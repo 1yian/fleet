@@ -1,0 +1,103 @@
+// The operations that sessions call (spec section 11). Each runs inside one
+// transaction and returns the sessions that have new entries to push.
+import type { DatabaseSync } from "node:sqlite";
+import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
+import { factsFrom, nextStatus, type Change } from "./status.ts";
+import {
+  addCard,
+  addEntry,
+  beginAttempt,
+  cardEntries,
+  getCard,
+  listCards,
+  setStatus,
+  workerOf,
+  type Session,
+} from "./store.ts";
+
+interface Done {
+  readonly value: unknown;
+  readonly notify: readonly string[];
+}
+type Handler = (db: DatabaseSync, session: Session, args: unknown) => Done;
+
+/** Reports that always reach the lane mate (spec section 10.1). */
+const TO_MATE: ReadonlySet<ReportStatus> = new Set([
+  "in-review",
+  "done",
+  "failed",
+  "blocked",
+  "needs-decision",
+  "resolved",
+  "stopped",
+]);
+
+function applyChange(db: DatabaseSync, card: Card, change: Change): void {
+  const facts = { ...factsFrom(cardEntries(db, card.id)), status: card.status, kind: card.kind };
+  const status = nextStatus(facts, change);
+  if (status instanceof Error) throw status;
+  setStatus(db, card.id, status);
+}
+
+function ownCard(db: DatabaseSync, session: Session, id: number): Card {
+  const card = getCard(db, id);
+  if (card.lane !== session.lane) throw new Error(`c-${String(id)} belongs to lane ${card.lane}`);
+  return card;
+}
+
+/** A report reaches the mate if its status hands off, or if it is the first report after a comment. */
+function reportRecipients(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
+  if (TO_MATE.has(status)) return [card.lane];
+  const entries = cardEntries(db, card.id);
+  const last = (kind: string): number => entries.findLast((entry) => entry.kind === kind)?.id ?? 0;
+  return last("comment") > last("report") ? [card.lane] : [];
+}
+
+const HANDLERS: Record<OpName, Handler> = {
+  "card.new": (db, session, raw) => {
+    const args = check(OPS["card.new"].args, raw);
+    return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
+  },
+  board: (db) => ({ value: listCards(db), notify: [] }),
+  comment: (db, session, raw) => {
+    const args = check(OPS.comment.args, raw);
+    const card = ownCard(db, session, args.card);
+    const worker = workerOf(db, card.id);
+    const to = worker === undefined ? [] : [worker];
+    applyChange(db, card, { kind: "comment", resolves: args.resolves });
+    const fields = { resolves: args.resolves, now: args.now };
+    addEntry(
+      db,
+      { card: card.id, author: `mate:${session.lane}`, kind: "comment", body: args.text, fields },
+      to,
+    );
+    return { value: getCard(db, card.id), notify: to };
+  },
+  "attempt.begin": (db, session, raw) => {
+    const args = check(OPS["attempt.begin"].args, raw);
+    const card = ownCard(db, session, args.card);
+    applyChange(db, card, { kind: "dispatch" });
+    return { value: beginAttempt(db, card, args.host), notify: [] };
+  },
+  report: (db, session, raw) => {
+    const args = check(OPS.report.args, raw);
+    if (session.card === null) throw new Error("only a worker on a card can report");
+    const card = getCard(db, session.card);
+    const to = reportRecipients(db, card, args.status);
+    applyChange(db, card, { kind: "report", status: args.status });
+    const fields = { status: args.status, key: args.key, until: args.until };
+    addEntry(
+      db,
+      { card: card.id, author: `worker:${session.id}`, kind: "report", body: args.text, fields },
+      to,
+    );
+    return { value: getCard(db, card.id), notify: to };
+  },
+};
+
+/** Runs an operation for a session. Throws if the session's role may not call it. */
+export function runOp(db: DatabaseSync, session: Session, op: OpName, args: unknown): Done {
+  const roles: readonly string[] = OPS[op].roles;
+  if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
+  return HANDLERS[op](db, session, args);
+}

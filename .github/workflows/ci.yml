@@ -25,6 +25,7 @@ jobs:
       behavior: ${{ steps.filter.outputs.behavior }}
       tests: ${{ steps.filter.outputs.tests }}
       pi: ${{ steps.filter.outputs.pi }}
+      cardd-e2e: ${{ steps.filter.outputs.cardd-e2e }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -52,9 +53,18 @@ jobs:
             tests:
               - "e2e/**"
             pi:
-              - "e2e/support/**"
+              - "e2e/support/harness.ts"
+              - "e2e/support/json.ts"
+              - "e2e/support/fake-model.ts"
+              - "e2e/support/probe.ts"
               - "e2e/pi/**"
               - "e2e/package.json"
+              - "package-lock.json"
+            cardd-e2e:
+              - "packages/cardd/**"
+              - "packages/protocol/**"
+              - "e2e/support/cardd.ts"
+              - "e2e/cardd/**"
               - "package-lock.json"
 
   static:
@@ -120,6 +130,19 @@ jobs:
       - run: npm ci
       - run: node --test --test-concurrency=1 "e2e/pi/**/*.test.ts"
 
+  e2e-cardd:
+    needs: changes
+    if: needs.changes.outputs.cardd-e2e == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node --test --test-concurrency=1 "e2e/cardd/**/*.test.ts"
+
   tests-required:
     needs: changes
     if: github.event_name == 'pull_request'
@@ -138,7 +161,7 @@ jobs:
           fi
 
   ci-ok:
-    needs: [changes, static, migrations, secrets, e2e-pi, tests-required]
+    needs: [changes, static, migrations, secrets, e2e-pi, e2e-cardd, tests-required]
     if: always()
     runs-on: ubuntu-latest
     steps:

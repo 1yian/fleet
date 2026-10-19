@@ -1,9 +1,11 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
-    ".": {},
-    "packages/cardd": {
+    ".": {
       "entry": ["scripts/*.ts"]
+    },
+    "packages/cardd": {
+      "entry": ["src/main.ts", "scripts/*.ts"]
     },
     "e2e": {
       "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts"]
