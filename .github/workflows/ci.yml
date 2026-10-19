@@ -24,6 +24,7 @@ jobs:
       cardd: ${{ steps.filter.outputs.cardd }}
       behavior: ${{ steps.filter.outputs.behavior }}
       tests: ${{ steps.filter.outputs.tests }}
+      pi: ${{ steps.filter.outputs.pi }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -50,6 +51,11 @@ jobs:
               - "packages/*/migrations/**"
             tests:
               - "e2e/**"
+            pi:
+              - "e2e/support/**"
+              - "e2e/pi/**"
+              - "e2e/package.json"
+              - "package-lock.json"
 
   static:
     needs: changes
@@ -101,6 +107,19 @@ jobs:
       - name: Scan the full history
         run: ./gitleaks git --redact --no-banner .
 
+  e2e-pi:
+    needs: changes
+    if: needs.changes.outputs.pi == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node --test --test-concurrency=1 "e2e/pi/**/*.test.ts"
+
   tests-required:
     needs: changes
     if: github.event_name == 'pull_request'
@@ -119,7 +138,7 @@ jobs:
           fi
 
   ci-ok:
-    needs: [changes, static, migrations, secrets, tests-required]
+    needs: [changes, static, migrations, secrets, e2e-pi, tests-required]
     if: always()
     runs-on: ubuntu-latest
     steps:

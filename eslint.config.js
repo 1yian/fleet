@@ -30,7 +30,14 @@ export default defineConfig(
       "@typescript-eslint/consistent-type-imports": "error",
       // unused code and promises
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
-      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-floating-promises": [
+        "error",
+        {
+          allowForKnownSafeCalls: [
+            { from: "package", package: "node:test", name: ["test", "describe", "it"] },
+          ],
+        },
+      ],
       "@typescript-eslint/no-misused-promises": "error",
       "no-unreachable": "error",
       // complexity

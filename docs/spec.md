@@ -627,7 +627,7 @@ A `now` entry can reach the model before an older follow-up entry. This is inten
 4. `cardd` marks those records Confirmed.
 5. `cardd` sends every other record for this session again, in entry order, whatever its state. This includes Acknowledged records whose message is not in the file.
 
-**Why the session file is the authority.** Pi 1.3.0 writes a message to the session file only at `message_end`. It writes it after the extension handlers for that event run. Pi also does not create the file until the session has its first user or assistant message. While a run streams, Pi holds new custom messages in memory and appends them at the end of the turn. An acknowledgment, or any separate "already delivered" record, can therefore exist for a message that is not on disk. Only the message itself in the file proves that the model keeps it after a crash.
+**Why the session file is the authority.** Pi 1.3.0 writes a message to the session file at `message_end`, after the extension handlers for that event run. But Pi does not create the file until the session has its first assistant message. Until then, every message is only in memory, even after the model received it. An acknowledgment, or any separate "already delivered" record, can therefore exist for a message that is not on disk. Only the message itself in the file proves that the model keeps it after a crash. The Pi contract tests (`e2e/pi/contract.test.ts`) show both facts.
 
 **Rules that follow:**
 
@@ -1361,10 +1361,18 @@ The design review of 2026-10-10 to 2026-10-12 built a scratch prototype: Pi sess
 - The no-report nudge and the automatic `stopped` report work. The nudge guard must reset only on new input, or the nudge loops.
 - `cleanup`'s archive-then-close step worked in a scratch copy.
 
-### 26.2 Not yet proven
+### 26.2 Proven on Pi 1.3.0
 
-- The same Pi calls on Pi 1.3.0. The prototype used the Pi version of 2026-10-10.
-- The run-end check on Pi 1.3.0: `agent_before_settle` with `continue: true` and `context.pendingMessages`, and `agent_settled` with `aborted`. The installed documentation describes this behavior, but no test has run it.
+`e2e/pi/contract.test.ts` runs real Pi 1.3.0 processes with a scripted fake model. It shows these results:
+
+- A steer sent during a tool call reaches the model after the tool call and before an older follow-up. The follow-up comes after the next model reply.
+- A fleet message is in the session file while the model call that received it is still running. A crash then keeps the steer on disk, and the queued follow-up is in neither the file nor the context.
+- Before the first assistant message, the session file does not exist. A message that the model already received is lost in a crash.
+- `agent_before_settle` can return `continue: true` with a custom-message entry. The model gets one more call that contains the entry.
+- `agent_settled` reports `aborted: true` after an abort.
+
+### 26.3 Not yet proven
+
 - Delivery between maverick and P620 over Tailscale.
 - Delivery records, recovery from the session file, and the three delivery tests in [section 25](#25-cutover-plan).
 - `herdr machine add` for watching panes on both hosts.
