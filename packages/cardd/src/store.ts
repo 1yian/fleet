@@ -1,0 +1,219 @@
+// Reads and writes cards.db. A mate's session ID is its lane name. Rows leave the database as JSON built by SQLite and
+// are checked against the protocol schemas, so the types match the wire.
+import { createHash, randomBytes } from "node:crypto";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import {
+  CardSchema,
+  check,
+  EntrySchema,
+  type Card,
+  type Entry,
+  type Status,
+} from "@fleet/protocol";
+import Type from "typebox";
+
+export interface Session {
+  readonly id: string;
+  readonly role: "mate" | "worker";
+  readonly lane: string;
+  readonly card: number | null;
+  readonly live: boolean;
+}
+const SessionSchema = Type.Object({
+  id: Type.String(),
+  role: Type.Enum(["mate", "worker"]),
+  lane: Type.String(),
+  card: Type.Union([Type.Integer(), Type.Null()]),
+  live: Type.Boolean(),
+});
+
+const CARD_JSON = `json_object('id', id, 'title', title, 'lane', lane, 'project', project,
+  'kind', kind, 'status', status, 'revision', revision, 'intent', intent, 'spec', spec,
+  'createdAt', created_at, 'updatedAt', updated_at)`;
+/** SQL that builds an entry's wire JSON from table alias `e`. */
+export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
+  'body', e.body, 'fields', json(e.fields), 'createdAt', e.created_at)`;
+const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'card', a.card,
+  'live', json(iif(s.role = 'mate' OR a.state IN ('starting', 'active'), 'true', 'false')))`;
+
+const hash = (token: string): string => createHash("sha256").update(token).digest("hex");
+const newToken = (): string => randomBytes(32).toString("base64url");
+
+/** Runs a query whose one column `j` is JSON, and parses each row. */
+export function json(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): unknown[] {
+  return db
+    .prepare(sql)
+    .all(...params)
+    .map((row) => {
+      const value = row["j"];
+      if (typeof value !== "string") throw new Error("expected a JSON column named j");
+      const parsed: unknown = JSON.parse(value);
+      return parsed;
+    });
+}
+
+export function transaction<T>(db: DatabaseSync, work: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = work();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/** Adds a lane and its mate session. Returns the mate's token. */
+export function addLane(
+  db: DatabaseSync,
+  lane: { name: string; home: string; parent?: string },
+): string {
+  const token = newToken();
+  transaction(db, () => {
+    db.prepare("INSERT INTO lanes (name, home, parent) VALUES (?, ?, ?)").run(
+      lane.name,
+      lane.home,
+      lane.parent ?? null,
+    );
+    db.prepare(
+      "INSERT INTO sessions (id, role, lane, host, token_hash, state) VALUES (?, 'mate', ?, '', ?, 'exited')",
+    ).run(lane.name, lane.name, hash(token));
+  });
+  return token;
+}
+
+export function sessionByToken(db: DatabaseSync, token: string): Session | undefined {
+  const sql = `SELECT ${SESSION_JSON} AS j FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt
+    WHERE s.token_hash = ?`;
+  const [row] = json(db, sql, hash(token));
+  return row === undefined ? undefined : check(SessionSchema, row);
+}
+
+export function getCard(db: DatabaseSync, id: number): Card {
+  const [row] = json(db, `SELECT ${CARD_JSON} AS j FROM cards WHERE id = ?`, id);
+  if (row === undefined) throw new Error(`no card c-${String(id)}`);
+  return check(CardSchema, row);
+}
+
+export const listCards = (db: DatabaseSync): Card[] =>
+  json(db, `SELECT ${CARD_JSON} AS j FROM cards ORDER BY id`).map((row) => check(CardSchema, row));
+
+export const cardEntries = (db: DatabaseSync, card: number): Entry[] =>
+  json(db, `SELECT ${ENTRY_JSON} AS j FROM entries e WHERE card = ? ORDER BY id`, card).map((row) =>
+    check(EntrySchema, row),
+  );
+
+export function addCard(
+  db: DatabaseSync,
+  card: {
+    lane: string;
+    title: string;
+    kind: Card["kind"];
+    project?: string;
+    intent?: string;
+    spec?: string;
+  },
+): Card {
+  const now = Date.now();
+  const { lastInsertRowid } = db
+    .prepare(
+      `INSERT INTO cards (title, lane, project, kind, status, intent, spec, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+    )
+    .run(
+      card.title,
+      card.lane,
+      card.project ?? null,
+      card.kind,
+      card.intent ?? "",
+      card.spec ?? "",
+      now,
+      now,
+    );
+  return getCard(db, Number(lastInsertRowid));
+}
+
+export function setStatus(db: DatabaseSync, card: number, status: Status): void {
+  db.prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ? AND status <> ?").run(
+    status,
+    Date.now(),
+    card,
+    status,
+  );
+}
+
+/** Writes an entry and a Pending delivery record for each recipient session. */
+export function addEntry(
+  db: DatabaseSync,
+  entry: Pick<Entry, "card" | "author" | "kind" | "body" | "fields">,
+  recipients: readonly string[],
+): void {
+  const now = Date.now();
+  const { lastInsertRowid } = db
+    .prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .run(entry.card, entry.author, entry.kind, entry.body, JSON.stringify(entry.fields), now);
+  const deliver = db.prepare(
+    "INSERT INTO deliveries (session, entry, state, updated_at) VALUES (?, ?, 'pending', ?)",
+  );
+  for (const session of recipients) deliver.run(session, lastInsertRowid, now);
+}
+
+/** The session of the card's live attempt, if there is one. */
+export function workerOf(db: DatabaseSync, card: number): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT s.id FROM sessions s JOIN attempts a ON a.id = s.attempt
+       WHERE a.card = ? AND a.state IN ('starting', 'active')`,
+    )
+    .get(card);
+  const id = row?.["id"];
+  return typeof id === "string" ? id : undefined;
+}
+
+/** Creates an attempt and its worker session in one transaction (spec section 6.9). */
+export function beginAttempt(
+  db: DatabaseSync,
+  card: Card,
+  host: string,
+): { session: string; token: string } {
+  if (workerOf(db, card.id) !== undefined)
+    throw new Error(`c-${String(card.id)} already has a live attempt`);
+  const token = newToken();
+  const now = Date.now();
+  const n = Number(
+    db.prepare("SELECT count(*) + 1 AS n FROM attempts WHERE card = ?").get(card.id)?.["n"],
+  );
+  const session = `c-${String(card.id)}-a${String(n)}`;
+  const { lastInsertRowid } = db
+    .prepare(
+      `INSERT INTO attempts (card, n, host, state, created_at, updated_at)
+       VALUES (?, ?, ?, 'starting', ?, ?)`,
+    )
+    .run(card.id, n, host, now, now);
+  db.prepare(
+    `INSERT INTO sessions (id, role, lane, attempt, host, token_hash, state)
+     VALUES (?, 'worker', ?, ?, ?, ?, 'starting')`,
+  ).run(session, card.lane, lastInsertRowid, host, hash(token));
+  return { session, token };
+}
+
+export type SessionState = "idle" | "running" | "waiting" | "exited" | "lost";
+
+/** Records a session state. A worker's first connect makes its attempt Active. */
+export function setSessionState(db: DatabaseSync, session: string, state: SessionState): void {
+  const now = Date.now();
+  db.prepare("UPDATE sessions SET state = ?, last_seen = ? WHERE id = ?").run(state, now, session);
+  db.prepare(
+    `UPDATE attempts SET state = 'active', updated_at = ?
+     WHERE state = 'starting' AND id = (SELECT attempt FROM sessions WHERE id = ?)`,
+  ).run(now, session);
+  if (state === "running" || state === "idle") {
+    db.prepare(
+      `UPDATE cards SET last_activity = ?
+       WHERE id = (SELECT a.card FROM sessions s JOIN attempts a ON a.id = s.attempt WHERE s.id = ?)`,
+    ).run(now, session);
+  }
+}
