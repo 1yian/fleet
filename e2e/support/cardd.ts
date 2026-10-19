@@ -22,8 +22,8 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
 
 export class Cardd {
   readonly db = join(mkdtempSync(join(tmpdir(), "fleet-cardd-")), "cards.db");
+  url = "";
   private child: ChildProcess | undefined;
-  private url = "";
 
   static async start(): Promise<Cardd> {
     const cardd = new Cardd();
@@ -47,6 +47,12 @@ export class Cardd {
     return session;
   }
 
+  /** Kills cardd and starts it again on the same database and port. */
+  async restart(): Promise<void> {
+    await this.stop();
+    await this.boot(new URL(this.url.replace(/^ws/, "http")).port);
+  }
+
   async stop(): Promise<void> {
     const child = this.child;
     if (child?.exitCode !== null) return;
@@ -55,8 +61,8 @@ export class Cardd {
     await exited;
   }
 
-  private async boot(): Promise<void> {
-    const child = spawn("node", [MAIN, "serve", "--db", this.db, "--listen", "127.0.0.1:0"], {
+  private async boot(port = "0"): Promise<void> {
+    const child = spawn("node", [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`], {
       stdio: ["ignore", "pipe", "inherit"],
     });
     this.child = child;

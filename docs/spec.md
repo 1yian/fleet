@@ -778,7 +778,7 @@ Pi fires `agent_before_settle` before a run ends. The extension can add one mess
 2. **Tracked wait.** A `run_long` job runs, a `wait_review` is pending, or the worker reported `paused` with an `until` date in the future.
 3. **Continuation.** A message is already queued for the session. The check reads `context.pendingMessages` in the event. An entry that `cardd` has not yet delivered to the session also counts.
 
-In Pi 1.3.0, `agent_before_settle` is the last point where an extension can add entries and request one more model call. `agent_settled` is notification only. Pi fires it when no retry, compaction, or queued continuation will run. Both facts come from the installed documentation and type declarations. A run-time test must still confirm them.
+In Pi 1.3.0, `agent_before_settle` is the last point where an extension can add entries and request one more model call. `agent_settled` is notification only. Pi fires it when no retry, compaction, or queued continuation will run. The Pi contract tests confirm both facts.
 
 If the captain stops the run with Escape, `agent_settled` reports `aborted: true`. The extension then files `stopped` with the note "stopped from the pane". This usually means that the captain stepped in. The mate checks the pane before it steers the worker.
 
@@ -1371,10 +1371,15 @@ The design review of 2026-10-10 to 2026-10-12 built a scratch prototype: Pi sess
 - `agent_before_settle` can return `continue: true` with a custom-message entry. The model gets one more call that contains the entry.
 - `agent_settled` reports `aborted: true` after an abort.
 
+`e2e/extension/worker.test.ts` runs a real worker (Pi with the fleet extension) against a real `cardd`. It shows these results:
+
+- Delivery tests 5, 6, and 7 of [section 25](#25-cutover-plan): after a crash, recovery delivers the older follow-up once and does not repeat the newer steer. A message lost before the session file existed is delivered again.
+- A `cardd` restart does not repeat a message that the worker already holds.
+- The run-end check: one nudge, then `stopped` with the worker's last message. An abort files "stopped from the pane".
+
 ### 26.3 Not yet proven
 
 - Delivery between maverick and P620 over Tailscale.
-- Delivery records, recovery from the session file, and the three delivery tests in [section 25](#25-cutover-plan).
 - `herdr machine add` for watching panes on both hosts.
 - `herdr worktree create` as a replacement for treehouse.
 

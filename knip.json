@@ -9,6 +9,9 @@
     },
     "e2e": {
       "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts"]
+    },
+    "packages/extension": {
+      "entry": ["src/index.ts"]
     }
   }
 }

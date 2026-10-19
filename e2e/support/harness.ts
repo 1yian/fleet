@@ -14,7 +14,9 @@ export interface Turn {
   readonly role: string;
   readonly text: string;
 }
-type Move = { readonly text: string } | { readonly tool: string };
+type Move =
+  | { readonly text: string }
+  | { readonly tool: string; readonly args?: Readonly<Record<string, string | number | boolean>> };
 type ModelHandler = (turns: Turn[]) => Move | Promise<Move>;
 
 const PI_BIN = fileURLToPath(new URL("../../node_modules/.bin/pi", import.meta.url));
@@ -50,11 +52,18 @@ function toTurns(body: JsonRecord): Turn[] {
 
 /** One Pi process in RPC mode. */
 export class Pi {
+  /** Pi's RPC event stream (spec: docs/json.md in the Pi package). */
+  readonly events: JsonRecord[] = [];
   private readonly child: ChildProcess;
   private readonly exited: Promise<void>;
   constructor(child: ChildProcess) {
     this.child = child;
-    child.stdout?.resume();
+    let buffer = "";
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+      const lines = (buffer + chunk).split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) if (line.trim() !== "") this.events.push(parseRecord(line));
+    });
     this.exited = new Promise((resolve) => {
       child.once("exit", () => {
         resolve();
@@ -68,6 +77,10 @@ export class Pi {
 
   abort(): void {
     this.command({ type: "abort" });
+  }
+
+  async waitFor(match: (event: JsonRecord) => boolean, what: string): Promise<JsonRecord> {
+    return poll(() => this.events.find(match), what);
   }
 
   /** Simulates a crash. */
@@ -119,7 +132,12 @@ export class Harness {
     this.handlers.push(handler);
   }
 
-  startPi(sessionId: string, env: Record<string, string> = {}): Pi {
+  /** Starts Pi with the fake model and the probe, plus any extra extensions. */
+  startPi(
+    sessionId: string,
+    env: Record<string, string> = {},
+    extensions: readonly string[] = [],
+  ): Pi {
     const agentDir = join(this.dir, "agent");
     const workDir = join(this.dir, "work");
     mkdirSync(agentDir, { recursive: true });
@@ -128,6 +146,7 @@ export class Harness {
       ["--mode", "rpc", "--offline", "--no-approve", "--no-extensions", "--no-skills"],
       ["--no-prompt-templates", "--no-themes", "--no-context-files", "--no-mcp"],
       ["--no-builtin-tools", "-e", join(SUPPORT, "fake-model.ts"), "-e", join(SUPPORT, "probe.ts")],
+      extensions.flatMap((path) => ["-e", path]),
       ["--provider", "fake", "--model", "scripted"],
       ["--session-dir", join(this.dir, "sessions"), "--session-id", sessionId],
     ].flat();
@@ -159,6 +178,15 @@ export class Harness {
 
   async waitFor(match: (event: JsonRecord) => boolean, what: string): Promise<JsonRecord> {
     return poll(() => this.events.find(match), what);
+  }
+
+  /** Waits for the nth event (counting from 1) that matches. */
+  async waitForNth(
+    match: (event: JsonRecord) => boolean,
+    n: number,
+    what: string,
+  ): Promise<JsonRecord> {
+    return poll(() => this.events.filter(match)[n - 1], what);
   }
 
   async waitForCall(index: number): Promise<Turn[]> {
@@ -194,10 +222,13 @@ export class Harness {
   }
 }
 
-async function poll<T>(read: () => T | undefined, what: string): Promise<T> {
+async function poll<T>(
+  read: () => T | undefined | Promise<T | undefined>,
+  what: string,
+): Promise<T> {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const value = read();
+    const value = await read();
     if (value !== undefined) return value;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 20));

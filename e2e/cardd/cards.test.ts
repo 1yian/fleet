@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "./fleet.ts";
+import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
 let card: Card;
