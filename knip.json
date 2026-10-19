@@ -4,6 +4,9 @@
     ".": {},
     "packages/cardd": {
       "entry": ["scripts/*.ts"]
+    },
+    "e2e": {
+      "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts"]
     }
   }
 }
