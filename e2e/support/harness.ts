@@ -52,18 +52,11 @@ function toTurns(body: JsonRecord): Turn[] {
 
 /** One Pi process in RPC mode. */
 export class Pi {
-  /** Pi's RPC event stream (spec: docs/json.md in the Pi package). */
-  readonly events: JsonRecord[] = [];
   private readonly child: ChildProcess;
   private readonly exited: Promise<void>;
   constructor(child: ChildProcess) {
     this.child = child;
-    let buffer = "";
-    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-      const lines = (buffer + chunk).split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) if (line.trim() !== "") this.events.push(parseRecord(line));
-    });
+    child.stdout?.resume();
     this.exited = new Promise((resolve) => {
       child.once("exit", () => {
         resolve();
@@ -77,10 +70,6 @@ export class Pi {
 
   abort(): void {
     this.command({ type: "abort" });
-  }
-
-  async waitFor(match: (event: JsonRecord) => boolean, what: string): Promise<JsonRecord> {
-    return poll(() => this.events.find(match), what);
   }
 
   /** Simulates a crash. */
@@ -222,13 +211,10 @@ export class Harness {
   }
 }
 
-async function poll<T>(
-  read: () => T | undefined | Promise<T | undefined>,
-  what: string,
-): Promise<T> {
+async function poll<T>(read: () => T | undefined, what: string): Promise<T> {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const value = await read();
+    const value = read();
     if (value !== undefined) return value;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 20));

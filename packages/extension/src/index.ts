@@ -1,5 +1,6 @@
 // The fleet Pi extension. Dispatch starts each session with FLEET_URL,
-// FLEET_TOKEN, and FLEET_ROLE. Without them, the extension does nothing.
+// FLEET_TOKEN, and FLEET_ROLE (worker or mate). Without all three, or with any
+// other role, the extension does nothing.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Link } from "./link.ts";
@@ -8,7 +9,8 @@ import { WorkerRun } from "./worker.ts";
 export default function fleet(pi: ExtensionAPI): void {
   const url = process.env["FLEET_URL"];
   const token = process.env["FLEET_TOKEN"];
-  if (url === undefined || token === undefined) return;
+  const role = process.env["FLEET_ROLE"];
+  if (url === undefined || token === undefined || (role !== "worker" && role !== "mate")) return;
   const injected = new Set<number>();
   let sessionFile: string | undefined;
 
@@ -36,7 +38,7 @@ export default function fleet(pi: ExtensionAPI): void {
       worker?.reset();
     },
   });
-  const worker = process.env["FLEET_ROLE"] === "worker" ? new WorkerRun(link) : undefined;
+  const worker = role === "worker" ? new WorkerRun(link) : undefined;
   worker?.register(pi);
 
   pi.on("session_start", (_event, ctx) => {

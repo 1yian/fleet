@@ -29,13 +29,20 @@ const ReportParams = Type.Object({
   ),
   text: Type.String({ minLength: 1, description: "What happened, in one or two sentences" }),
   key: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "Decision key" })),
-  until: Type.Optional(Type.String({ description: "UTC time, for paused" })),
+  until: Type.Optional(
+    Type.String({ description: "ISO 8601 UTC time like 2026-05-01T10:00:00Z, for paused" }),
+  ),
 });
+
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
 function untilMs(status: string, until: string | undefined): number | undefined {
   if (until !== undefined) {
-    const ms = Date.parse(until);
-    if (Number.isNaN(ms)) throw new Error(`until is not a date: ${until}`);
+    const ms = ISO_UTC.test(until) ? Date.parse(until) : Number.NaN;
+    if (Number.isNaN(ms))
+      throw new Error(
+        `until must be an ISO 8601 time ending in Z or a +hh:mm/-hh:mm offset, like 2026-05-01T10:00:00Z: ${until}`,
+      );
     return ms;
   }
   return status === "paused" ? Date.now() + PAUSE_DEFAULT_MS : undefined;
@@ -71,6 +78,7 @@ export class WorkerRun {
   /** New captain input or a new fleet entry starts a new obligation. */
   reset(): void {
     this.handedOff = false;
+    this.pausedUntil = 0;
     this.nudged = false;
   }
 
@@ -85,7 +93,7 @@ export class WorkerRun {
         const args = { status: params.status, text: params.text, key: params.key, until };
         const card = check(CardSchema, await this.link.call("report", args));
         if (HANDOFFS.has(params.status)) this.handedOff = true;
-        if (until !== undefined && params.status === "paused") this.pausedUntil = until;
+        this.pausedUntil = params.status === "paused" && until !== undefined ? until : 0;
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
       },

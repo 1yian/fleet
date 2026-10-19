@@ -82,6 +82,32 @@ test("a run that ends without a handoff gets one nudge, then files stopped", asy
   assert.equal(await status(fleet.main, card), "with-mate");
 });
 
+test("a worker woken from a pause is nudged and stopped when it ends a run on a progress report", async () => {
+  worker();
+  h.onModel(() => ({ tool: "report", args: { status: "paused", text: "waiting for CI" } }));
+  h.onModel(() => ({ text: "waiting" }));
+  await comment("start");
+  await fleet.main.waitForEntries(1);
+  await h.waitFor((e) => e["type"] === "settled", "the paused run to settle");
+  assert.equal(h.calls.length, 2);
+
+  h.onModel(() => ({ tool: "report", args: { status: "working", text: "back at it" } }));
+  h.onModel(() => ({ text: "that is all" }));
+  h.onModel(() => ({ text: "still nothing" }));
+  await comment("any news?");
+  await fleet.main.waitForEntries(3);
+
+  assert.match(
+    lastUser(await h.waitForCall(4)) ?? "",
+    /^\[fleet\] Your run is ending without a handoff/,
+  );
+  assert.deepEqual(reports(fleet.main), [
+    ["paused", "waiting for CI", "start"],
+    ["working", "back at it", "any news?"],
+    ["stopped", "ended the run without a handoff: still nothing", undefined],
+  ]);
+});
+
 test("a run stopped from the pane files stopped", async () => {
   const pi = worker();
   const held = gate();
