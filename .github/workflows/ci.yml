@@ -1,0 +1,133 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      cardd: ${{ steps.filter.outputs.cardd }}
+      behavior: ${{ steps.filter.outputs.behavior }}
+      tests: ${{ steps.filter.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            code:
+              - "packages/**"
+              - "e2e/**"
+              - "scripts/**"
+              - "package.json"
+              - "package-lock.json"
+              - "tsconfig.json"
+              - "eslint.config.js"
+              - "knip.json"
+              - ".dependency-cruiser.cjs"
+              - ".prettierrc.json"
+              - ".prettierignore"
+              - ".github/workflows/**"
+            cardd:
+              - "packages/cardd/**"
+            behavior:
+              - "packages/*/src/**"
+              - "packages/*/migrations/**"
+            tests:
+              - "e2e/**"
+
+  static:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run knip
+      - run: npm run deps
+
+  migrations:
+    needs: changes
+    if: needs.changes.outputs.cardd == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm run migrations:check
+        env:
+          MIGRATIONS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+
+  secrets:
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "${base}/${tarball}"
+          curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | grep " ${tarball}$" | sha256sum -c -
+          tar -xzf "${tarball}" gitleaks
+      - name: Scan the full history
+        run: ./gitleaks git --redact --no-banner .
+
+  tests-required:
+    needs: changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Behavior changes need end-to-end tests
+        env:
+          BEHAVIOR: ${{ needs.changes.outputs.behavior }}
+          TESTS: ${{ needs.changes.outputs.tests }}
+          EXEMPT: ${{ contains(github.event.pull_request.labels.*.name, 'no-behavior-change') }}
+        run: |
+          if [ "$BEHAVIOR" = "true" ] && [ "$TESTS" != "true" ] && [ "$EXEMPT" != "true" ]; then
+            echo "::error::This PR changes packages/*/src or migrations but no e2e test."
+            echo "Add or update a test under e2e/, or add the 'no-behavior-change' label."
+            exit 1
+          fi
+
+  ci-ok:
+    needs: [changes, static, migrations, secrets, tests-required]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in success | skipped) ;; *) exit 1 ;; esac
+          done

@@ -1,0 +1,45 @@
+# Build plan
+
+This plan orders the build of [the spec](spec.md). Each step ends in a state that CI or an end-to-end run checks. A step does not start until the step before it is green.
+
+## Steps
+
+| Step                 | Delivers                                                                                                              | Proof                                                                                                                                                                                           |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0. Scaffold          | Quality gates, CI, branch protection, the `cardd` schema, and the migration check.                                    | CI is green. Each gate fails on a planted violation.                                                                                                                                            |
+| 1. Pi proofs         | A test extension and a scripted fake model provider. They answer the open questions in spec section 26.2 on Pi 1.3.0. | `e2e/pi`: steer and follow-up order, the write to the session file at `message_end`, recovery from the session file, `agent_before_settle` with `continue`, and `agent_settled` with `aborted`. |
+| 2. `cardd` core      | Cards, entries, transitions with the guards of spec section 7.4, delivery records, recovery, sessions, and tokens.    | `e2e/cardd` drives a real `cardd` process over HTTP and websockets.                                                                                                                             |
+| 3. Worker extension  | Connect, recovery, `report`, the run-end check, and activity.                                                         | A real Pi with the fake model and a real `cardd`. The overtaking, persistence-boundary, and kill tests of spec section 25.                                                                      |
+| 4. Dispatch          | Attempts, `dispatch` over SSH with herdr worktrees and tabs, retry, `replace`, and `run_long` jobs.                   | A herdr lab on the P620 runner. The dispatch-retry, replaced-attempt, and job-restart tests.                                                                                                    |
+| 5. Timed check       | Findings, stall and idle detection, holds, and CI watching while Merging.                                             | Lab tests with short thresholds. Each condition is reported once.                                                                                                                               |
+| 6. Mate tools        | `ask`, `answer`, `handback`, `grant`, `merge`, `cleanup`, `card drop`, and grant precedence.                          | The main flow of spec section 25, step 3.1, without the board.                                                                                                                                  |
+| 7. Board             | The React board with AffectUI MIT components.                                                                         | Browser tests on a lab `cardd`. The stale-click test. The click budget of spec section 21.3.                                                                                                    |
+| 8. Prompts and ports | The Pi package with the prompts and skills, standing work, and each kept feature.                                     | The second-mate flow and the standing-card flow.                                                                                                                                                |
+| 9. Cutover           | The import of current records, the multi-host run, and the switch.                                                    | The full list in spec section 25.                                                                                                                                                               |
+
+## Quality gates
+
+| Rule                                                                                                     | Tool                                                                                                                          | Where                                        |
+| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Strict types, no `any`, no unchecked type assertions, `unknown` only with validation                     | `tsc` strict options, `typescript-eslint` strict type-checked rules, `consistent-type-assertions: never`                      | `tsconfig.json`, `eslint.config.js`          |
+| Zero lint errors and warnings. No inline disable comments.                                               | ESLint with `--max-warnings 0` and `noInlineConfig`                                                                           | `eslint.config.js`                           |
+| No unused imports, variables, files, exports, or dependencies                                            | `typescript-eslint`, `tsc`, `knip`                                                                                            | `knip.json`                                  |
+| No unhandled promises                                                                                    | `no-floating-promises`, `no-misused-promises`                                                                                 | `eslint.config.js`                           |
+| Complexity at most 10, files at most 500 lines, functions at most 100 lines, nesting at most 3           | ESLint core rules                                                                                                             | `eslint.config.js`                           |
+| No circular dependencies. Packages share only the wire protocol. End-to-end tests use only the protocol. | dependency-cruiser                                                                                                            | `.dependency-cruiser.cjs`                    |
+| Format                                                                                                   | Prettier                                                                                                                      | `.prettierrc.json`                           |
+| Secrets                                                                                                  | gitleaks over the full history, and GitHub secret scanning with push protection                                               | `ci.yml`, repository settings                |
+| Migrations                                                                                               | Migrations are append-only. Every migration applies to an empty database, and the result matches `packages/cardd/schema.sql`. | `packages/cardd/scripts/check-migrations.ts` |
+| Behavior changes need tests                                                                              | A pull request that changes `packages/*/src` or a migration must change `e2e/`, or carry the `no-behavior-change` label.      | `ci.yml`                                     |
+| Merge blocked on failure                                                                                 | Branch protection requires `ci-ok`, a pull request, and an up-to-date branch. Admins are included.                            | Repository settings                          |
+| Path-aware jobs, superseded runs cancelled                                                               | `dorny/paths-filter` and a `concurrency` group                                                                                | `ci.yml`                                     |
+
+Python rules (ruff, pyright, pytest) apply when the first Python file is added. The repository has none.
+
+## Test policy
+
+Tests are end-to-end. They start real processes (`cardd`, Pi with a scripted fake model, herdr) and check what a user or a session sees. There are no unit tests. A bug fix adds an end-to-end test that fails before the fix.
+
+## Runners
+
+GitHub-hosted runners run the gates and the tests that need only Node and Pi. Tests that need herdr or two hosts run on a self-hosted runner on P620. The repository is public, so that runner takes jobs only from pushes to `main` and from pull requests whose branch is in this repository. Pull requests from forks never reach it.
