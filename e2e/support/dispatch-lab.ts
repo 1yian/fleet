@@ -30,8 +30,17 @@ export interface DispatchLab {
 /** The file where the lab's worker launches record their arguments. */
 export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
 
-export async function startDispatchLab(): Promise<DispatchLab> {
-  const cardd = await Cardd.start();
+/** Variations of the lab: cardd's environment, and extra arguments for every worker's Pi. */
+export interface LabOptions {
+  readonly cardd?: Record<string, string>;
+  readonly workerArgs?: readonly string[];
+}
+
+export async function startDispatchLab({
+  cardd: carddEnv,
+  workerArgs = [],
+}: LabOptions = {}): Promise<DispatchLab> {
+  const cardd = await Cardd.start(carddEnv);
   const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
   const mainToken = cardd.addLane("main", undefined, home);
   const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
@@ -53,7 +62,7 @@ export async function startDispatchLab(): Promise<DispatchLab> {
       FLEET_ROLE: "mate",
       FLEET_FAKE_AGENT: "mate",
       HERDR_SESSION: lab.name,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", EXTENSION]),
+      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", EXTENSION, ...workerArgs]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],
         far: ["node", SWITCH, join(h.dir, "far-down")],
