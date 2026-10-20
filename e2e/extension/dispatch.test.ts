@@ -3,7 +3,7 @@
 // session, in its own git worktree. Both use the scripted fake model.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -204,5 +204,44 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
   assert.match(
     execFileSync("tar", ["-tf", join(unpacked, "untracked.tar")], { encoding: "utf8" }),
     /untracked\.txt/,
+  );
+});
+
+test("a rerun of cleanup after the worktree is gone still deletes the branch and reports the archive", async () => {
+  h.onModel(
+    () => ({
+      tool: "card_new",
+      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+    }),
+    "mate",
+  );
+  h.onModel(
+    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => {
+    mkdirSync(join(home, "archive"), { recursive: true });
+    writeFileSync(join(home, "archive", "c-1-a1.tar.zst"), "archived by the first run");
+    execFileSync("git", [
+      "-C",
+      clone,
+      "worktree",
+      "remove",
+      "--force",
+      `${clone}.worktrees/c-1-a1`,
+    ]);
+    return { tool: "card_drop", args: { card: 1, reason: "the design changed" } };
+  }, "mate");
+  h.onModel(() => ({ tool: "report", args: { status: "blocked", text: "unclear" } }), "worker");
+  await mateConnected();
+  mate.prompt("ship the scrollbar fix");
+
+  const archive = join(home, "archive", "c-1-a1.tar.zst");
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.equal(results.at(-1), `c-1 is dropped. Unlanded work is archived in ${archive}.`);
+  assert.equal(
+    execFileSync("git", ["-C", clone, "branch", "--list", "c-1-a1"], { encoding: "utf8" }).trim(),
+    "",
   );
 });

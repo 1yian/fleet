@@ -10,7 +10,7 @@ interface Props {
   readonly board: Board;
   readonly changes: number;
   readonly onReply: (text: string) => void;
-  readonly onAnswer: (choice: string) => void;
+  readonly onAnswer: (ask: number, choice: string) => void;
   readonly onClose: () => void;
 }
 
@@ -35,7 +35,7 @@ export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Pro
   useEffect(() => {
     void loadThread(card).then(setThread);
   }, [card, changes]);
-  const question = board.questions.find((each) => each.card === card);
+  const questions = board.questions.filter((each) => each.card === card);
   if (thread === undefined) return <aside className="drawer">Loading c-{card}…</aside>;
   return (
     <aside className="drawer" aria-label={`c-${String(card)}`}>
@@ -53,21 +53,21 @@ export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Pro
           )}
         </p>
       </header>
-      {question === undefined ? null : (
-        <div className="options">
+      {questions.map((question) => (
+        <div className="options" key={question.ask} aria-label={question.question}>
           {question.options.map((option) => (
             <button
               type="button"
               key={option}
               onClick={() => {
-                onAnswer(option);
+                onAnswer(question.ask, option);
               }}
             >
               {option}
             </button>
           ))}
         </div>
-      )}
+      ))}
       <CommentThread
         key={thread.entries.length}
         title="Thread"

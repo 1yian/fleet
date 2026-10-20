@@ -274,7 +274,11 @@ export const BoardActionSchema = Type.Object({
   card: Type.Integer(),
   revision: Type.Integer(),
   action: Type.Union([
-    Type.Object({ kind: Type.Literal("answer"), choice: Type.String({ minLength: 1 }) }),
+    Type.Object({
+      kind: Type.Literal("answer"),
+      ask: Type.Integer(),
+      choice: Type.String({ minLength: 1 }),
+    }),
     Type.Object({ kind: Type.Literal("comment"), text: Type.String({ minLength: 1 }) }),
     Type.Object({
       kind: Type.Literal("hold"),

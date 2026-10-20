@@ -49,6 +49,38 @@ test("Needs you shows each question, and one click answers it", async () => {
   assert.deepEqual([answer.author, answer.body], ["captain", "v2"]);
 });
 
+test("each open question of one card is shown, and a click answers that question", async () => {
+  const card = await question("Pick the API version", ["v1", "v2"]);
+  await main.call("ask", { card: card.id, question: "Ship on Friday?", options: ["yes", "no"] });
+  await page.goto(http());
+  await page.getByText("Ship on Friday?").waitFor();
+  await page.getByText("Pick the API version?").waitFor();
+
+  await page.getByRole("button", { name: "yes" }).click();
+  await page.getByText("Ship on Friday?").waitFor({ state: "detached" });
+  await page.getByText("Pick the API version?").waitFor();
+  await page.getByRole("button", { name: "v1" }).click();
+  await page.getByText("Nothing waits on you.").waitFor();
+  const answers = await main.waitForEntries(2);
+  assert.deepEqual(
+    answers.map((entry) => entry.body),
+    ["yes", "v1"],
+  );
+});
+
+test("number keys with a modifier do not answer", async () => {
+  await question("Ship on Friday", ["yes", "no"]);
+  await page.goto(http());
+  await page.getByText("Ship on Friday?").waitFor();
+  await page.keyboard.press("Control+1");
+  await page.keyboard.press("Alt+1");
+  await page.keyboard.press("Meta+1");
+  await page.keyboard.press("2");
+  const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  assert.equal(answer.body, "no");
+  assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 1);
+});
+
 test("a number key answers the first question", async () => {
   await question("Ship on Friday", ["yes", "no"]);
   await page.goto(http());

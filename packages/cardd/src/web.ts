@@ -29,6 +29,17 @@ function readBody(request: IncomingMessage): Promise<string> {
 }
 
 export class Web {
+  /** A request with an Origin header must come from the page that cardd itself serves. */
+  static sameOrigin(request: IncomingMessage): boolean {
+    const origin = request.headers.origin;
+    if (origin === undefined) return true;
+    try {
+      return new URL(origin).host === request.headers.host;
+    } catch {
+      return false;
+    }
+  }
+
   private readonly live = new Set<WebSocket>();
   private readonly db: DatabaseSync;
   private readonly flush: (session: string) => void;
@@ -55,6 +66,10 @@ export class Web {
       response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
     };
     try {
+      if (!Web.sameOrigin(request)) {
+        json(403, { ok: false, error: "cardd serves the board only to its own origin" });
+        return;
+      }
       const value = await this.route(request);
       if (value === undefined)
         this.serveFile(new URL(request.url ?? "/", "http://board").pathname, response);
@@ -76,6 +91,8 @@ export class Web {
   }
 
   private async act(request: IncomingMessage): Promise<unknown> {
+    if (request.headers["content-type"]?.split(";")[0]?.trim() !== "application/json")
+      throw new Error("board actions must be sent as application/json");
     const body: unknown = JSON.parse(await readBody(request));
     const notify = transaction(this.db, () => boardAction(this.db, body));
     for (const session of notify) this.flush(session);

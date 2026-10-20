@@ -25,6 +25,8 @@ const CLOSE_BAD_MESSAGE = 4000;
 const CLOSE_NOT_LIVE = 4001;
 const CLOSE_SUPERSEDED = 4002;
 
+const EVERY_INTERFACE: ReadonlySet<string> = new Set(["0.0.0.0", "::", "::ffff:0.0.0.0"]);
+
 type Outcome = { ok: true; value: unknown } | { ok: false; error: string };
 
 /** The session's attempt ended or was replaced. The socket closes with CLOSE_NOT_LIVE. */
@@ -215,7 +217,12 @@ export async function serve(
   const boards = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
     const path = new URL(request.url ?? "/", "http://cardd").pathname;
-    const target = path === "/session" ? sessions : path === "/live" ? boards : undefined;
+    const target =
+      path === "/session"
+        ? sessions
+        : path === "/live" && Web.sameOrigin(request)
+          ? boards
+          : undefined;
     if (target === undefined) socket.destroy();
     else
       target.handleUpgrade(request, socket, head, (ws) => {
@@ -226,5 +233,11 @@ export async function serve(
   await new Promise<void>((resolve) => server.listen(port, host, resolve));
   const address: AddressInfo | string | null = server.address();
   if (address === null || typeof address === "string") throw new Error("the server has no address");
-  return `ws://${host}:${String(address.port)}/session`;
+  // The board has no login: only the Tailscale network may reach cardd (spec section 21.4).
+  if (EVERY_INTERFACE.has(address.address)) {
+    server.close();
+    throw new Error("cardd binds to the Tailscale address, never to every interface");
+  }
+  const name = host.includes(":") ? `[${host}]` : host;
+  return `ws://${name}:${String(address.port)}/session`;
 }

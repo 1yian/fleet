@@ -31,8 +31,8 @@ export function App() {
     [board],
   );
   const answer = useCallback(
-    (card: number, choice: string) => {
-      send(card, { kind: "answer", choice });
+    (card: number, ask: number, choice: string) => {
+      send(card, { kind: "answer", ask, choice });
     },
     [send],
   );
@@ -67,8 +67,8 @@ export function App() {
           card={open}
           board={board}
           changes={changes}
-          onAnswer={(choice) => {
-            answer(open, choice);
+          onAnswer={(ask, choice) => {
+            answer(open, ask, choice);
           }}
           onReply={(text) => {
             send(open, { kind: "comment", text });

@@ -30,7 +30,7 @@ export function reachable(
   throw new Error(`c-${String(id)} belongs to lane ${card.lane}`);
 }
 
-export function openAsk(db: DatabaseSync, card: Card): string {
+function openAsk(db: DatabaseSync, card: Card): string {
   const ask = factsFrom(cardEntries(db, card.id)).askIds.at(-1);
   if (ask === undefined) throw new Error(`c-${String(card.id)} has no open question`);
   return ask;

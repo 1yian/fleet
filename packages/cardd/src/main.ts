@@ -26,10 +26,11 @@ const db = openDatabase(values.db);
 const [command, ...rest] = positionals;
 
 if (command === "serve") {
-  const [host = "", port = ""] = values.listen.split(":");
-  // The board has no login: only the Tailscale network may reach cardd (spec section 21.4).
-  if (host === "0.0.0.0" || host === "::")
-    throw new Error("cardd binds to the Tailscale address, never to every interface");
+  const split = values.listen.lastIndexOf(":");
+  const host = values.listen.slice(0, split).replace(/^\[(.*)\]$/, "$1");
+  const port = values.listen.slice(split + 1);
+  if (split < 0 || host === "" || !/^\d+$/.test(port))
+    throw new Error(`--listen ${values.listen} must be <host>:<port>, with both parts set`);
   const scale = Number(process.env["CARDD_TIMING_SCALE"] ?? "1");
   if (!(scale > 0)) throw new Error("CARDD_TIMING_SCALE must be a positive number");
   console.log(

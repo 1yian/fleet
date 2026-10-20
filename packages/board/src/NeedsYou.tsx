@@ -5,22 +5,22 @@ import type { Board } from "@fleet/protocol";
 
 interface Props {
   readonly board: Board;
-  readonly onAnswer: (card: number, choice: string) => void;
+  readonly onAnswer: (card: number, ask: number, choice: string) => void;
   readonly onOpen: (card: number) => void;
 }
+
+const typesText = (element: HTMLElement): boolean =>
+  element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName);
 
 export function NeedsYou({ board, onAnswer, onOpen }: Props) {
   const first = board.questions[0];
   useEffect(() => {
     const key = (event: KeyboardEvent): void => {
-      if (
-        first === undefined ||
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLTextAreaElement
-      )
+      if (first === undefined || event.repeat || event.metaKey || event.ctrlKey || event.altKey)
         return;
+      if (event.target instanceof HTMLElement && typesText(event.target)) return;
       const choice = first.options[Number(event.key) - 1];
-      if (choice !== undefined) onAnswer(first.card, choice);
+      if (choice !== undefined) onAnswer(first.card, first.ask, choice);
     };
     window.addEventListener("keydown", key);
     return () => {
@@ -52,7 +52,7 @@ export function NeedsYou({ board, onAnswer, onOpen }: Props) {
                   key={option}
                   className={index === 0 ? "primary" : ""}
                   onClick={() => {
-                    onAnswer(question.card, option);
+                    onAnswer(question.card, question.ask, option);
                   }}
                 >
                   {question === first && index < 9 ? <kbd>{index + 1}</kbd> : null} {option}
