@@ -171,6 +171,18 @@ test("an answer goes to the question it names, and a closed question is refused"
   assert.equal((await view()).questions.length, 0);
 });
 
+test("a comment is accepted whatever the card's revision, and an answer or hold is not", async () => {
+  const { card, revision, asks } = await twoQuestions();
+  const stale = revision - 1;
+  const post = (action: unknown) =>
+    send("/api/action", "POST", json, { card, revision: stale, action });
+
+  assert.equal((await post({ kind: "comment", text: "a thought" })).status, 200);
+  assert.equal((await post({ kind: "answer", ask: asks[0], choice: "v1" })).status, 409);
+  const hold = { kind: "hold", until: Date.now() + 3_600_000, reason: "later" };
+  assert.equal((await post(hold)).status, 409);
+});
+
 const serveWith = (listen: string): Promise<{ code: number | null; stderr: string }> =>
   new Promise((resolve) => {
     const child = execFile(

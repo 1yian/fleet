@@ -23,16 +23,17 @@ export function App() {
   const send = useCallback(
     (card: number, action: BoardAction["action"]) => {
       const revision = board?.cards.find((each) => each.id === card)?.revision ?? 0;
-      void act({ card, revision, action }).then((error) => {
+      return act({ card, revision, action }).then((error) => {
         setNotice(error);
         void loadBoard().then(setBoard);
+        return error;
       });
     },
     [board],
   );
   const answer = useCallback(
     (card: number, ask: number, choice: string) => {
-      send(card, { kind: "answer", ask, choice });
+      void send(card, { kind: "answer", ask, choice });
     },
     [send],
   );
@@ -70,8 +71,9 @@ export function App() {
           onAnswer={(ask, choice) => {
             answer(open, ask, choice);
           }}
-          onReply={(text) => {
-            send(open, { kind: "comment", text });
+          onReply={async (text) => {
+            const error = await send(open, { kind: "comment", text });
+            if (error !== undefined) throw new Error(error);
           }}
           onClose={() => {
             setOpen(undefined);

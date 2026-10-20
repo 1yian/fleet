@@ -152,3 +152,29 @@ test("a reply draft does not follow the captain to another card", async () => {
   await page.getByRole("heading", { name: new RegExp(`^c-${String(other.id)} `) }).waitFor();
   assert.equal(await page.getByRole("textbox", { name: "Reply" }).inputValue(), "");
 });
+
+test("a refused reply comes back into the reply box", async () => {
+  await question("Pick the API version", ["v1", "v2"]);
+  await page.route("**/api/action", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, error: "the card changed since you looked" }),
+    }),
+  );
+  await page.goto(http());
+  await page.getByRole("radio", { name: /Kanban/ }).click();
+  await page.getByRole("button", { name: /Pick the API version/ }).click();
+  const reply = page.getByRole("textbox", { name: "Reply" });
+  await reply.fill("I prefer v2 because");
+  await page.getByRole("button", { name: "Send reply" }).click();
+
+  await page.getByRole("alert").getByText("the card changed since you looked").waitFor();
+  await page.waitForFunction(
+    () =>
+      document.querySelector<HTMLInputElement>("input[aria-label=Reply]")?.value ===
+      "I prefer v2 because",
+    undefined,
+    { timeout: 5_000 },
+  );
+});

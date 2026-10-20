@@ -87,6 +87,9 @@ export function CommentThread({
     try {
       const reply = await answer;
       if (reply) setMessages((m) => [...m, { ...reply, createdAt: Date.now() }]);
+    } catch {
+      // fleet: a refused reply comes back into the box, unless the captain has typed something new
+      setDraft((current) => (current === "" ? text : current));
     } finally {
       setThinking(false);
       setNow(Date.now());

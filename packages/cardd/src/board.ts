@@ -53,7 +53,7 @@ function answerOnBoard(db: DatabaseSync, card: Card, ask: number, choice: string
 export function boardAction(db: DatabaseSync, raw: unknown): string[] {
   const { card: id, revision, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);
-  if (card.revision !== revision)
+  if (action.kind !== "comment" && card.revision !== revision)
     throw new StaleCard(`c-${String(id)} changed since you looked; here is the current card`);
   if (action.kind === "answer") answerOnBoard(db, card, action.ask, action.choice);
   if (action.kind === "comment") {

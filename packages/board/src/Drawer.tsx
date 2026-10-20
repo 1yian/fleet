@@ -9,7 +9,7 @@ interface Props {
   readonly card: number;
   readonly board: Board;
   readonly changes: number;
-  readonly onReply: (text: string) => void;
+  readonly onReply: (text: string) => Promise<void>;
   readonly onAnswer: (ask: number, choice: string) => void;
   readonly onClose: () => void;
 }
@@ -80,9 +80,7 @@ export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Pro
         title="Thread"
         messages={messages}
         currentUser={CAPTAIN}
-        onReply={(text) => {
-          onReply(text);
-        }}
+        onReply={onReply}
         onClose={onClose}
         className="drawer-thread"
       />
