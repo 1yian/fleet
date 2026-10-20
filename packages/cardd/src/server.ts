@@ -240,6 +240,8 @@ export async function serve(
     throw new Error("cardd binds to the Tailscale address, never to every interface");
   }
   const name = host.includes(":") ? `[${host}]` : host;
-  hub.web.allow([name, ...hostnames].map((each) => `${each}:${String(address.port)}`));
+  const withPort = (each: string): string =>
+    /:\d+$/.test(each) ? each : `${each}:${String(address.port)}`;
+  hub.web.allow([name, ...hostnames].map(withPort));
   return `ws://${name}:${String(address.port)}/session`;
 }

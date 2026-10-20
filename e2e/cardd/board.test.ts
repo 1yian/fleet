@@ -149,6 +149,22 @@ test("a name given with --hostname reaches the board, and no other name does", a
   assert.equal(await reach("board.example"), 403);
 });
 
+test("a name given with the default port is the same authority with or without the port", async () => {
+  await cardd.stop();
+  cardd = await Cardd.start({}, ["--hostname", "board.example:80"]);
+  const port = base().port;
+  const reach = async (host: string, origin?: string): Promise<number> =>
+    (await send("/api/board", "GET", origin === undefined ? { host } : { host, origin })).status;
+
+  assert.equal(await reach("board.example"), 200);
+  assert.equal(await reach("Board.Example:80"), 200);
+  assert.equal(await reach("board.example", "http://board.example"), 200);
+  assert.equal(await reach("board.example", "http://board.example:80"), 200);
+  assert.equal(await reach(`board.example:${port}`), 403);
+  assert.equal(await reach("other.example:80"), 403);
+  assert.equal(await reach("board.example", "http://other.example"), 403);
+});
+
 test("an answer goes to the question it names, and a closed question is refused", async () => {
   const { card, asks } = await twoQuestions();
   const [first = -1, second = -1] = asks;

@@ -29,17 +29,33 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
+/** The authority the way a browser writes it: lower case, and without the default port 80. */
+function canonical(authority: string): string | undefined {
+  if (/[\s/?#@\\]/.test(authority)) return undefined;
+  try {
+    return new URL(`http://${authority}`).host;
+  } catch {
+    return undefined;
+  }
+}
+
 export class Web {
   private readonly hosts = new Set<string>();
 
-  /** The only host:port names that reach the board: cardd's listen address, and the extra names the captain gave. */
-  allow(hosts: readonly string[]): void {
-    for (const host of hosts) this.hosts.add(host.toLowerCase());
+  /** The only authorities that reach the board: cardd's listen address, and the extra names the captain gave. */
+  allow(authorities: readonly string[]): void {
+    for (const authority of authorities) {
+      const host = canonical(authority);
+      if (host === undefined)
+        throw new Error(`${authority} is not a host name with an optional port`);
+      this.hosts.add(host);
+    }
   }
 
   /** A board request must name an allowed host, and its Origin, when present, must be an allowed origin. */
   permits(request: IncomingMessage): boolean {
-    const host = request.headers.host?.toLowerCase();
+    const header = request.headers.host;
+    const host = header === undefined ? undefined : canonical(header);
     if (host === undefined || !this.hosts.has(host)) return false;
     const origin = request.headers.origin;
     if (origin === undefined) return true;
