@@ -80,6 +80,9 @@ export const OPS = {
       project: Type.Optional(Type.String()),
       intent: Type.Optional(Type.String()),
       spec: Type.Optional(Type.String()),
+      lane: Type.Optional(
+        Type.String({ description: "Main only: a second mate's lane to route the card to" }),
+      ),
     }),
     result: CardSchema,
   },
