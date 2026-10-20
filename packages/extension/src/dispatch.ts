@@ -65,21 +65,42 @@ const LAUNCH_TRIES = 2;
 const toError = (failure: unknown): Error =>
   failure instanceof Error ? failure : new Error(String(failure));
 
+/** How often the pane is looked at. */
+const POLL_MS = 250;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** Checks until the check holds or the wait ends. */
 async function until(check: () => Promise<boolean>, waitMs: number): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   while (!(await check())) {
     if (Date.now() > deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await sleep(POLL_MS);
   }
   return true;
 }
 
-/** Runs herdr's agent start once the pane's shell is idle. Resolves with herdr's error, if any. */
+/**
+ * Runs herdr's agent start once the pane's shell is idle. Resolves with herdr's error, if any,
+ * and as soon as a Pi shows in the pane, because herdr's own readiness wait can run to its end
+ * on a worker that is busy at once.
+ */
 async function launchOnce(host: string, pane: string, args: string[]): Promise<Error | undefined> {
   // A new shell first runs its prompt's helpers, such as git, and keys typed then can be lost.
-  await until(() => shellIdle(host, pane), SHELL_WAIT_MS);
-  return herdr(host, args).then(() => undefined, toError);
+  const launched = until(() => shellIdle(host, pane), SHELL_WAIT_MS)
+    .then(() => herdr(host, args))
+    .then(() => undefined, toError);
+  const watch = { over: false };
+  const appeared = (async (): Promise<undefined> => {
+    // A pane that cannot be read is left to herdr's own answer.
+    while (!watch.over && !(await piRunning(host, pane).catch(() => false))) await sleep(POLL_MS);
+    return undefined;
+  })();
+  try {
+    return await Promise.race([launched, appeared]);
+  } finally {
+    watch.over = true;
+  }
 }
 
 /**
