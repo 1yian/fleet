@@ -275,3 +275,15 @@ test("a board load that cannot reach cardd shows a notice that goes away when lo
   await page.getByText("Pick the API version?").waitFor();
   assert.equal(await page.getByRole("alert").count(), 0);
 });
+
+test("the drawer fits a phone viewport", async () => {
+  await question("Pick the API version", ["v1", "v2"]);
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto(http());
+  await page.getByRole("button", { name: /Pick the API version/ }).click();
+  const drawer = page.getByRole("complementary");
+  await drawer.getByRole("heading", { name: "Thread" }).waitFor();
+
+  const box = await drawer.boundingBox();
+  assert.ok(box !== null && box.x >= 0 && box.x + box.width <= 390, JSON.stringify(box));
+});
