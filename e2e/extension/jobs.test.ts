@@ -178,7 +178,7 @@ test("an interrupted job reports exit 130, with the unfinished line before it", 
   await until(() => (pids(marker(2)).length === 0 ? true : undefined), "the sleep to be gone");
 });
 
-test("closing the job tab still posts the result, with what the command printed as it died", async () => {
+test("closing the job tab still reaches the worker: the result, or a lost job", async () => {
   const ready = join(h.dir, "ready-tab");
   const command = `trap 'echo dying; exit 3' TERM; echo started; touch ${ready}; sleep ${marker(6)} & wait`;
   h.onModel(() => ({ tool: "run_long", args: { label: "tab", command } }));
@@ -192,8 +192,15 @@ test("closing the job tab still posts the result, with what the command printed 
     assert.equal(typeof tab?.["tab_id"], "string");
     await lab.run(["tab", "close", String(tab?.["tab_id"])]);
 
+    // On macOS herdr hangs up the tab, and the wrapper posts what the command printed as it died.
+    // On Linux herdr kills the tab's processes at once, so the heartbeat check reports the job lost.
+    // Either way the worker hears exactly what happened to its job.
     const woken = lastUser(await h.waitForCall(2, "default", 20_000)) ?? "";
-    assert.equal(woken, "[fleet] c-1 job 1 (tab) exited 130: started\ndying\ninterrupted");
+    const expected =
+      process.platform === "darwin"
+        ? "[fleet] c-1 job 1 (tab) exited 130: started\ndying\ninterrupted"
+        : "[fleet] c-1 job 1 (tab) lost: no heartbeat arrived. It is not run again.";
+    assert.equal(woken, expected);
   } finally {
     for (const pid of pids(marker(6))) process.kill(pid, "SIGKILL");
   }
