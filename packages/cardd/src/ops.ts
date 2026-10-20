@@ -3,7 +3,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
-import type { Timing } from "./timed.ts";
+import type { Timings } from "./timing.ts";
 import { factsFrom, nextStatus, type Change } from "./status.ts";
 import {
   addCard,
@@ -20,7 +20,7 @@ interface Done {
   readonly value: unknown;
   readonly notify: readonly string[];
 }
-type Handler = (db: DatabaseSync, session: Session, args: unknown, timing: Timing) => Done;
+type Handler = (db: DatabaseSync, session: Session, args: unknown, timing: Timings) => Done;
 
 /** Reports that always reach the lane mate (spec section 10.1). */
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
@@ -33,7 +33,7 @@ const TO_MATE: ReadonlySet<ReportStatus> = new Set([
   "stopped",
 ]);
 
-function applyChange(db: DatabaseSync, card: Card, change: Change): void {
+export function applyChange(db: DatabaseSync, card: Card, change: Change): void {
   const facts = { ...factsFrom(cardEntries(db, card.id)), status: card.status, kind: card.kind };
   const status = nextStatus(facts, change);
   if (status instanceof Error) throw status;
@@ -97,7 +97,7 @@ const HANDLERS: Record<OpName, Handler> = {
   "job.start": (db, session, raw, timing) => {
     const args = check(OPS["job.start"].args, raw);
     const job = startJob(db, session.id, args.label, args.command);
-    return { value: { job, heartbeatMs: timing.heartbeatMs }, notify: [] };
+    return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
   },
   "job.alive": (db, session, raw) => {
     const args = check(OPS["job.alive"].args, raw);
@@ -146,7 +146,7 @@ export function runOp(
   session: Session,
   op: OpName,
   args: unknown,
-  timing: Timing,
+  timing: Timings,
 ): Done {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);

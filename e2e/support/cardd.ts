@@ -110,6 +110,7 @@ export class Cardd {
 type Outgoing =
   | { t: "hello"; token: string; inFile: readonly number[] }
   | { t: "ack"; entry: number }
+  | { t: "activity"; state: "running" | "idle" | "waiting" }
   | { t: "call"; id: number; op: string; args: unknown };
 
 /** One session's connection, as the fleet extension holds it. */
@@ -159,6 +160,10 @@ export class Session {
       `${String(count)} entries`,
     );
     return this.entries.map((push) => push.entry);
+  }
+
+  async waitForEntry(match: (entry: Entry) => boolean, what: string): Promise<Entry> {
+    return until(() => this.entries.find((push) => match(push.entry))?.entry, what);
   }
 
   async close(): Promise<void> {

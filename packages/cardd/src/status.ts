@@ -12,6 +12,7 @@ export interface CardFacts {
 
 export type Change =
   | { readonly kind: "dispatch" }
+  | { readonly kind: "finding" }
   | { readonly kind: "report"; readonly status: ReportStatus }
   | { readonly kind: "comment"; readonly resolves: string | undefined };
 
@@ -29,6 +30,8 @@ export function nextStatus(card: CardFacts, change: Change): Status | Error {
   switch (change.kind) {
     case "dispatch":
       return "working";
+    case "finding":
+      return "with-mate";
     case "report":
       return afterReport(card, change.status);
     case "comment":

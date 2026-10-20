@@ -79,9 +79,13 @@ function start(
     const id = fleetEntryId(event.message);
     if (id !== undefined) link.ack(id);
   });
-  pi.on("agent_start", () => {
+  // Activity at each run and tool call keeps last_activity fresh for the stall check (spec section 12.2).
+  const active = (): void => {
     link.activity("running");
-  });
+  };
+  pi.on("agent_start", active);
+  pi.on("tool_execution_start", active);
+  pi.on("tool_execution_end", active);
   pi.on("agent_settled", () => {
     link.activity(jobs?.waiting === true ? "waiting" : "idle");
   });

@@ -1,11 +1,11 @@
 // cardd command line.
-//   cardd serve --db <file> [--listen <host:port>]
+//   cardd serve --db <file> [--listen <host:port>]   (CARDD_TIMING_SCALE=0.01 speeds up every timer, for tests)
 //   cardd lane add <name> --db <file> --home <path> [--parent <lane>]   (prints the mate token)
 //   cardd project add <name> --db <file> --delivery <mode> [--capacity <n>] [--clone <host>=<path>]...
 import { parseArgs } from "node:util";
+import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
 import { serve } from "./server.ts";
-import { timingFor } from "./timed.ts";
 import { addLane, addProject } from "./store.ts";
 
 const { values, positionals } = parseArgs({
@@ -28,7 +28,7 @@ if (command === "serve") {
   const [host = "", port = ""] = values.listen.split(":");
   const scale = Number(process.env["CARDD_TIMING_SCALE"] ?? "1");
   if (!(scale > 0)) throw new Error("CARDD_TIMING_SCALE must be a positive number");
-  console.log(`cardd listening on ${await serve(db, host, Number(port), timingFor(scale))}`);
+  console.log(`cardd listening on ${await serve(db, host, Number(port), timings(scale))}`);
 } else if (
   command === "lane" &&
   rest[0] === "add" &&
