@@ -66,6 +66,35 @@ test("request changes sends the card back to the worker", async () => {
   assert.equal(await status(fleet.main, card), "working");
 });
 
+const chooseName = (card: Card) =>
+  fleet.main.call("answer", { card: card.id, words: "a it is", source: "chat", choice: "a" });
+
+test("a merge answer while another question is open keeps the card in Needs you until the last answer", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await fleet.main.call("ask", { card: card.id, question: "Which name?", options: ["a", "b"] });
+  await worker.call("report", { status: "done", text: "PR green and ready", pr: PR });
+
+  await approve(card);
+  assert.equal(await status(fleet.main, card), "needs-you");
+  await chooseName(card);
+  assert.equal(await status(fleet.main, card), "merging");
+});
+
+test("requested changes with another question open end with the card back with its mate", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await fleet.main.call("ask", { card: card.id, question: "Which name?", options: ["a", "b"] });
+  await worker.call("report", { status: "done", text: "PR green and ready", pr: PR });
+
+  await approve(card, CHANGES);
+  assert.equal(await status(fleet.main, card), "needs-you");
+  await chooseName(card);
+  assert.equal(await status(fleet.main, card), "with-mate");
+});
+
 test("a lane grant for merging sends a done card to Merging, but only in its project", async () => {
   gh.setPr(PR, "OPEN", { ci: "pass" });
   fleet.cardd.addProject("api", 1, { maverick: "/clones/api" });

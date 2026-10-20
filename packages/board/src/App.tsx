@@ -1,6 +1,6 @@
 // The board (spec section 21): Needs you by default, Kanban beside it, and a
 // card drawer. It updates live and shows when cardd refuses an action.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Board, BoardAction } from "@fleet/protocol";
 import { act, loadBoard, useChanges } from "./api.ts";
 import { Drawer } from "./Drawer.tsx";
@@ -16,20 +16,27 @@ export function App() {
   const [view, setView] = useState<View>("needs-you");
   const [open, setOpen] = useState<number | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
+  const loads = useRef(0);
+  const refresh = useCallback(() => {
+    const load = ++loads.current;
+    void loadBoard().then((loaded) => {
+      if (load === loads.current) setBoard(loaded);
+    });
+  }, []);
   useEffect(() => {
-    void loadBoard().then(setBoard);
-  }, [changes]);
+    refresh();
+  }, [changes, refresh]);
 
   const send = useCallback(
     (card: number, action: BoardAction["action"]) => {
       const revision = board?.cards.find((each) => each.id === card)?.revision ?? 0;
       return act({ card, revision, action }).then((error) => {
         setNotice(error);
-        void loadBoard().then(setBoard);
+        refresh();
         return error;
       });
     },
-    [board],
+    [board, refresh],
   );
   const answer = useCallback(
     (card: number, ask: number, choice: string) => {

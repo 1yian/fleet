@@ -156,6 +156,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run build
       - run: node --test --test-concurrency=1 "e2e/cardd/**/*.test.ts"
 
   e2e-extension:

@@ -40,19 +40,17 @@ export function useChanges(): number {
   useEffect(() => {
     let socket: WebSocket | undefined;
     let stopped = false;
-    let reconnected = false;
     const open = (): void => {
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/live`,
       );
       socket.addEventListener("open", () => {
-        if (reconnected) setChanges((n) => n + 1);
+        setChanges((n) => n + 1);
       });
       socket.addEventListener("message", () => {
         setChanges((n) => n + 1);
       });
       socket.addEventListener("close", () => {
-        reconnected = true;
         if (!stopped) setTimeout(open, 1000);
       });
     };

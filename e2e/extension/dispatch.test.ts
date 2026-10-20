@@ -3,7 +3,7 @@
 // session, in its own git worktree. Both use the scripted fake model.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -345,4 +345,39 @@ test("a host that hangs past the timeout counts as unreachable for a replaced at
     /^c-1 is dropped\. Unlanded work is archived in local:.*c-1-a2\.tar\.zst\. Left in place: far c-1-a1 \(herdr worktree on far failed: killed by SIGTERM\)\.$/,
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
+});
+
+test("a branch that cannot be deleted aborts the close, and a rerun finishes it", async () => {
+  h.onModel(
+    () => ({
+      tool: "card_new",
+      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+    }),
+    "mate",
+  );
+  h.onModel(
+    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
+    "mate",
+  );
+  const lock = `${clone}/.git/refs/heads/c-1-a1.lock`;
+  h.onModel(() => {
+    writeFileSync(lock, "");
+    return { tool: "card_drop", args: { card: 1, reason: "the design changed" } };
+  }, "mate");
+  h.onModel(() => {
+    rmSync(lock);
+    return { tool: "card_drop", args: { card: 1, reason: "the design changed" } };
+  }, "mate");
+  h.onModel(() => ({ text: "dropped" }), "mate");
+  await mateConnected();
+  mate.prompt("ship the scrollbar fix");
+
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.match(results.at(-2) ?? "", /^sh on local failed: /);
+  assert.match(results.at(-1) ?? "", /^c-1 is dropped\./);
+  assert.deepEqual(worktrees(), ["branch refs/heads/main"]);
+  assert.equal(
+    execFileSync("git", ["-C", clone, "branch", "--list", "c-1-a1"], { encoding: "utf8" }).trim(),
+    "",
+  );
 });

@@ -17,12 +17,23 @@ type Attempt = ReturnType<typeof parsePlan>["attempts"][number];
 const parsePlan = (value: unknown) => check(OPS["close.begin"].result, value);
 
 // Deletes the task branch once its work is archived or already on the base branch.
-// Prints the archive path when the archive exists. Safe to rerun.
-const FINISH_SCRIPT = `clone=$1 branch=$2 base=$3 out=$4
-if git -C "$clone" rev-parse --verify -q "refs/heads/$branch" >/dev/null; then
-  if [ -f "$out" ] || [ "$(git -C "$clone" rev-list --count "$base..refs/heads/$branch")" -eq 0 ]; then
-    git -C "$clone" branch -D "$branch" >/dev/null
+// Prints the archive path when the archive exists. Only a missing branch is
+// tolerated: every other git failure ends the script with its status. Safe to rerun.
+const FINISH_SCRIPT = `set -eu
+clone=$1 branch=$2 base=$3 out=$4
+status=0
+git -C "$clone" show-ref --verify -q "refs/heads/$branch" || status=$?
+if [ "$status" -eq 0 ]; then
+  drop=0
+  if [ -f "$out" ]; then
+    drop=1
+  else
+    ahead=$(git -C "$clone" rev-list --count "$base..refs/heads/$branch")
+    if [ "$ahead" -eq 0 ]; then drop=1; fi
   fi
+  if [ "$drop" -eq 1 ]; then git -C "$clone" branch -D "$branch" >/dev/null; fi
+elif [ "$status" -ne 1 ]; then
+  exit "$status"
 fi
 if [ -f "$out" ]; then echo "$out"; fi`;
 

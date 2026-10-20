@@ -190,3 +190,32 @@ test("the board reloads after its live socket reconnects", async () => {
   await question("Renew the certificate", ["now", "later"]);
   await page.getByText("Renew the certificate?").waitFor();
 });
+
+test("a board load that finishes late does not replace a newer one", async () => {
+  await question("Pick the API version", ["v1", "v2"]);
+  let calls = 0;
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/board", async (route) => {
+    calls += 1;
+    if (calls > 1) {
+      await route.continue();
+      return;
+    }
+    const stale = await route.fetch();
+    await held;
+    await route.fulfill({ response: stale });
+  });
+  await page.goto(http());
+  await page.getByText("Pick the API version?").waitFor();
+
+  await question("Renew the certificate", ["now", "later"]);
+  await page.getByText("Renew the certificate?").waitFor();
+  release();
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  assert.equal(await page.getByText("Renew the certificate?").isVisible(), true);
+});
