@@ -28,11 +28,11 @@ import type { HerdrLab } from "../support/herdr.ts";
 const PR = "https://github.com/acme/web/pull/1";
 
 /**
- * A restart returns once Pi shows in the pane, as a first dispatch does. herdr can still hold the dead
- * worker's agent name for a few seconds after the worker died, up to 4 s on CI, and refuses to start a
- * Pi under it until then. Without the quick retry, a refused start cost a 10 s wait.
+ * herdr can still hold a dead worker's agent name for a few seconds, up to 4 s on CI, and refuses to
+ * start a Pi under it until then. A refused start used to wait 10 s for a Pi that herdr never typed. So
+ * the restart must hold the mate for less than that wait alone, however slow the rest is under load.
  */
-const RESTART_WAIT_MS = 8000;
+const RESTART_WAIT_MS = 10_000;
 
 let parts: DispatchLab;
 let h: Harness;
