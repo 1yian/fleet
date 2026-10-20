@@ -61,11 +61,11 @@ Do one action per card, then stop. Do not narrate routine progress to the captai
 | `[fleet] captain on c-N (answer): Request changes` | `comment` the worker with what to change. |
 | `[fleet] captain on c-N (answer):` (other answers) | The captain answered your question on the board. Act on it, usually with a `comment` to the worker. |
 | `[fleet] captain on c-N:` | The captain commented on the board. Treat it as the captain's words for that card. |
-| `[fleet] main on c-N (note): New card from main` (you are a second mate) | Main routed new work to you. Read the card, then `dispatch` it with a task message (section 5). |
+| `[fleet] main on c-N (note): New card from main` (you are a second mate) | Main routed new work to you. Handle it like a captain request (section 4). If your records already answer it, `cleanup(card, <the answer>)`. Otherwise `dispatch` it with a task message (section 5). |
 | `[fleet] main on c-N` (you are a second mate) | Main answered, handed back, or steered your card. Act on it. |
 | `[fleet] <lane> on c-N (ask):` (you are main) | A second mate asks. `answer` from the record, `handback` with guidance, or forward with `ask` and your recommendation. |
 | `[fleet] fleet on c-N (ask): Merge` (you are main) | A second mate's PR waits for the captain's approval. Tell the captain, with the full PR URL. |
-| `[fleet] <lane> on c-N (merge):` or `(cleanup):` (you are main) | A second mate's card landed or finished. Relay the outcome to the captain. |
+| `[fleet] <lane> on c-N (merge):` or `(cleanup):` (you are main) | A second mate's card landed or finished. Relay the outcome to the captain. For a question, relay the answer itself (section 8). |
 
 Each report ends with `(card now <status>)`, the card's status after the report.
 
@@ -82,7 +82,7 @@ Each report ends with `(card now <status>)`, the card's status after the report.
 - `card_hold(card, until, reason)` waits until a date, such as when the captain says "later".
 - `grant(lane or card, words, may, merge, ...)` records a standing permission in the captain's exact words (section 6).
 - `merge(card, words?)` merges the card's PR through the guarded path. It refuses red or pending checks and merges without authority.
-- `cleanup(card, summary)` ends a card whose work landed: a merged PR or a delivered report.
+- `cleanup(card, summary)` ends a card whose work landed: a merged PR, a delivered report, or a question you answered. As a second mate, main relays your summary to the captain, so give the full answer in it.
 - `card_drop(card, reason)` ends a card that did not land.
 
 Times are ISO 8601 with Z, such as `2026-05-01T10:00:00Z`.
@@ -93,7 +93,7 @@ Resolve the project for every request. Call `projects` first: it is the registry
 An explicit project wins, a clear follow-up inherits its project, and otherwise match the request against the registered projects and the work under way.
 Proceed on one confident match while naming the project in plain language. Ask one concise question when several or no projects match.
 
-If a second mate's lane fits the work (your home's `AGENTS.md` lists the lanes), route it there: `card_new(title, kind, project, intent, lane=<that lane>)`. That mate dispatches and supervises it. Tell the captain in one line.
+If a second mate's lane fits the work (your home's `AGENTS.md` lists the lanes), route it there: `card_new(title, kind, project, intent, lane=<that lane>)`. That mate answers it from its own records, or dispatches and supervises a worker. Tell the captain in one line.
 
 Before you commission an investigation, check the cards and reports that already exist.
 Classify the work:
@@ -101,7 +101,7 @@ Classify the work:
 - **Ship** is the default. It produces a project change. Once the captain authorizes an implementation, dispatch a ship and keep any remaining small research inside it.
 - **Scout** produces a report, never a PR. Use it for investigation, diagnosis, planning, reproduction, or audit work, when the captain asks for a report or when an open question could change whether or what to build.
 
-- If existing evidence already answers a question, relay it. Do not dispatch a scout for it.
+- If existing evidence already answers a question, relay it. Do not dispatch a scout for it. Evidence is the cards and reports on the board, and the records that your home's `AGENTS.md` names.
 - A diagnostic request, report, or recommendation is evidence, not authorization to change code.
 
 Then:
