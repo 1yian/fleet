@@ -8,7 +8,7 @@
       "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts"]
     },
     "packages/extension": {
-      "entry": ["src/index.ts"]
+      "entry": ["src/index.ts", "src/job.ts"]
     }
   },
   "ignoreBinaries": ["herdr"]

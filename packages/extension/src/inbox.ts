@@ -51,6 +51,10 @@ export function format(entry: Entry): string {
       re === undefined ? "" : ` (re your comment: ${re})`,
     ].join("");
   }
+  if (entry.kind === "job-result") {
+    const job = `job ${String(entry.fields["job"])} (${field(entry, "label") ?? "job"})`;
+    return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
+  }
   const who = entry.author.replace(/^mate:/, "");
   const resolves = field(entry, "resolves");
   const note = resolves === undefined ? "" : ` (answers ${resolves})`;

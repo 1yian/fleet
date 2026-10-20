@@ -4,6 +4,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardSchema, check } from "@fleet/protocol";
 import Type from "typebox";
+import type { Jobs } from "./jobs.ts";
 import type { Link } from "./link.ts";
 
 const HANDOFFS: ReadonlySet<string> = new Set(["done", "failed", "blocked", "needs-decision"]);
@@ -75,9 +76,11 @@ export class WorkerRun {
   private nudged = false;
   private lastText = "";
   private readonly link: Link;
+  private readonly jobs: Jobs;
 
-  constructor(link: Link) {
+  constructor(link: Link, jobs: Jobs) {
     this.link = link;
+    this.jobs = jobs;
   }
 
   /** New captain input or a new fleet entry starts a new obligation. */
@@ -145,6 +148,7 @@ export class WorkerRun {
   }
 
   private mayEnd(): boolean {
+    if (this.jobs.waiting) return true;
     if (this.latest === undefined) return false;
     const { status, until } = this.latest;
     if (status === "paused") return until !== undefined && until > Date.now();

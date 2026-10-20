@@ -4,6 +4,7 @@
 // or mate, the extension does nothing.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
+import { Jobs } from "./jobs.ts";
 import { Link } from "./link.ts";
 import { registerMate } from "./mate.ts";
 import { WorkerRun } from "./worker.ts";
@@ -45,6 +46,7 @@ function start(
     onConnect: () => {
       pi.events.emit("fleet:connected", {});
       worker?.flush();
+      jobs?.sync().catch(() => undefined);
     },
     onPush: ({ entry, mode }) => {
       if (injected.has(entry.id)) return;
@@ -60,10 +62,13 @@ function start(
       );
       // Other extensions, such as the calm UI, can follow what the fleet queued for this session.
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
+      if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
       worker?.reset();
     },
   });
-  const worker = role === "worker" ? new WorkerRun(link) : undefined;
+  const jobs = role === "worker" ? new Jobs(link) : undefined;
+  jobs?.register(pi, { url, token });
+  const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() });
 
@@ -78,7 +83,7 @@ function start(
     link.activity("running");
   });
   pi.on("agent_settled", () => {
-    link.activity("idle");
+    link.activity(jobs?.waiting === true ? "waiting" : "idle");
   });
   link.start();
 }
