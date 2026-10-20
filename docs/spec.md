@@ -1373,7 +1373,7 @@ The design review of 2026-10-10 to 2026-10-12 built a scratch prototype: Pi sess
 
 `e2e/extension/worker.test.ts` runs a real worker (Pi with the fleet extension) against a real `cardd`. It shows these results:
 
-- Delivery tests 5, 6, and 7 of [section 25](#25-cutover-plan): after a crash, recovery delivers the older follow-up once and does not repeat the newer steer. A message lost before the session file existed is delivered again.
+- Delivery tests 5 and 6 of [section 25](#25-cutover-plan): after a crash, recovery delivers the older follow-up once and does not repeat the newer steer. A message lost before the session file existed is delivered again.
 - A `cardd` restart does not repeat a message that the worker already holds.
 - The run-end check: one nudge, then `stopped` with the worker's last message. An abort files "stopped from the pane".
 
