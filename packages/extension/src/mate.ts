@@ -1,6 +1,6 @@
 // Mate sessions: the card tools and dispatch (spec section 11.2).
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
+import { CardName, CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import Type from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
@@ -27,7 +27,8 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
     name: "card_new",
     label: "New card",
     description: "Creates a card. A card must exist before any work starts.",
-    parameters: OPS["card.new"].args,
+    // The mate always names its cards; cardd also accepts cards without a name.
+    parameters: Type.Object({ ...OPS["card.new"].args.properties, name: CardName }),
     execute: async (_id, params) =>
       reply(`Created ${line(check(CardSchema, await link.call("card.new", params)))}.`),
   });

@@ -43,8 +43,16 @@ export type Status = Static<typeof Status>;
 export type CardKind = Static<typeof CardKind>;
 export type ReportStatus = Static<typeof ReportStatus>;
 
+/** A card's short name, like a task ID: lowercase words joined by dashes. herdr shows it. */
+export const CardName = Type.String({
+  pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
+  maxLength: 40,
+  description: "A short name: 2 to 4 lowercase words joined by dashes, such as ios-app-store",
+});
+
 export const CardSchema = Type.Object({
   id: Type.Integer(),
+  name: Type.String(),
   title: Type.String(),
   lane: Type.String(),
   project: Nullable(Type.String()),
@@ -76,6 +84,7 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({
       title: Type.String({ minLength: 1 }),
+      name: Type.Optional(CardName),
       kind: CardKind,
       project: Type.Optional(Type.String()),
       intent: Type.Optional(Type.String()),
@@ -214,6 +223,9 @@ export const OPS = {
       clone: Type.String(),
       base: Type.String(),
       branch: Type.String(),
+      /** The card's name and lane, for the worker's place in herdr. */
+      name: Type.String(),
+      lane: Type.String(),
     }),
   },
   "job.start": {

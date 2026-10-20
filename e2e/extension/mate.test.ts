@@ -24,7 +24,10 @@ const toolResults = (turns: Turn[]): string[] =>
 
 test("answer records the captain's words only when the captain said them", async () => {
   const cleo = fleet.cardd.addLane("cleo", "main");
-  h.onModel(() => ({ tool: "card_new", args: { title: "Pick the API version", kind: "captain" } }));
+  h.onModel(() => ({
+    tool: "card_new",
+    args: { title: "Pick the API version", name: "api-version", kind: "captain" },
+  }));
   h.onModel(() => ({ tool: "ask", args: { card: 1, question: "v1 or v2?", options: "v2" } }));
   h.onModel(() => ({ tool: "answer", args: { card: 1, words: "use v3" } }));
   h.onModel(() => ({ tool: "answer", args: { card: 1, words: "use the v2 endpoint" } }));

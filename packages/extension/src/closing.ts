@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CardSchema, check, OPS } from "@fleet/protocol";
-import { field, herdr, HostUnreachable, onHost, records } from "./host.ts";
+import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
@@ -42,7 +42,10 @@ async function retire(attempt: Attempt): Promise<string | null> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
-  const tree = records(listed["worktrees"]).find((each) => field(each, "branch") === branch);
+  const tree = worktreeOf(listed, session);
+  // The worker may have moved its worktree to its own branch. That branch goes too, after the archive.
+  const own = field(tree, "branch");
+  const drop = own === undefined || own === branch ? [branch] : [branch, own];
   if (tree !== undefined) {
     const workspace = field(tree, "open_workspace_id");
     if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
@@ -51,17 +54,13 @@ async function retire(attempt: Attempt): Promise<string | null> {
     await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
   const out = `${archiveDir}/${session}.tar.zst`;
-  const archive = await onHost(host, [
-    "sh",
-    "-c",
-    FINISH_SCRIPT,
-    "finish",
-    clone,
-    branch,
-    base,
-    out,
-  ]);
-  return archive.trim() === "" ? null : archive.trim();
+  let archive = "";
+  for (const each of drop) {
+    archive = (
+      await onHost(host, ["sh", "-c", FINISH_SCRIPT, "finish", clone, each, base, out])
+    ).trim();
+  }
+  return archive === "" ? null : archive;
 }
 
 export async function close(

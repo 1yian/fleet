@@ -61,6 +61,8 @@ export interface Begun {
   readonly clone: string;
   readonly base: string;
   readonly branch: string;
+  readonly name: string;
+  readonly lane: string;
 }
 
 /** Where the attempt runs on the host: the project clone, the base branch, and the task branch. */
@@ -69,7 +71,7 @@ function placeOf(
   card: Card,
   host: string,
   session: string,
-): Pick<Begun, "clone" | "base" | "branch"> {
+): Pick<Begun, "clone" | "base" | "branch" | "name" | "lane"> {
   if (card.project === null)
     throw new Error(`c-${String(card.id)} has no project, so it cannot be dispatched`);
   const row = db
@@ -81,7 +83,8 @@ function placeOf(
     .get(host, card.id);
   const clone = row?.["clone"];
   if (typeof clone !== "string") throw new Error(`project ${card.project} has no clone on ${host}`);
-  return { clone, base: String(row?.["base"]), branch: `${String(row?.["prefix"])}${session}` };
+  const branch = `${String(row?.["prefix"])}${session}`;
+  return { clone, base: String(row?.["base"]), branch, name: card.name, lane: card.lane };
 }
 
 function connected(db: DatabaseSync, session: string): boolean {
