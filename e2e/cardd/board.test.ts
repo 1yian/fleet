@@ -6,7 +6,7 @@ import { request } from "node:http";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
-import { BoardSchema, CardSchema, check, type Board } from "@fleet/protocol";
+import { BoardSchema, CardSchema, check, OPS, ThreadSchema, type Board } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
@@ -236,4 +236,22 @@ test("cardd refuses to listen on every interface, however the address is written
     assert.notEqual(result.code, 0, listen);
     assert.match(result.stderr, /must be <host>:<port>, with both parts set/, listen);
   }
+});
+
+test("a card's thread on the board leaves out the worker's job results", async () => {
+  cardd.addProject("web", 1, { local: "/clones/web" });
+  const args = { title: "Users see one scrollbar", kind: "ship", project: "web" };
+  const card = check(CardSchema, await main.call("card.new", args));
+  const begin = { card: card.id, host: "local", task: "fix the scrollbar" };
+  const { token } = check(OPS["attempt.begin"].result, await main.call("attempt.begin", begin));
+  const worker = await cardd.connect(token);
+  const started = await worker.call("job.start", { label: "tests", command: "npm test" });
+  const { job } = check(OPS["job.start"].result, started);
+  await cardd.post(token, "job.finish", { job, exitCode: 127, outputTail: "gtimeout: not found" });
+  await worker.call("report", { status: "working", text: "the tests run again" });
+
+  const shown: unknown = JSON.parse((await send(`/api/card/${String(card.id)}`, "GET", {})).body);
+  const kinds = check(ThreadSchema, shown).entries.map((entry) => entry.kind);
+  assert.deepEqual(kinds, ["comment", "report"]);
+  await worker.close();
 });
