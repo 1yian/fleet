@@ -2,11 +2,11 @@
 // transaction and returns the sessions that have new entries to push.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
+import { beginAttempt, finishJob, runningJobs, startJob } from "./attempts.ts";
 import { factsFrom, nextStatus, type Change } from "./status.ts";
 import {
   addCard,
   addEntry,
-  beginAttempt,
   cardEntries,
   getCard,
   listCards,
@@ -85,9 +85,35 @@ const HANDLERS: Record<OpName, Handler> = {
   "attempt.begin": (db, session, raw) => {
     const args = check(OPS["attempt.begin"].args, raw);
     const card = ownCard(db, session, args.card);
-    applyChange(db, card, { kind: "dispatch" });
-    return { value: beginAttempt(db, card, args.host), notify: [] };
+    const begun = beginAttempt(db, card, args.host, args.replace ?? false);
+    if (!begun.resumed) applyChange(db, card, { kind: "dispatch" });
+    return { value: begun, notify: [] };
   },
+  "job.start": (db, session, raw) => {
+    const args = check(OPS["job.start"].args, raw);
+    return { value: { job: startJob(db, session.id, args.label, args.command) }, notify: [] };
+  },
+  "job.finish": (db, session, raw) => {
+    const args = check(OPS["job.finish"].args, raw);
+    const label = finishJob(db, session.id, {
+      id: args.job,
+      exitCode: args.exitCode,
+      outputTail: args.outputTail,
+    });
+    if (label === undefined || session.card === null)
+      return { value: { recorded: false }, notify: [] };
+    const fields = { job: args.job, label, exitCode: args.exitCode };
+    const entry = {
+      card: session.card,
+      author: `job:${String(args.job)}`,
+      kind: "job-result",
+      body: args.outputTail,
+      fields,
+    };
+    addEntry(db, entry, [session.id]);
+    return { value: { recorded: true }, notify: [session.id] };
+  },
+  jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   report: (db, session, raw) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");

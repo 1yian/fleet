@@ -90,8 +90,30 @@ export const OPS = {
   },
   "attempt.begin": {
     roles: ["mate"],
-    args: Type.Object({ card: Type.Integer(), host: Type.String({ minLength: 1 }) }),
-    result: Type.Object({ session: Type.String(), token: Type.String() }),
+    args: Type.Object({
+      card: Type.Integer(),
+      host: Type.String({ minLength: 1 }),
+      replace: Type.Optional(Type.Boolean()),
+    }),
+    result: Type.Object({ session: Type.String(), token: Type.String(), resumed: Type.Boolean() }),
+  },
+  "job.start": {
+    roles: ["worker"],
+    args: Type.Object({
+      label: Type.String({ minLength: 1 }),
+      command: Type.String({ minLength: 1 }),
+    }),
+    result: Type.Object({ job: Type.Integer() }),
+  },
+  "job.finish": {
+    roles: ["worker"],
+    args: Type.Object({ job: Type.Integer(), exitCode: Type.Integer(), outputTail: Type.String() }),
+    result: Type.Object({ recorded: Type.Boolean() }),
+  },
+  jobs: {
+    roles: ["worker"],
+    args: Type.Object({}),
+    result: Type.Array(Type.Object({ id: Type.Integer(), label: Type.String() })),
   },
   report: {
     roles: ["worker"],
@@ -123,6 +145,9 @@ const ClientMessage = Type.Union([
   }),
 ]);
 export type ClientMessage = Static<typeof ClientMessage>;
+
+/** The body of POST /call, for scripts that act as a session with its token. */
+export const HttpCallSchema = Type.Object({ op: Type.String(), args: Type.Unknown() });
 
 const ServerMessage = Type.Union([
   Type.Object({

@@ -83,7 +83,7 @@ test("a second mate's worker reports to that mate, not to main", async () => {
 
 test("a card has at most one live attempt", async () => {
   await assert.rejects(begin(fleet.main, card), {
-    message: `c-${String(card.id)} already has a live attempt`,
+    message: `c-${String(card.id)} has an active attempt c-${String(card.id)}-a1 on maverick`,
   });
 });
 

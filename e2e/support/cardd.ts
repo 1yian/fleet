@@ -39,6 +39,22 @@ export class Cardd {
     }).trim();
   }
 
+  addProject(name: string, capacity: number): void {
+    const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", "no-mistakes"];
+    execFileSync("node", [...args, "--capacity", String(capacity)]);
+  }
+
+  /** POST /call as the session that owns the token. */
+  async post(token: string, op: string, args: unknown): Promise<{ status: number; body: unknown }> {
+    const response = await fetch(this.url.replace(/^ws/, "http").replace(/\/session$/, "/call"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ op, args }),
+    });
+    const body: unknown = await response.json();
+    return { status: response.status, body };
+  }
+
   async connect(token: string, inFile: readonly number[] = []): Promise<Session> {
     const session = new Session(new WebSocket(this.url));
     await session.opened;
@@ -108,7 +124,8 @@ export class Session {
   async call(op: string, args: unknown): Promise<unknown> {
     const id = this.nextId++;
     this.send({ t: "call", id, op, args });
-    const result = await until(() => this.results.get(id), `the result of ${op}`);
+    const result = await until(() => this.results.get(id) ?? this.closeCode, `the result of ${op}`);
+    if (typeof result === "number") throw new Error(`the connection closed with ${String(result)}`);
     if (!result.ok) throw new Error(result.error);
     return result.value;
   }
