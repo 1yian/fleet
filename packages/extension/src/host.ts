@@ -12,7 +12,7 @@ function transport(host: string): string[] {
   return Array.isArray(entry) ? entry.filter((part) => typeof part === "string") : [];
 }
 
-const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
+export const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 /** A herdr failure message for the mate: never the command line, and never a worker token. */
 const scrub = (message: string): string =>
@@ -47,6 +47,8 @@ export async function herdr(
       else resolve(out);
     });
   });
+  // Some commands, such as pane run, print nothing when they succeed.
+  if (stdout.trim() === "") return {};
   const reply: unknown = JSON.parse(stdout);
   if (!isRecord(reply))
     throw new Error(`herdr ${args[0] ?? ""} on ${host} returned no JSON object`);
@@ -64,4 +66,10 @@ export const field = (
   const value = record?.[key];
   return typeof value === "string" ? value : undefined;
 };
-export { isRecord };
+
+/** The root pane that a herdr create command returned. */
+export function rootPane(result: Record<string, unknown>): string {
+  const pane = isRecord(result["root_pane"]) ? field(result["root_pane"], "pane_id") : undefined;
+  if (pane === undefined) throw new Error("herdr did not return a pane");
+  return pane;
+}

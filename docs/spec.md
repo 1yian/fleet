@@ -1376,6 +1376,11 @@ The design review of 2026-10-10 to 2026-10-12 built a scratch prototype: Pi sess
 - `herdr worktree create` gives each attempt its own worktree and branch. `herdr agent start` starts Pi there with the fleet flags, and refuses a pane that is not at a shell prompt.
 - Cutover test 8: when the connection drops after the worker started, the retry finds the same attempt. There is one worktree, one agent, and one task message.
 
+`e2e/extension/jobs.test.ts` runs a worker Pi whose `run_long` job runs in a herdr lab tab. It shows these results:
+
+- While a job runs, the run may end without a nudge. The result arrives as a `[fleet]` message.
+- Cutover test 11: when Pi is killed while a job runs, the job finishes, its result reaches the relaunched worker once, and the job does not run again.
+
 ### 26.3 Not yet proven
 
 - Delivery between maverick and P620 over Tailscale.

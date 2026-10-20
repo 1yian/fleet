@@ -112,7 +112,12 @@ export const OPS = {
       label: Type.String({ minLength: 1 }),
       command: Type.String({ minLength: 1 }),
     }),
-    result: Type.Object({ job: Type.Integer() }),
+    result: Type.Object({ job: Type.Integer(), heartbeatMs: Type.Integer({ minimum: 1 }) }),
+  },
+  "job.alive": {
+    roles: ["worker"],
+    args: Type.Object({ job: Type.Integer() }),
+    result: Type.Object({ running: Type.Boolean() }),
   },
   "job.finish": {
     roles: ["worker"],

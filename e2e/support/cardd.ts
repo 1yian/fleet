@@ -24,9 +24,15 @@ export class Cardd {
   readonly db = join(mkdtempSync(join(tmpdir(), "fleet-cardd-")), "cards.db");
   url = "";
   private child: ChildProcess | undefined;
+  private readonly env: NodeJS.ProcessEnv;
 
-  static async start(): Promise<Cardd> {
-    const cardd = new Cardd();
+  private constructor(env: NodeJS.ProcessEnv) {
+    this.env = { ...process.env, ...env };
+  }
+
+  /** Starts cardd. `env` sets variables such as CARDD_TIMING_SCALE for it. */
+  static async start(env: Record<string, string> = {}): Promise<Cardd> {
+    const cardd = new Cardd(env);
     await cardd.boot();
     return cardd;
   }
@@ -92,6 +98,7 @@ export class Cardd {
   private async boot(port = "0"): Promise<void> {
     const child = spawn("node", [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`], {
       stdio: ["ignore", "pipe", "inherit"],
+      env: this.env,
     });
     this.child = child;
     let out = "";

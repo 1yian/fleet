@@ -16,6 +16,7 @@ import {
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { runOp } from "./ops.ts";
+import { timedCheck, type Timing } from "./timed.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
 
 const CLOSE_BAD_MESSAGE = 4000;
@@ -53,16 +54,24 @@ function readBody(request: IncomingMessage): Promise<string> {
 class Hub {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly db: DatabaseSync;
+  private readonly timing: Timing;
 
-  constructor(db: DatabaseSync) {
+  constructor(db: DatabaseSync, timing: Timing) {
     this.db = db;
+    this.timing = timing;
+  }
+
+  /** One pass of the timed check (spec section 13). Pushes the findings it wrote. */
+  check(): void {
+    const notify = transaction(this.db, () => timedCheck(this.db, this.timing, Date.now()));
+    for (const recipient of notify) this.flush(recipient, false);
   }
 
   /** Runs an operation, then pushes its new entries. Websocket calls and POST /call share it. */
   perform(session: Session, op: string, args: unknown): Outcome {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
-      const done = transaction(this.db, () => runOp(this.db, session, op, args));
+      const done = transaction(this.db, () => runOp(this.db, session, op, args, this.timing));
       for (const recipient of done.notify) this.flush(recipient, false);
       return { ok: true, value: done.value };
     } catch (error) {
@@ -162,8 +171,16 @@ class Hub {
   }
 }
 
-export async function serve(db: DatabaseSync, host: string, port: number): Promise<string> {
-  const hub = new Hub(db);
+export async function serve(
+  db: DatabaseSync,
+  host: string,
+  port: number,
+  timing: Timing,
+): Promise<string> {
+  const hub = new Hub(db, timing);
+  setInterval(() => {
+    hub.check();
+  }, timing.checkMs).unref();
   const server = createServer((request, response) => {
     void hub.answerHttp(request, response);
   });

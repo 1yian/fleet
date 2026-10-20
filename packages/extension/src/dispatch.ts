@@ -2,7 +2,7 @@
 // host step first looks for its own result by the names that derive from the
 // attempt ID, so a retry after a lost connection never starts a second worker.
 import { check, OPS } from "@fleet/protocol";
-import { field, herdr, isRecord, records } from "./host.ts";
+import { field, herdr, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
 
 export interface Launch {
@@ -49,12 +49,6 @@ async function worktreePane(host: string, plan: Plan): Promise<string> {
     ].flat(),
   );
   return rootPane(created);
-}
-
-function rootPane(result: Record<string, unknown>): string {
-  const pane = isRecord(result["root_pane"]) ? field(result["root_pane"], "pane_id") : undefined;
-  if (pane === undefined) throw new Error("herdr did not return the worktree's pane");
-  return pane;
 }
 
 async function agentLive(host: string, name: string): Promise<boolean> {

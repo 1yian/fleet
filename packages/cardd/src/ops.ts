@@ -2,7 +2,8 @@
 // transaction and returns the sessions that have new entries to push.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
-import { beginAttempt, finishJob, runningJobs, startJob } from "./attempts.ts";
+import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
+import type { Timing } from "./timed.ts";
 import { factsFrom, nextStatus, type Change } from "./status.ts";
 import {
   addCard,
@@ -19,7 +20,7 @@ interface Done {
   readonly value: unknown;
   readonly notify: readonly string[];
 }
-type Handler = (db: DatabaseSync, session: Session, args: unknown) => Done;
+type Handler = (db: DatabaseSync, session: Session, args: unknown, timing: Timing) => Done;
 
 /** Reports that always reach the lane mate (spec section 10.1). */
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
@@ -93,9 +94,14 @@ const HANDLERS: Record<OpName, Handler> = {
     if (!begun.resumed) applyChange(db, card, { kind: "dispatch" });
     return { value: begun, notify: [] };
   },
-  "job.start": (db, session, raw) => {
+  "job.start": (db, session, raw, timing) => {
     const args = check(OPS["job.start"].args, raw);
-    return { value: { job: startJob(db, session.id, args.label, args.command) }, notify: [] };
+    const job = startJob(db, session.id, args.label, args.command);
+    return { value: { job, heartbeatMs: timing.heartbeatMs }, notify: [] };
+  },
+  "job.alive": (db, session, raw) => {
+    const args = check(OPS["job.alive"].args, raw);
+    return { value: { running: touchJob(db, session.id, args.job) }, notify: [] };
   },
   "job.finish": (db, session, raw) => {
     const args = check(OPS["job.finish"].args, raw);
@@ -135,8 +141,14 @@ const HANDLERS: Record<OpName, Handler> = {
 };
 
 /** Runs an operation for a session. Throws if the session's role may not call it. */
-export function runOp(db: DatabaseSync, session: Session, op: OpName, args: unknown): Done {
+export function runOp(
+  db: DatabaseSync,
+  session: Session,
+  op: OpName,
+  args: unknown,
+  timing: Timing,
+): Done {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
-  return HANDLERS[op](db, session, args);
+  return HANDLERS[op](db, session, args, timing);
 }
