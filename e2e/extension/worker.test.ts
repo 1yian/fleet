@@ -108,6 +108,25 @@ test("a worker woken from a pause is nudged and stopped when it ends a run on a 
   ]);
 });
 
+test("a worker that reports done and then working in the same run is nudged and stopped", async () => {
+  worker();
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR ready" } }));
+  h.onModel(() => ({ tool: "report", args: { status: "working", text: "CI failed, fixing" } }));
+  h.onModel(() => ({ text: "that is all" }));
+  h.onModel(() => ({ text: "still nothing" }));
+  await comment("ship it");
+  await fleet.main.waitForEntries(2);
+
+  assert.match(
+    lastUser(await h.waitForCall(3)) ?? "",
+    /^\[fleet\] Your run is ending without a handoff/,
+  );
+  assert.deepEqual(reports(fleet.main), [
+    ["done", "PR ready", "ship it"],
+    ["stopped", "ended the run without a handoff: still nothing", undefined],
+  ]);
+});
+
 test("a run stopped from the pane files stopped", async () => {
   const pi = worker();
   const held = gate();

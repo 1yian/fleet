@@ -64,9 +64,13 @@ function textOf(message: unknown): string {
     .join("");
 }
 
+interface LatestReport {
+  readonly status: string;
+  readonly until: number | undefined;
+}
+
 export class WorkerRun {
-  private handedOff = false;
-  private pausedUntil = 0;
+  private latest: LatestReport | undefined;
   private nudged = false;
   private lastText = "";
   private readonly link: Link;
@@ -77,8 +81,7 @@ export class WorkerRun {
 
   /** New captain input or a new fleet entry starts a new obligation. */
   reset(): void {
-    this.handedOff = false;
-    this.pausedUntil = 0;
+    this.latest = undefined;
     this.nudged = false;
   }
 
@@ -92,8 +95,7 @@ export class WorkerRun {
         const until = untilMs(params.status, params.until);
         const args = { status: params.status, text: params.text, key: params.key, until };
         const card = check(CardSchema, await this.link.call("report", args));
-        if (HANDOFFS.has(params.status)) this.handedOff = true;
-        this.pausedUntil = params.status === "paused" && until !== undefined ? until : 0;
+        this.latest = { status: params.status, until };
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
       },
@@ -121,7 +123,7 @@ export class WorkerRun {
       const text = event.aborted
         ? "stopped from the pane"
         : `ended the run without a handoff: ${this.lastText}`;
-      this.handedOff = true;
+      this.latest = { status: "stopped", until: undefined };
       await this.link
         .call("report", { status: "stopped", text: text.slice(0, 2000) })
         .catch(() => undefined);
@@ -129,6 +131,9 @@ export class WorkerRun {
   }
 
   private mayEnd(): boolean {
-    return this.handedOff || this.pausedUntil > Date.now();
+    if (this.latest === undefined) return false;
+    const { status, until } = this.latest;
+    if (status === "paused") return until !== undefined && until > Date.now();
+    return HANDOFFS.has(status) || status === "stopped";
   }
 }
