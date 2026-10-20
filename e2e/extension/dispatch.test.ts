@@ -392,3 +392,59 @@ test("a branch that cannot be deleted aborts the close, and a rerun finishes it"
     "",
   );
 });
+
+test("dispatching a card whose worker died restarts it on its own session", async () => {
+  h.onModel(
+    () => ({
+      tool: "card_new",
+      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+    }),
+    "mate",
+  );
+  h.onModel(
+    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(
+    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "restarted" }), "mate");
+  // The worker waits on a long job, so it ends its run without telling the mate anything.
+  h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
+  h.onModel(() => ({ text: "waiting for the job" }), "worker");
+  await mateConnected();
+  mate.prompt("ship the scrollbar fix");
+  await h.waitForCall(1, "worker", WORKER_WAIT_MS);
+  // The first dispatch has returned, so only the worker's Pi still carries these arguments.
+  await h.waitForCall(2, "mate", 120_000);
+
+  // Kill only this test's worker: the Pi in the lab pane that hosts agent c-1-a1.
+  const agent = records((await lab.run(["agent", "list"]))["agents"]).find(
+    (each) => each["name"] === "c-1-a1",
+  );
+  const info = await lab.run(["pane", "process-info", "--pane", String(agent?.["pane_id"])]);
+  const [pi] = records(records([info["process_info"]])[0]?.["foreground_processes"]).map((each) =>
+    Number(each["pid"]),
+  );
+  assert.ok(pi !== undefined && pi > 0);
+  process.kill(pi, "SIGKILL");
+  // Wait until herdr sees the pane back at its shell.
+  const deadline = Date.now() + 30_000;
+  while ((await agents()).includes("c-1-a1")) {
+    assert.ok(Date.now() < deadline, "herdr still lists the killed worker");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 1, "the mate's connection");
+  mate.prompt("the worker died; restart it");
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.equal(results.at(-1), "Restarted c-1-a1 on local on its own session, branch c-1-a1.");
+  const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
+  assert.equal(
+    lastUser(resumed),
+    "[fleet] main on c-1: Your session was restarted. Continue your task from where you stopped.",
+  );
+  assert.ok(resumed.some((turn) => turn.text === "[fleet] main on c-1: fix the scrollbar"));
+  assert.deepEqual(await agents(), ["c-1-a1"]);
+});

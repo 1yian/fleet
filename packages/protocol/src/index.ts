@@ -207,6 +207,7 @@ export const OPS = {
       token: Type.String(),
       resumed: Type.Boolean(),
       active: Type.Boolean(),
+      connected: Type.Boolean(),
       clone: Type.String(),
       base: Type.String(),
       branch: Type.String(),
