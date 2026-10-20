@@ -74,16 +74,20 @@ export function TaskCard(props: Props) {
   );
 }
 
+const LONG_OPTION = 32;
+
 function Ask(props: {
   readonly question: Question;
   readonly keys: boolean;
   readonly onAnswer: (ask: number, choice: string) => void;
 }) {
   const { question, keys, onAnswer } = props;
+  // Options longer than a few words read better as a list of choices than as buttons in a row.
+  const long = question.options.some((option) => option.length > LONG_OPTION);
   return (
     <div className="ask">
       <p className="ask-text">{question.question}</p>
-      <div className="options">
+      <div className={long ? "options long" : "options"}>
         {question.options.map((option, index) => (
           <button
             type="button"

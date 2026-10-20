@@ -166,6 +166,7 @@ An ask is a question that belongs to the captain.
 - Every unresolved question that belongs to the captain must become an ask before the work that found it finishes.
 - Ask on the card that the question blocks. Make one ask for each real decision point.
 - Write each ask so that it stands alone: evidence first, then the consequence, the options, and your recommendation.
+- Keep each option to a few words, such as `Approve`, `Use v2`, or `Wait a week`, with your recommendation first. Describe each option in the question, not in the option.
 - Do not ask "Do you want me to make a task for this?" Create the card with `card_new` and say so.
 - When the captain answers in chat, call `answer` with the captain's exact words before you act. Never close anything the captain owns without the captain's words.
 - "Later" is an answer: `card_hold` until the date.

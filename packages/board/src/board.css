@@ -302,6 +302,25 @@ svg.status-icon {
 .options button.primary:hover {
   background: #3f3f46;
 }
+.options.long {
+  flex-direction: column;
+}
+.options.long button {
+  text-align: left;
+  font-weight: 400;
+  background: #fff;
+  border-color: #d4d4d8;
+  color: var(--ink);
+  display: flex;
+  gap: 2px;
+}
+.options.long button:hover {
+  background: var(--panel);
+}
+.options.long button.primary {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
 .options kbd {
   font: inherit;
   font-size: 11px;
@@ -311,6 +330,25 @@ svg.status-icon {
 
 /* A touch screen has no number keys */
 @media (hover: none) {
+  .options.long {
+    flex-direction: column;
+  }
+  .options.long button {
+    text-align: left;
+    font-weight: 400;
+    background: #fff;
+    border-color: #d4d4d8;
+    color: var(--ink);
+    display: flex;
+    gap: 2px;
+  }
+  .options.long button:hover {
+    background: var(--panel);
+  }
+  .options.long button.primary {
+    border-color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--ink);
+  }
   .options kbd {
     display: none;
   }
