@@ -7,6 +7,7 @@ import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Jobs } from "./jobs.ts";
 import { Link } from "./link.ts";
 import { registerMate } from "./mate.ts";
+import { registerQuestions } from "./questions.ts";
 import { WorkerRun } from "./worker.ts";
 
 interface Config {
@@ -70,6 +71,7 @@ function start(
   jobs?.register(pi, { url, token });
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
+  if (role === "mate") registerQuestions(pi, link, () => sessionFile);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() });
 
   pi.on("session_shutdown", () => {

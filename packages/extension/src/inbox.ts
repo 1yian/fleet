@@ -61,3 +61,57 @@ export function format(entry: Entry): string {
   const note = resolves === undefined ? "" : ` (answers ${resolves})`;
   return `[fleet] ${who} on ${card}${entry.kind === "comment" ? "" : ` (${entry.kind})`}: ${entry.body}${note}`;
 }
+
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** A time from the model: ISO 8601 with Z or an explicit offset, so no host's local zone can shift it. */
+export function parseUtc(text: string): number {
+  const ms = ISO_UTC.test(text) ? Date.parse(text) : Number.NaN;
+  if (Number.isNaN(ms)) {
+    throw new Error(
+      `use an ISO 8601 time ending in Z or a +hh:mm/-hh:mm offset, like 2026-05-01T10:00:00Z: ${text}`,
+    );
+  }
+  return ms;
+}
+
+const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** Whether a user-role message in the session file holds these words (spec section 9.6). */
+export function captainSaid(file: string | undefined, words: string): boolean {
+  if (file === undefined || !existsSync(file) || squash(words) === "") return false;
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .flatMap((line): unknown[] => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    })
+    .some((entry) => {
+      const message = isRecord(entry) && entry["type"] === "message" ? entry["message"] : undefined;
+      return (
+        isRecord(message) &&
+        message["role"] === "user" &&
+        squash(textOf(message)).includes(squash(words))
+      );
+    });
+}
+
+/** The text of a Pi message: its string content, or its text blocks joined. */
+export function textOf(message: unknown): string {
+  if (typeof message !== "object" || message === null || !("content" in message)) return "";
+  const content: unknown = message.content;
+  if (!Array.isArray(content)) return typeof content === "string" ? content : "";
+  return content
+    .map((block: unknown) =>
+      typeof block === "object" &&
+      block !== null &&
+      "text" in block &&
+      typeof block.text === "string"
+        ? block.text
+        : "",
+    )
+    .join("");
+}

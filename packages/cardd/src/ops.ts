@@ -2,16 +2,16 @@
 // transaction and returns the sessions that have new entries to push.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
+import { answer, ask, handback, hold } from "./asks.ts";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
+import { applyChange } from "./change.ts";
 import type { Timings } from "./timing.ts";
-import { factsFrom, nextStatus, type Change } from "./status.ts";
 import {
   addCard,
   addEntry,
   cardEntries,
   getCard,
   listCards,
-  setStatus,
   workerOf,
   type Session,
 } from "./store.ts";
@@ -32,13 +32,6 @@ const TO_MATE: ReadonlySet<ReportStatus> = new Set([
   "resolved",
   "stopped",
 ]);
-
-export function applyChange(db: DatabaseSync, card: Card, change: Change): void {
-  const facts = { ...factsFrom(cardEntries(db, card.id)), status: card.status, kind: card.kind };
-  const status = nextStatus(facts, change);
-  if (status instanceof Error) throw status;
-  setStatus(db, card.id, status);
-}
 
 function ownCard(db: DatabaseSync, session: Session, id: number): Card {
   const card = getCard(db, id);
@@ -64,6 +57,10 @@ function reportRoute(
 }
 
 const HANDLERS: Record<OpName, Handler> = {
+  ask,
+  answer,
+  handback,
+  hold,
   "card.new": (db, session, raw) => {
     const args = check(OPS["card.new"].args, raw);
     return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };

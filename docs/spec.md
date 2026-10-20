@@ -920,7 +920,7 @@ An ask is a question that belongs to the captain. It is a card with the Needs yo
 2. Main handles it in its next run in one of three ways:
    - **Answer from the record.** The captain already decided this, or a grant or a recorded preference covers it. Main calls `answer` with the captain's earlier words and their source. The card goes to With mate in the second mate's lane.
    - **Hand back.** The question is not the captain's to decide. Main calls `card handback` with guidance.
-   - **Forward.** The question belongs to the captain. Main calls `ask` and adds a recommendation and any context from other lanes. The card goes to Needs you.
+   - **Forward.** The question belongs to the captain. Main calls `ask` and adds a recommendation and any context from other lanes. The forward replaces the second mate's question, so the captain answers one question. The card goes to Needs you.
 3. The captain's answer goes directly to the card. It does not pass back through main.
 4. If main does not act within 15 minutes, or main is not connected, the timed check moves the card to Needs you.
 

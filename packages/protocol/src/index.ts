@@ -88,6 +88,38 @@ export const OPS = {
     }),
     result: CardSchema,
   },
+  ask: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      question: Type.String({ minLength: 1 }),
+      options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    }),
+    result: CardSchema,
+  },
+  answer: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      words: Type.String({ minLength: 1 }),
+      source: Type.Enum(["chat", "board", "record"]),
+    }),
+    result: CardSchema,
+  },
+  handback: {
+    roles: ["mate"],
+    args: Type.Object({ card: Type.Integer(), guidance: Type.String({ minLength: 1 }) }),
+    result: CardSchema,
+  },
+  hold: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      until: Type.Integer(),
+      reason: Type.String({ minLength: 1 }),
+    }),
+    result: CardSchema,
+  },
   "attempt.begin": {
     roles: ["mate"],
     args: Type.Object({

@@ -3,17 +3,20 @@
 // condition stays true, and clears when the condition stops. The check wakes
 // nobody when everything is in order.
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { MINUTE, type Timings } from "./timing.ts";
-import { applyChange } from "./ops.ts";
+import { STATUSES } from "@fleet/protocol";
 import { loseSilentJobs } from "./attempts.ts";
+import { applyChange } from "./change.ts";
 import type { Change } from "./status.ts";
 import { addEntry, getCard, workerOf } from "./store.ts";
+import { MINUTE, type Timings } from "./timing.ts";
 
 interface Match {
   readonly card: number;
   readonly lane: string;
   readonly condition: string;
   readonly text: string;
+  /** The status change, if the finding moves the card. Reminders do not. */
+  readonly change?: Change;
 }
 
 /** A worker card in Working or In review, with its live attempt and session. */
@@ -76,7 +79,13 @@ function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
       `SELECT w.card AS card, w.lane AS lane FROM (${WORKER_CARDS}) w WHERE ${where}`,
       now,
       Number(t[limit]),
-    ).map((row) => ({ card: Number(row["card"]), lane: String(row["lane"]), condition, text })),
+    ).map((row) => ({
+      card: Number(row["card"]),
+      lane: String(row["lane"]),
+      condition,
+      text,
+      change: FINDING,
+    })),
   );
 }
 
@@ -147,9 +156,64 @@ function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
   });
 }
 
+/** A second mate's question that main did not take within 15 minutes, or while main is away, goes to the captain. */
+function firstMateMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+  const waiting = rows(
+    db,
+    `SELECT c.id AS card, c.lane AS lane, m.state AS main,
+       (SELECT max(created_at) FROM entries WHERE card = c.id AND kind = 'ask') AS asked
+     FROM cards c JOIN lanes l ON l.name = c.lane LEFT JOIN sessions m ON m.id = l.parent
+     WHERE c.status = 'with-first-mate'`,
+  );
+  return waiting.flatMap((row) => {
+    const away = !["idle", "running", "waiting"].includes(String(row["main"]));
+    if (!away && now - Number(row["asked"]) <= t.firstMate) return [];
+    const why = away ? "main is not connected" : "main did not take the question within 15 minutes";
+    const change: Change = { kind: "ask", toFirstMate: false };
+    const card = Number(row["card"]);
+    return [
+      {
+        card,
+        lane: String(row["lane"]),
+        condition: "first-mate",
+        text: `forwarded to the captain: ${why}`,
+        change,
+      },
+    ];
+  });
+}
+
+/** A hold whose date passed: the card goes back to the status it had (spec section 7.3). */
+function holdMatches(db: DatabaseSync, now: number): Match[] {
+  const held = rows(
+    db,
+    "SELECT id, lane, return_status FROM cards WHERE status = 'waiting' AND held_until <= ?",
+    now,
+  );
+  return held.flatMap((row) => {
+    const to = STATUSES.find((status) => status === row["return_status"]);
+    if (to === undefined) return [];
+    const change: Change = { kind: "unhold", to };
+    return [
+      {
+        card: Number(row["id"]),
+        lane: String(row["lane"]),
+        condition: "hold-ended",
+        text: `hold ended; back to ${to}`,
+        change,
+      },
+    ];
+  });
+}
+
 /** Writes each new finding once, clears the ones whose condition stopped, and returns the sessions to push to. */
 export function runCheck(db: DatabaseSync, now: number, t: Timings): string[] {
-  const matches = [...workerMatches(db, now, t), ...reminderMatches(db, now, t)];
+  const matches = [
+    ...workerMatches(db, now, t),
+    ...reminderMatches(db, now, t),
+    ...firstMateMatches(db, now, t),
+    ...holdMatches(db, now),
+  ];
   const live = new Set(matches.map((match) => `${String(match.card)}/${match.condition}`));
   for (const open of rows(
     db,
@@ -165,8 +229,12 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings): string[] {
       .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
       .get(match.card, match.condition);
     if (open !== undefined) continue;
-    if (!match.condition.startsWith("reminder-"))
-      applyChange(db, getCard(db, match.card), { kind: "finding" });
+    if (match.change?.kind === "unhold") {
+      db.prepare("UPDATE cards SET held_until = NULL, return_status = NULL WHERE id = ?").run(
+        match.card,
+      );
+    }
+    if (match.change !== undefined) applyChange(db, getCard(db, match.card), match.change);
     const fields = { condition: match.condition };
     addEntry(db, { card: match.card, author: "check", kind: "finding", body: match.text, fields }, [
       match.lane,

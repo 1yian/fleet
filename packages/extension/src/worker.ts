@@ -4,6 +4,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardSchema, check } from "@fleet/protocol";
 import Type from "typebox";
+import { parseUtc, textOf } from "./inbox.ts";
 import type { Jobs } from "./jobs.ts";
 import type { Link } from "./link.ts";
 
@@ -35,34 +36,9 @@ const ReportParams = Type.Object({
   ),
 });
 
-const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
-
 function untilMs(status: string, until: string | undefined): number | undefined {
-  if (until !== undefined) {
-    const ms = ISO_UTC.test(until) ? Date.parse(until) : Number.NaN;
-    if (Number.isNaN(ms))
-      throw new Error(
-        `until must be an ISO 8601 time ending in Z or a +hh:mm/-hh:mm offset, like 2026-05-01T10:00:00Z: ${until}`,
-      );
-    return ms;
-  }
+  if (until !== undefined) return parseUtc(until);
   return status === "paused" ? Date.now() + PAUSE_DEFAULT_MS : undefined;
-}
-
-function textOf(message: unknown): string {
-  if (typeof message !== "object" || message === null || !("content" in message)) return "";
-  const content: unknown = message.content;
-  if (!Array.isArray(content)) return typeof content === "string" ? content : "";
-  return content
-    .map((block: unknown) =>
-      typeof block === "object" &&
-      block !== null &&
-      "text" in block &&
-      typeof block.text === "string"
-        ? block.text
-        : "",
-    )
-    .join("");
 }
 
 interface LatestReport {
