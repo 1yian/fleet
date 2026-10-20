@@ -1,7 +1,8 @@
 // The board's view and the captain's board actions (spec section 21). The board
 // shows cards.db directly. Its actions carry the captain's authority, and each
-// reaches the lane mate as a fleet entry. Guard 5: an action on a card that
-// changed since the captain's view is refused.
+// reaches the lane mate as a fleet entry. Guard 5: an answer or a hold on a card
+// that changed since the captain's view is refused. A comment does not act on
+// the card's state, so it is accepted at any revision.
 import type { DatabaseSync } from "node:sqlite";
 import { check, BoardActionSchema, type Board, type Card, type Thread } from "@fleet/protocol";
 import { mergeChoice } from "./asks.ts";

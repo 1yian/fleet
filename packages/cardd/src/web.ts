@@ -1,5 +1,6 @@
 // The board's side of cardd (spec section 21): its JSON API, its live socket,
-// and its built files. Only the Tailscale network reaches cardd.
+// and its built files. Only the Tailscale network reaches cardd. Every board
+// request must name an allowed Host (see permits), which closes DNS rebinding.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
