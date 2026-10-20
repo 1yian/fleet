@@ -77,11 +77,14 @@ export function since(from: number, now: number): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
-export function statusLine(card: BoardCard, asked: boolean, now: number): string {
+/** Where the card stands, such as "In review" or "With cleo". A waiting question outranks the status. */
+export function phraseOf(card: BoardCard, asked: boolean): string {
   const phrase = asked && card.status !== "needs-you" ? PHRASES["needs-you"] : PHRASES[card.status];
-  const named = card.status === "with-mate" ? `With ${card.lane}` : phrase;
-  return `${named} · ${since(card.updatedAt, now)}`;
+  return card.status === "with-mate" ? `With ${card.lane}` : phrase;
 }
+
+export const statusLine = (card: BoardCard, asked: boolean, now: number): string =>
+  `${phraseOf(card, asked)} · ${since(card.updatedAt, now)}`;
 
 export const firstLine = (text: string): string =>
   text
@@ -90,7 +93,7 @@ export const firstLine = (text: string): string =>
     .find((line) => line !== "") ?? "";
 
 /** Everything after the first line, for an update that opens to its details. */
-export function rest(text: string): string {
+function rest(text: string): string {
   const lines = text.trim().split("\n");
   const first = lines.findIndex((line) => line.trim() !== "");
   return lines
@@ -103,11 +106,23 @@ export function rest(text: string): string {
 export const bodyOf = (entry: Entry): string =>
   entry.fields["routed"] === true ? rest(entry.body) : entry.body;
 
-export function who(author: string): string {
-  if (author === "captain") return "You";
-  if (author.startsWith("mate:")) return author.slice("mate:".length);
-  if (author.startsWith("worker:")) return "Worker";
-  return author.charAt(0).toUpperCase() + author.slice(1);
+type Role = "captain" | "first-mate" | "mate" | "worker" | "fleet";
+
+/** Who wrote an entry: the name the captain reads, and the part they play. */
+export interface Author {
+  readonly name: string;
+  readonly role: Role;
+  /** A short tag after the name for the mates, so the lane mate and main are told apart. */
+  readonly tag: string;
+}
+
+export function authorOf(author: string): Author {
+  if (author === "captain") return { name: "You", role: "captain", tag: "" };
+  if (author === "mate:main") return { name: "main", role: "first-mate", tag: "First mate" };
+  if (author.startsWith("mate:"))
+    return { name: author.slice("mate:".length), role: "mate", tag: "Mate" };
+  if (author.startsWith("worker:")) return { name: "Worker", role: "worker", tag: "" };
+  return { name: author.charAt(0).toUpperCase() + author.slice(1), role: "fleet", tag: "" };
 }
 
 /** A worker's report status after "Worker". Progress needs no word. */
@@ -129,12 +144,31 @@ const VERBS: Readonly<Record<string, string>> = {
   handback: "handed back",
 };
 
+/** What a mate's comment did: sent the task, or decided what a worker asked. */
+function commentVerb(entry: Entry): string {
+  if (entry.fields["task"] === true) return "sent the task";
+  return typeof entry.fields["resolves"] === "string" ? "decided" : "";
+}
+
 /** What an update did, such as "asked" or a worker's report status, after its author. */
 export function verb(entry: Entry): string {
   const status = entry.fields["status"];
+  if (entry.kind === "comment") return commentVerb(entry);
   if (entry.kind === "report" && typeof status === "string") return REPORTS[status] ?? status;
   if (entry.fields["routed"] === true) return "sent it here";
   if (entry.kind === "cleanup")
     return entry.fields["outcome"] === "dropped" ? "dropped it" : "closed it";
   return VERBS[entry.kind] ?? "";
+}
+
+/** An entry is a message (said to the captain or by him) or an event (something that happened). */
+const MESSAGES: ReadonlySet<string> = new Set(["comment", "ask", "answer", "report", "note"]);
+export const isMessage = (entry: Entry): boolean =>
+  MESSAGES.has(entry.kind) && entry.fields["routed"] !== true && entry.fields["task"] !== true;
+
+/** The decision key an entry carries: what a mate's decision resolves, or what a worker asks to have decided. */
+export function keyOf(entry: Entry): string | undefined {
+  const field = entry.kind === "report" ? "key" : entry.kind === "comment" ? "resolves" : undefined;
+  const key = field === undefined ? undefined : entry.fields[field];
+  return typeof key === "string" ? key : undefined;
 }

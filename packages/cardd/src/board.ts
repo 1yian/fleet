@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   check,
   BoardActionSchema,
+  MERGE_OPTIONS,
   type Board,
   type Card,
   type Entry,
@@ -21,15 +22,20 @@ import { addEntry, cardEntries, getCard, listCards } from "./store.ts";
 export class StaleCard extends Error {}
 
 /**
- * What the captain reads on the board: the captain's words, the mates' notes, questions,
- * and outcomes, and the workers' reports. The rest is for the mates: job results are the
- * worker's tool output, findings are the timed check's notices, and a mate's comments are
- * its instructions to the worker (the task message and its steers).
+ * What a card's thread shows the captain: the whole conversation between the card's owner
+ * and its mate. That is the mate's comments down (the task message, steers, and decisions),
+ * and the worker's reports and questions up, with the captain's words and the outcomes.
+ * Job results are the worker's tool output and findings are the timed check's notices,
+ * so they stay with the mates.
+ */
+const inThread = (entry: Entry): boolean => entry.kind !== "job-result" && entry.kind !== "finding";
+
+/**
+ * What a card's one-line state draws from: the thread without the mate's comments, which are
+ * instructions to the worker (the task message and its steers), not news.
  */
 const forCaptain = (entry: Entry): boolean =>
-  entry.kind !== "job-result" &&
-  entry.kind !== "finding" &&
-  !(entry.kind === "comment" && entry.author.startsWith("mate:"));
+  inThread(entry) && !(entry.kind === "comment" && entry.author.startsWith("mate:"));
 
 const firstLine = (text: string): string =>
   text
@@ -71,19 +77,30 @@ export function boardView(db: DatabaseSync): Board {
   return { cards, questions };
 }
 
-/** A card's thread for the captain. */
+/** A card's thread: the conversation between its owner and its mate, as the captain reads it. */
 export const thread = (db: DatabaseSync, id: number): Thread => ({
   card: getCard(db, id),
-  entries: cardEntries(db, id).filter(forCaptain),
+  entries: cardEntries(db, id).filter(inThread),
 });
 
-function answerOnBoard(db: DatabaseSync, card: Card, ask: number, choice: string): void {
+/**
+ * Answers an open question with one of its options, or with the captain's own words.
+ * Own words on a merge question are a request for changes: only the Approve option approves.
+ */
+function answerOnBoard(
+  db: DatabaseSync,
+  card: Card,
+  ask: number,
+  choice: string,
+  written: boolean,
+): void {
   const resolves = String(ask);
   if (!factsFrom(cardEntries(db, card.id)).askIds.includes(resolves))
     throw new StaleCard(`that question on c-${String(card.id)} is no longer open`);
-  const merge = mergeChoice(db, card, resolves, choice);
+  const merge = mergeChoice(db, card, resolves, written ? MERGE_OPTIONS[1] : choice);
   applyChange(db, card, merge === undefined ? { kind: "answer" } : { kind: "answer", merge });
-  const fields = { resolves, source: "board", choice };
+  const picked = written && merge !== undefined ? MERGE_OPTIONS[1] : choice;
+  const fields = { resolves, source: "board", choice: picked, ...(written ? { written } : {}) };
   addEntry(db, { card: card.id, author: "captain", kind: "answer", body: choice, fields }, [
     card.lane,
   ]);
@@ -95,7 +112,8 @@ export function boardAction(db: DatabaseSync, raw: unknown): string[] {
   const card = getCard(db, id);
   if (action.kind !== "comment" && card.revision !== revision)
     throw new StaleCard(`c-${String(id)} changed since you looked; here is the current card`);
-  if (action.kind === "answer") answerOnBoard(db, card, action.ask, action.choice);
+  if (action.kind === "answer")
+    answerOnBoard(db, card, action.ask, action.choice, action.written === true);
   if (action.kind === "comment") {
     addEntry(db, { card: id, author: "captain", kind: "comment", body: action.text, fields: {} }, [
       card.lane,

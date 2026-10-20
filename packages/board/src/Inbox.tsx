@@ -1,5 +1,6 @@
 // The inbox (spec section 21.2): Needs you, Running, and Done, as three columns
 // (Board) or one after another (List). A narrow screen always gets the list.
+// A click on a card opens its detail.
 import type { Board } from "@fleet/protocol";
 import { groups, questionsByCard } from "./format.ts";
 import { Sparkle } from "./icons.tsx";
@@ -10,17 +11,18 @@ export type View = "board" | "list";
 interface Props {
   readonly board: Board;
   readonly view: View;
-  readonly open: number | undefined;
   readonly now: number;
-  readonly changes: number;
-  readonly onToggle: (card: number) => void;
-  readonly onAnswer: (card: number, ask: number, choice: string) => void;
-  readonly onReply: (card: number, text: string) => Promise<void>;
-  readonly onFail: (message: string) => void;
+  readonly onOpen: (card: number) => void;
+  readonly onAnswer: (
+    card: number,
+    ask: number,
+    choice: string,
+    written: boolean,
+  ) => Promise<boolean>;
 }
 
 export function Inbox(props: Props) {
-  const { board, view, open } = props;
+  const { board, view } = props;
   const asked = questionsByCard(board.questions);
   const { needs, running, done } = groups(board.cards, asked);
   const sections = [
@@ -46,17 +48,11 @@ export function Inbox(props: Props) {
               card={card}
               questions={asked.get(card.id) ?? []}
               keys={card.id === keyed}
-              open={card.id === open}
               now={props.now}
-              changes={props.changes}
-              onToggle={() => {
-                props.onToggle(card.id);
+              onOpen={() => {
+                props.onOpen(card.id);
               }}
-              onAnswer={(ask, choice) => {
-                props.onAnswer(card.id, ask, choice);
-              }}
-              onReply={(text) => props.onReply(card.id, text)}
-              onFail={props.onFail}
+              onAnswer={(ask, choice, written) => props.onAnswer(card.id, ask, choice, written)}
             />
           ))}
         </section>

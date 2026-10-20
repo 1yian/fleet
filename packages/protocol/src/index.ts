@@ -313,6 +313,8 @@ export const BoardActionSchema = Type.Object({
       kind: Type.Literal("answer"),
       ask: Type.Integer(),
       choice: Type.String({ minLength: 1 }),
+      /** The captain typed the answer instead of picking an option. */
+      written: Type.Optional(Type.Boolean()),
     }),
     Type.Object({ kind: Type.Literal("comment"), text: Type.String({ minLength: 1 }) }),
     Type.Object({

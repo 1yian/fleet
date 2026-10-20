@@ -4,7 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Board, BoardAction } from "@fleet/protocol";
 import { act, loadBoard, unreachable, useChanges } from "./api.ts";
 import { BoardIcon, ListIcon } from "./icons.tsx";
+import { CardDetail, NoCard } from "./CardDetail.tsx";
+import { questionsByCard } from "./format.ts";
 import { Inbox, type View } from "./Inbox.tsx";
+import { useCardRoute } from "./route.ts";
 import { SegmentedControl } from "./vendor/segmented-control.tsx";
 
 /** How often relative times such as "5m ago" refresh. */
@@ -54,13 +57,14 @@ function useNow(): number {
   return now;
 }
 
-/** 1 to 9 answer the first question on the board. Escape closes the open card. */
+/** 1 to 9 answer the first question of the open card, or of the board. Escape closes the open card. */
 function useKeys(
   board: Board | undefined,
-  answer: (card: number, ask: number, choice: string) => void,
+  open: number | undefined,
+  answer: (card: number, ask: number, choice: string, written: boolean) => Promise<boolean>,
   close: () => void,
 ): void {
-  const first = board?.questions[0];
+  const first = board?.questions.find((question) => open === undefined || question.card === open);
   useEffect(() => {
     const key = (event: KeyboardEvent): void => {
       if (event.key === "Escape") close();
@@ -68,7 +72,7 @@ function useKeys(
         return;
       if (typesText(event.target)) return;
       const choice = first.options[Number(event.key) - 1];
-      if (choice !== undefined) answer(first.card, first.ask, choice);
+      if (choice !== undefined) void answer(first.card, first.ask, choice, false);
     };
     window.addEventListener("keydown", key);
     return () => {
@@ -83,29 +87,27 @@ export function App() {
   const [notice, setNotice] = useState<string | undefined>();
   const { board, refresh } = useBoard(changes, setNotice);
   const [view, setView] = useState<View>("board");
-  const [open, setOpen] = useState<number | undefined>();
+  const { card: open, open: openCard, close } = useCardRoute();
+  // What the captain started to write on each card, kept when he goes back to the board.
+  const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
 
+  /** Sends one action. Resolves true when cardd took it. */
   const send = useCallback(
-    (card: number, action: BoardAction["action"]) => {
+    async (card: number, action: BoardAction["action"]): Promise<boolean> => {
       const revision = board?.cards.find((each) => each.id === card)?.revision ?? 0;
-      return act({ card, revision, action }).then((error) => {
-        setNotice(error);
-        refresh();
-        return error;
-      });
+      const error = await act({ card, revision, action });
+      setNotice(error);
+      refresh();
+      return error === undefined;
     },
     [board, refresh],
   );
   const answer = useCallback(
-    (card: number, ask: number, choice: string) => {
-      void send(card, { kind: "answer", ask, choice });
-    },
+    (card: number, ask: number, choice: string, written: boolean) =>
+      send(card, { kind: "answer", ask, choice, ...(written ? { written } : {}) }),
     [send],
   );
-  const close = useCallback(() => {
-    setOpen(undefined);
-  }, []);
-  useKeys(board, answer, close);
+  useKeys(board, open, answer, close);
 
   const notices =
     notice === undefined ? null : (
@@ -118,6 +120,32 @@ export function App() {
       <main className="board">
         {notices}
         <p className="empty">Loading…</p>
+      </main>
+    );
+  const shown = open === undefined ? undefined : board.cards.find((card) => card.id === open);
+  if (open !== undefined)
+    return (
+      <main className="board detail-page">
+        {notices}
+        {shown === undefined ? (
+          <NoCard id={open} onClose={close} />
+        ) : (
+          <CardDetail
+            key={shown.id}
+            card={shown}
+            questions={questionsByCard(board.questions).get(shown.id) ?? []}
+            now={now}
+            changes={changes}
+            draft={drafts.get(shown.id) ?? ""}
+            onDraft={(text) => {
+              setDrafts((all) => new Map(all).set(shown.id, text));
+            }}
+            onClose={close}
+            onAnswer={(ask, choice, written) => answer(shown.id, ask, choice, written)}
+            onReply={(text) => send(shown.id, { kind: "comment", text })}
+            onFail={setNotice}
+          />
+        )}
       </main>
     );
   return (
@@ -136,22 +164,7 @@ export function App() {
         />
       </header>
       {notices}
-      <Inbox
-        board={board}
-        view={view}
-        open={open}
-        now={now}
-        changes={changes}
-        onToggle={(card) => {
-          setOpen(open === card ? undefined : card);
-        }}
-        onAnswer={answer}
-        onReply={async (card, text) => {
-          const error = await send(card, { kind: "comment", text });
-          if (error !== undefined) throw new Error(error);
-        }}
-        onFail={setNotice}
-      />
+      <Inbox board={board} view={view} now={now} onOpen={openCard} onAnswer={answer} />
     </main>
   );
 }

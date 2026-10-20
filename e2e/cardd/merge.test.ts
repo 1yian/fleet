@@ -2,7 +2,7 @@
 // 13.1, 18, and 20.4), against a real cardd and a fake gh.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { MERGE_OPTIONS, type Card } from "@fleet/protocol";
+import { BoardSchema, check, MERGE_OPTIONS, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { FakeGitHub } from "../support/github.ts";
@@ -268,4 +268,25 @@ test("a merge grant imported with the command line covers its project", async ()
   const card = await newCard(fleet.main, "Users see one scrollbar");
   await done(card);
   assert.equal(await status(fleet.main, card), "merging");
+});
+
+test("the captain's own words on a merge question from the board ask for changes, and never approve", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  const http = fleet.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
+  const board = check(BoardSchema, await (await fetch(`${http}api/board`)).json());
+  const question = board.questions.find((each) => each.card === card.id);
+  assert.equal(question?.merge, true);
+  const revision = board.cards.find((each) => each.id === card.id)?.revision;
+  const action = { kind: "answer", ask: question.ask, choice: APPROVE, written: true };
+  const response = await fetch(`${http}api/action`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ card: card.id, revision, action }),
+  });
+  assert.equal(response.status, 200);
+
+  assert.equal(await status(fleet.main, card), "working");
+  await assert.rejects(merge(card), { message: /no authority to merge/ });
 });

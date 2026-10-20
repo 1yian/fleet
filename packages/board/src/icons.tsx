@@ -39,3 +39,27 @@ export function ListIcon() {
     </svg>
   );
 }
+
+export function PencilIcon() {
+  return (
+    <svg className="inline-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M10.5 2.5 13.5 5.5 5.5 13.5 2 14 2.5 10.5Z" />
+    </svg>
+  );
+}
+
+export function BackIcon() {
+  return (
+    <svg className="inline-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M10 3 5 8l5 5" />
+    </svg>
+  );
+}
+
+export function SendIcon() {
+  return (
+    <svg className="inline-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+    </svg>
+  );
+}

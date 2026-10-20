@@ -40,6 +40,17 @@ async function question(title: string, options: string[]): Promise<Card> {
   return card;
 }
 
+/** A ship card on the lane of a second mate, with its worker connected. */
+async function shipped(title: string, task = "fix it") {
+  cardd.addProject("web", 1, { local: "/clones/web" });
+  const mate = await cardd.connect(cardd.addLane("cleo", "main"));
+  const args = { title, kind: "ship", project: "web" };
+  const card = check(CardSchema, await mate.call("card.new", args));
+  const begin = { card: card.id, host: "local", task };
+  const { token } = check(OPS["attempt.begin"].result, await mate.call("attempt.begin", begin));
+  return { card, mate, worker: await cardd.connect(token) };
+}
+
 test("Needs you shows each question, and one click answers it", async () => {
   await question("Pick the API version", ["v1", "v2"]);
   await page.goto(http());
@@ -128,49 +139,159 @@ test("the inbox groups the cards: Needs you, Running, and Done", async () => {
   assert.deepEqual(await titles("Done"), ["Ads"]);
 });
 
-test("a card opens in place to one line per update, without the mate's instructions to the worker", async () => {
-  const card = await question("Pick the API version", ["v1", "v2"]);
+test("a click on a card opens its detail: properties, the description, and the thread", async () => {
+  const card = check(
+    CardSchema,
+    await main.call("card.new", {
+      title: "Pick the API version",
+      kind: "captain",
+      intent: "Decide which API version ships.",
+      spec: "Compare v1 and v2 before the freeze.",
+    }),
+  );
   await main.call("comment", { card: card.id, text: "Spec: build the v2 endpoint" });
-  const detail = "v2 drops the legacy fields.";
-  await main.call("ask", { card: card.id, question: `Ship v2 now?\n${detail}`, options: ["yes"] });
+  await main.call("ask", { card: card.id, question: "Ship v2 now?", options: ["yes", "no"] });
   await page.goto(http());
-  const opened = page.getByRole("article", { name: "Pick the API version" });
-  await opened.getByRole("button", { name: /Pick the API version/ }).click();
+  await page.getByRole("article", { name: "Pick the API version" }).click();
 
-  const updates = opened.getByRole("list", { name: "Updates" });
-  await updates.getByText("Ship v2 now?").waitFor();
-  assert.equal(await updates.getByText("Spec: build the v2 endpoint").count(), 0);
-  assert.equal(await updates.getByText(detail).count(), 0);
-  await updates.getByRole("button", { name: /Ship v2 now\?/ }).click();
-  await updates.getByText(detail).waitFor();
+  const detail = page.getByRole("article", { name: "Pick the API version" });
+  await detail.getByRole("heading", { name: "Pick the API version", level: 1 }).waitFor();
+  assert.equal(new URL(page.url()).hash, `#/c-${String(card.id)}`);
+  const properties = detail.getByLabel("Properties");
+  await properties.getByText("Waiting for you").waitFor();
+  await properties.getByText("main", { exact: true }).waitFor();
+  await detail.getByText("Decide which API version ships.").waitFor();
+  await detail.getByRole("button", { name: "Spec" }).click();
+  await detail.getByText("Compare v1 and v2 before the freeze.").waitFor();
+  const thread = detail.getByRole("list", { name: "Thread" });
+  await thread.getByText("waiting for your answer above").waitFor();
+  await thread.getByText("Spec: build the v2 endpoint").waitFor();
+  await detail.getByRole("region", { name: "Waiting for you" }).getByText("Ship v2 now?").waitFor();
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("region", { name: "Needs you" }).waitFor();
+  assert.equal(new URL(page.url()).hash, "");
 });
-test("a reply draft survives a new entry on the open card", async () => {
+
+test("a card's address opens it directly, and a card that does not exist says so", async () => {
   const card = await question("Pick the API version", ["v1", "v2"]);
-  await page.goto(http());
-  const opened = page.getByRole("article", { name: "Pick the API version" });
-  await opened.getByRole("button", { name: /Pick the API version/ }).click();
-  const reply = opened.getByRole("textbox", { name: "Reply" });
-  await reply.fill("I prefer v2 because");
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  await page.getByRole("heading", { name: "Pick the API version", level: 1 }).waitFor();
+  await page.getByRole("button", { name: "Fleet" }).click();
+  await page.getByRole("region", { name: "Needs you" }).waitFor();
+  assert.equal(new URL(page.url()).hash, "");
+
+  await page.goto(`${http()}#/c-99`);
+  await page.getByText("c-99 is not on the board.").waitFor();
+});
+
+test("the thread is the conversation between the owner and its mate, with each author and the mate's decisions", async () => {
+  const { card, mate, worker } = await shipped("Users see one scrollbar");
+  await worker.call("report", { status: "working", text: "the scrollbar is doubled" });
+  await worker.call("report", {
+    status: "needs-decision",
+    key: "scope",
+    text: "Fix R1 only, or R1 and R2?",
+  });
+  await mate.call("comment", { card: card.id, text: "fix both R1 and R2", resolves: "scope" });
+  await mate.call("ask", { card: card.id, question: "Keep the footer?", options: ["yes", "no"] });
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+
+  const thread = page.getByRole("list", { name: "Thread" });
+  await thread.getByText("waiting for your answer above").waitFor();
+  await page.getByRole("button", { name: "yes" }).click();
+  await worker.call("report", { status: "done", text: "a final note" });
+  await thread.getByText("a final note").waitFor();
+
+  // Each author, in the order they spoke: comments down, reports and questions up.
+  const items = await thread.getByRole("listitem").allInnerTexts();
+  const lines = items.map((item) => item.replace(/\s+/g, " "));
+  assert.match(lines[0] ?? "", /cleo sent the task .*fix it/);
+  assert.match(lines[1] ?? "", /Worker .*the scrollbar is doubled/);
+  assert.match(lines[2] ?? "", /Worker needs a decision scope .*Fix R1 only, or R1 and R2\?/);
+  assert.match(lines[3] ?? "", /cleo Mate decided scope .*fix both R1 and R2/);
+  assert.match(lines[4] ?? "", /cleo Mate asked .*Keep the footer\?/);
+  assert.match(lines[5] ?? "", /You answered .*yes/);
+  assert.match(lines[6] ?? "", /Worker is done .*a final note/);
+  // Done on a ship card makes the fleet ask for the merge.
+  assert.match(lines[7] ?? "", /Fleet asked a question .*waiting for your answer above/);
+  assert.equal(lines.length, 8);
+  await worker.close();
+});
+
+test("a long task message is one line that opens to the whole text", async () => {
+  const task = ["Fix the scrollbar", "Keep the footer", "Do not touch the header"].join("\n");
+  const { card, worker } = await shipped("Users see one scrollbar", task);
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  const thread = page.getByRole("list", { name: "Thread" });
+  const sent = thread.getByRole("button", { name: /sent the task/ });
+  await sent.getByText("Fix the scrollbar").waitFor();
+  assert.equal(await thread.getByText("Do not touch the header").count(), 0);
+
+  await sent.click();
+  await thread.getByText("Do not touch the header").waitFor();
+  await sent.click();
+  await thread.getByText("Do not touch the header").waitFor({ state: "detached" });
+  await worker.close();
+});
+
+test("a long message collapses, and Show more opens it", async () => {
+  const { card, worker } = await shipped("Users see one scrollbar");
+  const lines = Array.from({ length: 30 }, (_, index) => `line ${String(index + 1)}`);
+  await worker.call("report", { status: "working", text: lines.join("\n") });
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  const thread = page.getByRole("list", { name: "Thread" });
+  const body = thread.locator(".body");
+  await thread.getByText("line 1", { exact: false }).first().waitFor();
+  const short = (await body.boundingBox())?.height ?? 0;
+  assert.ok(short > 0 && short < 300, `collapsed to ${String(short)} px`);
+
+  await thread.getByRole("button", { name: "Show more" }).click();
+  await thread.getByRole("button", { name: "Show less" }).waitFor();
+  assert.ok(((await body.boundingBox())?.height ?? 0) > 500);
+  await worker.close();
+});
+
+test("the captain chats on a card: Enter sends to the card's mate, Shift+Enter starts a new line", async () => {
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  const composer = page.getByRole("textbox", { name: "Comment" });
+  await composer.fill("first line");
+  await composer.press("Shift+Enter");
+  await composer.pressSequentially("second line");
+  assert.equal(cleo.entries.length, 0);
+  await composer.press("Enter");
+
+  const comment = await cleo.waitForEntry((entry) => entry.kind === "comment", "the comment");
+  assert.deepEqual([comment.author, comment.body], ["captain", "first line\nsecond line"]);
+  assert.equal(main.entries.filter(({ entry }) => entry.kind === "comment").length, 0);
+  const thread = page.getByRole("list", { name: "Thread" });
+  await thread.getByText("second line").waitFor();
+  assert.equal(await composer.inputValue(), "");
+  assert.equal(await page.getByRole("button", { name: "Send", exact: true }).isDisabled(), true);
+});
+
+test("a draft survives a new entry on the open card, and stays with its own card", async () => {
+  const card = await question("Pick the API version", ["v1", "v2"]);
+  const other = await question("Renew the certificate", ["now", "later"]);
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  const composer = page.getByRole("textbox", { name: "Comment" });
+  await composer.fill("I prefer v2 because");
 
   await main.call("ask", { card: card.id, question: "Ship on Friday?", options: ["yes", "no"] });
-  await opened.getByRole("list", { name: "Updates" }).getByText("Ship on Friday?").waitFor();
-  assert.equal(await reply.inputValue(), "I prefer v2 because");
-});
-test("a reply draft does not follow the captain to another card", async () => {
-  await question("Pick the API version", ["v1", "v2"]);
-  await question("Renew the certificate", ["now", "later"]);
-  await page.goto(http());
-  const first = page.getByRole("article", { name: "Pick the API version" });
-  await first.getByRole("button", { name: /Pick the API version/ }).click();
-  await first.getByRole("textbox", { name: "Reply" }).fill("I prefer v2 because");
+  await page
+    .getByRole("region", { name: "Waiting for you" })
+    .getByText("Ship on Friday?")
+    .waitFor();
+  assert.equal(await composer.inputValue(), "I prefer v2 because");
 
-  const other = page.getByRole("article", { name: "Renew the certificate" });
-  await other.getByRole("button", { name: /Renew the certificate/ }).click();
-  assert.equal(await other.getByRole("textbox", { name: "Reply" }).inputValue(), "");
-  assert.equal(await first.getByRole("textbox", { name: "Reply" }).count(), 0);
+  await page.goto(`${http()}#/c-${String(other.id)}`);
+  assert.equal(await page.getByRole("textbox", { name: "Comment" }).inputValue(), "");
 });
-test("a refused reply comes back into the reply box", async () => {
-  await question("Pick the API version", ["v1", "v2"]);
+
+test("a refused message comes back into the composer", async () => {
+  const card = await question("Pick the API version", ["v1", "v2"]);
   await page.route("**/api/action", (route) =>
     route.fulfill({
       status: 409,
@@ -178,20 +299,49 @@ test("a refused reply comes back into the reply box", async () => {
       body: JSON.stringify({ ok: false, error: "the card changed since you looked" }),
     }),
   );
-  await page.goto(http());
-  await page.getByRole("button", { name: /Pick the API version/ }).click();
-  const reply = page.getByRole("textbox", { name: "Reply" });
-  await reply.fill("I prefer v2 because");
-  await page.getByRole("button", { name: "Send reply" }).click();
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  const composer = page.getByRole("textbox", { name: "Comment" });
+  await composer.fill("I prefer v2 because");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
 
   await page.getByRole("alert").getByText("the card changed since you looked").waitFor();
-  await page.waitForFunction(
-    () =>
-      document.querySelector<HTMLInputElement>("input[aria-label=Reply]")?.value ===
-      "I prefer v2 because",
-    undefined,
-    { timeout: 5_000 },
+  await page.getByRole("button", { name: "Send", exact: true }).isEnabled();
+  assert.equal(await composer.inputValue(), "I prefer v2 because");
+});
+
+test("Write your own answers the question in the captain's words, for the card's mate", async () => {
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
+  await cleo.call("ask", { card: card.id, question: "Which channel?", options: ["search"] });
+  await page.goto(http());
+  await page.getByText("Which channel?").waitFor();
+
+  await page.getByRole("button", { name: "Write your own" }).click();
+  const box = page.getByRole("textbox", { name: "Your answer" });
+  await box.fill("Neither: try podcasts");
+  await box.press("Shift+Enter");
+  await box.pressSequentially("and newsletters");
+  await box.press("Enter");
+
+  const answer = await cleo.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  assert.deepEqual(
+    [answer.author, answer.body],
+    ["captain", "Neither: try podcasts\nand newsletters"],
   );
+  assert.equal(answer.fields["source"], "board");
+  assert.equal(answer.fields["written"], true);
+  await page.getByText("Nothing waits on you.").waitFor();
+});
+
+test("Escape closes the answer box and not the card", async () => {
+  const card = await question("Pick the API version", ["v1", "v2"]);
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  await page.getByRole("button", { name: "Write your own" }).click();
+  await page.getByRole("textbox", { name: "Your answer" }).press("Escape");
+  await page.getByRole("button", { name: "Write your own" }).waitFor();
+  assert.equal(new URL(page.url()).hash, `#/c-${String(card.id)}`);
+  await page.keyboard.press("Escape");
+  await page.getByRole("region", { name: "Needs you" }).waitFor();
 });
 
 test("the board reloads after its live socket reconnects", async () => {
@@ -259,17 +409,15 @@ test("a request that cannot reach cardd shows a notice, and a refused reply stay
     .getByText(/The board could not reach cardd/)
     .waitFor();
 
-  await page.getByRole("button", { name: /Pick the API version/ }).click();
-  const reply = page.getByRole("textbox", { name: "Reply" });
-  await reply.fill("I prefer v2 because");
-  await page.getByRole("button", { name: "Send reply" }).click();
-  await page.waitForFunction(
-    () =>
-      document.querySelector<HTMLInputElement>("input[aria-label=Reply]")?.value ===
-      "I prefer v2 because",
-    undefined,
-    { timeout: 5_000 },
-  );
+  await page.getByRole("link", { name: /Pick the API version/ }).click();
+  const composer = page.getByRole("textbox", { name: "Comment" });
+  await composer.fill("I prefer v2 because");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page
+    .getByRole("alert")
+    .getByText(/The board could not reach cardd/)
+    .waitFor();
+  assert.equal(await composer.inputValue(), "I prefer v2 because");
 });
 
 test("a board load that cannot reach cardd shows a notice that goes away when loading works", async () => {
@@ -307,10 +455,23 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
   ]) {
     await page.setViewportSize(viewport);
     await page.goto(http());
-    await page.getByRole("button", { name: /Pick the API version/ }).click();
-    await page.getByRole("button", { name: /Evidence:/ }).click();
-    await page.getByRole("list", { name: "Updates" }).getByText(url).waitFor();
-    assert.deepEqual(await sideways(page), [], `at ${String(viewport.width)} px`);
+    await page
+      .getByText(/Evidence:/)
+      .first()
+      .waitFor();
+    assert.deepEqual(await sideways(page), [], `the board at ${String(viewport.width)} px`);
+
+    await page.getByRole("link", { name: /Pick the API version/ }).click();
+    await page.getByRole("region", { name: "Waiting for you" }).getByText(url).waitFor();
+    await page.getByRole("button", { name: "Write your own" }).first().click();
+    await page.getByRole("textbox", { name: "Your answer" }).fill(url);
+    await page.getByRole("textbox", { name: "Comment" }).fill(url);
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page.getByRole("list", { name: "Thread" }).getByText(url).waitFor();
+    assert.deepEqual(await sideways(page), [], `the card at ${String(viewport.width)} px`);
+    // The box for writing stays in reach at the bottom of the screen.
+    const box = await page.getByRole("textbox", { name: "Comment" }).boundingBox();
+    assert.ok(box !== null && box.y + box.height <= viewport.height, "the composer is on screen");
   }
 });
 
