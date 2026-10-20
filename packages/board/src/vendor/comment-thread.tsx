@@ -47,7 +47,6 @@ function ago(time: number, now: number) {
 export function CommentThread({
   title = "Comment",
   messages: initial,
-  currentUser,
   assistant,
   onReply,
   onClose,
@@ -56,6 +55,8 @@ export function CommentThread({
   const [messages, setMessages] = useState(initial);
   // Assistant replies that are there from the start come in a beat after the comment above them
   const [firstIds] = useState(() => new Set(initial.filter((m) => m.author.assistant).map((m) => m.id)));
+  // fleet: follow the messages prop, so the reply draft survives new entries
+  useEffect(() => setMessages(initial), [initial]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -79,7 +80,7 @@ export function CommentThread({
     setDraft("");
     setNow(Date.now());
     lockHeight(true);
-    setMessages((m) => [...m, { id: `m-${Date.now()}`, author: currentUser, createdAt: Date.now(), text }]);
+    // fleet: no local copy of the reply; the thread shows only what cardd stored
     const answer = onReply?.(text);
     if (!answer) return;
     setThinking(true);

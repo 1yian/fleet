@@ -1,6 +1,6 @@
 // The card drawer (spec section 21.2): the thread, a reply box, and the option
 // buttons, beside the board. Replies go to the lane mate as the captain's words.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Board, Entry, Thread } from "@fleet/protocol";
 import { loadThread } from "./api.ts";
 import { CommentThread, type ThreadMessage } from "./vendor/comment-thread.tsx";
@@ -35,6 +35,7 @@ export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Pro
   useEffect(() => {
     void loadThread(card).then(setThread);
   }, [card, changes]);
+  const messages = useMemo(() => thread?.entries.map(message) ?? [], [thread]);
   const questions = board.questions.filter((each) => each.card === card);
   if (thread === undefined) return <aside className="drawer">Loading c-{card}…</aside>;
   return (
@@ -69,9 +70,8 @@ export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Pro
         </div>
       ))}
       <CommentThread
-        key={thread.entries.length}
         title="Thread"
-        messages={thread.entries.map(message)}
+        messages={messages}
         currentUser={CAPTAIN}
         onReply={(text) => {
           onReply(text);

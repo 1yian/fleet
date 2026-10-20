@@ -126,3 +126,16 @@ test("Kanban shows each card in its lane and status, and the drawer shows its th
     timeout: 5_000,
   });
 });
+
+test("a reply draft survives a new entry on the open card", async () => {
+  const card = await question("Pick the API version", ["v1", "v2"]);
+  await page.goto(http());
+  await page.getByRole("radio", { name: /Kanban/ }).click();
+  await page.getByRole("button", { name: /Pick the API version/ }).click();
+  const reply = page.getByRole("textbox", { name: "Reply" });
+  await reply.fill("I prefer v2 because");
+
+  await main.call("comment", { card: card.id, text: "the mate adds a note" });
+  await page.getByRole("complementary").getByText("the mate adds a note").waitFor();
+  assert.equal(await reply.inputValue(), "I prefer v2 because");
+});
