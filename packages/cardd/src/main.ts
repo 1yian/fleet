@@ -1,10 +1,11 @@
 // cardd command line.
 //   cardd serve --db <file> [--listen <host:port>]
 //   cardd lane add <name> --db <file> --home <path> [--parent <lane>]   (prints the mate token)
+//   cardd project add <name> --db <file> --delivery <mode> [--capacity <n>]
 import { parseArgs } from "node:util";
 import { openDatabase } from "./db.ts";
 import { serve } from "./server.ts";
-import { addLane } from "./store.ts";
+import { addLane, addProject } from "./store.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -13,6 +14,8 @@ const { values, positionals } = parseArgs({
     listen: { type: "string", default: "127.0.0.1:7420" },
     home: { type: "string" },
     parent: { type: "string" },
+    delivery: { type: "string" },
+    capacity: { type: "string", default: "2" },
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
@@ -30,6 +33,13 @@ if (command === "serve") {
 ) {
   const lane = { name: rest[1], home: values.home };
   console.log(addLane(db, values.parent === undefined ? lane : { ...lane, parent: values.parent }));
+} else if (
+  command === "project" &&
+  rest[0] === "add" &&
+  rest[1] !== undefined &&
+  values.delivery !== undefined
+) {
+  addProject(db, { name: rest[1], delivery: values.delivery, capacity: Number(values.capacity) });
 } else {
   throw new Error(
     "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path>",

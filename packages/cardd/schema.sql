@@ -158,6 +158,11 @@ CREATE TABLE projects (
   capacity INTEGER NOT NULL DEFAULT 2 CHECK (capacity >= 0)
 ) STRICT;
 
+CREATE TABLE secrets (
+  name TEXT PRIMARY KEY,
+  value BLOB NOT NULL
+) STRICT;
+
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
   role TEXT NOT NULL CHECK (role IN ('mate', 'worker')),

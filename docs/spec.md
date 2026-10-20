@@ -318,7 +318,7 @@ The registry is a table in `cardd`. All hosts can read it.
 | `lane` | The lane. |
 | `card` | The card of a worker. Empty for mates. |
 | `host` | The host. |
-| `token` | A secret that the session uses to connect. Dispatch issues it for one attempt. It stops working when that attempt ends or is replaced. |
+| `token` | A secret that the session uses to connect. Dispatch issues it for one attempt. It stops working when that attempt ends or is replaced. `cardd` derives it from the session ID with a key that only `cardd` holds, so a dispatch retry gets the same token and `cardd` stores no token. |
 | `state` | See [section 8](#8-sessions). |
 | `low_water` | The highest entry ID below which every delivery record for this session is Confirmed. See [section 9.4](#94-delivery-records-and-recovery). |
 
@@ -747,7 +747,7 @@ Worker reports in a second mate's lane go only to that second mate. Main does no
 
 ### 11.3 Script command
 
-`fleet note <card> "<text>"` adds a note entry to a card. Scripts on cron use it to record their actions on a standing card.
+`fleet note <card> "<text>"` adds a note entry to a card. Scripts on cron use it to record their actions on a standing card. Scripts reach `cardd` with `POST /call` and a session token. The `run_long` wrapper uses the same path to post a job result.
 
 ## 12. Extension behavior
 

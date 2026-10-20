@@ -1,6 +1,6 @@
 // Reads and writes cards.db. A mate's session ID is its lane name. Rows leave the database as JSON built by SQLite and
 // are checked against the protocol schemas, so the types match the wire.
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   CardSchema,
@@ -36,8 +36,17 @@ export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.a
 const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'card', a.card,
   'live', json(iif(s.role = 'mate' OR a.state IN ('starting', 'active'), 'true', 'false')))`;
 
-const hash = (token: string): string => createHash("sha256").update(token).digest("hex");
-const newToken = (): string => randomBytes(32).toString("base64url");
+export const hash = (token: string): string => createHash("sha256").update(token).digest("hex");
+
+/** The token of a session: the HMAC of its ID under the database's key. The same ID gives the same token. */
+export function tokenFor(db: DatabaseSync, session: string): string {
+  db.prepare("INSERT OR IGNORE INTO secrets (name, value) VALUES ('token-key', ?)").run(
+    randomBytes(32),
+  );
+  const key = db.prepare("SELECT value FROM secrets WHERE name = 'token-key'").get()?.["value"];
+  if (!(key instanceof Uint8Array)) throw new Error("the token key is missing");
+  return createHmac("sha256", key).update(session).digest("base64url");
+}
 
 /** Runs a query whose one column `j` is JSON, and parses each row. */
 export function json(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): unknown[] {
@@ -69,8 +78,8 @@ export function addLane(
   db: DatabaseSync,
   lane: { name: string; home: string; parent?: string },
 ): string {
-  const token = newToken();
-  transaction(db, () => {
+  const token = transaction(db, () => {
+    const token = tokenFor(db, lane.name);
     db.prepare("INSERT INTO lanes (name, home, parent) VALUES (?, ?, ?)").run(
       lane.name,
       lane.home,
@@ -79,8 +88,20 @@ export function addLane(
     db.prepare(
       "INSERT INTO sessions (id, role, lane, host, token_hash, state) VALUES (?, 'mate', ?, '', ?, 'exited')",
     ).run(lane.name, lane.name, hash(token));
+    return token;
   });
   return token;
+}
+
+export function addProject(
+  db: DatabaseSync,
+  project: { name: string; delivery: string; capacity: number },
+): void {
+  db.prepare("INSERT INTO projects (name, delivery, capacity) VALUES (?, ?, ?)").run(
+    project.name,
+    project.delivery,
+    project.capacity,
+  );
 }
 
 export function sessionByToken(db: DatabaseSync, token: string): Session | undefined {
@@ -171,33 +192,6 @@ export function workerOf(db: DatabaseSync, card: number): string | undefined {
     .get(card);
   const id = row?.["id"];
   return typeof id === "string" ? id : undefined;
-}
-
-/** Creates an attempt and its worker session in one transaction (spec section 6.9). */
-export function beginAttempt(
-  db: DatabaseSync,
-  card: Card,
-  host: string,
-): { session: string; token: string } {
-  if (workerOf(db, card.id) !== undefined)
-    throw new Error(`c-${String(card.id)} already has a live attempt`);
-  const token = newToken();
-  const now = Date.now();
-  const n = Number(
-    db.prepare("SELECT count(*) + 1 AS n FROM attempts WHERE card = ?").get(card.id)?.["n"],
-  );
-  const session = `c-${String(card.id)}-a${String(n)}`;
-  const { lastInsertRowid } = db
-    .prepare(
-      `INSERT INTO attempts (card, n, host, state, created_at, updated_at)
-       VALUES (?, ?, ?, 'starting', ?, ?)`,
-    )
-    .run(card.id, n, host, now, now);
-  db.prepare(
-    `INSERT INTO sessions (id, role, lane, attempt, host, token_hash, state)
-     VALUES (?, 'worker', ?, ?, ?, ?, 'starting')`,
-  ).run(session, card.lane, lastInsertRowid, host, hash(token));
-  return { session, token };
 }
 
 export type SessionState = "idle" | "running" | "waiting" | "exited" | "lost";
