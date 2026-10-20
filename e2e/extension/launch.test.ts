@@ -23,11 +23,14 @@ let h: Harness;
 let lab: HerdrLab;
 let config: string;
 let cleo: Session;
+let token: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
+  // 1 token in 64 begins with "-", and main's does here. Pi must read it as the token, not as an option.
+  cardd.dashTokens(["mate:main"]);
   h = await Harness.start();
   const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
-  const token = cardd.addLane("main", undefined, home);
+  token = cardd.addLane("main", undefined, home);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   config = mkdtempSync(join(tmpdir(), "fleet-config-"));
   const lane = { url: cardd.url, token, home, args: h.piArgs() };
@@ -70,6 +73,7 @@ async function cleoAsks(title: string): Promise<void> {
 }
 
 test("fleet up starts the mate in its own workspace once, and again on its own conversation", async () => {
+  assert.match(token, /^-/);
   assert.equal(up(), "main: started in fleet-main\n");
   await cleoAsks("Ship the scrollbar fix");
   await h.waitForCall(0, "mate", START_WAIT_MS);

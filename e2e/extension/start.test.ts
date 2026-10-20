@@ -3,9 +3,11 @@
 // task at once. Dispatch therefore looks at the worker's pane, so the mate is
 // not held while the worker works.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import {
   lastUser,
+  launchArgsOf,
   mateConnected,
   startDispatchLab,
   stopDispatchLab,
@@ -97,4 +99,34 @@ test("a worker that starts but never connects goes back to its mate, and dispatc
   assert.equal(toolResults(turns).at(-1), "Dispatched c-1-a1 on local, branch c-1-a1.");
   const woken = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.match(lastUser(woken) ?? "", /worker never connected/);
+});
+
+test("a worker whose token begins with a dash starts on its task", async () => {
+  await stopDispatchLab(parts);
+  // 1 token in 64 begins with "-", and this worker's does. Pi must read it as the token, not as an option.
+  parts = await startDispatchLab({ dashTokens: ["worker:c-1-a1"] });
+  const { h, mate } = parts;
+  const card = {
+    title: "Users see one scrollbar",
+    name: "one-scrollbar",
+    kind: "ship",
+    project: "site",
+  };
+  h.onModel(() => ({ tool: "card_new", args: card }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix it" } }), "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  const pr = "https://github.com/acme/web/pull/1";
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green", pr } }), "worker");
+  await mateConnected(h);
+  mate.prompt("ship the scrollbar fix");
+
+  const first = await h.waitForCall(0, "worker", WORKER_WAIT_MS);
+  assert.equal(lastUser(first), "[fleet] main on c-1: fix it");
+  const woken = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assert.equal(
+    lastUser(woken),
+    "[fleet] c-1 done: PR green (re your comment: fix it) (card now needs-you)",
+  );
+  const launched = readFileSync(launchArgsOf(h), "utf8").split("\n");
+  assert.match(launched.find((arg) => arg.startsWith("--fleet-token=")) ?? "", /^--fleet-token=-/);
 });

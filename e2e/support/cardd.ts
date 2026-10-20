@@ -1,10 +1,12 @@
 // Runs a real cardd process on a temporary database, and connects sessions to
 // it the way the fleet extension does.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import {
   BoardSchema,
   check,
@@ -53,6 +55,24 @@ export class Cardd {
     seed?.(cardd.db);
     await cardd.boot();
     return cardd;
+  }
+
+  /**
+   * Gives cardd a token key under which each listed session's token begins with "-", as 1 token in
+   * 64 does. A session is "<role>:<name>", such as "mate:main". Call it before cardd hands out a token.
+   * A test still checks that the token it got begins with "-".
+   */
+  dashTokens(sessions: readonly string[]): void {
+    for (let seed = 0; ; seed += 1) {
+      const key = createHash("sha256").update(String(seed)).digest();
+      const token = (session: string): string =>
+        createHmac("sha256", key).update(session).digest("base64url");
+      if (!sessions.every((session) => token(session).startsWith("-"))) continue;
+      const db = new DatabaseSync(this.db);
+      db.prepare("INSERT INTO secrets (name, value) VALUES ('token-key', ?)").run(key);
+      db.close();
+      return;
+    }
   }
 
   /** Adds a lane with the cardd command line. Returns the mate's token. */

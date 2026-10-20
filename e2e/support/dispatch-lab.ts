@@ -30,17 +30,20 @@ export interface DispatchLab {
 /** The file where the lab's worker launches record their arguments. */
 export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
 
-/** Variations of the lab: cardd's environment, and extra arguments for every worker's Pi. */
+/** Variations of the lab: cardd's environment, sessions whose tokens begin with "-", and extra arguments for every worker's Pi. */
 export interface LabOptions {
   readonly cardd?: Record<string, string>;
+  readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
 }
 
 export async function startDispatchLab({
   cardd: carddEnv,
+  dashTokens = [],
   workerArgs = [],
 }: LabOptions = {}): Promise<DispatchLab> {
   const cardd = await Cardd.start(carddEnv);
+  if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
   const mainToken = cardd.addLane("main", undefined, home);
   const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
