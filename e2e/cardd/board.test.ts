@@ -94,6 +94,59 @@ test("a page from another origin cannot act on the board, read it, or watch it",
   assert.equal((await view()).questions.length, 1);
 });
 
+test("a request that names a host other than cardd's own address is refused, even from its own page", async () => {
+  const { card, revision, asks } = await twoQuestions();
+  const action = { card, revision, action: { kind: "answer", ask: asks[0], choice: "v1" } };
+  const port = base().port;
+  const host = `evil.example:${port}`;
+  const rebound = { host, origin: `http://${host}` };
+
+  assert.equal((await send("/api/board", "GET", { host })).status, 403);
+  assert.equal((await send(`/api/card/${String(card)}`, "GET", { host })).status, 403);
+  assert.equal((await send("/", "GET", { host })).status, 403);
+  assert.equal((await send("/api/action", "POST", { ...json, ...rebound }, action)).status, 403);
+  assert.equal((await view()).questions.length, 2);
+
+  const upgrade = (headers: Record<string, string>): Promise<"opened" | "refused"> =>
+    new Promise((resolve) => {
+      const req = request(new URL("/live", base()), {
+        headers: {
+          connection: "Upgrade",
+          upgrade: "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+          ...headers,
+        },
+      });
+      req.on("upgrade", (_response, socket) => {
+        socket.destroy();
+        resolve("opened");
+      });
+      req.on("error", () => {
+        resolve("refused");
+      });
+      req.end();
+    });
+  assert.equal(await upgrade(rebound), "refused");
+  assert.equal(await upgrade({ host: `127.0.0.1:${port}` }), "opened");
+
+  const own = await send("/api/action", "POST", { ...json, host: `127.0.0.1:${port}` }, action);
+  assert.equal(own.status, 200);
+});
+
+test("a name given with --hostname reaches the board, and no other name does", async () => {
+  await cardd.stop();
+  cardd = await Cardd.start({}, ["--hostname", "Board.Example"]);
+  const port = base().port;
+  const reach = async (host: string): Promise<number> =>
+    (await send("/api/board", "GET", { host })).status;
+
+  assert.equal(await reach(`board.example:${port}`), 200);
+  assert.equal(await reach(`127.0.0.1:${port}`), 200);
+  assert.equal(await reach(`other.example:${port}`), 403);
+  assert.equal(await reach("board.example"), 403);
+});
+
 test("an answer goes to the question it names, and a closed question is refused", async () => {
   const { card, asks } = await twoQuestions();
   const [first = -1, second = -1] = asks;

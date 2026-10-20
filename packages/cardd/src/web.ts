@@ -29,12 +29,22 @@ function readBody(request: IncomingMessage): Promise<string> {
 }
 
 export class Web {
-  /** A request with an Origin header must come from the page that cardd itself serves. */
-  static sameOrigin(request: IncomingMessage): boolean {
+  private readonly hosts = new Set<string>();
+
+  /** The only host:port names that reach the board: cardd's listen address, and the extra names the captain gave. */
+  allow(hosts: readonly string[]): void {
+    for (const host of hosts) this.hosts.add(host.toLowerCase());
+  }
+
+  /** A board request must name an allowed host, and its Origin, when present, must be an allowed origin. */
+  permits(request: IncomingMessage): boolean {
+    const host = request.headers.host?.toLowerCase();
+    if (host === undefined || !this.hosts.has(host)) return false;
     const origin = request.headers.origin;
     if (origin === undefined) return true;
     try {
-      return new URL(origin).host === request.headers.host;
+      const url = new URL(origin);
+      return url.protocol === "http:" && this.hosts.has(url.host);
     } catch {
       return false;
     }
@@ -66,8 +76,8 @@ export class Web {
       response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
     };
     try {
-      if (!Web.sameOrigin(request)) {
-        json(403, { ok: false, error: "cardd serves the board only to its own origin" });
+      if (!this.permits(request)) {
+        json(403, { ok: false, error: "cardd serves the board only to its own address" });
         return;
       }
       const value = await this.route(request);

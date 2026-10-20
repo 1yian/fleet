@@ -200,6 +200,7 @@ export async function serve(
   port: number,
   timing: Timings,
   files?: string,
+  hostnames: readonly string[] = [],
 ): Promise<string> {
   // Convergent start: no session is connected yet. Live sessions reconnect and become idle.
   db.prepare(
@@ -220,7 +221,7 @@ export async function serve(
     const target =
       path === "/session"
         ? sessions
-        : path === "/live" && Web.sameOrigin(request)
+        : path === "/live" && hub.web.permits(request)
           ? boards
           : undefined;
     if (target === undefined) socket.destroy();
@@ -239,5 +240,6 @@ export async function serve(
     throw new Error("cardd binds to the Tailscale address, never to every interface");
   }
   const name = host.includes(":") ? `[${host}]` : host;
+  hub.web.allow([name, ...hostnames].map((each) => `${each}:${String(address.port)}`));
   return `ws://${name}:${String(address.port)}/session`;
 }
