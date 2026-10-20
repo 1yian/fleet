@@ -26,6 +26,14 @@ import type { Harness, Pi } from "../support/harness.ts";
 import type { HerdrLab } from "../support/herdr.ts";
 
 const PR = "https://github.com/acme/web/pull/1";
+
+/**
+ * A restart returns once Pi shows in the pane, as a first dispatch does. herdr can still hold the dead
+ * worker's agent name for a few seconds after the worker died, up to 4 s on CI, and refuses to start a
+ * Pi under it until then. Without the quick retry, a refused start cost a 10 s wait.
+ */
+const RESTART_WAIT_MS = 8000;
+
 let parts: DispatchLab;
 let h: Harness;
 let lab: HerdrLab;
@@ -415,11 +423,16 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "restarted" }), "mate");
+  let asked = 0;
+  let returned = 0;
+  h.onModel(() => {
+    asked = Date.now();
+    return { tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } };
+  }, "mate");
+  h.onModel(() => {
+    returned = Date.now();
+    return { text: "restarted" };
+  }, "mate");
   // The worker waits on a long job, so it ends its run without telling the mate anything.
   h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
   h.onModel(() => ({ text: "waiting for the job" }), "worker");
@@ -443,6 +456,10 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   mate.prompt("the worker died; restart it");
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "Restarted c-1-a1 on local on its own session, branch c-1-a1.");
+  assert.ok(
+    returned - asked < RESTART_WAIT_MS,
+    `the restart held the mate for ${String(returned - asked)} ms`,
+  );
   const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
   assert.equal(
     lastUser(resumed),
