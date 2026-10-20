@@ -36,7 +36,8 @@ beforeEach(async () => {
   parts = await startDispatchLab();
   ({ h, lab, clone, mate, home } = parts);
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await parts.lab.printIfFailed(t);
   await stopDispatchLab(parts);
 });
 

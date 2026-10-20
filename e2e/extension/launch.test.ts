@@ -34,7 +34,8 @@ beforeEach(async () => {
   writeFileSync(join(config, "main.json"), JSON.stringify(lane));
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await lab.printIfFailed(t);
   // Stop everything even if one part fails, so no process outlives the test.
   const stopped = await Promise.allSettled([cleo.close(), lab.stop(), h.stop(), cardd.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");

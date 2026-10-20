@@ -26,7 +26,8 @@ let parts: DispatchLab;
 beforeEach(async () => {
   parts = await startDispatchLab();
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await parts.lab.printIfFailed(t);
   await stopDispatchLab(parts);
 });
 
