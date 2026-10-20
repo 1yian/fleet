@@ -2,6 +2,7 @@
 // host step first looks for its own result by the names that derive from the
 // attempt ID, so a retry after a lost connection never starts a second worker.
 import { check, OPS } from "@fleet/protocol";
+import { fleetArgs } from "./fleet-args.ts";
 import { field, herdr, onHost, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
 import type { Link } from "./link.ts";
@@ -130,14 +131,6 @@ export async function dispatch(
       ? `c-${String(request.card)} is already running as ${where}.`
       : `Found ${where} already starting.`;
   }
-  const fleetArgs = [
-    "--fleet-url",
-    launch.url,
-    "--fleet-token",
-    plan.token,
-    "--fleet-role",
-    "worker",
-  ];
   await startAgent(
     request.host,
     pane,
@@ -154,7 +147,8 @@ export async function dispatch(
         String(READY_WAIT_MS),
         "--",
       ],
-      [...fleetArgs, "--session-id", plan.session, ...launch.piArgs],
+      fleetArgs({ url: launch.url, token: plan.token, role: "worker" }),
+      ["--session-id", plan.session, ...launch.piArgs],
     ].flat(),
   );
   if (!plan.active) return `Dispatched ${where}, branch ${plan.branch}.`;

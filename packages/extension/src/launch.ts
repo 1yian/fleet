@@ -13,6 +13,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fleetArgs } from "./fleet-args.ts";
 import { field, herdr as herdrOn, piRunning, records, rootPane } from "./host.ts";
 
 const EXTENSION = fileURLToPath(new URL("./index.ts", import.meta.url));
@@ -52,7 +53,7 @@ function readLane(name: string): Lane {
 
 /** Runs the lane's mate in this terminal until it exits. */
 function runMate(lane: Lane, extra: readonly string[]): number {
-  const fleet = ["--fleet-url", lane.url, "--fleet-token", lane.token, "--fleet-role", "mate"];
+  const fleet = fleetArgs({ url: lane.url, token: lane.token, role: "mate" });
   // Mates also get /calm (docs/calm.md). Workers do not.
   const args = ["-e", EXTENSION, "-e", CALM, ...fleet, "--continue", ...lane.args, ...extra];
   const env = {

@@ -116,7 +116,9 @@ test("a dispatch whose connection drops after the worker started finds it, and a
   // herdr's answer was lost, but the pane shows that Pi started.
   assert.equal(results.at(-2), "Dispatched c-1-a1 on flaky, branch c-1-a1.");
   const launched = readFileSync(launchArgs(), "utf8").split("\n");
-  const token = launched[launched.indexOf("--fleet-token") + 1];
+  const token = launched
+    .find((arg) => arg.startsWith("--fleet-token="))
+    ?.slice("--fleet-token=".length);
   assert.ok(token !== undefined && token !== "", "the worker was launched without a token");
   for (const result of results) {
     assert.ok(!result.includes(token), "a tool result carries the worker token");
