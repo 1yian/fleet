@@ -85,9 +85,11 @@ export class Pi {
 
 export class Harness {
   readonly dir = mkdtempSync(join(tmpdir(), "fleet-e2e-"));
+  /** Model calls of the default agent. Other agents are in `callsOf`. */
   readonly calls: Turn[][] = [];
+  private readonly agentCalls = new Map<string, Turn[][]>();
   readonly events: JsonRecord[] = [];
-  private readonly handlers: ModelHandler[] = [];
+  private readonly handlers = new Map<string, ModelHandler[]>();
   private readonly pis: Pi[] = [];
   private probe: WebSocket | undefined;
   private url = "";
@@ -116,9 +118,34 @@ export class Harness {
     return harness;
   }
 
-  /** Queues the answer to the next model call. Unqueued calls answer "ok". */
-  onModel(handler: ModelHandler): void {
-    this.handlers.push(handler);
+  /** Queues the answer to an agent's next model call. Unqueued calls answer "ok". */
+  onModel(handler: ModelHandler, agent = "default"): void {
+    this.handlers.set(agent, [...(this.handlers.get(agent) ?? []), handler]);
+  }
+
+  callsOf(agent: string): Turn[][] {
+    return agent === "default" ? this.calls : (this.agentCalls.get(agent) ?? []);
+  }
+
+  /** Pi arguments that isolate a Pi from the user's setup and give it the fake model. */
+  piArgs(): string[] {
+    return [
+      ["--offline", "--no-approve", "--no-extensions", "--no-skills", "--no-prompt-templates"],
+      ["--no-themes", "--no-context-files", "--no-mcp", "--no-builtin-tools"],
+      ["-e", join(SUPPORT, "fake-model.ts"), "--provider", "fake", "--model", "scripted"],
+      ["--session-dir", join(this.dir, "sessions")],
+    ].flat();
+  }
+
+  /** The environment that any Pi using this harness's fake model needs. */
+  piEnv(agent: string): Record<string, string> {
+    return {
+      PI_CODING_AGENT_DIR: join(this.dir, "agent"),
+      PI_SKIP_VERSION_CHECK: "1",
+      PI_TELEMETRY: "0",
+      FLEET_CONTROL_URL: this.url,
+      FLEET_FAKE_AGENT: agent,
+    };
   }
 
   /** Starts Pi with the fake model and the probe, plus any extra extensions. */
@@ -132,12 +159,9 @@ export class Harness {
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(workDir, { recursive: true });
     const args = [
-      ["--mode", "rpc", "--offline", "--no-approve", "--no-extensions", "--no-skills"],
-      ["--no-prompt-templates", "--no-themes", "--no-context-files", "--no-mcp"],
-      ["--no-builtin-tools", "-e", join(SUPPORT, "fake-model.ts"), "-e", join(SUPPORT, "probe.ts")],
+      ["--mode", "rpc", ...this.piArgs(), "-e", join(SUPPORT, "probe.ts")],
       extensions.flatMap((path) => ["-e", path]),
-      ["--provider", "fake", "--model", "scripted"],
-      ["--session-dir", join(this.dir, "sessions"), "--session-id", sessionId],
+      ["--session-id", sessionId],
     ].flat();
     const child = spawn(PI_BIN, args, {
       cwd: workDir,
@@ -178,8 +202,13 @@ export class Harness {
     return poll(() => this.events.filter(match)[n - 1], what);
   }
 
-  async waitForCall(index: number): Promise<Turn[]> {
-    return poll(() => this.calls[index], `model call ${String(index)}`);
+  /** Waits for an agent's model call. A worker that herdr starts cold can take longer, so the wait can be raised. */
+  async waitForCall(index: number, agent = "default", waitMs = WAIT_MS): Promise<Turn[]> {
+    return poll(
+      () => this.callsOf(agent)[index],
+      `model call ${String(index)} of ${agent}`,
+      waitMs,
+    );
   }
 
   /** The fleet entry IDs in a Pi session file, in file order. */
@@ -204,15 +233,18 @@ export class Harness {
 
   private async answerModel(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const turns = toTurns(parseRecord(await readBody(request)));
-    this.calls.push(turns);
-    const handler = this.handlers.shift() ?? (() => ({ text: "ok" }));
+    const header = request.headers["x-fake-agent"];
+    const agent = typeof header === "string" ? header : "default";
+    if (agent === "default") this.calls.push(turns);
+    else this.agentCalls.set(agent, [...this.callsOf(agent), turns]);
+    const handler = this.handlers.get(agent)?.shift() ?? (() => ({ text: "ok" }));
     const move = await handler(turns);
     response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(move));
   }
 }
 
-async function poll<T>(read: () => T | undefined, what: string): Promise<T> {
-  const deadline = Date.now() + WAIT_MS;
+async function poll<T>(read: () => T | undefined, what: string, waitMs = WAIT_MS): Promise<T> {
+  const deadline = Date.now() + waitMs;
   for (;;) {
     const value = read();
     if (value !== undefined) return value;

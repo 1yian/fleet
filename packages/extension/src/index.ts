@@ -1,19 +1,43 @@
-// The fleet Pi extension. Dispatch starts each session with FLEET_URL,
-// FLEET_TOKEN, and FLEET_ROLE (worker or mate). Without all three, or with any
-// other role, the extension does nothing.
+// The fleet Pi extension. Dispatch starts each worker with --fleet-url,
+// --fleet-token, and --fleet-role. FLEET_URL, FLEET_TOKEN, and FLEET_ROLE work
+// too, for mates started by hand. Without a URL, a token, and a role of worker
+// or mate, the extension does nothing.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Link } from "./link.ts";
+import { registerMate } from "./mate.ts";
 import { WorkerRun } from "./worker.ts";
 
-export default function fleet(pi: ExtensionAPI): void {
-  const url = process.env["FLEET_URL"];
-  const token = process.env["FLEET_TOKEN"];
-  const role = process.env["FLEET_ROLE"];
-  if (url === undefined || token === undefined || (role !== "worker" && role !== "mate")) return;
-  const injected = new Set<number>();
-  let sessionFile: string | undefined;
+interface Config {
+  readonly url: string;
+  readonly token: string;
+  readonly role: "worker" | "mate";
+}
 
+function config(pi: ExtensionAPI): Config | undefined {
+  const value = (flag: string, env: string): string | undefined => {
+    const fromFlag = pi.getFlag(flag);
+    return typeof fromFlag === "string" && fromFlag !== "" ? fromFlag : process.env[env];
+  };
+  const url = value("fleet-url", "FLEET_URL");
+  const token = value("fleet-token", "FLEET_TOKEN");
+  const role = value("fleet-role", "FLEET_ROLE");
+  if (url === undefined || token === undefined || (role !== "worker" && role !== "mate"))
+    return undefined;
+  return { url, token, role };
+}
+
+function piArgs(): string[] {
+  const parsed: unknown = JSON.parse(process.env["FLEET_PI_ARGS"] ?? "[]");
+  return Array.isArray(parsed) ? parsed.filter((arg) => typeof arg === "string") : [];
+}
+
+function start(
+  pi: ExtensionAPI,
+  { url, token, role }: Config,
+  sessionFile: string | undefined,
+): void {
+  const injected = new Set(idsInSessionFile(sessionFile));
   const link = new Link({
     url,
     token,
@@ -41,12 +65,9 @@ export default function fleet(pi: ExtensionAPI): void {
   });
   const worker = role === "worker" ? new WorkerRun(link) : undefined;
   worker?.register(pi);
+  if (role === "mate")
+    registerMate(pi, link, { url: process.env["FLEET_WORKER_URL"] ?? url, piArgs: piArgs() });
 
-  pi.on("session_start", (_event, ctx) => {
-    sessionFile = ctx.sessionManager.getSessionFile();
-    for (const id of idsInSessionFile(sessionFile)) injected.add(id);
-    link.start();
-  });
   pi.on("session_shutdown", () => {
     link.stop();
   });
@@ -59,5 +80,19 @@ export default function fleet(pi: ExtensionAPI): void {
   });
   pi.on("agent_settled", () => {
     link.activity("idle");
+  });
+  link.start();
+}
+
+export default function fleet(pi: ExtensionAPI): void {
+  pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
+  pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
+  pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
+  let started = false;
+  pi.on("session_start", (_event, ctx) => {
+    const found = config(pi);
+    if (started || found === undefined) return;
+    started = true;
+    start(pi, found, ctx.sessionManager.getSessionFile());
   });
 }

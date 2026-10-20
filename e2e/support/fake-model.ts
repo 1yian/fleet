@@ -44,7 +44,10 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
 const respond: FauxResponseFactory = async (context, options) => {
   const init: RequestInit = {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-fake-agent": process.env["FLEET_FAKE_AGENT"] ?? "default",
+    },
     body: JSON.stringify({ messages: context.messages }),
   };
   if (options?.signal !== undefined) init.signal = options.signal;

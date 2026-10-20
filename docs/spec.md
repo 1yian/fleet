@@ -1377,11 +1377,15 @@ The design review of 2026-10-10 to 2026-10-12 built a scratch prototype: Pi sess
 - A `cardd` restart does not repeat a message that the worker already holds.
 - The run-end check: one nudge, then `stopped` with the worker's last message. An abort files "stopped from the pane".
 
+`e2e/extension/dispatch.test.ts` runs a mate Pi that dispatches a worker Pi into an isolated herdr lab session. It shows these results:
+
+- `herdr worktree create` gives each attempt its own worktree and branch. `herdr agent start` starts Pi there with the fleet flags, and refuses a pane that is not at a shell prompt.
+- Cutover test 8: when the connection drops after the worker started, the retry finds the same attempt. There is one worktree, one agent, and one task message.
+
 ### 26.3 Not yet proven
 
 - Delivery between maverick and P620 over Tailscale.
 - `herdr machine add` for watching panes on both hosts.
-- `herdr worktree create` as a replacement for treehouse.
 
 The first end-to-end tests must cover these items.
 

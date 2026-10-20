@@ -32,3 +32,7 @@ export function messageText(message: JsonRecord): string {
     .map((block) => optionalString(block, "text") ?? "")
     .join("");
 }
+
+/** The objects in an array field. */
+export const records = (value: unknown): JsonRecord[] =>
+  Array.isArray(value) ? value.filter(isRecord) : [];
