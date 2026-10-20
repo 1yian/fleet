@@ -8,18 +8,31 @@ export interface CardFacts {
   readonly openAsks: number;
   readonly openDecisions: ReadonlySet<string>;
   readonly inPipeline: boolean;
+  /** Whether the card's grant covers merging (spec section 18). */
+  readonly mergeGranted: boolean;
+}
+
+/** Changes whose new status depends on nothing else. */
+const FIXED = {
+  dispatch: "working",
+  finding: "with-mate",
+  handback: "with-mate",
+  hold: "waiting",
+  merged: "merging",
+} as const satisfies Record<string, Status>;
+interface FixedChange {
+  readonly kind: keyof typeof FIXED;
 }
 
 export type Change =
-  | { readonly kind: "dispatch" }
-  | { readonly kind: "finding" }
+  | FixedChange
   | { readonly kind: "ask"; readonly toFirstMate: boolean }
-  | { readonly kind: "answer" }
-  | { readonly kind: "handback" }
-  | { readonly kind: "hold" }
+  | { readonly kind: "answer"; readonly merge?: "approve" | "changes" }
   | { readonly kind: "unhold"; readonly to: Status }
   | { readonly kind: "report"; readonly status: ReportStatus }
   | { readonly kind: "comment"; readonly resolves: string | undefined };
+
+const isFixed = (change: Change): change is FixedChange => Object.hasOwn(FIXED, change.kind);
 
 const CLOSED: ReadonlySet<Status> = new Set(["done", "dropped"]);
 const HANDOFFS: ReadonlySet<ReportStatus> = new Set([
@@ -35,18 +48,12 @@ export function nextStatus(card: CardFacts, change: Change): Status | Error {
 }
 
 function byKind(card: CardFacts, change: Change): Status {
+  if (isFixed(change)) return FIXED[change.kind];
   switch (change.kind) {
-    case "dispatch":
-      return "working";
-    case "finding":
-    case "handback":
-      return "with-mate";
     case "ask":
       return afterAsk(change.toFirstMate);
     case "answer":
-      return afterAnswer(card);
-    case "hold":
-      return "waiting";
+      return afterAnswer(card, change.merge);
     case "unhold":
       return change.to;
     case "report":
@@ -60,12 +67,16 @@ function byKind(card: CardFacts, change: Change): Status {
 const afterAsk = (toFirstMate: boolean): Status => (toFirstMate ? "with-first-mate" : "needs-you");
 
 /** The card returns to its mate once the captain has answered every open question. */
-const afterAnswer = (card: CardFacts): Status => (card.openAsks > 1 ? card.status : "with-mate");
+function afterAnswer(card: CardFacts, merge: "approve" | "changes" | undefined): Status {
+  if (merge !== undefined) return merge === "approve" ? "merging" : "working";
+  return card.openAsks > 1 ? card.status : "with-mate";
+}
 
 function afterReport(card: CardFacts, status: ReportStatus): Status {
   if (card.status === "needs-you" && card.openAsks > 0) return card.status;
   if (status === "in-review") return "in-review";
-  if (status === "done") return card.kind === "ship" ? "needs-you" : "with-mate";
+  if (status === "done")
+    return card.kind !== "ship" ? "with-mate" : card.mergeGranted ? "merging" : "needs-you";
   return HANDOFFS.has(status) ? "with-mate" : card.status;
 }
 
@@ -111,7 +122,7 @@ const ENTRY_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry) => void
 /** Open asks, open decision keys, and whether a pipeline runs, from a card's entries in order. */
 export function factsFrom(
   entries: readonly Entry[],
-): Omit<CardFacts, "status" | "kind"> & { readonly askIds: readonly string[] } {
+): Omit<CardFacts, "status" | "kind" | "mergeGranted"> & { readonly askIds: readonly string[] } {
   const tally: Tally = { asks: new Set(), decisions: new Set(), inPipeline: false };
   for (const entry of entries) ENTRY_EFFECTS[entry.kind]?.(tally, entry);
   return {

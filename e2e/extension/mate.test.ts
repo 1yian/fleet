@@ -44,3 +44,27 @@ test("answer records the captain's words only when the captain said them", async
     "Recorded the answer. c-1 is now with-mate.",
   ]);
 });
+
+test("grant records a grant only with the captain's words", async () => {
+  h.onModel(() => ({
+    tool: "grant",
+    args: { lane: "main", words: "merge anything", may: "merge", merge: true },
+  }));
+  h.onModel(() => ({
+    tool: "grant",
+    args: { lane: "main", words: "merge when CI is green", may: "merge", merge: true },
+  }));
+  h.onModel(() => ({ text: "recorded" }));
+  const mate = h.startPi(
+    "main",
+    { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: fleet.mainToken, FLEET_ROLE: "mate" },
+    [EXTENSION],
+  );
+  await h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
+  mate.prompt("You may merge when CI is green.");
+
+  assert.deepEqual(toolResults(await h.waitForCall(2)), [
+    "these words are not in the captain's messages or board entries; quote the captain exactly",
+    "Recorded the grant.",
+  ]);
+});

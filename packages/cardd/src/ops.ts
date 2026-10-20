@@ -1,10 +1,19 @@
 // The operations that sessions call (spec section 11). Each runs inside one
 // transaction and returns the sessions that have new entries to push.
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
+import {
+  check,
+  MERGE_OPTIONS,
+  OPS,
+  type Card,
+  type OpName,
+  type ReportStatus,
+} from "@fleet/protocol";
 import { answer, ask, handback, hold } from "./asks.ts";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
 import { applyChange } from "./change.ts";
+import { grant } from "./grants.ts";
+import { merge } from "./merge.ts";
 import type { Timings } from "./timing.ts";
 import {
   addCard,
@@ -12,6 +21,8 @@ import {
   cardEntries,
   getCard,
   listCards,
+  mainLane,
+  transaction,
   workerOf,
   type Session,
 } from "./store.ts";
@@ -56,7 +67,22 @@ function reportRoute(
   return { to: TO_MATE.has(status) ? [card.lane] : [] };
 }
 
-const HANDLERS: Record<OpName, Handler> = {
+/**
+ * A ship card that is done without a grant for merging waits for the captain's
+ * approval (spec section 7.5). The question skips main's filter; main gets one line.
+ */
+function askToMerge(db: DatabaseSync, card: Card): string[] {
+  if (card.kind !== "ship" || card.status !== "needs-you") return [];
+  const main = mainLane(db);
+  const to = main === card.lane ? [] : [main];
+  const body = `Merge ${card.pr ?? "the branch"} for c-${String(card.id)}: ${card.title}?`;
+  const fields = { options: [...MERGE_OPTIONS], merge: true, pr: card.pr };
+  addEntry(db, { card: card.id, author: "fleet", kind: "ask", body, fields }, to);
+  return to;
+}
+
+const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
+  grant,
   ask,
   answer,
   handback,
@@ -124,28 +150,32 @@ const HANDLERS: Record<OpName, Handler> = {
   report: (db, session, raw) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
+    if (args.pr !== undefined)
+      db.prepare("UPDATE cards SET pr = ? WHERE id = ?").run(args.pr, session.card);
     const card = getCard(db, session.card);
     const { to, re } = reportRoute(db, card, args.status);
     applyChange(db, card, { kind: "report", status: args.status });
-    const fields = { status: args.status, key: args.key, until: args.until, re };
+    const fields = { status: args.status, key: args.key, until: args.until, pr: args.pr, re };
     addEntry(
       db,
       { card: card.id, author: `worker:${session.id}`, kind: "report", body: args.text, fields },
       to,
     );
-    return { value: getCard(db, card.id), notify: to };
+    const merge = args.status === "done" ? askToMerge(db, getCard(db, card.id)) : [];
+    return { value: getCard(db, card.id), notify: [...to, ...merge] };
   },
 };
 
-/** Runs an operation for a session. Throws if the session's role may not call it. */
-export function runOp(
+/** Runs an operation for a session. Throws if the session's role may not call it. merge waits for gh. */
+export async function performOp(
   db: DatabaseSync,
   session: Session,
   op: OpName,
   args: unknown,
   timing: Timings,
-): Done {
+): Promise<Done> {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
-  return HANDLERS[op](db, session, args, timing);
+  if (op === "merge") return merge(db, session, args);
+  return transaction(db, () => HANDLERS[op](db, session, args, timing));
 }

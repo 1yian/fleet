@@ -2,7 +2,8 @@
 // ask from a second mate goes to main first (With first mate). Main answers from
 // the record, hands it back, or forwards it to the captain.
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card } from "@fleet/protocol";
+import { check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
+import { requireCaptainWords } from "./authority.ts";
 import { applyChange } from "./change.ts";
 import { factsFrom } from "./status.ts";
 import { addEntry, cardEntries, getCard, type Session } from "./store.ts";
@@ -23,16 +24,6 @@ function reachable(db: DatabaseSync, session: Session, id: number): { card: Card
   if (card.lane === session.lane) return { card, own: true };
   if (parentOf(db, card.lane) === session.lane) return { card, own: false };
   throw new Error(`c-${String(id)} belongs to lane ${card.lane}`);
-}
-
-/** Whether a captain entry on any card holds these words (a board comment or option click). */
-function captainWrote(db: DatabaseSync, words: string): boolean {
-  const squashed = words.replace(/\s+/g, " ").trim();
-  return (
-    db
-      .prepare("SELECT 1 FROM entries WHERE author = 'captain' AND instr(body, ?) > 0")
-      .get(squashed) !== undefined
-  );
 }
 
 function openAsk(db: DatabaseSync, card: Card): string {
@@ -67,16 +58,28 @@ export function answer(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.answer.args, raw);
   const { card, own } = reachable(db, session, args.card);
   const resolves = openAsk(db, card);
-  if (args.source !== "chat" && !captainWrote(db, args.words)) {
-    throw new Error(
-      "these words are not in the captain's messages or board entries; quote the captain exactly",
-    );
-  }
-  applyChange(db, card, { kind: "answer" });
+  requireCaptainWords(db, args.words, args.source);
+  const merge = mergeChoice(db, card, resolves, args.choice);
+  applyChange(db, card, merge === undefined ? { kind: "answer" } : { kind: "answer", merge });
   const to = own ? [] : [card.lane];
-  const fields = { resolves, source: args.source, by: `mate:${session.lane}` };
+  const fields = { resolves, source: args.source, by: `mate:${session.lane}`, choice: args.choice };
   addEntry(db, { card: card.id, author: "captain", kind: "answer", body: args.words, fields }, to);
   return { value: getCard(db, card.id), notify: to };
+}
+
+/** For a merge question, the captain's choice: approve or request changes. Undefined for other questions. */
+function mergeChoice(
+  db: DatabaseSync,
+  card: Card,
+  askId: string,
+  choice: string | undefined,
+): "approve" | "changes" | undefined {
+  const ask = cardEntries(db, card.id).find((entry) => String(entry.id) === askId);
+  if (ask?.fields["merge"] !== true) return undefined;
+  const [approve, changes] = MERGE_OPTIONS;
+  if (choice === approve) return "approve";
+  if (choice === changes) return "changes";
+  throw new Error(`a merge question needs the choice "${approve}" or "${changes}"`);
 }
 
 export function handback(db: DatabaseSync, session: Session, raw: unknown): Done {

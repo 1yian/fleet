@@ -14,10 +14,10 @@ import {
   type ServerMessage,
 } from "@fleet/protocol";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
-import { runCheck } from "./check.ts";
+import { readPullRequests, runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
-import { runOp } from "./ops.ts";
+import { performOp } from "./ops.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
 
 const CLOSE_BAD_MESSAGE = 4000;
@@ -56,23 +56,32 @@ class Hub {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly db: DatabaseSync;
   private readonly timing: Timings;
+  private checking = false;
 
   constructor(db: DatabaseSync, timing: Timings) {
     this.db = db;
     this.timing = timing;
   }
 
-  /** One pass of the timed check (spec section 13). Pushes the findings it wrote. */
+  /** One pass of the timed check (spec section 13): read PR state with gh, then check. Pushes the findings it wrote. */
   check(): void {
-    const notify = transaction(this.db, () => runCheck(this.db, Date.now(), this.timing));
-    for (const recipient of notify) this.flush(recipient, false);
+    if (this.checking) return;
+    this.checking = true;
+    void readPullRequests(this.db)
+      .then((prs) => {
+        const notify = transaction(this.db, () => runCheck(this.db, Date.now(), this.timing, prs));
+        for (const recipient of notify) this.flush(recipient, false);
+      })
+      .finally(() => {
+        this.checking = false;
+      });
   }
 
   /** Runs an operation, then pushes its new entries. Websocket calls and POST /call share it. */
-  perform(session: Session, op: string, args: unknown): Outcome {
+  async perform(session: Session, op: string, args: unknown): Promise<Outcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
-      const done = transaction(this.db, () => runOp(this.db, session, op, args, this.timing));
+      const done = await performOp(this.db, session, op, args, this.timing);
       for (const recipient of done.notify) this.flush(recipient, false);
       return { ok: true, value: done.value };
     } catch (error) {
@@ -94,12 +103,12 @@ class Hub {
         token = session === undefined ? undefined : message.token;
       } else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
       else if (message.t === "activity") setSessionState(this.db, live().id, message.state);
-      else
-        send(socket, {
-          t: "result",
-          id: message.id,
-          ...this.perform(live(), message.op, message.args),
+      else {
+        const id = message.id;
+        void this.perform(live(), message.op, message.args).then((outcome) => {
+          send(socket, { t: "result", id, ...outcome });
         });
+      }
     };
     socket.on("message", (data) => {
       try {
@@ -136,7 +145,7 @@ class Hub {
     }
     try {
       const body = check(HttpCallSchema, JSON.parse(await readBody(request)));
-      const outcome = this.perform(session, body.op, body.args);
+      const outcome = await this.perform(session, body.op, body.args);
       reply(outcome.ok ? 200 : 400, outcome);
     } catch (error) {
       reply(400, { ok: false, error: reason(error) });

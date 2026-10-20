@@ -119,7 +119,7 @@ CREATE TABLE grants (
   scope_branch TEXT,
   expires INTEGER,
   created_at INTEGER NOT NULL,
-  ended_at INTEGER,
+  ended_at INTEGER, merge INTEGER NOT NULL DEFAULT 0 CHECK (merge IN (0, 1)),
   CHECK ((lane IS NULL) <> (card IS NULL)),
   CHECK (scope_branch IS NULL OR scope_project IS NOT NULL)
 ) STRICT;

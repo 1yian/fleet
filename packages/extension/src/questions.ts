@@ -1,4 +1,4 @@
-// Mate tools for questions and holds (spec sections 11.2 and 17). answer checks
+// Mate tools for questions, holds, grants, and merges (spec sections 11.2, 17, 18, and 20.4). answer checks
 // the captain's words where it can see them: a user-role message in this mate's
 // own session file. Otherwise cardd looks for them in the captain's board entries.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,11 +15,20 @@ const card = (value: unknown): string => {
 };
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
+/** chat when the words are in this session's own user messages; otherwise cardd checks the record. */
+const sourceFrom =
+  (sessionFile: () => string | undefined) =>
+  (words: string): "chat" | "record" =>
+    captainSaid(sessionFile(), words) ? "chat" : "record";
+
 export function registerQuestions(
   pi: ExtensionAPI,
   link: Link,
   sessionFile: () => string | undefined,
 ): void {
+  /** chat when the words are in this session's own user messages; otherwise cardd checks the record. */
+  const sourceOf = (words: string): "chat" | "record" =>
+    captainSaid(sessionFile(), words) ? "chat" : "record";
   pi.registerTool({
     name: "ask",
     label: "Ask the captain",
@@ -36,12 +45,67 @@ export function registerQuestions(
     name: "answer",
     label: "Record the captain's answer",
     description: "Records the captain's exact words as the answer to the open question on a card.",
-    parameters: Type.Object({ card: CardId, words: Type.String({ minLength: 1 }) }),
+    parameters: Type.Object({
+      card: CardId,
+      words: Type.String({ minLength: 1 }),
+      choice: Type.Optional(
+        Type.String({ description: "For a merge question: Approve & merge, or Request changes" }),
+      ),
+    }),
     execute: async (_id, params) => {
-      const source = captainSaid(sessionFile(), params.words) ? "chat" : "record";
+      const source = sourceOf(params.words);
       return reply(
         `Recorded the answer. ${card(await link.call("answer", { ...params, source }))}`,
       );
+    },
+  });
+}
+
+/** grant and merge: both act on the captain's authority. */
+export function registerAuthority(
+  pi: ExtensionAPI,
+  link: Link,
+  sessionFile: () => string | undefined,
+): void {
+  const sourceOf = sourceFrom(sessionFile);
+  pi.registerTool({
+    name: "grant",
+    label: "Record a grant",
+    description:
+      "Sets a grant on a lane or a card with the captain's exact words. Never widen a grant by analogy. Set merge only when the words allow merging.",
+    parameters: Type.Object({
+      lane: Type.Optional(Type.String()),
+      card: Type.Optional(CardId),
+      words: Type.String({ minLength: 1 }),
+      may: Type.String({ minLength: 1, description: "What may happen without asking" }),
+      merge: Type.Boolean({ description: "Whether the grant covers merging" }),
+      limits: Type.Optional(Type.String()),
+      always_asks: Type.Optional(Type.String()),
+      project: Type.Optional(Type.String({ description: "Limit the grant to this project" })),
+      branch: Type.Optional(Type.String({ description: "Limit the grant to this target branch" })),
+      expires: Type.Optional(Type.String({ description: "ISO 8601 time with Z or an offset" })),
+    }),
+    execute: async (_id, { always_asks, expires, ...params }) => {
+      const args = {
+        ...params,
+        source: sourceOf(params.words),
+        ...(always_asks === undefined ? {} : { alwaysAsks: always_asks }),
+        ...(expires === undefined ? {} : { expires: parseUtc(expires) }),
+      };
+      await link.call("grant", args);
+      return reply("Recorded the grant.");
+    },
+  });
+  pi.registerTool({
+    name: "merge",
+    label: "Merge",
+    description:
+      "Merges a card's PR through the guarded path. It needs a grant, the captain's approval, or the captain's quoted words. It refuses red or pending checks.",
+    parameters: Type.Object({ card: CardId, words: Type.Optional(Type.String({ minLength: 1 })) }),
+    execute: async (_id, params) => {
+      const args =
+        params.words === undefined ? params : { ...params, source: sourceOf(params.words) };
+      return reply(`Merged. ${card(await link.call("merge", args))}`);
     },
   });
   pi.registerTool({

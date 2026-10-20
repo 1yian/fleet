@@ -6,6 +6,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { STATUSES } from "@fleet/protocol";
 import { loseSilentJobs } from "./attempts.ts";
 import { applyChange } from "./change.ts";
+import { readPullRequest, type PullRequest } from "./github.ts";
 import type { Change } from "./status.ts";
 import { addEntry, getCard, workerOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
@@ -206,13 +207,72 @@ function holdMatches(db: DatabaseSync, now: number): Match[] {
   });
 }
 
+/** The PRs of open cards, read with gh before the check's transaction. */
+export async function readPullRequests(db: DatabaseSync): Promise<Map<number, PullRequest>> {
+  const cards = rows(
+    db,
+    "SELECT id, pr FROM cards WHERE pr IS NOT NULL AND status NOT IN ('done', 'dropped')",
+  );
+  const read = await Promise.all(
+    cards.map(async (row) => {
+      const pr = await readPullRequest(String(row["pr"])).catch((error: unknown) => {
+        console.error(`timed check: ${String(error)}`);
+        return undefined;
+      });
+      return [Number(row["id"]), pr] as const;
+    }),
+  );
+  return new Map(read.flatMap(([card, pr]) => (pr === undefined ? [] : [[card, pr] as const])));
+}
+
+/** PR state (spec section 13.1): merged, closed without a merge, or red checks while Merging. */
+function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest>): Match[] {
+  return [...prs].flatMap(([card, pr]): Match[] => {
+    const row = db.prepare("SELECT lane, status FROM cards WHERE id = ?").get(card);
+    const lane = String(row?.["lane"]);
+    const status = String(row?.["status"]);
+    if (pr.state === "MERGED") {
+      const change: Change | undefined = status === "merging" ? undefined : { kind: "merged" };
+      return [
+        {
+          card,
+          lane,
+          condition: "pr-merged",
+          text: "PR merged; run cleanup",
+          ...(change === undefined ? {} : { change }),
+        },
+      ];
+    }
+    if (pr.state === "CLOSED")
+      return [
+        { card, lane, condition: "pr-closed", text: "PR closed without a merge", change: FINDING },
+      ];
+    if (status !== "merging" || pr.failed.length === 0) return [];
+    return [
+      {
+        card,
+        lane,
+        condition: "checks-failed",
+        text: `checks failed: ${pr.failed.join(", ")}`,
+        change: FINDING,
+      },
+    ];
+  });
+}
+
 /** Writes each new finding once, clears the ones whose condition stopped, and returns the sessions to push to. */
-export function runCheck(db: DatabaseSync, now: number, t: Timings): string[] {
+export function runCheck(
+  db: DatabaseSync,
+  now: number,
+  t: Timings,
+  prs: ReadonlyMap<number, PullRequest> = new Map(),
+): string[] {
   const matches = [
     ...workerMatches(db, now, t),
     ...reminderMatches(db, now, t),
     ...firstMateMatches(db, now, t),
     ...holdMatches(db, now),
+    ...prMatches(db, prs),
   ];
   const live = new Set(matches.map((match) => `${String(match.card)}/${match.condition}`));
   for (const open of rows(

@@ -34,6 +34,9 @@ const ReportParams = Type.Object({
   until: Type.Optional(
     Type.String({ description: "ISO 8601 UTC time like 2026-05-01T10:00:00Z, for paused" }),
   ),
+  pr: Type.Optional(
+    Type.String({ pattern: "^https://", description: "The PR URL, with done on a ship card" }),
+  ),
 });
 
 function untilMs(status: string, until: string | undefined): number | undefined {
@@ -82,7 +85,13 @@ export class WorkerRun {
       parameters: ReportParams,
       execute: async (_id, params) => {
         const until = untilMs(params.status, params.until);
-        const args = { status: params.status, text: params.text, key: params.key, until };
+        const args = {
+          status: params.status,
+          text: params.text,
+          key: params.key,
+          until,
+          pr: params.pr,
+        };
         const card = check(CardSchema, await this.link.call("report", args));
         this.latest = { status: params.status, until };
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;

@@ -28,6 +28,9 @@ export const REPORT_STATUSES = [
   "stopped",
 ] as const;
 
+/** The options of a merge question (spec section 7.5). */
+export const MERGE_OPTIONS = ["Approve & merge", "Request changes"] as const;
+
 const Status = Type.Enum(STATUSES);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const ReportStatus = Type.Enum(REPORT_STATUSES);
@@ -46,6 +49,7 @@ export const CardSchema = Type.Object({
   kind: CardKind,
   status: Status,
   revision: Type.Integer(),
+  pr: Nullable(Type.String()),
   intent: Type.String(),
   spec: Type.String(),
   createdAt: Type.Integer(),
@@ -103,6 +107,33 @@ export const OPS = {
       card: Type.Integer(),
       words: Type.String({ minLength: 1 }),
       source: Type.Enum(["chat", "board", "record"]),
+      choice: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    result: CardSchema,
+  },
+  grant: {
+    roles: ["mate"],
+    args: Type.Object({
+      lane: Type.Optional(Type.String()),
+      card: Type.Optional(Type.Integer()),
+      words: Type.String({ minLength: 1 }),
+      source: Type.Enum(["chat", "board", "record"]),
+      may: Type.String({ minLength: 1 }),
+      merge: Type.Boolean(),
+      limits: Type.Optional(Type.String()),
+      alwaysAsks: Type.Optional(Type.String()),
+      project: Type.Optional(Type.String()),
+      branch: Type.Optional(Type.String()),
+      expires: Type.Optional(Type.Integer()),
+    }),
+    result: Type.Object({ grant: Type.Integer() }),
+  },
+  merge: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      words: Type.Optional(Type.String({ minLength: 1 })),
+      source: Type.Optional(Type.Enum(["chat", "board", "record"])),
     }),
     result: CardSchema,
   },
@@ -168,6 +199,7 @@ export const OPS = {
       text: Type.String({ minLength: 1 }),
       key: Type.Optional(Key),
       until: Type.Optional(Type.Integer()),
+      pr: Type.Optional(Type.String({ pattern: "^https://" })),
     }),
     result: CardSchema,
   },
