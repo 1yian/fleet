@@ -36,6 +36,9 @@ let mainToken: string;
 let scratchDir: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
+  // 1 token in 64 begins with "-", and the worker's in the last test does. Pi must read each fleet
+  // flag's value as its value.
+  cardd.dashTokens(["mate:wt"]);
   h = await Harness.start();
   scratch = new Scratch();
   scratchDir = mkdtempSync(join(tmpdir(), "fleet-earlier-"));
@@ -43,7 +46,8 @@ beforeEach(async () => {
   ghost = await cardd.connect(cardd.addLane("ghost", "main"));
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await lab.printIfFailed(t);
   const stopped = await Promise.allSettled([ghost.close(), lab.stop(), h.stop(), cardd.stop()]);
   scratch.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
@@ -188,6 +192,7 @@ test("a worker in a worktree of the repo starts with only the extension it was g
   const wt = `${scratch.root}.worktrees/c-9-a1`;
   execFileSync("git", ["-C", scratch.root, "worktree", "add", "-q", "--detach", wt, "HEAD"]);
   const token = cardd.addLane("wt", "main");
+  assert.match(token, /^-/);
   const extension = join(scratch.root, "packages", "extension", "src", "index.ts");
   // A token can start with "-", so each fleet flag goes to Pi as --flag=value.
   const fleet = [`--fleet-url=${cardd.url}`, `--fleet-token=${token}`, "--fleet-role=mate"];

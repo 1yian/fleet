@@ -26,12 +26,16 @@ beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
   scratch = new Scratch();
+  // 1 token in 64 begins with "-", and cleo's does here. `fleet home add` must read it as the token.
+  cardd.dashTokens(["mate:cleo"]);
   main = await cardd.connect(cardd.addLane("main"));
   const token = cardd.addLane("cleo", "main");
+  assert.match(token, /^-/);
   scratch.addLane("cleo", { url: cardd.url, token, args: mateArgs(h) });
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await lab.printIfFailed(t);
   // Stop everything even if one part fails, so no process outlives the test.
   const stopped = await Promise.allSettled([main.close(), lab.stop(), h.stop(), cardd.stop()]);
   scratch.dispose();

@@ -52,7 +52,8 @@ beforeEach(async () => {
     FLEET_SUPERVISE_MS: "1000",
   });
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await lab.printIfFailed(t);
   const stopped = await Promise.allSettled([ghost.close(), lab.stop(), h.stop(), cardd.stop()]);
   here.dispose();
   p620.dispose();
