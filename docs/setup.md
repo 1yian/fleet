@@ -36,7 +36,7 @@ Run these once on the `cardd` host. `lane add` prints the mate's token.
 ```sh
 $CARDD lane add main --db ~/.fleet/cards.db --home ~/fleet-homes/main
 $CARDD lane add cleo --db ~/.fleet/cards.db --home /path/on/its/host --parent main
-$CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes --capacity 2 \
+$CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes \
   --clone maverick=/path/to/web --clone p620=/path/on/p620/web
 $CARDD grant add --db ~/.fleet/cards.db --lane main --project web --merge --words "<where the permission came from>"
 ```

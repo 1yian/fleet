@@ -42,7 +42,7 @@ async function question(title: string, options: string[]): Promise<Card> {
 
 /** A ship card on the lane of a second mate, with its worker connected. */
 async function shipped(title: string, task = "fix it") {
-  cardd.addProject("web", 1, { local: "/clones/web" });
+  cardd.addProject("web", { local: "/clones/web" });
   const mate = await cardd.connect(cardd.addLane("cleo", "main"));
   const args = { title, kind: "ship", project: "web" };
   const card = check(CardSchema, await mate.call("card.new", args));

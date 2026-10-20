@@ -154,9 +154,7 @@ CREATE TABLE projects (
   ),
   branch_prefix TEXT NOT NULL DEFAULT '',
   default_base TEXT NOT NULL DEFAULT 'main',
-  profile TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profile)),
-  capacity INTEGER NOT NULL DEFAULT 2 CHECK (capacity >= 0)
-) STRICT;
+  profile TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profile))) STRICT;
 
 CREATE TABLE secrets (
   name TEXT PRIMARY KEY,

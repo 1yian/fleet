@@ -97,7 +97,7 @@ test("requested changes with another question open end with the card back with i
 
 test("a lane grant for merging sends a done card to Merging, but only in its project", async () => {
   gh.setPr(PR, "OPEN", { ci: "pass" });
-  fleet.cardd.addProject("api", 1, { maverick: "/clones/api" });
+  fleet.cardd.addProject("api", { maverick: "/clones/api" });
   await grant("api");
   const outside = await newCard(fleet.main, "outside the grant");
   await done(outside);

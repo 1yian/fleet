@@ -1,4 +1,4 @@
-// Attempts, dispatch retries, replacement, capacity, and jobs (spec sections
+// Attempts, dispatch retries, replacement, and jobs (spec sections
 // 6.9, 6.10, and 11), against a real cardd.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
@@ -85,28 +85,26 @@ test("a lane cannot take the name of a worker session, before or after dispatch"
   assert.throws(() => fleet.cardd.addLane(c("-a1")), /cannot name a lane/);
 });
 
-test("a project at capacity refuses another attempt", async () => {
-  fleet.cardd.addProject("api", 1, { maverick: "/clones/api" });
-  const one = check(
-    CardSchema,
-    await fleet.main.call("card.new", { title: "one", kind: "ship", project: "api" }),
-  );
-  const two = check(
-    CardSchema,
-    await fleet.main.call("card.new", { title: "two", kind: "ship", project: "api" }),
-  );
-  await fleet.main.call("attempt.begin", { card: one.id, host: "maverick", task: "one" });
-
-  await assert.rejects(
-    fleet.main.call("attempt.begin", { card: two.id, host: "maverick", task: "two" }),
-    {
-      message: "project api is at capacity (1 workers)",
-    },
-  );
+test("a project takes any number of workers at once", async () => {
+  fleet.cardd.addProject("api", { maverick: "/clones/api" });
+  const sessions: string[] = [];
+  for (const title of ["one", "two", "three", "four", "five", "six"]) {
+    const each = check(
+      CardSchema,
+      await fleet.main.call("card.new", { title, kind: "ship", project: "api" }),
+    );
+    const begun = check(
+      OPS["attempt.begin"].result,
+      await fleet.main.call("attempt.begin", { card: each.id, host: "maverick", task: title }),
+    );
+    assert.equal(begun.resumed, false);
+    sessions.push(begun.session);
+  }
+  assert.equal(new Set(sessions).size, 6);
 });
 
 test("a clone registered for a host with a dot is found for that exact host", async () => {
-  fleet.cardd.addProject("api", 1, { "p620.tailnet": "/clones/api" });
+  fleet.cardd.addProject("api", { "p620.tailnet": "/clones/api" });
   const api = check(
     CardSchema,
     await fleet.main.call("card.new", { title: "one", kind: "ship", project: "api" }),

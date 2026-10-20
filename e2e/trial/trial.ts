@@ -28,7 +28,7 @@ writeFileSync(
 const cardd = await Cardd.start({}, ["--board", BOARD]);
 const token = cardd.addLane("main", undefined, home);
 const name = clone.split("/").at(-1) ?? "project";
-cardd.addProject(name, 2, { local: clone });
+cardd.addProject(name, { local: clone });
 const piArgs = ["-e", EXTENSION, "--model", model];
 const lab = await HerdrLab.start({ FLEET_PI_ARGS: JSON.stringify(piArgs) });
 
