@@ -9,7 +9,7 @@ import {
   type OpName,
   type ReportStatus,
 } from "@fleet/protocol";
-import { answer, ask, handback, hold } from "./asks.ts";
+import { answer, ask, handback, hold, openMergeAsk } from "./asks.ts";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
 import { applyChange } from "./change.ts";
 import { grant } from "./grants.ts";
@@ -72,7 +72,8 @@ function reportRoute(
  * approval (spec section 7.5). The question skips main's filter; main gets one line.
  */
 function askToMerge(db: DatabaseSync, card: Card): string[] {
-  if (card.kind !== "ship" || card.status !== "needs-you") return [];
+  if (card.kind !== "ship" || card.status !== "needs-you" || openMergeAsk(db, card) !== undefined)
+    return [];
   const main = mainLane(db);
   const to = main === card.lane ? [] : [main];
   const body = `Merge ${card.pr ?? "the branch"} for c-${String(card.id)}: ${card.title}?`;

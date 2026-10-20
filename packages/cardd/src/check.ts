@@ -18,6 +18,8 @@ interface Match {
   readonly text: string;
   /** The status change, if the finding moves the card. Reminders do not. */
   readonly change?: Change;
+  /** Whether a new finding may be written now. A finding that is already open stays open either way. */
+  readonly ready?: boolean;
 }
 
 /** A worker card in Working or In review, with its live attempt and session. */
@@ -98,13 +100,13 @@ function reminderTier(waited: number, at: readonly number[]): number {
   return passed < at.length || gap <= 0 ? passed : passed + Math.floor((waited - last) / gap);
 }
 
-/** Cards that wait on an idle mate (spec section 13.1): a reminder for each tier. */
+/** Cards that wait on their mate (spec section 13.1): a reminder for each tier, written while the mate is idle. */
 function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const waiting = rows(
     db,
-    `SELECT c.id AS card, c.lane AS lane, c.status AS status, max(c.updated_at,
+    `SELECT c.id AS card, c.lane AS lane, c.status AS status, m.state AS mate, max(c.updated_at,
        coalesce((SELECT max(created_at) FROM entries WHERE card = c.id AND author = 'mate:' || c.lane), 0)) AS since
-     FROM cards c JOIN sessions m ON m.id = c.lane AND m.role = 'mate' AND m.state = 'idle'
+     FROM cards c JOIN sessions m ON m.id = c.lane AND m.role = 'mate'
      WHERE c.status IN ('with-mate', 'merging')`,
   );
   return waiting.flatMap((row) => {
@@ -118,6 +120,7 @@ function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
         lane: String(row["lane"]),
         condition: `reminder-${String(tier)}`,
         text,
+        ready: row["mate"] === "idle",
       },
     ];
   });
@@ -288,7 +291,7 @@ export function runCheck(
     const open = db
       .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
       .get(match.card, match.condition);
-    if (open !== undefined) continue;
+    if (open !== undefined || match.ready === false) continue;
     if (match.change?.kind === "unhold") {
       db.prepare("UPDATE cards SET held_until = NULL, return_status = NULL WHERE id = ?").run(
         match.card,

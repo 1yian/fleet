@@ -2,7 +2,7 @@
 // the captain's words where it can see them: a user-role message in this mate's
 // own session file. Otherwise cardd looks for them in the captain's board entries.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardSchema, check } from "@fleet/protocol";
+import { CardSchema, check, Words } from "@fleet/protocol";
 import Type from "typebox";
 import { captainSaid, parseUtc } from "./inbox.ts";
 import type { Link } from "./link.ts";
@@ -26,9 +26,7 @@ export function registerQuestions(
   link: Link,
   sessionFile: () => string | undefined,
 ): void {
-  /** chat when the words are in this session's own user messages; otherwise cardd checks the record. */
-  const sourceOf = (words: string): "chat" | "record" =>
-    captainSaid(sessionFile(), words) ? "chat" : "record";
+  const sourceOf = sourceFrom(sessionFile);
   pi.registerTool({
     name: "ask",
     label: "Ask the captain",
@@ -47,7 +45,7 @@ export function registerQuestions(
     description: "Records the captain's exact words as the answer to the open question on a card.",
     parameters: Type.Object({
       card: CardId,
-      words: Type.String({ minLength: 1 }),
+      words: Words,
       choice: Type.Optional(
         Type.String({ description: "For a merge question: Approve & merge, or Request changes" }),
       ),
@@ -76,7 +74,7 @@ export function registerAuthority(
     parameters: Type.Object({
       lane: Type.Optional(Type.String()),
       card: Type.Optional(CardId),
-      words: Type.String({ minLength: 1 }),
+      words: Words,
       may: Type.String({ minLength: 1, description: "What may happen without asking" }),
       merge: Type.Boolean({ description: "Whether the grant covers merging" }),
       limits: Type.Optional(Type.String()),
@@ -101,7 +99,7 @@ export function registerAuthority(
     label: "Merge",
     description:
       "Merges a card's PR through the guarded path. It needs a grant, the captain's approval, or the captain's quoted words. It refuses red or pending checks.",
-    parameters: Type.Object({ card: CardId, words: Type.Optional(Type.String({ minLength: 1 })) }),
+    parameters: Type.Object({ card: CardId, words: Type.Optional(Words) }),
     execute: async (_id, params) => {
       const args =
         params.words === undefined ? params : { ...params, source: sourceOf(params.words) };

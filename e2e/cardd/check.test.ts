@@ -96,3 +96,21 @@ test("a card that waits on an idle mate gets one reminder for each tier", async 
     /^reminder: this card has waited for you \(with-mate, \d+ min\)$/,
   );
 });
+
+test("a mate that is busy and then idle again is not reminded twice for the same tier", async () => {
+  const card = await newCard(fleet.main, "blocked");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await worker.call("report", { status: "blocked", text: "the API is down" });
+  await findingFor(card, "reminder-1");
+
+  fleet.main.send({ t: "activity", state: "running" });
+  await fleet.main.call("board", {});
+  const probe = await newCard(fleet.main, "a pass happens while the mate is busy");
+  await begin(fleet.main, probe);
+  await findingFor(probe, "worker-never-connected");
+  fleet.main.send({ t: "activity", state: "idle" });
+  await fleet.main.call("board", {});
+
+  await findingFor(card, "reminder-2");
+  assert.deepEqual(findings(card), ["reminder-1", "reminder-2"]);
+});

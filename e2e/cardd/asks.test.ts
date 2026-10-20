@@ -77,6 +77,34 @@ test("an answer from the record must quote words the captain wrote", async () =>
   assert.equal(await status(fleet.main, card), "with-mate");
 });
 
+test("words that are only whitespace never count as the captain's words", async () => {
+  const other = await newCard(fleet.main, "Pick the API version");
+  await fleet.main.call("ask", { card: other.id, question: "v1 or v2?", options: ["v1", "v2"] });
+  await fleet.main.call("answer", { card: other.id, words: "Always use v2.", source: "chat" });
+  await ask(cleo);
+
+  const blank = /invalid \/words: /;
+  await assert.rejects(
+    fleet.main.call("answer", { card: card.id, words: " \n ", source: "record" }),
+    blank,
+  );
+  await assert.rejects(
+    fleet.main.call("grant", {
+      lane: "cleo",
+      words: "  ",
+      source: "record",
+      may: "anything",
+      merge: true,
+    }),
+    blank,
+  );
+  await assert.rejects(
+    fleet.main.call("merge", { card: card.id, words: "\t", source: "record" }),
+    blank,
+  );
+  assert.equal(await status(fleet.main, card), "with-first-mate");
+});
+
 test("a question that main does not take goes to the captain", async () => {
   await ask(cleo);
   await cleo.waitForEntry((entry) => entry.fields["condition"] === "first-mate", "the forward");

@@ -35,6 +35,8 @@ const Status = Type.Enum(STATUSES);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const ReportStatus = Type.Enum(REPORT_STATUSES);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
+/** The captain's quoted words: at least one character that is not whitespace. */
+export const Words = Type.String({ pattern: "\\S" });
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 
 export type Status = Static<typeof Status>;
@@ -105,7 +107,7 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
-      words: Type.String({ minLength: 1 }),
+      words: Words,
       source: Type.Enum(["chat", "board", "record"]),
       choice: Type.Optional(Type.String({ minLength: 1 })),
     }),
@@ -116,7 +118,7 @@ export const OPS = {
     args: Type.Object({
       lane: Type.Optional(Type.String()),
       card: Type.Optional(Type.Integer()),
-      words: Type.String({ minLength: 1 }),
+      words: Words,
       source: Type.Enum(["chat", "board", "record"]),
       may: Type.String({ minLength: 1 }),
       merge: Type.Boolean(),
@@ -132,7 +134,7 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
-      words: Type.Optional(Type.String({ minLength: 1 })),
+      words: Type.Optional(Words),
       source: Type.Optional(Type.Enum(["chat", "board", "record"])),
     }),
     result: CardSchema,

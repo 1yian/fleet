@@ -35,6 +35,14 @@ export class FakeGitHub {
     writeFileSync(this.file, JSON.stringify({ ...all, [url]: { state, checks: list } }));
   }
 
+  /** Makes `gh pr checks` fail with a network error from now on. */
+  breakChecks(url: string): void {
+    const all = parseRecord(readFileSync(this.file, "utf8"));
+    const pr = all[url];
+    const kept = typeof pr === "object" && pr !== null ? pr : {};
+    writeFileSync(this.file, JSON.stringify({ ...all, [url]: { ...kept, broken: true } }));
+  }
+
   state(url: string): unknown {
     const pr = parseRecord(readFileSync(this.file, "utf8"))[url];
     return typeof pr === "object" && pr !== null ? Reflect.get(pr, "state") : undefined;

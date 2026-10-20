@@ -95,6 +95,58 @@ test("merge refuses without authority, and refuses red or pending checks", async
   assert.equal(gh.state(PR), "OPEN");
 });
 
+test("quoted words merge only on a card with an open merge question, and they answer it", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const blocked = await newCard(fleet.main, "unrelated question");
+  const blockedWorker = await fleet.cardd.connect(await begin(fleet.main, blocked));
+  await blockedWorker.call("report", { status: "blocked", text: "stuck", pr: PR });
+  await fleet.main.call("ask", { card: blocked.id, question: "Which way?", options: ["a", "b"] });
+  assert.equal(await status(fleet.main, blocked), "needs-you");
+  const quoted = (card: Card) =>
+    fleet.main.call("merge", { card: card.id, words: "merge it", source: "chat" });
+  await assert.rejects(quoted(blocked), {
+    message: `no authority to merge c-${String(blocked.id)}: it needs a grant or the captain's approval`,
+  });
+  assert.equal(gh.state(PR), "OPEN");
+
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card, "https://github.com/acme/web/pull/11");
+  gh.setPr("https://github.com/acme/web/pull/11", "OPEN", { ci: "pass" });
+  await quoted(card);
+  assert.equal(gh.state("https://github.com/acme/web/pull/11"), "MERGED");
+  assert.equal(await status(fleet.main, card), "merging");
+  await assert.rejects(approve(card), { message: `c-${String(card.id)} has no open question` });
+});
+
+test("a second done report does not add a second merge question", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  const worker = await done(card);
+  await worker.call("report", { status: "done", text: "still green", pr: PR });
+  await approve(card);
+  await assert.rejects(approve(card), { message: `c-${String(card.id)} has no open question` });
+});
+
+test("merge does not run when gh cannot read the checks", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  gh.breakChecks(PR);
+  await assert.rejects(
+    fleet.main.call("merge", { card: card.id, words: "merge it", source: "chat" }),
+    /gh pr checks .* failed: HTTP 502/,
+  );
+  assert.equal(gh.state(PR), "OPEN");
+});
+
+test("a PR with no checks reported merges", async () => {
+  gh.setPr(PR, "OPEN");
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  await fleet.main.call("merge", { card: card.id, words: "merge it", source: "chat" });
+  assert.equal(gh.state(PR), "MERGED");
+});
+
 test("a closed PR, and red checks while Merging, go back to the mate", async () => {
   gh.setPr(PR, "CLOSED");
   const closed = await newCard(fleet.main, "closed");

@@ -1,6 +1,8 @@
 // The captain's authority (spec sections 9.6 and 18): his words, and grants.
 import type { DatabaseSync } from "node:sqlite";
 
+const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
+
 /**
  * Throws unless the captain's words are verified. The mate's extension checks
  * chat words against its own session file (source chat). For any other source,
@@ -9,11 +11,14 @@ import type { DatabaseSync } from "node:sqlite";
  */
 export function requireCaptainWords(db: DatabaseSync, words: string, source: string): void {
   if (source === "chat") return;
-  const squashed = words.replace(/\s+/g, " ").trim();
-  const found = db
-    .prepare("SELECT 1 FROM entries WHERE author = 'captain' AND instr(body, ?) > 0")
-    .get(squashed);
-  if (found === undefined) {
+  const squashed = squash(words);
+  const said =
+    squashed !== "" &&
+    db
+      .prepare("SELECT body FROM entries WHERE author = 'captain'")
+      .all()
+      .some((row) => squash(String(row["body"])).includes(squashed));
+  if (!said) {
     throw new Error(
       "these words are not in the captain's messages or board entries; quote the captain exactly",
     );

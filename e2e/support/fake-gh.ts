@@ -1,5 +1,6 @@
 // A fake gh for tests. It keeps PR state in the JSON file named by FAKE_GH_STATE:
-// { "<url>": { "state": "OPEN" | "MERGED" | "CLOSED", "checks": [{ "name", "bucket" }] } }
+// { "<url>": { "state": "OPEN" | "MERGED" | "CLOSED", "checks": [{ "name", "bucket" }], "broken"?: true } }
+// "broken" makes gh pr checks fail the way a network error does.
 import { readFileSync, writeFileSync } from "node:fs";
 import { isRecord, records } from "./json.ts";
 
@@ -13,7 +14,15 @@ if (noun !== "pr" || pr === undefined || !isRecord(prs)) {
 }
 if (verb === "view") console.log(JSON.stringify({ state: pr["state"] }));
 if (verb === "checks") {
+  if (pr["broken"] === true) {
+    console.error("HTTP 502: Bad Gateway");
+    process.exit(1);
+  }
   const checks = records(pr["checks"]);
+  if (checks.length === 0) {
+    console.error("no checks reported on the 'feature' branch");
+    process.exit(1);
+  }
   console.log(JSON.stringify(checks));
   process.exitCode = checks.some((check) => check["bucket"] === "fail") ? 1 : 0;
 }

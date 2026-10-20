@@ -56,15 +56,35 @@ export function ask(db: DatabaseSync, session: Session, raw: unknown): Done {
 
 export function answer(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.answer.args, raw);
-  const { card, own } = reachable(db, session, args.card);
+  const { card } = reachable(db, session, args.card);
   const resolves = openAsk(db, card);
   requireCaptainWords(db, args.words, args.source);
+  return recordAnswer(db, session, card, resolves, args);
+}
+
+/** Closes an open question with the captain's verified words. Returns the sessions to notify. */
+export function recordAnswer(
+  db: DatabaseSync,
+  session: Session,
+  card: Card,
+  resolves: string,
+  args: { readonly words: string; readonly source: string; readonly choice?: string | undefined },
+): Done {
   const merge = mergeChoice(db, card, resolves, args.choice);
   applyChange(db, card, merge === undefined ? { kind: "answer" } : { kind: "answer", merge });
-  const to = own ? [] : [card.lane];
+  const to = card.lane === session.lane ? [] : [card.lane];
   const fields = { resolves, source: args.source, by: `mate:${session.lane}`, choice: args.choice };
   addEntry(db, { card: card.id, author: "captain", kind: "answer", body: args.words, fields }, to);
   return { value: getCard(db, card.id), notify: to };
+}
+
+/** The card's latest open merge question. */
+export function openMergeAsk(db: DatabaseSync, card: Card): string | undefined {
+  const entries = cardEntries(db, card.id);
+  const merges = new Set(
+    entries.filter((entry) => entry.fields["merge"] === true).map((entry) => String(entry.id)),
+  );
+  return factsFrom(entries).askIds.findLast((id) => merges.has(id));
 }
 
 /** For a merge question, the captain's choice: approve or request changes. Undefined for other questions. */
