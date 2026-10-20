@@ -17,6 +17,7 @@ const DRAIN_MS = 1000;
 const GROUP_POLL_MS = 50;
 const MAX_RETRY_MS = 30_000;
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+const EARLY_REPORT_MS = 300;
 
 interface Job {
   readonly url: string;
@@ -145,15 +146,15 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     }, KILL_GRACE_MS);
   };
   const onSignal = (): void => {
-    // A closed tab can take this process down soon after its hangup, so report at once.
-    // The full result follows if there is time; cardd records only the first.
-    tail.flush();
-    void call(job, "job.finish", {
-      job: job.job,
-      exitCode: INTERRUPTED_EXIT,
-      outputTail: `${tail.text()}\ninterrupted`.trim(),
-    });
     stop("interrupted");
+    // A closed tab can take this process down soon after its hangup, so report early: as
+    // soon as the command ends or a moment passes. The full result follows if there is time;
+    // cardd records only the first.
+    void Promise.race([exited, sleep(EARLY_REPORT_MS)]).then(() => {
+      tail.flush();
+      const outputTail = `${tail.text()}\ninterrupted`.trim();
+      void call(job, "job.finish", { job: job.job, exitCode: INTERRUPTED_EXIT, outputTail });
+    });
   };
   for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
   const timer = setTimeout(() => {
