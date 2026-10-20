@@ -165,6 +165,7 @@ function firstMateMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const waiting = rows(
     db,
     `SELECT c.id AS card, c.lane AS lane, m.state AS main,
+       (SELECT max(id) FROM entries WHERE card = c.id AND kind = 'ask') AS ask,
        (SELECT max(created_at) FROM entries WHERE card = c.id AND kind = 'ask') AS asked
      FROM cards c JOIN lanes l ON l.name = c.lane LEFT JOIN sessions m ON m.id = l.parent
      WHERE c.status = 'with-first-mate'`,
@@ -179,7 +180,7 @@ function firstMateMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
       {
         card,
         lane: String(row["lane"]),
-        condition: "first-mate",
+        condition: `first-mate:${String(row["ask"])}`,
         text: `forwarded to the captain: ${why}`,
         change,
       },
@@ -191,7 +192,7 @@ function firstMateMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
 function holdMatches(db: DatabaseSync, now: number): Match[] {
   const held = rows(
     db,
-    "SELECT id, lane, return_status FROM cards WHERE status = 'waiting' AND held_until <= ?",
+    "SELECT id, lane, return_status, held_until FROM cards WHERE status = 'waiting' AND held_until <= ?",
     now,
   );
   return held.flatMap((row) => {
@@ -202,7 +203,7 @@ function holdMatches(db: DatabaseSync, now: number): Match[] {
       {
         card: Number(row["id"]),
         lane: String(row["lane"]),
-        condition: "hold-ended",
+        condition: `hold-ended:${String(row["held_until"])}`,
         text: `hold ended; back to ${to}`,
         change,
       },

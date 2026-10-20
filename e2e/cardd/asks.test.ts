@@ -107,7 +107,10 @@ test("words that are only whitespace never count as the captain's words", async 
 
 test("a question that main does not take goes to the captain", async () => {
   await ask(cleo);
-  await cleo.waitForEntry((entry) => entry.fields["condition"] === "first-mate", "the forward");
+  await cleo.waitForEntry(
+    (entry) => String(entry.fields["condition"]).startsWith("first-mate:"),
+    "the forward",
+  );
   assert.equal(await status(cleo, card), "needs-you");
   assert.equal(
     cleo.entries.at(-1)?.entry.body,
@@ -137,8 +140,28 @@ test("a hold ends on its date, and the card returns to its status", async () => 
   assert.equal(await status(fleet.main, held), "waiting");
 
   await fleet.main.waitForEntry(
-    (entry) => entry.fields["condition"] === "hold-ended",
+    (entry) => String(entry.fields["condition"]).startsWith("hold-ended:"),
     "the hold to end",
+  );
+  assert.equal(await status(fleet.main, held), "queued");
+});
+
+test("a second hold on the same card ends too, even right after the first one", async () => {
+  const held = await newCard(fleet.main, "Renew the certificate");
+  const hold = () =>
+    fleet.main.call("hold", { card: held.id, until: Date.now() + 10, reason: "after the freeze" });
+  await hold();
+  const first = await fleet.main.waitForEntry(
+    (entry) => entry.card === held.id && entry.author === "check",
+    "the first hold to end",
+  );
+  await hold();
+  await fleet.main.waitForEntry(
+    (entry) =>
+      entry.card === held.id &&
+      entry.author === "check" &&
+      entry.fields["condition"] !== first.fields["condition"],
+    "the second hold to end",
   );
   assert.equal(await status(fleet.main, held), "queued");
 });

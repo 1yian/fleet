@@ -188,7 +188,8 @@ test("a gh read that fails for one pass does not repeat a PR notice", async () =
       const probe = await newCard(fleet.main, `${what} ${String(round)}`);
       await fleet.main.call("hold", { card: probe.id, until: Date.now() + 100, reason: "probe" });
       await fleet.main.waitForEntry(
-        (entry) => entry.card === probe.id && entry.fields["condition"] === "hold-ended",
+        (entry) =>
+          entry.card === probe.id && String(entry.fields["condition"]).startsWith("hold-ended:"),
         `a check pass ${what}`,
       );
     }
