@@ -43,4 +43,4 @@ Tests are end-to-end. They start real processes (`cardd`, Pi with a scripted fak
 
 ## Runners
 
-GitHub-hosted runners run the gates and the tests that need only Node, Pi, and herdr (CI installs herdr pinned by SHA-256 for the isolated lab session). Tests that need two hosts run on a self-hosted runner on P620. The repository is public, so that runner takes jobs only from pushes to `main` and from pull requests whose branch is in this repository. Pull requests from forks never reach it.
+GitHub-hosted runners run the gates and the tests that need only Node, Pi, herdr, and Chromium (CI installs herdr pinned by SHA-256 for the isolated lab session, and Chromium through playwright for the board tests). Tests that need two hosts run on a self-hosted runner on P620. The repository is public, so that runner takes jobs only from pushes to `main` and from pull requests whose branch is in this repository. Pull requests from forks never reach it.
