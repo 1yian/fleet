@@ -52,18 +52,26 @@ Write each lane's settings on the host where its mate runs, in `~/.config/fleet/
 {
   "url": "ws://<cardd Tailscale address>:7420/session",
   "token": "<the token from lane add>",
+  "home": "/Users/me/fleet-homes/main",
   "hosts": { "p620": ["ssh", "p620"] },
+  "args": ["--model", "tier/default"],
   "workerArgs": ["--model", "tier/quick"]
 }
 ```
 
+- `home` is the lane's home folder. The mate runs there.
 - `hosts` names the hosts that this mate reaches over SSH. A host that is not listed runs here.
-- `model` (optional) is the mate's own model. `workerArgs` are extra Pi arguments for its workers.
+- `args` (optional) are extra Pi arguments for the mate. `workerArgs` are extra Pi arguments for its workers.
 
-Start the mate in a herdr pane, in the lane's home folder:
+Start every mate that is configured on a host:
 
 ```sh
-cd ~/fleet-homes/main && ~/.fleet/app/bin/fleet main
+~/.fleet/app/bin/fleet up
 ```
+
+- Each mate runs in its own herdr workspace, `fleet-<lane>`. A mate that already runs is left alone, so `fleet up` is safe to run again.
+- A mate continues its conversation when it starts again.
+- To start the mates on another host, run `fleet up` there, for example `ssh p620 ~/.fleet/app/bin/fleet up`. To see that host's workspaces, run `herdr --remote p620`.
+- To run one mate in the current terminal instead, run `~/.fleet/app/bin/fleet <lane>`.
 
 The home folder can hold an `AGENTS.md` with the lane's charter. The role contract comes from the extension.
