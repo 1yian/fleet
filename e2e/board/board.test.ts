@@ -6,7 +6,7 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import type { Card } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
-import { CardSchema, check } from "@fleet/protocol";
+import { CardSchema, check, OPS } from "@fleet/protocol";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 
@@ -218,4 +218,60 @@ test("a board load that finishes late does not replace a newer one", async () =>
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );
   assert.equal(await page.getByText("Renew the certificate?").isVisible(), true);
+});
+
+test("a question shows on its card whatever the card's status", async () => {
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
+  await cleo.call("ask", {
+    card: card.id,
+    question: "Which channel?",
+    options: ["search", "social"],
+  });
+  const cards = check(OPS.board.result, await cleo.call("board", {}));
+  assert.equal(cards.find((each) => each.id === card.id)?.status, "with-first-mate");
+
+  await page.goto(http());
+  await page.getByText("Which channel?").waitFor();
+});
+
+test("a request that cannot reach cardd shows a notice, and a refused reply stays in the box", async () => {
+  await question("Pick the API version", ["v1", "v2"]);
+  await page.route("**/api/action", (route) => route.abort());
+  await page.goto(http());
+  await page.getByText("Pick the API version?").waitFor();
+  await page.getByRole("button", { name: "v1" }).click();
+  await page
+    .getByRole("alert")
+    .getByText(/The board could not reach cardd/)
+    .waitFor();
+
+  await page.getByRole("radio", { name: /Kanban/ }).click();
+  await page.getByRole("button", { name: /Pick the API version/ }).click();
+  const reply = page.getByRole("textbox", { name: "Reply" });
+  await reply.fill("I prefer v2 because");
+  await page.getByRole("button", { name: "Send reply" }).click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector<HTMLInputElement>("input[aria-label=Reply]")?.value ===
+      "I prefer v2 because",
+    undefined,
+    { timeout: 5_000 },
+  );
+});
+
+test("a board load that cannot reach cardd shows a notice that goes away when loading works", async () => {
+  await question("Pick the API version", ["v1", "v2"]);
+  let blocked = true;
+  await page.route("**/api/board", (route) => (blocked ? route.abort() : route.continue()));
+  await page.goto(http());
+  await page
+    .getByRole("alert")
+    .getByText(/The board could not reach cardd/)
+    .waitFor();
+
+  blocked = false;
+  await main.call("comment", { card: 1, text: "wake the board" });
+  await page.getByText("Pick the API version?").waitFor();
+  assert.equal(await page.getByRole("alert").count(), 0);
 });

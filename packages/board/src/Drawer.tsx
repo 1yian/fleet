@@ -2,7 +2,7 @@
 // buttons, beside the board. Replies go to the lane mate as the captain's words.
 import { useEffect, useMemo, useState } from "react";
 import type { Board, Entry, Thread } from "@fleet/protocol";
-import { loadThread } from "./api.ts";
+import { loadThread, unreachable } from "./api.ts";
 import { CommentThread, type ThreadMessage } from "./vendor/comment-thread.tsx";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   readonly changes: number;
   readonly onReply: (text: string) => Promise<void>;
   readonly onAnswer: (ask: number, choice: string) => void;
+  readonly onFail: (message: string) => void;
   readonly onClose: () => void;
 }
 
@@ -30,17 +31,22 @@ function message(entry: Entry): ThreadMessage {
   };
 }
 
-export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Props) {
+export function Drawer({ card, board, changes, onReply, onAnswer, onFail, onClose }: Props) {
   const [thread, setThread] = useState<Thread | undefined>();
   useEffect(() => {
     let current = true;
-    void loadThread(card).then((loaded) => {
-      if (current) setThread(loaded);
-    });
+    loadThread(card).then(
+      (loaded) => {
+        if (current) setThread(loaded);
+      },
+      (error: unknown) => {
+        if (current) onFail(unreachable(error));
+      },
+    );
     return () => {
       current = false;
     };
-  }, [card, changes]);
+  }, [card, changes, onFail]);
   const messages = useMemo(() => thread?.entries.map(message) ?? [], [thread]);
   const questions = board.questions.filter((each) => each.card === card);
   if (thread?.card.id !== card) return <aside className="drawer">Loading c-{card}…</aside>;

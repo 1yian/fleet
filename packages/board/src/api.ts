@@ -10,6 +10,10 @@ import {
   type Thread,
 } from "@fleet/protocol";
 
+/** The notice for a request that failed before cardd answered. */
+export const unreachable = (error: unknown): string =>
+  `The board could not reach cardd: ${error instanceof Error ? error.message : String(error)}`;
+
 export async function loadBoard(): Promise<Board> {
   return check(BoardSchema, await (await fetch("/api/board")).json());
 }
@@ -18,20 +22,24 @@ export async function loadThread(card: number): Promise<Thread> {
   return check(ThreadSchema, await (await fetch(`/api/card/${String(card)}`)).json());
 }
 
-/** Sends one action. Resolves with an error message when cardd refused it, for example a stale card. */
+/** Sends one action. Resolves with an error message when cardd refused it or could not be reached. */
 export async function act(action: BoardAction): Promise<string | undefined> {
-  const response = await fetch("/api/action", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(action),
-  });
-  if (response.ok) return undefined;
-  const body: unknown = await response.json();
-  const error =
-    typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
-  return typeof error === "string"
-    ? error
-    : `cardd refused the action (${String(response.status)})`;
+  try {
+    const response = await fetch("/api/action", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(action),
+    });
+    if (response.ok) return undefined;
+    const body: unknown = await response.json();
+    const error =
+      typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
+    return typeof error === "string"
+      ? error
+      : `cardd refused the action (${String(response.status)})`;
+  } catch (error) {
+    return unreachable(error);
+  }
 }
 
 /** A counter that goes up each time cards.db changes. Reconnects when the socket drops. */

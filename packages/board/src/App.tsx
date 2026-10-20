@@ -2,7 +2,7 @@
 // card drawer. It updates live and shows when cardd refuses an action.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Board, BoardAction } from "@fleet/protocol";
-import { act, loadBoard, useChanges } from "./api.ts";
+import { act, loadBoard, unreachable, useChanges } from "./api.ts";
 import { Drawer } from "./Drawer.tsx";
 import { Kanban } from "./Kanban.tsx";
 import { NeedsYou } from "./NeedsYou.tsx";
@@ -17,11 +17,22 @@ export function App() {
   const [open, setOpen] = useState<number | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const loads = useRef(0);
+  const loadFailed = useRef(false);
   const refresh = useCallback(() => {
     const load = ++loads.current;
-    void loadBoard().then((loaded) => {
-      if (load === loads.current) setBoard(loaded);
-    });
+    loadBoard().then(
+      (loaded) => {
+        if (load !== loads.current) return;
+        setBoard(loaded);
+        if (loadFailed.current) setNotice(undefined);
+        loadFailed.current = false;
+      },
+      (error: unknown) => {
+        if (load !== loads.current) return;
+        loadFailed.current = true;
+        setNotice(unreachable(error));
+      },
+    );
   }, []);
   useEffect(() => {
     refresh();
@@ -45,7 +56,19 @@ export function App() {
     [send],
   );
 
-  if (board === undefined) return <main className="board">Loading…</main>;
+  const notices =
+    notice === undefined ? null : (
+      <p className="notice" role="alert">
+        {notice}
+      </p>
+    );
+  if (board === undefined)
+    return (
+      <main className="board">
+        {notices}
+        Loading…
+      </main>
+    );
   return (
     <main className="board">
       <header className="top">
@@ -60,11 +83,7 @@ export function App() {
           ]}
         />
       </header>
-      {notice === undefined ? null : (
-        <p className="notice" role="alert">
-          {notice}
-        </p>
-      )}
+      {notices}
       {view === "needs-you" ? (
         <NeedsYou board={board} onAnswer={answer} onOpen={setOpen} />
       ) : (
@@ -75,6 +94,7 @@ export function App() {
           card={open}
           board={board}
           changes={changes}
+          onFail={setNotice}
           onAnswer={(ask, choice) => {
             answer(open, ask, choice);
           }}

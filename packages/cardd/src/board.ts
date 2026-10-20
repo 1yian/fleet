@@ -16,7 +16,7 @@ export class StaleCard extends Error {}
 export function boardView(db: DatabaseSync): Board {
   const cards = listCards(db);
   const questions = cards
-    .filter((card) => card.status === "needs-you")
+    .filter((card) => card.status !== "done" && card.status !== "dropped")
     .flatMap((card) => {
       const entries = cardEntries(db, card.id);
       const open = new Set(factsFrom(entries).askIds);
