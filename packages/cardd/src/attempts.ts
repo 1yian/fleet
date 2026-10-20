@@ -177,6 +177,38 @@ export function finishJob(
   return typeof label === "string" ? label : undefined;
 }
 
+/** Records that a job's wrapper is alive. Returns whether the job is still running. */
+export function touchJob(db: DatabaseSync, session: string, job: number): boolean {
+  const row = db
+    .prepare(
+      "UPDATE jobs SET updated_at = ? WHERE id = ? AND attempt = ? AND state = 'running' RETURNING id",
+    )
+    .get(Date.now(), job, attemptOf(db, session));
+  return row !== undefined;
+}
+
+/** Marks running jobs of live attempts as lost when no heartbeat came since `before`. */
+export function loseSilentJobs(
+  db: DatabaseSync,
+  before: number,
+): { id: number; label: string; card: number }[] {
+  const silent = db
+    .prepare(
+      `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
+       WHERE j.state = 'running' AND j.updated_at < ? AND a.state IN ('starting', 'active')
+       ORDER BY j.id`,
+    )
+    .all(before)
+    .map((row) => ({
+      id: Number(row["id"]),
+      label: String(row["label"]),
+      card: Number(row["card"]),
+    }));
+  const lose = db.prepare("UPDATE jobs SET state = 'lost', updated_at = ? WHERE id = ?");
+  for (const job of silent) lose.run(Date.now(), job.id);
+  return silent;
+}
+
 export function runningJobs(db: DatabaseSync, session: string): { id: number; label: string }[] {
   return db
     .prepare("SELECT id, label FROM jobs WHERE attempt = ? AND state = 'running' ORDER BY id")

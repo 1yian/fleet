@@ -2,7 +2,7 @@
 // captain can watch. cardd records the job first. The wrapper posts the result,
 // which arrives as a fleet entry, also after a Pi restart. Nothing runs a job again.
 import { randomBytes } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,7 @@ const DEFAULT_TIMEOUT_MINUTES = 60;
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
   command: Type.String({ minLength: 1, description: "The shell command to run" }),
-  timeout_minutes: Type.Optional(Type.Integer({ minimum: 1, maximum: 24 * 60 })),
+  timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 24 * 60 })),
 });
 
 /** Running jobs are a tracked wait: the worker may end its run while one runs. */
@@ -56,36 +56,45 @@ export class Jobs {
         const workspace = process.env["HERDR_WORKSPACE_ID"];
         if (workspace === undefined) throw new Error("run_long needs a worker inside a herdr pane");
         const { label, command } = params;
-        const { job } = check(
+        const { job, heartbeatMs } = check(
           OPS["job.start"].result,
           await this.link.call("job.start", { label, command }),
         );
+        this.running.add(job);
         const file = join(
           tmpdir(),
           `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`,
         );
-        const url = cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
-        const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
-        writeFileSync(file, JSON.stringify({ url, token: cardd.token, job, command, timeoutMs }), {
-          mode: 0o600,
-        });
         const tab = `job-${String(job)}-${label}`;
-        const created = await herdr("local", [
-          "tab",
-          "create",
-          "--workspace",
-          workspace,
-          "--label",
-          tab,
-          "--no-focus",
-        ]);
-        await herdr("local", [
-          "pane",
-          "run",
-          rootPane(created),
-          `node ${quote(WRAPPER)} ${quote(file)}`,
-        ]);
-        this.running.add(job);
+        try {
+          const url = cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
+          const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
+          const body = { url, token: cardd.token, job, command, timeoutMs, heartbeatMs };
+          writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
+          const created = await herdr("local", [
+            "tab",
+            "create",
+            "--workspace",
+            workspace,
+            "--cwd",
+            process.cwd(),
+            "--label",
+            tab,
+            "--no-focus",
+          ]);
+          await herdr("local", [
+            "pane",
+            "run",
+            rootPane(created),
+            `node ${quote(WRAPPER)} ${quote(file)}`,
+          ]);
+        } catch (error) {
+          rmSync(file, { force: true });
+          this.running.delete(job);
+          const outputTail = `could not start: ${error instanceof Error ? error.message : String(error)}`;
+          await this.link.call("job.finish", { job, exitCode: 127, outputTail }).catch(() => 0);
+          throw error;
+        }
         const text = `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`;
         return { content: [{ type: "text", text }], details: {} };
       },
