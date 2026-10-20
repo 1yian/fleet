@@ -51,7 +51,7 @@ async function readChecks(url: string): Promise<Record<string, unknown>[]> {
 /** The PR's state and checks. gh exits non-zero while checks fail or pend, so the JSON decides. */
 export async function readPullRequest(url: string): Promise<PullRequest> {
   const state = await readState(url);
-  const items = await readChecks(url);
+  const items = state === "OPEN" ? await readChecks(url) : [];
   const named = (bucket: string[]): string[] =>
     items
       .filter((item) => bucket.includes(String(item["bucket"])))

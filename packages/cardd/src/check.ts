@@ -210,8 +210,10 @@ function holdMatches(db: DatabaseSync, now: number): Match[] {
   });
 }
 
-/** The PRs of open cards, read with gh before the check's transaction. */
-export async function readPullRequests(db: DatabaseSync): Promise<Map<number, PullRequest>> {
+/** The PRs of open cards, read with gh before the check's transaction. A PR that could not be read is undefined. */
+export async function readPullRequests(
+  db: DatabaseSync,
+): Promise<Map<number, PullRequest | undefined>> {
   const cards = rows(
     db,
     "SELECT id, pr FROM cards WHERE pr IS NOT NULL AND status NOT IN ('done', 'dropped')",
@@ -225,12 +227,15 @@ export async function readPullRequests(db: DatabaseSync): Promise<Map<number, Pu
       return [Number(row["id"]), pr] as const;
     }),
   );
-  return new Map(read.flatMap(([card, pr]) => (pr === undefined ? [] : [[card, pr] as const])));
+  return new Map(read);
 }
 
+const PR_CONDITIONS: ReadonlySet<string> = new Set(["pr-merged", "pr-closed", "checks-failed"]);
+
 /** PR state (spec section 13.1): merged, closed without a merge, or red checks while Merging. */
-function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest>): Match[] {
+function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | undefined>): Match[] {
   return [...prs].flatMap(([card, pr]): Match[] => {
+    if (pr === undefined) return [];
     const row = db.prepare("SELECT lane, status FROM cards WHERE id = ?").get(card);
     const lane = String(row?.["lane"]);
     const status = String(row?.["status"]);
@@ -263,12 +268,36 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest>): Mat
   });
 }
 
+/** Clears the open findings whose condition stopped. A PR that could not be read keeps its PR findings open. */
+function clearStopped(
+  db: DatabaseSync,
+  now: number,
+  matches: readonly Match[],
+  prs: ReadonlyMap<number, PullRequest | undefined>,
+): void {
+  const live = new Set(matches.map((match) => `${String(match.card)}/${match.condition}`));
+  const unread = new Set([...prs].flatMap(([card, pr]) => (pr === undefined ? [card] : [])));
+  for (const open of rows(
+    db,
+    "SELECT id, card, condition FROM findings WHERE cleared_at IS NULL",
+  )) {
+    const card = Number(open["card"]);
+    const condition = String(open["condition"]);
+    const stays =
+      live.has(`${String(card)}/${condition}`) ||
+      (unread.has(card) && PR_CONDITIONS.has(condition));
+    if (!stays) {
+      db.prepare("UPDATE findings SET cleared_at = ? WHERE id = ?").run(now, Number(open["id"]));
+    }
+  }
+}
+
 /** Writes each new finding once, clears the ones whose condition stopped, and returns the sessions to push to. */
 export function runCheck(
   db: DatabaseSync,
   now: number,
   t: Timings,
-  prs: ReadonlyMap<number, PullRequest> = new Map(),
+  prs: ReadonlyMap<number, PullRequest | undefined> = new Map(),
 ): string[] {
   const matches = [
     ...workerMatches(db, now, t),
@@ -277,15 +306,7 @@ export function runCheck(
     ...holdMatches(db, now),
     ...prMatches(db, prs),
   ];
-  const live = new Set(matches.map((match) => `${String(match.card)}/${match.condition}`));
-  for (const open of rows(
-    db,
-    "SELECT id, card, condition FROM findings WHERE cleared_at IS NULL",
-  )) {
-    if (!live.has(`${String(open["card"])}/${String(open["condition"])}`)) {
-      db.prepare("UPDATE findings SET cleared_at = ? WHERE id = ?").run(now, Number(open["id"]));
-    }
-  }
+  clearStopped(db, now, matches, prs);
   const notify = new Set<string>(lostJobs(db, now, t));
   for (const match of matches) {
     const open = db

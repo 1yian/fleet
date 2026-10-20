@@ -172,6 +172,38 @@ test("a closed PR, and red checks while Merging, go back to the mate", async () 
   );
 });
 
+test("a gh read that fails for one pass does not repeat a PR notice", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  await approve(card);
+  await merge(card);
+  await fleet.main.waitForEntry(
+    (entry) => entry.card === card.id && entry.fields["condition"] === "pr-merged",
+    "the notice",
+  );
+
+  const afterPasses = async (what: string): Promise<void> => {
+    for (const round of [1, 2]) {
+      const probe = await newCard(fleet.main, `${what} ${String(round)}`);
+      await fleet.main.call("hold", { card: probe.id, until: Date.now() + 100, reason: "probe" });
+      await fleet.main.waitForEntry(
+        (entry) => entry.card === probe.id && entry.fields["condition"] === "hold-ended",
+        `a check pass ${what}`,
+      );
+    }
+  };
+  gh.setDown(PR, true);
+  await afterPasses("while gh is down");
+  gh.setDown(PR, false);
+  await afterPasses("after gh is back");
+
+  const notices = fleet.main.entries.filter(
+    ({ entry }) => entry.card === card.id && entry.fields["condition"] === "pr-merged",
+  );
+  assert.equal(notices.length, 1);
+});
+
 test("a second mate's merge approval goes to the captain, and main gets one line", async () => {
   gh.setPr(PR, "OPEN", { ci: "pass" });
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));

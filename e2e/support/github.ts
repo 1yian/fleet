@@ -37,10 +37,19 @@ export class FakeGitHub {
 
   /** Makes `gh pr checks` fail with a network error from now on. */
   breakChecks(url: string): void {
+    this.patch(url, { broken: true });
+  }
+
+  /** Makes every gh call for this PR fail with a network error, or work again. */
+  setDown(url: string, down: boolean): void {
+    this.patch(url, { down });
+  }
+
+  private patch(url: string, change: Record<string, boolean>): void {
     const all = parseRecord(readFileSync(this.file, "utf8"));
     const pr = all[url];
     const kept = typeof pr === "object" && pr !== null ? pr : {};
-    writeFileSync(this.file, JSON.stringify({ ...all, [url]: { ...kept, broken: true } }));
+    writeFileSync(this.file, JSON.stringify({ ...all, [url]: { ...kept, ...change } }));
   }
 
   state(url: string): unknown {
