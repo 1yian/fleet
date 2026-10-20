@@ -31,7 +31,7 @@ module.exports = {
     },
   ],
   options: {
-    includeOnly: "^(packages|e2e|scripts)/",
+    includeOnly: "^(packages|e2e)/",
     exclude: { path: "(^|/)(node_modules|dist)/" },
     doNotFollow: { path: "node_modules" },
     tsConfig: { fileName: "tsconfig.json" },

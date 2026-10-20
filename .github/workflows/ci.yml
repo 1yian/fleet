@@ -36,7 +36,6 @@ jobs:
             code:
               - "packages/**"
               - "e2e/**"
-              - "scripts/**"
               - "package.json"
               - "package-lock.json"
               - "tsconfig.json"

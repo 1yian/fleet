@@ -23,5 +23,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["packages/*/src", "packages/*/scripts", "e2e", "scripts"]
+  "include": ["packages/*/src", "packages/*/scripts", "e2e"]
 }

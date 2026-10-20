@@ -61,7 +61,7 @@ The rewrite keeps the conversation as the main interface. It changes the machine
 - **Standing work.** Open-ended goals are cards that never close. A schedule on the card creates one run card for each scheduled run.
 - **A board.** A web board shows every card. The default view lists everything that waits on the captain, and one click answers most items.
 
-The rewrite removes about 241,000 of 394,000 tracked lines (61%). New code is limited to 5,000 lines.
+The rewrite removes about 241,000 of 394,000 tracked lines (61%). The new code stays small, but it has no fixed line limit.
 
 ## 2. Background
 
@@ -190,7 +190,7 @@ The lesson: the transport is not the main problem. The problem is that no single
 5. Catch what events miss with one timed check in one process.
 6. Store every standing permission as a grant that the tools enforce.
 7. Give the captain a board that is the visible source of truth and that takes fewer clicks than the chat for common actions.
-8. Remove at least 200,000 tracked lines. Limit new code to 5,000 lines, including end-to-end tests.
+8. Remove at least 200,000 tracked lines. Keep the new code small, without a fixed line limit.
 
 ### 4.2 Non-goals
 
@@ -1155,7 +1155,7 @@ npx shadcn@latest add https://www.affectui.com/r/<slug>.json
 
 The paid AffectUI components (Agent Inbox and Autonomy Dial) are not used and not copied. Their download endpoint requires a license key.
 
-The board needs a build step (Vite). Vendored components do not count toward the 1,500-line limit for board code.
+The board needs a build step (Vite).
 
 The board leaves out these parts of the old board: the embedded terminal, image drop, and hover previews.
 
@@ -1300,15 +1300,9 @@ python3 data/fm-rewrite/census.py --files cut-transport   # list the files in on
 
 The separate `firstmate-board` repository (about 8,000 lines) is archived.
 
-### 24.2 New code limit
+### 24.2 New code size
 
-| Part | Limit (lines) |
-|---|---:|
-| `fleet` extension | 1,900 |
-| `cardd` | 600 |
-| Board (own code; vendored components excluded) | 1,500 |
-| End-to-end tests | 1,000 |
-| **Total** | **5,000** |
+The new code has no fixed line limit. The quality gates keep each part small: at most 500 lines in a file, 100 lines in a function, and a complexity of 10. The first build steps showed that the earlier limits (600 lines for `cardd`, 1,000 for end-to-end tests) were too low for code that passes these gates with full end-to-end coverage.
 
 ### 24.3 Kept features
 
@@ -1396,6 +1390,7 @@ The first end-to-end tests must cover these items.
 | Rewrite the model, not only the transport. | The earlier transport redesign returned to the same machinery. The missing part is one record for each work item. |
 | Full cutover, no pilot lane. | The captain's choice. It avoids a period with two systems. |
 | Pi only and herdr only. | The captain uses only these. It removes about 35,000 lines. |
+| No fixed line limit for new code. | The captain's choice. The quality gates keep each part small, and the earlier limits were too low for full end-to-end coverage. |
 | Messages through a Pi extension, not a polling watcher. | The captain's choice. The extension injects messages directly into the session. |
 | One store process (`cardd`), not zero. | The fleet uses two machines and one board. SQLite cannot be shared over the network. The alternative (one database per home and direct calls between extensions) rebuilds the current remote relay. |
 | `cardd` on maverick. | The captain's choice. Main lives there, and maverick already must stay awake. |
