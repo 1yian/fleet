@@ -22,15 +22,20 @@ import { addEntry, cardEntries, getCard, listCards } from "./store.ts";
 export class StaleCard extends Error {}
 
 /**
- * What the captain reads on the board: the captain's words, the mates' notes, questions,
- * and outcomes, and the workers' reports. The rest is for the mates: job results are the
- * worker's tool output, findings are the timed check's notices, and a mate's comments are
- * its instructions to the worker (the task message and its steers).
+ * What a card's thread shows the captain: the whole conversation between the card's owner
+ * and its mate. That is the mate's comments down (the task message, steers, and decisions),
+ * and the worker's reports and questions up, with the captain's words and the outcomes.
+ * Job results are the worker's tool output and findings are the timed check's notices,
+ * so they stay with the mates.
+ */
+const inThread = (entry: Entry): boolean => entry.kind !== "job-result" && entry.kind !== "finding";
+
+/**
+ * What a card's one-line state draws from: the thread without the mate's comments, which are
+ * instructions to the worker (the task message and its steers), not news.
  */
 const forCaptain = (entry: Entry): boolean =>
-  entry.kind !== "job-result" &&
-  entry.kind !== "finding" &&
-  !(entry.kind === "comment" && entry.author.startsWith("mate:"));
+  inThread(entry) && !(entry.kind === "comment" && entry.author.startsWith("mate:"));
 
 const firstLine = (text: string): string =>
   text
@@ -72,10 +77,10 @@ export function boardView(db: DatabaseSync): Board {
   return { cards, questions };
 }
 
-/** A card's thread for the captain. */
+/** A card's thread: the conversation between its owner and its mate, as the captain reads it. */
 export const thread = (db: DatabaseSync, id: number): Thread => ({
   card: getCard(db, id),
-  entries: cardEntries(db, id).filter(forCaptain),
+  entries: cardEntries(db, id).filter(inThread),
 });
 
 /**

@@ -238,7 +238,7 @@ test("cardd refuses to listen on every interface, however the address is written
   }
 });
 
-test("a card's thread on the board leaves out job results and the mate's instructions to the worker", async () => {
+test("a card's thread on the board is the whole conversation with its mate, without job results", async () => {
   cardd.addProject("web", 1, { local: "/clones/web" });
   const args = { title: "Users see one scrollbar", kind: "ship", project: "web" };
   const card = check(CardSchema, await main.call("card.new", args));
@@ -253,7 +253,8 @@ test("a card's thread on the board leaves out job results and the mate's instruc
 
   const shown: unknown = JSON.parse((await send(`/api/card/${String(card.id)}`, "GET", {})).body);
   const kinds = check(ThreadSchema, shown).entries.map((entry) => entry.kind);
-  assert.deepEqual(kinds, ["report"]);
+  // The task message, the worker's report, and the mate's steer. Job results stay out.
+  assert.deepEqual(kinds, ["comment", "report", "comment"]);
   // The card's summary on the board is the latest thing the captain reads, in one line.
   const summary = (await view()).cards.find((each) => each.id === card.id)?.summary;
   assert.equal(summary, "the tests run again");

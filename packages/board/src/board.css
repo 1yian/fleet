@@ -186,8 +186,8 @@ textarea {
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   overflow: hidden;
 }
 .task-head:focus-visible,
@@ -276,8 +276,8 @@ svg.status-icon {
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   overflow: hidden;
 }
 .options {
@@ -701,6 +701,14 @@ kbd.esc {
 .verb:empty {
   display: none;
 }
+.key {
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--panel);
+  color: #52525b;
+  font-size: 12px;
+  white-space: nowrap;
+}
 .thread time {
   margin-left: auto;
   color: var(--faint);
@@ -772,10 +780,6 @@ button.event-head:hover .line {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.event.open .line {
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
 .event-more {
   margin: 2px 0 6px 22px;

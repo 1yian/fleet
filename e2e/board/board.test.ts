@@ -41,12 +41,12 @@ async function question(title: string, options: string[]): Promise<Card> {
 }
 
 /** A ship card on the lane of a second mate, with its worker connected. */
-async function shipped(title: string) {
+async function shipped(title: string, task = "fix it") {
   cardd.addProject("web", 1, { local: "/clones/web" });
   const mate = await cardd.connect(cardd.addLane("cleo", "main"));
   const args = { title, kind: "ship", project: "web" };
   const card = check(CardSchema, await mate.call("card.new", args));
-  const begin = { card: card.id, host: "local", task: "fix it" };
+  const begin = { card: card.id, host: "local", task };
   const { token } = check(OPS["attempt.begin"].result, await mate.call("attempt.begin", begin));
   return { card, mate, worker: await cardd.connect(token) };
 }
@@ -139,7 +139,7 @@ test("the inbox groups the cards: Needs you, Running, and Done", async () => {
   assert.deepEqual(await titles("Done"), ["Ads"]);
 });
 
-test("a click on a card opens its detail: properties, the thread, and no instructions to the worker", async () => {
+test("a click on a card opens its detail: properties, the description, and the thread", async () => {
   const card = check(
     CardSchema,
     await main.call("card.new", {
@@ -165,7 +165,7 @@ test("a click on a card opens its detail: properties, the thread, and no instruc
   await detail.getByText("Compare v1 and v2 before the freeze.").waitFor();
   const thread = detail.getByRole("list", { name: "Thread" });
   await thread.getByText("waiting for your answer above").waitFor();
-  assert.equal(await thread.getByText("Spec: build the v2 endpoint").count(), 0);
+  await thread.getByText("Spec: build the v2 endpoint").waitFor();
   await detail.getByRole("region", { name: "Waiting for you" }).getByText("Ship v2 now?").waitFor();
 
   await page.keyboard.press("Escape");
@@ -185,29 +185,53 @@ test("a card's address opens it directly, and a card that does not exist says so
   await page.getByText("c-99 is not on the board.").waitFor();
 });
 
-test("the thread shows who wrote each entry, in time order, and follows the card live", async () => {
+test("the thread is the conversation between the owner and its mate, with each author and the mate's decisions", async () => {
   const { card, mate, worker } = await shipped("Users see one scrollbar");
   await worker.call("report", { status: "working", text: "the scrollbar is doubled" });
+  await worker.call("report", {
+    status: "needs-decision",
+    key: "scope",
+    text: "Fix R1 only, or R1 and R2?",
+  });
+  await mate.call("comment", { card: card.id, text: "fix both R1 and R2", resolves: "scope" });
   await mate.call("ask", { card: card.id, question: "Keep the footer?", options: ["yes", "no"] });
   await page.goto(`${http()}#/c-${String(card.id)}`);
 
   const thread = page.getByRole("list", { name: "Thread" });
-  await thread.getByText("the scrollbar is doubled").waitFor();
+  await thread.getByText("waiting for your answer above").waitFor();
   await page.getByRole("button", { name: "yes" }).click();
-  await mate.call("comment", { card: card.id, text: "I told the worker" });
   await worker.call("report", { status: "done", text: "a final note" });
   await thread.getByText("a final note").waitFor();
 
-  // Each author, in the order they spoke. The mate's instructions to its worker stay hidden.
+  // Each author, in the order they spoke: comments down, reports and questions up.
   const items = await thread.getByRole("listitem").allInnerTexts();
   const lines = items.map((item) => item.replace(/\s+/g, " "));
-  assert.match(lines[0] ?? "", /Worker .*the scrollbar is doubled/);
-  assert.match(lines[1] ?? "", /cleo Mate asked .*Keep the footer\?/);
-  assert.match(lines[2] ?? "", /You answered .*yes/);
-  assert.match(lines[3] ?? "", /Worker is done .*a final note/);
+  assert.match(lines[0] ?? "", /cleo sent the task .*fix it/);
+  assert.match(lines[1] ?? "", /Worker .*the scrollbar is doubled/);
+  assert.match(lines[2] ?? "", /Worker needs a decision scope .*Fix R1 only, or R1 and R2\?/);
+  assert.match(lines[3] ?? "", /cleo Mate decided scope .*fix both R1 and R2/);
+  assert.match(lines[4] ?? "", /cleo Mate asked .*Keep the footer\?/);
+  assert.match(lines[5] ?? "", /You answered .*yes/);
+  assert.match(lines[6] ?? "", /Worker is done .*a final note/);
   // Done on a ship card makes the fleet ask for the merge.
-  assert.match(lines[4] ?? "", /Fleet asked a question .*waiting for your answer above/);
-  assert.equal(lines.length, 5);
+  assert.match(lines[7] ?? "", /Fleet asked a question .*waiting for your answer above/);
+  assert.equal(lines.length, 8);
+  await worker.close();
+});
+
+test("a long task message is one line that opens to the whole text", async () => {
+  const task = ["Fix the scrollbar", "Keep the footer", "Do not touch the header"].join("\n");
+  const { card, worker } = await shipped("Users see one scrollbar", task);
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  const thread = page.getByRole("list", { name: "Thread" });
+  const sent = thread.getByRole("button", { name: /sent the task/ });
+  await sent.getByText("Fix the scrollbar").waitFor();
+  assert.equal(await thread.getByText("Do not touch the header").count(), 0);
+
+  await sent.click();
+  await thread.getByText("Do not touch the header").waitFor();
+  await sent.click();
+  await thread.getByText("Do not touch the header").waitFor({ state: "detached" });
   await worker.close();
 });
 

@@ -93,7 +93,7 @@ export const firstLine = (text: string): string =>
     .find((line) => line !== "") ?? "";
 
 /** Everything after the first line, for an update that opens to its details. */
-export function rest(text: string): string {
+function rest(text: string): string {
   const lines = text.trim().split("\n");
   const first = lines.findIndex((line) => line.trim() !== "");
   return lines
@@ -144,9 +144,16 @@ const VERBS: Readonly<Record<string, string>> = {
   handback: "handed back",
 };
 
+/** What a mate's comment did: sent the task, or decided what a worker asked. */
+function commentVerb(entry: Entry): string {
+  if (entry.fields["task"] === true) return "sent the task";
+  return typeof entry.fields["resolves"] === "string" ? "decided" : "";
+}
+
 /** What an update did, such as "asked" or a worker's report status, after its author. */
 export function verb(entry: Entry): string {
   const status = entry.fields["status"];
+  if (entry.kind === "comment") return commentVerb(entry);
   if (entry.kind === "report" && typeof status === "string") return REPORTS[status] ?? status;
   if (entry.fields["routed"] === true) return "sent it here";
   if (entry.kind === "cleanup")
@@ -157,4 +164,11 @@ export function verb(entry: Entry): string {
 /** An entry is a message (said to the captain or by him) or an event (something that happened). */
 const MESSAGES: ReadonlySet<string> = new Set(["comment", "ask", "answer", "report", "note"]);
 export const isMessage = (entry: Entry): boolean =>
-  MESSAGES.has(entry.kind) && entry.fields["routed"] !== true;
+  MESSAGES.has(entry.kind) && entry.fields["routed"] !== true && entry.fields["task"] !== true;
+
+/** The decision key an entry carries: what a mate's decision resolves, or what a worker asks to have decided. */
+export function keyOf(entry: Entry): string | undefined {
+  const field = entry.kind === "report" ? "key" : entry.kind === "comment" ? "resolves" : undefined;
+  const key = field === undefined ? undefined : entry.fields[field];
+  return typeof key === "string" ? key : undefined;
+}

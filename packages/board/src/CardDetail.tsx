@@ -18,8 +18,8 @@ import {
   firstLine,
   isActive,
   isMessage,
+  keyOf,
   phraseOf,
-  rest,
   since,
   toneOf,
   verb,
@@ -41,6 +41,9 @@ interface Props {
   readonly onReply: (text: string) => Promise<boolean>;
   readonly onFail: (message: string) => void;
 }
+
+/** A one-line event longer than this opens to its whole text. */
+const LONG_LINE = 90;
 
 /** How far from the bottom of the page the captain may be and still follow new entries. */
 const NEAR_BOTTOM = 240;
@@ -322,6 +325,7 @@ function Message({ entry, now }: { readonly entry: Entry; readonly now: number }
         <span className="name">{author.name}</span>
         {author.tag === "" ? null : <span className="tag">{author.tag}</span>}
         <span className="verb">{verb(entry)}</span>
+        {keyOf(entry) === undefined ? null : <span className="key">{keyOf(entry)}</span>}
         <Time entry={entry} now={now} />
       </header>
       <Collapsible text={bodyOf(entry)} />
@@ -329,7 +333,7 @@ function Message({ entry, now }: { readonly entry: Entry; readonly now: number }
   );
 }
 
-/** Something that happened: a status change, a merge, a hand-back. One line, and the rest on a click. */
+/** Something that happened, or a task message: one line, and the whole text on a click. */
 function Event(props: {
   readonly entry: Entry;
   readonly now: number;
@@ -339,22 +343,25 @@ function Event(props: {
   const { entry, now, waiting } = props;
   const [open, setOpen] = useState(false);
   const author = authorOf(entry.author);
-  const body = props.waiting ? "" : bodyOf(entry);
-  const more = rest(body);
-  const line = (
+  const body = waiting ? "" : bodyOf(entry).trim();
+  const line = firstLine(body);
+  const expands = body !== line || line.length > LONG_LINE;
+  const head = (
     <>
       <span className="dot" aria-hidden="true" />
       <span className="name">{author.name}</span>
       <span className="verb">{waiting ? "asked a question" : verb(entry)}</span>
-      <span className="line">{waiting ? "waiting for your answer above" : firstLine(body)}</span>
+      {open ? (
+        <span className="line" />
+      ) : (
+        <span className="line">{waiting ? "waiting for your answer above" : line}</span>
+      )}
       <Time entry={entry} now={now} />
     </>
   );
   return (
     <li className={`event${open ? " open" : ""}`} data-kind={entry.kind}>
-      {more === "" ? (
-        <div className="event-head">{line}</div>
-      ) : (
+      {expands ? (
         <button
           type="button"
           className="event-head"
@@ -363,10 +370,12 @@ function Event(props: {
             setOpen(!open);
           }}
         >
-          {line}
+          {head}
         </button>
+      ) : (
+        <div className="event-head">{head}</div>
       )}
-      {open ? <p className="event-more">{more}</p> : null}
+      {open ? <p className="event-more">{body}</p> : null}
     </li>
   );
 }
