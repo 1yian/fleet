@@ -313,3 +313,25 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
     assert.deepEqual(await sideways(page), [], `at ${String(viewport.width)} px`);
   }
 });
+
+test("long options show as a list of full-width choices, and one click answers", async () => {
+  const long = "Same, but main's comment goes straight to the lane's worker";
+  await question("Pick the messaging", [
+    "Recommended: main's comment goes to the lane's mate",
+    long,
+    "Hold off",
+  ]);
+  await page.goto(http());
+  // Once one option is long, every option is a full-width choice, even a short one.
+  const short = page.getByRole("button", { name: "Hold off" });
+  const box = await short.boundingBox();
+  const row = await short.locator("..").boundingBox();
+  assert.ok(
+    box !== null && row !== null && Math.abs(box.width - row.width) < 1,
+    "a choice fills its row",
+  );
+
+  await page.getByRole("button", { name: long }).click();
+  const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  assert.equal(answer.body, long);
+});
