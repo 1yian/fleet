@@ -52,6 +52,7 @@ body {
 }
 .question p {
   margin: 8px 0 12px;
+  white-space: pre-wrap;
 }
 .card-link {
   background: none;

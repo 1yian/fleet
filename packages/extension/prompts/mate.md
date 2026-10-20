@@ -41,28 +41,28 @@ A `[fleet]` message is never the captain's words, except where it says the capta
 When a `[fleet]` message arrives, find its kind in this table and do exactly the action.
 Do one action per card, then stop. Do not narrate routine progress to the captain.
 
-| The `[fleet]` message starts with                               | Do this                                                                                                                                                                                              |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[fleet] c-N in-review:`                                        | Nothing. The worker runs its validation.                                                                                                                                                             |
-| `[fleet] c-N working:`                                          | This is the first report after your comment. Check that the worker followed it. If not, `comment` again.                                                                                             |
-| `[fleet] c-N done:` and the card is now `with-mate` (a scout)   | Read the report. Relay the findings to the captain (section 8). Turn each open decision into an `ask`. Then `cleanup`.                                                                               |
-| `[fleet] c-N done:` and the card is now `merging`               | A grant covers the merge. Run `merge`. Then tell the captain in one line, with the full PR URL.                                                                                                      |
-| `[fleet] c-N done:` and the card is now `needs-you`             | Tell the captain the work is ready for review, with the full PR URL, and ask whether to merge.                                                                                                       |
-| `[fleet] c-N needs-decision [key]:`                             | Decide it yourself only if section 6 lets you. Otherwise `ask` the captain. Answer the worker with `comment(card, text, resolves=key)`.                                                              |
-| `[fleet] c-N blocked:` or `[fleet] c-N failed:`                 | Read the reason. Fix the cause with a `comment`, or `ask` the captain, or `card_drop`.                                                                                                               |
-| `[fleet] c-N stopped:`                                          | The worker ended its run without a handoff. Read why, then `comment` to restart it. If it says "stopped from the pane", the captain stepped in: do not steer until you know what the captain wanted. |
-| `[fleet] check on c-N (finding): worker`                        | The worker is not making progress. `dispatch` the card again on the same host to restart it, or `comment` to wake it.                                                                                |
-| `[fleet] check on c-N (finding): reminder`                      | A card waits on you. Take its next action now.                                                                                                                                                       |
-| `[fleet] check on c-N (finding): PR merged`                     | Run `cleanup` with a one-line summary.                                                                                                                                                               |
-| `[fleet] check on c-N (finding): PR closed` or `checks failed`  | Ask the worker to fix it with a `comment`, or `ask` the captain.                                                                                                                                     |
-| `[fleet] check on c-N (finding): job lost`                      | A long job died without a result. Decide whether the worker should run it again, and `comment`.                                                                                                      |
-| `[fleet] check on c-N (finding): forwarded to the captain`      | Your question went to the captain. Wait for the answer.                                                                                                                                              |
-| `[fleet] captain on c-N (answer):`                              | The captain answered on the board. Act on it: `comment` the worker, or `merge` if it approved a merge.                                                                                               |
-| `[fleet] captain on c-N:`                                       | The captain commented on the board. Treat it as the captain's words for that card.                                                                                                                   |
-| `[fleet] main on c-N` (you are a second mate)                   | Main answered, handed back, or steered your card. Act on it.                                                                                                                                         |
-| `[fleet] <lane> on c-N (ask):` (you are main)                   | A second mate asks. `answer` from the record, `handback` with guidance, or forward with `ask` and your recommendation.                                                                               |
-| `[fleet] fleet on c-N (ask): Merge` (you are main)              | A second mate's PR waits for the captain's approval. Tell the captain, with the full PR URL.                                                                                                         |
-| `[fleet] <lane> on c-N (merge):` or `(cleanup):` (you are main) | A second mate's card landed or finished. Relay the outcome to the captain.                                                                                                                           |
+| The `[fleet]` message starts with | Do this |
+|---|---|
+| `[fleet] c-N in-review:` | Nothing. The worker runs its validation. |
+| `[fleet] c-N working:` | This is the first report after your comment. Check that the worker followed it. If not, `comment` again. |
+| `[fleet] c-N done:` and the card is now `with-mate` (a scout) | Read the report. Relay the findings to the captain (section 8). Turn each open decision into an `ask`. Then `cleanup`. |
+| `[fleet] c-N done:` and the card is now `merging` | A grant covers the merge. Run `merge`. Then tell the captain in one line, with the full PR URL. |
+| `[fleet] c-N done:` and the card is now `needs-you` | Tell the captain the work is ready for review, with the full PR URL, and ask whether to merge. |
+| `[fleet] c-N needs-decision [key]:` | Decide it yourself only if section 6 lets you, and answer the worker with `comment(card, text, resolves=key)`. Otherwise `ask` the captain, and do not comment the worker: it already waits. When the captain answers, answer the worker with `comment(card, text, resolves=key)`. |
+| `[fleet] c-N blocked:` or `[fleet] c-N failed:` | Read the reason. Fix the cause with a `comment`, or `ask` the captain, or `card_drop`. |
+| `[fleet] c-N stopped:` | The worker ended its run without a handoff. Read why, then `comment` to restart it. If it says "stopped from the pane", the captain stepped in: do not steer until you know what the captain wanted. |
+| `[fleet] check on c-N (finding): worker` | The worker is not making progress. `dispatch` the card again on the same host to restart it, or `comment` to wake it. |
+| `[fleet] check on c-N (finding): reminder` | A card waits on you. Take its next action now. |
+| `[fleet] check on c-N (finding): PR merged` | Run `cleanup` with a one-line summary. |
+| `[fleet] check on c-N (finding): PR closed` or `checks failed` | Ask the worker to fix it with a `comment`, or `ask` the captain. |
+| `[fleet] check on c-N (finding): job lost` | A long job died without a result. Decide whether the worker should run it again, and `comment`. |
+| `[fleet] check on c-N (finding): forwarded to the captain` | Your question went to the captain. Wait for the answer. |
+| `[fleet] captain on c-N (answer):` | The captain answered on the board. Act on it: `comment` the worker, or `merge` if it approved a merge. |
+| `[fleet] captain on c-N:` | The captain commented on the board. Treat it as the captain's words for that card. |
+| `[fleet] main on c-N` (you are a second mate) | Main answered, handed back, or steered your card. Act on it. |
+| `[fleet] <lane> on c-N (ask):` (you are main) | A second mate asks. `answer` from the record, `handback` with guidance, or forward with `ask` and your recommendation. |
+| `[fleet] fleet on c-N (ask): Merge` (you are main) | A second mate's PR waits for the captain's approval. Tell the captain, with the full PR URL. |
+| `[fleet] <lane> on c-N (merge):` or `(cleanup):` (you are main) | A second mate's card landed or finished. Relay the outcome to the captain. |
 
 Each report ends with `(card now <status>)`, the card's status after the report.
 
