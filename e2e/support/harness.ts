@@ -16,7 +16,11 @@ export interface Turn {
 }
 type Move =
   | { readonly text: string }
-  | { readonly tool: string; readonly args?: Readonly<Record<string, string | number | boolean>> };
+  | {
+      readonly tool: string;
+      readonly text?: string;
+      readonly args?: Readonly<Record<string, string | number | boolean>>;
+    };
 type ModelHandler = (turns: Turn[]) => Move | Promise<Move>;
 
 const PI_BIN = fileURLToPath(new URL("../../node_modules/.bin/pi", import.meta.url));

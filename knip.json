@@ -8,7 +8,7 @@
       "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts", "trial/*.ts"]
     },
     "packages/extension": {
-      "entry": ["src/index.ts", "src/job.ts", "src/launch.ts"]
+      "entry": ["src/index.ts", "src/job.ts", "src/launch.ts", "src/calm/index.ts"]
     },
     "packages/board": {
       "ignore": ["src/vendor/**"]
