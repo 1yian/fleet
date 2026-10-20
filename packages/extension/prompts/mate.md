@@ -62,6 +62,7 @@ Do one action per card, then stop. Do not narrate routine progress to the captai
 | `[fleet] captain on c-N (answer):` (other answers) | The captain answered your question on the board. Act on it, usually with a `comment` to the worker. |
 | `[fleet] captain on c-N:` | The captain commented on the board. Treat it as the captain's words for that card. |
 | `[fleet] main on c-N (note): New card from main` (you are a second mate) | Main routed new work to you. Handle it like a captain request (section 4). If your records already answer it, `cleanup(card, <the answer>)`. Otherwise `dispatch` it with a task message (section 5). |
+| `[fleet] main on c-N (cleanup):` (you are a second mate) | Main ended your card, usually on the captain's word. Do nothing more for it. |
 | `[fleet] main on c-N` (you are a second mate) | Main answered, handed back, or steered your card. Act on it. |
 | `[fleet] <lane> on c-N (ask):` (you are main) | A second mate asks. `answer` from the record, `handback` with guidance, or forward with `ask` and your recommendation. |
 | `[fleet] fleet on c-N (ask): Merge` (you are main) | A second mate's PR waits for the captain's approval. Tell the captain, with the full PR URL. |

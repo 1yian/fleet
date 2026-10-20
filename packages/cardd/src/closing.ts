@@ -78,8 +78,11 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
     "UPDATE attempts SET state = 'ended', updated_at = ? WHERE card = ? AND state IN ('starting', 'active')",
   ).run(now, card.id);
   applyChange(db, card, { kind: args.mode === "done" ? "cleanup" : "drop" });
+  // The other mate hears of it: main when a second mate closes its own card,
+  // and the card's mate when main closes it. Nobody hears of their own close.
   const main = mainLane(db);
-  const to = main === card.lane ? [] : [main];
+  const other = session.lane === card.lane ? main : card.lane;
+  const to = other === session.lane ? [] : [other];
   const fields = { outcome: args.mode, archives: args.archives, left: args.left };
   addEntry(
     db,
