@@ -1,0 +1,4 @@
+# Per-repository no-mistakes settings.
+commands:
+  lint: "npm run check"
+  test: "npm run test:e2e"
