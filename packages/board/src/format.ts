@@ -77,11 +77,14 @@ export function since(from: number, now: number): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
-export function statusLine(card: BoardCard, asked: boolean, now: number): string {
+/** Where the card stands, such as "In review" or "With cleo". A waiting question outranks the status. */
+export function phraseOf(card: BoardCard, asked: boolean): string {
   const phrase = asked && card.status !== "needs-you" ? PHRASES["needs-you"] : PHRASES[card.status];
-  const named = card.status === "with-mate" ? `With ${card.lane}` : phrase;
-  return `${named} · ${since(card.updatedAt, now)}`;
+  return card.status === "with-mate" ? `With ${card.lane}` : phrase;
 }
+
+export const statusLine = (card: BoardCard, asked: boolean, now: number): string =>
+  `${phraseOf(card, asked)} · ${since(card.updatedAt, now)}`;
 
 export const firstLine = (text: string): string =>
   text
@@ -103,11 +106,23 @@ export function rest(text: string): string {
 export const bodyOf = (entry: Entry): string =>
   entry.fields["routed"] === true ? rest(entry.body) : entry.body;
 
-export function who(author: string): string {
-  if (author === "captain") return "You";
-  if (author.startsWith("mate:")) return author.slice("mate:".length);
-  if (author.startsWith("worker:")) return "Worker";
-  return author.charAt(0).toUpperCase() + author.slice(1);
+type Role = "captain" | "first-mate" | "mate" | "worker" | "fleet";
+
+/** Who wrote an entry: the name the captain reads, and the part they play. */
+export interface Author {
+  readonly name: string;
+  readonly role: Role;
+  /** A short tag after the name for the mates, so the lane mate and main are told apart. */
+  readonly tag: string;
+}
+
+export function authorOf(author: string): Author {
+  if (author === "captain") return { name: "You", role: "captain", tag: "" };
+  if (author === "mate:main") return { name: "main", role: "first-mate", tag: "First mate" };
+  if (author.startsWith("mate:"))
+    return { name: author.slice("mate:".length), role: "mate", tag: "Mate" };
+  if (author.startsWith("worker:")) return { name: "Worker", role: "worker", tag: "" };
+  return { name: author.charAt(0).toUpperCase() + author.slice(1), role: "fleet", tag: "" };
 }
 
 /** A worker's report status after "Worker". Progress needs no word. */
@@ -138,3 +153,8 @@ export function verb(entry: Entry): string {
     return entry.fields["outcome"] === "dropped" ? "dropped it" : "closed it";
   return VERBS[entry.kind] ?? "";
 }
+
+/** An entry is a message (said to the captain or by him) or an event (something that happened). */
+const MESSAGES: ReadonlySet<string> = new Set(["comment", "ask", "answer", "report", "note"]);
+export const isMessage = (entry: Entry): boolean =>
+  MESSAGES.has(entry.kind) && entry.fields["routed"] !== true;

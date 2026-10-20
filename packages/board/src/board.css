@@ -28,7 +28,8 @@ body {
   box-sizing: border-box;
 }
 button,
-input {
+input,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -162,7 +163,14 @@ input {
   border: 0;
   background: none;
   text-align: left;
+  color: inherit;
+  text-decoration: none;
+}
+.task {
   cursor: pointer;
+}
+.task:hover {
+  border-color: #d4d4d8;
 }
 .task-head .sparkle {
   margin-top: 3px;
@@ -182,11 +190,11 @@ input {
   line-clamp: 2;
   overflow: hidden;
 }
-.task.open .task-summary {
-  display: block;
-}
 .task-head:focus-visible,
-.update-head:focus-visible {
+.event-head:focus-visible,
+.back:focus-visible,
+.more:focus-visible,
+.spec-toggle:focus-visible {
   outline: 2px solid var(--running);
   outline-offset: 3px;
   border-radius: 6px;
@@ -272,16 +280,12 @@ svg.status-icon {
   line-clamp: 4;
   overflow: hidden;
 }
-.task.open .ask-text {
-  display: block;
-}
 .options {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
-.options button,
-.reply button {
+.options button {
   border: 1px solid #d4d4d8;
   background: #fff;
   border-radius: 9px;
@@ -293,8 +297,7 @@ svg.status-icon {
 .options button:hover {
   background: var(--panel);
 }
-.options button.primary,
-.reply button {
+.options button.primary {
   background: var(--ink);
   border-color: var(--ink);
   color: #fff;
@@ -354,114 +357,491 @@ svg.status-icon {
   }
 }
 
-/* The card's story, open in place */
-.details {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+/* Write your own */
+.options button.write-own {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-style: dashed;
+  color: var(--muted);
+  font-weight: 400;
+}
+.options button.write-own:hover {
+  color: var(--ink);
+  border-color: #a1a1aa;
+}
+.inline-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.write {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.write textarea,
+.composer textarea {
+  width: 100%;
+  border: 1px solid #d4d4d8;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  background: #fff;
+  resize: vertical;
+}
+.write textarea:focus {
+  outline: 2px solid #bfd3fb;
+  border-color: var(--running);
+}
+.write-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.write-actions .hint {
+  flex: 1 1 100%;
+}
+.write-actions button {
+  border: 1px solid #d4d4d8;
+  background: #fff;
+  border-radius: 9px;
+  padding: 7px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.write-actions button.quiet {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+.write-actions button.quiet:hover {
+  color: var(--ink);
+}
+.write-actions button.send {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+.write-actions button.send:hover:not(:disabled) {
+  background: #3f3f46;
+}
+.write-actions button:disabled,
+.send-round:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* A card's detail, laid out like an issue page */
+.board.detail-page {
+  max-width: 1040px;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 4px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.back:hover {
+  background: var(--panel);
+  color: var(--ink);
+}
+.sep {
+  color: #d4d4d8;
+}
+.card-id {
+  font-variant-numeric: tabular-nums;
+}
+kbd.esc {
+  margin-left: auto;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--faint);
+  background: #fff;
+}
+.detail-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 256px;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "head side"
+    "main side";
+  column-gap: 40px;
+}
+.detail-head {
+  grid-area: head;
+}
+.detail-head h1 {
+  margin: 0 0 20px;
+  font-size: 26px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+.detail-main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-width: 0;
+  max-width: 740px;
+}
+.detail h2 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Properties */
+.properties {
+  grid-area: side;
+  align-self: start;
+  position: sticky;
+  top: 24px;
+  margin: 0;
+  padding: 2px 0 2px 24px;
+  border-left: 1px solid var(--line);
+  display: grid;
+  gap: 2px;
+  font-size: 13.5px;
+}
+.property {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+.property dt {
+  color: var(--muted);
+}
+.property dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.property dd a {
+  color: var(--running);
+  text-decoration: none;
+}
+.property dd a:hover {
+  text-decoration: underline;
+}
+.kind {
+  text-transform: capitalize;
+}
+
+/* Description */
+.description {
   display: grid;
   gap: 12px;
 }
-.updates {
+.collapsible .body {
+  font-size: 15px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.collapsible .body.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 10;
+  line-clamp: 10;
+  overflow: hidden;
+}
+.more,
+.spec-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.more {
+  margin-top: 6px;
+}
+.more:hover,
+.spec-toggle:hover {
+  color: var(--ink);
+}
+.spec-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13.5px;
+}
+.spec:not(.open) .spec-toggle {
+  margin-bottom: 0;
+}
+.caret {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform 0.12s;
+}
+.spec.open .caret {
+  transform: rotate(45deg);
+}
+.spec .collapsible .body {
+  color: #3f3f46;
+  font-size: 14px;
+}
+
+/* Questions that wait on the captain */
+.waiting {
+  background: #fff;
+  border: 1px solid #f0d9a8;
+  border-left: 3px solid var(--needs);
+  border-radius: 14px;
+  padding: 16px 18px 18px;
+}
+.waiting h2 {
+  color: #a16c0b;
+}
+.waiting .ask:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.detail .ask-text {
+  display: block;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/* The thread */
+.thread {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
 }
-.update {
-  position: relative;
-  padding-left: 18px;
+.message {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 16px 13px;
+  min-width: 0;
 }
-.update::before {
-  content: "";
-  position: absolute;
-  left: 3px;
-  top: 10px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #c4c4c8;
+.message.captain {
+  background: #f5f8ff;
+  border-color: #dbe6fb;
 }
-.update:last-child::before {
-  background: var(--ink);
-}
-.update:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  left: 5.5px;
-  top: 20px;
-  bottom: -4px;
-  width: 1px;
-  background: var(--line);
-}
-.update-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
+.message header {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 3px 0;
-  border: 0;
-  background: none;
-  text-align: left;
-  font-size: 14px;
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  min-width: 0;
 }
-button.update-head {
-  cursor: pointer;
+.name {
+  font-weight: 500;
+  white-space: nowrap;
 }
-button.update-head:hover .line {
-  color: var(--ink);
-}
-.who {
+.verb {
   color: var(--muted);
   white-space: nowrap;
 }
-.line {
+.verb:empty {
+  display: none;
+}
+.thread time {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.message .collapsible .body {
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+.avatar {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--faint);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+.avatar.captain {
+  background: var(--ink);
+}
+.avatar.first-mate {
+  background: #7c6bd6;
+}
+.avatar.mate {
+  background: var(--running);
+}
+.avatar.worker {
+  background: var(--done);
+}
+.event-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 4px 2px 8px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 13.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+button.event-head {
+  cursor: pointer;
+}
+button.event-head:hover .line {
+  color: var(--ink);
+}
+.event .name {
+  font-weight: 500;
+  color: #52525b;
+}
+.event .dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  align-self: center;
+  border-radius: 50%;
+  background: #c4c4c8;
+}
+.event .line {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.update.open .line {
-  grid-column: 1 / -1;
-  grid-row: 2;
+.event.open .line {
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.update time {
-  grid-column: 3;
-  grid-row: 1;
-  color: var(--faint);
-  font-size: 13px;
-  white-space: nowrap;
-}
-.update-detail {
-  margin: 2px 0 8px;
-  font-size: 14px;
+.event-more {
+  margin: 2px 0 6px 22px;
+  font-size: 13.5px;
   color: #3f3f46;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.reply {
-  display: flex;
-  gap: 8px;
+
+/* The box for writing to the card's mate */
+.end {
+  height: 0;
+  margin-top: -28px;
+  scroll-margin-bottom: 96px;
 }
-.reply input {
+.composer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 20px 0 max(12px, env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, rgb(250 250 250 / 0), var(--page) 22px);
+}
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid #d4d4d8;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+.composer-box:focus-within {
+  border-color: var(--running);
+  outline: 2px solid #bfd3fb;
+}
+.composer textarea {
   flex: 1;
   min-width: 0;
-  border: 1px solid #d4d4d8;
-  border-radius: 9px;
-  padding: 7px 12px;
-  font-size: 14px;
-  background: #fff;
+  max-height: 200px;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 15px;
+  resize: none;
+  outline: none;
 }
-.reply input:focus {
-  outline: 2px solid #bfd3fb;
-  border-color: var(--running);
+.send-round {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
 }
-.reply button:disabled {
-  opacity: 0.35;
-  cursor: default;
+.send-round .inline-icon {
+  stroke-width: 1.8;
+}
+.composer .hint {
+  margin: 6px 0 0 4px;
 }
 
 /* A narrow screen always gets the list */
@@ -478,5 +858,49 @@ button.update-head:hover .line {
   }
   .view-switch {
     display: none;
+  }
+  .detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas:
+      "head"
+      "side"
+      "main";
+  }
+  .detail-head h1 {
+    margin-bottom: 14px;
+    font-size: 22px;
+  }
+  .crumbs {
+    margin-bottom: 16px;
+  }
+  kbd.esc,
+  .composer .hint,
+  .write-actions .hint {
+    display: none;
+  }
+  .properties {
+    position: static;
+    margin-bottom: 24px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 16px;
+  }
+  .property {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+    min-height: 0;
+  }
+  .property dt {
+    font-size: 12px;
+  }
+  .detail-main {
+    gap: 24px;
+  }
+  .waiting {
+    padding: 14px;
   }
 }

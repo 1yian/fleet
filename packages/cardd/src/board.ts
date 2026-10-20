@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   check,
   BoardActionSchema,
+  MERGE_OPTIONS,
   type Board,
   type Card,
   type Entry,
@@ -77,13 +78,24 @@ export const thread = (db: DatabaseSync, id: number): Thread => ({
   entries: cardEntries(db, id).filter(forCaptain),
 });
 
-function answerOnBoard(db: DatabaseSync, card: Card, ask: number, choice: string): void {
+/**
+ * Answers an open question with one of its options, or with the captain's own words.
+ * Own words on a merge question are a request for changes: only the Approve option approves.
+ */
+function answerOnBoard(
+  db: DatabaseSync,
+  card: Card,
+  ask: number,
+  choice: string,
+  written: boolean,
+): void {
   const resolves = String(ask);
   if (!factsFrom(cardEntries(db, card.id)).askIds.includes(resolves))
     throw new StaleCard(`that question on c-${String(card.id)} is no longer open`);
-  const merge = mergeChoice(db, card, resolves, choice);
+  const merge = mergeChoice(db, card, resolves, written ? MERGE_OPTIONS[1] : choice);
   applyChange(db, card, merge === undefined ? { kind: "answer" } : { kind: "answer", merge });
-  const fields = { resolves, source: "board", choice };
+  const picked = written && merge !== undefined ? MERGE_OPTIONS[1] : choice;
+  const fields = { resolves, source: "board", choice: picked, ...(written ? { written } : {}) };
   addEntry(db, { card: card.id, author: "captain", kind: "answer", body: choice, fields }, [
     card.lane,
   ]);
@@ -95,7 +107,8 @@ export function boardAction(db: DatabaseSync, raw: unknown): string[] {
   const card = getCard(db, id);
   if (action.kind !== "comment" && card.revision !== revision)
     throw new StaleCard(`c-${String(id)} changed since you looked; here is the current card`);
-  if (action.kind === "answer") answerOnBoard(db, card, action.ask, action.choice);
+  if (action.kind === "answer")
+    answerOnBoard(db, card, action.ask, action.choice, action.written === true);
   if (action.kind === "comment") {
     addEntry(db, { card: id, author: "captain", kind: "comment", body: action.text, fields: {} }, [
       card.lane,
