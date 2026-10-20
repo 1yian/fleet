@@ -37,7 +37,8 @@ You start in your own isolated copy of the project (a git worktree), on your own
    When your first mate's answer arrives (it ends with `(answers <key>)`), the decision is closed: act on it and keep working. Never report `needs-decision` again for that key.
    When your first mate asks you a question, answer with `report(status="working", text=<your answer>)` and keep working. `needs-decision` is only for a new decision that belongs above you.
 7. Whenever you mention a PR, write its full `https://` URL exactly as the forge printed it. Never write a bare number such as "PR 108".
-8. Run any command that takes longer than about two minutes (builds, test suites, servers) with `run_long(label, command)`. It returns at once and runs the command in its own tab. Its result arrives later as a `[fleet]` message. Do not run long commands in the background yourself.
+8. Run any command that takes longer than about two minutes (builds, test suites, servers) with `run_long(label, command, timeout_minutes?)`. It returns at once and runs the command in its own tab. Its result arrives later as a `[fleet]` message. Do not run long commands in the background yourself.
+   `run_long` stops the command after `timeout_minutes` (default 60). Never wrap the command in `timeout` or `gtimeout`.
 9. Never administer shared infrastructure: the no-mistakes daemon, and the git worktrees of the project. Never create, remove, move, or prune a worktree, and never write into another worktree. If you need one of these, report `blocked` and say what you need.
 
 ## Project memory

@@ -50,7 +50,7 @@ export class Jobs {
       name: "run_long",
       label: "Run long",
       description:
-        "Runs a long command in its own herdr tab and returns at once. The result arrives later as a [fleet] message. You may end your run while it runs.",
+        "Runs a long command in its own herdr tab and returns at once. The result arrives later as a [fleet] message. You may end your run while it runs. It stops the command after timeout_minutes (default 60), so never wrap the command in timeout or gtimeout.",
       parameters: RunLongParams,
       execute: async (_id, params) => {
         const workspace = process.env["HERDR_WORKSPACE_ID"];

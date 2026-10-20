@@ -33,9 +33,10 @@ export function boardView(db: DatabaseSync): Board {
   return { cards, questions };
 }
 
+/** A card's thread for the captain. Job results are the worker's tool output: the captain reads its reports. */
 export const thread = (db: DatabaseSync, id: number): Thread => ({
   card: getCard(db, id),
-  entries: cardEntries(db, id),
+  entries: cardEntries(db, id).filter((entry) => entry.kind !== "job-result"),
 });
 
 function answerOnBoard(db: DatabaseSync, card: Card, ask: number, choice: string): void {
