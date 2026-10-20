@@ -36,7 +36,7 @@ const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/
 
 async function question(title: string, options: string[]): Promise<Card> {
   const card = check(CardSchema, await main.call("card.new", { title, kind: "captain" }));
-  await main.call("ask", { card: card.id, question: `${title}?`, options });
+  await main.call("hold", { card: card.id, question: `${title}?`, options });
   return card;
 }
 
@@ -51,7 +51,7 @@ async function shipped(title: string, task = "fix it") {
   return { card, mate, worker: await cardd.connect(token) };
 }
 
-test("Needs you shows each question, and one click answers it", async () => {
+test("Needs you shows a hold, and one click answers it", async () => {
   await question("Pick the API version", ["v1", "v2"]);
   await page.goto(http());
   await page.getByText("Pick the API version?").waitFor();
@@ -60,25 +60,6 @@ test("Needs you shows each question, and one click answers it", async () => {
   await page.getByText("Nothing waits on you.").waitFor();
   const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
   assert.deepEqual([answer.author, answer.body], ["captain", "v2"]);
-});
-
-test("each open question of one card is shown, and a click answers that question", async () => {
-  const card = await question("Pick the API version", ["v1", "v2"]);
-  await main.call("ask", { card: card.id, question: "Ship on Friday?", options: ["yes", "no"] });
-  await page.goto(http());
-  await page.getByText("Ship on Friday?").waitFor();
-  await page.getByText("Pick the API version?").waitFor();
-
-  await page.getByRole("button", { name: "yes" }).click();
-  await page.getByText("Ship on Friday?").waitFor({ state: "detached" });
-  await page.getByText("Pick the API version?").waitFor();
-  await page.getByRole("button", { name: "v1" }).click();
-  await page.getByText("Nothing waits on you.").waitFor();
-  const answers = await main.waitForEntries(2);
-  assert.deepEqual(
-    answers.map((entry) => entry.body),
-    ["yes", "v1"],
-  );
 });
 
 test("number keys with a modifier do not answer", async () => {
@@ -111,8 +92,8 @@ test("a click on a card that changed since the captain looked is refused", async
   await page.getByText("Renew the certificate?").waitFor();
   await main.call("hold", {
     card: card.id,
+    question: "Renew the certificate?",
     until: Date.now() + 3_600_000,
-    reason: "after the freeze",
   });
 
   await page.getByRole("button", { name: "now" }).click();
@@ -150,7 +131,7 @@ test("a click on a card opens its detail: properties, the description, and the t
     }),
   );
   await main.call("comment", { card: card.id, text: "Spec: build the v2 endpoint" });
-  await main.call("ask", { card: card.id, question: "Ship v2 now?", options: ["yes", "no"] });
+  await main.call("hold", { card: card.id, question: "Ship v2 now?", options: ["yes", "no"] });
   await page.goto(http());
   await page.getByRole("article", { name: "Pick the API version" }).click();
 
@@ -194,16 +175,23 @@ test("the thread is the conversation between the owner and its mate, with each a
     text: "Fix R1 only, or R1 and R2?",
   });
   await mate.call("comment", { card: card.id, text: "fix both R1 and R2", resolves: "scope" });
-  // The mate's question goes to main, which puts it to the captain.
-  const footer = { card: card.id, question: "Keep the footer?", options: ["yes", "no"] };
-  await mate.call("ask", footer);
-  await main.call("ask", footer);
+  await mate.call("hold", { card: card.id, question: "Keep the footer?", options: ["yes", "no"] });
+  await main.call("hold", {
+    card: card.id,
+    to: "captain",
+    question: "Keep the footer? I say yes.",
+    options: ["yes", "no"],
+  });
   await page.goto(`${http()}#/c-${String(card.id)}`);
 
   const thread = page.getByRole("list", { name: "Thread" });
   await thread.getByText("waiting for your answer above").waitFor();
   await page.getByRole("button", { name: "yes" }).click();
-  await worker.call("report", { status: "done", text: "a final note" });
+  await worker.call("report", {
+    status: "done",
+    text: "a final note",
+    pr: "https://github.com/acme/web/pull/3",
+  });
   await thread.getByText("a final note").waitFor();
 
   // Each author, in the order they spoke: comments down, reports and questions up.
@@ -214,11 +202,11 @@ test("the thread is the conversation between the owner and its mate, with each a
   assert.match(lines[2] ?? "", /Worker needs a decision scope .*Fix R1 only, or R1 and R2\?/);
   assert.match(lines[3] ?? "", /cleo Mate decided scope .*fix both R1 and R2/);
   assert.match(lines[4] ?? "", /cleo Mate asked .*Keep the footer\?/);
-  assert.match(lines[5] ?? "", /main First mate asked .*Keep the footer\?/);
+  assert.match(lines[5] ?? "", /main First mate escalated it .*Keep the footer\? I say yes\./);
   assert.match(lines[6] ?? "", /You answered .*yes/);
   assert.match(lines[7] ?? "", /Worker is done .*a final note/);
-  // Done on a ship card makes the fleet ask for the merge.
-  assert.match(lines[8] ?? "", /Fleet asked a question .*waiting for your answer above/);
+  // Done on a ship card makes the fleet hold the card for the merge, on main first.
+  assert.match(lines[8] ?? "", /Fleet asked .*Merge https:\/\/github\.com\/acme\/web\/pull\/3/);
   assert.equal(lines.length, 9);
   await worker.close();
 });
@@ -283,7 +271,7 @@ test("a draft survives a new entry on the open card, and stays with its own card
   const composer = page.getByRole("textbox", { name: "Comment" });
   await composer.fill("I prefer v2 because");
 
-  await main.call("ask", { card: card.id, question: "Ship on Friday?", options: ["yes", "no"] });
+  await main.call("hold", { card: card.id, question: "Ship on Friday?", options: ["yes", "no"] });
   await page
     .getByRole("region", { name: "Waiting for you" })
     .getByText("Ship on Friday?")
@@ -316,9 +304,13 @@ test("a refused message comes back into the composer", async () => {
 test("Write your own answers the question in the captain's words, for the card's mate", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
-  const channel = { card: card.id, question: "Which channel?", options: ["search"] };
-  await cleo.call("ask", channel);
-  await main.call("ask", channel);
+  await cleo.call("hold", { card: card.id, question: "Which channel?", options: ["search"] });
+  await main.call("hold", {
+    card: card.id,
+    to: "captain",
+    question: "Which channel?",
+    options: ["search"],
+  });
   await page.goto(http());
   await page.getByText("Which channel?").waitFor();
 
@@ -439,11 +431,12 @@ const sideways = (target: Page): Promise<string[]> =>
 test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken text", async () => {
   const card = await question("Pick the API version", ["v1", "v2"]);
   const url = `https://example.com/${"a".repeat(240)}`;
-  await main.call("ask", { card: card.id, question: `Evidence:\n${url}`, options: ["ok"] });
   for (const viewport of [
     { width: 1440, height: 900 },
     { width: 390, height: 800 },
   ]) {
+    // The captain's comment below takes the hold back from him, so the card holds again for each size.
+    await main.call("hold", { card: card.id, question: `Evidence:\n${url}`, options: ["ok"] });
     await page.setViewportSize(viewport);
     await page.goto(http());
     await page
@@ -458,7 +451,8 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
     await page.getByRole("textbox", { name: "Your answer" }).fill(url);
     await page.getByRole("textbox", { name: "Comment" }).fill(url);
     await page.getByRole("button", { name: "Send", exact: true }).click();
-    await page.getByRole("list", { name: "Thread" }).getByText(url).waitFor();
+    // The captain's comment took the hold back from him, so its question reads in the thread too.
+    await page.getByRole("list", { name: "Thread" }).getByText(url).last().waitFor();
     assert.deepEqual(await sideways(page), [], `the card at ${String(viewport.width)} px`);
     // The box for writing stays in reach at the bottom of the screen.
     const box = await page.getByRole("textbox", { name: "Comment" }).boundingBox();

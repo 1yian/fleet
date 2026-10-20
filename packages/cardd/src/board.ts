@@ -13,10 +13,10 @@ import {
   type Entry,
   type Thread,
 } from "@fleet/protocol";
-import { mergeChoice } from "./asks.ts";
-import { applyChange } from "./change.ts";
-import { factsFrom } from "./status.ts";
-import { addEntry, cardEntries, getCard, isLaneCard, listCards, parentOf } from "./store.ts";
+import { applyChange, type Draft } from "./change.ts";
+import { answerHold, hearers, holdOf, rewritten } from "./holds.ts";
+import { factsFrom, type Hold } from "./status.ts";
+import { addEntry, cardEntries, getCard, isLaneCard, listCards, touchCard } from "./store.ts";
 
 /** The card changed since the captain saw it. The board shows the current card. */
 export class StaleCard extends Error {}
@@ -44,72 +44,40 @@ const firstLine = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
-/** A second mate's question: it goes to main first, and only main's own question reaches the captain. */
-const isLaneAsk = (db: DatabaseSync, entry: Entry): boolean =>
-  entry.kind === "ask" &&
-  entry.author.startsWith("mate:") &&
-  parentOf(db, entry.author.slice("mate:".length)) !== null;
-
-/** The card's open questions, split by who holds them: the captain, or main. */
-function openAsks(
-  db: DatabaseSync,
-  entries: readonly Entry[],
-): { captain: Entry[]; main: Entry[] } {
-  const open = new Set(factsFrom(entries).askIds);
-  const asks = entries.filter((entry) => entry.kind === "ask" && open.has(String(entry.id)));
-  return {
-    captain: asks.filter((entry) => !isLaneAsk(db, entry)),
-    main: asks.filter((entry) => isLaneAsk(db, entry)),
-  };
-}
-
 /**
  * The card's latest news in one line, or the captain's words when there is none yet.
- * A question for the captain shows on its own, a question that waits with main shows
- * here as "Asks main", and a routing note only repeats the title.
+ * A hold for the captain shows on its own, a hold that waits with main shows here as
+ * "Asks main", and a routing note only repeats the title.
  */
-function summaryOf(
-  card: Card,
-  entries: readonly Entry[],
-  laneCard: boolean,
-  withMain: readonly Entry[],
-): string {
+function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hold?: Hold): string {
+  const withMain = hold?.holder === "main" ? hold.entry : undefined;
   const latest = entries.findLast(
     (entry) =>
       forCaptain(entry, laneCard) &&
-      (entry.kind !== "ask" || withMain.includes(entry)) &&
+      (entry.kind !== "hold" || entry.id === withMain) &&
       entry.fields["routed"] !== true,
   );
-  if (latest !== undefined && withMain.includes(latest)) {
-    return `Asks main: ${firstLine(latest.body)}`;
-  }
+  if (latest !== undefined && latest.id === withMain) return `Asks main: ${firstLine(latest.body)}`;
   return firstLine(latest?.body ?? card.intent);
 }
 
-/**
- * What the board shows. Its questions are the captain's only: a second mate's question
- * waits with main and shows on its card, and it reaches Needs you when main asks it.
- */
+/** The board: every card, and the holds that wait on the captain. Nothing else is his to answer. */
 export function boardView(db: DatabaseSync): Board {
-  const entriesOf = new Map<number, Entry[]>();
+  const now = Date.now();
+  const holds: Board["holds"] = [];
   const cards = listCards(db).map((card) => {
     const entries = cardEntries(db, card.id);
-    entriesOf.set(card.id, entries);
+    const { hold } = factsFrom(entries);
+    const open = card.status !== "done" && card.status !== "dropped";
+    if (open && hold?.holder === "captain" && (hold.until === null || hold.until <= now)) {
+      const { entry, question, options, merge } = hold;
+      holds.push({ card: card.id, hold: entry, question, options: [...options], merge });
+    }
     const mate = isLaneCard(db, card);
-    return { ...card, summary: summaryOf(card, entries, mate, openAsks(db, entries).main), mate };
+    const summary = summaryOf(card, entries, mate, hold);
+    return { ...card, summary, mate, holder: hold?.holder ?? null };
   });
-  const questions = cards
-    .filter((card) => card.status !== "done" && card.status !== "dropped")
-    .flatMap((card) =>
-      openAsks(db, entriesOf.get(card.id) ?? []).captain.map((ask) => ({
-        card: card.id,
-        ask: ask.id,
-        question: ask.body,
-        options: Array.isArray(ask.fields["options"]) ? ask.fields["options"].map(String) : [],
-        merge: ask.fields["merge"] === true,
-      })),
-    );
-  return { cards, questions };
+  return { cards, holds };
 }
 
 /** A card's thread: the conversation between its owner and its mate, as the captain reads it. */
@@ -119,31 +87,56 @@ export const thread = (db: DatabaseSync, id: number): Thread => ({
 });
 
 /**
- * Answers an open question with one of its options, or with the captain's own words.
- * Own words on a merge question are a request for changes: only the Approve option approves.
+ * Answers the hold that the captain sees, with one of its options or with his own words. It
+ * resolves the whole hold. Own words on a merge question are a request for changes: only the
+ * Approve option approves.
  */
 function answerOnBoard(
   db: DatabaseSync,
   card: Card,
-  ask: number,
+  hold: number,
   choice: string,
   written: boolean,
-): void {
-  const resolves = String(ask);
-  const entries = cardEntries(db, card.id);
-  if (!factsFrom(entries).askIds.includes(resolves))
-    throw new StaleCard(`that question on c-${String(card.id)} is no longer open`);
-  const asked = entries.find((entry) => entry.id === ask);
-  if (asked !== undefined && isLaneAsk(db, asked)) {
-    throw new Error("that question is with main. It reaches you when main puts it to you");
-  }
-  const merge = mergeChoice(db, card, resolves, written ? MERGE_OPTIONS[1] : choice);
-  applyChange(db, card, merge === undefined ? { kind: "answer" } : { kind: "answer", merge });
-  const picked = written && merge !== undefined ? MERGE_OPTIONS[1] : choice;
-  const fields = { resolves, source: "board", choice: picked, ...(written ? { written } : {}) };
-  addEntry(db, { card: card.id, author: "captain", kind: "answer", body: choice, fields }, [
-    card.lane,
-  ]);
+): string[] {
+  const open = holdOf(db, card);
+  if (open?.entry !== hold)
+    throw new StaleCard(`that hold on c-${String(card.id)} is no longer open`);
+  if (open.holder !== "captain")
+    throw new Error("that hold is with main or its mate. It reaches you when main escalates it");
+  const picked = written && open.merge ? MERGE_OPTIONS[1] : choice;
+  const args = { words: choice, source: "board", choice: picked, ...(written ? { written } : {}) };
+  return [...answerHold(db, null, card, open, args).notify];
+}
+
+/** The captain's comment is a steer. It takes the hold back from him, and the owner decides what it does. */
+function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
+  const taken = holdOf(db, card)?.holder === "captain";
+  const to = taken ? hearers(db, card, null, ["main"]) : [card.lane];
+  const draft: Draft = {
+    card: card.id,
+    author: "captain",
+    kind: "comment",
+    body: text,
+    fields: {},
+  };
+  if (taken) applyChange(db, card, { kind: "held" }, [draft]);
+  addEntry(db, draft, to);
+  if (taken) touchCard(db, card.id);
+  return to;
+}
+
+/** The captain's "later": the hold waits until the date, then it is his again. A card with no hold waits with its owner. */
+function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: string): string[] {
+  if (until <= Date.now()) throw new Error("until must be in the future");
+  const facts = factsFrom(cardEntries(db, card.id));
+  const fields = { ...rewritten(facts, facts.hold?.holder ?? "owner", until), reason };
+  const body = facts.hold?.question ?? reason;
+  const draft: Draft = { card: card.id, author: "captain", kind: "hold", body, fields };
+  applyChange(db, card, { kind: "held" }, [draft]);
+  const to = hearers(db, card, null, [fields.holder]);
+  addEntry(db, draft, to);
+  touchCard(db, card.id);
+  return to;
 }
 
 /** Runs one board action. Returns the sessions to push to. */
@@ -153,27 +146,7 @@ export function boardAction(db: DatabaseSync, raw: unknown): string[] {
   if (action.kind !== "comment" && card.revision !== revision)
     throw new StaleCard(`c-${String(id)} changed since you looked; here is the current card`);
   if (action.kind === "answer")
-    answerOnBoard(db, card, action.ask, action.choice, action.written === true);
-  if (action.kind === "comment") {
-    addEntry(db, { card: id, author: "captain", kind: "comment", body: action.text, fields: {} }, [
-      card.lane,
-    ]);
-  }
-  if (action.kind === "hold") {
-    if (action.until <= Date.now()) throw new Error("until must be in the future");
-    if (card.status === "waiting") throw new Error(`c-${String(id)} is already waiting`);
-    db.prepare("UPDATE cards SET held_until = ?, return_status = ? WHERE id = ?").run(
-      action.until,
-      card.status,
-      id,
-    );
-    applyChange(db, card, { kind: "hold" });
-    const body = `held until ${new Date(action.until).toISOString()}: ${action.reason}`;
-    addEntry(
-      db,
-      { card: id, author: "captain", kind: "status", body, fields: { until: action.until } },
-      [card.lane],
-    );
-  }
-  return [card.lane];
+    return answerOnBoard(db, card, action.hold, action.choice, action.written === true);
+  if (action.kind === "comment") return commentOnBoard(db, card, action.text);
+  return deferOnBoard(db, card, action.until, action.reason);
 }

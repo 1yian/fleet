@@ -45,7 +45,7 @@ test("a comment returns the card to In review while the pipeline runs", async ()
   await comment("keep the old API");
   assert.equal(await status(fleet.main, card), "in-review");
   await report("done", "PR green and ready");
-  assert.equal(await status(fleet.main, card), "needs-you");
+  assert.equal(await status(fleet.main, card), "with-mate");
 });
 
 test("routine reports stay on the board, except the first one after the task or a comment", async () => {

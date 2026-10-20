@@ -62,16 +62,16 @@ test("the Mates section shows each second mate's lane card, and its detail is th
   assert.equal(heard.body, "Thanks, cleo");
 });
 
-test("a second mate's question is not in Needs you until main forwards it", async () => {
+test("a second mate's hold is not in Needs you until main escalates it", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
-  await cleo.call("ask", {
+  await cleo.call("hold", {
     card: card.id,
     question: "Which channel?",
     options: ["search", "social"],
   });
   const cards = check(OPS.board.result, await cleo.call("board", {}));
-  assert.equal(cards.find((each) => each.id === card.id)?.status, "with-first-mate");
+  assert.equal(cards.find((each) => each.id === card.id)?.status, "with-mate");
 
   // With main: the card shows in Running, with the question as its news, and no buttons.
   await page.goto(http());
@@ -82,8 +82,9 @@ test("a second mate's question is not in Needs you until main forwards it", asyn
   assert.equal(await page.getByRole("button", { name: "search" }).count(), 0);
 
   // Main puts it to the captain, and now it needs him.
-  await main.call("ask", {
+  await main.call("hold", {
     card: card.id,
+    to: "captain",
     question: "Cleo asks which channel. I recommend search.",
     options: ["search", "social"],
   });
@@ -94,11 +95,11 @@ test("a second mate's question is not in Needs you until main forwards it", asyn
   assert.equal(answer.body, "search");
 });
 
-test("the board refuses an answer to a question that is still with main", async () => {
+test("the board refuses an answer to a hold that is still with main", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
-  await cleo.call("ask", { card: card.id, question: "Which channel?", options: ["search"] });
-  const ask = await main.waitForEntry((entry) => entry.kind === "ask", "the question");
+  await cleo.call("hold", { card: card.id, question: "Which channel?", options: ["search"] });
+  const ask = await main.waitForEntry((entry) => entry.kind === "hold", "the hold");
   const current = check(OPS.board.result, await cleo.call("board", {})).find(
     (each) => each.id === card.id,
   );
@@ -108,7 +109,7 @@ test("the board refuses an answer to a question that is still with main", async 
     body: JSON.stringify({
       card: card.id,
       revision: current?.revision,
-      action: { kind: "answer", ask: ask.id, choice: "search" },
+      action: { kind: "answer", hold: ask.id, choice: "search" },
     }),
   });
   assert.equal(response.status, 400);

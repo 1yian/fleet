@@ -97,6 +97,20 @@ test("a card that waits on an idle mate gets one reminder for each tier", async 
   );
 });
 
+test("a hold that waits on main reminds main, and not the lane mate that raised it", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const card = await newCard(cleo, "Ads stay under budget");
+  await cleo.call("hold", { card: card.id, question: "Raise the budget?", options: ["No"] });
+
+  await findingFor(card, "reminder-1");
+  const reminded = (session: Session): string[] =>
+    session.entries
+      .filter(({ entry }) => entry.card === card.id && entry.author === "check")
+      .map(({ entry }) => String(entry.fields["condition"]));
+  assert.deepEqual(reminded(fleet.main), ["reminder-1"]);
+  assert.deepEqual(reminded(cleo), []);
+});
+
 test("a mate that is busy and then idle again is not reminded twice for the same tier", async () => {
   const card = await newCard(fleet.main, "blocked");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));

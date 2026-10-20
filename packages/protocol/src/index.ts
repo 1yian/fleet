@@ -8,7 +8,6 @@ export const STATUSES = [
   "working",
   "in-review",
   "with-mate",
-  "with-first-mate",
   "needs-you",
   "merging",
   "waiting",
@@ -27,6 +26,11 @@ export const REPORT_STATUSES = [
   "failed",
   "stopped",
 ] as const;
+
+/** Who a hold waits on. The owner is the card's own mate. Main is the owner of its own cards. */
+export const HOLDERS = ["owner", "main", "captain"] as const;
+const Holder = Type.Enum(HOLDERS);
+export type Holder = Static<typeof Holder>;
 
 /** The options of a merge question (spec section 7.5). */
 export const MERGE_OPTIONS = ["Approve & merge", "Request changes"] as const;
@@ -124,22 +128,39 @@ export const OPS = {
     }),
     result: CardSchema,
   },
-  ask: {
+  hold: {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
-      question: Type.String({ minLength: 1 }),
-      options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+      question: Type.String({
+        minLength: 1,
+        description:
+          "Everything the hold waits on, in one text: each question numbered, with the evidence, the consequence, and your recommendation",
+      }),
+      options: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), {
+          description:
+            "Short answers to the whole hold, your recommendation first, such as 'Take all my recommendations'",
+        }),
+      ),
+      to: Type.Optional(
+        Type.Enum(["main", "captain"], {
+          description:
+            "Who the hold waits on: main (a second mate escalates here) or captain (only main). Omit it for a new hold to wait on the next level up, and for an open hold to stay where it is",
+        }),
+      ),
+      until: Type.Optional(Type.Integer()),
     }),
     result: CardSchema,
   },
-  answer: {
+  release: {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
-      words: Words,
-      source: Type.Enum(["chat", "board", "record"]),
+      words: Type.Optional(Words),
+      source: Type.Optional(Type.Enum(["chat", "board", "record"])),
       choice: Type.Optional(Type.String({ minLength: 1 })),
+      note: Type.Optional(Type.String({ minLength: 1 })),
     }),
     result: CardSchema,
   },
@@ -166,20 +187,6 @@ export const OPS = {
       card: Type.Integer(),
       words: Type.Optional(Words),
       source: Type.Optional(Type.Enum(["chat", "board", "record"])),
-    }),
-    result: CardSchema,
-  },
-  handback: {
-    roles: ["mate"],
-    args: Type.Object({ card: Type.Integer(), guidance: Type.String({ minLength: 1 }) }),
-    result: CardSchema,
-  },
-  hold: {
-    roles: ["mate"],
-    args: Type.Object({
-      card: Type.Integer(),
-      until: Type.Integer(),
-      reason: Type.String({ minLength: 1 }),
     }),
     result: CardSchema,
   },
@@ -296,15 +303,19 @@ export const BoardCardSchema = Type.Object({
   summary: Type.String(),
   /** Whether the card is a second mate's lane card, which the board shows under Mates. */
   mate: Type.Boolean(),
+  /** Who the card's open hold waits on, or null when it has none. */
+  holder: Nullable(Holder),
 });
 export type BoardCard = Static<typeof BoardCardSchema>;
 
 export const BoardSchema = Type.Object({
   cards: Type.Array(BoardCardSchema),
-  questions: Type.Array(
+  /** The holds that wait on the captain: at most one for each card. Nothing else is his to answer. */
+  holds: Type.Array(
     Type.Object({
       card: Type.Integer(),
-      ask: Type.Integer(),
+      /** The entry that wrote the hold as it stands. An answer names it, so an answer to an older hold is refused. */
+      hold: Type.Integer(),
       question: Type.String(),
       options: Type.Array(Type.String()),
       merge: Type.Boolean(),
@@ -322,7 +333,7 @@ export const BoardActionSchema = Type.Object({
   action: Type.Union([
     Type.Object({
       kind: Type.Literal("answer"),
-      ask: Type.Integer(),
+      hold: Type.Integer(),
       choice: Type.String({ minLength: 1 }),
       /** The captain typed the answer instead of picking an option. */
       written: Type.Optional(Type.Boolean()),

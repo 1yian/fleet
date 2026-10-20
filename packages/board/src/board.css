@@ -269,7 +269,7 @@ svg.status-icon {
   }
 }
 
-/* A question for the captain */
+/* A hold for the captain: every question of it shows, since one answer settles them all */
 .ask {
   margin-top: 12px;
   padding-top: 12px;
@@ -280,11 +280,6 @@ svg.status-icon {
   font-size: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
 }
 .options {
   display: flex;

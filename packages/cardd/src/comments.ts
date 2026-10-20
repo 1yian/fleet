@@ -4,10 +4,11 @@
 // main hears the second mate when it answers. Main never steers another lane's worker.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
-import { applyChange } from "./change.ts";
+import { applyChange, type Draft } from "./change.ts";
+import { withEcho } from "./echo.ts";
+import { holdOf, withdrawMerge } from "./holds.ts";
 import {
   addEntry,
-  cardEntries,
   getCard,
   isLaneCard,
   laneCardOf,
@@ -20,52 +21,6 @@ import {
 interface Done {
   readonly value: unknown;
   readonly notify: readonly string[];
-}
-
-/** What a second mate does on a card that answers a comment from main (spec section 10.3). */
-const ACTIONS: ReadonlySet<string> = new Set(["comment", "ask", "cleanup", "status"]);
-
-/**
- * The echo of a mate's next action: if its parent commented on the card and the mate has
- * not acted on the card since, the action also reaches the parent, with that comment. It
- * is written once, because the next action ends the wait.
- */
-function echoTo(
-  db: DatabaseSync,
-  session: Session,
-  card: Card,
-): { readonly to: readonly string[]; readonly re?: string } {
-  const parent = parentOf(db, session.lane);
-  if (parent === null || card.lane !== session.lane) return { to: [] };
-  const entries = cardEntries(db, card.id);
-  const asked = entries.findLast(
-    (entry) =>
-      entry.author === `mate:${parent}` &&
-      entry.kind === "comment" &&
-      entry.fields["for"] === "mate",
-  );
-  if (asked === undefined) return { to: [] };
-  const acted = entries.some(
-    (entry) =>
-      entry.id > asked.id &&
-      entry.author === `mate:${session.lane}` &&
-      entry.fields["task"] !== true &&
-      ACTIONS.has(entry.kind),
-  );
-  return acted ? { to: [] } : { to: [parent], re: asked.body };
-}
-
-/** The recipients and fields of a mate's entry on a card, with the echo added when one is due. */
-export function withEcho(
-  db: DatabaseSync,
-  session: Session,
-  card: Card,
-  to: readonly string[],
-  fields: Record<string, unknown>,
-): { to: string[]; fields: Record<string, unknown> } {
-  const echo = echoTo(db, session, card);
-  const both = [...new Set([...to, ...echo.to])];
-  return { to: both, fields: echo.re === undefined ? fields : { ...fields, re: echo.re } };
 }
 
 /** The card the comment is for: the card given, or the lane card of the lane given. */
@@ -105,7 +60,12 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
   }
   const worker = route.kind === "worker" ? workerOf(db, card.id) : undefined;
   const recipient = route.kind === "worker" ? worker : route.to;
-  if (route.kind === "worker") applyChange(db, card, { kind: "comment", resolves: args.resolves });
+  // A steer opens the work again, so a merge question about the old head no longer stands.
+  let withdrawn: string[] = [];
+  if (route.kind === "worker") {
+    requireNotCaptains(db, card, args.resolves);
+    withdrawn = withdrawMerge(db, card);
+  }
   // `for` marks a comment that reached a session: the first report or action after it answers it.
   const delivered = recipient === undefined ? {} : { for: route.kind };
   const own = { resolves: args.resolves, now: args.now, ...delivered };
@@ -116,7 +76,24 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
     recipient === undefined ? [] : [recipient],
     own,
   );
-  const entry = { card: card.id, author: `mate:${session.lane}`, kind: "comment", body: args.text };
-  addEntry(db, { ...entry, fields }, to);
-  return { value: getCard(db, card.id), notify: to };
+  const draft: Draft = {
+    card: card.id,
+    author: `mate:${session.lane}`,
+    kind: "comment",
+    body: args.text,
+    fields,
+  };
+  if (route.kind === "worker") applyChange(db, card, { kind: "comment" }, [draft]);
+  addEntry(db, draft, to);
+  return { value: getCard(db, card.id), notify: [...to, ...withdrawn] };
+}
+
+/** A comment cannot answer a worker's decision that waits on the captain: his words release it first. */
+function requireNotCaptains(db: DatabaseSync, card: Card, resolves: string | undefined): void {
+  const open = holdOf(db, card);
+  if (resolves !== undefined && open?.holder === "captain" && open.keys.includes(resolves)) {
+    throw new Error(
+      `the captain holds c-${String(card.id)}: release it with his exact words, then answer the worker`,
+    );
+  }
 }

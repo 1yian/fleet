@@ -11,6 +11,7 @@ import {
   type Status,
 } from "@fleet/protocol";
 import Type from "typebox";
+import { PHASES, type Phase } from "./status.ts";
 
 export interface Session {
   readonly id: string;
@@ -213,6 +214,23 @@ export function setStatus(db: DatabaseSync, card: number, status: Status): void 
     card,
     status,
   );
+}
+
+/** Where the card's work stands, under its hold (see status.ts). */
+export function phaseOf(db: DatabaseSync, card: number): Phase {
+  const phase = db.prepare("SELECT phase FROM cards WHERE id = ?").get(card)?.["phase"];
+  const found = PHASES.find((each) => each === phase);
+  if (found === undefined) throw new Error(`no card c-${String(card)}`);
+  return found;
+}
+
+export function setPhase(db: DatabaseSync, card: number, phase: Phase): void {
+  db.prepare("UPDATE cards SET phase = ? WHERE id = ? AND phase <> ?").run(phase, card, phase);
+}
+
+/** Raises the card's revision without changing its status. A changed hold must refuse the board's answers to the old one. */
+export function touchCard(db: DatabaseSync, card: number): void {
+  db.prepare("UPDATE cards SET revision = revision + 1 WHERE id = ?").run(card);
 }
 
 /** Writes an entry and a Pending delivery record for each recipient session. */

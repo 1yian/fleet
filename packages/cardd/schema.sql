@@ -65,7 +65,9 @@ CREATE TABLE cards (
   revision INTEGER NOT NULL DEFAULT 1,
   last_activity INTEGER,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '', phase TEXT NOT NULL DEFAULT 'queued' CHECK (
+  phase IN ('queued', 'working', 'in-review', 'with-mate', 'merging', 'done', 'dropped')
+),
   CHECK (kind = 'standing' OR (schedule IS NULL AND runner IS NULL)),
   CHECK (kind = 'ship' OR delivery IS NULL),
   CHECK ((held_until IS NULL) = (return_status IS NULL)),
@@ -80,13 +82,13 @@ CREATE TABLE deliveries (
   PRIMARY KEY (session, entry)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE entries (
+CREATE TABLE "entries" (
   id INTEGER PRIMARY KEY,
   card INTEGER NOT NULL REFERENCES cards (id),
   author TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (
     kind IN (
-      'comment', 'report', 'ask', 'answer', 'status', 'merge', 'cleanup', 'connect',
+      'comment', 'report', 'hold', 'release', 'answer', 'status', 'merge', 'cleanup', 'connect',
       'disconnect', 'finding', 'grant', 'note', 'job-result', 'review-feedback'
     )
   ),

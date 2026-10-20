@@ -1,50 +1,80 @@
-// Card status transitions (spec section 7.3) and their guards (section 7.4).
-// Pure: the facts come from the card and its entries.
+// Card status (spec sections 7 and 17). A card has a phase, where its work stands, and at
+// most one hold. Its status is derived: the phase seen through the hold. No operation sets
+// a status. Pure: the facts come from the card and its entries.
 import {
+  HOLDERS,
   MERGE_OPTIONS,
   type CardKind,
   type Entry,
+  type Holder,
   type ReportStatus,
   type Status,
 } from "@fleet/protocol";
 
+/** Where a card's work stands, whatever holds it. */
+export const PHASES = [
+  "queued",
+  "working",
+  "in-review",
+  "with-mate",
+  "merging",
+  "done",
+  "dropped",
+] as const;
+export type Phase = (typeof PHASES)[number];
+
+/**
+ * A card's hold: the one gate that it waits at. It bundles every question that the gate
+ * holds, and it names who it waits on now. Each time the card is held again after a release,
+ * that is a new occurrence of the same hold.
+ */
+export interface Hold {
+  readonly occurrence: number;
+  readonly holder: Holder;
+  readonly question: string;
+  readonly options: readonly string[];
+  readonly merge: boolean;
+  /** The decision keys of the worker that it carries. */
+  readonly keys: readonly string[];
+  /** Whether a worker's decision opened it. It ends when the worker's keys are all answered. */
+  readonly fromWorker: boolean;
+  readonly until: number | null;
+  /** The entry that wrote the hold as it stands. */
+  readonly entry: number;
+}
+
 export interface CardFacts {
-  readonly status: Status;
+  readonly phase: Phase;
   readonly kind: CardKind;
-  readonly openAsks: number;
-  readonly openDecisions: ReadonlySet<string>;
+  readonly hold: Hold | undefined;
   readonly inPipeline: boolean;
-  /** Whether the card's latest merge question was answered with approval. */
-  readonly mergeApproved: boolean;
   /** Whether the card's grant covers merging (spec section 18). */
   readonly mergeGranted: boolean;
 }
 
-/** Changes whose new status depends on nothing else. */
+/** Changes whose new phase depends on nothing else. */
 const FIXED = {
   dispatch: "working",
   finding: "with-mate",
-  handback: "with-mate",
-  hold: "waiting",
   merged: "merging",
   cleanup: "done",
   drop: "dropped",
-} as const satisfies Record<string, Status>;
+} as const satisfies Record<string, Phase>;
 interface FixedChange {
   readonly kind: keyof typeof FIXED;
 }
 
 export type Change =
   | FixedChange
-  | { readonly kind: "ask"; readonly toFirstMate: boolean }
-  | { readonly kind: "answer"; readonly merge?: "approve" | "changes" }
-  | { readonly kind: "unhold"; readonly to: Status }
+  /** A hold began, changed, or ended its date: the phase stays, and the status follows the hold. */
+  | { readonly kind: "held" }
+  | { readonly kind: "released"; readonly outcome?: "approve" | "changes" | "withdrawn" }
   | { readonly kind: "report"; readonly status: ReportStatus }
-  | { readonly kind: "comment"; readonly resolves: string | undefined };
+  | { readonly kind: "comment" };
 
 const isFixed = (change: Change): change is FixedChange => Object.hasOwn(FIXED, change.kind);
 
-const CLOSED: ReadonlySet<Status> = new Set(["done", "dropped"]);
+const CLOSED: ReadonlySet<Phase> = new Set(["done", "dropped"]);
 const HANDOFFS: ReadonlySet<ReportStatus> = new Set([
   "blocked",
   "needs-decision",
@@ -52,51 +82,57 @@ const HANDOFFS: ReadonlySet<ReportStatus> = new Set([
   "stopped",
 ]);
 
-/** The status after a change, or the reason that a guard rejects it. */
-export function nextStatus(card: CardFacts, change: Change): Status | Error {
-  return CLOSED.has(card.status) ? new Error(`card is ${card.status}`) : byKind(card, change);
+/** The phase after a change, or the reason that a guard rejects it. */
+export function nextPhase(card: CardFacts, change: Change): Phase | Error {
+  return CLOSED.has(card.phase) ? new Error(`card is ${card.phase}`) : byKind(card, change);
 }
 
-function byKind(card: CardFacts, change: Change): Status {
+function byKind(card: CardFacts, change: Change): Phase {
   if (isFixed(change)) return FIXED[change.kind];
   switch (change.kind) {
-    case "ask":
-      return afterAsk(change.toFirstMate);
-    case "answer":
-      return afterAnswer(card, change.merge);
-    case "unhold":
-      return change.to;
+    case "held":
+      return card.phase;
+    case "released":
+      return afterRelease(card, change.outcome);
     case "report":
       return afterReport(card, change.status);
     case "comment":
-      return afterComment(card, change.resolves);
+      return afterComment(card);
   }
 }
 
-/** A second mate's question goes to main first. Every other question goes to the captain. */
-const afterAsk = (toFirstMate: boolean): Status => (toFirstMate ? "with-first-mate" : "needs-you");
-
-/** While another question is open the card stays. The last answer decides: merge approval goes to Merging, requested changes to Working. */
-function afterAnswer(card: CardFacts, merge: "approve" | "changes" | undefined): Status {
-  if (card.openAsks > 1) return card.status;
-  if (merge === "changes") return "working";
-  return merge === "approve" || card.mergeApproved ? "merging" : "with-mate";
+/** The captain's merge answer decides: approval goes to Merging, requested changes to Working. Anything else goes to the mate, who acts on it. A withdrawn question changes nothing. */
+function afterRelease(
+  card: CardFacts,
+  outcome: "approve" | "changes" | "withdrawn" | undefined,
+): Phase {
+  if (outcome === "withdrawn") return card.phase;
+  if (outcome === "changes") return "working";
+  return outcome === "approve" || card.phase === "merging" ? "merging" : "with-mate";
 }
 
-function afterReport(card: CardFacts, status: ReportStatus): Status {
-  if (card.status === "needs-you" && card.openAsks > 0) return card.status;
+function afterReport(card: CardFacts, status: ReportStatus): Phase {
   if (status === "in-review") return "in-review";
   if (status === "done")
-    return card.kind !== "ship" ? "with-mate" : card.mergeGranted ? "merging" : "needs-you";
-  return HANDOFFS.has(status) ? "with-mate" : card.status;
+    return card.kind !== "ship" || !card.mergeGranted ? "with-mate" : "merging";
+  return HANDOFFS.has(status) ? "with-mate" : card.phase;
 }
 
-function afterComment(card: CardFacts, resolves: string | undefined): Status {
-  if (card.status !== "with-mate") return card.status;
-  const open = new Set(card.openDecisions);
-  if (resolves !== undefined) open.delete(resolves);
-  if (open.size > 0) return card.status;
+/** A mate's comment sends the worker back to work, unless a decision key of the worker is still open. */
+function afterComment(card: CardFacts): Phase {
+  if (card.phase !== "with-mate" || (card.hold?.keys.length ?? 0) > 0) return card.phase;
   return card.inPipeline ? "in-review" : "working";
+}
+
+/**
+ * The status of a card: its phase seen through its hold. A hold that waits on the captain
+ * makes the card Needs you. A hold that waits on a mate makes it With mate. A hold with a
+ * date in the future is Waiting until then. A closed card has no hold.
+ */
+export function statusOf(phase: Phase, hold: Hold | undefined, now: number): Status {
+  if (CLOSED.has(phase) || hold === undefined) return phase;
+  if (hold.until !== null && hold.until > now) return "waiting";
+  return hold.holder === "captain" ? "needs-you" : "with-mate";
 }
 
 const text = (entry: Entry, key: string): string | undefined => {
@@ -104,60 +140,130 @@ const text = (entry: Entry, key: string): string | undefined => {
   return typeof value === "string" ? value : undefined;
 };
 
+const holderOf = (value: unknown): Holder =>
+  HOLDERS.find((holder) => holder === value) ?? "captain";
+
+const textsOf = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map(String).filter((each) => each !== "") : [];
+
 interface Tally {
-  mergeAsk: string | undefined;
+  hold: Hold | undefined;
+  occurrences: number;
   mergeApproved: boolean;
-  readonly asks: Set<string>;
-  readonly decisions: Set<string>;
+  /** Whether the worker's latest word is done, and nothing has reopened the work since. */
+  awaitingMerge: boolean;
   inPipeline: boolean;
 }
 
-const REPORT_EFFECTS: Partial<Record<string, (tally: Tally, key: string) => void>> = {
-  "needs-decision": (tally, key) => tally.decisions.add(key),
-  resolved: (tally, key) => tally.decisions.delete(key),
-  "in-review": (tally) => (tally.inPipeline = true),
-  done: (tally) => (tally.inPipeline = false),
-  failed: (tally) => (tally.inPipeline = false),
+/** Writes a hold, or writes it again: the occurrence, the keys, and the worker's origin stay. */
+function holdFrom(tally: Tally, entry: Entry): void {
+  const merge = entry.fields["merge"] === true;
+  const until = entry.fields["until"];
+  const written = {
+    holder: holderOf(entry.fields["holder"]),
+    question: entry.body,
+    options: textsOf(entry.fields["options"]),
+    merge,
+    until: typeof until === "number" ? until : null,
+    entry: entry.id,
+  };
+  const open = tally.hold;
+  if (open === undefined) {
+    tally.hold = { ...written, occurrence: ++tally.occurrences, keys: [], fromWorker: false };
+    if (merge) tally.mergeApproved = false;
+  } else tally.hold = { ...open, ...written };
+}
+
+/** A worker's decision opens the card's hold, or adds its key to the hold that is open. */
+function decide(tally: Tally, entry: Entry, key: string): void {
+  const open = tally.hold;
+  if (open === undefined) {
+    tally.hold = {
+      occurrence: ++tally.occurrences,
+      holder: "owner",
+      question: entry.body,
+      options: [],
+      merge: false,
+      keys: [key],
+      fromWorker: true,
+      until: null,
+      entry: entry.id,
+    };
+  } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };
+}
+
+/** A worker's key is answered. A hold that a worker opened ends with its last key. */
+function answerKey(tally: Tally, key: string): void {
+  const open = tally.hold;
+  if (open === undefined) return;
+  const keys = open.keys.filter((each) => each !== key);
+  tally.hold = open.fromWorker && keys.length === 0 ? undefined : { ...open, keys };
+}
+
+const REPORT_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry, key: string) => void>> = {
+  "needs-decision": (tally, entry, key) => {
+    tally.awaitingMerge = false;
+    decide(tally, entry, key);
+  },
+  resolved: (tally, _entry, key) => {
+    answerKey(tally, key);
+  },
+  "in-review": (tally) => {
+    tally.inPipeline = true;
+    tally.awaitingMerge = false;
+  },
+  done: (tally) => {
+    tally.inPipeline = false;
+    tally.awaitingMerge = true;
+  },
+  failed: (tally) => {
+    tally.inPipeline = false;
+    tally.awaitingMerge = false;
+  },
 };
 
 const ENTRY_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry) => void>> = {
-  ask: (tally, entry) => {
-    tally.asks.delete(text(entry, "resolves") ?? "");
-    tally.asks.add(String(entry.id));
-    if (entry.fields["merge"] === true) {
-      tally.mergeAsk = String(entry.id);
-      tally.mergeApproved = false;
-    }
+  hold: holdFrom,
+  release: (tally) => {
+    tally.hold = undefined;
   },
   answer: (tally, entry) => {
-    const resolves = text(entry, "resolves");
-    tally.asks.delete(resolves ?? "");
-    if (resolves !== undefined && resolves === tally.mergeAsk)
+    if (tally.hold?.merge === true) {
       tally.mergeApproved = text(entry, "choice") === MERGE_OPTIONS[0];
+      tally.awaitingMerge = false;
+    }
+    tally.hold = undefined;
   },
-  note: (tally, entry) => tally.asks.delete(text(entry, "resolves") ?? ""),
-  comment: (tally, entry) => tally.decisions.delete(text(entry, "resolves") ?? ""),
+  comment: (tally, entry) => {
+    if (entry.author === "captain") {
+      // The captain's steer takes the hold back from him: its owner decides what it does.
+      if (tally.hold?.holder === "captain") tally.hold = { ...tally.hold, holder: "owner" };
+    } else {
+      tally.awaitingMerge = false;
+      answerKey(tally, text(entry, "resolves") ?? "");
+    }
+  },
   report: (tally, entry) =>
-    REPORT_EFFECTS[text(entry, "status") ?? ""]?.(tally, text(entry, "key") ?? ""),
+    REPORT_EFFECTS[text(entry, "status") ?? ""]?.(tally, entry, text(entry, "key") ?? ""),
 };
 
-/** Open asks, open decision keys, and whether a pipeline runs, from a card's entries in order. */
-export function factsFrom(
-  entries: readonly Entry[],
-): Omit<CardFacts, "status" | "kind" | "mergeGranted"> & { readonly askIds: readonly string[] } {
+export interface Facts {
+  readonly hold: Hold | undefined;
+  readonly occurrences: number;
+  readonly inPipeline: boolean;
+  readonly mergeApproved: boolean;
+  readonly awaitingMerge: boolean;
+}
+
+/** The hold, the pipeline, and the merge approval of a card, from its entries in order. */
+export function factsFrom(entries: readonly Entry[]): Facts {
   const tally: Tally = {
-    mergeAsk: undefined,
+    hold: undefined,
+    occurrences: 0,
     mergeApproved: false,
-    asks: new Set(),
-    decisions: new Set(),
+    awaitingMerge: false,
     inPipeline: false,
   };
   for (const entry of entries) ENTRY_EFFECTS[entry.kind]?.(tally, entry);
-  return {
-    openAsks: tally.asks.size,
-    askIds: [...tally.asks],
-    openDecisions: tally.decisions,
-    inPipeline: tally.inPipeline,
-    mergeApproved: tally.mergeApproved,
-  };
+  return { ...tally };
 }

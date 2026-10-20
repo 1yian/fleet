@@ -3,11 +3,20 @@
 // outcome goes to main.
 import type { DatabaseSync } from "node:sqlite";
 import { check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
-import { openMergeAsk, recordAnswer } from "./asks.ts";
 import { requireCaptainWords } from "./authority.ts";
 import { applyChange } from "./change.ts";
 import { mergePullRequest, readPullRequest } from "./github.ts";
-import { addEntry, cardEntries, getCard, mainLane, transaction, type Session } from "./store.ts";
+import { answerHold, openMergeHold } from "./holds.ts";
+import { factsFrom } from "./status.ts";
+import {
+  addEntry,
+  cardEntries,
+  getCard,
+  mainLane,
+  phaseOf,
+  transaction,
+  type Session,
+} from "./store.ts";
 
 interface Done {
   readonly value: unknown;
@@ -15,7 +24,7 @@ interface Done {
 }
 
 interface Approval {
-  readonly ask: string;
+  readonly hold: number;
   readonly words: string;
   readonly source: string;
 }
@@ -26,25 +35,12 @@ interface Authorized {
 }
 
 /**
- * A card reaches Merging only through a grant that covers merging, or the
- * captain's approval. On a card with an open merge question, the captain's
- * quoted words can authorize the merge directly. They then answer that question.
+ * A card reaches Merging only through a grant that covers merging, or the captain's approval.
+ * The captain already approved the latest merge question, even if another hold took the card
+ * since. The approval still stands for this PR.
  */
-/**
- * The captain already approved the latest merge question, even if a later question
- * then took the card back to Needs you. The approval still stands for this PR.
- */
-function approvedOnRecord(db: DatabaseSync, card: Card): boolean {
-  const entries = cardEntries(db, card.id);
-  const ask = entries.findLast((entry) => entry.kind === "ask" && entry.fields["merge"] === true);
-  if (ask === undefined) return false;
-  return entries.some(
-    (entry) =>
-      entry.kind === "answer" &&
-      entry.fields["resolves"] === String(ask.id) &&
-      entry.fields["choice"] === MERGE_OPTIONS[0],
-  );
-}
+const approvedOnRecord = (db: DatabaseSync, card: Card): boolean =>
+  factsFrom(cardEntries(db, card.id)).mergeApproved;
 
 /** A mate may merge its own lane's cards, and main may merge a second mate's. */
 function requireLane(db: DatabaseSync, session: Session, card: Card): void {
@@ -60,17 +56,17 @@ function authorize(db: DatabaseSync, session: Session, raw: unknown): Authorized
   requireLane(db, session, card);
   if (card.pr === null) throw new Error(`c-${String(card.id)} has no PR`);
   const pr = { ...card, pr: card.pr };
-  if (card.status === "merging" || approvedOnRecord(db, card))
+  if (phaseOf(db, card.id) === "merging" || approvedOnRecord(db, card))
     return { card: pr, approval: undefined };
-  const ask = card.status === "needs-you" ? openMergeAsk(db, card) : undefined;
-  if (ask === undefined || args.words === undefined) {
+  const open = openMergeHold(db, card);
+  if (open === undefined || args.words === undefined) {
     throw new Error(
       `no authority to merge c-${String(card.id)}: it needs a grant or the captain's approval`,
     );
   }
   const source = args.source ?? "record";
   requireCaptainWords(db, args.words, source);
-  return { card: pr, approval: { ask, words: args.words, source } };
+  return { card: pr, approval: { hold: open.entry, words: args.words, source } };
 }
 
 export async function merge(db: DatabaseSync, session: Session, raw: unknown): Promise<Done> {
@@ -85,11 +81,12 @@ export async function merge(db: DatabaseSync, session: Session, raw: unknown): P
   }
   return transaction(db, () => {
     const now = getCard(db, card.id);
+    const open = openMergeHold(db, now);
     const answered =
-      approval !== undefined && openMergeAsk(db, now) === approval.ask
-        ? recordAnswer(db, session, now, approval.ask, { ...approval, choice: MERGE_OPTIONS[0] })
+      approval !== undefined && open?.entry === approval.hold
+        ? answerHold(db, session.lane, now, open, { ...approval, choice: MERGE_OPTIONS[0] })
         : undefined;
-    if (answered === undefined && now.status !== "merging")
+    if (answered === undefined && phaseOf(db, card.id) !== "merging")
       applyChange(db, now, { kind: "merged" });
     const main = mainLane(db);
     const to = main === card.lane ? [] : [main];

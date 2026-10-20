@@ -46,20 +46,21 @@ function send(
 const view = async (): Promise<Board> =>
   check(BoardSchema, JSON.parse((await send("/api/board", "GET", {})).body));
 
-async function twoQuestions(): Promise<{ card: number; revision: number; asks: number[] }> {
+/** A card with one hold that bundles two questions. */
+async function twoQuestions(): Promise<{ card: number; revision: number; hold: number }> {
   const card = check(CardSchema, await main.call("card.new", { title: "Two", kind: "captain" }));
-  await main.call("ask", { card: card.id, question: "Which version?", options: ["v1", "v2"] });
-  await main.call("ask", { card: card.id, question: "Ship it?", options: ["yes", "no"] });
+  const question = "1. Which version?\n2. Ship it?";
+  await main.call("hold", { card: card.id, question, options: ["v1 and ship", "v2 and wait"] });
   const board = await view();
   const revision = board.cards.find((each) => each.id === card.id)?.revision ?? -1;
-  return { card: card.id, revision, asks: board.questions.map((each) => each.ask) };
+  return { card: card.id, revision, hold: board.holds[0]?.hold ?? -1 };
 }
 
 const json = { "content-type": "application/json" };
 
 test("a page from another origin cannot act on the board, read it, or watch it", async () => {
-  const { card, revision, asks } = await twoQuestions();
-  const action = { card, revision, action: { kind: "answer", ask: asks[0], choice: "v1" } };
+  const { card, revision, hold } = await twoQuestions();
+  const action = { card, revision, action: { kind: "answer", hold, choice: "v1 and ship" } };
   const foreign = { origin: "http://evil.example" };
 
   const refused = await send("/api/action", "POST", { ...json, ...foreign }, action);
@@ -67,7 +68,7 @@ test("a page from another origin cannot act on the board, read it, or watch it",
   assert.equal((await send("/api/board", "GET", foreign)).status, 403);
   const simple = await send("/api/action", "POST", { "content-type": "text/plain" }, action);
   assert.equal(simple.status, 400);
-  assert.equal((await view()).questions.length, 2);
+  assert.equal((await view()).holds.length, 1);
 
   const watch = (origin: string | undefined): Promise<"opened" | "refused"> =>
     new Promise((resolve) => {
@@ -93,12 +94,12 @@ test("a page from another origin cannot act on the board, read it, or watch it",
 
   const own = await send("/api/action", "POST", { ...json, origin: base().origin }, action);
   assert.equal(own.status, 200);
-  assert.equal((await view()).questions.length, 1);
+  assert.equal((await view()).holds.length, 0);
 });
 
 test("a request that names a host other than cardd's own address is refused, even from its own page", async () => {
-  const { card, revision, asks } = await twoQuestions();
-  const action = { card, revision, action: { kind: "answer", ask: asks[0], choice: "v1" } };
+  const { card, revision, hold } = await twoQuestions();
+  const action = { card, revision, action: { kind: "answer", hold, choice: "v1 and ship" } };
   const port = base().port;
   const host = `evil.example:${port}`;
   const rebound = { host, origin: `http://${host}` };
@@ -107,7 +108,7 @@ test("a request that names a host other than cardd's own address is refused, eve
   assert.equal((await send(`/api/card/${String(card)}`, "GET", { host })).status, 403);
   assert.equal((await send("/", "GET", { host })).status, 403);
   assert.equal((await send("/api/action", "POST", { ...json, ...rebound }, action)).status, 403);
-  assert.equal((await view()).questions.length, 2);
+  assert.equal((await view()).holds.length, 1);
 
   const upgrade = (headers: Record<string, string>): Promise<"opened" | "refused"> =>
     new Promise((resolve) => {
@@ -165,40 +166,50 @@ test("a name given with the default port is the same authority with or without t
   assert.equal(await reach("board.example", "http://other.example"), 403);
 });
 
-test("an answer goes to the question it names, and a closed question is refused", async () => {
-  const { card, asks } = await twoQuestions();
-  const [first = -1, second = -1] = asks;
-  assert.equal(asks.length, 2);
-  const answer = async (ask: number, choice: string) => {
+test("an answer resolves the whole hold, and an answer to a hold that is released is refused", async () => {
+  const { card, hold } = await twoQuestions();
+  const answer = async (choice: string) => {
     const revision = (await view()).cards.find((each) => each.id === card)?.revision ?? -1;
     return send("/api/action", "POST", json, {
       card,
       revision,
-      action: { kind: "answer", ask, choice },
+      action: { kind: "answer", hold, choice },
     });
   };
 
-  assert.equal((await answer(second, "yes")).status, 200);
-  assert.deepEqual(
-    (await view()).questions.map((each) => each.ask),
-    [first],
-  );
-  const again = await answer(second, "no");
-  assert.equal(again.status, 409);
-  assert.equal((await answer(first, "v2")).status, 200);
-  assert.equal((await view()).questions.length, 0);
+  assert.equal((await view()).holds.length, 1);
+  assert.equal((await answer("v2 and wait")).status, 200);
+  assert.equal((await view()).holds.length, 0);
+  assert.equal((await answer("v1 and ship")).status, 409);
+});
+
+test("a hold that changed since the captain looked refuses his answer to the old one", async () => {
+  const { card, hold } = await twoQuestions();
+  await main.call("hold", { card, question: "1. Which version?\n2. Ship it?\n3. When?" });
+  const revision = (await view()).cards.find((each) => each.id === card)?.revision ?? -1;
+  const post = (revision: number, held: number) =>
+    send("/api/action", "POST", json, {
+      card,
+      revision,
+      action: { kind: "answer", hold: held, choice: "v1 and ship" },
+    });
+
+  assert.equal((await post(revision, hold)).status, 409);
+  const current = (await view()).holds[0]?.hold ?? -1;
+  assert.notEqual(current, hold);
+  assert.equal((await post(revision, current)).status, 200);
 });
 
 test("a comment is accepted whatever the card's revision, and an answer or hold is not", async () => {
-  const { card, revision, asks } = await twoQuestions();
+  const { card, revision, hold } = await twoQuestions();
   const stale = revision - 1;
   const post = (action: unknown) =>
     send("/api/action", "POST", json, { card, revision: stale, action });
 
   assert.equal((await post({ kind: "comment", text: "a thought" })).status, 200);
-  assert.equal((await post({ kind: "answer", ask: asks[0], choice: "v1" })).status, 409);
-  const hold = { kind: "hold", until: Date.now() + 3_600_000, reason: "later" };
-  assert.equal((await post(hold)).status, 409);
+  assert.equal((await post({ kind: "answer", hold, choice: "v1 and ship" })).status, 409);
+  const later = { kind: "hold", until: Date.now() + 3_600_000, reason: "later" };
+  assert.equal((await post(later)).status, 409);
 });
 
 test("the board folder may be given as a relative path", async () => {

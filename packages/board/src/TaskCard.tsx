@@ -14,7 +14,7 @@ interface Props {
   readonly keys: boolean;
   readonly now: number;
   readonly onOpen: () => void;
-  readonly onAnswer: (ask: number, choice: string, written: boolean) => Promise<boolean>;
+  readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
 }
 
 /** A click on the card opens it, unless the click was meant for a control inside it. */
@@ -59,7 +59,7 @@ export function TaskCard(props: Props) {
       </p>
       {questions.map((question, index) => (
         <Ask
-          key={question.ask}
+          key={question.hold}
           question={question}
           keys={keys && index === 0}
           onAnswer={props.onAnswer}

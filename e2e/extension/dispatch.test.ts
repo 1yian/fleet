@@ -25,6 +25,7 @@ import {
 import type { Harness, Pi } from "../support/harness.ts";
 import type { HerdrLab } from "../support/herdr.ts";
 
+const PR = "https://github.com/acme/web/pull/1";
 let parts: DispatchLab;
 let h: Harness;
 let lab: HerdrLab;
@@ -66,7 +67,10 @@ function scriptMate(...dispatches: { host: string }[]): void {
     );
   }
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green" } }), "worker");
+  h.onModel(
+    () => ({ tool: "report", args: { status: "done", text: "PR green", pr: PR } }),
+    "worker",
+  );
 }
 
 test("dispatch starts a worker in its own worktree, and the worker's report reaches the mate", async () => {

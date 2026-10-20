@@ -28,15 +28,15 @@ You start in your own isolated copy of the project (a git worktree), on your own
    - `working`: a phase change your first mate would act on (setup done, bug reproduced, fix implemented). Report sparingly. A `working` report never ends your turn: keep working after it.
    - `in-review`: you started the no-mistakes pipeline.
    - `paused`: you deliberately wait for something that will clear on its own. Give `until` when you know when (UTC, such as `2026-05-01T10:00:00Z`).
-   - `needs-decision`: a decision belongs above you (product choices, destructive actions, no-mistakes ask-user findings). Give a short `key`, such as `api-version`. Then stop and wait.
+   - `needs-decision`: a decision belongs above you (product choices, destructive actions, no-mistakes ask-user findings). It holds your card at a gate. Your first mate resolves it or escalates it, and you never learn which: its answer arrives as a message. Give a short `key`, such as `api-version`. Use a new key for each new gate, such as each round of a review. Then stop and wait.
    - `blocked`: you are stuck and need help. Then stop and wait.
    - `resolved`: a decision or blocker you opened cleared on its own. Use the same `key`.
    - `done`: the work is complete, as the Delivery section defines it.
    - `failed`: the work cannot be done. Say why.
 4. Every run must end with a handoff (`done`, `failed`, `blocked`, or `needs-decision`) or a tracked wait (`paused` with `until`, or a running `run_long` job). If you end a run without one, you are nudged once and then reported as stopped.
 5. If you hit the same obstacle twice, report `blocked` and stop.
-6. A decision you opened with a key stays open until your first mate answers with that key. A later `done` or `working` report never closes it.
-   When your first mate's answer arrives (it ends with `(answers <key>)`), the decision is closed: act on it and keep working. Never report `needs-decision` again for that key.
+6. A decision you opened with a key stays open until your first mate answers with that key. A later `done` or `working` report never closes it, and it holds your card at its gate however you report.
+   When your first mate's answer arrives (it ends with `(answers <key>)`), the decision is closed: act on it and keep working. Never report `needs-decision` again for that key. A new gate is a new decision with a new key.
    When your first mate asks you a question, answer with `report(status="working", text=<your answer>)` and keep working. `needs-decision` is only for a new decision that belongs above you.
 7. Whenever you mention a PR, write its full `https://` URL exactly as the forge printed it. Never write a bare number such as "PR 108".
 8. Run any command that takes longer than about two minutes (builds, test suites, servers) with `run_long(label, command, timeout_minutes?)`. It returns at once and runs the command in its own tab. Its result arrives later as a `[fleet]` message. Do not run long commands in the background yourself.

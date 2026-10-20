@@ -1,20 +1,13 @@
 // The operations that sessions call (spec section 11). Each runs inside one
 // transaction and returns the sessions that have new entries to push.
 import type { DatabaseSync } from "node:sqlite";
-import {
-  check,
-  MERGE_OPTIONS,
-  OPS,
-  type Card,
-  type OpName,
-  type ReportStatus,
-} from "@fleet/protocol";
-import { answer, ask, handback, hold, openMergeAsk } from "./asks.ts";
+import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
-import { applyChange, requireOrdinary } from "./change.ts";
+import { applyChange, requireOrdinary, type Draft } from "./change.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { grant } from "./grants.ts";
+import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import { merge } from "./merge.ts";
 import type { Timings } from "./timing.ts";
 import {
@@ -24,7 +17,6 @@ import {
   getCard,
   listCards,
   listProjects,
-  mainLane,
   parentOf,
   transaction,
   type Session,
@@ -75,29 +67,21 @@ function reportRoute(
   return { to: TO_MATE.has(status) ? [card.lane] : [] };
 }
 
-/**
- * A ship card that is done without a grant for merging waits for the captain's
- * approval (spec section 7.5). The question skips main's filter; main gets one line.
- */
-function askToMerge(db: DatabaseSync, card: Card): string[] {
-  if (card.kind !== "ship" || card.status !== "needs-you" || openMergeAsk(db, card) !== undefined)
-    return [];
-  const main = mainLane(db);
-  const to = main === card.lane ? [] : [main];
-  const body = `Merge ${card.pr ?? "the branch"} for c-${String(card.id)}: ${card.title}?`;
-  const fields = { options: [...MERGE_OPTIONS], merge: true, pr: card.pr };
-  addEntry(db, { card: card.id, author: "fleet", kind: "ask", body, fields }, to);
-  return to;
-}
+/** Reports that mean the work is open again, so a merge question about the old head no longer stands. */
+const REWORK: ReadonlySet<ReportStatus> = new Set([
+  "in-review",
+  "needs-decision",
+  "failed",
+  "blocked",
+  "stopped",
+]);
 
 const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
   "close.begin": closeBegin,
   "close.finish": closeFinish,
   grant,
-  ask,
-  answer,
-  handback,
   hold,
+  release,
   "card.new": (db, session, raw) => {
     const { lane, ...args } = check(OPS["card.new"].args, raw);
     if (lane !== undefined && lane !== session.lane) {
@@ -161,23 +145,25 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
       db.prepare("UPDATE cards SET pr = ? WHERE id = ?").run(args.pr, session.card);
     const card = getCard(db, session.card);
     const { to, re } = reportRoute(db, card, args.status);
-    applyChange(db, card, { kind: "report", status: args.status });
-    const statusAfter = getCard(db, card.id).status;
-    const fields = {
-      status: args.status,
-      key: args.key,
-      until: args.until,
-      pr: args.pr,
-      re,
-      statusAfter,
+    const withdrawn = REWORK.has(args.status) ? withdrawMerge(db, card) : [];
+    const fields = { status: args.status, key: args.key, until: args.until, pr: args.pr, re };
+    const report: Draft = {
+      card: card.id,
+      author: `worker:${session.id}`,
+      kind: "report",
+      body: args.text,
+      fields,
     };
-    addEntry(
+    const asked = args.status === "done" ? mergeQuestion(db, card, [report]) : undefined;
+    const statusAfter = applyChange(
       db,
-      { card: card.id, author: `worker:${session.id}`, kind: "report", body: args.text, fields },
-      to,
+      card,
+      { kind: "report", status: args.status },
+      asked === undefined ? [report] : [report, asked],
     );
-    const merge = args.status === "done" ? askToMerge(db, getCard(db, card.id)) : [];
-    return { value: getCard(db, card.id), notify: [...to, ...merge] };
+    addEntry(db, { ...report, fields: { ...fields, statusAfter } }, to);
+    const merge = asked === undefined ? [] : writeMergeQuestion(db, card, asked);
+    return { value: getCard(db, card.id), notify: [...to, ...withdrawn, ...merge] };
   },
 };
 

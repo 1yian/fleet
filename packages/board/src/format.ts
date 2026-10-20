@@ -1,7 +1,8 @@
 // How the board words a card and its updates for the captain. Pure functions only.
 import type { Board, BoardCard, Entry, Status } from "@fleet/protocol";
 
-export type Question = Board["questions"][number];
+/** A hold that waits on the captain: all its questions in one text, and the options that answer it. */
+export type Question = Board["holds"][number];
 export type Tone = "needs" | "running" | "done" | "dropped" | "mate";
 
 /** The Done group shows the most recent cards only. */
@@ -63,7 +64,6 @@ const PHRASES: Record<Status, string> = {
   working: "Working",
   "in-review": "In review",
   "with-mate": "With its mate",
-  "with-first-mate": "With main",
   "needs-you": "Waiting for you",
   merging: "Merging",
   waiting: "On hold",
@@ -81,11 +81,14 @@ export function since(from: number, now: number): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
-/** Where the card stands, such as "In review" or "With cleo". A waiting question outranks the status. */
+/** The mate that must act on a card with its mate: main when its hold waits on main, otherwise the card's own mate. */
+const withWho = (card: BoardCard): string => (card.holder === "main" ? "main" : card.lane);
+
+/** Where the card stands, such as "In review" or "With cleo". A waiting hold outranks the status. */
 export function phraseOf(card: BoardCard, asked: boolean): string {
   if (card.mate) return "Second mate";
   const phrase = asked && card.status !== "needs-you" ? PHRASES["needs-you"] : PHRASES[card.status];
-  return card.status === "with-mate" ? `With ${card.lane}` : phrase;
+  return card.status === "with-mate" ? `With ${withWho(card)}` : phrase;
 }
 
 export const statusLine = (card: BoardCard, asked: boolean, now: number): string =>
@@ -141,12 +144,11 @@ const REPORTS: Readonly<Record<string, string>> = {
 };
 
 const VERBS: Readonly<Record<string, string>> = {
-  ask: "asked",
+  release: "decided",
   answer: "answered",
   merge: "merged",
   grant: "granted",
   finding: "noticed",
-  handback: "handed back",
 };
 
 /** What a mate's comment did: sent the task, or decided what a worker asked. */
@@ -154,6 +156,10 @@ function commentVerb(entry: Entry): string {
   if (entry.fields["task"] === true) return "sent the task";
   return typeof entry.fields["resolves"] === "string" ? "decided" : "";
 }
+
+/** A hold is a question, or an escalation of the question that a mate held. */
+const holdVerb = (entry: Entry): string =>
+  entry.fields["escalated"] === true ? "escalated it" : "asked";
 
 /** What an update did, such as "asked" or a worker's report status, after its author. */
 export function verb(entry: Entry): string {
@@ -163,11 +169,18 @@ export function verb(entry: Entry): string {
   if (entry.fields["routed"] === true) return "sent it here";
   if (entry.kind === "cleanup")
     return entry.fields["outcome"] === "dropped" ? "dropped it" : "closed it";
-  return VERBS[entry.kind] ?? "";
+  return entry.kind === "hold" ? holdVerb(entry) : (VERBS[entry.kind] ?? "");
 }
 
 /** An entry is a message (said to the captain or by him) or an event (something that happened). */
-const MESSAGES: ReadonlySet<string> = new Set(["comment", "ask", "answer", "report", "note"]);
+const MESSAGES: ReadonlySet<string> = new Set([
+  "comment",
+  "hold",
+  "release",
+  "answer",
+  "report",
+  "note",
+]);
 export const isMessage = (entry: Entry): boolean =>
   MESSAGES.has(entry.kind) && entry.fields["routed"] !== true && entry.fields["task"] !== true;
 

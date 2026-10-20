@@ -10,7 +10,7 @@ interface Props {
   /** Whether number keys answer this question. */
   readonly keys: boolean;
   /** Resolves true when cardd took the answer. */
-  readonly onAnswer: (ask: number, choice: string, written: boolean) => Promise<boolean>;
+  readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
 }
 
 export function Ask({ question, keys, onAnswer }: Props) {
@@ -27,7 +27,7 @@ export function Ask({ question, keys, onAnswer }: Props) {
             key={option}
             className={index === 0 ? "primary" : ""}
             onClick={() => {
-              void onAnswer(question.ask, option, false);
+              void onAnswer(question.hold, option, false);
             }}
           >
             {keys && index < 9 ? <kbd>{index + 1}</kbd> : null}
@@ -71,7 +71,7 @@ function WriteYourOwn(
     const words = text.trim();
     if (words === "" || sending) return;
     setSending(true);
-    const taken = await onAnswer(question.ask, words, true);
+    const taken = await onAnswer(question.hold, words, true);
     setSending(false);
     if (taken) onCancel();
   };
