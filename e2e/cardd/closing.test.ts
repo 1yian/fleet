@@ -104,3 +104,25 @@ test("a second mate's finished card reaches main with its summary, and its worke
     message: `c-${String(card.id)} is already done`,
   });
 });
+
+test("when main closes a second mate's card, that mate hears of it and main does not", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const card = await newCard(cleo, "Which ads convert?", "scout");
+  const text = "The captain dropped it.";
+  await fleet.main.call("close.finish", {
+    card: card.id,
+    mode: "dropped",
+    text,
+    archives: [],
+    left: [],
+  });
+
+  const outcome = await cleo.waitForEntry((entry) => entry.kind === "cleanup", "the outcome");
+  assert.deepEqual([outcome.author, outcome.body], ["mate:main", text]);
+  // A call's result follows every entry that cardd sent before it on the same connection.
+  await fleet.main.call("board", {});
+  assert.deepEqual(
+    fleet.main.entries.filter((push) => push.entry.kind === "cleanup"),
+    [],
+  );
+});
