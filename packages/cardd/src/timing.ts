@@ -11,6 +11,10 @@ export interface Timings {
   readonly heartbeat: number;
   /** When reminders fire, counted from the last action on the card. Later ones repeat at the last gap. */
   readonly reminders: readonly number[];
+  /** The same for a card whose work is finished and only needs closing. Sooner, because nothing is left to think about. */
+  readonly finished: readonly number[];
+  /** When a lane mate that has not closed a finished card is reported to its parent, counted from the finish. */
+  readonly escalations: readonly number[];
 }
 
 /** The defaults of spec section 28. A scale below 1 speeds every timer up, for tests. */
@@ -24,5 +28,7 @@ export function timings(scale: number): Timings {
     idle: at(2),
     heartbeat: at(0.5),
     reminders: [at(30), at(60), at(120), at(360)],
+    finished: [at(5), at(15), at(30), at(60), at(120), at(360)],
+    escalations: [at(30), at(120), at(360)],
   };
 }

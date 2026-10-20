@@ -4,7 +4,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
 import { applyChange, requireOrdinary } from "./change.ts";
-import { factsFrom } from "./status.ts";
+import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import { addEntry, cardEntries, getCard, mainLane, reachable, type Session } from "./store.ts";
 
@@ -13,18 +13,37 @@ interface Done {
   readonly notify: readonly string[];
 }
 
-/** Done means landed (guard 7): a merged ship card, or any other card whose work was delivered. */
-function landed(db: DatabaseSync, card: Card): boolean {
-  if (card.kind !== "ship") return true;
-  return cardEntries(db, card.id).some(
-    (entry) =>
-      entry.kind === "merge" ||
-      (entry.kind === "finding" && entry.fields["condition"] === "pr-merged"),
-  );
+/**
+ * Done means landed (guard 7, spec section 20.5), judged the way Firstmate did: nothing is
+ * left unlanded. A merged PR landed everything. Without one, the worker must have reported
+ * done, and a ship card must say that it made no code change (`withoutPr`). The host then
+ * confirms for each attempt that no commit is unmerged and the worktree is clean.
+ * Returns whether the host must confirm.
+ */
+function checkLanded(db: DatabaseSync, card: Card, withoutPr: boolean): boolean {
+  const name = `c-${String(card.id)}`;
+  const { merged, workerDone } = finishFrom(cardEntries(db, card.id));
+  if (merged) return false;
+  const worked = db.prepare("SELECT 1 FROM attempts WHERE card = ?").get(card.id) !== undefined;
+  if (worked && !workerDone) {
+    throw new Error(
+      `${name} is not finished: the worker has not reported done. Use card_drop if the work will not finish.`,
+    );
+  }
+  if (card.kind === "ship" && !withoutPr) {
+    throw new Error(
+      `${name} is a ship card with no merged PR. If it made no code change, such as an operation, or its commits are already on the base branch, call cleanup with without_pr set and say so in the summary. Otherwise merge it, or use card_drop.`,
+    );
+  }
+  return card.kind === "ship";
 }
 
-function closable(db: DatabaseSync, session: Session, id: number, mode: "done" | "dropped"): Card {
-  const { card } = reachable(db, session, id);
+function closable(
+  db: DatabaseSync,
+  session: Session,
+  args: { card: number; mode: "done" | "dropped"; withoutPr?: boolean | undefined },
+): { card: Card; verify: boolean } {
+  const { card } = reachable(db, session, args.card);
   const name = `c-${String(card.id)}`;
   requireOrdinary(db, card);
   if (card.status === "done" || card.status === "dropped")
@@ -34,17 +53,13 @@ function closable(db: DatabaseSync, session: Session, id: number, mode: "done" |
       `${name} has an open hold; release it first, with the captain's words when it waits on him`,
     );
   }
-  if (mode === "done" && !landed(db, card)) {
-    throw new Error(
-      `${name} has not landed; cleanup is for merged or delivered work. Use card_drop.`,
-    );
-  }
-  return card;
+  const verify = args.mode === "done" && checkLanded(db, card, args.withoutPr === true);
+  return { card, verify };
 }
 
 export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS["close.begin"].args, raw);
-  const card = closable(db, session, args.card, args.mode);
+  const { card, verify } = closable(db, session, args);
   const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
@@ -64,12 +79,12 @@ export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Do
       ? [{ session, host, branch, base, clone, live: live === 1 }]
       : [];
   });
-  return { value: { attempts }, notify: [] };
+  return { value: { verify, attempts }, notify: [] };
 }
 
 export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS["close.finish"].args, raw);
-  const card = closable(db, session, args.card, args.mode);
+  const { card } = closable(db, session, args);
   const now = Date.now();
   db.prepare(
     `UPDATE sessions SET state = 'closed' WHERE attempt IN
@@ -83,7 +98,12 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
   // and the card's mate when main closes it. Nobody hears of their own close.
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
-  const closed = { outcome: args.mode, archives: args.archives, left: args.left };
+  const closed = {
+    outcome: args.mode,
+    archives: args.archives,
+    left: args.left,
+    ...(args.withoutPr === true ? { withoutPr: true } : {}),
+  };
   const { to, fields } = withEcho(db, session, card, other === session.lane ? [] : [other], closed);
   addEntry(
     db,

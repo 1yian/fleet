@@ -261,11 +261,19 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
  * Withdraws the merge question while the PR is reworked: approving a PR that is about to change
  * would approve the wrong head. The worker's next `done` asks again, as the same hold.
  */
-export function withdrawMerge(db: DatabaseSync, card: Card): string[] {
+export function withdrawMerge(
+  db: DatabaseSync,
+  card: Card,
+  why: "reworked" | "closed" | "merged" = "reworked",
+): string[] {
   const open = openMergeHold(db, card);
   if (open === undefined) return [];
-  const body =
-    "The PR is being reworked, so the merge question is withdrawn. It is asked again when the work is done.";
+  const body = {
+    reworked:
+      "The PR is being reworked, so the merge question is withdrawn. It is asked again when the work is done.",
+    closed: "The PR was closed without a merge, so the merge question is withdrawn.",
+    merged: "The PR merged on GitHub, so the merge question is moot and withdrawn.",
+  }[why];
   const fields = { hold: open.entry, occurrence: open.occurrence, withdrawn: true };
   const draft: Draft = { card: card.id, author: "fleet", kind: "release", body, fields };
   applyChange(db, card, { kind: "released", outcome: "withdrawn" }, [draft]);

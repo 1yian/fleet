@@ -100,6 +100,11 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
     const args = check(OPS["attempt.begin"].args, raw);
     const card = ownCard(db, session, args.card);
     requireOrdinary(db, card);
+    if (card.kind === "captain") {
+      throw new Error(
+        `c-${String(card.id)} is a captain card: it is for the captain alone, so no worker runs it`,
+      );
+    }
     const begun = beginAttempt(db, card, {
       host: args.host,
       replace: args.replace ?? false,

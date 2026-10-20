@@ -71,10 +71,26 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
     name: "cleanup",
     label: "Clean up",
     description:
-      "Ends a card whose work landed (a merged PR or a delivered report): stops the worker, archives anything unlanded, removes the worktree, and marks it Done. Main relays the summary to the captain.",
-    parameters: Type.Object({ card: Type.Integer(), summary: Type.String({ minLength: 1 }) }),
+      "Ends a card whose work landed: stops the worker, archives anything left over, removes the worktree, and marks it Done. Needs the worker's done, and a merged PR for a ship card. A ship card that made no code change, such as an operation, closes with without_pr set, and its worktree must have nothing unlanded. Main relays the summary to the captain.",
+    parameters: Type.Object({
+      card: Type.Integer(),
+      summary: Type.String({ minLength: 1 }),
+      without_pr: Type.Optional(
+        Type.Boolean({
+          description:
+            "A ship card with no merged PR: it made no code change, or its commits are already on the base branch. Say so in the summary.",
+        }),
+      ),
+    }),
     execute: async (_id, params) =>
-      reply(await close(link, { card: params.card, mode: "done", text: params.summary })),
+      reply(
+        await close(link, {
+          card: params.card,
+          mode: "done",
+          text: params.summary,
+          withoutPr: params.without_pr === true,
+        }),
+      ),
   });
   pi.registerTool({
     name: "card_drop",
