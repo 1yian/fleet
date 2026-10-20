@@ -13,7 +13,7 @@ const ARCHIVE_SCRIPT = readFileSync(
   "utf8",
 );
 
-type Attempt = NonNullable<ReturnType<typeof parsePlan>["attempt"]>;
+type Attempt = ReturnType<typeof parsePlan>["attempts"][number];
 const parsePlan = (value: unknown) => check(OPS["close.begin"].result, value);
 
 // Deletes the task branch once its work is archived or already on the base branch.
@@ -27,8 +27,9 @@ fi
 if [ -f "$out" ]; then echo "$out"; fi`;
 
 /** Stops the writers, archives, and removes the worktree and branch. Returns the archive path, or null if there is no archive. */
-async function retire(attempt: Attempt, archiveDir: string): Promise<string | null> {
+async function retire(attempt: Attempt): Promise<string | null> {
   const { host, clone, branch, base, session } = attempt;
+  const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone]);
   const tree = records(listed["worktrees"]).find((each) => field(each, "branch") === branch);
   if (tree !== undefined) {
@@ -59,8 +60,12 @@ export async function close(
   const plan = parsePlan(
     await link.call("close.begin", { card: request.card, mode: request.mode }),
   );
-  const archive = plan.attempt === null ? null : await retire(plan.attempt, plan.archiveDir);
-  const card = check(CardSchema, await link.call("close.finish", { ...request, archive }));
-  const kept = archive === null ? "" : ` Unlanded work is archived in ${archive}.`;
+  const archives: string[] = [];
+  for (const attempt of plan.attempts) {
+    const path = await retire(attempt);
+    if (path !== null) archives.push(`${attempt.host}:${path}`);
+  }
+  const card = check(CardSchema, await link.call("close.finish", { ...request, archives }));
+  const kept = archives.length === 0 ? "" : ` Unlanded work is archived in ${archives.join(", ")}.`;
   return `c-${String(card.id)} is ${card.status}.${kept}`;
 }

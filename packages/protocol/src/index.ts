@@ -157,8 +157,7 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({ card: Type.Integer(), mode: Type.Enum(["done", "dropped"]) }),
     result: Type.Object({
-      archiveDir: Type.String(),
-      attempt: Nullable(
+      attempts: Type.Array(
         Type.Object({
           session: Type.String(),
           host: Type.String(),
@@ -175,7 +174,7 @@ export const OPS = {
       card: Type.Integer(),
       mode: Type.Enum(["done", "dropped"]),
       text: Type.String({ minLength: 1 }),
-      archive: Nullable(Type.String()),
+      archives: Type.Array(Type.String()),
     }),
     result: CardSchema,
   },

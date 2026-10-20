@@ -44,31 +44,26 @@ function closable(db: DatabaseSync, session: Session, id: number, mode: "done" |
 export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS["close.begin"].args, raw);
   const card = closable(db, session, args.card, args.mode);
-  const row = db
+  const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
-         json_extract(p.clones, '$."' || a.host || '"') AS clone, l.home AS home
-       FROM cards c JOIN lanes l ON l.name = c.lane LEFT JOIN projects p ON p.name = c.project
-       LEFT JOIN attempts a ON a.card = c.id LEFT JOIN sessions s ON s.attempt = a.id
-       WHERE c.id = ? ORDER BY a.n DESC LIMIT 1`,
+         json_extract(p.clones, '$."' || a.host || '"') AS clone
+       FROM attempts a JOIN cards c ON c.id = a.card JOIN sessions s ON s.attempt = a.id
+       LEFT JOIN projects p ON p.name = c.project
+       WHERE a.card = ? ORDER BY a.n`,
     )
-    .get(card.id);
-  const text = (key: string): string | undefined => {
-    const value = row?.[key];
-    return typeof value === "string" ? value : undefined;
-  };
-  const [sessionId, host, branch, base, clone] = ["session", "host", "branch", "base", "clone"].map(
-    text,
-  );
-  const attempt =
-    sessionId === undefined ||
-    host === undefined ||
-    branch === undefined ||
-    base === undefined ||
-    clone === undefined
-      ? null
-      : { session: sessionId, host, branch, base, clone };
-  return { value: { archiveDir: `${text("home") ?? ""}/archive`, attempt }, notify: [] };
+    .all(card.id);
+  const attempts = rows.flatMap((row) => {
+    const { session, host, branch, base, clone } = row;
+    return typeof session === "string" &&
+      typeof host === "string" &&
+      typeof branch === "string" &&
+      typeof base === "string" &&
+      typeof clone === "string"
+      ? [{ session, host, branch, base, clone }]
+      : [];
+  });
+  return { value: { attempts }, notify: [] };
 }
 
 export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): Done {
@@ -85,7 +80,7 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
   applyChange(db, card, { kind: args.mode === "done" ? "cleanup" : "drop" });
   const main = mainLane(db);
   const to = main === card.lane ? [] : [main];
-  const fields = { outcome: args.mode, archive: args.archive };
+  const fields = { outcome: args.mode, archives: args.archives };
   addEntry(
     db,
     { card: card.id, author: `mate:${session.lane}`, kind: "cleanup", body: args.text, fields },

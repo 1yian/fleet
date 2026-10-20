@@ -3,7 +3,7 @@
 // request must name an allowed Host (see permits), which closes DNS rebinding.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { extname, join, normalize } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket } from "ws";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
@@ -59,7 +59,7 @@ export class Web {
   constructor(db: DatabaseSync, flush: (session: string) => void, files: string | undefined) {
     this.db = db;
     this.flush = flush;
-    this.files = files;
+    this.files = files === undefined ? undefined : resolve(files);
   }
 
   /** A board page that wants to hear when cards.db changes. */
@@ -120,7 +120,7 @@ export class Web {
     if (
       root === undefined ||
       file === undefined ||
-      !file.startsWith(root) ||
+      !file.startsWith(root + sep) ||
       !existsSync(file) ||
       !statSync(file).isFile()
     ) {

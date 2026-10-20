@@ -3,11 +3,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { request } from "node:http";
+import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { BoardSchema, CardSchema, check, type Board } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
 
+const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 
 let cardd: Cardd;
@@ -181,6 +183,14 @@ test("a comment is accepted whatever the card's revision, and an answer or hold 
   assert.equal((await post({ kind: "answer", ask: asks[0], choice: "v1" })).status, 409);
   const hold = { kind: "hold", until: Date.now() + 3_600_000, reason: "later" };
   assert.equal((await post(hold)).status, 409);
+});
+
+test("the board folder may be given as a relative path", async () => {
+  await cardd.stop();
+  cardd = await Cardd.start({}, ["--board", relative(process.cwd(), BOARD)]);
+  const page = await send("/", "GET", {});
+  assert.equal(page.status, 200);
+  assert.match(page.body, /<div id="root">/);
 });
 
 const serveWith = (listen: string): Promise<{ code: number | null; stderr: string }> =>

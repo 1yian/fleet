@@ -185,9 +185,9 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
   await mateConnected();
   mate.prompt("ship the scrollbar fix");
 
-  const archive = join(home, "archive", "c-1-a1.tar.zst");
+  const archive = `${clone}.archive/c-1-a1.tar.zst`;
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.equal(results.at(-1), `c-1 is dropped. Unlanded work is archived in ${archive}.`);
+  assert.equal(results.at(-1), `c-1 is dropped. Unlanded work is archived in local:${archive}.`);
   assert.deepEqual(worktrees(), ["branch refs/heads/main"]);
   assert.deepEqual(await agents(), []);
 
@@ -221,8 +221,8 @@ test("a rerun of cleanup after the worktree is gone still deletes the branch and
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(() => {
-    mkdirSync(join(home, "archive"), { recursive: true });
-    writeFileSync(join(home, "archive", "c-1-a1.tar.zst"), "archived by the first run");
+    mkdirSync(`${clone}.archive`, { recursive: true });
+    writeFileSync(`${clone}.archive/c-1-a1.tar.zst`, "archived by the first run");
     execFileSync("git", [
       "-C",
       clone,
@@ -237,9 +237,9 @@ test("a rerun of cleanup after the worktree is gone still deletes the branch and
   await mateConnected();
   mate.prompt("ship the scrollbar fix");
 
-  const archive = join(home, "archive", "c-1-a1.tar.zst");
+  const archive = `${clone}.archive/c-1-a1.tar.zst`;
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.equal(results.at(-1), `c-1 is dropped. Unlanded work is archived in ${archive}.`);
+  assert.equal(results.at(-1), `c-1 is dropped. Unlanded work is archived in local:${archive}.`);
   assert.equal(
     execFileSync("git", ["-C", clone, "branch", "--list", "c-1-a1"], { encoding: "utf8" }).trim(),
     "",

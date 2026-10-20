@@ -20,22 +20,41 @@ test("cleanup refuses unlanded ship work, and card_drop takes it", async () => {
   });
 
   assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, mode: "dropped" }), {
-    archiveDir: "/homes/main/archive",
-    attempt: {
-      session: `c-${String(card.id)}-a1`,
-      host: "maverick",
-      branch: `c-${String(card.id)}-a1`,
-      base: "main",
-      clone: "/clones/web",
-    },
+    attempts: [
+      {
+        session: `c-${String(card.id)}-a1`,
+        host: "maverick",
+        branch: `c-${String(card.id)}-a1`,
+        base: "main",
+        clone: "/clones/web",
+      },
+    ],
   });
   await fleet.main.call("close.finish", {
     card: card.id,
     mode: "dropped",
     text: "the design changed",
-    archive: null,
+    archives: [],
   });
   assert.equal(await status(fleet.main, card), "dropped");
+});
+
+test("close.begin lists every attempt of the card, including a replaced one", async () => {
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await begin(fleet.main, card);
+  await fleet.main.call("attempt.begin", {
+    card: card.id,
+    host: "p620",
+    task: "again",
+    replace: true,
+  });
+  const name = (n: number): string => `c-${String(card.id)}-a${String(n)}`;
+  assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, mode: "dropped" }), {
+    attempts: [
+      { session: name(1), host: "maverick", branch: name(1), base: "main", clone: "/clones/web" },
+      { session: name(2), host: "p620", branch: name(2), base: "main", clone: "/clones/web" },
+    ],
+  });
 });
 
 test("cleanup and drop wait while a question is open", async () => {
@@ -55,7 +74,7 @@ test("a second mate's finished card reaches main with its summary, and its worke
     card: card.id,
     mode: "done",
     text: "Search ads convert best.",
-    archive: null,
+    archives: [],
   });
 
   assert.equal(await status(cleo, card), "done");
