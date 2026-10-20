@@ -47,7 +47,7 @@ async function worktreePane(host: string, plan: Plan): Promise<string> {
   return openWorkerWorkspace(host, path, plan);
 }
 
-/** How long a new pane's shell may take to settle at its prompt. */
+/** How long a pane's shell may take to settle at its prompt, and herdr to take the start. */
 const SHELL_WAIT_MS = 20_000;
 
 /**
@@ -65,6 +65,13 @@ const LAUNCH_TRIES = 2;
 
 const toError = (failure: unknown): Error =>
   failure instanceof Error ? failure : new Error(String(failure));
+
+/**
+ * herdr refused the start and typed nothing: the shell was not at its prompt yet, or herdr still
+ * held the agent name of a worker that died a moment ago.
+ */
+const refused = (error: Error): boolean =>
+  /"code":"agent_(pane_busy|name_taken)"/.test(error.message);
 
 /** How often the pane is looked at. */
 const POLL_MS = 250;
@@ -106,14 +113,22 @@ async function launchOnce(host: string, pane: string, args: string[]): Promise<E
 
 /**
  * Starts Pi in the pane. herdr types the command into the shell and waits for Pi to idle, which a
- * worker busy on its task may never do, so Pi in the pane decides. A command that reached no shell
- * started nothing, and goes once more. herdr refuses a pane where Pi runs, so no second Pi starts.
+ * worker busy on its task may never do, so Pi in the pane decides. A start that herdr refused goes
+ * again at once, until herdr takes it. A command that reached no shell started nothing, and goes
+ * once more. herdr refuses a pane where Pi runs, so no second Pi starts.
  */
 async function startAgent(host: string, pane: string, args: string[]): Promise<void> {
-  for (let tries = 1; ; tries += 1) {
+  const deadline = Date.now() + SHELL_WAIT_MS;
+  for (let tries = 1; ;) {
     const error = await launchOnce(host, pane, args);
-    if (error === undefined || (await until(() => piRunning(host, pane), PI_NAME_WAIT_MS))) return;
+    if (error === undefined) return;
+    if (refused(error) && Date.now() < deadline) {
+      await sleep(POLL_MS);
+      continue;
+    }
+    if (await until(() => piRunning(host, pane), PI_NAME_WAIT_MS)) return;
     if (tries === LAUNCH_TRIES) throw error;
+    tries += 1;
   }
 }
 
