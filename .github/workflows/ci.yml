@@ -27,6 +27,7 @@ jobs:
       pi: ${{ steps.filter.outputs.pi }}
       cardd-e2e: ${{ steps.filter.outputs.cardd-e2e }}
       extension-e2e: ${{ steps.filter.outputs.extension-e2e }}
+      board-e2e: ${{ steps.filter.outputs.board-e2e }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -60,6 +61,13 @@ jobs:
               - "e2e/pi/**"
               - "e2e/package.json"
               - "package-lock.json"
+            board-e2e:
+              - "packages/board/**"
+              - "packages/cardd/**"
+              - "packages/protocol/**"
+              - "e2e/board/**"
+              - "e2e/support/cardd.ts"
+              - "package-lock.json"
             extension-e2e:
               - "packages/**"
               - "e2e/support/**"
@@ -87,6 +95,7 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run build
       - run: npm run knip
       - run: npm run deps
 
@@ -147,6 +156,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run build
       - run: node --test --test-concurrency=1 "e2e/cardd/**/*.test.ts"
 
   e2e-extension:
@@ -170,6 +180,21 @@ jobs:
           chmod +x herdr && sudo mv herdr /usr/local/bin/herdr
       - run: node --test --test-concurrency=1 "e2e/extension/**/*.test.ts"
 
+  e2e-board:
+    needs: changes
+    if: needs.changes.outputs.board-e2e == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: node --test --test-concurrency=1 "e2e/board/**/*.test.ts"
+
   tests-required:
     needs: changes
     if: github.event_name == 'pull_request'
@@ -188,7 +213,18 @@ jobs:
           fi
 
   ci-ok:
-    needs: [changes, static, migrations, secrets, e2e-pi, e2e-cardd, e2e-extension, tests-required]
+    needs:
+      [
+        changes,
+        static,
+        migrations,
+        secrets,
+        e2e-pi,
+        e2e-cardd,
+        e2e-extension,
+        e2e-board,
+        tests-required,
+      ]
     if: always()
     runs-on: ubuntu-latest
     steps:

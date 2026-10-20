@@ -12,6 +12,7 @@ import {
 import { answer, ask, handback, hold, openMergeAsk } from "./asks.ts";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
 import { applyChange } from "./change.ts";
+import { closeBegin, closeFinish } from "./closing.ts";
 import { grant } from "./grants.ts";
 import { merge } from "./merge.ts";
 import type { Timings } from "./timing.ts";
@@ -21,6 +22,7 @@ import {
   cardEntries,
   getCard,
   listCards,
+  listProjects,
   mainLane,
   transaction,
   workerOf,
@@ -83,16 +85,37 @@ function askToMerge(db: DatabaseSync, card: Card): string[] {
 }
 
 const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
+  "close.begin": closeBegin,
+  "close.finish": closeFinish,
   grant,
   ask,
   answer,
   handback,
   hold,
   "card.new": (db, session, raw) => {
-    const args = check(OPS["card.new"].args, raw);
-    return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
+    const { lane, ...args } = check(OPS["card.new"].args, raw);
+    if (lane === undefined || lane === session.lane)
+      return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
+    // Main routes work to a second mate: the card lives in that lane, and its mate hears of it.
+    const parent = db.prepare("SELECT parent FROM lanes WHERE name = ?").get(lane)?.["parent"];
+    if (parent !== session.lane) throw new Error(`lane ${lane} is not one of your second mates`);
+    const card = addCard(db, { ...args, lane });
+    const body = `New card from ${session.lane}: ${card.title}${card.intent === "" ? "" : `\n\nCaptain's words: ${card.intent}`}`;
+    addEntry(
+      db,
+      {
+        card: card.id,
+        author: `mate:${session.lane}`,
+        kind: "note",
+        body,
+        fields: { routed: true },
+      },
+      [lane],
+    );
+    return { value: card, notify: [lane] };
   },
   board: (db) => ({ value: listCards(db), notify: [] }),
+  projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment: (db, session, raw) => {
     const args = check(OPS.comment.args, raw);
     const card = ownCard(db, session, args.card);
@@ -156,7 +179,15 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
     const card = getCard(db, session.card);
     const { to, re } = reportRoute(db, card, args.status);
     applyChange(db, card, { kind: "report", status: args.status });
-    const fields = { status: args.status, key: args.key, until: args.until, pr: args.pr, re };
+    const statusAfter = getCard(db, card.id).status;
+    const fields = {
+      status: args.status,
+      key: args.key,
+      until: args.until,
+      pr: args.pr,
+      re,
+      statusAfter,
+    };
     addEntry(
       db,
       { card: card.id, author: `worker:${session.id}`, kind: "report", body: args.text, fields },

@@ -94,3 +94,27 @@ test("sessions call only the operations of their role and lane", async () => {
     message: "mate sessions cannot call report",
   });
 });
+
+test("projects lists the registry with each project's hosts", async () => {
+  assert.deepEqual(await fleet.main.call("projects", {}), [
+    { name: "web", delivery: "no-mistakes", base: "main", hosts: ["maverick", "p620"] },
+  ]);
+});
+
+test("main routes a card to a second mate, who hears of it", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const routed = await fleet.main.call("card.new", {
+    title: "Ads stay under budget",
+    kind: "scout",
+    lane: "cleo",
+  });
+  const note = await cleo.waitForEntry((entry) => entry.kind === "note", "the routed card");
+  assert.deepEqual(
+    [note.author, note.body],
+    ["mate:main", "New card from main: Ads stay under budget"],
+  );
+  assert.equal(Reflect.get(Object(routed), "lane"), "cleo");
+  await assert.rejects(cleo.call("card.new", { title: "x", kind: "scout", lane: "main" }), {
+    message: "lane main is not one of your second mates",
+  });
+});

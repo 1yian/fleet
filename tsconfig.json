@@ -23,5 +23,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["packages/*/src", "packages/*/scripts", "e2e"]
+  "include": [
+    "packages/cardd/src",
+    "packages/cardd/scripts",
+    "packages/protocol/src",
+    "packages/extension/src",
+    "e2e"
+  ]
 }

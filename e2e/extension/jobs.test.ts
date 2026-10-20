@@ -3,7 +3,7 @@
 // Pi restart, and the job never runs twice.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -19,6 +19,7 @@ let fleet: Fleet;
 let h: Harness;
 let lab: HerdrLab;
 let env: Record<string, string>;
+let jobDir: string;
 let card: Card;
 beforeEach(async () => {
   fleet = await startFleet({ CARDD_TIMING_SCALE: "0.04" });
@@ -30,7 +31,9 @@ beforeEach(async () => {
   card = await newCard(fleet.main, "Users see one scrollbar");
   const token = await begin(fleet.main, card, "run the tests");
   env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
-  env = { ...env, HERDR_SESSION: lab.name, HERDR_WORKSPACE_ID: workspace };
+  jobDir = join(h.dir, "jobs");
+  mkdirSync(jobDir);
+  env = { ...env, HERDR_SESSION: lab.name, HERDR_WORKSPACE_ID: workspace, TMPDIR: jobDir };
 });
 afterEach(async () => {
   // Stop everything even if one part fails, so no process outlives the test.
@@ -163,7 +166,7 @@ test("an interrupted job reports exit 130, with the unfinished line before it", 
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "interrupted" } }));
   worker();
   await until(() => (existsSync(ready) ? true : undefined), "the job to start");
-  const [wrapper] = pids("fleet-job-1-");
+  const [wrapper] = pids(join(jobDir, "fleet-job-1-"));
   assert.ok(wrapper !== undefined);
   process.kill(wrapper, "SIGINT");
   await fleet.main.waitForEntries(1);
@@ -175,7 +178,7 @@ test("an interrupted job reports exit 130, with the unfinished line before it", 
   await until(() => (pids(marker(2)).length === 0 ? true : undefined), "the sleep to be gone");
 });
 
-test("closing the job tab still posts the result, with what the command printed as it died", async () => {
+test("closing the job tab still reaches the worker: the result, or a lost job", async () => {
   const ready = join(h.dir, "ready-tab");
   const command = `trap 'echo dying; exit 3' TERM; echo started; touch ${ready}; sleep ${marker(6)} & wait`;
   h.onModel(() => ({ tool: "run_long", args: { label: "tab", command } }));
@@ -189,8 +192,15 @@ test("closing the job tab still posts the result, with what the command printed 
     assert.equal(typeof tab?.["tab_id"], "string");
     await lab.run(["tab", "close", String(tab?.["tab_id"])]);
 
+    // On macOS herdr hangs up the tab, and the wrapper posts what the command printed as it died.
+    // On Linux herdr kills the tab's processes at once, so the heartbeat check reports the job lost.
+    // Either way the worker hears exactly what happened to its job.
     const woken = lastUser(await h.waitForCall(2, "default", 20_000)) ?? "";
-    assert.equal(woken, "[fleet] c-1 job 1 (tab) exited 130: started\ndying\ninterrupted");
+    const expected =
+      process.platform === "darwin"
+        ? "[fleet] c-1 job 1 (tab) exited 130: started\ndying\ninterrupted"
+        : "[fleet] c-1 job 1 (tab) lost: no heartbeat arrived. It is not run again.";
+    assert.equal(woken, expected);
   } finally {
     for (const pid of pids(marker(6))) process.kill(pid, "SIGKILL");
   }
@@ -209,7 +219,7 @@ const waiting = (n: number): { command: string; ready: string; go: string } => {
 
 const wrapperOf = async (job: number, ready: string): Promise<number> => {
   await until(() => (existsSync(ready) ? true : undefined), "the job to start");
-  const [wrapper] = pids(`fleet-job-${String(job)}-`);
+  const [wrapper] = pids(join(jobDir, `fleet-job-${String(job)}-`));
   assert.ok(wrapper !== undefined);
   return wrapper;
 };

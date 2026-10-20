@@ -1,6 +1,12 @@
 // Card status transitions (spec section 7.3) and their guards (section 7.4).
 // Pure: the facts come from the card and its entries.
-import type { CardKind, Entry, ReportStatus, Status } from "@fleet/protocol";
+import {
+  MERGE_OPTIONS,
+  type CardKind,
+  type Entry,
+  type ReportStatus,
+  type Status,
+} from "@fleet/protocol";
 
 export interface CardFacts {
   readonly status: Status;
@@ -8,6 +14,8 @@ export interface CardFacts {
   readonly openAsks: number;
   readonly openDecisions: ReadonlySet<string>;
   readonly inPipeline: boolean;
+  /** Whether the card's latest merge question was answered with approval. */
+  readonly mergeApproved: boolean;
   /** Whether the card's grant covers merging (spec section 18). */
   readonly mergeGranted: boolean;
 }
@@ -19,6 +27,8 @@ const FIXED = {
   handback: "with-mate",
   hold: "waiting",
   merged: "merging",
+  cleanup: "done",
+  drop: "dropped",
 } as const satisfies Record<string, Status>;
 interface FixedChange {
   readonly kind: keyof typeof FIXED;
@@ -66,10 +76,11 @@ function byKind(card: CardFacts, change: Change): Status {
 /** A second mate's question goes to main first. Every other question goes to the captain. */
 const afterAsk = (toFirstMate: boolean): Status => (toFirstMate ? "with-first-mate" : "needs-you");
 
-/** The card returns to its mate once the captain has answered every open question. */
+/** While another question is open the card stays. The last answer decides: merge approval goes to Merging, requested changes to Working. */
 function afterAnswer(card: CardFacts, merge: "approve" | "changes" | undefined): Status {
-  if (merge !== undefined) return merge === "approve" ? "merging" : "working";
-  return card.openAsks > 1 ? card.status : "with-mate";
+  if (card.openAsks > 1) return card.status;
+  if (merge === "changes") return "working";
+  return merge === "approve" || card.mergeApproved ? "merging" : "with-mate";
 }
 
 function afterReport(card: CardFacts, status: ReportStatus): Status {
@@ -94,6 +105,8 @@ const text = (entry: Entry, key: string): string | undefined => {
 };
 
 interface Tally {
+  mergeAsk: string | undefined;
+  mergeApproved: boolean;
   readonly asks: Set<string>;
   readonly decisions: Set<string>;
   inPipeline: boolean;
@@ -111,8 +124,17 @@ const ENTRY_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry) => void
   ask: (tally, entry) => {
     tally.asks.delete(text(entry, "resolves") ?? "");
     tally.asks.add(String(entry.id));
+    if (entry.fields["merge"] === true) {
+      tally.mergeAsk = String(entry.id);
+      tally.mergeApproved = false;
+    }
   },
-  answer: (tally, entry) => tally.asks.delete(text(entry, "resolves") ?? ""),
+  answer: (tally, entry) => {
+    const resolves = text(entry, "resolves");
+    tally.asks.delete(resolves ?? "");
+    if (resolves !== undefined && resolves === tally.mergeAsk)
+      tally.mergeApproved = text(entry, "choice") === MERGE_OPTIONS[0];
+  },
   note: (tally, entry) => tally.asks.delete(text(entry, "resolves") ?? ""),
   comment: (tally, entry) => tally.decisions.delete(text(entry, "resolves") ?? ""),
   report: (tally, entry) =>
@@ -123,12 +145,19 @@ const ENTRY_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry) => void
 export function factsFrom(
   entries: readonly Entry[],
 ): Omit<CardFacts, "status" | "kind" | "mergeGranted"> & { readonly askIds: readonly string[] } {
-  const tally: Tally = { asks: new Set(), decisions: new Set(), inPipeline: false };
+  const tally: Tally = {
+    mergeAsk: undefined,
+    mergeApproved: false,
+    asks: new Set(),
+    decisions: new Set(),
+    inPipeline: false,
+  };
   for (const entry of entries) ENTRY_EFFECTS[entry.kind]?.(tally, entry);
   return {
     openAsks: tally.asks.size,
     askIds: [...tally.asks],
     openDecisions: tally.decisions,
     inPipeline: tally.inPipeline,
+    mergeApproved: tally.mergeApproved,
   };
 }

@@ -26,20 +26,26 @@ export class Cardd {
   private child: ChildProcess | undefined;
   private readonly env: NodeJS.ProcessEnv;
 
-  private constructor(env: NodeJS.ProcessEnv) {
+  private readonly args: readonly string[];
+
+  private constructor(env: NodeJS.ProcessEnv, args: readonly string[]) {
     this.env = { ...process.env, ...env };
+    this.args = args;
   }
 
   /** Starts cardd. `env` sets variables such as CARDD_TIMING_SCALE for it. */
-  static async start(env: Record<string, string> = {}): Promise<Cardd> {
-    const cardd = new Cardd(env);
+  static async start(
+    env: Record<string, string> = {},
+    args: readonly string[] = [],
+  ): Promise<Cardd> {
+    const cardd = new Cardd(env, args);
     await cardd.boot();
     return cardd;
   }
 
   /** Adds a lane with the cardd command line. Returns the mate's token. */
-  addLane(name: string, parent?: string): string {
-    const args = [MAIN, "lane", "add", name, "--db", this.db, "--home", `/homes/${name}`];
+  addLane(name: string, parent?: string, home = `/homes/${name}`): string {
+    const args = [MAIN, "lane", "add", name, "--db", this.db, "--home", home];
     return execFileSync("node", parent === undefined ? args : [...args, "--parent", parent], {
       encoding: "utf8",
     }).trim();
@@ -60,6 +66,12 @@ export class Cardd {
     execFileSync("node", [...args, "--capacity", String(capacity), ...cloneArgs], {
       stdio: ["ignore", "pipe", "pipe"],
     });
+  }
+
+  /** Adds a lane grant with the cardd command line, as an import from Firstmate does. */
+  addMergeGrant(lane: string, project: string): void {
+    const args = [MAIN, "grant", "add", "--db", this.db, "--lane", lane, "--project", project];
+    execFileSync("node", [...args, "--words", "Firstmate yolo flag", "--merge"]);
   }
 
   /** POST /call as the session that owns the token. */
@@ -96,10 +108,14 @@ export class Cardd {
   }
 
   private async boot(port = "0"): Promise<void> {
-    const child = spawn("node", [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`], {
-      stdio: ["ignore", "pipe", "inherit"],
-      env: this.env,
-    });
+    const child = spawn(
+      "node",
+      [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`, ...this.args],
+      {
+        stdio: ["ignore", "pipe", "inherit"],
+        env: this.env,
+      },
+    );
     this.child = child;
     let out = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Starts a fleet mate in the current folder: fleet <lane> [pi arguments]
+exec node "$(dirname "$(realpath "$0")")/../packages/extension/src/launch.ts" "$@"

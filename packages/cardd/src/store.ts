@@ -228,3 +228,32 @@ export function mainLane(db: DatabaseSync): string {
   if (typeof name !== "string") throw new Error("there is no main lane");
   return name;
 }
+
+/** The project registry (spec section 6.4): each project, its delivery mode, base branch, and the hosts with a clone. */
+export function listProjects(
+  db: DatabaseSync,
+): { name: string; delivery: string; base: string; hosts: string[] }[] {
+  return db
+    .prepare("SELECT name, delivery, default_base AS base, clones FROM projects ORDER BY name")
+    .all()
+    .map((row) => {
+      const clones: unknown = JSON.parse(String(row["clones"]));
+      const hosts = typeof clones === "object" && clones !== null ? Object.keys(clones) : [];
+      return {
+        name: String(row["name"]),
+        delivery: String(row["delivery"]),
+        base: String(row["base"]),
+        hosts,
+      };
+    });
+}
+
+/** A lane grant added by the operator, for example when importing a Firstmate yolo flag. */
+export function addLaneGrant(
+  db: DatabaseSync,
+  grant: { lane: string; words: string; may: string; merge: boolean; project?: string },
+): void {
+  db.prepare(
+    "INSERT INTO grants (lane, words, may, merge, scope_project, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(grant.lane, grant.words, grant.may, grant.merge ? 1 : 0, grant.project ?? null, Date.now());
+}

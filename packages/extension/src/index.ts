@@ -6,6 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Jobs } from "./jobs.ts";
 import { Link } from "./link.ts";
+import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
 import { registerAuthority, registerQuestions } from "./questions.ts";
 import { WorkerRun } from "./worker.ts";
@@ -75,6 +76,9 @@ function start(
   if (role === "mate") registerAuthority(pi, link, () => sessionFile);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() });
 
+  pi.on("before_agent_start", (event) => ({
+    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}`,
+  }));
   pi.on("session_shutdown", () => {
     link.stop();
   });

@@ -80,10 +80,25 @@ export const OPS = {
       project: Type.Optional(Type.String()),
       intent: Type.Optional(Type.String()),
       spec: Type.Optional(Type.String()),
+      lane: Type.Optional(
+        Type.String({ description: "Main only: a second mate's lane to route the card to" }),
+      ),
     }),
     result: CardSchema,
   },
   board: { roles: ["mate"], args: Type.Object({}), result: Type.Array(CardSchema) },
+  projects: {
+    roles: ["mate"],
+    args: Type.Object({}),
+    result: Type.Array(
+      Type.Object({
+        name: Type.String(),
+        delivery: Type.String(),
+        base: Type.String(),
+        hosts: Type.Array(Type.String()),
+      }),
+    ),
+  },
   comment: {
     roles: ["mate"],
     args: Type.Object({
@@ -153,6 +168,35 @@ export const OPS = {
     }),
     result: CardSchema,
   },
+  "close.begin": {
+    roles: ["mate"],
+    args: Type.Object({ card: Type.Integer(), mode: Type.Enum(["done", "dropped"]) }),
+    result: Type.Object({
+      attempts: Type.Array(
+        Type.Object({
+          session: Type.String(),
+          host: Type.String(),
+          clone: Type.String(),
+          branch: Type.String(),
+          base: Type.String(),
+          live: Type.Boolean(),
+        }),
+      ),
+    }),
+  },
+  "close.finish": {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      mode: Type.Enum(["done", "dropped"]),
+      text: Type.String({ minLength: 1 }),
+      archives: Type.Array(Type.String()),
+      left: Type.Array(
+        Type.Object({ session: Type.String(), host: Type.String(), reason: Type.String() }),
+      ),
+    }),
+    result: CardSchema,
+  },
   "attempt.begin": {
     roles: ["mate"],
     args: Type.Object({
@@ -166,6 +210,7 @@ export const OPS = {
       token: Type.String(),
       resumed: Type.Boolean(),
       active: Type.Boolean(),
+      connected: Type.Boolean(),
       clone: Type.String(),
       base: Type.String(),
       branch: Type.String(),
@@ -225,6 +270,43 @@ const ClientMessage = Type.Union([
   }),
 ]);
 export type ClientMessage = Static<typeof ClientMessage>;
+
+/** The board (spec section 21): what it shows, and the captain's actions. */
+export const BoardSchema = Type.Object({
+  cards: Type.Array(CardSchema),
+  questions: Type.Array(
+    Type.Object({
+      card: Type.Integer(),
+      ask: Type.Integer(),
+      question: Type.String(),
+      options: Type.Array(Type.String()),
+      merge: Type.Boolean(),
+    }),
+  ),
+});
+export type Board = Static<typeof BoardSchema>;
+
+export const ThreadSchema = Type.Object({ card: CardSchema, entries: Type.Array(EntrySchema) });
+export type Thread = Static<typeof ThreadSchema>;
+
+export const BoardActionSchema = Type.Object({
+  card: Type.Integer(),
+  revision: Type.Integer(),
+  action: Type.Union([
+    Type.Object({
+      kind: Type.Literal("answer"),
+      ask: Type.Integer(),
+      choice: Type.String({ minLength: 1 }),
+    }),
+    Type.Object({ kind: Type.Literal("comment"), text: Type.String({ minLength: 1 }) }),
+    Type.Object({
+      kind: Type.Literal("hold"),
+      until: Type.Integer(),
+      reason: Type.String({ minLength: 1 }),
+    }),
+  ]),
+});
+export type BoardAction = Static<typeof BoardActionSchema>;
 
 /** The body of POST /call, for scripts that act as a session with its token. */
 export const HttpCallSchema = Type.Object({ op: Type.String(), args: Type.Unknown() });

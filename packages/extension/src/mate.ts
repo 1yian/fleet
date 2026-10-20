@@ -2,6 +2,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import Type from "typebox";
+import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
 import type { Link } from "./link.ts";
 
@@ -40,6 +41,21 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
       reply(`Commented. ${line(check(CardSchema, await link.call("comment", params)))}`),
   });
   pi.registerTool({
+    name: "projects",
+    label: "Projects",
+    description:
+      "Lists the registered projects: delivery mode, base branch, and the hosts that have a clone.",
+    parameters: OPS.projects.args,
+    execute: async () => {
+      const list = check(OPS.projects.result, await link.call("projects", {}));
+      const lines = list.map(
+        (each) =>
+          `${each.name}: delivery ${each.delivery}, base ${each.base}, hosts ${each.hosts.join(", ")}`,
+      );
+      return reply(lines.length === 0 ? "No projects are registered." : lines.join("\n"));
+    },
+  });
+  pi.registerTool({
     name: "board",
     label: "Board",
     description: "Lists the cards.",
@@ -48,6 +64,24 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
       const cards = check(OPS.board.result, await link.call("board", {}));
       return reply(cards.length === 0 ? "No cards." : cards.map(line).join("\n"));
     },
+  });
+  pi.registerTool({
+    name: "cleanup",
+    label: "Clean up",
+    description:
+      "Ends a card whose work landed (a merged PR or a delivered report): stops the worker, archives anything unlanded, removes the worktree, and marks it Done. Main relays the summary to the captain.",
+    parameters: Type.Object({ card: Type.Integer(), summary: Type.String({ minLength: 1 }) }),
+    execute: async (_id, params) =>
+      reply(await close(link, { card: params.card, mode: "done", text: params.summary })),
+  });
+  pi.registerTool({
+    name: "card_drop",
+    label: "Drop a card",
+    description:
+      "Ends a card that did not land: stops the worker, archives its unlanded work, removes the worktree, and marks it Dropped. The reason is required.",
+    parameters: Type.Object({ card: Type.Integer(), reason: Type.String({ minLength: 1 }) }),
+    execute: async (_id, params) =>
+      reply(await close(link, { card: params.card, mode: "dropped", text: params.reason })),
   });
   pi.registerTool({
     name: "dispatch",

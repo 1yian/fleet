@@ -1,0 +1,7 @@
+# gitleaks settings: the default rules, plus known test values that are not secrets.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The sample Sec-WebSocket-Key from RFC 6455, used by the board socket tests"
+regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']

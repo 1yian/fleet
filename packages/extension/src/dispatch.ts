@@ -59,6 +59,12 @@ async function agentLive(host: string, name: string): Promise<boolean> {
 const SHELL_WAIT_MS = 20_000;
 
 /** Starts the agent once the new pane's shell reaches its prompt. herdr refuses a pane that is not yet a shell. */
+/**
+ * How long herdr waits for Pi to become ready. A Pi with many packages can take more than herdr's
+ * default 30 s. It stays below the 120 s limit on each herdr call, so herdr reports its own timeout.
+ */
+const START_WAIT_MS = 90_000;
+
 async function startAgent(host: string, args: string[]): Promise<void> {
   const deadline = Date.now() + SHELL_WAIT_MS;
   for (;;) {
@@ -66,7 +72,10 @@ async function startAgent(host: string, args: string[]): Promise<void> {
       await herdr(host, args);
       return;
     } catch (error) {
-      const busy = error instanceof Error && error.message.includes("not an available shell");
+      const message = error instanceof Error ? error.message : "";
+      // herdr started Pi but stopped waiting for it: the worker still comes up and connects.
+      if (message.includes("timed out waiting for agent startup")) return;
+      const busy = message.includes("not an available shell");
       if (!busy || Date.now() > deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -80,9 +89,11 @@ export async function dispatch(
 ): Promise<string> {
   const plan = parsePlan(await link.call("attempt.begin", request));
   const where = `${plan.session} on ${request.host}`;
-  if (plan.active) return `c-${String(request.card)} is already running as ${where}.`;
+  // herdr knows whether the worker's Pi is still in its pane; cardd may not have seen it die yet.
+  const live = await agentLive(request.host, plan.session);
+  if (live && plan.connected) return `c-${String(request.card)} is already running as ${where}.`;
+  if (live) return `Found ${where} already starting.`;
   const pane = await worktreePane(request.host, plan);
-  if (await agentLive(request.host, plan.session)) return `Found ${where} already starting.`;
   const fleetArgs = [
     "--fleet-url",
     launch.url,
@@ -94,9 +105,24 @@ export async function dispatch(
   await startAgent(
     request.host,
     [
-      ["agent", "start", plan.session, "--kind", "pi", "--pane", pane, "--"],
+      [
+        "agent",
+        "start",
+        plan.session,
+        "--kind",
+        "pi",
+        "--pane",
+        pane,
+        "--timeout",
+        String(START_WAIT_MS),
+        "--",
+      ],
       [...fleetArgs, "--session-id", plan.session, ...launch.piArgs],
     ].flat(),
   );
-  return `Dispatched ${where}, branch ${plan.branch}${plan.resumed ? " (resumed the earlier attempt)" : ""}.`;
+  if (!plan.active) return `Dispatched ${where}, branch ${plan.branch}.`;
+  // A relaunch: the worker resumes its own session file. A note starts its next run.
+  const note = "Your session was restarted. Continue your task from where you stopped.";
+  await link.call("comment", { card: request.card, text: note });
+  return `Restarted ${where} on its own session, branch ${plan.branch}.`;
 }

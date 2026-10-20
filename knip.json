@@ -5,10 +5,13 @@
       "entry": ["src/main.ts", "scripts/*.ts"]
     },
     "e2e": {
-      "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts"]
+      "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts", "trial/*.ts"]
     },
     "packages/extension": {
-      "entry": ["src/index.ts", "src/job.ts"]
+      "entry": ["src/index.ts", "src/job.ts", "src/launch.ts"]
+    },
+    "packages/board": {
+      "ignore": ["src/vendor/**"]
     }
   },
   "ignoreBinaries": ["herdr", "pgrep"]

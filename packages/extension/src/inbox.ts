@@ -40,26 +40,34 @@ const field = (entry: Entry, key: string): string | undefined => {
   return typeof value === "string" ? value : undefined;
 };
 
+/** An optional suffix: the text in parentheses when the field is set, otherwise nothing. */
+const suffix = (entry: Entry, key: string, label: string): string => {
+  const value = field(entry, key);
+  return value === undefined ? "" : ` (${label}${value})`;
+};
+
+function formatReport(entry: Entry, card: string): string {
+  const key = field(entry, "key");
+  const head = `[fleet] ${card} ${field(entry, "status") ?? "report"}${key === undefined ? "" : ` [${key}]`}: ${entry.body}`;
+  return (
+    head + suffix(entry, "re", "re your comment: ") + suffix(entry, "statusAfter", "card now ")
+  );
+}
+
+function formatJob(entry: Entry, card: string): string {
+  const job = `job ${String(entry.fields["job"])} (${field(entry, "label") ?? "job"})`;
+  if (entry.fields["lost"] === true) return `[fleet] ${card} ${job} lost: ${entry.body}`;
+  return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
+}
+
 /** The text the model reads. It starts with [fleet] so agents can tell it from the captain. */
 export function format(entry: Entry): string {
   const card = `c-${String(entry.card)}`;
-  if (entry.kind === "report") {
-    const key = field(entry, "key");
-    const re = field(entry, "re");
-    return [
-      `[fleet] ${card} ${field(entry, "status") ?? "report"}${key === undefined ? "" : ` [${key}]`}: ${entry.body}`,
-      re === undefined ? "" : ` (re your comment: ${re})`,
-    ].join("");
-  }
-  if (entry.kind === "job-result") {
-    const job = `job ${String(entry.fields["job"])} (${field(entry, "label") ?? "job"})`;
-    if (entry.fields["lost"] === true) return `[fleet] ${card} ${job} lost: ${entry.body}`;
-    return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
-  }
+  if (entry.kind === "report") return formatReport(entry, card);
+  if (entry.kind === "job-result") return formatJob(entry, card);
   const who = entry.author.replace(/^mate:/, "");
-  const resolves = field(entry, "resolves");
-  const note = resolves === undefined ? "" : ` (answers ${resolves})`;
-  return `[fleet] ${who} on ${card}${entry.kind === "comment" ? "" : ` (${entry.kind})`}: ${entry.body}${note}`;
+  const kind = entry.kind === "comment" ? "" : ` (${entry.kind})`;
+  return `[fleet] ${who} on ${card}${kind}: ${entry.body}${suffix(entry, "resolves", "answers ")}`;
 }
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;

@@ -19,7 +19,11 @@ function parentOf(db: DatabaseSync, lane: string): string | null {
 }
 
 /** The card, if the session's lane owns it or is the parent of the lane that does. */
-function reachable(db: DatabaseSync, session: Session, id: number): { card: Card; own: boolean } {
+export function reachable(
+  db: DatabaseSync,
+  session: Session,
+  id: number,
+): { card: Card; own: boolean } {
   const card = getCard(db, id);
   if (card.lane === session.lane) return { card, own: true };
   if (parentOf(db, card.lane) === session.lane) return { card, own: false };
@@ -88,7 +92,7 @@ export function openMergeAsk(db: DatabaseSync, card: Card): string | undefined {
 }
 
 /** For a merge question, the captain's choice: approve or request changes. Undefined for other questions. */
-function mergeChoice(
+export function mergeChoice(
   db: DatabaseSync,
   card: Card,
   askId: string,

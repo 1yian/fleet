@@ -13,18 +13,20 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint --max-warnings 0 .",
-    "typecheck": "tsc -p .",
+    "typecheck": "tsc -p . && tsc -p packages/board",
     "knip": "knip --treat-config-hints-as-errors",
     "deps": "depcruise .",
     "migrations:check": "node packages/cardd/scripts/check-migrations.ts",
-    "test:e2e": "node --test --test-concurrency=1 \"e2e/**/*.test.ts\"",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run knip && npm run deps && npm run migrations:check"
+    "test:e2e": "npm run build && node --test --test-concurrency=1 \"e2e/**/*.test.ts\"",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run knip && npm run deps && npm run migrations:check",
+    "build": "npm run -w @fleet/board build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
     "dependency-cruiser": "18.7.0",
     "eslint": "10.13.0",
+    "eslint-plugin-react-hooks": "7.1.1",
     "knip": "6.42.1",
     "prettier": "3.9.10",
     "typescript": "6.0.3",

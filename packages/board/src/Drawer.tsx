@@ -1,0 +1,95 @@
+// The card drawer (spec section 21.2): the thread, a reply box, and the option
+// buttons, beside the board. Replies go to the lane mate as the captain's words.
+import { useEffect, useMemo, useState } from "react";
+import type { Board, Entry, Thread } from "@fleet/protocol";
+import { loadThread, unreachable } from "./api.ts";
+import { CommentThread, type ThreadMessage } from "./vendor/comment-thread.tsx";
+
+interface Props {
+  readonly card: number;
+  readonly board: Board;
+  readonly changes: number;
+  readonly onReply: (text: string) => Promise<void>;
+  readonly onAnswer: (ask: number, choice: string) => void;
+  readonly onFail: (message: string) => void;
+  readonly onClose: () => void;
+}
+
+const CAPTAIN = { name: "You" };
+
+function message(entry: Entry): ThreadMessage {
+  const who =
+    entry.author === "captain"
+      ? "You"
+      : entry.author.replace(/^mate:/, "").replace(/^worker:/, "worker ");
+  const status = typeof entry.fields["status"] === "string" ? `${entry.fields["status"]}: ` : "";
+  return {
+    id: String(entry.id),
+    author: entry.author === "captain" ? CAPTAIN : { name: who },
+    createdAt: entry.createdAt,
+    text: `${status}${entry.body}`,
+  };
+}
+
+export function Drawer({ card, board, changes, onReply, onAnswer, onFail, onClose }: Props) {
+  const [thread, setThread] = useState<Thread | undefined>();
+  useEffect(() => {
+    let current = true;
+    loadThread(card).then(
+      (loaded) => {
+        if (current) setThread(loaded);
+      },
+      (error: unknown) => {
+        if (current) onFail(unreachable(error));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [card, changes, onFail]);
+  const messages = useMemo(() => thread?.entries.map(message) ?? [], [thread]);
+  const questions = board.questions.filter((each) => each.card === card);
+  if (thread?.card.id !== card) return <aside className="drawer">Loading c-{card}…</aside>;
+  return (
+    <aside className="drawer" aria-label={`c-${String(card)}`}>
+      <header>
+        <h2>
+          c-{card} · {thread.card.title}
+        </h2>
+        <p className="status">
+          {thread.card.lane} · {thread.card.status}
+          {thread.card.pr === null ? null : (
+            <>
+              {" · "}
+              <a href={thread.card.pr}>PR</a>
+            </>
+          )}
+        </p>
+      </header>
+      {questions.map((question) => (
+        <div className="options" key={question.ask} aria-label={question.question}>
+          {question.options.map((option) => (
+            <button
+              type="button"
+              key={option}
+              onClick={() => {
+                onAnswer(question.ask, option);
+              }}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      ))}
+      <CommentThread
+        key={card}
+        title="Thread"
+        messages={messages}
+        currentUser={CAPTAIN}
+        onReply={onReply}
+        onClose={onClose}
+        className="drawer-thread"
+      />
+    </aside>
+  );
+}

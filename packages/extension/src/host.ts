@@ -18,6 +18,25 @@ export const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'
 const scrub = (message: string): string =>
   message.replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]");
 
+/**
+ * The transport could not reach the host: ssh exits with status 255 for a lost or refused
+ * connection, or the reachability probe (herdr called with `probe`) ran past its timeout.
+ * A timeout on any other step is a plain failure.
+ */
+export class HostUnreachable extends Error {}
+
+const PROBE_TIMEOUT_MS = 60_000;
+
+const failure = (
+  via: readonly string[],
+  error: { code?: unknown; killed?: unknown },
+  message: string,
+  probe: boolean,
+): Error =>
+  via.length > 0 && (error.code === 255 || (probe && error.killed === true))
+    ? new HostUnreachable(message)
+    : new Error(message);
+
 const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
   typeof error.signal === "string"
     ? `killed by ${error.signal}`
@@ -27,6 +46,7 @@ const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
 export async function herdr(
   host: string,
   args: readonly string[],
+  probe = false,
 ): Promise<Record<string, unknown>> {
   const session = process.env["HERDR_SESSION"];
   // --session must come before a "--" delimiter, or herdr passes it on to the agent.
@@ -37,23 +57,48 @@ export async function herdr(
   const [file = "herdr", ...rest] =
     via.length === 0 ? command : [...via, command.map(quote).join(" ")];
   const stdout = await new Promise<string>((resolve, reject) => {
-    execFile(file, rest, { encoding: "utf8", timeout: 120_000 }, (error, out, err) => {
-      if (error !== null && out.trim() === "")
-        reject(
-          new Error(
-            scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`),
-          ),
-        );
-      else resolve(out);
-    });
+    execFile(
+      file,
+      rest,
+      { encoding: "utf8", timeout: probe ? PROBE_TIMEOUT_MS : 120_000 },
+      (error, out, err) => {
+        if (error !== null && out.trim() === "") {
+          const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
+          reject(failure(via, error, scrub(message), probe));
+        } else resolve(out);
+      },
+    );
   });
-  // Some commands, such as pane run, print nothing when they succeed.
+  return resultOf(stdout, host, args[0] ?? "");
+}
+
+/** The `result` object of herdr's JSON output. Some commands, such as pane run, print nothing when they succeed. */
+function resultOf(stdout: string, host: string, name: string): Record<string, unknown> {
   if (stdout.trim() === "") return {};
   const reply: unknown = JSON.parse(stdout);
-  if (!isRecord(reply))
-    throw new Error(`herdr ${args[0] ?? ""} on ${host} returned no JSON object`);
+  if (!isRecord(reply)) throw new Error(`herdr ${name} on ${host} returned no JSON object`);
   if (isRecord(reply["error"])) throw new Error(scrub(String(reply["error"]["message"])));
   return isRecord(reply["result"]) ? reply["result"] : {};
+}
+
+/** Runs a command on the host and returns its output. Throws with the command's error output on a non-zero exit. */
+export async function onHost(host: string, argv: readonly string[]): Promise<string> {
+  const via = transport(host);
+  const [file = "", ...rest] = via.length === 0 ? argv : [...via, argv.map(quote).join(" ")];
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      rest,
+      { encoding: "utf8", timeout: 600_000, maxBuffer: 16 * 1024 * 1024 },
+      (error, out, err) => {
+        if (error === null) resolve(out);
+        else {
+          const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
+          reject(failure(via, error, scrub(message), false));
+        }
+      },
+    );
+  });
 }
 
 /** The items of an array field, keeping only objects. */

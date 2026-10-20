@@ -56,6 +56,8 @@ export interface Begun {
   readonly token: string;
   readonly resumed: boolean;
   readonly active: boolean;
+  /** Whether the worker's Pi is connected to cardd right now. */
+  readonly connected: boolean;
   readonly clone: string;
   readonly base: string;
   readonly branch: string;
@@ -82,6 +84,11 @@ function placeOf(
   return { clone, base: String(row?.["base"]), branch: `${String(row?.["prefix"])}${session}` };
 }
 
+function connected(db: DatabaseSync, session: string): boolean {
+  const state = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
+  return state === "idle" || state === "running" || state === "waiting";
+}
+
 /**
  * Starts an attempt, or finds the one a lost dispatch already started on the same
  * host: same session, same token, and no second task message. With replace, the
@@ -106,6 +113,7 @@ export function beginAttempt(
       token: tokenFor(db, "worker", session),
       resumed: true,
       active: live.state === "active",
+      connected: connected(db, session),
       ...place,
     };
   }
@@ -136,7 +144,7 @@ export function beginAttempt(
     fields: { task: true },
   };
   addEntry(db, task, [session]);
-  return { session, token, resumed: false, active: false, ...place };
+  return { session, token, resumed: false, active: false, connected: false, ...place };
 }
 
 /** The attempt behind a worker session. */
