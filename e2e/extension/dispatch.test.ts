@@ -282,6 +282,39 @@ test("an unreachable host of a replaced attempt does not block closing, and its 
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
 });
 
+test("a killed archive step of a replaced attempt aborts the close instead of leaving it in place", async () => {
+  h.onModel(
+    () => ({
+      tool: "card_new",
+      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+    }),
+    "mate",
+  );
+  h.onModel(
+    () => ({ tool: "dispatch", args: { card: 1, host: "far", task: "fix the scrollbar" } }),
+    "mate",
+  );
+  h.onModel(() => {
+    writeFileSync(join(h.dir, "far-down"), "flood\n");
+    return {
+      tool: "dispatch",
+      args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
+    };
+  }, "mate");
+  h.onModel(() => ({ tool: "card_drop", args: { card: 1, reason: "the design changed" } }), "mate");
+  h.onModel(() => ({ text: "dropped" }), "mate");
+  await mateConnected();
+  mate.prompt("ship the scrollbar fix");
+
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.match(results.at(-1) ?? "", /^sh on far failed: /);
+  assert.deepEqual(worktrees(), [
+    "branch refs/heads/main",
+    "branch refs/heads/c-1-a1",
+    "branch refs/heads/c-1-a2",
+  ]);
+});
+
 test("a host that hangs past the timeout counts as unreachable for a replaced attempt", async () => {
   h.onModel(
     () => ({
