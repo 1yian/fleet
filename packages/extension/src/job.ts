@@ -9,6 +9,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
 const TAIL_LINES = 40;
+const MAX_LINE_CHARS = 2000;
 const TIMEOUT_EXIT = 124;
 const INTERRUPTED_EXIT = 130;
 const KILL_GRACE_MS = 5000;
@@ -51,15 +52,15 @@ class Stream {
   private readonly decoder = new StringDecoder("utf8");
   private rest = "";
 
-  /** The complete lines in this chunk. The unfinished line waits for the next chunk. */
+  /** The complete lines in this chunk. A carriage return ends a line too. The unfinished line waits for the next chunk. */
   write(chunk: Buffer): string[] {
-    const parts = (this.rest + this.decoder.write(chunk)).split("\n");
-    this.rest = parts.pop() ?? "";
-    return parts;
+    const parts = (this.rest + this.decoder.write(chunk)).split(/\r\n|\r(?!$)|\n/);
+    this.rest = (parts.pop() ?? "").slice(-MAX_LINE_CHARS);
+    return parts.map((line) => line.slice(-MAX_LINE_CHARS));
   }
 
   end(): string {
-    return this.rest + this.decoder.end();
+    return (this.rest + this.decoder.end()).replace(/\r$/, "").slice(-MAX_LINE_CHARS);
   }
 }
 
@@ -88,6 +89,17 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+/** Copies output to the tab. If the tab is gone, it stops copying and the job goes on. */
+function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
+  let open = true;
+  out.on("error", () => {
+    open = false;
+  });
+  return (chunk) => {
+    if (open) out.write(chunk);
+  };
+}
+
 async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> {
   const tail = new Tail();
   const child = spawn("sh", ["-c", job.command], {
@@ -102,12 +114,14 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
       return false;
     }
   };
+  const mirrorOut = mirror(process.stdout);
+  const mirrorErr = mirror(process.stderr);
   child.stdout.on("data", (chunk: Buffer) => {
-    process.stdout.write(chunk);
+    mirrorOut(chunk);
     tail.add(tail.out.write(chunk));
   });
   child.stderr.on("data", (chunk: Buffer) => {
-    process.stderr.write(chunk);
+    mirrorErr(chunk);
     tail.add(tail.err.write(chunk));
   });
   const closed = new Promise<void>((resolve) =>

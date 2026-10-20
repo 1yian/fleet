@@ -126,6 +126,18 @@ test("a timeout kills the whole command, exits 124, and leaves nothing behind", 
   await until(() => (pids(marker(1)).length === 0 ? true : undefined), "the sleep to be gone");
 });
 
+test("a carriage return ends a line, and an endless line is cut to its last 2000 characters", async () => {
+  const command = `printf 'x\\ry\\r\\n'; head -c 5000 /dev/zero | tr '\\0' a`;
+  h.onModel(() => ({ tool: "run_long", args: { label: "progress", command } }));
+  h.onModel(() => ({ text: "waiting" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "seen" } }));
+  worker();
+  await fleet.main.waitForEntries(1);
+
+  const expected = `[fleet] c-1 job 1 (progress) exited 0: x\ny\n${"a".repeat(2000)}`;
+  assert.equal(lastUser(await h.waitForCall(2)), expected);
+});
+
 test("a command that ignores SIGTERM is killed when the grace ends", async () => {
   const command = `(trap '' TERM; exec sleep ${marker(5)}) & wait`;
   h.onModel(() => ({
@@ -161,6 +173,27 @@ test("an interrupted job reports exit 130, with the unfinished line before it", 
     "[fleet] c-1 job 1 (wait) exited 130: started\npartial\ninterrupted",
   );
   await until(() => (pids(marker(2)).length === 0 ? true : undefined), "the sleep to be gone");
+});
+
+test("closing the job tab still posts the result, with what the command printed as it died", async () => {
+  const ready = join(h.dir, "ready-tab");
+  const command = `trap 'echo dying; exit 3' TERM; echo started; touch ${ready}; sleep ${marker(6)} & wait`;
+  h.onModel(() => ({ tool: "run_long", args: { label: "tab", command } }));
+  h.onModel(() => ({ text: "waiting" }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "the tab was closed" } }));
+  try {
+    worker();
+    await until(() => (existsSync(ready) ? true : undefined), "the job to start");
+    const listed = await lab.run(["tab", "list", "--workspace", env["HERDR_WORKSPACE_ID"] ?? ""]);
+    const tab = records(listed["tabs"]).find((each) => each["label"] === "job-1-tab");
+    assert.equal(typeof tab?.["tab_id"], "string");
+    await lab.run(["tab", "close", String(tab?.["tab_id"])]);
+
+    const woken = lastUser(await h.waitForCall(2, "default", 20_000)) ?? "";
+    assert.equal(woken, "[fleet] c-1 job 1 (tab) exited 130: started\ndying\ninterrupted");
+  } finally {
+    for (const pid of pids(marker(6))) process.kill(pid, "SIGKILL");
+  }
 });
 
 const findings = (): string[] =>
