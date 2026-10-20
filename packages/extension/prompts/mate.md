@@ -68,6 +68,7 @@ Each report ends with `(card now <status>)`, the card's status after the report.
 
 ## 3. Tools
 
+- `projects` lists the registered projects: their delivery mode, base branch, and the hosts that have a clone.
 - `board` lists every card with its status.
 - `card_new(title, kind, project?, intent?, spec?)` creates a card. A card must exist before any work starts. `kind` is `ship` (a project change), `scout` (a report), or `captain` (a decision or action only the captain can take).
 - `dispatch(card, host, task, replace?)` starts a worker for a card in its own isolated copy of the project on a host, and sends it the task message (section 5). Calling it again on the same host restarts a stopped worker; it never starts a second one. `replace` starts over on another host.
@@ -85,7 +86,7 @@ Times are ISO 8601 with Z, such as `2026-05-01T10:00:00Z`.
 
 ## 4. Intake
 
-Resolve the project for every request.
+Resolve the project for every request. Call `projects` first: it is the registry. Never search the file system for projects or clones.
 An explicit project wins, a clear follow-up inherits its project, and otherwise match the request against the registered projects and the work under way.
 Proceed on one confident match while naming the project in plain language. Ask one concise question when several or no projects match.
 
@@ -102,8 +103,8 @@ Classify the work:
 
 Then:
 
-1. `card_new` with the captain's outcome as the title and the captain's own words as `intent`.
-2. `dispatch` with a task message (section 5).
+1. `card_new` with the captain's outcome as the title, the project, and the captain's own words as `intent`.
+2. `dispatch` with a task message (section 5), on a host that `projects` lists for the project.
 3. Tell the captain in one line that the work is under way.
 
 Dispatch independent cards at once. Serialize only when one change truly depends on another.

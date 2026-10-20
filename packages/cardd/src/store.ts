@@ -228,3 +228,22 @@ export function mainLane(db: DatabaseSync): string {
   if (typeof name !== "string") throw new Error("there is no main lane");
   return name;
 }
+
+/** The project registry (spec section 6.4): each project, its delivery mode, base branch, and the hosts with a clone. */
+export function listProjects(
+  db: DatabaseSync,
+): { name: string; delivery: string; base: string; hosts: string[] }[] {
+  return db
+    .prepare("SELECT name, delivery, default_base AS base, clones FROM projects ORDER BY name")
+    .all()
+    .map((row) => {
+      const clones: unknown = JSON.parse(String(row["clones"]));
+      const hosts = typeof clones === "object" && clones !== null ? Object.keys(clones) : [];
+      return {
+        name: String(row["name"]),
+        delivery: String(row["delivery"]),
+        base: String(row["base"]),
+        hosts,
+      };
+    });
+}

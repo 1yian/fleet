@@ -84,6 +84,18 @@ export const OPS = {
     result: CardSchema,
   },
   board: { roles: ["mate"], args: Type.Object({}), result: Type.Array(CardSchema) },
+  projects: {
+    roles: ["mate"],
+    args: Type.Object({}),
+    result: Type.Array(
+      Type.Object({
+        name: Type.String(),
+        delivery: Type.String(),
+        base: Type.String(),
+        hosts: Type.Array(Type.String()),
+      }),
+    ),
+  },
   comment: {
     roles: ["mate"],
     args: Type.Object({

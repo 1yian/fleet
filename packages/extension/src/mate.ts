@@ -41,6 +41,21 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
       reply(`Commented. ${line(check(CardSchema, await link.call("comment", params)))}`),
   });
   pi.registerTool({
+    name: "projects",
+    label: "Projects",
+    description:
+      "Lists the registered projects: delivery mode, base branch, and the hosts that have a clone.",
+    parameters: OPS.projects.args,
+    execute: async () => {
+      const list = check(OPS.projects.result, await link.call("projects", {}));
+      const lines = list.map(
+        (each) =>
+          `${each.name}: delivery ${each.delivery}, base ${each.base}, hosts ${each.hosts.join(", ")}`,
+      );
+      return reply(lines.length === 0 ? "No projects are registered." : lines.join("\n"));
+    },
+  });
+  pi.registerTool({
     name: "board",
     label: "Board",
     description: "Lists the cards.",

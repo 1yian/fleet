@@ -22,6 +22,7 @@ import {
   cardEntries,
   getCard,
   listCards,
+  listProjects,
   mainLane,
   transaction,
   workerOf,
@@ -96,6 +97,7 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
     return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
   },
   board: (db) => ({ value: listCards(db), notify: [] }),
+  projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment: (db, session, raw) => {
     const args = check(OPS.comment.args, raw);
     const card = ownCard(db, session, args.card);

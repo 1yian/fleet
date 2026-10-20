@@ -59,6 +59,9 @@ async function agentLive(host: string, name: string): Promise<boolean> {
 const SHELL_WAIT_MS = 20_000;
 
 /** Starts the agent once the new pane's shell reaches its prompt. herdr refuses a pane that is not yet a shell. */
+/** How long herdr waits for Pi to become ready. A Pi with many packages can take more than herdr's default 30 s. */
+const START_WAIT_MS = 120_000;
+
 async function startAgent(host: string, args: string[]): Promise<void> {
   const deadline = Date.now() + SHELL_WAIT_MS;
   for (;;) {
@@ -66,7 +69,10 @@ async function startAgent(host: string, args: string[]): Promise<void> {
       await herdr(host, args);
       return;
     } catch (error) {
-      const busy = error instanceof Error && error.message.includes("not an available shell");
+      const message = error instanceof Error ? error.message : "";
+      // herdr started Pi but stopped waiting for it: the worker still comes up and connects.
+      if (message.includes("timed out waiting for agent startup")) return;
+      const busy = message.includes("not an available shell");
       if (!busy || Date.now() > deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -94,7 +100,18 @@ export async function dispatch(
   await startAgent(
     request.host,
     [
-      ["agent", "start", plan.session, "--kind", "pi", "--pane", pane, "--"],
+      [
+        "agent",
+        "start",
+        plan.session,
+        "--kind",
+        "pi",
+        "--pane",
+        pane,
+        "--timeout",
+        String(START_WAIT_MS),
+        "--",
+      ],
       [...fleetArgs, "--session-id", plan.session, ...launch.piArgs],
     ].flat(),
   );
