@@ -45,12 +45,21 @@ function ownCard(db: DatabaseSync, session: Session, id: number): Card {
   return card;
 }
 
-/** A report reaches the mate if its status hands off, or if it is the first report after a comment. */
-function reportRecipients(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
-  if (TO_MATE.has(status)) return [card.lane];
+/**
+ * A report reaches the mate if its status hands off, or if it is the first report
+ * after a comment (spec section 10.3). Then it carries the comment it follows.
+ */
+function reportRoute(
+  db: DatabaseSync,
+  card: Card,
+  status: ReportStatus,
+): { to: string[]; re?: string } {
   const entries = cardEntries(db, card.id);
-  const last = (kind: string): number => entries.findLast((entry) => entry.kind === kind)?.id ?? 0;
-  return last("comment") > last("report") ? [card.lane] : [];
+  const comment = entries.findLast((entry) => entry.kind === "comment");
+  const report = entries.findLast((entry) => entry.kind === "report");
+  const firstAfterComment = comment !== undefined && comment.id > (report?.id ?? 0);
+  if (firstAfterComment) return { to: [card.lane], re: comment.body };
+  return { to: TO_MATE.has(status) ? [card.lane] : [] };
 }
 
 const HANDLERS: Record<OpName, Handler> = {
@@ -83,9 +92,9 @@ const HANDLERS: Record<OpName, Handler> = {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     const card = getCard(db, session.card);
-    const to = reportRecipients(db, card, args.status);
+    const { to, re } = reportRoute(db, card, args.status);
     applyChange(db, card, { kind: "report", status: args.status });
-    const fields = { status: args.status, key: args.key, until: args.until };
+    const fields = { status: args.status, key: args.key, until: args.until, re };
     addEntry(
       db,
       { card: card.id, author: `worker:${session.id}`, kind: "report", body: args.text, fields },

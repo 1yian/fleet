@@ -14,7 +14,9 @@ export interface Turn {
   readonly role: string;
   readonly text: string;
 }
-type Move = { readonly text: string } | { readonly tool: string };
+type Move =
+  | { readonly text: string }
+  | { readonly tool: string; readonly args?: Readonly<Record<string, string | number | boolean>> };
 type ModelHandler = (turns: Turn[]) => Move | Promise<Move>;
 
 const PI_BIN = fileURLToPath(new URL("../../node_modules/.bin/pi", import.meta.url));
@@ -119,7 +121,12 @@ export class Harness {
     this.handlers.push(handler);
   }
 
-  startPi(sessionId: string, env: Record<string, string> = {}): Pi {
+  /** Starts Pi with the fake model and the probe, plus any extra extensions. */
+  startPi(
+    sessionId: string,
+    env: Record<string, string> = {},
+    extensions: readonly string[] = [],
+  ): Pi {
     const agentDir = join(this.dir, "agent");
     const workDir = join(this.dir, "work");
     mkdirSync(agentDir, { recursive: true });
@@ -128,6 +135,7 @@ export class Harness {
       ["--mode", "rpc", "--offline", "--no-approve", "--no-extensions", "--no-skills"],
       ["--no-prompt-templates", "--no-themes", "--no-context-files", "--no-mcp"],
       ["--no-builtin-tools", "-e", join(SUPPORT, "fake-model.ts"), "-e", join(SUPPORT, "probe.ts")],
+      extensions.flatMap((path) => ["-e", path]),
       ["--provider", "fake", "--model", "scripted"],
       ["--session-dir", join(this.dir, "sessions"), "--session-id", sessionId],
     ].flat();
@@ -159,6 +167,15 @@ export class Harness {
 
   async waitFor(match: (event: JsonRecord) => boolean, what: string): Promise<JsonRecord> {
     return poll(() => this.events.find(match), what);
+  }
+
+  /** Waits for the nth event (counting from 1) that matches. */
+  async waitForNth(
+    match: (event: JsonRecord) => boolean,
+    n: number,
+    what: string,
+  ): Promise<JsonRecord> {
+    return poll(() => this.events.filter(match)[n - 1], what);
   }
 
   async waitForCall(index: number): Promise<Turn[]> {

@@ -10,7 +10,7 @@ import {
   type FauxResponseFactory,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { optionalString, parseRecord } from "./json.ts";
+import { isRecord, optionalString, parseRecord } from "./json.ts";
 
 const CALLS = 10_000;
 
@@ -20,10 +20,23 @@ function controlUrl(): string {
   return url;
 }
 
+/** Tool arguments from the test: an object of strings, numbers, and booleans. */
+function scalarArgs(value: unknown): Record<string, string | number | boolean> {
+  if (!isRecord(value)) return {};
+  const args: Record<string, string | number | boolean> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean")
+      args[key] = item;
+  }
+  return args;
+}
+
 function toMessage(move: Record<string, unknown>): AssistantMessage {
   const tool = optionalString(move, "tool");
   if (tool !== undefined) {
-    return fauxAssistantMessage([fauxToolCall(tool, {})], { stopReason: "toolUse" });
+    return fauxAssistantMessage([fauxToolCall(tool, scalarArgs(move["args"]))], {
+      stopReason: "toolUse",
+    });
   }
   return fauxAssistantMessage([fauxText(optionalString(move, "text") ?? "")]);
 }

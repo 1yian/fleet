@@ -54,6 +54,13 @@ export default function probe(pi: ExtensionAPI): void {
     },
   });
 
+  pi.events.on("fleet:delivered", (data) => {
+    if (isRecord(data))
+      report({ type: "fleet_delivered", entryId: optionalNumber(data, "entryId") });
+  });
+  pi.events.on("fleet:connected", () => {
+    report({ type: "fleet_connected" });
+  });
   pi.on("session_start", (_event, ctx) => {
     report({ type: "session", file: ctx.sessionManager.getSessionFile() });
   });

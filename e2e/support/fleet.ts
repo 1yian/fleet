@@ -1,6 +1,6 @@
 // A small fleet on a real cardd: a main lane, a card, and a worker on it.
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
-import { Cardd, type Session } from "../support/cardd.ts";
+import { Cardd, type Session } from "./cardd.ts";
 
 export interface Fleet {
   readonly cardd: Cardd;
