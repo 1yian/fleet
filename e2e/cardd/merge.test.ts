@@ -245,3 +245,19 @@ test("a second mate's merge approval goes to the captain, and main gets one line
   const line = await fleet.main.waitForEntry((entry) => entry.kind === "ask", "the merge line");
   assert.equal(line.body, `Merge ${PR} for c-${String(card.id)}: Ads stay under budget?`);
 });
+
+test("an approval still stands after a later question takes the card back to the captain", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  await approve(card);
+  await fleet.main.call("ask", {
+    card: card.id,
+    question: "Also clean up the old run?",
+    options: ["yes", "no"],
+  });
+  assert.equal(await status(fleet.main, card), "needs-you");
+
+  await merge(card);
+  assert.equal(gh.state(PR), "MERGED");
+});

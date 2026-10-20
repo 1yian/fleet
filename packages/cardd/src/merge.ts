@@ -7,7 +7,7 @@ import { openMergeAsk, recordAnswer } from "./asks.ts";
 import { requireCaptainWords } from "./authority.ts";
 import { applyChange } from "./change.ts";
 import { mergePullRequest, readPullRequest } from "./github.ts";
-import { addEntry, getCard, mainLane, transaction, type Session } from "./store.ts";
+import { addEntry, cardEntries, getCard, mainLane, transaction, type Session } from "./store.ts";
 
 interface Done {
   readonly value: unknown;
@@ -30,15 +30,38 @@ interface Authorized {
  * captain's approval. On a card with an open merge question, the captain's
  * quoted words can authorize the merge directly. They then answer that question.
  */
+/**
+ * The captain already approved the latest merge question, even if a later question
+ * then took the card back to Needs you. The approval still stands for this PR.
+ */
+function approvedOnRecord(db: DatabaseSync, card: Card): boolean {
+  const entries = cardEntries(db, card.id);
+  const ask = entries.findLast((entry) => entry.kind === "ask" && entry.fields["merge"] === true);
+  if (ask === undefined) return false;
+  return entries.some(
+    (entry) =>
+      entry.kind === "answer" &&
+      entry.fields["resolves"] === String(ask.id) &&
+      entry.fields["choice"] === MERGE_OPTIONS[0],
+  );
+}
+
+/** A mate may merge its own lane's cards, and main may merge a second mate's. */
+function requireLane(db: DatabaseSync, session: Session, card: Card): void {
+  const parent = db.prepare("SELECT parent FROM lanes WHERE name = ?").get(card.lane)?.["parent"];
+  if (card.lane !== session.lane && parent !== session.lane) {
+    throw new Error(`c-${String(card.id)} belongs to lane ${card.lane}`);
+  }
+}
+
 function authorize(db: DatabaseSync, session: Session, raw: unknown): Authorized {
   const args = check(OPS.merge.args, raw);
   const card = getCard(db, args.card);
-  const parent = db.prepare("SELECT parent FROM lanes WHERE name = ?").get(card.lane)?.["parent"];
-  if (card.lane !== session.lane && parent !== session.lane)
-    throw new Error(`c-${String(card.id)} belongs to lane ${card.lane}`);
+  requireLane(db, session, card);
   if (card.pr === null) throw new Error(`c-${String(card.id)} has no PR`);
   const pr = { ...card, pr: card.pr };
-  if (card.status === "merging") return { card: pr, approval: undefined };
+  if (card.status === "merging" || approvedOnRecord(db, card))
+    return { card: pr, approval: undefined };
   const ask = card.status === "needs-you" ? openMergeAsk(db, card) : undefined;
   if (ask === undefined || args.words === undefined) {
     throw new Error(
