@@ -8,9 +8,11 @@ export interface Fleet {
   readonly main: Session;
 }
 
+/** Starts cardd with the main lane and the project "web", cloned on maverick and p620. */
 export async function startFleet(): Promise<Fleet> {
   const cardd = await Cardd.start();
   const mainToken = cardd.addLane("main");
+  cardd.addProject("web", 2, { maverick: "/clones/web", p620: "/clones/web" });
   return { cardd, mainToken, main: await cardd.connect(mainToken) };
 }
 
@@ -19,12 +21,12 @@ export async function newCard(
   title: string,
   kind: Card["kind"] = "ship",
 ): Promise<Card> {
-  return check(CardSchema, await mate.call("card.new", { title, kind }));
+  return check(CardSchema, await mate.call("card.new", { title, kind, project: "web" }));
 }
 
-/** Dispatches a worker on the card. Returns its token. */
-export async function begin(mate: Session, card: Card): Promise<string> {
-  const value = await mate.call("attempt.begin", { card: card.id, host: "maverick" });
+/** Starts an attempt on the card with this task message. Returns the worker's token. */
+export async function begin(mate: Session, card: Card, task = "the task"): Promise<string> {
+  const value = await mate.call("attempt.begin", { card: card.id, host: "maverick", task });
   return check(OPS["attempt.begin"].result, value).token;
 }
 

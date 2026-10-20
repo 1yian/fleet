@@ -13,5 +13,6 @@
     "packages/extension": {
       "entry": ["src/index.ts"]
     }
-  }
+  },
+  "ignoreBinaries": ["herdr"]
 }

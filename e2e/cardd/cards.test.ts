@@ -48,7 +48,7 @@ test("a comment returns the card to In review while the pipeline runs", async ()
   assert.equal(await status(fleet.main, card), "needs-you");
 });
 
-test("routine reports stay on the board, except the first one after a comment", async () => {
+test("routine reports stay on the board, except the first one after the task or a comment", async () => {
   await report("working", "reading the code");
   await comment("use the v2 endpoint");
   await report("working", "switched to v2");
@@ -59,6 +59,7 @@ test("routine reports stay on the board, except the first one after a comment", 
   assert.deepEqual(
     fleet.main.entries.map(({ entry }) => [entry.fields["status"], entry.body]),
     [
+      ["working", "reading the code"],
       ["working", "switched to v2"],
       ["blocked", "v2 is down"],
     ],
@@ -79,12 +80,6 @@ test("a second mate's worker reports to that mate, not to main", async () => {
   );
   assert.deepEqual(fleet.main.entries, []);
   assert.equal(await status(cleo, cleoCard), "with-mate");
-});
-
-test("a card has at most one live attempt", async () => {
-  await assert.rejects(begin(fleet.main, card), {
-    message: `c-${String(card.id)} has an active attempt c-${String(card.id)}-a1 on maverick`,
-  });
 });
 
 test("sessions call only the operations of their role and lane", async () => {

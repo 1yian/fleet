@@ -1,6 +1,7 @@
 // Pi extension: a scripted model. Each model call posts the transcript to the
 // test's control server and returns the move that the test chooses. Every
 // other mechanism in Pi stays real.
+import { writeFileSync } from "node:fs";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -44,7 +45,10 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
 const respond: FauxResponseFactory = async (context, options) => {
   const init: RequestInit = {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-fake-agent": process.env["FLEET_FAKE_AGENT"] ?? "default",
+    },
     body: JSON.stringify({ messages: context.messages }),
   };
   if (options?.signal !== undefined) init.signal = options.signal;
@@ -53,6 +57,8 @@ const respond: FauxResponseFactory = async (context, options) => {
 };
 
 export default function fakeModel(pi: ExtensionAPI): void {
+  const argvFile = process.env["FLEET_ARGV_FILE"];
+  if (argvFile !== undefined) writeFileSync(argvFile, `${process.argv.join("\n")}\n`);
   const faux = fauxProvider({ provider: "fake", models: [{ id: "scripted" }] });
   faux.setResponses(Array.from({ length: CALLS }, () => respond));
   pi.registerProvider(faux.provider);

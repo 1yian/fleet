@@ -9,30 +9,31 @@ import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
 
-// Entry IDs in a fresh cardd: the first, second, and third comment.
+// Entry IDs in a fresh cardd: the task message, then the second and third comment.
 const [START, OLDER, NEWER] = [1, 2, 3];
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 
 let fleet: Fleet;
 let h: Harness;
 let card: Card;
-let env: Record<string, string>;
+let token: string | undefined;
 beforeEach(async () => {
   fleet = await startFleet();
   h = await Harness.start();
   card = await newCard(fleet.main, "Users see one scrollbar");
-  env = {
-    FLEET_URL: fleet.cardd.url,
-    FLEET_TOKEN: await begin(fleet.main, card),
-    FLEET_ROLE: "worker",
-  };
+  token = undefined;
 });
 afterEach(async () => {
   await h.stop();
   await fleet.cardd.stop();
 });
 
-const worker = (): Pi => h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
+/** Dispatches the card with this task message on the first call, then starts (or restarts) its worker. */
+async function worker(task = "the task"): Promise<Pi> {
+  token ??= await begin(fleet.main, card, task);
+  const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
+  return h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
+}
 const comment = (text: string, now = false): Promise<unknown> =>
   fleet.main.call("comment", { card: card.id, text, now });
 const fleetText = (text: string): string => `[fleet] main on c-${String(card.id)}: ${text}`;
@@ -54,10 +55,9 @@ async function sessionFile(): Promise<string> {
 const delivered = (id: number) => (event: Record<string, unknown>) =>
   event["type"] === "fleet_delivered" && event["entryId"] === id;
 
-test("a comment wakes an idle worker, and its report reaches the mate", async () => {
-  worker();
+test("the task message wakes a new worker, and its report reaches the mate", async () => {
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green and ready" } }));
-  await comment("fix the scrollbar");
+  await worker("fix the scrollbar");
   await fleet.main.waitForEntries(1);
 
   assert.equal(lastUser(await h.waitForCall(0)), fleetText("fix the scrollbar"));
@@ -66,10 +66,9 @@ test("a comment wakes an idle worker, and its report reaches the mate", async ()
 });
 
 test("a run that ends without a handoff gets one nudge, then files stopped", async () => {
-  worker();
   h.onModel(() => ({ text: "I looked around" }));
   h.onModel(() => ({ text: "still looking" }));
-  await comment("investigate the scrollbar");
+  await worker("investigate the scrollbar");
   await fleet.main.waitForEntries(1);
 
   assert.match(
@@ -84,10 +83,9 @@ test("a run that ends without a handoff gets one nudge, then files stopped", asy
 });
 
 test("a worker woken from a pause is nudged and stopped when it ends a run on a progress report", async () => {
-  worker();
   h.onModel(() => ({ tool: "report", args: { status: "paused", text: "waiting for CI" } }));
   h.onModel(() => ({ text: "waiting" }));
-  await comment("start");
+  await worker("start");
   await fleet.main.waitForEntries(1);
   await h.waitFor((e) => e["type"] === "settled", "the paused run to settle");
   assert.equal(h.calls.length, 2);
@@ -110,12 +108,11 @@ test("a worker woken from a pause is nudged and stopped when it ends a run on a 
 });
 
 test("a worker that reports done and then working in the same run is nudged and stopped", async () => {
-  worker();
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR ready" } }));
   h.onModel(() => ({ tool: "report", args: { status: "working", text: "CI failed, fixing" } }));
   h.onModel(() => ({ text: "that is all" }));
   h.onModel(() => ({ text: "still nothing" }));
-  await comment("ship it");
+  await worker("ship it");
   await fleet.main.waitForEntries(2);
 
   assert.match(
@@ -129,13 +126,12 @@ test("a worker that reports done and then working in the same run is nudged and 
 });
 
 test("a run stopped from the pane files stopped", async () => {
-  const pi = worker();
   const held = gate();
   h.onModel(async () => {
     await held.wait;
     return { text: "too late" };
   });
-  await comment("investigate the scrollbar");
+  const pi = await worker("investigate the scrollbar");
   await h.waitForCall(0);
   pi.abort();
   await fleet.main.waitForEntries(1);
@@ -147,9 +143,8 @@ test("a run stopped from the pane files stopped", async () => {
 });
 
 test("after a crash, recovery delivers the older follow-up once and never repeats the newer steer", async () => {
-  const pi = worker();
   h.onModel(() => ({ tool: "slow_tool" }));
-  await comment("start");
+  const pi = await worker("start");
   await h.waitFor((e) => e["type"] === "tool_waiting", "the tool call");
   await comment("older follow-up");
   await comment("newer steer", true);
@@ -170,7 +165,7 @@ test("after a crash, recovery delivers the older follow-up once and never repeat
   held.open();
 
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "done after the crash" } }));
-  worker();
+  await worker();
   await fleet.main.waitForEntries(1);
   const after = await h.waitForCall(2);
   assert.equal(lastUser(after), fleetText("older follow-up"));
@@ -180,20 +175,19 @@ test("after a crash, recovery delivers the older follow-up once and never repeat
 });
 
 test("a message lost before the session file existed is delivered again after a crash", async () => {
-  const pi = worker();
   const held = gate();
   h.onModel(async () => {
     await held.wait;
     return { text: "never sent" };
   });
-  await comment("the task message");
+  const pi = await worker("the task message");
   assert.equal(lastUser(await h.waitForCall(0)), fleetText("the task message"));
   await h.waitFor(delivered(START), "the task message delivered");
   await pi.kill();
   held.open();
 
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "done" } }));
-  worker();
+  await worker();
   await fleet.main.waitForEntries(1);
   const after = await h.waitForCall(1);
   assert.deepEqual(
@@ -203,9 +197,8 @@ test("a message lost before the session file existed is delivered again after a 
 });
 
 test("a session file with a torn last line does not stop the restarted worker from connecting", async () => {
-  const pi = worker();
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "first done" } }));
-  await comment("first");
+  const pi = await worker("first");
   await fleet.main.waitForEntries(1);
   const file = await sessionFile();
   await h.waitFor((e) => e["type"] === "settled", "the first run to settle");
@@ -213,7 +206,7 @@ test("a session file with a torn last line does not stop the restarted worker fr
   appendFileSync(file, '{"type":"custom_message","customType":"fle');
 
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "second done" } }));
-  worker();
+  await worker();
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the worker to reconnect");
   await comment("again");
   await fleet.main.waitForEntries(2);
@@ -225,14 +218,13 @@ test("a session file with a torn last line does not stop the restarted worker fr
 });
 
 test("a stopped report filed while cardd is down reaches the mate once cardd is back", async () => {
-  worker();
   const held = gate();
   h.onModel(async () => {
     await held.wait;
     return { text: "nothing to report" };
   });
   h.onModel(() => ({ text: "still nothing" }));
-  await comment("investigate the scrollbar");
+  await worker("investigate the scrollbar");
   await h.waitForCall(0);
   await fleet.cardd.stop();
   held.open();
@@ -250,9 +242,8 @@ test("a stopped report filed while cardd is down reaches the mate once cardd is 
 });
 
 test("a cardd restart does not repeat a message the worker already holds", async () => {
-  worker();
   h.onModel(() => ({ tool: "slow_tool" }));
-  await comment("start");
+  await worker("start");
   await h.waitFor((e) => e["type"] === "tool_waiting", "the tool call");
   await comment("older follow-up");
   await h.waitFor(delivered(OLDER), "the follow-up queued");

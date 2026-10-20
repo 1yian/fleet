@@ -85,7 +85,11 @@ const HANDLERS: Record<OpName, Handler> = {
   "attempt.begin": (db, session, raw) => {
     const args = check(OPS["attempt.begin"].args, raw);
     const card = ownCard(db, session, args.card);
-    const begun = beginAttempt(db, card, args.host, args.replace ?? false);
+    const begun = beginAttempt(db, card, {
+      host: args.host,
+      replace: args.replace ?? false,
+      task: args.task,
+    });
     if (!begun.resumed) applyChange(db, card, { kind: "dispatch" });
     return { value: begun, notify: [] };
   },

@@ -39,9 +39,21 @@ export class Cardd {
     }).trim();
   }
 
-  addProject(name: string, capacity: number): void {
+  addProject(name: string, capacity: number, clones: Record<string, string> = {}): void {
+    this.addProjectWithCloneArgs(
+      name,
+      Object.entries(clones).map(([host, path]) => `${host}=${path}`),
+      capacity,
+    );
+  }
+
+  /** Like addProject, with each --clone value given as written on the command line. */
+  addProjectWithCloneArgs(name: string, clones: readonly string[], capacity = 1): void {
     const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", "no-mistakes"];
-    execFileSync("node", [...args, "--capacity", String(capacity)]);
+    const cloneArgs = clones.flatMap((clone) => ["--clone", clone]);
+    execFileSync("node", [...args, "--capacity", String(capacity), ...cloneArgs], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   }
 
   /** POST /call as the session that owns the token. */

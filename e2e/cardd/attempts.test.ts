@@ -22,20 +22,34 @@ const begin = async (host: string, replace?: boolean) =>
     await fleet.main.call("attempt.begin", {
       card: card.id,
       host,
+      task: "fix the scrollbar",
       ...(replace === undefined ? {} : { replace }),
     }),
   );
 const c = (suffix = ""): string => `c-${String(card.id)}${suffix}`;
 
-test("a dispatch retry before the worker connects finds the same attempt", async () => {
+test("a dispatch retry finds the attempt that already started, with one task message", async () => {
   const first = await begin("maverick");
   const retry = await begin("maverick");
 
-  assert.deepEqual([first.session, first.resumed], [c("-a1"), false]);
-  assert.deepEqual([retry.session, retry.token, retry.resumed], [first.session, first.token, true]);
+  assert.deepEqual(
+    [first.session, first.resumed, first.clone, first.base, first.branch],
+    [c("-a1"), false, "/clones/web", "main", c("-a1")],
+  );
+  assert.deepEqual(
+    [retry.session, retry.token, retry.resumed, retry.active],
+    [first.session, first.token, true, false],
+  );
   const worker = await fleet.cardd.connect(retry.token);
   assert.equal(worker.welcome?.session, c("-a1"));
-  await assert.rejects(begin("maverick"), {
+  const again = await begin("maverick");
+  assert.deepEqual([again.session, again.resumed, again.active], [c("-a1"), true, true]);
+  await fleet.main.call("board", {});
+  assert.deepEqual(
+    worker.entries.map(({ entry }) => [entry.kind, entry.body, entry.fields["task"]]),
+    [["comment", "fix the scrollbar", true]],
+  );
+  await assert.rejects(begin("p620"), {
     message: `${c()} has an active attempt ${c("-a1")} on maverick`,
   });
 });
@@ -46,6 +60,7 @@ test("replacing an attempt cuts off the old worker, even when it comes back", as
   await assert.rejects(begin("maverick"), {
     message: `${c()} has an active attempt ${c("-a1")} on p620`,
   });
+  assert.equal((await begin("p620")).resumed, true);
 
   const second = await begin("maverick", true);
   assert.equal(second.session, c("-a2"));
@@ -71,20 +86,47 @@ test("a lane cannot take the name of a worker session, before or after dispatch"
 });
 
 test("a project at capacity refuses another attempt", async () => {
-  fleet.cardd.addProject("web", 1);
+  fleet.cardd.addProject("api", 1, { maverick: "/clones/api" });
   const one = check(
     CardSchema,
-    await fleet.main.call("card.new", { title: "one", kind: "ship", project: "web" }),
+    await fleet.main.call("card.new", { title: "one", kind: "ship", project: "api" }),
   );
   const two = check(
     CardSchema,
-    await fleet.main.call("card.new", { title: "two", kind: "ship", project: "web" }),
+    await fleet.main.call("card.new", { title: "two", kind: "ship", project: "api" }),
   );
-  await fleet.main.call("attempt.begin", { card: one.id, host: "maverick" });
+  await fleet.main.call("attempt.begin", { card: one.id, host: "maverick", task: "one" });
 
-  await assert.rejects(fleet.main.call("attempt.begin", { card: two.id, host: "maverick" }), {
-    message: "project web is at capacity (1 workers)",
-  });
+  await assert.rejects(
+    fleet.main.call("attempt.begin", { card: two.id, host: "maverick", task: "two" }),
+    {
+      message: "project api is at capacity (1 workers)",
+    },
+  );
+});
+
+test("a clone registered for a host with a dot is found for that exact host", async () => {
+  fleet.cardd.addProject("api", 1, { "p620.tailnet": "/clones/api" });
+  const api = check(
+    CardSchema,
+    await fleet.main.call("card.new", { title: "one", kind: "ship", project: "api" }),
+  );
+  const begun = check(
+    OPS["attempt.begin"].result,
+    await fleet.main.call("attempt.begin", { card: api.id, host: "p620.tailnet", task: "one" }),
+  );
+  assert.equal(begun.clone, "/clones/api");
+  await assert.rejects(
+    fleet.main.call("attempt.begin", { card: api.id, host: "p620", task: "one", replace: true }),
+    { message: "project api has no clone on p620" },
+  );
+});
+
+test("a clone given without a host or a path is refused when the project is added", () => {
+  for (const clone of ["maverick", "=/clones/api", "maverick="])
+    assert.throws(() => {
+      fleet.cardd.addProjectWithCloneArgs("api", [clone]);
+    }, /must be <host>=<path>/);
 });
 
 test("a job result reaches the waiting worker once, through POST /call", async () => {
@@ -108,7 +150,10 @@ test("a job result reaches the waiting worker once, through POST /call", async (
   await worker.call("jobs", {});
   assert.deepEqual(
     worker.entries.map(({ entry }) => [entry.kind, entry.body, entry.fields["exitCode"]]),
-    [["job-result", "1 failing", 1]],
+    [
+      ["comment", "fix the scrollbar", undefined],
+      ["job-result", "1 failing", 1],
+    ],
   );
   assert.deepEqual(await worker.call("jobs", {}), []);
 });
