@@ -38,14 +38,14 @@ const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'c
 
 export const hash = (token: string): string => createHash("sha256").update(token).digest("hex");
 
-/** The token of a session: the HMAC of its ID under the database's key. The same ID gives the same token. */
-export function tokenFor(db: DatabaseSync, session: string): string {
+/** The token of a session: the HMAC of its role and ID under the database's key. The same session gives the same token, and no mate can share a token with a worker. */
+export function tokenFor(db: DatabaseSync, role: "mate" | "worker", session: string): string {
   db.prepare("INSERT OR IGNORE INTO secrets (name, value) VALUES ('token-key', ?)").run(
     randomBytes(32),
   );
   const key = db.prepare("SELECT value FROM secrets WHERE name = 'token-key'").get()?.["value"];
   if (!(key instanceof Uint8Array)) throw new Error("the token key is missing");
-  return createHmac("sha256", key).update(session).digest("base64url");
+  return createHmac("sha256", key).update(`${role}:${session}`).digest("base64url");
 }
 
 /** Runs a query whose one column `j` is JSON, and parses each row. */
@@ -79,7 +79,7 @@ export function addLane(
   lane: { name: string; home: string; parent?: string },
 ): string {
   const token = transaction(db, () => {
-    const token = tokenFor(db, lane.name);
+    const token = tokenFor(db, "mate", lane.name);
     db.prepare("INSERT INTO lanes (name, home, parent) VALUES (?, ?, ?)").run(
       lane.name,
       lane.home,
@@ -199,7 +199,11 @@ export type SessionState = "idle" | "running" | "waiting" | "exited" | "lost";
 /** Records a session state. A worker's first connect makes its attempt Active. */
 export function setSessionState(db: DatabaseSync, session: string, state: SessionState): void {
   const now = Date.now();
-  db.prepare("UPDATE sessions SET state = ?, last_seen = ? WHERE id = ?").run(state, now, session);
+  db.prepare("UPDATE sessions SET state = ?, last_seen = ? WHERE id = ? AND state <> 'closed'").run(
+    state,
+    now,
+    session,
+  );
   db.prepare(
     `UPDATE attempts SET state = 'active', updated_at = ?
      WHERE state = 'starting' AND id = (SELECT attempt FROM sessions WHERE id = ?)`,

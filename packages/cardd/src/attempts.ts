@@ -67,7 +67,7 @@ export function beginAttempt(db: DatabaseSync, card: Card, host: string, replace
   if (live !== undefined && !replace) {
     if (live.state === "starting" && live.host === host) {
       const session = name(card.id, live.n);
-      return { session, token: tokenFor(db, session), resumed: true };
+      return { session, token: tokenFor(db, "worker", session), resumed: true };
     }
     const which = live.state === "active" ? "an active" : "a starting";
     throw new Error(
@@ -81,7 +81,7 @@ export function beginAttempt(db: DatabaseSync, card: Card, host: string, replace
     db.prepare("SELECT count(*) + 1 AS n FROM attempts WHERE card = ?").get(card.id)?.["n"],
   );
   const session = name(card.id, n);
-  const token = tokenFor(db, session);
+  const token = tokenFor(db, "worker", session);
   const { lastInsertRowid } = db
     .prepare(
       "INSERT INTO attempts (card, n, host, state, created_at, updated_at) VALUES (?, ?, ?, 'starting', ?, ?)",

@@ -42,6 +42,6 @@ if (command === "serve") {
   addProject(db, { name: rest[1], delivery: values.delivery, capacity: Number(values.capacity) });
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path>",
+    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--capacity <n>]",
   );
 }
