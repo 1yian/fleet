@@ -18,7 +18,11 @@ export const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'
 const scrub = (message: string): string =>
   message.replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]");
 
-/** The transport could not reach the host: ssh exits with status 255 for a lost or refused connection. */
+/**
+ * The transport could not reach the host: ssh exits with status 255 for a lost or refused
+ * connection, or the reachability probe (herdr called with `probe`) ran past its timeout.
+ * A timeout on any other step is a plain failure.
+ */
 export class HostUnreachable extends Error {}
 
 const PROBE_TIMEOUT_MS = 60_000;
