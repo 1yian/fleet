@@ -14,13 +14,22 @@ export function fleetEntryId(message: unknown): number | undefined {
   return typeof id === "number" ? id : undefined;
 }
 
+/** Pi skips lines that do not parse, such as a line torn by a crash. So do we. */
+function parseLine(line: string): unknown {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+}
+
 /** The fleet entry IDs in the session file on disk. Pi creates the file late, so it may not exist. */
 export function idsInSessionFile(file: string | undefined): number[] {
   if (file === undefined || !existsSync(file)) return [];
   return readFileSync(file, "utf8")
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .map((line): unknown => JSON.parse(line))
+    .map(parseLine)
     .filter((entry) => isRecord(entry) && entry["type"] === "custom_message")
     .map(fleetEntryId)
     .filter((id) => id !== undefined);

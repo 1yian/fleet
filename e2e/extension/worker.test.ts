@@ -1,6 +1,7 @@
 // A real worker: Pi with the fleet extension and the scripted model, connected
 // to a real cardd. The mate is a test session. Spec sections 9, 12.3, and 25.
 import assert from "node:assert/strict";
+import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
@@ -199,6 +200,28 @@ test("a message lost before the session file existed is delivered again after a 
     after.filter((turn) => turn.role === "user").map((turn) => turn.text),
     [fleetText("the task message")],
   );
+});
+
+test("a session file with a torn last line does not stop the restarted worker from connecting", async () => {
+  const pi = worker();
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "first done" } }));
+  await comment("first");
+  await fleet.main.waitForEntries(1);
+  const file = await sessionFile();
+  await h.waitFor((e) => e["type"] === "settled", "the first run to settle");
+  await pi.kill();
+  appendFileSync(file, '{"type":"custom_message","customType":"fle');
+
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "second done" } }));
+  worker();
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the worker to reconnect");
+  await comment("again");
+  await fleet.main.waitForEntries(2);
+
+  assert.deepEqual(reports(fleet.main), [
+    ["done", "first done", "first"],
+    ["done", "second done", "again"],
+  ]);
 });
 
 test("a cardd restart does not repeat a message the worker already holds", async () => {
