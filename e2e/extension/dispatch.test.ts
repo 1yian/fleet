@@ -121,11 +121,19 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
     toolResults(await h.waitForCall(2, "mate")).at(-1),
     "Dispatched c-1-a1 on local, branch c-1-a1.",
   );
-  assert.equal(
-    lastUser(await h.waitForCall(0, "worker")),
-    "[fleet] main on c-1: fix the scrollbar",
+  const workerFirst = await h.waitForCall(0, "worker");
+  assert.equal(lastUser(workerFirst), "[fleet] main on c-1: fix the scrollbar");
+  // The emitted system prompt carries each role's contract.
+  assert.match(
+    workerFirst.find((turn) => turn.role === "system")?.text ?? "",
+    /^# Worker role contract$/m,
   );
-  assert.equal(lastUser(woken), "[fleet] c-1 done: PR green (re your comment: fix the scrollbar)");
+  const mateFirst = await h.waitForCall(0, "mate");
+  assert.match(mateFirst.find((turn) => turn.role === "system")?.text ?? "", /^# Firstmate$/m);
+  assert.equal(
+    lastUser(woken),
+    "[fleet] c-1 done: PR green (re your comment: fix the scrollbar) (card now needs-you)",
+  );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await agents(), ["c-1-a1"]);
 });
@@ -149,7 +157,10 @@ test("a dispatch retry after a lost connection finds the worker that already sta
     results.at(-1) ?? "",
     /^(c-1 is already running as c-1-a1 on flaky\.|Found c-1-a1 on flaky already starting\.)$/,
   );
-  assert.equal(lastUser(woken), "[fleet] c-1 done: PR green (re your comment: fix the scrollbar)");
+  assert.equal(
+    lastUser(woken),
+    "[fleet] c-1 done: PR green (re your comment: fix the scrollbar) (card now needs-you)",
+  );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await agents(), ["c-1-a1"]);
   const workerTurns = h.callsOf("worker").at(-1) ?? [];

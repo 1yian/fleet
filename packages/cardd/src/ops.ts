@@ -159,7 +159,15 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
     const card = getCard(db, session.card);
     const { to, re } = reportRoute(db, card, args.status);
     applyChange(db, card, { kind: "report", status: args.status });
-    const fields = { status: args.status, key: args.key, until: args.until, pr: args.pr, re };
+    const statusAfter = getCard(db, card.id).status;
+    const fields = {
+      status: args.status,
+      key: args.key,
+      until: args.until,
+      pr: args.pr,
+      re,
+      statusAfter,
+    };
     addEntry(
       db,
       { card: card.id, author: `worker:${session.id}`, kind: "report", body: args.text, fields },
