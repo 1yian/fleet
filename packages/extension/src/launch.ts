@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { field, herdr as herdrOn, records, rootPane } from "./host.ts";
 
 const EXTENSION = fileURLToPath(new URL("./index.ts", import.meta.url));
+const CALM = fileURLToPath(new URL("./calm/index.ts", import.meta.url));
 const SELF = fileURLToPath(import.meta.url);
 const CONFIG = process.env["FLEET_CONFIG_DIR"] ?? join(homedir(), ".config", "fleet");
 
@@ -52,9 +53,12 @@ function readLane(name: string): Lane {
 /** Runs the lane's mate in this terminal until it exits. */
 function runMate(lane: Lane, extra: readonly string[]): number {
   const fleet = ["--fleet-url", lane.url, "--fleet-token", lane.token, "--fleet-role", "mate"];
-  const args = ["-e", EXTENSION, ...fleet, "--continue", ...lane.args, ...extra];
+  // Mates also get /calm (docs/calm.md). Workers do not.
+  const args = ["-e", EXTENSION, "-e", CALM, ...fleet, "--continue", ...lane.args, ...extra];
   const env = {
     ...process.env,
+    // Calm keeps its choice in <home>/config/calm.
+    FLEET_HOME: lane.home,
     // Workers get the extension the same way, plus their own Pi arguments.
     FLEET_PI_ARGS: JSON.stringify(["-e", EXTENSION, ...lane.workerArgs]),
     FLEET_HOSTS: JSON.stringify(lane.hosts),

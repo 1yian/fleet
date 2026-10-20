@@ -31,6 +31,17 @@ export class HerdrLab {
     return isRecord(reply["result"]) ? reply["result"] : {};
   }
 
+  /** The text on a pane's screen right now. */
+  async screen(pane: string): Promise<string> {
+    return this.text(["pane", "read", pane, "--source", "visible"]);
+  }
+
+  /** Types into a pane, then presses Enter. */
+  async submit(pane: string, text: string): Promise<void> {
+    await this.text(["pane", "send-text", pane, text]);
+    await this.text(["pane", "send-keys", pane, "enter"]);
+  }
+
   private async raw(args: readonly string[]): Promise<JsonRecord> {
     return parseRecord(await this.text(args));
   }

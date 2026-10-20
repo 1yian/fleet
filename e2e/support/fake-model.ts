@@ -34,12 +34,15 @@ function scalarArgs(value: unknown): Record<string, string | number | boolean> {
 
 function toMessage(move: Record<string, unknown>): AssistantMessage {
   const tool = optionalString(move, "tool");
+  const text = optionalString(move, "text");
   if (tool !== undefined) {
-    return fauxAssistantMessage([fauxToolCall(tool, scalarArgs(move["args"]))], {
+    // A tool call may follow a short note, as a real model's does.
+    const note = text === undefined ? [] : [fauxText(text)];
+    return fauxAssistantMessage([...note, fauxToolCall(tool, scalarArgs(move["args"]))], {
       stopReason: "toolUse",
     });
   }
-  return fauxAssistantMessage([fauxText(optionalString(move, "text") ?? "")]);
+  return fauxAssistantMessage([fauxText(text ?? "")]);
 }
 
 const respond: FauxResponseFactory = async (context, options) => {
