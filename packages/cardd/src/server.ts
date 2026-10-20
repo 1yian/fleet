@@ -189,7 +189,7 @@ export async function serve(
 ): Promise<string> {
   // Convergent start: no session is connected yet. Live sessions reconnect and become idle.
   db.prepare(
-    "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state NOT IN ('starting', 'closed')",
+    "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state IN ('idle', 'running', 'waiting')",
   ).run(Date.now());
   const hub = new Hub(db, timing);
   setInterval(() => {
