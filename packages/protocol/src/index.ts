@@ -94,8 +94,17 @@ export const OPS = {
       card: Type.Integer(),
       host: Type.String({ minLength: 1 }),
       replace: Type.Optional(Type.Boolean()),
+      task: Type.String({ minLength: 1 }),
     }),
-    result: Type.Object({ session: Type.String(), token: Type.String(), resumed: Type.Boolean() }),
+    result: Type.Object({
+      session: Type.String(),
+      token: Type.String(),
+      resumed: Type.Boolean(),
+      active: Type.Boolean(),
+      clone: Type.String(),
+      base: Type.String(),
+      branch: Type.String(),
+    }),
   },
   "job.start": {
     roles: ["worker"],

@@ -39,9 +39,13 @@ export class Cardd {
     }).trim();
   }
 
-  addProject(name: string, capacity: number): void {
+  addProject(name: string, capacity: number, clones: Record<string, string> = {}): void {
     const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", "no-mistakes"];
-    execFileSync("node", [...args, "--capacity", String(capacity)]);
+    const cloneArgs = Object.entries(clones).flatMap(([host, path]) => [
+      "--clone",
+      `${host}=${path}`,
+    ]);
+    execFileSync("node", [...args, "--capacity", String(capacity), ...cloneArgs]);
   }
 
   /** POST /call as the session that owns the token. */

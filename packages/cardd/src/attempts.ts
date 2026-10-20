@@ -2,7 +2,7 @@
 // of a card by one worker. Its ID is the retry key for dispatch.
 import type { DatabaseSync } from "node:sqlite";
 import type { Card } from "@fleet/protocol";
-import { hash, tokenFor } from "./store.ts";
+import { addEntry, hash, tokenFor } from "./store.ts";
 
 interface LiveAttempt {
   readonly id: number;
@@ -55,24 +55,59 @@ export interface Begun {
   readonly session: string;
   readonly token: string;
   readonly resumed: boolean;
+  readonly active: boolean;
+  readonly clone: string;
+  readonly base: string;
+  readonly branch: string;
+}
+
+/** Where the attempt runs on the host: the project clone, the base branch, and the task branch. */
+function placeOf(
+  db: DatabaseSync,
+  card: Card,
+  host: string,
+  session: string,
+): Pick<Begun, "clone" | "base" | "branch"> {
+  if (card.project === null)
+    throw new Error(`c-${String(card.id)} has no project, so it cannot be dispatched`);
+  const row = db
+    .prepare(
+      `SELECT json_extract(p.clones, '$.' || ?) AS clone, coalesce(c.base_branch, p.default_base) AS base,
+         p.branch_prefix AS prefix
+       FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ?`,
+    )
+    .get(host, card.id);
+  const clone = row?.["clone"];
+  if (typeof clone !== "string") throw new Error(`project ${card.project} has no clone on ${host}`);
+  return { clone, base: String(row?.["base"]), branch: `${String(row?.["prefix"])}${session}` };
 }
 
 /**
- * Starts an attempt, or finds the one a lost dispatch already started. A Starting
- * attempt on the same host is resumed with the same session and token. With
- * replace, the live attempt becomes Replaced and its token stops working.
+ * Starts an attempt, or finds the one a lost dispatch already started on the same
+ * host: same session, same token, and no second task message. With replace, the
+ * live attempt becomes Replaced and its token stops working. A new attempt gets
+ * its task message in the same transaction, so a retry can neither lose it nor repeat it.
  */
-export function beginAttempt(db: DatabaseSync, card: Card, host: string, replace: boolean): Begun {
+export function beginAttempt(
+  db: DatabaseSync,
+  card: Card,
+  request: { host: string; replace: boolean; task: string },
+): Begun {
   const live = liveAttempt(db, card.id);
-  if (live !== undefined && !replace) {
-    if (live.state === "starting" && live.host === host) {
-      const session = name(card.id, live.n);
-      return { session, token: tokenFor(db, "worker", session), resumed: true };
+  if (live !== undefined && !request.replace) {
+    const session = name(card.id, live.n);
+    if (live.host !== request.host) {
+      const which = live.state === "active" ? "an active" : "a starting";
+      throw new Error(`c-${String(card.id)} has ${which} attempt ${session} on ${live.host}`);
     }
-    const which = live.state === "active" ? "an active" : "a starting";
-    throw new Error(
-      `c-${String(card.id)} has ${which} attempt ${name(card.id, live.n)} on ${live.host}`,
-    );
+    const place = placeOf(db, card, request.host, session);
+    return {
+      session,
+      token: tokenFor(db, "worker", session),
+      resumed: true,
+      active: live.state === "active",
+      ...place,
+    };
   }
   if (live !== undefined) endAttempt(db, live, "replaced");
   checkCapacity(db, card);
@@ -81,17 +116,27 @@ export function beginAttempt(db: DatabaseSync, card: Card, host: string, replace
     db.prepare("SELECT count(*) + 1 AS n FROM attempts WHERE card = ?").get(card.id)?.["n"],
   );
   const session = name(card.id, n);
+  const place = placeOf(db, card, request.host, session);
   const token = tokenFor(db, "worker", session);
   const { lastInsertRowid } = db
     .prepare(
-      "INSERT INTO attempts (card, n, host, state, created_at, updated_at) VALUES (?, ?, ?, 'starting', ?, ?)",
+      `INSERT INTO attempts (card, n, host, state, branch, created_at, updated_at)
+       VALUES (?, ?, ?, 'starting', ?, ?, ?)`,
     )
-    .run(card.id, n, host, now, now);
+    .run(card.id, n, request.host, place.branch, now, now);
   db.prepare(
     `INSERT INTO sessions (id, role, lane, attempt, host, token_hash, state)
      VALUES (?, 'worker', ?, ?, ?, ?, 'starting')`,
-  ).run(session, card.lane, lastInsertRowid, host, hash(token));
-  return { session, token, resumed: false };
+  ).run(session, card.lane, lastInsertRowid, request.host, hash(token));
+  const task = {
+    card: card.id,
+    author: `mate:${card.lane}`,
+    kind: "comment",
+    body: request.task,
+    fields: { task: true },
+  };
+  addEntry(db, task, [session]);
+  return { session, token, resumed: false, active: false, ...place };
 }
 
 /** The attempt behind a worker session. */

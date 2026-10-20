@@ -1,7 +1,7 @@
 // cardd command line.
 //   cardd serve --db <file> [--listen <host:port>]
 //   cardd lane add <name> --db <file> --home <path> [--parent <lane>]   (prints the mate token)
-//   cardd project add <name> --db <file> --delivery <mode> [--capacity <n>]
+//   cardd project add <name> --db <file> --delivery <mode> [--capacity <n>] [--clone <host>=<path>]...
 import { parseArgs } from "node:util";
 import { openDatabase } from "./db.ts";
 import { serve } from "./server.ts";
@@ -16,6 +16,7 @@ const { values, positionals } = parseArgs({
     parent: { type: "string" },
     delivery: { type: "string" },
     capacity: { type: "string", default: "2" },
+    clone: { type: "string", multiple: true, default: [] },
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
@@ -39,9 +40,17 @@ if (command === "serve") {
   rest[1] !== undefined &&
   values.delivery !== undefined
 ) {
-  addProject(db, { name: rest[1], delivery: values.delivery, capacity: Number(values.capacity) });
+  const clones: Record<string, string> = {};
+  for (const pair of values.clone)
+    clones[pair.slice(0, pair.indexOf("="))] = pair.slice(pair.indexOf("=") + 1);
+  addProject(db, {
+    name: rest[1],
+    delivery: values.delivery,
+    capacity: Number(values.capacity),
+    clones,
+  });
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--capacity <n>]",
+    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--capacity <n>] [--clone <host>=<path>]...",
   );
 }

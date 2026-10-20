@@ -98,12 +98,13 @@ export function addLane(
 
 export function addProject(
   db: DatabaseSync,
-  project: { name: string; delivery: string; capacity: number },
+  project: { name: string; delivery: string; capacity: number; clones: Record<string, string> },
 ): void {
-  db.prepare("INSERT INTO projects (name, delivery, capacity) VALUES (?, ?, ?)").run(
+  db.prepare("INSERT INTO projects (name, delivery, capacity, clones) VALUES (?, ?, ?, ?)").run(
     project.name,
     project.delivery,
     project.capacity,
+    JSON.stringify(project.clones),
   );
 }
 
