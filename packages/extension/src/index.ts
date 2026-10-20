@@ -20,6 +20,7 @@ export default function fleet(pi: ExtensionAPI): void {
     inFile: () => idsInSessionFile(sessionFile),
     onConnect: () => {
       pi.events.emit("fleet:connected", {});
+      worker?.flush();
     },
     onPush: ({ entry, mode }) => {
       if (injected.has(entry.id)) return;

@@ -55,7 +55,7 @@ export class Cardd {
 
   async stop(): Promise<void> {
     const child = this.child;
-    if (child?.exitCode !== null) return;
+    if (child?.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.kill("SIGKILL");
     await exited;

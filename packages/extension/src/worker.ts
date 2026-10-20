@@ -71,6 +71,7 @@ interface LatestReport {
 
 export class WorkerRun {
   private latest: LatestReport | undefined;
+  private unsent: string | undefined;
   private nudged = false;
   private lastText = "";
   private readonly link: Link;
@@ -82,7 +83,16 @@ export class WorkerRun {
   /** New captain input or a new fleet entry starts a new obligation. */
   reset(): void {
     this.latest = undefined;
+    this.unsent = undefined;
     this.nudged = false;
+  }
+
+  /** Files the stopped report that could not reach cardd. Called at each welcome. */
+  flush(): void {
+    const text = this.unsent;
+    if (text === undefined) return;
+    this.unsent = undefined;
+    void this.fileStopped(text);
   }
 
   register(pi: ExtensionAPI): void {
@@ -124,9 +134,13 @@ export class WorkerRun {
         ? "stopped from the pane"
         : `ended the run without a handoff: ${this.lastText}`;
       this.latest = { status: "stopped", until: undefined };
-      await this.link
-        .call("report", { status: "stopped", text: text.slice(0, 2000) })
-        .catch(() => undefined);
+      await this.fileStopped(text.slice(0, 2000));
+    });
+  }
+
+  private async fileStopped(text: string): Promise<void> {
+    await this.link.call("report", { status: "stopped", text }).catch(() => {
+      if (this.latest?.status === "stopped") this.unsent = text;
     });
   }
 
