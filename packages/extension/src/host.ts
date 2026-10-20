@@ -21,8 +21,14 @@ const scrub = (message: string): string =>
 /** The transport could not reach the host: ssh exits with status 255 for a lost or refused connection. */
 export class HostUnreachable extends Error {}
 
-const unreachable = (via: readonly string[], error: { code?: unknown }): boolean =>
-  via.length > 0 && error.code === 255;
+const failure = (
+  via: readonly string[],
+  error: { code?: unknown; killed?: unknown },
+  message: string,
+): Error =>
+  via.length > 0 && (error.code === 255 || error.killed === true)
+    ? new HostUnreachable(message)
+    : new Error(message);
 
 const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
   typeof error.signal === "string"
@@ -33,6 +39,7 @@ const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
 export async function herdr(
   host: string,
   args: readonly string[],
+  timeout = 120_000,
 ): Promise<Record<string, unknown>> {
   const session = process.env["HERDR_SESSION"];
   // --session must come before a "--" delimiter, or herdr passes it on to the agent.
@@ -43,40 +50,43 @@ export async function herdr(
   const [file = "herdr", ...rest] =
     via.length === 0 ? command : [...via, command.map(quote).join(" ")];
   const stdout = await new Promise<string>((resolve, reject) => {
-    execFile(file, rest, { encoding: "utf8", timeout: 120_000 }, (error, out, err) => {
+    execFile(file, rest, { encoding: "utf8", timeout }, (error, out, err) => {
       if (error !== null && out.trim() === "") {
-        const failure = scrub(
-          `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`,
-        );
-        reject(unreachable(via, error) ? new HostUnreachable(failure) : new Error(failure));
+        const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
+        reject(failure(via, error, scrub(message)));
       } else resolve(out);
     });
   });
-  // Some commands, such as pane run, print nothing when they succeed.
+  return resultOf(stdout, host, args[0] ?? "");
+}
+
+/** The `result` object of herdr's JSON output. Some commands, such as pane run, print nothing when they succeed. */
+function resultOf(stdout: string, host: string, name: string): Record<string, unknown> {
   if (stdout.trim() === "") return {};
   const reply: unknown = JSON.parse(stdout);
-  if (!isRecord(reply))
-    throw new Error(`herdr ${args[0] ?? ""} on ${host} returned no JSON object`);
+  if (!isRecord(reply)) throw new Error(`herdr ${name} on ${host} returned no JSON object`);
   if (isRecord(reply["error"])) throw new Error(scrub(String(reply["error"]["message"])));
   return isRecord(reply["result"]) ? reply["result"] : {};
 }
 
 /** Runs a command on the host and returns its output. Throws with the command's error output on a non-zero exit. */
-export async function onHost(host: string, argv: readonly string[]): Promise<string> {
+export async function onHost(
+  host: string,
+  argv: readonly string[],
+  timeout = 600_000,
+): Promise<string> {
   const via = transport(host);
   const [file = "", ...rest] = via.length === 0 ? argv : [...via, argv.map(quote).join(" ")];
   return new Promise((resolve, reject) => {
     execFile(
       file,
       rest,
-      { encoding: "utf8", timeout: 600_000, maxBuffer: 16 * 1024 * 1024 },
+      { encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 },
       (error, out, err) => {
         if (error === null) resolve(out);
         else {
-          const failure = scrub(
-            `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`,
-          );
-          reject(unreachable(via, error) ? new HostUnreachable(failure) : new Error(failure));
+          const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
+          reject(failure(via, error, scrub(message)));
         }
       },
     );

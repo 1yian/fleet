@@ -26,17 +26,24 @@ if git -C "$clone" rev-parse --verify -q "refs/heads/$branch" >/dev/null; then
 fi
 if [ -f "$out" ]; then echo "$out"; fi`;
 
+const OLD_ATTEMPT_TIMEOUT_MS = 60_000;
+
 /** Stops the writers, archives, and removes the worktree and branch. Returns the archive path, or null if there is no archive. */
 async function retire(attempt: Attempt): Promise<string | null> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
-  const listed = await herdr(host, ["worktree", "list", "--cwd", clone]);
+  const timeout = attempt.live ? undefined : OLD_ATTEMPT_TIMEOUT_MS;
+  const listed = await herdr(host, ["worktree", "list", "--cwd", clone], timeout);
   const tree = records(listed["worktrees"]).find((each) => field(each, "branch") === branch);
   if (tree !== undefined) {
     const workspace = field(tree, "open_workspace_id");
-    if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
+    if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace], timeout);
     const path = field(tree, "path") ?? "";
-    await onHost(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
+    await onHost(
+      host,
+      ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session],
+      timeout,
+    );
     await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
   const out = `${archiveDir}/${session}.tar.zst`;

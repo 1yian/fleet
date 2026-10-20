@@ -13,6 +13,7 @@ const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url
 let browser: Browser;
 let cardd: Cardd;
 let main: Session;
+let mainToken: string;
 let page: Page;
 before(async () => {
   browser = await chromium.launch();
@@ -22,7 +23,8 @@ after(async () => {
 });
 beforeEach(async () => {
   cardd = await Cardd.start({}, ["--board", BOARD]);
-  main = await cardd.connect(cardd.addLane("main"));
+  mainToken = cardd.addLane("main");
+  main = await cardd.connect(mainToken);
   page = await browser.newPage();
 });
 afterEach(async () => {
@@ -177,4 +179,14 @@ test("a refused reply comes back into the reply box", async () => {
     undefined,
     { timeout: 5_000 },
   );
+});
+
+test("the board reloads after its live socket reconnects", async () => {
+  await page.goto(http());
+  await page.getByText("Nothing waits on you.").waitFor();
+
+  await cardd.restart();
+  main = await cardd.connect(mainToken);
+  await question("Renew the certificate", ["now", "later"]);
+  await page.getByText("Renew the certificate?").waitFor();
 });
