@@ -5,7 +5,7 @@ This repository rebuilds Firstmate as `cardd`, the `fleet` Pi extension, and a b
 ## Commands
 
 - `npm run check` runs every static gate: format, lint, typecheck, knip, dependency-cruiser, and the migration check.
-- `npm run test:e2e` runs every end-to-end test.
+- `npm run test:e2e` builds the board, then runs every end-to-end test. Board tests drive Chromium through playwright, so run `npx playwright install chromium` once.
 
 ## Rules
 
@@ -16,7 +16,7 @@ This repository rebuilds Firstmate as `cardd`, the `fleet` Pi extension, and a b
 
 ## Tests
 
-- Tests are end-to-end only. They start real processes (`cardd`, Pi with the scripted fake model in `e2e/support`) and assert what a session or a user sees. Do not write unit tests.
+- Tests are end-to-end only. They start real processes (`cardd`, Pi with the scripted fake model in `e2e/support`, and Chromium for the board) and assert what a session or a user sees. Do not write unit tests.
 - A behavior change needs an end-to-end test. A bug fix needs a test that fails before the fix.
 - Do not wait with fixed sleeps. Wait for an event, an entry, or a state.
 - Do not test by reading source files for strings.
