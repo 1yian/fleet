@@ -12,7 +12,7 @@ export interface Fleet {
 export async function startFleet(env: Record<string, string> = {}): Promise<Fleet> {
   const cardd = await Cardd.start(env);
   const mainToken = cardd.addLane("main");
-  cardd.addProject("web", 2, { maverick: "/clones/web", p620: "/clones/web" });
+  cardd.addProject("web", { maverick: "/clones/web", p620: "/clones/web" });
   return { cardd, mainToken, main: await cardd.connect(mainToken) };
 }
 

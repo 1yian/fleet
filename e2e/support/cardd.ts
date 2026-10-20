@@ -33,12 +33,14 @@ export class Cardd {
     this.args = args;
   }
 
-  /** Starts cardd. `env` sets variables such as CARDD_TIMING_SCALE for it. */
+  /** Starts cardd. `env` sets variables such as CARDD_TIMING_SCALE for it. `seed` may write a database file before cardd opens it. */
   static async start(
     env: Record<string, string> = {},
     args: readonly string[] = [],
+    seed?: (db: string) => void,
   ): Promise<Cardd> {
     const cardd = new Cardd(env, args);
+    seed?.(cardd.db);
     await cardd.boot();
     return cardd;
   }
@@ -51,19 +53,18 @@ export class Cardd {
     }).trim();
   }
 
-  addProject(name: string, capacity: number, clones: Record<string, string> = {}): void {
+  addProject(name: string, clones: Record<string, string> = {}): void {
     this.addProjectWithCloneArgs(
       name,
       Object.entries(clones).map(([host, path]) => `${host}=${path}`),
-      capacity,
     );
   }
 
   /** Like addProject, with each --clone value given as written on the command line. */
-  addProjectWithCloneArgs(name: string, clones: readonly string[], capacity = 1): void {
+  addProjectWithCloneArgs(name: string, clones: readonly string[]): void {
     const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", "no-mistakes"];
     const cloneArgs = clones.flatMap((clone) => ["--clone", clone]);
-    execFileSync("node", [...args, "--capacity", String(capacity), ...cloneArgs], {
+    execFileSync("node", [...args, ...cloneArgs], {
       stdio: ["ignore", "pipe", "pipe"],
     });
   }

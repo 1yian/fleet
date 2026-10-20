@@ -239,7 +239,7 @@ test("cardd refuses to listen on every interface, however the address is written
 });
 
 test("a card's thread on the board is the whole conversation with its mate, without job results", async () => {
-  cardd.addProject("web", 1, { local: "/clones/web" });
+  cardd.addProject("web", { local: "/clones/web" });
   const args = { title: "Users see one scrollbar", kind: "ship", project: "web" };
   const card = check(CardSchema, await main.call("card.new", args));
   const begin = { card: card.id, host: "local", task: "Spec: fix the scrollbar" };

@@ -27,21 +27,6 @@ function liveAttempt(db: DatabaseSync, card: number): LiveAttempt | undefined {
   return { id, n, state, host };
 }
 
-function checkCapacity(db: DatabaseSync, card: Card): void {
-  if (card.project === null) return;
-  const row = db
-    .prepare(
-      `SELECT p.capacity AS capacity, (SELECT count(*) FROM attempts a JOIN cards c ON c.id = a.card
-         WHERE c.project = p.name AND a.state IN ('starting', 'active')) AS used
-       FROM projects p WHERE p.name = ?`,
-    )
-    .get(card.project);
-  if (row === undefined) throw new Error(`project ${card.project} is not in the registry`);
-  if (Number(row["used"]) >= Number(row["capacity"])) {
-    throw new Error(`project ${card.project} is at capacity (${String(row["capacity"])} workers)`);
-  }
-}
-
 function endAttempt(db: DatabaseSync, attempt: LiveAttempt, state: "ended" | "replaced"): void {
   db.prepare("UPDATE attempts SET state = ?, updated_at = ? WHERE id = ?").run(
     state,
@@ -121,7 +106,6 @@ export function beginAttempt(
     };
   }
   if (live !== undefined) endAttempt(db, live, "replaced");
-  checkCapacity(db, card);
   const now = Date.now();
   const n = Number(
     db.prepare("SELECT count(*) + 1 AS n FROM attempts WHERE card = ?").get(card.id)?.["n"],

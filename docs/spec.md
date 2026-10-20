@@ -310,7 +310,6 @@ The registry is a table in `cardd`. All hosts can read it.
 | `branch_prefix` | A required branch prefix, if any. |
 | `default_base` | The default base branch. |
 | `profile` | The dispatch profile: model candidates and effort. |
-| `capacity` | The maximum number of workers at the same time. |
 
 ### 6.5 Session
 
@@ -365,7 +364,7 @@ An attempt is one execution of a card by one worker.
 Rules:
 
 - A card has at most one attempt in Starting or Active.
-- `cardd` creates the attempt and reserves project capacity in one transaction.
+- `cardd` creates the attempt in one transaction.
 - The attempt ID is the retry key for `dispatch`. See [section 11.2](#112-mate-tools).
 
 ### 6.10 Job
@@ -751,7 +750,7 @@ Worker reports in a second mate's lane go only to that second mate. Main does no
 | `card drop(card, reason)` | Ends a card that did not land. It follows the cleanup order in [section 20.5](#205-cleanup) and moves the card to Dropped. The reason is required. Refuses while an ask on the card is open. |
 | `card promote(card, delivery)` | Changes a scout card to a ship card. The same worker continues. |
 | `card handback(card, guidance)` | Main only. Returns a second mate's open question to that mate with guidance, and closes the question. It is not a general message: to say anything else to a second mate, use `comment`. |
-| `dispatch(card, host?, profile?, replace?)` | Creates an attempt and reserves capacity in one `cardd` transaction. Then, over SSH on the host, it creates the worktree, starts Pi in a herdr tab, and sends the task message. Each step first checks whether its result already exists, by the names that derive from the attempt ID. A retry after a lost SSH connection therefore finds the attempt that already started. It does not start a second one. Refuses without a card, while the card has another attempt in Starting or Active, past the project capacity, or on a host that the lane does not allow. With `replace`, the current attempt becomes Replaced and its token stops working, so a late reconnect cannot change the card. |
+| `dispatch(card, host?, profile?, replace?)` | Creates an attempt in one `cardd` transaction. Then, over SSH on the host, it creates the worktree, starts Pi in a herdr tab, and sends the task message. Each step first checks whether its result already exists, by the names that derive from the attempt ID. A retry after a lost SSH connection therefore finds the attempt that already started. It does not start a second one. Refuses without a card, while the card has another attempt in Starting or Active, or on a host that the lane does not allow. With `replace`, the current attempt becomes Replaced and its token stops working, so a late reconnect cannot change the card. |
 | `comment(card or lane, text, resolves?, now?)` | Talks to an agent through a card. On a card in the caller's own lane, it goes to the worker. On a second mate's lane card, or any card in that lane, it goes from main to that second mate, never to its worker, with no status gate and no status change. A second mate's comment on its lane card goes to main. `lane` is shorthand for that lane's lane card, so main never looks up a card number. `resolves` names the decision key that the answer closes. It applies to a worker's card only. `now` delivers at the next tool boundary. |
 | `ask(card, question, options)` | Asks the captain. From main's lane, the card goes to Needs you. From a second mate's lane, it goes to With first mate. |
 | `answer(card, captain_words)` | Records the captain's exact words on a card, together with what they approve: the card and the action. Refuses if the words are not in a user-role message or a captain board entry. |

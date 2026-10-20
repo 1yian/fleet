@@ -47,7 +47,7 @@ export async function startDispatchLab({
   const git = "git -c user.name=t -c user.email=t@t";
   const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
   execFileSync("sh", ["-c", init], { cwd: dirname(clone) });
-  cardd.addProject("site", 2, { local: clone, flaky: clone, far: clone });
+  cardd.addProject("site", { local: clone, flaky: clone, far: clone });
   const h = await Harness.start();
   const lab = await HerdrLab.start({
     ...h.piEnv("worker"),

@@ -2,7 +2,7 @@
 //   cardd serve --db <file> [--listen <host:port>] [--board <built board folder>] [--hostname <name>]...   (CARDD_TIMING_SCALE=0.01 speeds up every timer, for tests)
 //   cardd lane add <name> --db <file> --home <path> [--parent <lane>]   (prints the mate token)
 //   cardd grant add --db <file> --lane <lane> --words <source> [--project <name>] [--may <text>] [--merge]
-//   cardd project add <name> --db <file> --delivery <mode> [--capacity <n>] [--clone <host>=<path>]...
+//   cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]...
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
@@ -19,7 +19,6 @@ const { values, positionals } = parseArgs({
     home: { type: "string" },
     parent: { type: "string" },
     delivery: { type: "string" },
-    capacity: { type: "string", default: "2" },
     clone: { type: "string", multiple: true, default: [] },
     lane: { type: "string" },
     project: { type: "string" },
@@ -69,7 +68,6 @@ if (command === "serve") {
   addProject(db, {
     name: rest[1],
     delivery: values.delivery,
-    capacity: Number(values.capacity),
     clones,
   });
 } else if (
@@ -88,6 +86,6 @@ if (command === "serve") {
   addLaneGrant(db, values.project === undefined ? grant : { ...grant, project: values.project });
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--capacity <n>] [--clone <host>=<path>]...",
+    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]...",
   );
 }
