@@ -71,7 +71,7 @@ Start every mate that is configured on a host:
 
 - Each mate runs in its own herdr workspace, `fleet-<lane>`. A mate that already runs is left alone, so `fleet up` is safe to run again.
 - A mate continues its conversation when it starts again.
-- To start the mates on another host, run `fleet up` there, for example `ssh p620 ~/.fleet/app/bin/fleet up`. To see that host's workspaces, run `herdr --remote p620`.
+- To start the mates on another host, run `fleet up` there, for example `ssh p620 ~/.fleet/app/bin/fleet up`. To see that host's workspaces in the herdr you already use on another machine, add the host once as a machine there: `herdr machine add p620 --remote-session default`. The mates and their workers run in each host's `default` session.
 - To run one mate in the current terminal instead, run `~/.fleet/app/bin/fleet <lane>`.
 
 The home folder can hold an `AGENTS.md` with the lane's charter. The role contract comes from the extension.
