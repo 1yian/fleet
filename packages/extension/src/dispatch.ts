@@ -2,7 +2,7 @@
 // host step first looks for its own result by the names that derive from the
 // attempt ID, so a retry after a lost connection never starts a second worker.
 import { check, OPS } from "@fleet/protocol";
-import { field, herdr, onHost, piRunning, records, worktreeOf } from "./host.ts";
+import { field, herdr, onHost, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
 import type { Link } from "./link.ts";
 
@@ -46,6 +46,7 @@ async function worktreePane(host: string, plan: Plan): Promise<string> {
   return openWorkerWorkspace(host, path, plan);
 }
 
+/** How long a new pane's shell may take to settle at its prompt. */
 const SHELL_WAIT_MS = 20_000;
 
 /**
@@ -58,34 +59,39 @@ const READY_WAIT_MS = 4000;
 /** How long a Pi that herdr launched may take to show in the pane under its own name. */
 const PI_NAME_WAIT_MS = 10_000;
 
-/** Whether Pi runs in the pane, waiting briefly for a Pi that is still starting. */
-async function piStarted(host: string, pane: string): Promise<boolean> {
-  const deadline = Date.now() + PI_NAME_WAIT_MS;
-  while (!(await piRunning(host, pane))) {
+/** herdr's command can be lost before it reaches the shell. It is sent this many times at most. */
+const LAUNCH_TRIES = 2;
+
+const toError = (failure: unknown): Error =>
+  failure instanceof Error ? failure : new Error(String(failure));
+
+/** Checks until the check holds or the wait ends. */
+async function until(check: () => Promise<boolean>, waitMs: number): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
+  while (!(await check())) {
     if (Date.now() > deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   return true;
 }
 
-/** Starts the agent once the new pane's shell reaches its prompt. herdr refuses a pane that is not yet a shell. */
+/** Runs herdr's agent start once the pane's shell is idle. Resolves with herdr's error, if any. */
+async function launchOnce(host: string, pane: string, args: string[]): Promise<Error | undefined> {
+  // A new shell first runs its prompt's helpers, such as git, and keys typed then can be lost.
+  await until(() => shellIdle(host, pane), SHELL_WAIT_MS);
+  return herdr(host, args).then(() => undefined, toError);
+}
+
+/**
+ * Starts Pi in the pane. herdr types the command into the shell and waits for Pi to idle, which a
+ * worker busy on its task may never do, so Pi in the pane decides. A command that reached no shell
+ * started nothing, and goes once more. herdr refuses a pane where Pi runs, so no second Pi starts.
+ */
 async function startAgent(host: string, pane: string, args: string[]): Promise<void> {
-  const deadline = Date.now() + SHELL_WAIT_MS;
-  for (;;) {
-    const error = await herdr(host, args).then(
-      () => undefined,
-      (failure: unknown) => (failure instanceof Error ? failure : new Error(String(failure))),
-    );
-    if (error === undefined) return;
-    const shellNotReady =
-      error instanceof Error && error.message.includes("not an available shell");
-    if (shellNotReady && Date.now() <= deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      continue;
-    }
-    // herdr stopped waiting for Pi to idle. Pi in the pane's foreground means it started.
-    if (!shellNotReady && (await piStarted(host, pane))) return;
-    throw error;
+  for (let tries = 1; ; tries += 1) {
+    const error = await launchOnce(host, pane, args);
+    if (error === undefined || (await until(() => piRunning(host, pane), PI_NAME_WAIT_MS))) return;
+    if (tries === LAUNCH_TRIES) throw error;
   }
 }
 

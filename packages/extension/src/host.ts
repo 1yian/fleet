@@ -135,13 +135,29 @@ export function worktreeOf(
   );
 }
 
+/** What runs in the pane's foreground, and the pane's shell. */
+async function foreground(
+  host: string,
+  pane: string,
+): Promise<{ group: unknown; shell: unknown; processes: Record<string, unknown>[] }> {
+  const info = (await herdr(host, ["pane", "process-info", "--pane", pane]))["process_info"];
+  if (!isRecord(info)) return { group: undefined, shell: undefined, processes: [] };
+  const processes = records(info["foreground_processes"]);
+  return { group: info["foreground_process_group_id"], shell: info["shell_pid"], processes };
+}
+
 /**
  * Whether a Pi runs in the pane's foreground. Pi names its process "pi". Other foreground
  * processes do not count: an idle shell's prompt runs helpers such as git there too.
  */
 export async function piRunning(host: string, pane: string): Promise<boolean> {
-  const info = (await herdr(host, ["pane", "process-info", "--pane", pane]))["process_info"];
-  const processes = isRecord(info) ? records(info["foreground_processes"]) : [];
+  const { processes } = await foreground(host, pane);
   // macOS reports the name as argv0, and Linux as the process name.
   return processes.some((each) => field(each, "argv0") === "pi" || field(each, "name") === "pi");
+}
+
+/** Whether the pane's shell waits at its prompt with nothing else in the foreground. */
+export async function shellIdle(host: string, pane: string): Promise<boolean> {
+  const { group, shell } = await foreground(host, pane);
+  return group !== undefined && group === shell;
 }
