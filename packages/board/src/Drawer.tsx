@@ -33,11 +33,17 @@ function message(entry: Entry): ThreadMessage {
 export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Props) {
   const [thread, setThread] = useState<Thread | undefined>();
   useEffect(() => {
-    void loadThread(card).then(setThread);
+    let current = true;
+    void loadThread(card).then((loaded) => {
+      if (current) setThread(loaded);
+    });
+    return () => {
+      current = false;
+    };
   }, [card, changes]);
   const messages = useMemo(() => thread?.entries.map(message) ?? [], [thread]);
   const questions = board.questions.filter((each) => each.card === card);
-  if (thread === undefined) return <aside className="drawer">Loading c-{card}…</aside>;
+  if (thread?.card.id !== card) return <aside className="drawer">Loading c-{card}…</aside>;
   return (
     <aside className="drawer" aria-label={`c-${String(card)}`}>
       <header>
@@ -70,6 +76,7 @@ export function Drawer({ card, board, changes, onReply, onAnswer, onClose }: Pro
         </div>
       ))}
       <CommentThread
+        key={card}
         title="Thread"
         messages={messages}
         currentUser={CAPTAIN}

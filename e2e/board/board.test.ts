@@ -139,3 +139,16 @@ test("a reply draft survives a new entry on the open card", async () => {
   await page.getByRole("complementary").getByText("the mate adds a note").waitFor();
   assert.equal(await reply.inputValue(), "I prefer v2 because");
 });
+
+test("a reply draft does not follow the captain to another card", async () => {
+  await question("Pick the API version", ["v1", "v2"]);
+  const other = await question("Renew the certificate", ["now", "later"]);
+  await page.goto(http());
+  await page.getByRole("radio", { name: /Kanban/ }).click();
+  await page.getByRole("button", { name: /Pick the API version/ }).click();
+  await page.getByRole("textbox", { name: "Reply" }).fill("I prefer v2 because");
+
+  await page.getByRole("button", { name: /Renew the certificate/ }).click();
+  await page.getByRole("heading", { name: new RegExp(`^c-${String(other.id)} `) }).waitFor();
+  assert.equal(await page.getByRole("textbox", { name: "Reply" }).inputValue(), "");
+});
