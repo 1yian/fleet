@@ -127,6 +127,11 @@ test("a dispatch retry after a lost connection finds the worker that already sta
 
   const results = toolResults(await h.waitForCall(3, "mate"));
   assert.match(results.at(-2) ?? "", /^herdr agent on flaky failed/);
+  const token = cardd.workerToken("c-1-a1");
+  for (const result of results) {
+    assert.ok(!result.includes(token), "a tool result carries the worker token");
+    assert.ok(!result.includes("--fleet-token"), "a tool result carries the herdr command line");
+  }
   assert.match(
     results.at(-1) ?? "",
     /^(c-1 is already running as c-1-a1 on flaky\.|Found c-1-a1 on flaky already starting\.)$/,

@@ -72,7 +72,7 @@ function placeOf(
     throw new Error(`c-${String(card.id)} has no project, so it cannot be dispatched`);
   const row = db
     .prepare(
-      `SELECT json_extract(p.clones, '$.' || ?) AS clone, coalesce(c.base_branch, p.default_base) AS base,
+      `SELECT json_extract(p.clones, '$."' || ? || '"') AS clone, coalesce(c.base_branch, p.default_base) AS base,
          p.branch_prefix AS prefix
        FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ?`,
     )

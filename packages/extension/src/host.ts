@@ -14,6 +14,15 @@ function transport(host: string): string[] {
 
 const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
+/** A herdr failure message for the mate: never the command line, and never a worker token. */
+const scrub = (message: string): string =>
+  message.replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]");
+
+const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
+  typeof error.signal === "string"
+    ? `killed by ${error.signal}`
+    : `exit status ${String(error.code)}`;
+
 /** Runs one herdr command on the host and returns its `result` object. Throws herdr's error message. */
 export async function herdr(
   host: string,
@@ -30,14 +39,18 @@ export async function herdr(
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(file, rest, { encoding: "utf8", timeout: 120_000 }, (error, out, err) => {
       if (error !== null && out.trim() === "")
-        reject(new Error(`herdr ${args[0] ?? ""} on ${host} failed: ${err || error.message}`));
+        reject(
+          new Error(
+            scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`),
+          ),
+        );
       else resolve(out);
     });
   });
   const reply: unknown = JSON.parse(stdout);
   if (!isRecord(reply))
     throw new Error(`herdr ${args[0] ?? ""} on ${host} returned no JSON object`);
-  if (isRecord(reply["error"])) throw new Error(String(reply["error"]["message"]));
+  if (isRecord(reply["error"])) throw new Error(scrub(String(reply["error"]["message"])));
   return isRecord(reply["result"]) ? reply["result"] : {};
 }
 

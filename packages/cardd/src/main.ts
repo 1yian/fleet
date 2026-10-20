@@ -41,8 +41,14 @@ if (command === "serve") {
   values.delivery !== undefined
 ) {
   const clones: Record<string, string> = {};
-  for (const pair of values.clone)
-    clones[pair.slice(0, pair.indexOf("="))] = pair.slice(pair.indexOf("=") + 1);
+  for (const pair of values.clone) {
+    const split = pair.indexOf("=");
+    const host = pair.slice(0, split);
+    const path = pair.slice(split + 1);
+    if (split < 0 || host === "" || path === "")
+      throw new Error(`--clone ${pair} must be <host>=<path>, with both parts set`);
+    clones[host] = path;
+  }
   addProject(db, {
     name: rest[1],
     delivery: values.delivery,

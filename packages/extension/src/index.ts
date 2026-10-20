@@ -65,8 +65,7 @@ function start(
   });
   const worker = role === "worker" ? new WorkerRun(link) : undefined;
   worker?.register(pi);
-  if (role === "mate")
-    registerMate(pi, link, { url: process.env["FLEET_WORKER_URL"] ?? url, piArgs: piArgs() });
+  if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() });
 
   pi.on("session_shutdown", () => {
     link.stop();

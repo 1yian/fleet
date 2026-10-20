@@ -105,6 +105,30 @@ test("a project at capacity refuses another attempt", async () => {
   );
 });
 
+test("a clone registered for a host with a dot is found for that exact host", async () => {
+  fleet.cardd.addProject("api", 1, { "p620.tailnet": "/clones/api" });
+  const api = check(
+    CardSchema,
+    await fleet.main.call("card.new", { title: "one", kind: "ship", project: "api" }),
+  );
+  const begun = check(
+    OPS["attempt.begin"].result,
+    await fleet.main.call("attempt.begin", { card: api.id, host: "p620.tailnet", task: "one" }),
+  );
+  assert.equal(begun.clone, "/clones/api");
+  await assert.rejects(
+    fleet.main.call("attempt.begin", { card: api.id, host: "p620", task: "one", replace: true }),
+    { message: "project api has no clone on p620" },
+  );
+});
+
+test("a clone given without a host or a path is refused when the project is added", () => {
+  for (const clone of ["maverick", "=/clones/api", "maverick="])
+    assert.throws(() => {
+      fleet.cardd.addProjectWithCloneArgs("api", [clone]);
+    }, /must be <host>=<path>/);
+});
+
 test("a job result reaches the waiting worker once, through POST /call", async () => {
   const { token } = await begin("maverick");
   const worker: Session = await fleet.cardd.connect(token);
