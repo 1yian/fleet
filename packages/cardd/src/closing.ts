@@ -47,20 +47,20 @@ export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Do
   const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
-         json_extract(p.clones, '$."' || a.host || '"') AS clone
+         json_extract(p.clones, '$."' || a.host || '"') AS clone, a.state IN ('starting', 'active') AS live
        FROM attempts a JOIN cards c ON c.id = a.card JOIN sessions s ON s.attempt = a.id
        LEFT JOIN projects p ON p.name = c.project
        WHERE a.card = ? ORDER BY a.n`,
     )
     .all(card.id);
   const attempts = rows.flatMap((row) => {
-    const { session, host, branch, base, clone } = row;
+    const { session, host, branch, base, clone, live } = row;
     return typeof session === "string" &&
       typeof host === "string" &&
       typeof branch === "string" &&
       typeof base === "string" &&
       typeof clone === "string"
-      ? [{ session, host, branch, base, clone }]
+      ? [{ session, host, branch, base, clone, live: live === 1 }]
       : [];
   });
   return { value: { attempts }, notify: [] };
@@ -80,7 +80,7 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
   applyChange(db, card, { kind: args.mode === "done" ? "cleanup" : "drop" });
   const main = mainLane(db);
   const to = main === card.lane ? [] : [main];
-  const fields = { outcome: args.mode, archives: args.archives };
+  const fields = { outcome: args.mode, archives: args.archives, left: args.left };
   addEntry(
     db,
     { card: card.id, author: `mate:${session.lane}`, kind: "cleanup", body: args.text, fields },

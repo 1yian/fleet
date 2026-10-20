@@ -27,6 +27,7 @@ test("cleanup refuses unlanded ship work, and card_drop takes it", async () => {
         branch: `c-${String(card.id)}-a1`,
         base: "main",
         clone: "/clones/web",
+        live: true,
       },
     ],
   });
@@ -35,6 +36,7 @@ test("cleanup refuses unlanded ship work, and card_drop takes it", async () => {
     mode: "dropped",
     text: "the design changed",
     archives: [],
+    left: [],
   });
   assert.equal(await status(fleet.main, card), "dropped");
 });
@@ -51,8 +53,22 @@ test("close.begin lists every attempt of the card, including a replaced one", as
   const name = (n: number): string => `c-${String(card.id)}-a${String(n)}`;
   assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, mode: "dropped" }), {
     attempts: [
-      { session: name(1), host: "maverick", branch: name(1), base: "main", clone: "/clones/web" },
-      { session: name(2), host: "p620", branch: name(2), base: "main", clone: "/clones/web" },
+      {
+        session: name(1),
+        host: "maverick",
+        branch: name(1),
+        base: "main",
+        clone: "/clones/web",
+        live: false,
+      },
+      {
+        session: name(2),
+        host: "p620",
+        branch: name(2),
+        base: "main",
+        clone: "/clones/web",
+        live: true,
+      },
     ],
   });
 });
@@ -75,6 +91,7 @@ test("a second mate's finished card reaches main with its summary, and its worke
     mode: "done",
     text: "Search ads convert best.",
     archives: [],
+    left: [],
   });
 
   assert.equal(await status(cleo, card), "done");

@@ -164,6 +164,7 @@ export const OPS = {
           clone: Type.String(),
           branch: Type.String(),
           base: Type.String(),
+          live: Type.Boolean(),
         }),
       ),
     }),
@@ -175,6 +176,9 @@ export const OPS = {
       mode: Type.Enum(["done", "dropped"]),
       text: Type.String({ minLength: 1 }),
       archives: Type.Array(Type.String()),
+      left: Type.Array(
+        Type.Object({ session: Type.String(), host: Type.String(), reason: Type.String() }),
+      ),
     }),
     result: CardSchema,
   },

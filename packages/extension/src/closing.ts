@@ -61,11 +61,22 @@ export async function close(
     await link.call("close.begin", { card: request.card, mode: request.mode }),
   );
   const archives: string[] = [];
+  const left: { session: string; host: string; reason: string }[] = [];
   for (const attempt of plan.attempts) {
-    const path = await retire(attempt);
-    if (path !== null) archives.push(`${attempt.host}:${path}`);
+    try {
+      const path = await retire(attempt);
+      if (path !== null) archives.push(`${attempt.host}:${path}`);
+    } catch (error) {
+      if (attempt.live) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      left.push({ session: attempt.session, host: attempt.host, reason });
+    }
   }
-  const card = check(CardSchema, await link.call("close.finish", { ...request, archives }));
+  const card = check(CardSchema, await link.call("close.finish", { ...request, archives, left }));
   const kept = archives.length === 0 ? "" : ` Unlanded work is archived in ${archives.join(", ")}.`;
-  return `c-${String(card.id)} is ${card.status}.${kept}`;
+  const stayed =
+    left.length === 0
+      ? ""
+      : ` Left in place: ${left.map((each) => `${each.host} ${each.session} (${each.reason})`).join("; ")}.`;
+  return `c-${String(card.id)} is ${card.status}.${kept}${stayed}`;
 }

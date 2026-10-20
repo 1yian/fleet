@@ -16,6 +16,7 @@ import { records } from "../support/json.ts";
 // herdr starts each worker Pi cold, which can take tens of seconds on a busy CI runner.
 const WORKER_WAIT_MS = 60_000;
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
+const SWITCH = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
 const FLAKY = fileURLToPath(new URL("../support/flaky-transport.ts", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 
@@ -44,7 +45,7 @@ beforeEach(async () => {
     "-m",
     "init",
   ]);
-  cardd.addProject("site", 2, { local: clone, flaky: clone });
+  cardd.addProject("site", 2, { local: clone, flaky: clone, far: clone });
   h = await Harness.start();
   lab = await HerdrLab.start({
     ...h.piEnv("worker"),
@@ -60,7 +61,10 @@ beforeEach(async () => {
       FLEET_FAKE_AGENT: "mate",
       HERDR_SESSION: lab.name,
       FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", EXTENSION]),
-      FLEET_HOSTS: JSON.stringify({ flaky: ["node", FLAKY, join(h.dir, "dropped")] }),
+      FLEET_HOSTS: JSON.stringify({
+        flaky: ["node", FLAKY, join(h.dir, "dropped")],
+        far: ["node", SWITCH, join(h.dir, "far-down")],
+      }),
     },
     [EXTENSION],
   );
@@ -244,4 +248,36 @@ test("a rerun of cleanup after the worktree is gone still deletes the branch and
     execFileSync("git", ["-C", clone, "branch", "--list", "c-1-a1"], { encoding: "utf8" }).trim(),
     "",
   );
+});
+
+test("an unreachable host of a replaced attempt does not block closing, and its work stays in place", async () => {
+  h.onModel(
+    () => ({
+      tool: "card_new",
+      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+    }),
+    "mate",
+  );
+  h.onModel(
+    () => ({ tool: "dispatch", args: { card: 1, host: "far", task: "fix the scrollbar" } }),
+    "mate",
+  );
+  h.onModel(() => {
+    writeFileSync(join(h.dir, "far-down"), "the host is down\n");
+    return {
+      tool: "dispatch",
+      args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
+    };
+  }, "mate");
+  h.onModel(() => ({ tool: "card_drop", args: { card: 1, reason: "the design changed" } }), "mate");
+  h.onModel(() => ({ text: "dropped" }), "mate");
+  await mateConnected();
+  mate.prompt("ship the scrollbar fix");
+
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.match(
+    results.at(-1) ?? "",
+    /^c-1 is dropped\. Unlanded work is archived in local:.*c-1-a2\.tar\.zst\. Left in place: far c-1-a1 \(herdr worktree on far failed: .*timed out.*\)\.$/,
+  );
+  assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
 });
