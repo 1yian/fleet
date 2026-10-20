@@ -41,6 +41,7 @@ $CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes --capacity 
 $CARDD grant add --db ~/.fleet/cards.db --lane main --project web --merge --words "<where the permission came from>"
 ```
 
+- `lane add` with `--parent` also creates the lane's standing card, such as `cleo`. Main talks to that second mate by commenting on it. The board shows it under Mates.
 - A project's clone is a normal clone of the repository on that host. Dispatch creates each worker's worktree next to it, in `<clone>.worktrees/`.
 - Use the same host names in `--clone` that mates pass to `dispatch`.
 
