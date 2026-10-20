@@ -1145,7 +1145,7 @@ npx shadcn@latest add https://www.affectui.com/r/<slug>.json
 
 | Board part | Component |
 |---|---|
-| Needs you list | Decision Inbox (extended from two answers to the full option list and an inline reply) |
+| Needs you list | New code. Decision Inbox allows only two answers, and a question can have more. |
 | Card thread | Comment Thread |
 | Worker activity | Tool Call Card |
 | "Since you were last here" | Change Summary |
