@@ -145,6 +145,14 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     }, KILL_GRACE_MS);
   };
   const onSignal = (): void => {
+    // A closed tab can take this process down soon after its hangup, so report at once.
+    // The full result follows if there is time; cardd records only the first.
+    tail.flush();
+    void call(job, "job.finish", {
+      job: job.job,
+      exitCode: INTERRUPTED_EXIT,
+      outputTail: `${tail.text()}\ninterrupted`.trim(),
+    });
     stop("interrupted");
   };
   for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
