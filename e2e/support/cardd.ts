@@ -68,6 +68,12 @@ export class Cardd {
     });
   }
 
+  /** Adds a lane grant with the cardd command line, as an import from Firstmate does. */
+  addMergeGrant(lane: string, project: string): void {
+    const args = [MAIN, "grant", "add", "--db", this.db, "--lane", lane, "--project", project];
+    execFileSync("node", [...args, "--words", "Firstmate yolo flag", "--merge"]);
+  }
+
   /** POST /call as the session that owns the token. */
   async post(token: string, op: string, args: unknown): Promise<{ status: number; body: unknown }> {
     const response = await fetch(this.url.replace(/^ws/, "http").replace(/\/session$/, "/call"), {

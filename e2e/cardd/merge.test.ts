@@ -261,3 +261,11 @@ test("an approval still stands after a later question takes the card back to the
   await merge(card);
   assert.equal(gh.state(PR), "MERGED");
 });
+
+test("a merge grant imported with the command line covers its project", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  fleet.cardd.addMergeGrant("main", "web");
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  assert.equal(await status(fleet.main, card), "merging");
+});

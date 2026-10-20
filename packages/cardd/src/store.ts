@@ -247,3 +247,13 @@ export function listProjects(
       };
     });
 }
+
+/** A lane grant added by the operator, for example when importing a Firstmate yolo flag. */
+export function addLaneGrant(
+  db: DatabaseSync,
+  grant: { lane: string; words: string; may: string; merge: boolean; project?: string },
+): void {
+  db.prepare(
+    "INSERT INTO grants (lane, words, may, merge, scope_project, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(grant.lane, grant.words, grant.may, grant.merge ? 1 : 0, grant.project ?? null, Date.now());
+}
