@@ -13,7 +13,8 @@ import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 
-// herdr starts the mate's Pi cold, which can take tens of seconds on a busy CI runner.
+// The mate's first model call comes within a few seconds of fleet up, on CI too. The wait leaves a
+// slow runner room. A mate that misses it did not start: a failed test prints its pane.
 const START_WAIT_MS = 60_000;
 const LAUNCH = fileURLToPath(new URL("../../packages/extension/src/launch.ts", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));

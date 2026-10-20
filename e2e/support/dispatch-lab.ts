@@ -11,7 +11,10 @@ import { Harness, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 
-/** herdr starts each worker Pi cold, which can take tens of seconds on a busy CI runner. */
+/**
+ * A worker's first model call comes within a few seconds of dispatch, on CI too. The wait leaves a
+ * slow runner room. A worker that misses it did not start: a failed lab test prints its pane.
+ */
 export const WORKER_WAIT_MS = 60_000;
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const SWITCH = fileURLToPath(new URL("./switch-transport.ts", import.meta.url));
