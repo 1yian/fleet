@@ -238,20 +238,24 @@ test("cardd refuses to listen on every interface, however the address is written
   }
 });
 
-test("a card's thread on the board leaves out the worker's job results", async () => {
+test("a card's thread on the board leaves out job results and the mate's instructions to the worker", async () => {
   cardd.addProject("web", 1, { local: "/clones/web" });
   const args = { title: "Users see one scrollbar", kind: "ship", project: "web" };
   const card = check(CardSchema, await main.call("card.new", args));
-  const begin = { card: card.id, host: "local", task: "fix the scrollbar" };
+  const begin = { card: card.id, host: "local", task: "Spec: fix the scrollbar" };
   const { token } = check(OPS["attempt.begin"].result, await main.call("attempt.begin", begin));
   const worker = await cardd.connect(token);
   const started = await worker.call("job.start", { label: "tests", command: "npm test" });
   const { job } = check(OPS["job.start"].result, started);
   await cardd.post(token, "job.finish", { job, exitCode: 127, outputTail: "gtimeout: not found" });
-  await worker.call("report", { status: "working", text: "the tests run again" });
+  await worker.call("report", { status: "working", text: "the tests run again\nstep 2 of 3" });
+  await main.call("comment", { card: card.id, text: "also check the footer" });
 
   const shown: unknown = JSON.parse((await send(`/api/card/${String(card.id)}`, "GET", {})).body);
   const kinds = check(ThreadSchema, shown).entries.map((entry) => entry.kind);
-  assert.deepEqual(kinds, ["comment", "report"]);
+  assert.deepEqual(kinds, ["report"]);
+  // The card's summary on the board is the latest thing the captain reads, in one line.
+  const summary = (await view()).cards.find((each) => each.id === card.id)?.summary;
+  assert.equal(summary, "the tests run again");
   await worker.close();
 });

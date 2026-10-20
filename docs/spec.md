@@ -1075,14 +1075,14 @@ Do not add a separate reviewer or a manual approval step on top of a mode. If a 
 
 `cleanup(card, summary)` and `card drop(card, reason)` use the same steps, in this order:
 
-1. Stop all writers: end the worker's Pi session and the attempt's `run_long` jobs.
-2. Pack all unlanded work into one archive file in the home's archive folder. The archive is compressed with `zstd -19`. It holds:
+1. Stop all writers: end the worker's Pi session and the attempt's `run_long` jobs. Every attempt of the card is retired, including replaced ones.
+2. Pack all unlanded work into one archive file on the worker's host, next to the project clone: `<clone>.archive/<session>.tar.zst`. The archive is compressed with `zstd -19`. It holds:
    - Every commit on the task branch that is not on the base branch, as a git bundle. This includes pushed commits that are not merged.
    - Staged and unstaged changes, as two binary patches.
    - Untracked files that are not ignored.
    - A manifest.
 3. Verify the archive with `git bundle verify` and a test decompression.
-4. Record the archive path on the card.
+4. Record the host and the archive path on the card.
 5. Remove the worktree and the pane.
 6. Set the final status: Done for `cleanup`, Dropped for `card drop`.
 
@@ -1111,9 +1111,11 @@ Do not add a separate reviewer or a manual approval step on top of a mode. If a 
 
 | View | Contents |
 |---|---|
-| Needs you (default) | Every card with the Needs you status in every lane. Each question shows inline with its option buttons. Merge approvals show "Approve & merge" and "Request changes". A "since you were last here" summary appears at the top. |
-| Kanban | One column for each status in flow order. One swimlane for each lane. A lane filter and a project filter. Standing cards show their grant, their last and next run, and their child cards folded. |
-| Card drawer | Opens beside the board, never as a separate page. It shows the thread, a reply box, the option buttons, move and hold controls, the worker's recent activity, and a "watch live" action. "Watch live" copies the herdr command that attaches to the worker's pane. |
+| Board (default) | Three groups as columns: Needs you, Running, and Done. Needs you holds every card with a question for the captain, in every lane, with each question and its option buttons inline. Merge approvals show "Approve & merge" and "Request changes". Done shows the 20 most recent finished or dropped cards. A lane filter and a project filter. Standing cards show their grant, their last and next run, and their child cards folded. A "since you were last here" summary appears at the top. |
+| List | The same groups, one after another. A narrow screen always gets the list. |
+| Card | Each card shows its title, its latest news in one line, its status, its lane, and its PR. It opens in place, never as a separate page or a drawer. Open, it shows one line for each update, and each line opens to its details. It also has a reply box, move and hold controls, and a "watch live" action. "Watch live" copies the herdr command that attaches to the worker's pane. |
+
+A card's thread shows what the captain reads: the captain's words, the mates' notes, questions, and outcomes, and the workers' reports. Job results, the timed check's findings, and the mate's instructions to the worker (the task message and its steers) stay out. Nothing on the board scrolls sideways.
 
 A **message box** on every view sends text into main's chat as a captain message. The board therefore never becomes a second conversation.
 
@@ -1146,14 +1148,14 @@ npx shadcn@latest add https://www.affectui.com/r/<slug>.json
 | Board part | Component |
 |---|---|
 | Needs you list | New code. Decision Inbox allows only two answers, and a question can have more. |
-| Card thread | Comment Thread |
+| Card thread | New code: one line for each update, which opens to its details |
 | Worker activity | Tool Call Card |
 | "Since you were last here" | Change Summary |
 | Lane and project filters | Filter Menu |
 | View switcher | Segmented Control |
-| Kanban and grant display | New code |
+| Inbox groups, cards, and grant display | New code |
 
-The paid AffectUI components (Agent Inbox and Autonomy Dial) are not used and not copied. Their download endpoint requires a license key.
+The paid AffectUI components (Agent Inbox and Autonomy Dial) are not used and not copied. Their download endpoint requires a license key. The inbox follows the look of the public Agent Inbox demo, in new code.
 
 The board needs a build step (Vite).
 

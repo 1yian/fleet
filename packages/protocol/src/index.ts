@@ -284,8 +284,12 @@ const ClientMessage = Type.Union([
 export type ClientMessage = Static<typeof ClientMessage>;
 
 /** The board (spec section 21): what it shows, and the captain's actions. */
+/** A card as the board shows it: the card and the latest thing the captain would read on it. */
+export const BoardCardSchema = Type.Object({ ...CardSchema.properties, summary: Type.String() });
+export type BoardCard = Static<typeof BoardCardSchema>;
+
 export const BoardSchema = Type.Object({
-  cards: Type.Array(CardSchema),
+  cards: Type.Array(BoardCardSchema),
   questions: Type.Array(
     Type.Object({
       card: Type.Integer(),

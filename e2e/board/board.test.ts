@@ -112,49 +112,63 @@ test("a click on a card that changed since the captain looked is refused", async
   assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 0);
 });
 
-test("Kanban shows each card in its lane and status, and the drawer shows its thread", async () => {
-  const card = await question("Pick the API version", ["v1", "v2"]);
-  await main.call("comment", { card: card.id, text: "the captain prefers v2" });
+test("the inbox groups the cards: Needs you, Running, and Done", async () => {
+  await question("Pick the API version", ["v1", "v2"]);
+  await main.call("card.new", { title: "Users see one scrollbar", kind: "scout" });
+  const done = check(CardSchema, await main.call("card.new", { title: "Ads", kind: "scout" }));
+  const text = "Search ads convert best.";
+  await main.call("close.finish", { card: done.id, mode: "done", text, archives: [], left: [] });
   await page.goto(http());
-  await page.getByRole("radio", { name: /Kanban/ }).click();
-  const row = page.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "main" }) });
-  await row.getByRole("button", { name: /Pick the API version/ }).click();
 
-  const message = page.getByRole("complementary").getByText("the captain prefers v2");
-  await message.waitFor();
-  // Visible to the eye, not only to the DOM: the thread's fade-in must finish at full opacity.
-  const handle = await message.elementHandle();
-  await page.waitForFunction((element) => getComputedStyle(element).opacity === "1", handle, {
-    timeout: 5_000,
-  });
+  const titles = (group: string) =>
+    page.getByRole("region", { name: group }).locator(".task-title").allTextContents();
+  await page.getByRole("region", { name: "Done" }).getByText(text).waitFor();
+  assert.deepEqual(await titles("Needs you"), ["Pick the API version"]);
+  assert.deepEqual(await titles("Running"), ["Users see one scrollbar"]);
+  assert.deepEqual(await titles("Done"), ["Ads"]);
 });
 
+test("a card opens in place to one line per update, without the mate's instructions to the worker", async () => {
+  const card = await question("Pick the API version", ["v1", "v2"]);
+  await main.call("comment", { card: card.id, text: "Spec: build the v2 endpoint" });
+  const detail = "v2 drops the legacy fields.";
+  await main.call("ask", { card: card.id, question: `Ship v2 now?\n${detail}`, options: ["yes"] });
+  await page.goto(http());
+  const opened = page.getByRole("article", { name: "Pick the API version" });
+  await opened.getByRole("button", { name: /Pick the API version/ }).click();
+
+  const updates = opened.getByRole("list", { name: "Updates" });
+  await updates.getByText("Ship v2 now?").waitFor();
+  assert.equal(await updates.getByText("Spec: build the v2 endpoint").count(), 0);
+  assert.equal(await updates.getByText(detail).count(), 0);
+  await updates.getByRole("button", { name: /Ship v2 now\?/ }).click();
+  await updates.getByText(detail).waitFor();
+});
 test("a reply draft survives a new entry on the open card", async () => {
   const card = await question("Pick the API version", ["v1", "v2"]);
   await page.goto(http());
-  await page.getByRole("radio", { name: /Kanban/ }).click();
-  await page.getByRole("button", { name: /Pick the API version/ }).click();
-  const reply = page.getByRole("textbox", { name: "Reply" });
+  const opened = page.getByRole("article", { name: "Pick the API version" });
+  await opened.getByRole("button", { name: /Pick the API version/ }).click();
+  const reply = opened.getByRole("textbox", { name: "Reply" });
   await reply.fill("I prefer v2 because");
 
-  await main.call("comment", { card: card.id, text: "the mate adds a note" });
-  await page.getByRole("complementary").getByText("the mate adds a note").waitFor();
+  await main.call("ask", { card: card.id, question: "Ship on Friday?", options: ["yes", "no"] });
+  await opened.getByRole("list", { name: "Updates" }).getByText("Ship on Friday?").waitFor();
   assert.equal(await reply.inputValue(), "I prefer v2 because");
 });
-
 test("a reply draft does not follow the captain to another card", async () => {
   await question("Pick the API version", ["v1", "v2"]);
-  const other = await question("Renew the certificate", ["now", "later"]);
+  await question("Renew the certificate", ["now", "later"]);
   await page.goto(http());
-  await page.getByRole("radio", { name: /Kanban/ }).click();
-  await page.getByRole("button", { name: /Pick the API version/ }).click();
-  await page.getByRole("textbox", { name: "Reply" }).fill("I prefer v2 because");
+  const first = page.getByRole("article", { name: "Pick the API version" });
+  await first.getByRole("button", { name: /Pick the API version/ }).click();
+  await first.getByRole("textbox", { name: "Reply" }).fill("I prefer v2 because");
 
-  await page.getByRole("button", { name: /Renew the certificate/ }).click();
-  await page.getByRole("heading", { name: new RegExp(`^c-${String(other.id)} `) }).waitFor();
-  assert.equal(await page.getByRole("textbox", { name: "Reply" }).inputValue(), "");
+  const other = page.getByRole("article", { name: "Renew the certificate" });
+  await other.getByRole("button", { name: /Renew the certificate/ }).click();
+  assert.equal(await other.getByRole("textbox", { name: "Reply" }).inputValue(), "");
+  assert.equal(await first.getByRole("textbox", { name: "Reply" }).count(), 0);
 });
-
 test("a refused reply comes back into the reply box", async () => {
   await question("Pick the API version", ["v1", "v2"]);
   await page.route("**/api/action", (route) =>
@@ -165,7 +179,6 @@ test("a refused reply comes back into the reply box", async () => {
     }),
   );
   await page.goto(http());
-  await page.getByRole("radio", { name: /Kanban/ }).click();
   await page.getByRole("button", { name: /Pick the API version/ }).click();
   const reply = page.getByRole("textbox", { name: "Reply" });
   await reply.fill("I prefer v2 because");
@@ -246,7 +259,6 @@ test("a request that cannot reach cardd shows a notice, and a refused reply stay
     .getByText(/The board could not reach cardd/)
     .waitFor();
 
-  await page.getByRole("radio", { name: /Kanban/ }).click();
   await page.getByRole("button", { name: /Pick the API version/ }).click();
   const reply = page.getByRole("textbox", { name: "Reply" });
   await reply.fill("I prefer v2 because");
@@ -276,14 +288,28 @@ test("a board load that cannot reach cardd shows a notice that goes away when lo
   assert.equal(await page.getByRole("alert").count(), 0);
 });
 
-test("the drawer fits a phone viewport", async () => {
-  await question("Pick the API version", ["v1", "v2"]);
-  await page.setViewportSize({ width: 390, height: 800 });
-  await page.goto(http());
-  await page.getByRole("button", { name: /Pick the API version/ }).click();
-  const drawer = page.getByRole("complementary");
-  await drawer.getByRole("heading", { name: "Thread" }).waitFor();
+/** Elements wider than their box that the captain could scroll sideways. */
+const sideways = (target: Page): Promise<string[]> =>
+  target.evaluate(() =>
+    [document.documentElement, ...document.querySelectorAll("body *")]
+      .filter((element) => element.scrollWidth > element.clientWidth + 1)
+      .filter((element) => !["hidden", "clip"].includes(getComputedStyle(element).overflowX))
+      .map((element) => element.className || element.tagName),
+  );
 
-  const box = await drawer.boundingBox();
-  assert.ok(box !== null && box.x >= 0 && box.x + box.width <= 390, JSON.stringify(box));
+test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken text", async () => {
+  const card = await question("Pick the API version", ["v1", "v2"]);
+  const url = `https://example.com/${"a".repeat(240)}`;
+  await main.call("ask", { card: card.id, question: `Evidence:\n${url}`, options: ["ok"] });
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(http());
+    await page.getByRole("button", { name: /Pick the API version/ }).click();
+    await page.getByRole("button", { name: /Evidence:/ }).click();
+    await page.getByRole("list", { name: "Updates" }).getByText(url).waitFor();
+    assert.deepEqual(await sideways(page), [], `at ${String(viewport.width)} px`);
+  }
 });

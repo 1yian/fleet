@@ -4,7 +4,14 @@
 // that changed since the captain's view is refused. A comment does not act on
 // the card's state, so it is accepted at any revision.
 import type { DatabaseSync } from "node:sqlite";
-import { check, BoardActionSchema, type Board, type Card, type Thread } from "@fleet/protocol";
+import {
+  check,
+  BoardActionSchema,
+  type Board,
+  type Card,
+  type Entry,
+  type Thread,
+} from "@fleet/protocol";
 import { mergeChoice } from "./asks.ts";
 import { applyChange } from "./change.ts";
 import { factsFrom } from "./status.ts";
@@ -13,8 +20,39 @@ import { addEntry, cardEntries, getCard, listCards } from "./store.ts";
 /** The card changed since the captain saw it. The board shows the current card. */
 export class StaleCard extends Error {}
 
+/**
+ * What the captain reads on the board: the captain's words, the mates' notes, questions,
+ * and outcomes, and the workers' reports. The rest is for the mates: job results are the
+ * worker's tool output, findings are the timed check's notices, and a mate's comments are
+ * its instructions to the worker (the task message and its steers).
+ */
+const forCaptain = (entry: Entry): boolean =>
+  entry.kind !== "job-result" &&
+  entry.kind !== "finding" &&
+  !(entry.kind === "comment" && entry.author.startsWith("mate:"));
+
+const firstLine = (text: string): string =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line !== "") ?? "";
+
+/**
+ * The card's latest news in one line, or the captain's words when there is none yet.
+ * A question shows on its own, and a routing note only repeats the title.
+ */
+function summaryOf(card: Card, entries: readonly Entry[]): string {
+  const latest = entries.findLast(
+    (entry) => forCaptain(entry) && entry.kind !== "ask" && entry.fields["routed"] !== true,
+  );
+  return firstLine(latest?.body ?? card.intent);
+}
+
 export function boardView(db: DatabaseSync): Board {
-  const cards = listCards(db);
+  const cards = listCards(db).map((card) => ({
+    ...card,
+    summary: summaryOf(card, cardEntries(db, card.id)),
+  }));
   const questions = cards
     .filter((card) => card.status !== "done" && card.status !== "dropped")
     .flatMap((card) => {
@@ -33,10 +71,10 @@ export function boardView(db: DatabaseSync): Board {
   return { cards, questions };
 }
 
-/** A card's thread for the captain. Job results are the worker's tool output: the captain reads its reports. */
+/** A card's thread for the captain. */
 export const thread = (db: DatabaseSync, id: number): Thread => ({
   card: getCard(db, id),
-  entries: cardEntries(db, id).filter((entry) => entry.kind !== "job-result"),
+  entries: cardEntries(db, id).filter(forCaptain),
 });
 
 function answerOnBoard(db: DatabaseSync, card: Card, ask: number, choice: string): void {
