@@ -43,7 +43,8 @@ const created = await lab.run([
 ]);
 const [pane] = records([created["root_pane"]]).map((each) => each["pane_id"]);
 if (typeof pane !== "string") throw new Error("the lab returned no pane");
-const fleet = ["--fleet-url", cardd.url, "--fleet-token", token, "--fleet-role", "mate"];
+// Each value follows "=", since Pi reads a separate value that begins with "-" as an option.
+const fleet = [`--fleet-url=${cardd.url}`, `--fleet-token=${token}`, "--fleet-role=mate"];
 execFileSync(
   "herdr",
   [

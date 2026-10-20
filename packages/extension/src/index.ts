@@ -1,5 +1,5 @@
 // The fleet Pi extension. Dispatch starts each worker with --fleet-url,
-// --fleet-token, and --fleet-role. FLEET_URL, FLEET_TOKEN, and FLEET_ROLE work
+// --fleet-token, and --fleet-role (fleet-args.ts writes them). FLEET_URL, FLEET_TOKEN, and FLEET_ROLE work
 // too, for mates started by hand. Without a URL, a token, and a role of worker
 // or mate, the extension does nothing.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

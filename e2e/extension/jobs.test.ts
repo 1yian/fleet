@@ -35,7 +35,8 @@ beforeEach(async () => {
   mkdirSync(jobDir);
   env = { ...env, HERDR_SESSION: lab.name, HERDR_WORKSPACE_ID: workspace, TMPDIR: jobDir };
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await lab.printIfFailed(t);
   // Stop everything even if one part fails, so no process outlives the test.
   const stopped = await Promise.allSettled([lab.stop(), h.stop(), fleet.cardd.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");

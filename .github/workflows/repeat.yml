@@ -1,0 +1,66 @@
+name: repeat
+
+# Runs end-to-end tests many times on fresh runners, to measure a flaky test.
+# Each shard runs the tests `rounds` times in a row, and the summary counts the failures.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: The test files, as a glob
+        default: e2e/extension/**/*.test.ts
+      rounds:
+        description: Rounds per shard
+        default: "3"
+
+permissions:
+  contents: read
+
+env:
+  TESTS: ${{ inputs.tests || 'e2e/extension/**/*.test.ts' }}
+  ROUNDS: ${{ inputs.rounds || '3' }}
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install herdr
+        env:
+          HERDR_VERSION: 0.9.5
+          HERDR_SHA256: 14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
+        run: |
+          curl -fsSL -o herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
+          echo "${HERDR_SHA256}  herdr" | sha256sum -c -
+          chmod +x herdr && sudo mv herdr /usr/local/bin/herdr
+      - name: Run the tests ${{ env.ROUNDS }} times
+        run: |
+          set -o pipefail
+          failed=0
+          for round in $(seq "$ROUNDS"); do
+            echo "::group::round $round"
+            if ! node --test --test-concurrency=1 "$TESTS" 2>&1 | tee "round-$round.log"; then
+              failed=$((failed + 1))
+            fi
+            echo "::endgroup::"
+            grep -E "^✖ " "round-$round.log" | grep -v "failing tests" | sed "s/^/round $round: /" >> failures.txt || true
+          done
+          echo "rounds: $ROUNDS, failed rounds: $failed" | tee -a "$GITHUB_STEP_SUMMARY"
+          sort -u failures.txt | tee -a "$GITHUB_STEP_SUMMARY" || true
+          test "$failed" -eq 0
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: round-*.log

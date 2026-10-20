@@ -37,7 +37,8 @@ beforeEach(async () => {
   );
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await lab.printIfFailed(t);
   const stopped = await Promise.allSettled([cleo.close(), lab.stop(), h.stop(), cardd.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
@@ -67,7 +68,11 @@ async function matePane(): Promise<{ pane: string; group: number; shell: number 
   };
 }
 
-/** Waits until the pane's screen satisfies `ready`, and returns that screen. */
+/**
+ * Waits until the pane's screen satisfies `ready`, and returns that screen. A read can catch Pi's frame
+ * half drawn, more so under load, so `ready` states the whole screen that a step expects, including what
+ * must be gone. A check on the returned screen alone could see a frame that is not finished.
+ */
 async function screenWhere(pane: string, what: string, ready: (s: string) => boolean) {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
@@ -100,6 +105,12 @@ const NOTE = "Checking the board first.";
 const REPLY = "Cleo wants a decision on the scrollbar fix.";
 const CAPTAIN = "Any news for me?";
 const ANSWER = "Nothing else is waiting.";
+const BANNER_REPLY = "The banner can go.";
+/** A screen that shows every `shown` text and none of the `hidden` ones. */
+const showing =
+  (shown: readonly string[], hidden: readonly string[] = []) =>
+  (screen: string): boolean =>
+    shown.every((text) => screen.includes(text)) && !hidden.some((text) => screen.includes(text));
 
 test("/calm hides fleet rows, tool rows, and working notes, keeps the conversation, and survives a restart", async () => {
   h.onModel(() => ({ tool: "board", text: NOTE }), "mate");
@@ -109,37 +120,44 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     await working.wait;
     return { text: ANSWER };
   }, "mate");
+  h.onModel(() => ({ text: BANNER_REPLY }), "mate");
   assert.equal(up(), "main: started in fleet-main\n");
   const { pane } = await matePane();
   await cleoAsks("Ship the scrollbar fix");
 
   // Calm is off until the first /calm: every row shows.
-  const before = await screenWhere(pane, "the first turn", (s) => s.includes(REPLY));
+  const before = await screenWhere(
+    pane,
+    "every row of the first turn",
+    showing([FLEET_ROW, TOOL_ROW, NOTE, REPLY]),
+  );
   keep("1-before-calm", before);
-  for (const shown of [FLEET_ROW, TOOL_ROW, NOTE, REPLY]) assert.ok(before.includes(shown), shown);
 
+  // The mate's reply stays. The fleet row, the tool row, and the short note before the tool call hide.
   await lab.submit(pane, "/calm");
-  const after = await screenWhere(pane, "calm to hide the rows", (s) => !s.includes(FLEET_ROW));
+  const after = await screenWhere(
+    pane,
+    "calm to hide the rows",
+    showing([REPLY], [FLEET_ROW, NOTE, TOOL_ROW]),
+  );
   keep("2-after-calm", after);
-  assert.ok(after.includes(REPLY), "the mate's reply stays");
-  assert.ok(!after.includes(NOTE), "the short note before the tool call hides");
-  assert.ok(!after.includes("board"), "the tool row hides");
   assert.equal(readFileSync(join(home, "config", "calm"), "utf8"), "on\n");
 
   // The captain's prompt and the answer stay; a new fleet message stays out of sight.
   await lab.submit(pane, CAPTAIN);
   // While the mate works, the boat replaces Pi's own working row.
-  const sailing = await screenWhere(pane, "the boat", (s) => s.includes("◿│◣"));
+  const sailing = await screenWhere(pane, "the boat", showing(["◿│◣"], ["Working"]));
   keep("3-calm-working-boat", sailing);
-  assert.ok(!sailing.includes("Working"));
   working.open();
-  await screenWhere(pane, "the answer", (s) => s.includes(ANSWER));
+  await screenWhere(pane, "the answer", showing([ANSWER]));
   await cleoAsks("Drop the old banner");
   const turns = await h.waitForCall(3, "mate", WAIT_MS);
-  const live = await screenWhere(pane, "the second turn", (s) => s.includes(ANSWER));
+  const live = await screenWhere(
+    pane,
+    "the second turn, without its fleet row",
+    showing([CAPTAIN, ANSWER, BANNER_REPLY], ["[fleet]"]),
+  );
   keep("4-calm-conversation", live);
-  assert.ok(live.includes(CAPTAIN) && live.includes(ANSWER));
-  assert.ok(!live.includes("[fleet]"));
   // Nothing was dropped from the model's context.
   const context = turns.map((turn) => `${turn.role}: ${turn.text}`).join("\n");
   assert.ok(
@@ -158,16 +176,14 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   // Until the new Pi takes the screen, it still shows the shell and the command that starts it.
   const restarted = await screenWhere(
     pane,
-    "the restored conversation",
-    (s) => s.includes(CAPTAIN) && !s.includes("FLEET_CONFIG_DIR"),
+    "the restored conversation, still calm",
+    showing([CAPTAIN, ANSWER, BANNER_REPLY], ["[fleet]", "FLEET_CONFIG_DIR"]),
   );
   keep("5-after-restart", restarted);
-  assert.ok(restarted.includes(ANSWER) && !restarted.includes("[fleet]"));
 
   // /calm again turns it off and every row comes back.
   await lab.submit(pane, "/calm");
-  const off = await screenWhere(pane, "the rows to return", (s) => s.includes(FLEET_ROW));
+  const off = await screenWhere(pane, "the rows to return", showing([FLEET_ROW, NOTE, TOOL_ROW]));
   keep("6-calm-off", off);
-  assert.ok(off.includes(NOTE) && off.includes(TOOL_ROW));
   assert.equal(readFileSync(join(home, "config", "calm"), "utf8"), "off\n");
 });

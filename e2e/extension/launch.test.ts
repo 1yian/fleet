@@ -13,7 +13,8 @@ import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 
-// herdr starts the mate's Pi cold, which can take tens of seconds on a busy CI runner.
+// The mate's first model call comes within a few seconds of fleet up, on CI too. The wait leaves a
+// slow runner room. A mate that misses it did not start: a failed test prints its pane.
 const START_WAIT_MS = 60_000;
 const LAUNCH = fileURLToPath(new URL("../../packages/extension/src/launch.ts", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -23,18 +24,22 @@ let h: Harness;
 let lab: HerdrLab;
 let config: string;
 let cleo: Session;
+let token: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
+  // 1 token in 64 begins with "-", and main's does here. Pi must read it as the token, not as an option.
+  cardd.dashTokens(["mate:main"]);
   h = await Harness.start();
   const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
-  const token = cardd.addLane("main", undefined, home);
+  token = cardd.addLane("main", undefined, home);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   config = mkdtempSync(join(tmpdir(), "fleet-config-"));
   const lane = { url: cardd.url, token, home, args: h.piArgs() };
   writeFileSync(join(config, "main.json"), JSON.stringify(lane));
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await lab.printIfFailed(t);
   // Stop everything even if one part fails, so no process outlives the test.
   const stopped = await Promise.allSettled([cleo.close(), lab.stop(), h.stop(), cardd.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");
@@ -69,6 +74,7 @@ async function cleoAsks(title: string): Promise<void> {
 }
 
 test("fleet up starts the mate in its own workspace once, and again on its own conversation", async () => {
+  assert.match(token, /^-/);
   assert.equal(up(), "main: started in fleet-main\n");
   await cleoAsks("Ship the scrollbar fix");
   await h.waitForCall(0, "mate", START_WAIT_MS);

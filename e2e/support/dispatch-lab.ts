@@ -11,7 +11,10 @@ import { Harness, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 
-/** herdr starts each worker Pi cold, which can take tens of seconds on a busy CI runner. */
+/**
+ * A worker's first model call comes within a few seconds of dispatch, on CI too. The wait leaves a
+ * slow runner room. A worker that misses it did not start: a failed lab test prints its pane.
+ */
 export const WORKER_WAIT_MS = 60_000;
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const SWITCH = fileURLToPath(new URL("./switch-transport.ts", import.meta.url));
@@ -30,17 +33,20 @@ export interface DispatchLab {
 /** The file where the lab's worker launches record their arguments. */
 export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
 
-/** Variations of the lab: cardd's environment, and extra arguments for every worker's Pi. */
+/** Variations of the lab: cardd's environment, sessions whose tokens begin with "-", and extra arguments for every worker's Pi. */
 export interface LabOptions {
   readonly cardd?: Record<string, string>;
+  readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
 }
 
 export async function startDispatchLab({
   cardd: carddEnv,
+  dashTokens = [],
   workerArgs = [],
 }: LabOptions = {}): Promise<DispatchLab> {
   const cardd = await Cardd.start(carddEnv);
+  if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
   const mainToken = cardd.addLane("main", undefined, home);
   const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
@@ -86,6 +92,17 @@ export const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
+
+/** Whether the herdr command that starts an attempt's worker still runs. It waits for the worker to idle. */
+export function herdrStartRunning(lab: HerdrLab, attempt: string): boolean {
+  try {
+    execFileSync("pgrep", ["-f", `herdr agent start ${attempt} .*--session ${lab.name}`]);
+    return true;
+  } catch {
+    // pgrep exits 1 when no process matches.
+    return false;
+  }
+}
 
 /** The clone's worktrees, by branch. */
 export const worktreesOf = (clone: string): string[] =>

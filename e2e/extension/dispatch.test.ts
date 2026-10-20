@@ -26,6 +26,14 @@ import type { Harness, Pi } from "../support/harness.ts";
 import type { HerdrLab } from "../support/herdr.ts";
 
 const PR = "https://github.com/acme/web/pull/1";
+
+/**
+ * herdr can still hold a dead worker's agent name for a few seconds, up to 4 s on CI, and refuses to
+ * start a Pi under it until then. A refused start used to wait 10 s for a Pi that herdr never typed. So
+ * the restart must hold the mate for less than that wait alone, however slow the rest is under load.
+ */
+const RESTART_WAIT_MS = 10_000;
+
 let parts: DispatchLab;
 let h: Harness;
 let lab: HerdrLab;
@@ -36,7 +44,8 @@ beforeEach(async () => {
   parts = await startDispatchLab();
   ({ h, lab, clone, mate, home } = parts);
 });
-afterEach(async () => {
+afterEach(async (t) => {
+  await parts.lab.printIfFailed(t);
   await stopDispatchLab(parts);
 });
 
@@ -115,7 +124,9 @@ test("a dispatch whose connection drops after the worker started finds it, and a
   // herdr's answer was lost, but the pane shows that Pi started.
   assert.equal(results.at(-2), "Dispatched c-1-a1 on flaky, branch c-1-a1.");
   const launched = readFileSync(launchArgs(), "utf8").split("\n");
-  const token = launched[launched.indexOf("--fleet-token") + 1];
+  const token = launched
+    .find((arg) => arg.startsWith("--fleet-token="))
+    ?.slice("--fleet-token=".length);
   assert.ok(token !== undefined && token !== "", "the worker was launched without a token");
   for (const result of results) {
     assert.ok(!result.includes(token), "a tool result carries the worker token");
@@ -412,11 +423,16 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "restarted" }), "mate");
+  let asked = 0;
+  let returned = 0;
+  h.onModel(() => {
+    asked = Date.now();
+    return { tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } };
+  }, "mate");
+  h.onModel(() => {
+    returned = Date.now();
+    return { text: "restarted" };
+  }, "mate");
   // The worker waits on a long job, so it ends its run without telling the mate anything.
   h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
   h.onModel(() => ({ text: "waiting for the job" }), "worker");
@@ -440,6 +456,10 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   mate.prompt("the worker died; restart it");
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "Restarted c-1-a1 on local on its own session, branch c-1-a1.");
+  assert.ok(
+    returned - asked < RESTART_WAIT_MS,
+    `the restart held the mate for ${String(returned - asked)} ms`,
+  );
   const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
   assert.equal(
     lastUser(resumed),
