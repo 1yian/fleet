@@ -5,9 +5,9 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-/** The mate's home: FLEET_HOME (set by `fleet <lane>`), else the folder Pi runs in. */
+/** The mate's home is the folder Pi runs in. */
 export function preferenceFile(): string {
-  return join(process.env["FLEET_HOME"] ?? process.cwd(), "config", "calm");
+  return join(process.cwd(), "config", "calm");
 }
 
 export function loadPreference(file: string): boolean {

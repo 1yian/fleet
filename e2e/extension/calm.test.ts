@@ -1,10 +1,8 @@
-// /calm in a real mate (docs/calm.md). `fleet up` starts the mate's Pi in a herdr pane,
-// with the scripted model. The test reads what the pane shows before and after /calm.
+// /calm in a real mate (docs/calm.md). Main is a plain Pi in a scratch copy of the repo, in a
+// herdr pane, with the scripted model. The test reads what the pane shows before and after /calm.
 // It writes each screen to CALM_EVIDENCE_DIR when that is set.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -12,43 +10,32 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { gate, Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
+import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
-const LAUNCH = fileURLToPath(new URL("../../packages/extension/src/launch.ts", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["CALM_EVIDENCE_DIR"];
 
 let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
-let home: string;
-let config: string;
+let scratch: Scratch;
 let cleo: Session;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
-  home = mkdtempSync(join(tmpdir(), "fleet-home-"));
-  const token = cardd.addLane("main", undefined, home);
+  scratch = new Scratch();
+  configureMain(scratch, cardd.url, cardd.addLane("main", undefined, scratch.root));
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-  config = mkdtempSync(join(tmpdir(), "fleet-config-"));
-  writeFileSync(
-    join(config, "main.json"),
-    JSON.stringify({ url: cardd.url, token, home, args: h.piArgs() }),
-  );
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);
   const stopped = await Promise.allSettled([cleo.close(), lab.stop(), h.stop(), cardd.stop()]);
+  scratch.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
-
-const up = (): string =>
-  execFileSync("node", [LAUNCH, "up"], {
-    encoding: "utf8",
-    env: { ...process.env, FLEET_CONFIG_DIR: config, HERDR_SESSION: lab.name },
-  });
 
 async function matePane(): Promise<{ pane: string; group: number; shell: number }> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
@@ -121,8 +108,7 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     return { text: ANSWER };
   }, "mate");
   h.onModel(() => ({ text: BANNER_REPLY }), "mate");
-  assert.equal(up(), "main: started in fleet-main\n");
-  const { pane } = await matePane();
+  const pane = await startMain(lab, scratch, h);
   await cleoAsks("Ship the scrollbar fix");
 
   // Calm is off until the first /calm: every row shows.
@@ -141,7 +127,7 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     showing([REPLY], [FLEET_ROW, NOTE, TOOL_ROW]),
   );
   keep("2-after-calm", after);
-  assert.equal(readFileSync(join(home, "config", "calm"), "utf8"), "on\n");
+  assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "on\n");
 
   // The captain's prompt and the answer stay; a new fleet message stays out of sight.
   await lab.submit(pane, CAPTAIN);
@@ -172,12 +158,13 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  assert.equal(up(), "main: started in fleet-main\n");
-  // Until the new Pi takes the screen, it still shows the shell and the command that starts it.
+  await startMain(lab, scratch, h, true);
+  // The old screen stays until the new Pi draws its own, so wait for the new Pi to join the fleet.
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted mate to connect");
   const restarted = await screenWhere(
     pane,
     "the restored conversation, still calm",
-    showing([CAPTAIN, ANSWER, BANNER_REPLY], ["[fleet]", "FLEET_CONFIG_DIR"]),
+    showing([CAPTAIN, ANSWER, BANNER_REPLY], ["[fleet]"]),
   );
   keep("5-after-restart", restarted);
 
@@ -185,5 +172,5 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   await lab.submit(pane, "/calm");
   const off = await screenWhere(pane, "the rows to return", showing([FLEET_ROW, NOTE, TOOL_ROW]));
   keep("6-calm-off", off);
-  assert.equal(readFileSync(join(home, "config", "calm"), "utf8"), "off\n");
+  assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "off\n");
 });

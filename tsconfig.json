@@ -24,6 +24,7 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": [
+    ".pi/extensions",
     "packages/cardd/src",
     "packages/cardd/scripts",
     "packages/protocol/src",

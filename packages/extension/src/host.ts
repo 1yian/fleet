@@ -82,14 +82,18 @@ function resultOf(stdout: string, host: string, name: string): Record<string, un
 }
 
 /** Runs a command on the host and returns its output. Throws with the command's error output on a non-zero exit. */
-export async function onHost(host: string, argv: readonly string[]): Promise<string> {
+export async function onHost(
+  host: string,
+  argv: readonly string[],
+  timeout = 600_000,
+): Promise<string> {
   const via = transport(host);
   const [file = "", ...rest] = via.length === 0 ? argv : [...via, argv.map(quote).join(" ")];
   return new Promise((resolve, reject) => {
     execFile(
       file,
       rest,
-      { encoding: "utf8", timeout: 600_000, maxBuffer: 16 * 1024 * 1024 },
+      { encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 },
       (error, out, err) => {
         if (error === null) resolve(out);
         else {

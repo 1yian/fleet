@@ -1,19 +1,27 @@
 # Setup
 
-This sets up the fleet on hosts that share a Tailscale network. One host runs `cardd`. Every host that runs mates or workers has a copy of this repository.
+This sets up the fleet on hosts that share a Tailscale network. One host runs `cardd`. Every host that runs mates or workers has a checkout of this repository.
 
-## 1. A stable copy on each host
+The captain's routine is one step: open a terminal in the fleet repository and run `pi`. That Pi is main. Main brings up the rest of the fleet and keeps it running.
 
-Keep the copy that runs the fleet apart from any development checkout:
+## How the pieces fit
+
+- **Main's home is this repository.** `.pi/extensions/fleet.ts` loads the fleet extension, `/calm`, and conversation memory. `.pi/settings.json` starts Pi on the `orchestrator` tier. `AGENTS.md` holds the standing instructions. Main's private files are in `config/`, `data/`, and `state/`, which git ignores.
+- **Each second mate's home is a git worktree of this repository**, at `<repo>.worktrees/lane-<lane>`, with its own private `config/`, `data/`, and `state/`. A mate is `pi` run in its home. On a host that does not have main, the checkout there plays the same part: it is the root of that host's lane homes.
+- **A lane home is a folder with `config/lane.json`.** Pi started anywhere else loads none of this. A worker in a worktree of this repository gets only the extension that dispatch passes with `-e`, and needs no installed packages.
+- **cardd is not part of main.** It runs under launchd on one host. Main never starts, stops, or restarts it.
+
+## 1. A checkout on each host
 
 ```sh
-git clone https://github.com/1yian/fleet ~/.fleet/app
-cd ~/.fleet/app && npm ci && npm run build
+git clone https://github.com/1yian/fleet ~/Projects/fleet     # on maverick, the captain's checkout
+git clone https://github.com/1yian/fleet ~/.fleet/app         # on a host that only runs second mates
+cd <checkout> && npm ci && npm run build
 ```
 
-Each host needs Node 24 or later, Pi, herdr, git, `gh` (logged in), `zstd`, and `no-mistakes` for projects that use it.
+Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Each host needs Node 24 or later, Pi, herdr, git, `gh` (logged in), `zstd`, and `no-mistakes` for projects that use it.
 
-To update later: `git -C ~/.fleet/app pull && (cd ~/.fleet/app && npm ci && npm run build)`, then restart `cardd` and the mates.
+To update later: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`. The lanes move to the new commit when their mates next start, so then run `lane_restart` with lane `all` from main (or `fleet restart` on that host). A lane home with uncommitted changes stays where it is.
 
 ## 2. cardd
 
@@ -27,54 +35,127 @@ NAME=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sy
 $CARDD serve --db ~/.fleet/cards.db --listen "$IP:7420" --hostname "$NAME:7420" --board ~/.fleet/app/packages/board/dist
 ```
 
-On macOS, run it under launchd with `KeepAlive` so it restarts after a crash or a reboot. The board is then at `http://<NAME>:7420/`.
+On macOS, run it under launchd with `KeepAlive` so it restarts after a crash or a reboot. The board is then at `http://<NAME>:7420/`. Update it by hand, apart from main: pull its checkout, build, and restart its launchd job.
 
 ## 3. Lanes and projects
 
-Run these once on the `cardd` host. `lane add` prints the mate's token.
+Run these once on the `cardd` host. `lane add` prints the mate's token. A lane's `--home` is informational.
 
 ```sh
-$CARDD lane add main --db ~/.fleet/cards.db --home ~/fleet-homes/main
+$CARDD lane add main --db ~/.fleet/cards.db --home ~/Projects/fleet
 $CARDD lane add cleo --db ~/.fleet/cards.db --home /path/on/its/host --parent main
 $CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes \
   --clone maverick=/path/to/web --clone p620=/path/on/p620/web
 $CARDD grant add --db ~/.fleet/cards.db --lane main --project web --merge --words "<where the permission came from>"
 ```
 
-- `lane add` with `--parent` also creates the lane's standing card, such as `cleo`. Main talks to that second mate by commenting on it. The board shows it under Mates.
 - A project's clone is a normal clone of the repository on that host. Dispatch creates each worker's worktree next to it, in `<clone>.worktrees/`.
 - Use the same host names in `--clone` that mates pass to `dispatch`.
 
-## 4. Mates
+## 4. Main
 
-Write each lane's settings on the host where its mate runs, in `~/.config/fleet/<lane>.json`:
-
-```json
-{
-  "url": "ws://<cardd Tailscale address>:7420/session",
-  "token": "<the token from lane add>",
-  "home": "/Users/me/fleet-homes/main",
-  "hosts": { "p620": ["ssh", "p620"] },
-  "args": ["--model", "tier/default"],
-  "workerArgs": ["--model", "tier/quick"]
-}
-```
-
-- `home` is the lane's home folder. The mate runs there.
-- `hosts` names the hosts that this mate reaches over SSH. A host that is not listed runs here.
-- `args` (optional) are extra Pi arguments for the mate. `workerArgs` are extra Pi arguments for its workers.
-
-Start every mate that is configured on a host:
+In the fleet repository, write main's settings and charter. Both are private.
 
 ```sh
-~/.fleet/app/bin/fleet up
+cd ~/Projects/fleet
+mkdir -p config data
+cat > config/lane.json <<'JSON'
+{
+  "lane": "main",
+  "url": "ws://<cardd Tailscale address>:7420/session",
+  "token": "<the token from lane add main>",
+  "hosts": { "p620": ["ssh", "p620"] },
+  "roots": { "p620": "/home/me/.fleet/app" },
+  "workerArgs": ["--model", "tier/quick"]
+}
+JSON
+$EDITOR data/charter.md      # the lane table, main's own projects, and where its records are
+pi
 ```
 
-- Each mate runs in its own herdr workspace, `fleet-<lane>`. A mate that already runs is left alone, so `fleet up` is safe to run again.
-- A mate continues its conversation when it starts again.
-- To start the mates on another host, run `fleet up` there, for example `ssh p620 ~/.fleet/app/bin/fleet up`. To see that host's workspaces in the herdr you already use on another machine, add the host once as a machine there: `herdr machine add p620 --remote-session default`. The mates and their workers run in each host's `default` session.
-- To run one mate in the current terminal instead, run `~/.fleet/app/bin/fleet <lane>`.
+- `hosts` names the hosts that main reaches over SSH. A host that is not listed runs here. `roots` is each remote host's checkout, and defaults to `~/.fleet/app`.
+- `workerArgs` are extra Pi arguments for main's workers. For main's own Pi, use Pi's settings: `.pi/settings.json` sets `tier/orchestrator`. `args` is only used when `fleet up` starts a second mate.
+- `data/charter.md` is added to main's role contract at every start. Keep the lane table there: each lane's name, host, and scope. Keep the captain's preferences and records here too, under `data/`.
+- `pi -c` continues the last conversation in this folder. Plain `pi` starts a new one, and conversation memory carries what matters.
 
-Every mate also gets `/calm`, which hides tool rows and `[fleet]` rows. See [calm.md](calm.md). A restart picks it up in an existing home.
+### Conversation memory (optchat)
 
-The home folder can hold an `AGENTS.md` with the lane's charter. The role contract comes from the extension.
+Main has conversation memory the way Firstmate's home does. The loader is the user-level `~/.pi/agent/extensions/fm-optchat`. Firstmate sets `FM_HOME` for it with `optpi`. Here, `.pi/extensions/fleet.ts` loads it again with `FM_HOME` set to this folder, when `config/optchat.json` exists. Nothing else changes in `~/.pi`.
+
+```sh
+node ~/.pi/agent/optchat/package.mjs prepare /path/to/published/pi-optchat config/optchat/package
+mkdir -p data/optchat/profiles/main
+cp <firstmate>/data/optchat/profiles/main/{AGENTS.md,config.json} data/optchat/profiles/main/
+cat > config/optchat.json <<'JSON'
+{ "enabled": true, "package": "config/optchat/package", "memoryHome": "data/optchat", "profile": "main", "thinking": "xhigh", "compactorModel": "compact", "compactorProvider": "tier" }
+JSON
+```
+
+This is a fresh profile. Firstmate's own memory stays with Firstmate. `/firstmate-memory` shows whether it is active. To turn it off, set `"enabled": false` and restart.
+
+## 5. Second mates
+
+On the host where a mate runs, from that host's checkout:
+
+```sh
+<checkout>/bin/fleet home add cleo --url ws://<cardd>:7420/session --token <the token from lane add cleo> \
+  --args '["--model","tier/default"]' --worker-args '["--model","tier/quick"]'
+$EDITOR <checkout>.worktrees/lane-cleo/data/charter.md     # cleo's charter
+```
+
+This makes the home as a worktree of the checkout, with `config/lane.json`. The mate's own settings:
+
+- `args` are extra Pi arguments for the mate. `workerArgs` are for its workers.
+- `hosts` and `roots` work as for main, when this mate dispatches to other hosts.
+- `data/charter.md` is the lane's charter, added to its role contract.
+
+On a remote host, `fleet` must work over a non-interactive SSH session, so Node must be on that session's `PATH`. Check it from main's host: `ssh p620 '~/.fleet/app/bin/fleet status'`.
+
+You do not start second mates by hand. Main starts them.
+
+## 6. Day to day
+
+```sh
+cd ~/Projects/fleet && pi
+```
+
+Main starts, and within a minute it has brought up every lane on every host that is not running. After that:
+
+- Main starts a mate that died, on whichever host it runs. It says so in its thread.
+- A lane that starts three times in ten minutes is held, and main tells the captain once.
+- A host that cannot be reached is reported once, and again when it answers.
+- `lane_stop` stops a lane and holds it, so main leaves it alone. `lane_start` starts it. `lane_restart` restarts one lane, or every lane that is not held with lane `all`, on every host. Ask main in plain words: "restart the fleet".
+- Each mate runs in its own herdr workspace, `fleet-<lane>`, in that host's `default` session, and continues its conversation when it starts again. To see another host's workspaces in the herdr you already use, add the host once as a machine: `herdr machine add p620 --remote-session default`.
+
+The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
+
+| Command                     | Does                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `fleet status [--json]`     | Shows each lane on this host: running, down, or stopped.                              |
+| `fleet up [lane]`           | Starts each lane that does not run. A stopped lane stays stopped unless it is named.  |
+| `fleet stop <lane>`         | Closes the lane's workspace and holds the lane.                                       |
+| `fleet restart [lane]`      | Starts the mate again on its conversation. No lane means every lane that is not held. |
+| `fleet home add <lane> ...` | Makes a lane's home.                                                                  |
+| `fleet migrate [--undo]`    | Moves the earlier layout into homes (below).                                          |
+
+When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
+
+## Moving from the earlier layout
+
+Before this layout, main's home was `~/fleet-homes/main`, each mate's settings were in `~/.config/fleet/<lane>.json`, mates ran from `~/.fleet/app`, and `fleet up` started them. Migration only copies. It changes nothing in cardd, so every card, entry, and live worker stays. It never deletes an old home, an old conversation, or a record.
+
+1. Pull the new code in the captain's checkout and in each host's checkout, and run `npm ci && npm run build` in each.
+2. Stop main's old Pi and every mate that `fleet up` started (close their `fleet-<lane>` workspaces). A mate that stays up keeps running on the old code until its pane is closed.
+3. On each host, run `<checkout>/bin/fleet migrate`. It reads `~/.config/fleet/*.json` (or `--from <dir>`) and, for each file:
+   - writes `config/lane.json` in the new home: the repository for `main`, and a new worktree `lane-<lane>` for any other lane;
+   - copies the old home's `AGENTS.md` to `data/charter.md`, and its `config/` folder to `config/` (the `/calm` choice);
+   - copies the old home's Pi conversations to the new home, so `pi -c` continues them;
+   - renames the settings file to `<lane>.json.migrated`, so nothing starts the lane twice.
+
+   A repeat finds nothing to migrate.
+
+4. Records that lived outside the home, such as Firstmate's `data`, stay where they are. The charter names them by path.
+5. Set up conversation memory (section 4) if you want it, then `cd ~/Projects/fleet && pi`.
+6. Retire the old pieces when you are satisfied: `~/fleet-homes/main`, and `~/.fleet/app` on maverick if cardd does not run from it.
+
+To go back, run `<checkout>/bin/fleet migrate --undo` on each host. It renames each `<lane>.json.migrated` to `<lane>.json` and sets aside each home's `config/lane.json` as `lane.json.undone`, so the new layout starts no lane. Then start the mates with the earlier code: check out the commit before this change in each checkout. The new homes stay on disk. Remove one with `git worktree remove <home>`.

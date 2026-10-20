@@ -1,4 +1,8 @@
-node_modules/
+node_modules
+# A lane's private home: its settings and token, charter and records, and runtime state.
+/config/
+/data/
+/state/
 dist/
 *.db
 *.db-wal

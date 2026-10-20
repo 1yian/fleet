@@ -1,6 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
+    ".": {
+      "entry": [".pi/extensions/*.ts"]
+    },
     "packages/cardd": {
       "entry": ["src/main.ts", "scripts/*.ts"]
     },
@@ -8,7 +11,13 @@
       "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts", "trial/*.ts"]
     },
     "packages/extension": {
-      "entry": ["src/index.ts", "src/job.ts", "src/launch.ts", "src/calm/index.ts"]
+      "entry": [
+        "src/index.ts",
+        "src/job.ts",
+        "src/launch.ts",
+        "src/calm/index.ts",
+        "src/optchat.ts"
+      ]
     },
     "packages/board": {
       "ignore": ["src/vendor/**"]
