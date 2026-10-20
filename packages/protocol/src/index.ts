@@ -153,6 +153,32 @@ export const OPS = {
     }),
     result: CardSchema,
   },
+  "close.begin": {
+    roles: ["mate"],
+    args: Type.Object({ card: Type.Integer(), mode: Type.Enum(["done", "dropped"]) }),
+    result: Type.Object({
+      archiveDir: Type.String(),
+      attempt: Nullable(
+        Type.Object({
+          session: Type.String(),
+          host: Type.String(),
+          clone: Type.String(),
+          branch: Type.String(),
+          base: Type.String(),
+        }),
+      ),
+    }),
+  },
+  "close.finish": {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      mode: Type.Enum(["done", "dropped"]),
+      text: Type.String({ minLength: 1 }),
+      archive: Nullable(Type.String()),
+    }),
+    result: CardSchema,
+  },
   "attempt.begin": {
     roles: ["mate"],
     args: Type.Object({

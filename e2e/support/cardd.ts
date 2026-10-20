@@ -38,8 +38,8 @@ export class Cardd {
   }
 
   /** Adds a lane with the cardd command line. Returns the mate's token. */
-  addLane(name: string, parent?: string): string {
-    const args = [MAIN, "lane", "add", name, "--db", this.db, "--home", `/homes/${name}`];
+  addLane(name: string, parent?: string, home = `/homes/${name}`): string {
+    const args = [MAIN, "lane", "add", name, "--db", this.db, "--home", home];
     return execFileSync("node", parent === undefined ? args : [...args, "--parent", parent], {
       encoding: "utf8",
     }).trim();

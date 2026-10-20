@@ -19,6 +19,8 @@ const FIXED = {
   handback: "with-mate",
   hold: "waiting",
   merged: "merging",
+  cleanup: "done",
+  drop: "dropped",
 } as const satisfies Record<string, Status>;
 interface FixedChange {
   readonly kind: keyof typeof FIXED;

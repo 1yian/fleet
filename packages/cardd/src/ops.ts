@@ -12,6 +12,7 @@ import {
 import { answer, ask, handback, hold, openMergeAsk } from "./asks.ts";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
 import { applyChange } from "./change.ts";
+import { closeBegin, closeFinish } from "./closing.ts";
 import { grant } from "./grants.ts";
 import { merge } from "./merge.ts";
 import type { Timings } from "./timing.ts";
@@ -83,6 +84,8 @@ function askToMerge(db: DatabaseSync, card: Card): string[] {
 }
 
 const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
+  "close.begin": closeBegin,
+  "close.finish": closeFinish,
   grant,
   ask,
   answer,

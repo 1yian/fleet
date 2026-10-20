@@ -3,7 +3,7 @@
 // session, in its own git worktree. Both use the scripted fake model.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,9 +24,11 @@ let h: Harness;
 let lab: HerdrLab;
 let clone: string;
 let mate: Pi;
+let home: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
-  const mainToken = cardd.addLane("main");
+  home = mkdtempSync(join(tmpdir(), "fleet-home-"));
+  const mainToken = cardd.addLane("main", undefined, home);
   clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
   execFileSync("git", ["init", "-q", "-b", "main", clone]);
   execFileSync("git", [
@@ -150,5 +152,57 @@ test("a dispatch retry after a lost connection finds the worker that already sta
   assert.equal(
     workerTurns.filter((turn) => turn.text === "[fleet] main on c-1: fix the scrollbar").length,
     1,
+  );
+});
+
+test("dropping a card stops the worker, archives its unlanded work, and removes the worktree", async () => {
+  h.onModel(
+    () => ({
+      tool: "card_new",
+      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+    }),
+    "mate",
+  );
+  h.onModel(
+    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => ({ tool: "card_drop", args: { card: 1, reason: "the design changed" } }), "mate");
+  h.onModel(() => {
+    const tree = `${clone}.worktrees/c-1-a1`;
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+    writeFileSync(join(tree, "committed.txt"), "one\n");
+    git("add", "committed.txt");
+    git("commit", "-q", "-m", "work in progress");
+    writeFileSync(join(tree, "staged.txt"), "two\n");
+    git("add", "staged.txt");
+    writeFileSync(join(tree, "committed.txt"), "one\nchanged\n");
+    writeFileSync(join(tree, "untracked.txt"), "three\n");
+    return { tool: "report", args: { status: "blocked", text: "the design is unclear" } };
+  }, "worker");
+  await mateConnected();
+  mate.prompt("ship the scrollbar fix");
+
+  const archive = join(home, "archive", "c-1-a1.tar.zst");
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.equal(results.at(-1), `c-1 is dropped. Unlanded work is archived in ${archive}.`);
+  assert.deepEqual(worktrees(), ["branch refs/heads/main"]);
+  assert.deepEqual(await agents(), []);
+
+  const out = mkdtempSync(join(tmpdir(), "fleet-unpack-"));
+  execFileSync("sh", ["-c", `zstd -dc '${archive}' | tar -xf - -C '${out}'`]);
+  const unpacked = join(out, "c-1-a1");
+  assert.deepEqual(
+    readdirSync(unpacked).sort(),
+    ["commits.bundle", "manifest.json", "staged.patch", "unstaged.patch", "untracked.tar"].sort(),
+  );
+  execFileSync("git", ["-C", clone, "bundle", "verify", join(unpacked, "commits.bundle")]);
+  assert.match(readFileSync(join(unpacked, "staged.patch"), "utf8"), /staged\.txt/);
+  assert.match(readFileSync(join(unpacked, "unstaged.patch"), "utf8"), /\+changed/);
+  assert.match(
+    execFileSync("tar", ["-tf", join(unpacked, "untracked.tar")], { encoding: "utf8" }),
+    /untracked\.txt/,
   );
 });
