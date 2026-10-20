@@ -2,7 +2,7 @@
 import type { Board, BoardCard, Entry, Status } from "@fleet/protocol";
 
 export type Question = Board["questions"][number];
-export type Tone = "needs" | "running" | "done" | "dropped";
+export type Tone = "needs" | "running" | "done" | "dropped" | "mate";
 
 /** The Done group shows the most recent cards only. */
 const DONE_SHOWN = 20;
@@ -20,30 +20,34 @@ export function questionsByCard(questions: readonly Question[]): Map<number, Que
 }
 
 /**
- * The inbox's three groups. A card with a question for the captain needs them,
- * whatever its status, and the card of the first question comes first.
+ * The inbox's groups. A card with a question for the captain needs them, whatever
+ * its status, and the card of the first question comes first. The lane cards of the
+ * second mates are not work: they are the Mates group, the talk between main and each mate.
  */
 export function groups(
   cards: readonly BoardCard[],
   asked: ReadonlyMap<number, Question[]>,
-): Record<"needs" | "running" | "done", BoardCard[]> {
+): Record<"needs" | "running" | "done" | "mates", BoardCard[]> {
   const order = [...asked.keys()];
   const rank = (card: BoardCard): number => {
     const index = order.indexOf(card.id);
     return index === -1 ? order.length : index;
   };
-  const needs = cards
+  const work = cards.filter((card) => !card.mate);
+  const needs = work
     .filter((card) => asked.has(card.id) || card.status === "needs-you")
     .sort((a, b) => rank(a) - rank(b));
-  const rest = cards.filter((card) => !needs.includes(card));
+  const rest = work.filter((card) => !needs.includes(card));
   return {
     needs,
+    mates: cards.filter((card) => card.mate).sort((a, b) => a.lane.localeCompare(b.lane)),
     running: rest.filter((card) => !closed(card)).sort(recentFirst),
     done: rest.filter(closed).sort(recentFirst).slice(0, DONE_SHOWN),
   };
 }
 
 export function toneOf(card: BoardCard, asked: boolean): Tone {
+  if (card.mate) return "mate";
   if (asked || card.status === "needs-you") return "needs";
   if (card.status === "done") return "done";
   if (card.status === "dropped") return "dropped";
@@ -59,7 +63,7 @@ const PHRASES: Record<Status, string> = {
   working: "Working",
   "in-review": "In review",
   "with-mate": "With its mate",
-  "with-first-mate": "With the first mate",
+  "with-first-mate": "With main",
   "needs-you": "Waiting for you",
   merging: "Merging",
   waiting: "On hold",
@@ -79,6 +83,7 @@ export function since(from: number, now: number): string {
 
 /** Where the card stands, such as "In review" or "With cleo". A waiting question outranks the status. */
 export function phraseOf(card: BoardCard, asked: boolean): string {
+  if (card.mate) return "Second mate";
   const phrase = asked && card.status !== "needs-you" ? PHRASES["needs-you"] : PHRASES[card.status];
   return card.status === "with-mate" ? `With ${card.lane}` : phrase;
 }

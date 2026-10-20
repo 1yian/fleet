@@ -1,5 +1,5 @@
 // The inbox (spec section 21.2): Needs you, Running, and Done, as three columns
-// (Board) or one after another (List). A narrow screen always gets the list.
+// (Board) or one after another (List), and Mates under them. A narrow screen always gets the list.
 // A click on a card opens its detail.
 import type { Board } from "@fleet/protocol";
 import { groups, questionsByCard } from "./format.ts";
@@ -24,11 +24,13 @@ interface Props {
 export function Inbox(props: Props) {
   const { board, view } = props;
   const asked = questionsByCard(board.questions);
-  const { needs, running, done } = groups(board.cards, asked);
+  const { needs, running, done, mates } = groups(board.cards, asked);
   const sections = [
     { tone: "needs", label: "Needs you", cards: needs, empty: "Nothing waits on you." },
     { tone: "running", label: "Running", cards: running, empty: "Nothing is running." },
     { tone: "done", label: "Done", cards: done, empty: "Nothing has finished yet." },
+    // Main and each second mate talk on its lane card. There is no section without a mate.
+    ...(mates.length === 0 ? [] : [{ tone: "mates", label: "Mates", cards: mates, empty: "" }]),
   ];
   // Number keys answer the first question on the board.
   const keyed = board.questions[0]?.card;

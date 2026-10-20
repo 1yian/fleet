@@ -28,9 +28,9 @@ test("answer records the captain's words only when the captain said them", async
     tool: "card_new",
     args: { title: "Pick the API version", name: "api-version", kind: "captain" },
   }));
-  h.onModel(() => ({ tool: "ask", args: { card: 1, question: "v1 or v2?", options: "v2" } }));
-  h.onModel(() => ({ tool: "answer", args: { card: 1, words: "use v3" } }));
-  h.onModel(() => ({ tool: "answer", args: { card: 1, words: "use the v2 endpoint" } }));
+  h.onModel(() => ({ tool: "ask", args: { card: 2, question: "v1 or v2?", options: "v2" } }));
+  h.onModel(() => ({ tool: "answer", args: { card: 2, words: "use v3" } }));
+  h.onModel(() => ({ tool: "answer", args: { card: 2, words: "use the v2 endpoint" } }));
   h.onModel(() => ({ text: "recorded" }));
   const mate = h.startPi(
     "cleo",
@@ -42,9 +42,9 @@ test("answer records the captain's words only when the captain said them", async
 
   const results = toolResults(await h.waitForCall(4));
   assert.deepEqual(results.slice(1), [
-    "Asked. c-1 is now with-first-mate.",
+    "Asked. c-2 is now with-first-mate.",
     "these words are not in the captain's messages or board entries; quote the captain exactly",
-    "Recorded the answer. c-1 is now with-mate.",
+    "Recorded the answer. c-2 is now with-mate.",
   ]);
 });
 
@@ -70,4 +70,33 @@ test("grant records a grant only with the captain's words", async () => {
     "these words are not in the captain's messages or board entries; quote the captain exactly",
     "Recorded the grant.",
   ]);
+});
+
+test("main hands work to a second mate with comment(lane), and card_new refuses the lane", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  h.onModel(() => ({
+    tool: "card_new",
+    args: { title: "Ads stay under budget", name: "ads-budget", kind: "scout", lane: "cleo" },
+  }));
+  h.onModel(() => ({
+    tool: "comment",
+    args: { lane: "cleo", text: "The captain asks: keep ads under budget" },
+  }));
+  h.onModel(() => ({ text: "handed over" }));
+  const mate = h.startPi(
+    "main",
+    { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: fleet.mainToken, FLEET_ROLE: "mate" },
+    [EXTENSION],
+  );
+  await h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
+  mate.prompt("Hand the ad budget work to cleo.");
+
+  const results = toolResults(await h.waitForCall(2));
+  assert.match(
+    results[0] ?? "",
+    /^card_new cannot create a card in lane cleo\. To hand work to cleo/,
+  );
+  assert.equal(results[1], "Commented. c-1 [waiting] cleo");
+  const heard = await cleo.waitForEntry((entry) => entry.author === "mate:main", "main's comment");
+  assert.equal(heard.body, "The captain asks: keep ads under budget");
 });

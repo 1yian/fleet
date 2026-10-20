@@ -26,7 +26,8 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
   pi.registerTool({
     name: "card_new",
     label: "New card",
-    description: "Creates a card. A card must exist before any work starts.",
+    description:
+      "Creates a card in your own lane. A card must exist before any work starts. As main, never use lane: to hand work to a second mate, comment on its lane card.",
     // The mate always names its cards; cardd also accepts cards without a name.
     parameters: Type.Object({ ...OPS["card.new"].args.properties, name: CardName }),
     execute: async (_id, params) =>
@@ -36,7 +37,7 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
     name: "comment",
     label: "Comment",
     description:
-      "Sends a steer or an answer to the worker on a card. now delivers at the next tool boundary.",
+      "Talks to an agent through a card. On your own card it reaches the worker. As main, a comment on a second mate's lane card, or on any card in its lane, reaches that second mate, never its worker. As a second mate, a comment on your lane card reaches main. comment(lane, text) is the shorthand for a lane card. now delivers at the next tool boundary.",
     parameters: OPS.comment.args,
     execute: async (_id, params) =>
       reply(`Commented. ${line(check(CardSchema, await link.call("comment", params)))}`),

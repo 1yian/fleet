@@ -90,6 +90,9 @@ textarea {
 .inbox[data-view="board"] {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.inbox[data-view="board"] .group.mates {
+  grid-column: 1 / -1;
+}
 .group {
   background: var(--panel);
   border-radius: 18px;
@@ -241,6 +244,9 @@ svg.status-icon {
 }
 .task.dropped .status-icon.dot {
   background: var(--dropped);
+}
+.task.mate .status-icon.dot {
+  background: var(--running);
 }
 .status-icon.spinner {
   border-radius: 50%;

@@ -144,7 +144,7 @@ CREATE TABLE lanes (
   hosts TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(hosts)),
   charter TEXT NOT NULL DEFAULT '',
   parent TEXT REFERENCES lanes (name)
-) STRICT;
+, card INTEGER REFERENCES cards (id)) STRICT;
 
 CREATE TABLE projects (
   name TEXT PRIMARY KEY,

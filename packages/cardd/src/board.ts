@@ -16,7 +16,7 @@ import {
 import { mergeChoice } from "./asks.ts";
 import { applyChange } from "./change.ts";
 import { factsFrom } from "./status.ts";
-import { addEntry, cardEntries, getCard, listCards } from "./store.ts";
+import { addEntry, cardEntries, getCard, isLaneCard, listCards, parentOf } from "./store.ts";
 
 /** The card changed since the captain saw it. The board shows the current card. */
 export class StaleCard extends Error {}
@@ -32,10 +32,11 @@ const inThread = (entry: Entry): boolean => entry.kind !== "job-result" && entry
 
 /**
  * What a card's one-line state draws from: the thread without the mate's comments, which are
- * instructions to the worker (the task message and its steers), not news.
+ * instructions to the worker (the task message and its steers), not news. On a lane card the
+ * comments are the talk between main and the second mate, so they are news.
  */
-const forCaptain = (entry: Entry): boolean =>
-  inThread(entry) && !(entry.kind === "comment" && entry.author.startsWith("mate:"));
+const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
+  inThread(entry) && (laneCard || !(entry.kind === "comment" && entry.author.startsWith("mate:")));
 
 const firstLine = (text: string): string =>
   text
@@ -43,37 +44,71 @@ const firstLine = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
+/** A second mate's question: it goes to main first, and only main's own question reaches the captain. */
+const isLaneAsk = (db: DatabaseSync, entry: Entry): boolean =>
+  entry.kind === "ask" &&
+  entry.author.startsWith("mate:") &&
+  parentOf(db, entry.author.slice("mate:".length)) !== null;
+
+/** The card's open questions, split by who holds them: the captain, or main. */
+function openAsks(
+  db: DatabaseSync,
+  entries: readonly Entry[],
+): { captain: Entry[]; main: Entry[] } {
+  const open = new Set(factsFrom(entries).askIds);
+  const asks = entries.filter((entry) => entry.kind === "ask" && open.has(String(entry.id)));
+  return {
+    captain: asks.filter((entry) => !isLaneAsk(db, entry)),
+    main: asks.filter((entry) => isLaneAsk(db, entry)),
+  };
+}
+
 /**
  * The card's latest news in one line, or the captain's words when there is none yet.
- * A question shows on its own, and a routing note only repeats the title.
+ * A question for the captain shows on its own, a question that waits with main shows
+ * here as "Asks main", and a routing note only repeats the title.
  */
-function summaryOf(card: Card, entries: readonly Entry[]): string {
+function summaryOf(
+  card: Card,
+  entries: readonly Entry[],
+  laneCard: boolean,
+  withMain: readonly Entry[],
+): string {
   const latest = entries.findLast(
-    (entry) => forCaptain(entry) && entry.kind !== "ask" && entry.fields["routed"] !== true,
+    (entry) =>
+      forCaptain(entry, laneCard) &&
+      (entry.kind !== "ask" || withMain.includes(entry)) &&
+      entry.fields["routed"] !== true,
   );
+  if (latest !== undefined && withMain.includes(latest)) {
+    return `Asks main: ${firstLine(latest.body)}`;
+  }
   return firstLine(latest?.body ?? card.intent);
 }
 
+/**
+ * What the board shows. Its questions are the captain's only: a second mate's question
+ * waits with main and shows on its card, and it reaches Needs you when main asks it.
+ */
 export function boardView(db: DatabaseSync): Board {
-  const cards = listCards(db).map((card) => ({
-    ...card,
-    summary: summaryOf(card, cardEntries(db, card.id)),
-  }));
+  const entriesOf = new Map<number, Entry[]>();
+  const cards = listCards(db).map((card) => {
+    const entries = cardEntries(db, card.id);
+    entriesOf.set(card.id, entries);
+    const mate = isLaneCard(db, card);
+    return { ...card, summary: summaryOf(card, entries, mate, openAsks(db, entries).main), mate };
+  });
   const questions = cards
     .filter((card) => card.status !== "done" && card.status !== "dropped")
-    .flatMap((card) => {
-      const entries = cardEntries(db, card.id);
-      const open = new Set(factsFrom(entries).askIds);
-      return entries
-        .filter((entry) => entry.kind === "ask" && open.has(String(entry.id)))
-        .map((ask) => ({
-          card: card.id,
-          ask: ask.id,
-          question: ask.body,
-          options: Array.isArray(ask.fields["options"]) ? ask.fields["options"].map(String) : [],
-          merge: ask.fields["merge"] === true,
-        }));
-    });
+    .flatMap((card) =>
+      openAsks(db, entriesOf.get(card.id) ?? []).captain.map((ask) => ({
+        card: card.id,
+        ask: ask.id,
+        question: ask.body,
+        options: Array.isArray(ask.fields["options"]) ? ask.fields["options"].map(String) : [],
+        merge: ask.fields["merge"] === true,
+      })),
+    );
   return { cards, questions };
 }
 
@@ -95,8 +130,13 @@ function answerOnBoard(
   written: boolean,
 ): void {
   const resolves = String(ask);
-  if (!factsFrom(cardEntries(db, card.id)).askIds.includes(resolves))
+  const entries = cardEntries(db, card.id);
+  if (!factsFrom(entries).askIds.includes(resolves))
     throw new StaleCard(`that question on c-${String(card.id)} is no longer open`);
+  const asked = entries.find((entry) => entry.id === ask);
+  if (asked !== undefined && isLaneAsk(db, asked)) {
+    throw new Error("that question is with main. It reaches you when main puts it to you");
+  }
   const merge = mergeChoice(db, card, resolves, written ? MERGE_OPTIONS[1] : choice);
   applyChange(db, card, merge === undefined ? { kind: "answer" } : { kind: "answer", merge });
   const picked = written && merge !== undefined ? MERGE_OPTIONS[1] : choice;

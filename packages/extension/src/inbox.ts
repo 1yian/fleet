@@ -67,7 +67,8 @@ export function format(entry: Entry): string {
   if (entry.kind === "job-result") return formatJob(entry, card);
   const who = entry.author.replace(/^mate:/, "");
   const kind = entry.kind === "comment" ? "" : ` (${entry.kind})`;
-  return `[fleet] ${who} on ${card}${kind}: ${entry.body}${suffix(entry, "resolves", "answers ")}`;
+  const answers = suffix(entry, "resolves", "answers ");
+  return `[fleet] ${who} on ${card}${kind}: ${entry.body}${answers}${suffix(entry, "re", "re your comment: ")}`;
 }
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;

@@ -6,28 +6,12 @@ import { check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
 import { requireCaptainWords } from "./authority.ts";
 import { applyChange } from "./change.ts";
 import { factsFrom } from "./status.ts";
-import { addEntry, cardEntries, getCard, type Session } from "./store.ts";
+import { withEcho } from "./comments.ts";
+import { addEntry, cardEntries, getCard, parentOf, reachable, type Session } from "./store.ts";
 
 interface Done {
   readonly value: unknown;
   readonly notify: readonly string[];
-}
-
-function parentOf(db: DatabaseSync, lane: string): string | null {
-  const parent = db.prepare("SELECT parent FROM lanes WHERE name = ?").get(lane)?.["parent"];
-  return typeof parent === "string" ? parent : null;
-}
-
-/** The card, if the session's lane owns it or is the parent of the lane that does. */
-export function reachable(
-  db: DatabaseSync,
-  session: Session,
-  id: number,
-): { card: Card; own: boolean } {
-  const card = getCard(db, id);
-  if (card.lane === session.lane) return { card, own: true };
-  if (parentOf(db, card.lane) === session.lane) return { card, own: false };
-  throw new Error(`c-${String(id)} belongs to lane ${card.lane}`);
 }
 
 function openAsk(db: DatabaseSync, card: Card): string {
@@ -47,9 +31,9 @@ export function ask(db: DatabaseSync, session: Session, raw: unknown): Done {
   const parent = parentOf(db, card.lane);
   const toFirstMate = own && parent !== null;
   applyChange(db, card, { kind: "ask", toFirstMate });
-  const to = toFirstMate ? [parent] : [];
   // A forward replaces the second mate's question, so the captain answers one question.
-  const fields = { options: args.options, ...(own ? {} : { resolves: openAsk(db, card) }) };
+  const asked = { options: args.options, ...(own ? {} : { resolves: openAsk(db, card) }) };
+  const { to, fields } = withEcho(db, session, card, toFirstMate ? [parent] : [], asked);
   addEntry(
     db,
     { card: card.id, author: `mate:${session.lane}`, kind: "ask", body: args.question, fields },
@@ -136,16 +120,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   );
   applyChange(db, card, { kind: "hold" });
   const body = `held until ${new Date(args.until).toISOString()}: ${args.reason}`;
-  addEntry(
-    db,
-    {
-      card: card.id,
-      author: `mate:${session.lane}`,
-      kind: "status",
-      body,
-      fields: { until: args.until },
-    },
-    [],
-  );
-  return { value: getCard(db, card.id), notify: [] };
+  const { to, fields } = withEcho(db, session, card, [], { until: args.until });
+  addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "status", body, fields }, to);
+  return { value: getCard(db, card.id), notify: to };
 }

@@ -3,10 +3,10 @@
 // writers, archives, and removes the worktree, then cardd closes the card.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
-import { reachable } from "./asks.ts";
-import { applyChange } from "./change.ts";
+import { applyChange, requireOrdinary } from "./change.ts";
 import { factsFrom } from "./status.ts";
-import { addEntry, cardEntries, getCard, mainLane, type Session } from "./store.ts";
+import { withEcho } from "./comments.ts";
+import { addEntry, cardEntries, getCard, mainLane, reachable, type Session } from "./store.ts";
 
 interface Done {
   readonly value: unknown;
@@ -26,6 +26,7 @@ function landed(db: DatabaseSync, card: Card): boolean {
 function closable(db: DatabaseSync, session: Session, id: number, mode: "done" | "dropped"): Card {
   const { card } = reachable(db, session, id);
   const name = `c-${String(card.id)}`;
+  requireOrdinary(db, card);
   if (card.status === "done" || card.status === "dropped")
     throw new Error(`${name} is already ${card.status}`);
   if (factsFrom(cardEntries(db, card.id)).openAsks > 0) {
@@ -82,8 +83,8 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
   // and the card's mate when main closes it. Nobody hears of their own close.
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
-  const to = other === session.lane ? [] : [other];
-  const fields = { outcome: args.mode, archives: args.archives, left: args.left };
+  const closed = { outcome: args.mode, archives: args.archives, left: args.left };
+  const { to, fields } = withEcho(db, session, card, other === session.lane ? [] : [other], closed);
   addEntry(
     db,
     { card: card.id, author: `mate:${session.lane}`, kind: "cleanup", body: args.text, fields },

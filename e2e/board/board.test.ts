@@ -383,7 +383,7 @@ test("a board load that finishes late does not replace a newer one", async () =>
   assert.equal(await page.getByText("Renew the certificate?").isVisible(), true);
 });
 
-test("a question shows on its card whatever the card's status", async () => {
+test("a second mate's question is not in Needs you until main forwards it", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
   await cleo.call("ask", {
@@ -394,8 +394,46 @@ test("a question shows on its card whatever the card's status", async () => {
   const cards = check(OPS.board.result, await cleo.call("board", {}));
   assert.equal(cards.find((each) => each.id === card.id)?.status, "with-first-mate");
 
+  // With main: the card shows in Running, with the question as its news, and no buttons.
   await page.goto(http());
-  await page.getByText("Which channel?").waitFor();
+  const running = page.getByRole("region", { name: "Running" });
+  await running.getByText("Asks main: Which channel?").waitFor();
+  await running.getByText("With main").waitFor();
+  await page.getByText("Nothing waits on you.").waitFor();
+  assert.equal(await page.getByRole("button", { name: "search" }).count(), 0);
+
+  // Main puts it to the captain, and now it needs him.
+  await main.call("ask", {
+    card: card.id,
+    question: "Cleo asks which channel. I recommend search.",
+    options: ["search", "social"],
+  });
+  const needs = page.getByRole("region", { name: "Needs you" });
+  await needs.getByText("Cleo asks which channel. I recommend search.").waitFor();
+  await needs.getByRole("button", { name: "search" }).click();
+  const answer = await cleo.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  assert.equal(answer.body, "search");
+});
+
+test("the board refuses an answer to a question that is still with main", async () => {
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
+  await cleo.call("ask", { card: card.id, question: "Which channel?", options: ["search"] });
+  const ask = await main.waitForEntry((entry) => entry.kind === "ask", "the question");
+  const current = check(OPS.board.result, await cleo.call("board", {})).find(
+    (each) => each.id === card.id,
+  );
+  const response = await fetch(`${http()}api/action`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      card: card.id,
+      revision: current?.revision,
+      action: { kind: "answer", ask: ask.id, choice: "search" },
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.match(JSON.stringify(await response.json()), /with main/);
 });
 
 test("a request that cannot reach cardd shows a notice, and a refused reply stays in the box", async () => {
@@ -495,4 +533,29 @@ test("long options show as a list of full-width choices, and one click answers",
   await page.getByRole("button", { name: long }).click();
   const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
   assert.equal(answer.body, long);
+});
+
+test("the Mates section shows each second mate's lane card and the talk with main", async () => {
+  await page.goto(http());
+  await page.getByText("Nothing waits on you.").waitFor();
+  assert.equal(await page.getByRole("region", { name: "Mates" }).count(), 0);
+
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  await main.call("card.new", { title: "Users see one scrollbar", kind: "scout" });
+  await main.call("comment", { lane: "cleo", text: "The captain asks: how are ads doing?" });
+  await cleo.call("comment", { lane: "cleo", text: "Ads are under budget, 3 of 5 convert." });
+
+  const mates = page.getByRole("region", { name: "Mates" });
+  await mates.getByText("Ads are under budget, 3 of 5 convert.").waitFor();
+  assert.deepEqual(await mates.locator(".task-title").allTextContents(), ["cleo"]);
+  await mates.getByText("Second mate").waitFor();
+  const running = page.getByRole("region", { name: "Running" });
+  assert.deepEqual(await running.locator(".task-title").allTextContents(), [
+    "Users see one scrollbar",
+  ]);
+
+  await mates.getByRole("button", { name: /cleo/ }).click();
+  const updates = mates.getByRole("list", { name: "Updates" });
+  await updates.getByText("The captain asks: how are ads doing?").waitFor();
+  assert.deepEqual(await updates.locator(".who").allTextContents(), ["main ", "cleo "]);
 });

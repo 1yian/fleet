@@ -11,8 +11,9 @@ import {
 } from "@fleet/protocol";
 import { answer, ask, handback, hold, openMergeAsk } from "./asks.ts";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
-import { applyChange } from "./change.ts";
+import { applyChange, requireOrdinary } from "./change.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
+import { comment } from "./comments.ts";
 import { grant } from "./grants.ts";
 import { merge } from "./merge.ts";
 import type { Timings } from "./timing.ts";
@@ -24,8 +25,8 @@ import {
   listCards,
   listProjects,
   mainLane,
+  parentOf,
   transaction,
-  workerOf,
   type Session,
 } from "./store.ts";
 
@@ -62,7 +63,12 @@ function reportRoute(
   status: ReportStatus,
 ): { to: string[]; re?: string } {
   const entries = cardEntries(db, card.id);
-  const comment = entries.findLast((entry) => entry.kind === "comment");
+  // Only a comment that reached the worker counts: the task message, or a mate's comment to it.
+  const comment = entries.findLast(
+    (entry) =>
+      entry.kind === "comment" &&
+      (entry.fields["task"] === true || entry.fields["for"] === "worker"),
+  );
   const report = entries.findLast((entry) => entry.kind === "report");
   const firstAfterComment = comment !== undefined && comment.id > (report?.id ?? 0);
   if (firstAfterComment) return { to: [card.lane], re: comment.body };
@@ -94,45 +100,22 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
   hold,
   "card.new": (db, session, raw) => {
     const { lane, ...args } = check(OPS["card.new"].args, raw);
-    if (lane === undefined || lane === session.lane)
-      return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
-    // Main routes work to a second mate: the card lives in that lane, and its mate hears of it.
-    const parent = db.prepare("SELECT parent FROM lanes WHERE name = ?").get(lane)?.["parent"];
-    if (parent !== session.lane) throw new Error(`lane ${lane} is not one of your second mates`);
-    const card = addCard(db, { ...args, lane });
-    const body = `New card from ${session.lane}: ${card.title}${card.intent === "" ? "" : `\n\nCaptain's words: ${card.intent}`}`;
-    addEntry(
-      db,
-      {
-        card: card.id,
-        author: `mate:${session.lane}`,
-        kind: "note",
-        body,
-        fields: { routed: true },
-      },
-      [lane],
-    );
-    return { value: card, notify: [lane] };
+    if (lane !== undefined && lane !== session.lane) {
+      const hint =
+        parentOf(db, lane) === session.lane
+          ? `To hand work to ${lane}, comment on its lane card: comment(lane="${lane}", text=...). It creates its own card.`
+          : "A mate creates cards only in its own lane.";
+      throw new Error(`card_new cannot create a card in lane ${lane}. ${hint}`);
+    }
+    return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
   },
   board: (db) => ({ value: listCards(db), notify: [] }),
   projects: (db) => ({ value: listProjects(db), notify: [] }),
-  comment: (db, session, raw) => {
-    const args = check(OPS.comment.args, raw);
-    const card = ownCard(db, session, args.card);
-    const worker = workerOf(db, card.id);
-    const to = worker === undefined ? [] : [worker];
-    applyChange(db, card, { kind: "comment", resolves: args.resolves });
-    const fields = { resolves: args.resolves, now: args.now };
-    addEntry(
-      db,
-      { card: card.id, author: `mate:${session.lane}`, kind: "comment", body: args.text, fields },
-      to,
-    );
-    return { value: getCard(db, card.id), notify: to };
-  },
+  comment,
   "attempt.begin": (db, session, raw) => {
     const args = check(OPS["attempt.begin"].args, raw);
     const card = ownCard(db, session, args.card);
+    requireOrdinary(db, card);
     const begun = beginAttempt(db, card, {
       host: args.host,
       replace: args.replace ?? false,

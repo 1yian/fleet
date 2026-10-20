@@ -136,6 +136,7 @@ export function CardDetail(props: Props) {
           <div ref={end} className="end" />
           <Composer
             lane={card.lane}
+            mate={card.mate}
             draft={props.draft}
             onDraft={props.onDraft}
             onReply={props.onReply}
@@ -189,8 +190,8 @@ function Properties(props: {
         </>,
       )}
       {row("Lane", <span className="tag">{card.lane}</span>)}
-      {row("Project", card.project ?? <span className="muted">None</span>)}
-      {row("Kind", <span className="kind">{card.kind}</span>)}
+      {card.mate ? null : row("Project", card.project ?? <span className="muted">None</span>)}
+      {row("Kind", <span className="kind">{card.mate ? "lane card" : card.kind}</span>)}
       {card.pr === null
         ? null
         : row(
@@ -199,7 +200,7 @@ function Properties(props: {
               {prLabel(card.pr)}
             </a>,
           )}
-      {row("Updated", since(card.updatedAt, now))}
+      {card.mate ? null : row("Updated", since(card.updatedAt, now))}
       {row(
         "Created",
         <time dateTime={new Date(card.createdAt).toISOString()}>
@@ -383,11 +384,13 @@ function Event(props: {
 /** The captain's message to the card's mate. Enter sends and Shift+Enter starts a new line. */
 function Composer(props: {
   readonly lane: string;
+  /** A lane card: the captain talks to the second mate itself. */
+  readonly mate: boolean;
   readonly draft: string;
   readonly onDraft: (text: string) => void;
   readonly onReply: (text: string) => Promise<boolean>;
 }) {
-  const { lane, draft, onDraft } = props;
+  const { lane, mate, draft, onDraft } = props;
   const [sending, setSending] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   const empty = draft.trim() === "";
@@ -425,7 +428,7 @@ function Composer(props: {
           aria-label="Comment"
           rows={1}
           value={draft}
-          placeholder={`Message ${lane} about this card`}
+          placeholder={mate ? `Message ${lane}` : `Message ${lane} about this card`}
           onChange={(event) => {
             onDraft(event.target.value);
           }}

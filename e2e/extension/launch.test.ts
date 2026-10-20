@@ -61,7 +61,7 @@ async function matePane(): Promise<{ group: number; shell: number }> {
   };
 }
 
-/** A second mate's question wakes main for one turn. */
+/** A second mate's question wakes main for one turn. Cleo's lane card is c-1, so its cards start at c-2. */
 async function cleoAsks(title: string): Promise<void> {
   const card: unknown = await cleo.call("card.new", { title, kind: "scout" });
   const id: unknown = Reflect.get(Object(card), "id");
@@ -89,7 +89,7 @@ test("fleet up starts the mate in its own workspace once, and again on its own c
   const asks = turns.filter((turn) => turn.role === "user").map((turn) => turn.text);
   assert.deepEqual(
     asks.map((text) => text.split(":")[0]),
-    ["[fleet] cleo on c-1 (ask)", "[fleet] cleo on c-2 (ask)"],
+    ["[fleet] cleo on c-2 (ask)", "[fleet] cleo on c-3 (ask)"],
   );
   assert.equal(readdirSync(join(h.dir, "sessions")).length, 1);
 });
