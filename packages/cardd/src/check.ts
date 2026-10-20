@@ -7,7 +7,7 @@ import { loseSilentJobs } from "./attempts.ts";
 import { applyChange } from "./change.ts";
 import { readPullRequest, type PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
-import { factsFrom, type Change } from "./status.ts";
+import { factsFrom, finishFrom, type Change } from "./status.ts";
 import { addEntry, cardEntries, getCard, parentOf, phaseOf, workerOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
 
@@ -18,8 +18,10 @@ interface Match {
   readonly text: string;
   /** The status change, if the finding moves the card. Reminders do not. */
   readonly change?: Change;
-  /** Whether the finding ends the merge question: it asks about a PR that is closed. */
-  readonly withdrawsMerge?: boolean;
+  /** Who hears of it, if not the card's lane mate. */
+  readonly to?: string;
+  /** Why the finding ends the merge question: its PR is closed, or it merged by hand. */
+  readonly withdrawsMerge?: "closed" | "merged";
   /** Whether a new finding may be written now. A finding that is already open stays open either way. */
   readonly ready?: boolean;
 }
@@ -108,14 +110,91 @@ function actingLane(db: DatabaseSync, card: number, lane: string): string {
   return hold?.holder === "main" ? (parentOf(db, lane) ?? lane) : lane;
 }
 
-/** Cards that wait on a mate (spec section 13.1): a reminder for each tier, written while that mate is idle. A hold that waits on main reminds main. */
+/** What a mate does with a finished card, by kind and by how it landed. */
+function closeAdvice(kind: string, merged: boolean, hasPr: boolean): string {
+  if (merged) return "Close it now with cleanup(card, summary).";
+  if (kind !== "ship")
+    return "Relay the findings, then close it with cleanup(card, summary), or card_drop if it did not land.";
+  if (hasPr)
+    return "Land it with merge(card), then cleanup(card, summary). Use card_drop if it will not land.";
+  return "If it made no code change, close it with cleanup(card, summary, without_pr). Otherwise use card_drop.";
+}
+
+const minutesSince = (now: number, since: number): number => Math.round((now - since) / MINUTE);
+const stateOf = (db: DatabaseSync, lane: string | null): unknown =>
+  lane === null
+    ? undefined
+    : db.prepare("SELECT state FROM sessions WHERE id = ? AND role = 'mate'").get(lane)?.["state"];
+
+/**
+ * A card whose work is finished and that only needs closing (spec section 13.1): the worker
+ * reported done, or the PR merged, and no hold is open. Its mate is reminded sooner than for
+ * other cards, and the lane's parent is told when a second mate leaves it open. Nothing closes
+ * it but the mate: cleanup or card_drop.
+ */
+function finishedMatches(
+  db: DatabaseSync,
+  card: { id: number; lane: string; kind: string; pr: unknown; status: string; since: number },
+  finish: { merged: boolean; at: number },
+  now: number,
+  t: Timings,
+): Match[] {
+  const since = Math.max(card.since, finish.at);
+  const name = `c-${String(card.id)}`;
+  const close = closeAdvice(card.kind, finish.merged, card.pr !== null);
+  const waited = `${card.status}, ${String(minutesSince(now, since))} min`;
+  const tier = reminderTier(now - since, t.finished);
+  const reminders: Match[] =
+    tier === 0
+      ? []
+      : [
+          {
+            card: card.id,
+            lane: card.lane,
+            condition: `finished-${String(tier)}`,
+            text: `reminder: ${name} is finished and still open (${waited}). ${close}`,
+            ready: stateOf(db, card.lane) === "idle",
+          },
+        ];
+  const parent = parentOf(db, card.lane);
+  const escalation = reminderTier(now - since, t.escalations);
+  if (parent === null || escalation === 0) return reminders;
+  const text = `escalation: ${name} finished ${String(minutesSince(now, since))} min ago and ${card.lane} has not closed it (${card.status}). ${close} Or ask ${card.lane} why.`;
+  return [
+    ...reminders,
+    {
+      card: card.id,
+      lane: card.lane,
+      to: parent,
+      condition: `escalated-${String(escalation)}`,
+      text,
+      ready: stateOf(db, parent) === "idle",
+    },
+  ];
+}
+
+/** Cards that wait on a mate (spec section 13.1): a reminder for each tier, written while that mate is idle. A hold that waits on main reminds main. A finished card is reminded sooner. */
 function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const waiting = rows(
     db,
-    "SELECT id, lane, status, updated_at FROM cards WHERE status IN ('with-mate', 'merging')",
+    "SELECT id, lane, kind, pr, status, updated_at FROM cards WHERE status IN ('with-mate', 'merging')",
   );
   return waiting.flatMap((row) => {
     const card = Number(row["id"]);
+    const entries = cardEntries(db, card);
+    const { hold } = factsFrom(entries);
+    const finish = finishFrom(entries);
+    if (hold === undefined && (finish.merged || finish.workerDone)) {
+      const own = {
+        id: card,
+        lane: String(row["lane"]),
+        kind: String(row["kind"]),
+        pr: row["pr"],
+        status: String(row["status"]),
+        since: Number(row["updated_at"]),
+      };
+      return finishedMatches(db, own, finish, now, t);
+    }
     const lane = actingLane(db, card, String(row["lane"]));
     const acted = db
       .prepare("SELECT max(created_at) AS at FROM entries WHERE card = ? AND author = ?")
@@ -123,18 +202,9 @@ function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     const since = Math.max(Number(row["updated_at"]), typeof acted === "number" ? acted : 0);
     const tier = reminderTier(now - since, t.reminders);
     if (tier === 0) return [];
-    const mate = db.prepare("SELECT state FROM sessions WHERE id = ? AND role = 'mate'").get(lane);
-    const minutes = Math.round((now - since) / MINUTE);
-    const text = `reminder: this card has waited for you (${String(row["status"])}, ${String(minutes)} min)`;
-    return [
-      {
-        card,
-        lane,
-        condition: `reminder-${String(tier)}`,
-        text,
-        ready: mate?.["state"] === "idle",
-      },
-    ];
+    const text = `reminder: this card has waited for you (${String(row["status"])}, ${String(minutesSince(now, since))} min)`;
+    const ready = stateOf(db, lane) === "idle";
+    return [{ card, lane, condition: `reminder-${String(tier)}`, text, ready }];
   });
 }
 
@@ -231,6 +301,7 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
           lane,
           condition: "pr-merged",
           text: "PR merged; run cleanup",
+          withdrawsMerge: "merged" as const,
           ...(change === undefined ? {} : { change }),
         },
       ];
@@ -243,7 +314,7 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
           condition: "pr-closed",
           text: "PR closed without a merge",
           change: FINDING,
-          withdrawsMerge: true,
+          withdrawsMerge: "closed" as const,
         },
       ];
     if (status !== "merging" || pr.failed.length === 0) return [];
@@ -303,20 +374,22 @@ export function runCheck(
       .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
       .get(match.card, match.condition);
     if (open !== undefined || match.ready === false) continue;
-    if (match.withdrawsMerge === true) {
-      for (const lane of withdrawMerge(db, getCard(db, match.card))) notify.add(lane);
+    if (match.withdrawsMerge !== undefined) {
+      for (const lane of withdrawMerge(db, getCard(db, match.card), match.withdrawsMerge))
+        notify.add(lane);
     }
     if (match.change !== undefined) applyChange(db, getCard(db, match.card), match.change);
     const fields = { condition: match.condition };
+    const to = match.to ?? match.lane;
     addEntry(db, { card: match.card, author: "check", kind: "finding", body: match.text, fields }, [
-      match.lane,
+      to,
     ]);
     db.prepare("INSERT INTO findings (card, condition, opened_at) VALUES (?, ?, ?)").run(
       match.card,
       match.condition,
       now,
     );
-    notify.add(match.lane);
+    notify.add(to);
   }
   return [...notify];
 }

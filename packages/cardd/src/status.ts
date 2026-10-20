@@ -267,3 +267,37 @@ export function factsFrom(entries: readonly Entry[]): Facts {
   for (const entry of entries) ENTRY_EFFECTS[entry.kind]?.(tally, entry);
   return { ...tally };
 }
+
+/** How a card's entries show that its work is finished (spec section 20.5). */
+export interface Finish {
+  /** A PR of the card merged, by the merge tool or by hand on GitHub. */
+  readonly merged: boolean;
+  /** The worker's latest handoff is `done`, and no comment steered it since. */
+  readonly workerDone: boolean;
+  /** When the latest entry that showed the work finished was written. 0 if none did. */
+  readonly at: number;
+}
+
+/** Statuses that hand the run back. Progress reports (`working`, `note`, `paused`, `resolved`) do not count. */
+const HANDOFF_REPORTS: ReadonlySet<string> = new Set([...HANDOFFS, "in-review", "done"]);
+
+const isMerge = (entry: Entry): boolean =>
+  entry.kind === "merge" || (entry.kind === "finding" && text(entry, "condition") === "pr-merged");
+
+export function finishFrom(entries: readonly Entry[]): Finish {
+  const finish = { merged: false, workerDone: false, at: 0 };
+  for (const entry of entries) {
+    const status = text(entry, "status");
+    if (isMerge(entry)) {
+      finish.merged = true;
+      finish.at = entry.createdAt;
+    } else if (entry.kind === "comment") {
+      // A comment steers the worker again, so an earlier done no longer stands.
+      finish.workerDone = false;
+    } else if (entry.kind === "report" && status !== undefined && HANDOFF_REPORTS.has(status)) {
+      finish.workerDone = status === "done";
+      if (finish.workerDone) finish.at = entry.createdAt;
+    }
+  }
+  return finish;
+}

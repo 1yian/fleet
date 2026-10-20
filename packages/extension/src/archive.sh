@@ -3,7 +3,8 @@
 # the base branch (a git bundle), staged and unstaged changes (binary patches),
 # untracked files that are not ignored, and a manifest. Prints the archive path.
 # Every step is checked on its own, so a failed step stops the script before an
-# archive is published. Safe to rerun: an existing archive is kept.
+# archive is published. Safe to rerun: an existing archive is kept. A worktree with
+# nothing unlanded gets no archive, and the script prints nothing.
 # Usage: sh -c "$(cat archive.sh)" archive <worktree> <base> <archive dir> <name>
 set -eu
 wt=$1 base=$2 arch=$3 name=$4
@@ -13,7 +14,7 @@ command -v zstd >/dev/null || { echo "zstd is required to archive" >&2; exit 1; 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 dir="$work/$name"
-mkdir -p "$arch" "$dir"
+mkdir -p "$dir"
 cd "$wt"
 ahead=$(git rev-list --count "$base..HEAD")
 head=$(git rev-parse HEAD)
@@ -24,10 +25,15 @@ fi
 git diff --binary --cached >"$dir/staged.patch"
 git diff --binary >"$dir/unstaged.patch"
 git ls-files --others --exclude-standard -z >"$work/untracked.list"
+# Nothing unlanded: no archive. The caller reads empty output as "nothing to keep".
+if [ "$ahead" -eq 0 ] && [ ! -s "$dir/staged.patch" ] && [ ! -s "$dir/unstaged.patch" ] && [ ! -s "$work/untracked.list" ]; then
+  exit 0
+fi
 tar --null -T "$work/untracked.list" -cf "$dir/untracked.tar"
 printf '{"worktree":"%s","base":"%s","head":"%s"}\n' "$wt" "$base" "$head" >"$dir/manifest.json"
 tar -cf "$work/snapshot.tar" -C "$work" "$name"
 zstd -19 -q -o "$work/archive.tar.zst" "$work/snapshot.tar"
 zstd -t -q "$work/archive.tar.zst"
+mkdir -p "$arch"
 mv "$work/archive.tar.zst" "$out"
 echo "$out"

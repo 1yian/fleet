@@ -128,3 +128,70 @@ test("a mate that is busy and then idle again is not reminded twice for the same
   await findingFor(card, "reminder-2");
   assert.deepEqual(findings(card), ["reminder-1", "reminder-2"]);
 });
+
+test("a finished card that its lane mate leaves open is reminded early, then reported to main", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const card = await newCard(cleo, "Which ads convert?", "scout");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", { status: "done", text: "report written" });
+  const name = `c-${String(card.id)}`;
+
+  const reminder = await cleo.waitForEntry(
+    (entry) => entry.fields["condition"] === "finished-1",
+    "the first reminder",
+  );
+  assert.match(
+    reminder.body,
+    new RegExp(`^reminder: ${name} is finished and still open \\(with-mate, \\d+ min\\)\\. Relay`),
+  );
+  const escalation = await fleet.main.waitForEntry(
+    (entry) => entry.fields["condition"] === "escalated-1",
+    "the escalation to main",
+  );
+  assert.match(
+    escalation.body,
+    new RegExp(`^escalation: ${name} finished \\d+ min ago and cleo has not closed it`),
+  );
+  // The reminders are for the lane mate. Main hears only the escalation.
+  assert.deepEqual(
+    fleet.main.entries
+      .map(({ entry }) => String(entry.fields["condition"]))
+      .filter((condition) => condition.startsWith("finished")),
+    [],
+  );
+
+  // Main closes it, as the escalation says, and nothing more follows.
+  await fleet.main.call("close.finish", {
+    card: card.id,
+    mode: "done",
+    text: "closed by main",
+    archives: [],
+    left: [],
+  });
+  assert.equal(await status(fleet.main, card), "done");
+});
+
+test("main's own finished card is reminded, and never reported to anyone", async () => {
+  const card = await newCard(fleet.main, "Which ads convert?", "scout");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await worker.call("report", { status: "done", text: "report written" });
+
+  await findingFor(card, "finished-4");
+  assert.deepEqual(findings(card), ["finished-1", "finished-2", "finished-3", "finished-4"]);
+});
+
+test("a ship card that only did an operation is reminded how to close it", async () => {
+  const card = await newCard(fleet.main, "Add credit");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await fleet.main.call("grant", {
+    lane: "main",
+    project: "web",
+    words: "You may merge web when CI is green",
+    source: "chat",
+    may: "merge when CI is green",
+    merge: true,
+  });
+  await worker.call("report", { status: "done", text: "credit added" });
+  const reminder = await findingFor(card, "finished-1");
+  assert.match(reminder.body, /\(merging, \d+ min\)\. If it made no code change.*without_pr/);
+});

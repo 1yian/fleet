@@ -285,7 +285,7 @@ test("an unreachable host of a replaced attempt does not block closing, and its 
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.match(
     results.at(-1) ?? "",
-    /^c-1 is dropped\. Unlanded work is archived in local:.*c-1-a2\.tar\.zst\. Left in place: far c-1-a1 \(herdr worktree on far failed: .*timed out.*\)\.$/,
+    /^c-1 is dropped\. Left in place: far c-1-a1 \(herdr worktree on far failed: .*timed out.*\)\.$/,
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
 });
@@ -360,7 +360,7 @@ test("a host that hangs past the timeout counts as unreachable for a replaced at
   const results = toolResults(await h.waitForCall(4, "mate", 120_000));
   assert.match(
     results.at(-1) ?? "",
-    /^c-1 is dropped\. Unlanded work is archived in local:.*c-1-a2\.tar\.zst\. Left in place: far c-1-a1 \(herdr worktree on far failed: killed by SIGTERM\)\.$/,
+    /^c-1 is dropped\. Left in place: far c-1-a1 \(herdr worktree on far failed: killed by SIGTERM\)\.$/,
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
 });

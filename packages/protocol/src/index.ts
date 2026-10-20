@@ -192,8 +192,14 @@ export const OPS = {
   },
   "close.begin": {
     roles: ["mate"],
-    args: Type.Object({ card: Type.Integer(), mode: Type.Enum(["done", "dropped"]) }),
+    args: Type.Object({
+      card: Type.Integer(),
+      mode: Type.Enum(["done", "dropped"]),
+      withoutPr: Type.Optional(Type.Boolean()),
+    }),
     result: Type.Object({
+      /** Whether the host must confirm that no attempt has unlanded work before the card closes as Done. */
+      verify: Type.Boolean(),
       attempts: Type.Array(
         Type.Object({
           session: Type.String(),
@@ -212,6 +218,7 @@ export const OPS = {
       card: Type.Integer(),
       mode: Type.Enum(["done", "dropped"]),
       text: Type.String({ minLength: 1 }),
+      withoutPr: Type.Optional(Type.Boolean()),
       archives: Type.Array(Type.String()),
       left: Type.Array(
         Type.Object({ session: Type.String(), host: Type.String(), reason: Type.String() }),

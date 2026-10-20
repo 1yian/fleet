@@ -37,6 +37,63 @@ elif [ "$status" -ne 1 ]; then
 fi
 if [ -f "$out" ]; then echo "$out"; fi`;
 
+// Prints "<commits not on the base branch> <changed or untracked files>" for one attempt.
+// The worktree decides while it exists. Once it is gone, only its branch is left to judge.
+const LANDING_SCRIPT = `set -eu
+wt=$1 clone=$2 branch=$3 base=$4
+ahead=0 dirty=0
+if [ -d "$wt" ]; then
+  ahead=$(git -C "$wt" rev-list --count "$base..HEAD")
+  dirty=$(git -C "$wt" status --porcelain | wc -l | tr -d ' ')
+elif git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
+  ahead=$(git -C "$clone" rev-list --count "$base..refs/heads/$branch")
+fi
+echo "$ahead $dirty"`;
+
+/** What one attempt has not landed, in words. Empty when nothing is left (spec section 20.5). */
+async function unlanded(attempt: Attempt): Promise<string> {
+  const { host, clone, branch, base, session } = attempt;
+  const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
+  const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
+  const out = await onHost(host, [
+    "sh",
+    "-c",
+    LANDING_SCRIPT,
+    "landing",
+    path,
+    clone,
+    branch,
+    base,
+  ]);
+  const [ahead = 0, dirty = 0] = out.trim().split(" ").map(Number);
+  const parts = [
+    ahead > 0 ? `${String(ahead)} commit${ahead === 1 ? "" : "s"} not on ${base}` : "",
+    dirty > 0 ? `${String(dirty)} uncommitted file${dirty === 1 ? "" : "s"}` : "",
+  ].filter((part) => part !== "");
+  return parts.join(" and ");
+}
+
+/**
+ * The landing test of cleanup: every attempt has nothing unlanded. An unreachable host of an
+ * attempt that no longer runs cannot be asked, and its work stays in place, as for a close.
+ */
+async function requireLanded(card: number, plan: ReturnType<typeof parsePlan>): Promise<void> {
+  const left: string[] = [];
+  for (const attempt of plan.attempts) {
+    try {
+      const what = await unlanded(attempt);
+      if (what !== "") left.push(`${attempt.session} on ${attempt.host} has ${what}`);
+    } catch (error) {
+      if (attempt.live || !(error instanceof HostUnreachable)) throw error;
+    }
+  }
+  if (left.length > 0) {
+    throw new Error(
+      `c-${String(card)} has unlanded work, so it cannot close as Done: ${left.join("; ")}. Land it, or use card_drop, which archives it.`,
+    );
+  }
+}
+
 /** Stops the writers, archives, and removes the worktree and branch. Returns the archive path, or null if there is no archive. */
 async function retire(attempt: Attempt): Promise<string | null> {
   const { host, clone, branch, base, session } = attempt;
@@ -65,11 +122,11 @@ async function retire(attempt: Attempt): Promise<string | null> {
 
 export async function close(
   link: Link,
-  request: { card: number; mode: "done" | "dropped"; text: string },
+  request: { card: number; mode: "done" | "dropped"; text: string; withoutPr?: boolean },
 ): Promise<string> {
-  const plan = parsePlan(
-    await link.call("close.begin", { card: request.card, mode: request.mode }),
-  );
+  const { card: id, mode, withoutPr } = request;
+  const plan = parsePlan(await link.call("close.begin", { card: id, mode, withoutPr }));
+  if (plan.verify) await requireLanded(id, plan);
   const archives: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
   for (const attempt of plan.attempts) {

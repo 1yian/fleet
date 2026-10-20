@@ -2,7 +2,7 @@
 // 13.1, 18, and 20.4), against a real cardd and a fake gh.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { BoardSchema, check, MERGE_OPTIONS, type Card } from "@fleet/protocol";
+import { BoardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { FakeGitHub } from "../support/github.ts";
@@ -297,4 +297,22 @@ test("the captain's own words on a merge question from the board ask for changes
 
   assert.equal(await status(fleet.main, card), "working");
   await assert.rejects(merge(card), { message: /no authority to merge/ });
+});
+
+test("a PR merged by hand makes the open merge question moot, and the card closes as Done", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  assert.equal(await status(fleet.main, card), "needs-you");
+  const close = { card: card.id, mode: "done" };
+  await assert.rejects(fleet.main.call("close.begin", close), {
+    message: `c-${String(card.id)} has an open hold; release it first, with the captain's words when it waits on him`,
+  });
+
+  gh.setPr(PR, "MERGED");
+  await fleet.main.waitForEntry((entry) => entry.fields["condition"] === "pr-merged", "the notice");
+  assert.equal(await status(fleet.main, card), "merging");
+  // A merged PR landed the work: no marker, and the host has nothing to confirm.
+  const plan = check(OPS["close.begin"].result, await fleet.main.call("close.begin", close));
+  assert.equal(plan.verify, false);
 });
