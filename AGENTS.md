@@ -6,7 +6,6 @@ This repository rebuilds Firstmate as `cardd`, the `fleet` Pi extension, and a b
 
 - `npm run check` runs every static gate: format, lint, typecheck, knip, dependency-cruiser, and the migration check.
 - `npm run test:e2e` runs every end-to-end test.
-- `node scripts/budget.ts` prints the line counts against the limits in spec section 24.2.
 
 ## Rules
 
