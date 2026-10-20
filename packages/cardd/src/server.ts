@@ -14,9 +14,10 @@ import {
   type ServerMessage,
 } from "@fleet/protocol";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import { readPullRequests, runCheck } from "./check.ts";
+import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
-import { runOp } from "./ops.ts";
-import { timedCheck, type Timing } from "./timed.ts";
+import { performOp } from "./ops.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
 
 const CLOSE_BAD_MESSAGE = 4000;
@@ -54,24 +55,33 @@ function readBody(request: IncomingMessage): Promise<string> {
 class Hub {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly db: DatabaseSync;
-  private readonly timing: Timing;
+  private readonly timing: Timings;
+  private checking = false;
 
-  constructor(db: DatabaseSync, timing: Timing) {
+  constructor(db: DatabaseSync, timing: Timings) {
     this.db = db;
     this.timing = timing;
   }
 
-  /** One pass of the timed check (spec section 13). Pushes the findings it wrote. */
+  /** One pass of the timed check (spec section 13): read PR state with gh, then check. Pushes the findings it wrote. */
   check(): void {
-    const notify = transaction(this.db, () => timedCheck(this.db, this.timing, Date.now()));
-    for (const recipient of notify) this.flush(recipient, false);
+    if (this.checking) return;
+    this.checking = true;
+    void readPullRequests(this.db)
+      .then((prs) => {
+        const notify = transaction(this.db, () => runCheck(this.db, Date.now(), this.timing, prs));
+        for (const recipient of notify) this.flush(recipient, false);
+      })
+      .finally(() => {
+        this.checking = false;
+      });
   }
 
   /** Runs an operation, then pushes its new entries. Websocket calls and POST /call share it. */
-  perform(session: Session, op: string, args: unknown): Outcome {
+  async perform(session: Session, op: string, args: unknown): Promise<Outcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
-      const done = transaction(this.db, () => runOp(this.db, session, op, args, this.timing));
+      const done = await performOp(this.db, session, op, args, this.timing);
       for (const recipient of done.notify) this.flush(recipient, false);
       return { ok: true, value: done.value };
     } catch (error) {
@@ -93,12 +103,12 @@ class Hub {
         token = session === undefined ? undefined : message.token;
       } else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
       else if (message.t === "activity") setSessionState(this.db, live().id, message.state);
-      else
-        send(socket, {
-          t: "result",
-          id: message.id,
-          ...this.perform(live(), message.op, message.args),
+      else {
+        const id = message.id;
+        void this.perform(live(), message.op, message.args).then((outcome) => {
+          send(socket, { t: "result", id, ...outcome });
         });
+      }
     };
     socket.on("message", (data) => {
       try {
@@ -135,7 +145,7 @@ class Hub {
     }
     try {
       const body = check(HttpCallSchema, JSON.parse(await readBody(request)));
-      const outcome = this.perform(session, body.op, body.args);
+      const outcome = await this.perform(session, body.op, body.args);
       reply(outcome.ok ? 200 : 400, outcome);
     } catch (error) {
       reply(400, { ok: false, error: reason(error) });
@@ -162,7 +172,7 @@ class Hub {
     return session;
   }
 
-  private flush(session: string, atConnect: boolean): void {
+  flush(session: string, atConnect: boolean): void {
     const socket = this.sockets.get(session);
     if (socket === undefined) return;
     for (const push of transaction(this.db, () => toPush(this.db, session, atConnect))) {
@@ -175,12 +185,16 @@ export async function serve(
   db: DatabaseSync,
   host: string,
   port: number,
-  timing: Timing,
+  timing: Timings,
 ): Promise<string> {
+  // Convergent start: no session is connected yet. Live sessions reconnect and become idle.
+  db.prepare(
+    "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state IN ('idle', 'running', 'waiting')",
+  ).run(Date.now());
   const hub = new Hub(db, timing);
   setInterval(() => {
     hub.check();
-  }, timing.checkMs).unref();
+  }, timing.every).unref();
   const server = createServer((request, response) => {
     void hub.answerHttp(request, response);
   });

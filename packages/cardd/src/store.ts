@@ -28,7 +28,7 @@ const SessionSchema = Type.Object({
 });
 
 const CARD_JSON = `json_object('id', id, 'title', title, 'lane', lane, 'project', project,
-  'kind', kind, 'status', status, 'revision', revision, 'intent', intent, 'spec', spec,
+  'kind', kind, 'status', status, 'revision', revision, 'pr', pr, 'intent', intent, 'spec', spec,
   'createdAt', created_at, 'updatedAt', updated_at)`;
 /** SQL that builds an entry's wire JSON from table alias `e`. */
 export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
@@ -218,4 +218,13 @@ export function setSessionState(db: DatabaseSync, session: string, state: Sessio
        WHERE id = (SELECT a.card FROM sessions s JOIN attempts a ON a.id = s.attempt WHERE s.id = ?)`,
     ).run(now, session);
   }
+}
+
+/** Main's lane: the one lane with no parent. */
+export function mainLane(db: DatabaseSync): string {
+  const name = db
+    .prepare("SELECT name FROM lanes WHERE parent IS NULL ORDER BY name LIMIT 1")
+    .get()?.["name"];
+  if (typeof name !== "string") throw new Error("there is no main lane");
+  return name;
 }

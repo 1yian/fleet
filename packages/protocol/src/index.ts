@@ -28,10 +28,15 @@ export const REPORT_STATUSES = [
   "stopped",
 ] as const;
 
+/** The options of a merge question (spec section 7.5). */
+export const MERGE_OPTIONS = ["Approve & merge", "Request changes"] as const;
+
 const Status = Type.Enum(STATUSES);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const ReportStatus = Type.Enum(REPORT_STATUSES);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
+/** The captain's quoted words: at least one character that is not whitespace. */
+export const Words = Type.String({ pattern: "\\S" });
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 
 export type Status = Static<typeof Status>;
@@ -46,6 +51,7 @@ export const CardSchema = Type.Object({
   kind: CardKind,
   status: Status,
   revision: Type.Integer(),
+  pr: Nullable(Type.String()),
   intent: Type.String(),
   spec: Type.String(),
   createdAt: Type.Integer(),
@@ -85,6 +91,65 @@ export const OPS = {
       text: Type.String({ minLength: 1 }),
       resolves: Type.Optional(Key),
       now: Type.Optional(Type.Boolean()),
+    }),
+    result: CardSchema,
+  },
+  ask: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      question: Type.String({ minLength: 1 }),
+      options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    }),
+    result: CardSchema,
+  },
+  answer: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      words: Words,
+      source: Type.Enum(["chat", "board", "record"]),
+      choice: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+    result: CardSchema,
+  },
+  grant: {
+    roles: ["mate"],
+    args: Type.Object({
+      lane: Type.Optional(Type.String()),
+      card: Type.Optional(Type.Integer()),
+      words: Words,
+      source: Type.Enum(["chat", "board", "record"]),
+      may: Type.String({ minLength: 1 }),
+      merge: Type.Boolean(),
+      limits: Type.Optional(Type.String()),
+      alwaysAsks: Type.Optional(Type.String()),
+      project: Type.Optional(Type.String()),
+      branch: Type.Optional(Type.String()),
+      expires: Type.Optional(Type.Integer()),
+    }),
+    result: Type.Object({ grant: Type.Integer() }),
+  },
+  merge: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      words: Type.Optional(Words),
+      source: Type.Optional(Type.Enum(["chat", "board", "record"])),
+    }),
+    result: CardSchema,
+  },
+  handback: {
+    roles: ["mate"],
+    args: Type.Object({ card: Type.Integer(), guidance: Type.String({ minLength: 1 }) }),
+    result: CardSchema,
+  },
+  hold: {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      until: Type.Integer(),
+      reason: Type.String({ minLength: 1 }),
     }),
     result: CardSchema,
   },
@@ -136,6 +201,7 @@ export const OPS = {
       text: Type.String({ minLength: 1 }),
       key: Type.Optional(Key),
       until: Type.Optional(Type.Integer()),
+      pr: Type.Optional(Type.String({ pattern: "^https://" })),
     }),
     result: CardSchema,
   },

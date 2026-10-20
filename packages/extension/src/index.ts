@@ -7,6 +7,7 @@ import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Jobs } from "./jobs.ts";
 import { Link } from "./link.ts";
 import { registerMate } from "./mate.ts";
+import { registerAuthority, registerQuestions } from "./questions.ts";
 import { WorkerRun } from "./worker.ts";
 
 interface Config {
@@ -70,6 +71,8 @@ function start(
   jobs?.register(pi, { url, token });
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
+  if (role === "mate") registerQuestions(pi, link, () => sessionFile);
+  if (role === "mate") registerAuthority(pi, link, () => sessionFile);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() });
 
   pi.on("session_shutdown", () => {
@@ -79,9 +82,13 @@ function start(
     const id = fleetEntryId(event.message);
     if (id !== undefined) link.ack(id);
   });
-  pi.on("agent_start", () => {
+  // Activity at each run and tool call keeps last_activity fresh for the stall check (spec section 12.2).
+  const active = (): void => {
     link.activity("running");
-  });
+  };
+  pi.on("agent_start", active);
+  pi.on("tool_execution_start", active);
+  pi.on("tool_execution_end", active);
   pi.on("agent_settled", () => {
     link.activity(jobs?.waiting === true ? "waiting" : "idle");
   });
