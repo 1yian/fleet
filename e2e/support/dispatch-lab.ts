@@ -93,6 +93,17 @@ export const lastUser = (turns: Turn[]): string | undefined =>
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
 
+/** Whether the herdr command that starts an attempt's worker still runs. It waits for the worker to idle. */
+export function herdrStartRunning(lab: HerdrLab, attempt: string): boolean {
+  try {
+    execFileSync("pgrep", ["-f", `herdr agent start ${attempt} .*--session ${lab.name}`]);
+    return true;
+  } catch {
+    // pgrep exits 1 when no process matches.
+    return false;
+  }
+}
+
 /** The clone's worktrees, by branch. */
 export const worktreesOf = (clone: string): string[] =>
   execFileSync("git", ["-C", clone, "worktree", "list", "--porcelain"], { encoding: "utf8" })
