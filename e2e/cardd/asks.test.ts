@@ -105,17 +105,19 @@ test("words that are only whitespace never count as the captain's words", async 
   assert.equal(await status(fleet.main, card), "with-first-mate");
 });
 
-test("a question that main does not take goes to the captain", async () => {
+test("a question that main does not take stays with main, which gets a reminder, and never reaches the captain", async () => {
   await ask(cleo);
   const question = await fleet.main.waitForEntry((entry) => entry.kind === "ask", "the question");
-  await cleo.waitForEntry(
+  const reminder = await fleet.main.waitForEntry(
     (entry) => entry.fields["condition"] === `first-mate:${String(question.id)}`,
-    "the forward",
+    "the reminder",
   );
-  assert.equal(await status(cleo, card), "needs-you");
+  assert.match(reminder.body, /^reminder: a second mate's question has waited for you/);
+  assert.equal(await status(cleo, card), "with-first-mate");
   assert.equal(
-    cleo.entries.at(-1)?.entry.body,
-    "forwarded to the captain: main did not take the question within 15 minutes",
+    cleo.entries.filter(({ entry }) => entry.kind === "finding").length,
+    0,
+    "the second mate hears nothing",
   );
 });
 

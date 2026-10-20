@@ -90,7 +90,10 @@ export const OPS = {
       intent: Type.Optional(Type.String()),
       spec: Type.Optional(Type.String()),
       lane: Type.Optional(
-        Type.String({ description: "Main only: a second mate's lane to route the card to" }),
+        Type.String({
+          description:
+            "Refused unless it is your own lane. To hand work to a second mate, comment on its lane card",
+        }),
       ),
     }),
     result: CardSchema,
@@ -111,7 +114,10 @@ export const OPS = {
   comment: {
     roles: ["mate"],
     args: Type.Object({
-      card: Type.Integer(),
+      card: Type.Optional(Type.Integer({ description: "The card number, such as 12 for c-12" })),
+      lane: Type.Optional(
+        Type.String({ description: "A lane's name: shorthand for that lane's lane card" }),
+      ),
       text: Type.String({ minLength: 1 }),
       resolves: Type.Optional(Key),
       now: Type.Optional(Type.Boolean()),
@@ -285,7 +291,12 @@ export type ClientMessage = Static<typeof ClientMessage>;
 
 /** The board (spec section 21): what it shows, and the captain's actions. */
 /** A card as the board shows it: the card and the latest thing the captain would read on it. */
-export const BoardCardSchema = Type.Object({ ...CardSchema.properties, summary: Type.String() });
+export const BoardCardSchema = Type.Object({
+  ...CardSchema.properties,
+  summary: Type.String(),
+  /** Whether the card is a second mate's lane card, which the board shows under Mates. */
+  mate: Type.Boolean(),
+});
 export type BoardCard = Static<typeof BoardCardSchema>;
 
 export const BoardSchema = Type.Object({

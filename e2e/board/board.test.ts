@@ -194,7 +194,10 @@ test("the thread is the conversation between the owner and its mate, with each a
     text: "Fix R1 only, or R1 and R2?",
   });
   await mate.call("comment", { card: card.id, text: "fix both R1 and R2", resolves: "scope" });
-  await mate.call("ask", { card: card.id, question: "Keep the footer?", options: ["yes", "no"] });
+  // The mate's question goes to main, which puts it to the captain.
+  const footer = { card: card.id, question: "Keep the footer?", options: ["yes", "no"] };
+  await mate.call("ask", footer);
+  await main.call("ask", footer);
   await page.goto(`${http()}#/c-${String(card.id)}`);
 
   const thread = page.getByRole("list", { name: "Thread" });
@@ -211,11 +214,12 @@ test("the thread is the conversation between the owner and its mate, with each a
   assert.match(lines[2] ?? "", /Worker needs a decision scope .*Fix R1 only, or R1 and R2\?/);
   assert.match(lines[3] ?? "", /cleo Mate decided scope .*fix both R1 and R2/);
   assert.match(lines[4] ?? "", /cleo Mate asked .*Keep the footer\?/);
-  assert.match(lines[5] ?? "", /You answered .*yes/);
-  assert.match(lines[6] ?? "", /Worker is done .*a final note/);
+  assert.match(lines[5] ?? "", /main First mate asked .*Keep the footer\?/);
+  assert.match(lines[6] ?? "", /You answered .*yes/);
+  assert.match(lines[7] ?? "", /Worker is done .*a final note/);
   // Done on a ship card makes the fleet ask for the merge.
-  assert.match(lines[7] ?? "", /Fleet asked a question .*waiting for your answer above/);
-  assert.equal(lines.length, 8);
+  assert.match(lines[8] ?? "", /Fleet asked a question .*waiting for your answer above/);
+  assert.equal(lines.length, 9);
   await worker.close();
 });
 
@@ -312,7 +316,9 @@ test("a refused message comes back into the composer", async () => {
 test("Write your own answers the question in the captain's words, for the card's mate", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
-  await cleo.call("ask", { card: card.id, question: "Which channel?", options: ["search"] });
+  const channel = { card: card.id, question: "Which channel?", options: ["search"] };
+  await cleo.call("ask", channel);
+  await main.call("ask", channel);
   await page.goto(http());
   await page.getByText("Which channel?").waitFor();
 
@@ -381,21 +387,6 @@ test("a board load that finishes late does not replace a newer one", async () =>
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );
   assert.equal(await page.getByText("Renew the certificate?").isVisible(), true);
-});
-
-test("a question shows on its card whatever the card's status", async () => {
-  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-  const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
-  await cleo.call("ask", {
-    card: card.id,
-    question: "Which channel?",
-    options: ["search", "social"],
-  });
-  const cards = check(OPS.board.result, await cleo.call("board", {}));
-  assert.equal(cards.find((each) => each.id === card.id)?.status, "with-first-mate");
-
-  await page.goto(http());
-  await page.getByText("Which channel?").waitFor();
 });
 
 test("a request that cannot reach cardd shows a notice, and a refused reply stays in the box", async () => {

@@ -1,0 +1,116 @@
+/// <reference lib="dom" />
+// Second mates on the board (spec sections 6.3, 17.2, and 21.2): their lane cards, and their
+// questions, which reach Needs you only when main puts them to the captain.
+import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+import { after, afterEach, before, beforeEach, test } from "node:test";
+import { chromium, type Browser, type Page } from "playwright";
+import { CardSchema, check, OPS } from "@fleet/protocol";
+import { Cardd, type Session } from "../support/cardd.ts";
+
+const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
+
+let browser: Browser;
+let cardd: Cardd;
+let main: Session;
+let page: Page;
+before(async () => {
+  browser = await chromium.launch();
+});
+after(async () => {
+  await browser.close();
+});
+beforeEach(async () => {
+  cardd = await Cardd.start({}, ["--board", BOARD]);
+  main = await cardd.connect(cardd.addLane("main"));
+  page = await browser.newPage();
+});
+afterEach(async () => {
+  await page.close();
+  await cardd.stop();
+});
+
+const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
+
+test("the Mates section shows each second mate's lane card, and its detail is the talk with main", async () => {
+  await page.goto(http());
+  await page.getByText("Nothing waits on you.").waitFor();
+  assert.equal(await page.getByRole("region", { name: "Mates" }).count(), 0);
+
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  await main.call("card.new", { title: "Users see one scrollbar", kind: "scout" });
+  await main.call("comment", { lane: "cleo", text: "The captain asks: how are ads doing?" });
+  await cleo.call("comment", { lane: "cleo", text: "Ads are under budget, 3 of 5 convert." });
+
+  const mates = page.getByRole("region", { name: "Mates" });
+  await mates.getByText("Ads are under budget, 3 of 5 convert.").waitFor();
+  assert.deepEqual(await mates.locator(".task-title").allTextContents(), ["cleo"]);
+  await mates.getByText("Second mate").waitFor();
+  const running = page.getByRole("region", { name: "Running" });
+  assert.deepEqual(await running.locator(".task-title").allTextContents(), [
+    "Users see one scrollbar",
+  ]);
+
+  await mates.getByRole("link", { name: /cleo/ }).click();
+  const thread = page.getByRole("list", { name: "Thread" });
+  await thread.getByText("The captain asks: how are ads doing?").waitFor();
+  await thread.getByText("Ads are under budget, 3 of 5 convert.").waitFor();
+  assert.deepEqual(await thread.locator(".name").allTextContents(), ["main", "cleo"]);
+  await page.getByRole("textbox", { name: "Comment" }).fill("Thanks, cleo");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const heard = await cleo.waitForEntry((entry) => entry.author === "captain", "the captain");
+  assert.equal(heard.body, "Thanks, cleo");
+});
+
+test("a second mate's question is not in Needs you until main forwards it", async () => {
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
+  await cleo.call("ask", {
+    card: card.id,
+    question: "Which channel?",
+    options: ["search", "social"],
+  });
+  const cards = check(OPS.board.result, await cleo.call("board", {}));
+  assert.equal(cards.find((each) => each.id === card.id)?.status, "with-first-mate");
+
+  // With main: the card shows in Running, with the question as its news, and no buttons.
+  await page.goto(http());
+  const running = page.getByRole("region", { name: "Running" });
+  await running.getByText("Asks main: Which channel?").waitFor();
+  await running.getByText("With main").waitFor();
+  await page.getByText("Nothing waits on you.").waitFor();
+  assert.equal(await page.getByRole("button", { name: "search" }).count(), 0);
+
+  // Main puts it to the captain, and now it needs him.
+  await main.call("ask", {
+    card: card.id,
+    question: "Cleo asks which channel. I recommend search.",
+    options: ["search", "social"],
+  });
+  const needs = page.getByRole("region", { name: "Needs you" });
+  await needs.getByText("Cleo asks which channel. I recommend search.").waitFor();
+  await needs.getByRole("button", { name: "search" }).click();
+  const answer = await cleo.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  assert.equal(answer.body, "search");
+});
+
+test("the board refuses an answer to a question that is still with main", async () => {
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
+  await cleo.call("ask", { card: card.id, question: "Which channel?", options: ["search"] });
+  const ask = await main.waitForEntry((entry) => entry.kind === "ask", "the question");
+  const current = check(OPS.board.result, await cleo.call("board", {})).find(
+    (each) => each.id === card.id,
+  );
+  const response = await fetch(`${http()}api/action`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      card: card.id,
+      revision: current?.revision,
+      action: { kind: "answer", ask: ask.id, choice: "search" },
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.match(JSON.stringify(await response.json()), /with main/);
+});

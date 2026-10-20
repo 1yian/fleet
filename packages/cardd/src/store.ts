@@ -92,10 +92,49 @@ export function addLane(
     db.prepare(
       "INSERT INTO sessions (id, role, lane, host, token_hash, state) VALUES (?, 'mate', ?, '', ?, 'exited')",
     ).run(lane.name, lane.name, hash(token));
+    if (lane.parent !== undefined) {
+      // The lane card: where the parent and this second mate talk (spec section 6.3).
+      const card = addCard(db, {
+        lane: lane.name,
+        title: lane.name,
+        name: lane.name,
+        kind: "standing",
+      });
+      setStatus(db, card.id, "waiting");
+      db.prepare("UPDATE lanes SET card = ? WHERE name = ?").run(card.id, lane.name);
+    }
     return token;
   });
   return token;
 }
+
+/** The parent of a lane: main for a second mate, null for main. */
+export function parentOf(db: DatabaseSync, lane: string): string | null {
+  const parent = db.prepare("SELECT parent FROM lanes WHERE name = ?").get(lane)?.["parent"];
+  return typeof parent === "string" ? parent : null;
+}
+
+/** The lane card of a lane, if it has one. Only a second mate's lane does. */
+export function laneCardOf(db: DatabaseSync, lane: string): number | undefined {
+  const card = db.prepare("SELECT card FROM lanes WHERE name = ?").get(lane)?.["card"];
+  return typeof card === "number" ? card : undefined;
+}
+
+/** The card, if the session's lane owns it or is the parent of the lane that does. */
+export function reachable(
+  db: DatabaseSync,
+  session: Session,
+  id: number,
+): { card: Card; own: boolean } {
+  const card = getCard(db, id);
+  if (card.lane === session.lane) return { card, own: true };
+  if (parentOf(db, card.lane) === session.lane) return { card, own: false };
+  throw new Error(`c-${String(id)} belongs to lane ${card.lane}`);
+}
+
+/** Whether the card is the lane card of its lane. */
+export const isLaneCard = (db: DatabaseSync, card: Card): boolean =>
+  laneCardOf(db, card.lane) === card.id;
 
 export function addProject(
   db: DatabaseSync,

@@ -50,7 +50,7 @@ export function TaskCard(props: Props) {
       <p className="task-status">
         <StatusIcon tone={tone} active={isActive(card)} />
         <span className="task-phrase">{statusLine(card, asked, now)}</span>
-        <span className="tag">{card.lane}</span>
+        {card.mate ? null : <span className="tag">{card.lane}</span>}
         {card.pr === null ? null : (
           <a className="tag link" href={card.pr} target="_blank" rel="noreferrer">
             PR

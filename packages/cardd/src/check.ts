@@ -160,29 +160,29 @@ function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
   });
 }
 
-/** A second mate's question that main did not take within 15 minutes, or while main is away, goes to the captain. */
+/**
+ * A second mate's question that main did not take within 15 minutes, or while main is away.
+ * The question stays with main: only main's own ask reaches the captain. Main gets a reminder.
+ */
 function firstMateMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const waiting = rows(
     db,
-    `SELECT c.id AS card, c.lane AS lane, m.state AS main,
+    `SELECT c.id AS card, l.parent AS main, m.state AS state,
        (SELECT max(id) FROM entries WHERE card = c.id AND kind = 'ask') AS ask,
        (SELECT max(created_at) FROM entries WHERE card = c.id AND kind = 'ask') AS asked
      FROM cards c JOIN lanes l ON l.name = c.lane LEFT JOIN sessions m ON m.id = l.parent
      WHERE c.status = 'with-first-mate'`,
   );
   return waiting.flatMap((row) => {
-    const away = !["idle", "running", "waiting"].includes(String(row["main"]));
-    if (!away && now - Number(row["asked"]) <= t.firstMate) return [];
-    const why = away ? "main is not connected" : "main did not take the question within 15 minutes";
-    const change: Change = { kind: "ask", toFirstMate: false };
-    const card = Number(row["card"]);
+    if (now - Number(row["asked"]) <= t.firstMate) return [];
+    const minutes = Math.round((now - Number(row["asked"])) / MINUTE);
     return [
       {
-        card,
-        lane: String(row["lane"]),
+        card: Number(row["card"]),
+        lane: String(row["main"]),
         condition: `first-mate:${String(row["ask"])}`,
-        text: `forwarded to the captain: ${why}`,
-        change,
+        text: `reminder: a second mate's question has waited for you (${String(minutes)} min). Answer it, hand it back, or ask the captain.`,
+        ready: row["state"] === "idle",
       },
     ];
   });
