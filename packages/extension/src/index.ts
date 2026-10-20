@@ -1,11 +1,17 @@
 // The fleet Pi extension. Dispatch starts each worker with --fleet-url,
 // --fleet-token, and --fleet-role (fleet-args.ts writes them). FLEET_URL, FLEET_TOKEN, and FLEET_ROLE work
-// too, for mates started by hand. Without a URL, a token, and a role of worker
-// or mate, the extension does nothing.
+// too. A Pi started in a lane home (the fleet repo for main, a worktree of it for a
+// second mate) needs none of them: the home's config/lane.json makes it that lane's
+// mate. Without either, the extension does nothing.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Jobs } from "./jobs.ts";
+import { readLaneConfig } from "./lane-config.ts";
 import { Link } from "./link.ts";
+import { registerLanes } from "./lanes.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
 import { registerAuthority, registerQuestions } from "./questions.ts";
@@ -15,7 +21,12 @@ interface Config {
   readonly url: string;
   readonly token: string;
   readonly role: "worker" | "mate";
+  /** Set when the config came from the home's lane.json. */
+  readonly lane?: string;
 }
+
+const EXTENSION = fileURLToPath(import.meta.url);
+const HOME = (): string => process.cwd();
 
 function config(pi: ExtensionAPI): Config | undefined {
   const value = (flag: string, env: string): string | undefined => {
@@ -25,9 +36,24 @@ function config(pi: ExtensionAPI): Config | undefined {
   const url = value("fleet-url", "FLEET_URL");
   const token = value("fleet-token", "FLEET_TOKEN");
   const role = value("fleet-role", "FLEET_ROLE");
-  if (url === undefined || token === undefined || (role !== "worker" && role !== "mate"))
-    return undefined;
-  return { url, token, role };
+  if (url !== undefined && token !== undefined && (role === "worker" || role === "mate"))
+    return { url, token, role };
+  const lane = readLaneConfig(HOME());
+  if (lane === undefined) return undefined;
+  // What the lane's own commands and workers need, from the same file.
+  process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
+  process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...lane.workerArgs]);
+  return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane };
+}
+
+/** The lane's private charter, data/charter.md: its lane table, its projects, and where its records are. */
+function charter(): string {
+  try {
+    const text = readFileSync(join(HOME(), "data", "charter.md"), "utf8").trim();
+    return text === "" ? "" : `\n\n${text}`;
+  } catch {
+    return "";
+  }
 }
 
 function piArgs(): string[] {
@@ -37,7 +63,7 @@ function piArgs(): string[] {
 
 function start(
   pi: ExtensionAPI,
-  { url, token, role }: Config,
+  { url, token, role, lane }: Config,
   sessionFile: string | undefined,
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
@@ -75,9 +101,11 @@ function start(
   if (role === "mate") registerQuestions(pi, link, () => sessionFile);
   if (role === "mate") registerAuthority(pi, link, () => sessionFile);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() });
+  // Main keeps the rest of the fleet running (docs/setup.md).
+  if (lane === "main") registerLanes(pi, HOME());
 
   pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}`,
+    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? charter() : ""}`,
   }));
   pi.on("session_shutdown", () => {
     link.stop();

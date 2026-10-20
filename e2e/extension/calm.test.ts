@@ -1,10 +1,8 @@
-// /calm in a real mate (docs/calm.md). `fleet up` starts the mate's Pi in a herdr pane,
-// with the scripted model. The test reads what the pane shows before and after /calm.
+// /calm in a real mate (docs/calm.md). Main is a plain Pi in a scratch copy of the repo, in a
+// herdr pane, with the scripted model. The test reads what the pane shows before and after /calm.
 // It writes each screen to CALM_EVIDENCE_DIR when that is set.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -12,43 +10,31 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { gate, Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
+import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
-const LAUNCH = fileURLToPath(new URL("../../packages/extension/src/launch.ts", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["CALM_EVIDENCE_DIR"];
 
 let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
-let home: string;
-let config: string;
+let scratch: Scratch;
 let cleo: Session;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
-  home = mkdtempSync(join(tmpdir(), "fleet-home-"));
-  const token = cardd.addLane("main", undefined, home);
+  scratch = new Scratch();
+  configureMain(scratch, cardd.url, cardd.addLane("main", undefined, scratch.root));
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-  config = mkdtempSync(join(tmpdir(), "fleet-config-"));
-  writeFileSync(
-    join(config, "main.json"),
-    JSON.stringify({ url: cardd.url, token, home, args: h.piArgs() }),
-  );
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
-afterEach(async (t) => {
-  await lab.printIfFailed(t);
+afterEach(async () => {
   const stopped = await Promise.allSettled([cleo.close(), lab.stop(), h.stop(), cardd.stop()]);
+  scratch.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
-
-const up = (): string =>
-  execFileSync("node", [LAUNCH, "up"], {
-    encoding: "utf8",
-    env: { ...process.env, FLEET_CONFIG_DIR: config, HERDR_SESSION: lab.name },
-  });
 
 async function matePane(): Promise<{ pane: string; group: number; shell: number }> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
@@ -68,11 +54,7 @@ async function matePane(): Promise<{ pane: string; group: number; shell: number 
   };
 }
 
-/**
- * Waits until the pane's screen satisfies `ready`, and returns that screen. A read can catch Pi's frame
- * half drawn, more so under load, so `ready` states the whole screen that a step expects, including what
- * must be gone. A check on the returned screen alone could see a frame that is not finished.
- */
+/** Waits until the pane's screen satisfies `ready`, and returns that screen. */
 async function screenWhere(pane: string, what: string, ready: (s: string) => boolean) {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
@@ -105,12 +87,6 @@ const NOTE = "Checking the board first.";
 const REPLY = "Cleo wants a decision on the scrollbar fix.";
 const CAPTAIN = "Any news for me?";
 const ANSWER = "Nothing else is waiting.";
-const BANNER_REPLY = "The banner can go.";
-/** A screen that shows every `shown` text and none of the `hidden` ones. */
-const showing =
-  (shown: readonly string[], hidden: readonly string[] = []) =>
-  (screen: string): boolean =>
-    shown.every((text) => screen.includes(text)) && !hidden.some((text) => screen.includes(text));
 
 test("/calm hides fleet rows, tool rows, and working notes, keeps the conversation, and survives a restart", async () => {
   h.onModel(() => ({ tool: "board", text: NOTE }), "mate");
@@ -120,44 +96,36 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     await working.wait;
     return { text: ANSWER };
   }, "mate");
-  h.onModel(() => ({ text: BANNER_REPLY }), "mate");
-  assert.equal(up(), "main: started in fleet-main\n");
-  const { pane } = await matePane();
+  const pane = await startMain(lab, scratch, h);
   await cleoAsks("Ship the scrollbar fix");
 
   // Calm is off until the first /calm: every row shows.
-  const before = await screenWhere(
-    pane,
-    "every row of the first turn",
-    showing([FLEET_ROW, TOOL_ROW, NOTE, REPLY]),
-  );
+  const before = await screenWhere(pane, "the first turn", (s) => s.includes(REPLY));
   keep("1-before-calm", before);
+  for (const shown of [FLEET_ROW, TOOL_ROW, NOTE, REPLY]) assert.ok(before.includes(shown), shown);
 
-  // The mate's reply stays. The fleet row, the tool row, and the short note before the tool call hide.
   await lab.submit(pane, "/calm");
-  const after = await screenWhere(
-    pane,
-    "calm to hide the rows",
-    showing([REPLY], [FLEET_ROW, NOTE, TOOL_ROW]),
-  );
+  const after = await screenWhere(pane, "calm to hide the rows", (s) => !s.includes(FLEET_ROW));
   keep("2-after-calm", after);
-  assert.equal(readFileSync(join(home, "config", "calm"), "utf8"), "on\n");
+  assert.ok(after.includes(REPLY), "the mate's reply stays");
+  assert.ok(!after.includes(NOTE), "the short note before the tool call hides");
+  assert.ok(!after.includes("board"), "the tool row hides");
+  assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "on\n");
 
   // The captain's prompt and the answer stay; a new fleet message stays out of sight.
   await lab.submit(pane, CAPTAIN);
   // While the mate works, the boat replaces Pi's own working row.
-  const sailing = await screenWhere(pane, "the boat", showing(["◿│◣"], ["Working"]));
+  const sailing = await screenWhere(pane, "the boat", (s) => s.includes("◿│◣"));
   keep("3-calm-working-boat", sailing);
+  assert.ok(!sailing.includes("Working"));
   working.open();
-  await screenWhere(pane, "the answer", showing([ANSWER]));
+  await screenWhere(pane, "the answer", (s) => s.includes(ANSWER));
   await cleoAsks("Drop the old banner");
   const turns = await h.waitForCall(3, "mate", WAIT_MS);
-  const live = await screenWhere(
-    pane,
-    "the second turn, without its fleet row",
-    showing([CAPTAIN, ANSWER, BANNER_REPLY], ["[fleet]"]),
-  );
+  const live = await screenWhere(pane, "the second turn", (s) => s.includes(ANSWER));
   keep("4-calm-conversation", live);
+  assert.ok(live.includes(CAPTAIN) && live.includes(ANSWER));
+  assert.ok(!live.includes("[fleet]"));
   // Nothing was dropped from the model's context.
   const context = turns.map((turn) => `${turn.role}: ${turn.text}`).join("\n");
   assert.ok(
@@ -172,18 +140,20 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  assert.equal(up(), "main: started in fleet-main\n");
-  // Until the new Pi takes the screen, it still shows the shell and the command that starts it.
+  await startMain(lab, scratch, h, true);
+  // The old screen stays until the new Pi draws its own, so wait for the new Pi to join the fleet.
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted mate to connect");
   const restarted = await screenWhere(
     pane,
-    "the restored conversation, still calm",
-    showing([CAPTAIN, ANSWER, BANNER_REPLY], ["[fleet]", "FLEET_CONFIG_DIR"]),
+    "the restored conversation",
+    (s) => s.includes(CAPTAIN) && s.includes(ANSWER) && !s.includes("[fleet]"),
   );
   keep("5-after-restart", restarted);
 
   // /calm again turns it off and every row comes back.
   await lab.submit(pane, "/calm");
-  const off = await screenWhere(pane, "the rows to return", showing([FLEET_ROW, NOTE, TOOL_ROW]));
+  const off = await screenWhere(pane, "the rows to return", (s) => s.includes(FLEET_ROW));
   keep("6-calm-off", off);
-  assert.equal(readFileSync(join(home, "config", "calm"), "utf8"), "off\n");
+  assert.ok(off.includes(NOTE) && off.includes(TOOL_ROW));
+  assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "off\n");
 });

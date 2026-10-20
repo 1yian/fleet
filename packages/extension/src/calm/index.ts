@@ -3,8 +3,8 @@
 // and shows a small working boat while the mate works. Pi's session keeps every row in
 // the model's context, the session file, and exports; only the live transcript changes.
 //
-// This is its own Pi extension, loaded by `fleet <lane>` for mates only (see launch.ts),
-// so workers never get it. The choice is saved per mate home in config/calm and is
+// This is its own Pi extension, loaded by the repo's .pi/extensions/fleet.ts only in a lane home
+// (a folder with config/lane.json), so workers never get it. The choice is saved per mate home in config/calm and is
 // read again at every session start. Calm is off until the first /calm.
 // Ported from Firstmate's Calm; docs/calm.md owns the user-facing behavior.
 import type { ExtensionAPI, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
