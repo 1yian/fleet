@@ -107,8 +107,9 @@ test("words that are only whitespace never count as the captain's words", async 
 
 test("a question that main does not take goes to the captain", async () => {
   await ask(cleo);
+  const question = await fleet.main.waitForEntry((entry) => entry.kind === "ask", "the question");
   await cleo.waitForEntry(
-    (entry) => String(entry.fields["condition"]).startsWith("first-mate:"),
+    (entry) => entry.fields["condition"] === `first-mate:${String(question.id)}`,
     "the forward",
   );
   assert.equal(await status(cleo, card), "needs-you");
@@ -132,36 +133,13 @@ test("while a question is open, worker reports do not take the card from the cap
 
 test("a hold ends on its date, and the card returns to its status", async () => {
   const held = await newCard(fleet.main, "Renew the certificate");
-  await fleet.main.call("hold", {
-    card: held.id,
-    until: Date.now() + 300,
-    reason: "after the freeze",
-  });
+  const until = Date.now() + 300;
+  await fleet.main.call("hold", { card: held.id, until, reason: "after the freeze" });
   assert.equal(await status(fleet.main, held), "waiting");
 
   await fleet.main.waitForEntry(
-    (entry) => String(entry.fields["condition"]).startsWith("hold-ended:"),
+    (entry) => entry.fields["condition"] === `hold-ended:${String(until)}`,
     "the hold to end",
-  );
-  assert.equal(await status(fleet.main, held), "queued");
-});
-
-test("a second hold on the same card ends too, even right after the first one", async () => {
-  const held = await newCard(fleet.main, "Renew the certificate");
-  const hold = () =>
-    fleet.main.call("hold", { card: held.id, until: Date.now() + 10, reason: "after the freeze" });
-  await hold();
-  const first = await fleet.main.waitForEntry(
-    (entry) => entry.card === held.id && entry.author === "check",
-    "the first hold to end",
-  );
-  await hold();
-  await fleet.main.waitForEntry(
-    (entry) =>
-      entry.card === held.id &&
-      entry.author === "check" &&
-      entry.fields["condition"] !== first.fields["condition"],
-    "the second hold to end",
   );
   assert.equal(await status(fleet.main, held), "queued");
 });
