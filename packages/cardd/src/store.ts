@@ -78,6 +78,9 @@ export function addLane(
   db: DatabaseSync,
   lane: { name: string; home: string; parent?: string },
 ): string {
+  if (/^c-\d+-a\d+$/.test(lane.name)) {
+    throw new Error(`${lane.name} is the form of a worker session, so it cannot name a lane`);
+  }
   const token = transaction(db, () => {
     const token = tokenFor(db, "mate", lane.name);
     db.prepare("INSERT INTO lanes (name, home, parent) VALUES (?, ?, ?)").run(

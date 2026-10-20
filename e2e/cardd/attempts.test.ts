@@ -59,6 +59,17 @@ test("replacing an attempt cuts off the old worker, even when it comes back", as
   assert.equal(await status(fleet.main, card), "with-mate");
 });
 
+test("a lane cannot take the name of a worker session, before or after dispatch", async () => {
+  assert.throws(() => fleet.cardd.addLane(c("-a1")), /cannot name a lane/);
+
+  const first = await begin("maverick");
+
+  assert.equal(first.session, c("-a1"));
+  const worker = await fleet.cardd.connect(first.token);
+  assert.equal(worker.welcome?.session, c("-a1"));
+  assert.throws(() => fleet.cardd.addLane(c("-a1")), /cannot name a lane/);
+});
+
 test("a project at capacity refuses another attempt", async () => {
   fleet.cardd.addProject("web", 1);
   const one = check(
