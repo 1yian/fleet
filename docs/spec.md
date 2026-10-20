@@ -1375,7 +1375,8 @@ The design review of 2026-10-10 to 2026-10-12 built a scratch prototype: Pi sess
 
 `e2e/extension/dispatch.test.ts` runs a mate Pi that dispatches a worker Pi into an isolated herdr lab session. It shows these results:
 
-- `herdr worktree create` gives each attempt its own worktree and branch. `herdr agent start` starts Pi there with the fleet flags, and refuses a pane that is not at a shell prompt.
+- Dispatch adds each attempt's own git worktree and branch, and opens a herdr workspace for it under its mate's workspace. `herdr agent start` starts Pi there with the fleet flags, and refuses a pane that is not at a shell prompt.
+- herdr counts an agent as ready only when it idles, and a worker starts on its task at once. So dispatch does not wait for herdr: a Pi in the pane's foreground means it started, and a pane that runs Pi is never started again (`e2e/extension/start.test.ts`).
 - Cutover test 8: when the connection drops after the worker started, the retry finds the same attempt. There is one worktree, one agent, and one task message.
 
 `e2e/extension/jobs.test.ts` runs a worker Pi whose `run_long` job runs in a herdr lab tab. It shows these results:

@@ -13,7 +13,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { field, herdr as herdrOn, records, rootPane } from "./host.ts";
+import { field, herdr as herdrOn, piRunning, records, rootPane } from "./host.ts";
 
 const EXTENSION = fileURLToPath(new URL("./index.ts", import.meta.url));
 const CALM = fileURLToPath(new URL("./calm/index.ts", import.meta.url));
@@ -91,18 +91,12 @@ async function matePane(
   return { pane, found: true };
 }
 
-/** True when something other than the pane's shell is in the foreground: the mate, or its start. */
-async function busy(pane: string): Promise<boolean> {
-  const info = (await herdr(["pane", "process-info", "--pane", pane]))["process_info"];
-  return isRecord(info) && info["foreground_process_group_id"] !== info["shell_pid"];
-}
-
 async function up(): Promise<void> {
   const workspaces = records((await herdr(["workspace", "list"]))["workspaces"]);
   const lanes = readdirSync(CONFIG).filter((file) => file.endsWith(".json"));
   for (const lane of lanes.sort().map((file) => readLane(file.slice(0, -".json".length)))) {
     const { pane, found } = await matePane(lane, workspaces);
-    if (found && (await busy(pane))) {
+    if (found && (await piRunning("local", pane))) {
       console.log(`${lane.name}: already running in fleet-${lane.name}`);
       continue;
     }

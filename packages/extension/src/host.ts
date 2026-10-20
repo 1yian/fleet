@@ -134,3 +134,14 @@ export function worktreeOf(
     (tree) => field(tree, "path")?.endsWith(`.worktrees/${session}`) === true,
   );
 }
+
+/**
+ * Whether a Pi runs in the pane's foreground. Pi names its process "pi". Other foreground
+ * processes do not count: an idle shell's prompt runs helpers such as git there too.
+ */
+export async function piRunning(host: string, pane: string): Promise<boolean> {
+  const info = (await herdr(host, ["pane", "process-info", "--pane", pane]))["process_info"];
+  const processes = isRecord(info) ? records(info["foreground_processes"]) : [];
+  // macOS reports the name as argv0, and Linux as the process name.
+  return processes.some((each) => field(each, "argv0") === "pi" || field(each, "name") === "pi");
+}

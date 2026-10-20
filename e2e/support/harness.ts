@@ -208,11 +208,20 @@ export class Harness {
 
   /** Waits for an agent's model call. A worker that herdr starts cold can take longer, so the wait can be raised. */
   async waitForCall(index: number, agent = "default", waitMs = WAIT_MS): Promise<Turn[]> {
-    return poll(
-      () => this.callsOf(agent)[index],
-      `model call ${String(index)} of ${agent}`,
-      waitMs,
-    );
+    try {
+      return await poll(() => this.callsOf(agent)[index], `model call ${String(index)}`, waitMs);
+    } catch (error) {
+      // Say how far the agent got, so a timeout shows where it stopped.
+      const calls = this.callsOf(agent);
+      const last = (calls.at(-1) ?? [])
+        .slice(-2)
+        .map((turn) => `${turn.role}: ${turn.text.slice(0, 300)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${message} of ${agent}; it made ${String(calls.length)}, the last ending ${last.join(" | ")}`,
+        { cause: error },
+      );
+    }
   }
 
   /** The fleet entry IDs in a Pi session file, in file order. */
