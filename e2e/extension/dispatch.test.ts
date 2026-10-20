@@ -3,7 +3,7 @@
 // session, in its own git worktree. Both use the scripted fake model.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,11 @@ beforeEach(async () => {
   ]);
   cardd.addProject("site", 2, { local: clone, flaky: clone });
   h = await Harness.start();
-  lab = await HerdrLab.start({ ...h.piEnv("worker"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
+  lab = await HerdrLab.start({
+    ...h.piEnv("worker"),
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    FLEET_ARGV_FILE: launchArgs(),
+  });
   mate = h.startPi(
     "main",
     {
@@ -66,6 +70,7 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
+const launchArgs = (): string => join(h.dir, "worker-args");
 const toolResults = (turns: Turn[]): string[] =>
   turns.filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
 const lastUser = (turns: Turn[]): string | undefined =>
@@ -127,7 +132,9 @@ test("a dispatch retry after a lost connection finds the worker that already sta
 
   const results = toolResults(await h.waitForCall(3, "mate"));
   assert.match(results.at(-2) ?? "", /^herdr agent on flaky failed/);
-  const token = cardd.workerToken("c-1-a1");
+  const launched = readFileSync(launchArgs(), "utf8").split("\n");
+  const token = launched[launched.indexOf("--fleet-token") + 1];
+  assert.ok(token !== undefined && token !== "", "the worker was launched without a token");
   for (const result of results) {
     assert.ok(!result.includes(token), "a tool result carries the worker token");
     assert.ok(!result.includes("--fleet-token"), "a tool result carries the herdr command line");

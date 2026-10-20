@@ -1,9 +1,7 @@
 // Runs a real cardd process on a temporary database, and connects sessions to
 // it the way the fleet extension does.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,18 +37,6 @@ export class Cardd {
     return execFileSync("node", parent === undefined ? args : [...args, "--parent", parent], {
       encoding: "utf8",
     }).trim();
-  }
-
-  /** The token cardd gave a worker session: the HMAC of its role and ID under the database's key. */
-  workerToken(session: string): string {
-    const db = new DatabaseSync(this.db, { readOnly: true });
-    try {
-      const key = db.prepare("SELECT value FROM secrets WHERE name = 'token-key'").get()?.["value"];
-      if (!(key instanceof Uint8Array)) throw new Error("the token key is missing");
-      return createHmac("sha256", key).update(`worker:${session}`).digest("base64url");
-    } finally {
-      db.close();
-    }
   }
 
   addProject(name: string, capacity: number, clones: Record<string, string> = {}): void {
