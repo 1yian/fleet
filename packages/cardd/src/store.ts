@@ -27,7 +27,8 @@ const SessionSchema = Type.Object({
   live: Type.Boolean(),
 });
 
-const CARD_JSON = `json_object('id', id, 'title', title, 'lane', lane, 'project', project,
+// A card without a name, from before names existed, is known by its number.
+const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', project,
   'kind', kind, 'status', status, 'revision', revision, 'pr', pr, 'intent', intent, 'spec', spec,
   'createdAt', created_at, 'updatedAt', updated_at)`;
 /** SQL that builds an entry's wire JSON from table alias `e`. */
@@ -129,11 +130,18 @@ export const cardEntries = (db: DatabaseSync, card: number): Entry[] =>
     check(EntrySchema, row),
   );
 
+/** A name made from the title's first words, for a card created without one. */
+function nameFrom(title: string): string {
+  const words = title.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  return words.slice(0, 4).join("-").slice(0, 40).replace(/-+$/, "");
+}
+
 export function addCard(
   db: DatabaseSync,
   card: {
     lane: string;
     title: string;
+    name?: string;
     kind: Card["kind"];
     project?: string;
     intent?: string;
@@ -143,11 +151,12 @@ export function addCard(
   const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO cards (title, lane, project, kind, status, intent, spec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+      `INSERT INTO cards (title, name, lane, project, kind, status, intent, spec, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
     )
     .run(
       card.title,
+      card.name ?? nameFrom(card.title),
       card.lane,
       card.project ?? null,
       card.kind,

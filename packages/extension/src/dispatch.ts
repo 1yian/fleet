@@ -2,7 +2,8 @@
 // host step first looks for its own result by the names that derive from the
 // attempt ID, so a retry after a lost connection never starts a second worker.
 import { check, OPS } from "@fleet/protocol";
-import { field, herdr, records, rootPane } from "./host.ts";
+import { field, herdr, onHost, records, worktreeOf } from "./host.ts";
+import { openWorkerWorkspace } from "./place.ts";
 import type { Link } from "./link.ts";
 
 export interface Launch {
@@ -15,40 +16,34 @@ export interface Launch {
 type Plan = ReturnType<typeof parsePlan>;
 const parsePlan = (value: unknown) => check(OPS["attempt.begin"].result, value);
 
+// Adds the attempt's worktree on its task branch, or on the branch again if a
+// cleanup removed only the worktree. Safe to rerun only through the lookup before it.
+const ADD_WORKTREE = `set -eu
+clone=$1 path=$2 branch=$3 base=$4
+if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
+  git -C "$clone" worktree add -q "$path" "$branch"
+else
+  git -C "$clone" worktree add -q -b "$branch" "$path" "$base"
+fi`;
+
 /** The root pane of the attempt's worktree workspace, created if needed. */
 async function worktreePane(host: string, plan: Plan): Promise<string> {
-  const listed = await herdr(host, ["worktree", "list", "--cwd", plan.clone]);
-  const existing = records(listed["worktrees"]).find(
-    (tree) => field(tree, "branch") === plan.branch,
+  const tree = worktreeOf(
+    await herdr(host, ["worktree", "list", "--cwd", plan.clone]),
+    plan.session,
   );
-  const workspace = field(existing, "open_workspace_id");
-  if (existing !== undefined && workspace === undefined) {
-    const path = field(existing, "path") ?? "";
-    const opened = await herdr(host, [
-      "worktree",
-      "open",
-      "--cwd",
-      plan.clone,
-      "--path",
-      path,
-      "--no-focus",
-    ]);
-    return rootPane(opened);
-  }
+  const workspace = field(tree, "open_workspace_id");
   if (workspace !== undefined) {
     const panes = records((await herdr(host, ["pane", "list", "--workspace", workspace]))["panes"]);
     const pane = field(panes[0], "pane_id");
     if (pane === undefined) throw new Error(`workspace ${workspace} on ${host} has no pane`);
     return pane;
   }
-  const created = await herdr(
-    host,
-    [
-      ["worktree", "create", "--cwd", plan.clone, "--branch", plan.branch, "--base", plan.base],
-      ["--path", `${plan.clone}.worktrees/${plan.session}`, "--label", plan.session, "--no-focus"],
-    ].flat(),
-  );
-  return rootPane(created);
+  const path = field(tree, "path") ?? `${plan.clone}.worktrees/${plan.session}`;
+  if (tree === undefined) {
+    await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", plan.clone, path, plan.branch, plan.base]);
+  }
+  return openWorkerWorkspace(host, path, plan);
 }
 
 async function agentLive(host: string, name: string): Promise<boolean> {

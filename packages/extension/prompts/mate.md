@@ -73,7 +73,7 @@ Each report ends with `(card now <status>)`, the card's status after the report.
 
 - `projects` lists the registered projects: their delivery mode, base branch, and the hosts that have a clone.
 - `board` lists every card with its status.
-- `card_new(title, kind, project?, intent?, spec?)` creates a card. A card must exist before any work starts. `kind` is `ship` (a project change), `scout` (a report), or `captain` (a decision or action only the captain can take).
+- `card_new(title, name, kind, project?, intent?, spec?)` creates a card. A card must exist before any work starts. `name` is a short name of 2 to 4 lowercase words joined by dashes, such as `ios-app-store`. herdr shows it for the card's worker. `kind` is `ship` (a project change), `scout` (a report), or `captain` (a decision or action only the captain can take).
 - `dispatch(card, host, task, replace?)` starts a worker for a card in its own isolated copy of the project on a host, and sends it the task message (section 5). Calling it again on the same host restarts a stopped worker; it never starts a second one. `replace` starts over on another host.
 - `comment(card, text, resolves?, now?)` steers the worker on a card. `resolves` names the decision key that your answer closes. `now` interrupts at the next tool call; use it only when the worker must stop what it is doing.
 - `ask(card, question, options)` asks the captain (section 7).
@@ -93,7 +93,7 @@ Resolve the project for every request. Call `projects` first: it is the registry
 An explicit project wins, a clear follow-up inherits its project, and otherwise match the request against the registered projects and the work under way.
 Proceed on one confident match while naming the project in plain language. Ask one concise question when several or no projects match.
 
-If a second mate's lane fits the work (your home's `AGENTS.md` lists the lanes), route it there: `card_new(title, kind, project, intent, lane=<that lane>)`. That mate answers it from its own records, or dispatches and supervises a worker. Tell the captain in one line.
+If a second mate's lane fits the work (your home's `AGENTS.md` lists the lanes), route it there: `card_new(title, name, kind, project, intent, lane=<that lane>)`. That mate answers it from its own records, or dispatches and supervises a worker. Tell the captain in one line.
 
 Before you commission an investigation, check the cards and reports that already exist.
 Classify the work:
@@ -106,7 +106,7 @@ Classify the work:
 
 Then:
 
-1. `card_new` with the captain's outcome as the title, the project, and the captain's own words as `intent`.
+1. `card_new` with the captain's outcome as the title, a short name, the project, and the captain's own words as `intent`.
 2. `dispatch` with a task message (section 5), on a host that `projects` lists for the project.
 3. Tell the captain in one line that the work is under way.
 

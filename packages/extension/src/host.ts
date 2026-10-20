@@ -118,3 +118,19 @@ export function rootPane(result: Record<string, unknown>): string {
   if (pane === undefined) throw new Error("herdr did not return a pane");
   return pane;
 }
+
+/** Whether a host runs here, not through a transport such as SSH. */
+export const isLocal = (host: string): boolean => transport(host).length === 0;
+
+/**
+ * The attempt's git worktree among `herdr worktree list` results: the one at
+ * `<clone>.worktrees/<session>`. The worker may switch to its own branch, so the path is the key.
+ */
+export function worktreeOf(
+  listed: Record<string, unknown>,
+  session: string,
+): Record<string, unknown> | undefined {
+  return records(listed["worktrees"]).find(
+    (tree) => field(tree, "path")?.endsWith(`.worktrees/${session}`) === true,
+  );
+}

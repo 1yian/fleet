@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
@@ -31,20 +31,9 @@ beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), "fleet-home-"));
   const mainToken = cardd.addLane("main", undefined, home);
   clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
-  execFileSync("git", ["init", "-q", "-b", "main", clone]);
-  execFileSync("git", [
-    "-C",
-    clone,
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@t",
-    "commit",
-    "-q",
-    "--allow-empty",
-    "-m",
-    "init",
-  ]);
+  const git = "git -c user.name=t -c user.email=t@t";
+  const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
+  execFileSync("sh", ["-c", init], { cwd: dirname(clone) });
   cardd.addProject("site", 2, { local: clone, flaky: clone, far: clone });
   h = await Harness.start();
   lab = await HerdrLab.start({
@@ -85,6 +74,15 @@ const worktrees = (): string[] =>
   execFileSync("git", ["-C", clone, "worktree", "list", "--porcelain"], { encoding: "utf8" })
     .split("\n")
     .filter((line) => line.startsWith("branch "));
+const branches = (): string[] =>
+  execFileSync("git", ["-C", clone, "branch", "--format=%(refname:short)"], { encoding: "utf8" })
+    .split("\n")
+    .filter((line) => line !== "");
+/** The workspace labels in herdr's sidebar, top to bottom. */
+const sidebar = async (): Promise<string[]> =>
+  records((await lab.run(["workspace", "list"]))["workspaces"]).map((each) =>
+    String(each["label"]),
+  );
 const agents = async (): Promise<string[]> =>
   records((await lab.run(["agent", "list"]))["agents"]).flatMap((agent) =>
     typeof agent["name"] === "string" ? [agent["name"]] : [],
@@ -97,7 +95,12 @@ function scriptMate(...dispatches: { host: string }[]): void {
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
@@ -113,6 +116,9 @@ function scriptMate(...dispatches: { host: string }[]): void {
 
 test("dispatch starts a worker in its own worktree, and the worker's report reaches the mate", async () => {
   scriptMate({ host: "local" });
+  for (const label of ["fleet-main", "fleet-cleo"]) {
+    await lab.run(["workspace", "create", "--cwd", home, "--label", label, "--no-focus"]);
+  }
   await mateConnected();
   mate.prompt("ship the scrollbar fix");
   const woken = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
@@ -136,6 +142,8 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await agents(), ["c-1-a1"]);
+  // In the sidebar the worker sits under its mate's workspace, by the card's name.
+  assert.deepEqual(await sidebar(), ["fleet-main", "└ one-scrollbar", "fleet-cleo"]);
 });
 
 test("a dispatch retry after a lost connection finds the worker that already started", async () => {
@@ -170,11 +178,16 @@ test("a dispatch retry after a lost connection finds the worker that already sta
   );
 });
 
-test("dropping a card stops the worker, archives its unlanded work, and removes the worktree", async () => {
+test("dropping a card stops the worker, archives its unlanded work, and removes the worktree and branches", async () => {
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
@@ -188,6 +201,8 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
     const tree = `${clone}.worktrees/c-1-a1`;
     const git = (...args: string[]) =>
       execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+    // Workers name their own branch, as a PR branch.
+    git("switch", "-q", "-c", "feat/one-scrollbar");
     writeFileSync(join(tree, "committed.txt"), "one\n");
     git("add", "committed.txt");
     git("commit", "-q", "-m", "work in progress");
@@ -204,6 +219,7 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), `c-1 is dropped. Unlanded work is archived in local:${archive}.`);
   assert.deepEqual(worktrees(), ["branch refs/heads/main"]);
+  assert.deepEqual(branches(), ["main"]);
   assert.deepEqual(await agents(), []);
 
   const out = mkdtempSync(join(tmpdir(), "fleet-unpack-"));
@@ -226,7 +242,12 @@ test("a rerun of cleanup after the worktree is gone still deletes the branch and
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
@@ -265,7 +286,12 @@ test("an unreachable host of a replaced attempt does not block closing, and its 
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
@@ -297,7 +323,12 @@ test("a killed archive step of a replaced attempt aborts the close instead of le
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
@@ -330,7 +361,12 @@ test("a host that hangs past the timeout counts as unreachable for a replaced at
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
@@ -362,7 +398,12 @@ test("a branch that cannot be deleted aborts the close, and a rerun finishes it"
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
@@ -397,7 +438,12 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   h.onModel(
     () => ({
       tool: "card_new",
-      args: { title: "Users see one scrollbar", kind: "ship", project: "site" },
+      args: {
+        title: "Users see one scrollbar",
+        name: "one-scrollbar",
+        kind: "ship",
+        project: "site",
+      },
     }),
     "mate",
   );
