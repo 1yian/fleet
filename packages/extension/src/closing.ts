@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CardSchema, check, OPS } from "@fleet/protocol";
-import { field, herdr, onHost, records } from "./host.ts";
+import { field, herdr, HostUnreachable, onHost, records } from "./host.ts";
 import type { Link } from "./link.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
@@ -67,9 +67,8 @@ export async function close(
       const path = await retire(attempt);
       if (path !== null) archives.push(`${attempt.host}:${path}`);
     } catch (error) {
-      if (attempt.live) throw error;
-      const reason = error instanceof Error ? error.message : String(error);
-      left.push({ session: attempt.session, host: attempt.host, reason });
+      if (attempt.live || !(error instanceof HostUnreachable)) throw error;
+      left.push({ session: attempt.session, host: attempt.host, reason: error.message });
     }
   }
   const card = check(CardSchema, await link.call("close.finish", { ...request, archives, left }));

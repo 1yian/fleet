@@ -18,6 +18,12 @@ export const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'
 const scrub = (message: string): string =>
   message.replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]");
 
+/** The transport could not reach the host: ssh exits with status 255 for a lost or refused connection. */
+export class HostUnreachable extends Error {}
+
+const unreachable = (via: readonly string[], error: { code?: unknown }): boolean =>
+  via.length > 0 && error.code === 255;
+
 const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
   typeof error.signal === "string"
     ? `killed by ${error.signal}`
@@ -38,13 +44,12 @@ export async function herdr(
     via.length === 0 ? command : [...via, command.map(quote).join(" ")];
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(file, rest, { encoding: "utf8", timeout: 120_000 }, (error, out, err) => {
-      if (error !== null && out.trim() === "")
-        reject(
-          new Error(
-            scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`),
-          ),
+      if (error !== null && out.trim() === "") {
+        const failure = scrub(
+          `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`,
         );
-      else resolve(out);
+        reject(unreachable(via, error) ? new HostUnreachable(failure) : new Error(failure));
+      } else resolve(out);
     });
   });
   // Some commands, such as pane run, print nothing when they succeed.
@@ -67,12 +72,12 @@ export async function onHost(host: string, argv: readonly string[]): Promise<str
       { encoding: "utf8", timeout: 600_000, maxBuffer: 16 * 1024 * 1024 },
       (error, out, err) => {
         if (error === null) resolve(out);
-        else
-          reject(
-            new Error(
-              scrub(`${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`),
-            ),
+        else {
+          const failure = scrub(
+            `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`,
           );
+          reject(unreachable(via, error) ? new HostUnreachable(failure) : new Error(failure));
+        }
       },
     );
   });
