@@ -161,7 +161,7 @@ export function startJob(
   return Number(lastInsertRowid);
 }
 
-/** Records a job's result once. Returns its label, or undefined if it had already finished. */
+/** Records a job's result once, also for a job marked lost that ran on. Returns its label, or undefined if it had already finished. */
 export function finishJob(
   db: DatabaseSync,
   session: string,
@@ -170,7 +170,7 @@ export function finishJob(
   const row = db
     .prepare(
       `UPDATE jobs SET state = 'finished', exit_code = ?, output_tail = ?, updated_at = ?
-       WHERE id = ? AND attempt = ? AND state = 'running' RETURNING label`,
+       WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING label`,
     )
     .get(job.exitCode, job.outputTail, Date.now(), job.id, attemptOf(db, session));
   const label = row?.["label"];

@@ -126,9 +126,26 @@ test("a timeout kills the whole command, exits 124, and leaves nothing behind", 
   await until(() => (pids(marker(1)).length === 0 ? true : undefined), "the sleep to be gone");
 });
 
-test("an interrupted job reports exit 130", async () => {
+test("a command that ignores SIGTERM is killed when the grace ends", async () => {
+  const command = `(trap '' TERM; exec sleep ${marker(5)}) & wait`;
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "stubborn", command, timeout_minutes: 0.01 },
+  }));
+  h.onModel(() => ({ text: "waiting" }));
+  try {
+    worker();
+    const woken = await h.waitForCall(2, "default", 30_000);
+    assert.match(lastUser(woken) ?? "", /^\[fleet\] c-1 job 1 \(stubborn\) exited 124:/);
+    assert.deepEqual(pids(marker(5)), []);
+  } finally {
+    for (const pid of pids(marker(5))) process.kill(pid, "SIGKILL");
+  }
+});
+
+test("an interrupted job reports exit 130, with the unfinished line before it", async () => {
   const ready = join(h.dir, "ready");
-  const command = `echo started; touch ${ready}; sleep ${marker(2)}`;
+  const command = `echo started; printf partial; touch ${ready}; sleep ${marker(2)}`;
   h.onModel(() => ({ tool: "run_long", args: { label: "wait", command } }));
   h.onModel(() => ({ text: "waiting" }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "interrupted" } }));
@@ -141,44 +158,93 @@ test("an interrupted job reports exit 130", async () => {
 
   assert.equal(
     lastUser(await h.waitForCall(2)),
-    "[fleet] c-1 job 1 (wait) exited 130: started\ninterrupted",
+    "[fleet] c-1 job 1 (wait) exited 130: started\npartial\ninterrupted",
   );
   await until(() => (pids(marker(2)).length === 0 ? true : undefined), "the sleep to be gone");
 });
 
-test("a job whose wrapper died is lost once, and the card goes to the mate", async () => {
-  const stuck = (n: number): string => {
-    const ready = join(h.dir, `ready-${String(n)}`);
-    return `touch ${ready}; sleep ${marker(n)}`;
-  };
-  const killWrapper = async (n: number): Promise<void> => {
-    await until(() => (existsSync(join(h.dir, `ready-${String(n)}`)) ? true : undefined), "start");
-    const [wrapper] = pids(`fleet-job-${String(n - 2)}-`);
-    assert.ok(wrapper !== undefined);
-    process.kill(wrapper, "SIGKILL");
-  };
-  h.onModel(() => ({ tool: "run_long", args: { label: "first", command: stuck(3) } }));
+const findings = (): string[] =>
+  fleet.main.entries.filter(({ entry }) => entry.kind === "finding").map(({ entry }) => entry.body);
+
+/** Starts a command that waits for the file `go`, and tells when it runs. */
+const waiting = (n: number): { command: string; ready: string; go: string } => {
+  const ready = join(h.dir, `ready-${String(n)}`);
+  const go = join(h.dir, `go-${String(n)}`);
+  const command = `touch ${ready}; while [ ! -f ${go} ]; do sleep 0.1; done; echo late`;
+  return { command, ready, go };
+};
+
+const wrapperOf = async (job: number, ready: string): Promise<number> => {
+  await until(() => (existsSync(ready) ? true : undefined), "the job to start");
+  const [wrapper] = pids(`fleet-job-${String(job)}-`);
+  assert.ok(wrapper !== undefined);
+  return wrapper;
+};
+
+test("a job whose wrapper died is lost once: the mate and the worker are told", async () => {
+  const first = waiting(1);
+  const second = waiting(2);
+  h.onModel(() => ({ tool: "run_long", args: { label: "first", command: first.command } }));
   h.onModel(() => ({ text: "waiting for the first job" }));
-  h.onModel(() => ({ tool: "run_long", args: { label: "second", command: stuck(4) } }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "the first job is lost" } }));
+  h.onModel(() => ({ text: "done" }));
+  h.onModel(() => ({ tool: "run_long", args: { label: "second", command: second.command } }));
   h.onModel(() => ({ text: "waiting for the second job" }));
   try {
     worker();
-    await killWrapper(3);
-    const first = await fleet.main.waitForEntries(1);
+    process.kill(await wrapperOf(1, first.ready), "SIGKILL");
+    await until(() => (findings().length > 0 ? true : undefined), "the finding");
     assert.deepEqual(
-      first.map((entry) => [entry.kind, entry.body.slice(0, 22)]),
-      [["finding", "job lost: job 1 (first"]],
+      findings().map((body) => body.slice(0, 22)),
+      ["job lost: job 1 (first"],
     );
     assert.equal(await status(fleet.main, card), "with-mate");
+    assert.match(
+      lastUser(await h.waitForCall(3)) ?? "",
+      /^\[fleet\] c-1 job 1 \(first\) lost: no heartbeat arrived/,
+    );
+    const reported = (): boolean => fleet.main.entries.some(({ entry }) => entry.kind === "report");
+    await until(() => (reported() ? true : undefined), "the worker's report");
 
     await fleet.main.call("comment", { card: card.id, text: "run another job" });
-    await killWrapper(4);
-    const found = await fleet.main.waitForEntries(2);
+    process.kill(await wrapperOf(2, second.ready), "SIGKILL");
+    await until(() => (findings().length > 1 ? true : undefined), "the second finding");
     assert.deepEqual(
-      found.map((entry) => entry.body.slice(0, 22)),
+      findings().map((body) => body.slice(0, 22)),
       ["job lost: job 1 (first", "job lost: job 2 (secon"],
     );
   } finally {
-    for (const n of [3, 4]) for (const pid of pids(marker(n))) process.kill(pid, "SIGKILL");
+    writeFileSync(first.go, "");
+    writeFileSync(second.go, "");
   }
+});
+
+test("a result that arrives after the job was marked lost is still delivered once", async () => {
+  const slow = waiting(3);
+  h.onModel(() => ({ tool: "run_long", args: { label: "late", command: slow.command } }));
+  h.onModel(() => ({ text: "waiting for the job" }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "the job is lost" } }));
+  h.onModel(() => ({ text: "done" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "the job ended after all" } }));
+  worker();
+  const wrapper = await wrapperOf(1, slow.ready);
+  process.kill(wrapper, "SIGSTOP");
+  try {
+    await until(() => (findings().length > 0 ? true : undefined), "the finding");
+    assert.match(
+      lastUser(await h.waitForCall(3)) ?? "",
+      /^\[fleet\] c-1 job 1 \(late\) lost: no heartbeat arrived/,
+    );
+    await until(
+      () => (fleet.main.entries.some(({ entry }) => entry.kind === "report") ? true : undefined),
+      "the worker's report",
+    );
+    writeFileSync(slow.go, "");
+  } finally {
+    process.kill(wrapper, "SIGCONT");
+  }
+
+  const after = await h.waitForCall(5);
+  assert.equal(lastUser(after), "[fleet] c-1 job 1 (late) exited 0: late");
+  assert.equal(after.filter((turn) => turn.text.includes("exited 0")).length, 1);
 });

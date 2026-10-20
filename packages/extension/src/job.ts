@@ -13,6 +13,7 @@ const TIMEOUT_EXIT = 124;
 const INTERRUPTED_EXIT = 130;
 const KILL_GRACE_MS = 5000;
 const DRAIN_MS = 1000;
+const GROUP_POLL_MS = 50;
 const MAX_RETRY_MS = 30_000;
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
@@ -72,12 +73,13 @@ class Tail {
     this.lines = this.lines.concat(lines).slice(-TAIL_LINES);
   }
 
+  /** Moves each stream's unfinished line into the tail. Call it once, when the output is over. */
+  flush(): void {
+    this.add([this.out.end(), this.err.end()].filter((line) => line !== ""));
+  }
+
   text(): string {
-    return this.lines
-      .concat([this.out.end(), this.err.end()].filter((line) => line !== ""))
-      .slice(-TAIL_LINES)
-      .join("\n")
-      .trim();
+    return this.lines.join("\n").trim();
   }
 }
 
@@ -93,11 +95,11 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     stdio: ["ignore", "pipe", "pipe"],
   });
   const pid = child.pid;
-  const signalGroup = (signal: NodeJS.Signals): void => {
+  const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
     try {
-      if (pid !== undefined) process.kill(-pid, signal);
+      return pid !== undefined && process.kill(-pid, signal);
     } catch {
-      // The group is already gone.
+      return false;
     }
   };
   child.stdout.on("data", (chunk: Buffer) => {
@@ -119,13 +121,14 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     }),
   );
   let reason: "timeout" | "interrupted" | undefined;
+  let killTimer: NodeJS.Timeout | undefined;
   const stop = (why: "timeout" | "interrupted"): void => {
     if (reason !== undefined) return;
     reason = why;
     signalGroup("SIGTERM");
-    setTimeout(() => {
+    killTimer = setTimeout(() => {
       signalGroup("SIGKILL");
-    }, KILL_GRACE_MS).unref();
+    }, KILL_GRACE_MS);
   };
   const onSignal = (): void => {
     stop("interrupted");
@@ -137,9 +140,12 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   const code = await exited;
   clearTimeout(timer);
   for (const signal of STOP_SIGNALS) process.off(signal, onSignal);
+  while (reason !== undefined && signalGroup(0)) await sleep(GROUP_POLL_MS);
+  clearTimeout(killTimer);
   await Promise.race([closed, sleep(DRAIN_MS)]);
   child.stdout.destroy();
   child.stderr.destroy();
+  tail.flush();
   if (reason === "interrupted") tail.add(["interrupted"]);
   const forced = reason === "timeout" ? TIMEOUT_EXIT : INTERRUPTED_EXIT;
   return { exitCode: reason === undefined ? (code ?? 1) : forced, outputTail: tail.text() };

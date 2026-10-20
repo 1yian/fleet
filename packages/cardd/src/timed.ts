@@ -2,7 +2,7 @@
 // event reported. It writes each finding once and wakes nobody when all is well.
 import type { DatabaseSync } from "node:sqlite";
 import { loseSilentJobs } from "./attempts.ts";
-import { addEntry, getCard, setStatus } from "./store.ts";
+import { addEntry, getCard, setStatus, workerOf } from "./store.ts";
 
 const HEARTBEAT_MS = 30_000;
 const CHECK_MS = 60_000;
@@ -26,13 +26,25 @@ export function timingFor(scale: number): Timing {
 /** A running job whose wrapper stopped sending heartbeats is lost: the lane mate decides what next. Returns the sessions with new entries. */
 export function timedCheck(db: DatabaseSync, timing: Timing, now: number): string[] {
   const lost = loseSilentJobs(db, now - MISSED_HEARTBEATS * timing.heartbeatMs);
-  return lost.map((job) => {
+  return lost.flatMap((job) => {
     const card = getCard(db, job.card);
     const body = `job lost: job ${String(job.id)} (${job.label}) stopped reporting. It is not run again.`;
     const fields = { condition: "job lost", job: job.id };
     addEntry(db, { card: card.id, author: "check", kind: "finding", body, fields }, [card.lane]);
+    const worker = workerOf(db, card.id);
+    if (worker !== undefined) {
+      const result = { job: job.id, label: job.label, lost: true };
+      const note = "no heartbeat arrived. It is not run again.";
+      const entry = {
+        card: card.id,
+        author: `job:${String(job.id)}`,
+        kind: "job-result",
+        body: note,
+      };
+      addEntry(db, { ...entry, fields: result }, [worker]);
+    }
     if (card.status === "working" || card.status === "in-review")
       setStatus(db, card.id, "with-mate");
-    return card.lane;
+    return worker === undefined ? [card.lane] : [card.lane, worker];
   });
 }
