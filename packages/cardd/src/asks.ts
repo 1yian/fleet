@@ -30,7 +30,7 @@ export function reachable(
   throw new Error(`c-${String(id)} belongs to lane ${card.lane}`);
 }
 
-function openAsk(db: DatabaseSync, card: Card): string {
+export function openAsk(db: DatabaseSync, card: Card): string {
   const ask = factsFrom(cardEntries(db, card.id)).askIds.at(-1);
   if (ask === undefined) throw new Error(`c-${String(card.id)} has no open question`);
   return ask;
@@ -92,7 +92,7 @@ export function openMergeAsk(db: DatabaseSync, card: Card): string | undefined {
 }
 
 /** For a merge question, the captain's choice: approve or request changes. Undefined for other questions. */
-function mergeChoice(
+export function mergeChoice(
   db: DatabaseSync,
   card: Card,
   askId: string,

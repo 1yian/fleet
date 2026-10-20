@@ -19,6 +19,7 @@ import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { performOp } from "./ops.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
+import { Web } from "./web.ts";
 
 const CLOSE_BAD_MESSAGE = 4000;
 const CLOSE_NOT_LIVE = 4001;
@@ -57,10 +58,18 @@ class Hub {
   private readonly db: DatabaseSync;
   private readonly timing: Timings;
   private checking = false;
+  readonly web: Web;
 
-  constructor(db: DatabaseSync, timing: Timings) {
+  constructor(db: DatabaseSync, timing: Timings, files: string | undefined) {
     this.db = db;
     this.timing = timing;
+    this.web = new Web(
+      db,
+      (session) => {
+        this.flush(session, false);
+      },
+      files,
+    );
   }
 
   /** One pass of the timed check (spec section 13): read PR state with gh, then check. Pushes the findings it wrote. */
@@ -71,6 +80,7 @@ class Hub {
       .then((prs) => {
         const notify = transaction(this.db, () => runCheck(this.db, Date.now(), this.timing, prs));
         for (const recipient of notify) this.flush(recipient, false);
+        if (notify.length > 0) this.web.changed();
       })
       .finally(() => {
         this.checking = false;
@@ -83,6 +93,7 @@ class Hub {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
       const done = await performOp(this.db, session, op, args, this.timing);
       for (const recipient of done.notify) this.flush(recipient, false);
+      this.web.changed();
       return { ok: true, value: done.value };
     } catch (error) {
       return { ok: false, error: reason(error) };
@@ -134,7 +145,7 @@ class Hub {
         .end(JSON.stringify(outcome));
     };
     if (request.method !== "POST" || request.url !== "/call") {
-      reply(404, { ok: false, error: "not found" });
+      await this.web.answer(request, response);
       return;
     }
     const token = /^Bearer (\S+)$/.exec(request.headers.authorization ?? "")?.[1];
@@ -186,20 +197,31 @@ export async function serve(
   host: string,
   port: number,
   timing: Timings,
+  files?: string,
 ): Promise<string> {
   // Convergent start: no session is connected yet. Live sessions reconnect and become idle.
   db.prepare(
     "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state IN ('idle', 'running', 'waiting')",
   ).run(Date.now());
-  const hub = new Hub(db, timing);
+  const hub = new Hub(db, timing, files);
   setInterval(() => {
     hub.check();
   }, timing.every).unref();
   const server = createServer((request, response) => {
     void hub.answerHttp(request, response);
   });
-  new WebSocketServer({ server, path: "/session" }).on("connection", (socket) => {
-    hub.attach(socket);
+  // Two socket paths on one server: sessions, and board pages that watch for changes.
+  const sessions = new WebSocketServer({ noServer: true });
+  const boards = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    const path = new URL(request.url ?? "/", "http://cardd").pathname;
+    const target = path === "/session" ? sessions : path === "/live" ? boards : undefined;
+    if (target === undefined) socket.destroy();
+    else
+      target.handleUpgrade(request, socket, head, (ws) => {
+        if (target === sessions) hub.attach(ws);
+        else hub.web.watch(ws);
+      });
   });
   await new Promise<void>((resolve) => server.listen(port, host, resolve));
   const address: AddressInfo | string | null = server.address();

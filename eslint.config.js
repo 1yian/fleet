@@ -2,10 +2,11 @@
 // can only change here, in review.
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
+import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  { ignores: ["**/node_modules/", "**/dist/"] },
+  { ignores: ["**/node_modules/", "**/dist/", "packages/board/src/vendor/"] },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
@@ -49,6 +50,7 @@ export default defineConfig(
       eqeqeq: "error",
     },
   },
+  { files: ["packages/board/**/*.tsx"], extends: [reactHooks.configs.flat["recommended-latest"]] },
   { files: ["**/*.js", "**/*.cjs"], extends: [tseslint.configs.disableTypeChecked] },
   {
     files: ["**/*.cjs"],

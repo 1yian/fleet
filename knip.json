@@ -9,6 +9,9 @@
     },
     "packages/extension": {
       "entry": ["src/index.ts", "src/job.ts"]
+    },
+    "packages/board": {
+      "ignore": ["src/vendor/**"]
     }
   },
   "ignoreBinaries": ["herdr", "pgrep"]
