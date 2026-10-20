@@ -73,11 +73,11 @@ test("close.begin lists every attempt of the card, including a replaced one", as
   });
 });
 
-test("cleanup and drop wait while a question is open", async () => {
+test("cleanup and drop wait while a hold is open", async () => {
   const card = await newCard(fleet.main, "Pick the API version", "captain");
-  await fleet.main.call("ask", { card: card.id, question: "v1 or v2?", options: ["v1", "v2"] });
+  await fleet.main.call("hold", { card: card.id, question: "v1 or v2?", options: ["v1", "v2"] });
   await assert.rejects(fleet.main.call("close.begin", { card: card.id, mode: "dropped" }), {
-    message: `c-${String(card.id)} has an open question; the captain answers it, or agrees that it is moot, first`,
+    message: `c-${String(card.id)} has an open hold; release it first, with the captain's words when it waits on him`,
   });
 });
 

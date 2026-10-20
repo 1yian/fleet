@@ -61,10 +61,10 @@ function useNow(): number {
 function useKeys(
   board: Board | undefined,
   open: number | undefined,
-  answer: (card: number, ask: number, choice: string, written: boolean) => Promise<boolean>,
+  answer: (card: number, hold: number, choice: string, written: boolean) => Promise<boolean>,
   close: () => void,
 ): void {
-  const first = board?.questions.find((question) => open === undefined || question.card === open);
+  const first = board?.holds.find((question) => open === undefined || question.card === open);
   useEffect(() => {
     const key = (event: KeyboardEvent): void => {
       if (event.key === "Escape") close();
@@ -72,7 +72,7 @@ function useKeys(
         return;
       if (typesText(event.target)) return;
       const choice = first.options[Number(event.key) - 1];
-      if (choice !== undefined) void answer(first.card, first.ask, choice, false);
+      if (choice !== undefined) void answer(first.card, first.hold, choice, false);
     };
     window.addEventListener("keydown", key);
     return () => {
@@ -103,8 +103,8 @@ export function App() {
     [board, refresh],
   );
   const answer = useCallback(
-    (card: number, ask: number, choice: string, written: boolean) =>
-      send(card, { kind: "answer", ask, choice, ...(written ? { written } : {}) }),
+    (card: number, hold: number, choice: string, written: boolean) =>
+      send(card, { kind: "answer", hold, choice, ...(written ? { written } : {}) }),
     [send],
   );
   useKeys(board, open, answer, close);
@@ -133,7 +133,7 @@ export function App() {
           <CardDetail
             key={shown.id}
             card={shown}
-            questions={questionsByCard(board.questions).get(shown.id) ?? []}
+            questions={questionsByCard(board.holds).get(shown.id) ?? []}
             now={now}
             changes={changes}
             draft={drafts.get(shown.id) ?? ""}
@@ -141,7 +141,7 @@ export function App() {
               setDrafts((all) => new Map(all).set(shown.id, text));
             }}
             onClose={close}
-            onAnswer={(ask, choice, written) => answer(shown.id, ask, choice, written)}
+            onAnswer={(hold, choice, written) => answer(shown.id, hold, choice, written)}
             onReply={(text) => send(shown.id, { kind: "comment", text })}
             onFail={setNotice}
           />

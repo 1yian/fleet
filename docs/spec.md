@@ -33,7 +33,7 @@ The documents in this folder support this spec:
 14. [Failure handling](#14-failure-handling)
 15. [Hosts](#15-hosts)
 16. [Second mates](#16-second-mates)
-17. [Asks](#17-asks)
+17. [Holds](#17-holds)
 18. [Grants](#18-grants)
 19. [Standing work](#19-standing-work)
 20. [Delivery modes, validation, merge, and cleanup](#20-delivery-modes-validation-merge-and-cleanup)
@@ -250,9 +250,8 @@ Install and update: Firstmate ships as one Pi package. Each host runs `pi instal
 | `lane` | The mate that owns the card. |
 | `project` | The project from the registry. Empty for non-project work. |
 | `kind` | `ship` (makes a project change), `scout` (makes a report), `captain` (a decision or action for the captain only), or `standing` (an open-ended goal). A second mate's lane card is a standing card ([section 6.3](#63-lane)). |
-| `status` | The lane on the board. See [section 7](#7-card-status-and-lanes). |
-| `held_until` | A date. Used with the Waiting status. |
-| `return_status` | The status that the card goes back to when `held_until` passes. |
+| `status` | The lane on the board. Derived from the card's phase and its hold, and never set by hand. See [section 7](#7-card-status-and-lanes). |
+| `phase` | Where the card's work stands, whatever holds it: queued, working, in review, with mate, merging, done, or dropped. The status is the phase seen through the card's hold. See [section 7](#7-card-status-and-lanes). |
 | `blocked_by` | Card IDs that must finish first. |
 | `parent` | The parent card, such as the standing card of a run card. |
 | `grant` | A grant for this card and its children. Empty means "use the lane grant". |
@@ -278,9 +277,9 @@ An entry is one event on a card. The thread on the board and the activity log ar
 | `id` | Unique entry ID. |
 | `card` | The card. |
 | `author` | `captain`, `mate:<lane>`, `worker:<id>`, `check` (the timed check), or `script:<name>`. |
-| `kind` | `comment`, `report`, `ask`, `answer`, `status`, `merge`, `cleanup`, `connect`, `disconnect`, `finding`, `grant`, `note`, `job-result`, or `review-feedback`. |
+| `kind` | `comment`, `report`, `hold`, `release`, `answer`, `status`, `merge`, `cleanup`, `connect`, `disconnect`, `finding`, `grant`, `note`, `job-result`, or `review-feedback`. |
 | `body` | The text. |
-| `fields` | Kind-specific data, such as the report status, key, `until`, ask options, `resolves`, `now`, or `quote`. |
+| `fields` | Kind-specific data, such as the report status, key, `until`, a hold's holder and options, `resolves`, `now`, or `quote`. |
 | `attempt` | For entries by a worker or a job: the attempt that wrote it. |
 | `created_at` | Timestamp. |
 
@@ -392,6 +391,8 @@ A finding is one condition that the timed check reported.
 
 Each card has exactly one status. The status is also its lane on the board. It shows who must act next.
 
+A status is never set by hand. A card has a **phase** (where its work stands) and at most one **hold** (the gate it waits at, see [section 17](#17-holds)). The status is the phase seen through the hold: a hold that waits on the captain makes the card Needs you, a hold that waits on a mate makes it With mate, and a hold with a date in the future makes it Waiting. Otherwise the status is the phase. A worker's report moves the phase, so it can never take a card out from under an open hold.
+
 ### 7.1 Statuses
 
 | Status | Next actor | Meaning |
@@ -399,15 +400,14 @@ Each card has exactly one status. The status is also its lane on the board. It s
 | Queued | The lane mate | The card exists. Work has not started. |
 | Working | The worker | The worker implements, investigates, or reworks. |
 | In review | The worker | The no-mistakes pipeline runs. The worker answers its gates. |
-| With mate | The lane mate | A worker reported back or the timed check found a problem. The mate must act. |
-| With first mate | Main | A second mate asked a question. Main handles it before the captain sees it. |
-| Needs you | The captain | A question for the captain, or a "merge this PR?" approval. |
+| With mate | The lane mate, or main | A worker reported back, the timed check found a problem, or a hold waits on a mate. The mate must act. When the hold waits on main, the card is With mate and the board names main. |
+| Needs you | The captain | A hold that main escalated to the captain: its questions, or a "merge this PR?" approval. Nothing else is the captain's. |
 | Merging | The lane mate | The merge is approved by the captain or by a grant. The mate lands it. |
-| Waiting | Someone outside, or a date | Held until a date, or blocked on an outside event. |
+| Waiting | A date | A hold that waits until a date, such as when the captain says "later". |
 | Done | Nobody | Merged and cleaned up, or the report was delivered. Final. |
 | Dropped | Nobody | Stopped on purpose. Unlanded work is archived. Final. |
 
-The board shows the main flow from left to right: Queued, Working, In review, With mate, Needs you, Merging, Done. With mate and With first mate share one column, with a badge that names the mate. Waiting and Dropped sit to the side. Dropped is hidden by default.
+The board shows the main flow from left to right: Queued, Working, In review, With mate, Needs you, Merging, Done. With mate shows a badge that names the mate. Waiting and Dropped sit to the side. Dropped is hidden by default.
 
 ### 7.2 Badges
 
@@ -431,18 +431,12 @@ Badges show details. They are not statuses.
 | `dispatch` starts a worker. | Working |
 | The worker reports `working`, `note`, or `paused`. | No change |
 | The worker reports `in-review` (it started no-mistakes). | In review |
-| The worker reports `done` on a ship card (PR green and ready, PR opened, or branch ready). | Merging if a grant covers the merge. Otherwise Needs you, with a merge question. |
+| The worker reports `done` on a ship card (PR green and ready, PR opened, or branch ready). | Merging if a grant covers the merge. Otherwise With mate, and the card is held for the merge question (see below). |
 | The worker reports `done` on a scout card (report written). | With mate |
-| The worker reports `failed`, `blocked`, or `needs-decision`. | With mate |
+| The worker reports `failed` or `blocked`. | With mate |
+| The worker reports `needs-decision`. | The card is held, waiting on its owner. With mate. |
 | The worker ends a run without a report. The extension reports `stopped`. | With mate |
 | The timed check finds a problem: worker lost, stalled, or never connected; PR closed without a merge; required checks failed while Merging. | With mate |
-| A mate comments (a steer or an answer). | The status that the worker had before it handed off: In review if a pipeline still runs, otherwise Working. |
-| Main's lane asks the captain. | Needs you |
-| A second mate asks a question. It never reaches the captain directly. | With first mate |
-| Main forwards the question with its own ask. | Needs you |
-| Main answers from the record, or hands the question back. | With mate |
-| The captain answers. | With mate. For a merge approval: Merging. For "request changes": Working, with the Changes requested badge. |
-| The captain says "later", or a mate holds the card until a date. | Waiting. On that date the card goes back to `return_status`. |
 | The merge is waiting for required checks. | No change (Merging) |
 | Red checks or a merge conflict block the merge. | With mate. The worker's fix goes back through In review. |
 | The PR merges, by `merge` or by hand on GitHub. | Merging, then Done after `cleanup` |
@@ -455,10 +449,10 @@ The transitions in [section 7.3](#73-transitions) apply only when these guards a
 
 1. **Closed cards stay closed.** `cardd` rejects reports, job results, and status changes for a Done or Dropped card.
 2. **Only the current attempt counts.** `cardd` rejects reports from an attempt that ended or was replaced.
-3. **Open captain questions stay visible.** While an ask on the card is open, worker reports do not move the card out of Needs you. They go on the thread and to the mate.
-4. **Open decisions stay visible.** A comment moves the card back to the worker only if it resolves the last open decision key. See [section 17.5](#175-worker-decision-keys).
+3. **An open hold stays visible.** While the card has a hold, worker reports move its phase only. Its status follows the hold, so a report never takes it out from under the hold. The reports go on the thread and to the mate.
+4. **Open decisions stay visible.** A comment moves the card back to the worker only if it resolves the last open decision key. See [section 17.5](#175-worker-decision-keys). A comment cannot answer a decision that waits on the captain.
 5. **Board actions are checked against the current card.** Each board action carries the card revision. If the card changed since the captain's view, `cardd` rejects the action, and the board shows the current card.
-6. **Questions block closing.** `cleanup` and `card drop` refuse while an ask on the card is open. The mate resolves it first: the captain answers, or he agrees that it is moot.
+6. **A hold blocks closing.** `cleanup` and `card drop` refuse while the card has a hold. The owner releases it first, with the captain's words when it waits on him.
 7. **Done means landed.** `cleanup` moves a card to Done only for landed work: a merged ship, or a delivered report. Unmerged work that ends is Dropped.
 
 ### 7.5 Flow for each delivery mode
@@ -466,14 +460,14 @@ The transitions in [section 7.3](#73-transitions) apply only when these guards a
 ```
 no-mistakes:
   Working ─ in-review ─► In review ─ done (PR green) ─┬─ grant covers merge ─► Merging ─ merged ─► Done
-                           │                          └─ otherwise ─► Needs you ("Merge PR …?")
+                           │                          └─ otherwise ─► With mate, held ("Merge PR …?")
                            │                                            ├─ Approve & merge ─► Merging
                            │                                            └─ Request changes ─► Working
-                           └─ ask-user findings ─► With mate ─ mate decides ─► In review
-                                                               └─ needs the captain ─► Needs you ─► With mate ─► In review
+                           └─ ask-user findings ─► With mate (held) ─ mate decides ─► In review
+                                                               └─ escalates ─► main ─► Needs you ─► With mate ─► In review
 
-direct-PR:   Working ─ done (PR opened) ─► Merging (grant) or Needs you. Merging waits for required checks.
-local-only:  Working ─ done (branch ready) ─► Merging (grant) or Needs you. Merging fast-forwards local main.
+direct-PR:   Working ─ done (PR opened) ─► Merging (grant) or held for the merge question. Merging waits for required checks.
+local-only:  Working ─ done (branch ready) ─► Merging (grant) or With mate. Merging fast-forwards local main.
 scout:       Working ─ done (report written) ─► With mate ─ findings relayed, questions asked ─► Done
 ```
 
@@ -489,9 +483,8 @@ Every unfinished card must have one of these at all times:
 |---|---|---|
 | Queued | The card waits for a blocker or for a free slot in the project. Both wake the mate. Otherwise the mate dispatches it. | Timed check notice |
 | Working, In review | The worker's run is in progress, or the worker waits on a tracked job or review, or it paused with a date, or an entry is waiting for delivery to it. | Run-end check ([12.3](#123-nudges)), timed check ([13.1](#131-what-it-does)) |
-| With mate, With first mate, Merging | The mate has the next action. | Nudge, reminders, and a reminder to main after 15 minutes in With first mate |
 | Needs you | The captain has the next action. | Board and widget. No reminders. |
-| Waiting | `held_until` is set, or a PR state that the timed check reads. | `card hold` requires a date |
+| Waiting | The hold has a date, or a PR state that the timed check reads. | `hold` with `until` requires a date |
 
 A progress report alone never meets the rule. A worker that reports `working` and ends its run, with nothing else pending, breaks it.
 
@@ -499,7 +492,7 @@ A progress report alone never meets the rule. A worker that reports `working` an
 
 A lane card is a standing card with no schedule and no runs. It stays in Waiting for as long as the lane exists. It holds the conversation between main and the second mate.
 
-A standing card stays in Waiting until its next scheduled run. Each run is a run card that moves through the normal statuses. An ask on the standing card moves the standing card to Needs you. After the answer, it goes to With mate and then back to Waiting.
+A standing card stays in Waiting until its next scheduled run. Each run is a run card that moves through the normal statuses. A hold on the standing card waits on the captain like any other. After the answer, it goes to With mate and then back to Waiting.
 
 ## 8. Sessions
 
@@ -671,10 +664,11 @@ Code checks quotes. `answer` and `merge(quote)` accept a quote from only two sou
 | Mate `comment` on a card in its own lane | The worker on the card, if one is live | Yes |
 | Main `comment` on a second mate's lane card, or on any card in that lane | That second mate, never its worker, at any card status | Yes |
 | Second-mate `comment` on its lane card | Main | Yes |
-| Main `ask` | The captain (board and widget) | No session |
-| Second-mate `ask` | Main | Yes |
-| Merge approval (`done` on a ship card without a covering grant) | The captain (board and widget), and one line to main | Main: yes |
-| Captain answer, click, comment, or move on the board | The next actor after the entry | Yes |
+| A worker's `needs-decision` | The lane mate, who owns the hold | Yes |
+| A second mate's `hold` (waits on main) | Main | Yes |
+| Main's escalation of a hold to the captain | The captain (board and widget), and the lane mate | Lane mate: yes |
+| Merge question (`done` on a ship card without a covering grant) | Main, when the card is in a second mate's lane. The captain (board and widget) when main owns the card. | Main: yes |
+| Captain answer, click, or comment on the board | The owner of the card, and main when the card is in a second mate's lane | Yes |
 | Timed-check finding | The next actor after the entry | Yes |
 | Outcome in any lane (merged, done, dropped, or failed) | Main | Yes |
 | Run card created by a schedule | The lane mate | Yes |
@@ -685,8 +679,8 @@ Code checks quotes. `answer` and `merge(quote)` accept a quote from only two sou
 Main runs only when the captain types or when its extension injects a `[fleet]` message. The extension injects when:
 
 1. **A card in main's lane goes to With mate.** A worker in main's lane reports, stops without a report, or gets a timed-check finding.
-2. **A second mate asks a question.** The card goes to With first mate.
-3. **The captain must act in any lane.** For example, a merge approval from a second mate's lane. Main gets one line, so it can tell the captain in chat.
+2. **A second mate holds a card.** The hold waits on main.
+3. **The captain answered a hold in any lane.** Main hears the answer on a second mate's card, so it can tell the captain what happened.
 4. **An outcome lands in any lane.** A card is merged, done, dropped, or failed, or a summary run finishes. All four outcomes count, from every lane. The mate's summary comes with it.
 5. **Something that main scheduled is due.** A `paused until` date passes, or a run card of one of main's standing cards is created.
 
@@ -716,7 +710,7 @@ The same echo covers main's comments to a second mate. After main comments on a 
 
 The captain is not a session. The captain sees:
 
-- The **Needs you** view on the board. It lists the questions that main has put to the captain, in every lane, and the merge approvals. A second mate's question that main has not forwarded is not there. Its card shows "With main" in Running.
+- The **Needs you** view on the board. It lists the holds that main escalated to the captain, in every lane, one card for each hold, including merge approvals. A mate's decision about a worker's question is on the card's thread, not in Needs you. A hold that waits on main is not there. Its card shows "With main" in Running.
 - A **"Needs you: N"** widget in every mate's Pi screen.
 - Main's chat. Main tells the captain about questions, outcomes, and findings.
 - **"Since you were last here."** The captain sends a message after time away. Main's extension then adds two lists to that run: the outcomes since the captain's last message, and the Needs you list.
@@ -726,7 +720,7 @@ The captain is not a session. The captain sees:
 Worker reports in a second mate's lane go only to that second mate. Main does not see them and cannot steer those workers. Main talks to the second mate, with a comment on its lane card or on a card in its lane. That comment goes to the second mate at any card status. The second mate decides what its workers hear. Main hears four things from a second mate's lane:
 
 1. The second mate's comments on its lane card, and its next action after a comment from main ([section 10.3](#103-first-report-after-a-comment)).
-2. The second mate's questions (With first mate).
+2. The second mate's holds, which wait on main. Main resolves one or escalates it to the captain.
 3. Finished cards, with the second mate's summary.
 4. Escalations, when the second mate holds a card too long.
 
@@ -746,17 +740,15 @@ Worker reports in a second mate's lane go only to that second mate. Main does no
 |---|---|
 | `card new` | Creates a card in the caller's own lane. A card must exist before any work starts. A `lane` for another lane is refused, with a pointer to the lane card: main hands work to a second mate with `comment`, and the second mate creates its own card. |
 | `card move` | Moves a card to another status, within the rules of [section 7.3](#73-transitions). |
-| `card hold(card, until)` | Moves a card to Waiting until a date. |
-| `card drop(card, reason)` | Ends a card that did not land. It follows the cleanup order in [section 20.5](#205-cleanup) and moves the card to Dropped. The reason is required. Refuses while an ask on the card is open. |
+| `card drop(card, reason)` | Ends a card that did not land. It follows the cleanup order in [section 20.5](#205-cleanup) and moves the card to Dropped. The reason is required. Refuses while the card has a hold. |
 | `card promote(card, delivery)` | Changes a scout card to a ship card. The same worker continues. |
-| `card handback(card, guidance)` | Main only. Returns a second mate's open question to that mate with guidance, and closes the question. It is not a general message: to say anything else to a second mate, use `comment`. |
 | `dispatch(card, host?, profile?, replace?)` | Creates an attempt in one `cardd` transaction. Then, over SSH on the host, it creates the worktree, starts Pi in a herdr tab, and sends the task message. Each step first checks whether its result already exists, by the names that derive from the attempt ID. A retry after a lost SSH connection therefore finds the attempt that already started. It does not start a second one. Refuses without a card, while the card has another attempt in Starting or Active, or on a host that the lane does not allow. With `replace`, the current attempt becomes Replaced and its token stops working, so a late reconnect cannot change the card. |
-| `comment(card or lane, text, resolves?, now?)` | Talks to an agent through a card. On a card in the caller's own lane, it goes to the worker. On a second mate's lane card, or any card in that lane, it goes from main to that second mate, never to its worker, with no status gate and no status change. A second mate's comment on its lane card goes to main. `lane` is shorthand for that lane's lane card, so main never looks up a card number. `resolves` names the decision key that the answer closes. It applies to a worker's card only. `now` delivers at the next tool boundary. |
-| `ask(card, question, options)` | Asks the captain. From main's lane, the card goes to Needs you. From a second mate's lane, it goes to With first mate. |
-| `answer(card, captain_words)` | Records the captain's exact words on a card, together with what they approve: the card and the action. Refuses if the words are not in a user-role message or a captain board entry. |
+| `comment(card or lane, text, resolves?, now?)` | Talks to an agent through a card. On a card in the caller's own lane, it goes to the worker. On a second mate's lane card, or any card in that lane, it goes from main to that second mate, never to its worker, with no status gate and no status change. A second mate's comment on its lane card goes to main. `lane` is shorthand for that lane's lane card, so main never looks up a card number. `resolves` names the decision key that the answer closes, and the hold that carried the key ends with its last key. It applies to a worker's card only. A steer to a worker withdraws the merge question of the card: its PR is being reworked. `now` delivers at the next tool boundary. |
+| `hold(card, question, options?, to?, until?)` | Holds a card at a gate, with every question of the gate bundled in the one hold, and names who it waits on. A card has one hold, so a second call rewrites it. The owner of the card holds it on the next level up: a second mate on main, main on the captain. `to` escalates one level: main sets `to=captain` on the hold that waits on main. Only main marks a hold as the captain's, and only a hold that waits on main. `until` holds it until a date. See [section 17](#17-holds). |
+| `release(card, words? or note?, choice?)` | Releases the hold. `words` is the captain's exact words when he decided it, and merge approval is such a release. It refuses if the words are not in a user-role message or a captain board entry. `note` is the owner's or main's own decision, and it cannot release what waits on the captain. |
 | `control(card or lane, interrupt or relaunch, note?)` | `interrupt` stops the current run. `relaunch` restarts Pi on the same session file, in the same worktree, with the note. Refuses while a live agent still owns the worktree. |
 | `merge(card, quote?)` | Merges through the guarded path. Refuses red checks, required checks that have not reported, and merges without authority. `quote` is the captain's approving words when no grant covers the merge. |
-| `cleanup(card, summary)` | Ends a card whose work landed. It follows the order in [section 20.5](#205-cleanup) and moves the card to Done. The summary is required. Main relays it to the captain. Refuses for unmerged ship work (use `card drop`) and while an ask on the card is open. |
+| `cleanup(card, summary)` | Ends a card whose work landed. It follows the order in [section 20.5](#205-cleanup) and moves the card to Done. The summary is required. Main relays it to the captain. Refuses for unmerged ship work (use `card drop`) and while the card has a hold. |
 | `grant(target, fields, captain_words)` | Sets or changes a grant on a card or lane. Refuses without the captain's words. |
 | `board(filter)` | Reads cards. |
 
@@ -785,7 +777,7 @@ Pi fires `agent_before_settle` before a run ends. The extension can add one mess
 |---|---|---|
 | Worker | The run ends with the card in Working or In review and without a handoff. See the run-end check below. | Add one nudge and request one more model call. If the rule is still not met when Pi fires `agent_settled`, file `stopped` with the worker's last message. The card goes to With mate. |
 | Mate | A card that woke the mate in this run still has status With mate or Merging, and the mate did nothing on it. | Add one nudge. |
-| Mate | The last assistant message asks the captain a question, and no `ask` ran. | Add one nudge to use `ask`. |
+| Mate | The last assistant message asks the captain a question, and no `hold` ran. | Add one nudge to use `hold`. |
 
 **Run-end check for workers.** At `agent_before_settle`, the run may end only if at least one of these is true:
 
@@ -836,13 +828,12 @@ The timed check is one pass inside `cardd` every 60 seconds. It reads only `card
 | A running worker with no activity for the stall threshold | Status With mate: "worker stalled" |
 | A card in Working or In review whose worker session is Idle (not Waiting) for 2 minutes, with no future `paused` date and no undelivered entry | Status With mate: "worker idle without a handoff". This is the backup for the run-end check. |
 | A card in With mate whose mate is not connected | A notice to main. If the mate is main, the card waits for main. |
-| A card in With mate or Merging with no action for 30 minutes | A reminder to that mate. Then reminders after 1 hour, 2 hours, and every 4 hours. Only while the mate is idle. |
+| A card in With mate or Merging with no action for 30 minutes | A reminder to the mate that must act: the lane mate, or main when the hold waits on main. Then reminders after 1 hour, 2 hours, and every 4 hours. Only while the mate is idle. |
 | A second mate holding a card for 2 hours | An escalation to main. |
-| A card in With first mate for 15 minutes | A reminder to main. The question stays with main. |
 | A PR merged | Status Merging, and a notice to the lane mate to run `cleanup`. |
-| A PR closed without a merge | Status With mate. |
+| A PR closed without a merge | Status With mate, and the merge question is withdrawn. |
 | A card in Merging whose required checks failed | Status With mate. While a card is In review, the no-mistakes pipeline handles CI itself. |
-| `held_until` passed | Status `return_status`. |
+| A hold's date passed | The hold waits on its holder again, and the status follows it. |
 | A `run_long` job whose tab and result are both gone | Status With mate: "job lost". The job is not run again. |
 | A schedule rule due | A new run card under the standing card. Not created if the previous run card is still open. |
 | A queued card whose blockers are all Done, or whose project gets a free slot | A notice to the lane mate. |
@@ -867,9 +858,9 @@ The current watcher is expensive for four reasons. It runs as five processes on 
 
 | Failure | Mechanism | Trigger |
 |---|---|---|
-| A worker finishes, and nobody reviews the work. | The `done` report moves the card to Merging or Needs you. The card cannot stay in Working. | The report |
-| A question for the captain scrolls away in chat. | Mates ask only through `ask`. The question is a card in Needs you. | The tool call |
-| A mate asks in plain chat anyway. | One nudge to use `ask`. | `agent_before_settle` |
+| A worker finishes, and nobody reviews the work. | The `done` report moves the card to Merging, or to With mate with a merge question held. The card cannot stay in Working. | The report |
+| A question for the captain scrolls away in chat. | Mates hold a card only through `hold`. The hold is a card in Needs you once main escalates it. | The tool call |
+| A mate asks in plain chat anyway. | One nudge to use `hold`. | `agent_before_settle` |
 | The captain forgets to answer. | The widget count, the Needs you view, and the list that main adds on the captain's next message. | The captain's own message |
 | A mate does not act on a card. | One nudge, then reminders, then escalation to main for a second mate. | `agent_before_settle`, timed check |
 | A worker ends a run without a report. | One nudge, then an automatic `stopped` report. | `agent_before_settle`, `agent_settled` |
@@ -911,60 +902,64 @@ Any session can run on any host. The websocket to `cardd` is the only cross-host
 - A second mate owns one lane: a home folder, a charter, a direnv environment, memory files, and a herdr pane. Main and second mates start with `optpi`, which keeps conversation memory in the home folder. Workers start with plain `pi`.
 - A second mate acts only on cards in its lane. These cards are its own: it creates them when main comments on its lane card with work, when its own standing cards' schedules are due, or when the captain types in its pane. After a restart, it checks its own cards and then waits. An empty lane never permits a survey, an audit, or an improvement sweep.
 - The second mate handles its workers' reports and decisions. It applies the same rules as main.
-- Its questions for the captain go to main first. See [section 17](#17-asks).
+- Its holds wait on main first. See [section 17](#17-holds).
 - Its finished cards reach main with its required summary.
-- Its chat is not a channel to the captain. Anything for the captain goes through `ask` or a card summary. When the captain types in its pane, it answers there and records decisions on the card.
+- Its chat is not a channel to the captain. Anything for the captain goes through `hold` or a card summary. When the captain types in its pane, it answers there and records decisions on the card.
 - Main creates cards only in its own lane, under its own supervision. It hands work to a second mate with a comment on the lane card, quoting the captain's words. The second mate creates its own card and dispatches it, or answers on the lane card. Main cannot dispatch a second mate's card or steer its workers.
 - A second mate answers main with `comment` on its lane card. Its chat is not a channel.
 
-## 17. Asks
+## 17. Holds
 
-An ask is a question that belongs to the captain. It is a card with the Needs you status and a list of options.
+A hold is a gate that a card waits at. It replaces the separate question rows of the earlier design, and it follows Firstmate's captain-hold model: a decision is not a separate thing, it is a card that waits on someone.
 
-### 17.1 Creating an ask
+### 17.1 One hold for each card
 
-- Every unresolved question that belongs to the captain must become an ask before the work that found it finishes. This includes questions from investigations, reports, and Lavish reviews.
-- Ask on the card that the question blocks. Create a new card only when none exists. Link the new card to the card that found the question.
-- Make one ask for each real decision point. A review with several questions is one ask that points to the report.
-- Findings that are already resolved and recommendations that need no choice are not asks.
-- Write each ask so that it stands alone: evidence first, then the consequence, the options, and a recommendation.
-- Do not ask "Do you want me to make a task for this?" Create the follow-up card in Queued with a recommendation. Ask only if the start needs the captain's permission.
+- A card has at most one open hold. It bundles every question of the gate, with their options, in one text. A review with several questions is one hold that points to the report.
+- No separate question rows exist, so nothing can be answered out of order, and nothing resolves "the newest open one".
+- Hold the card that the gate blocks. Create a new card only when none exists.
+- Write the hold so that it stands alone: number each question, with the evidence first, then the consequence, and a recommendation. Options are short, with the recommendation first, and each one answers the whole hold. The captain can also write his own answer.
+- Findings that are already resolved and recommendations that need no choice are not holds.
+- Do not ask "Do you want me to make a task for this?" Create the follow-up card in Queued with a recommendation. Hold it only if the start needs the captain's permission.
+- Holding a card that already has a hold is the same hold, written again. Holding it again after a release is the next occurrence of the same hold, recorded as such. Nothing is registered twice.
 
-### 17.2 Questions from second mates
+### 17.2 Owner and holder
 
-1. A second mate calls `ask`. The card goes to With first mate.
-2. Main handles it in its next run in one of three ways:
-   - **Answer from the record.** The captain already decided this, or a grant or a recorded preference covers it. Main calls `answer` with the captain's earlier words and their source. The card goes to With mate in the second mate's lane.
-   - **Hand back.** The question is not the captain's to decide. Main calls `card handback` with guidance. This closes the question. Other messages to the second mate are comments on the lane card.
-   - **Forward.** The question belongs to the captain. Main calls `ask` and adds a recommendation and any context from other lanes. The forward replaces the second mate's question, so the captain answers one question. The card goes to Needs you.
-3. The captain's answer goes directly to the card. It does not pass back through main.
-4. If main does not act within 15 minutes, the timed check reminds main. The question stays with main. Only main's own `ask` reaches the captain, so nothing reaches the captain except through main.
+- The **owner** of a hold is the card's own mate: the lane mate for a lane card, main for main's cards.
+- The **holder** is who the hold waits on now: the owner, then main, then the captain. For main's own cards the owner is main, so a hold goes from main to the captain.
+- A worker's `needs-decision` opens the hold, and the owner holds it. The captain and main do not see it. It is the owner's to resolve.
+- The owner resolves it, or escalates it one level with `hold`. A second mate escalates to main. A second mate never skips main.
+- Only main can mark a hold as the captain's. Main never re-registers a lane's hold as its own row. It escalates the existing one with `hold(to=captain)`, and may add a recommendation. Main cannot open a hold on a second mate's card, and it cannot escalate one that still waits on that mate.
+- Only a hold that waits on the captain appears in the board's Needs you, and nothing is surfaced to the captain except through main.
+- A merge question is part of the hold (see [section 7.5](#75-flow-for-each-delivery-mode)). The fleet writes it when a worker reports `done` on a ship card with a PR and no covering grant, and it needs the PR. It waits on main for a second mate's card, and on the captain when main owns the card. It is withdrawn while the PR is being reworked: when a mate steers the worker, when the worker reports `in-review`, `failed`, `blocked`, or `needs-decision`, or when the PR is closed. The next `done` holds the card again.
 
-Merge approvals skip this step. Main cannot approve a merge without the captain's words or a grant, so a filter adds nothing. They go directly to Needs you, and main gets one line.
+### 17.3 Release and re-hold
 
-### 17.3 Answers
-
-- A click on a board option records the captain's choice on the card.
-- When the captain answers in chat, the mate calls `answer` with the captain's exact words before it acts. Never close anything that the captain owns without the captain's words.
-- "Later" is an answer. The card goes to Waiting until the date.
+- The owner **releases** the hold. With the captain's exact words when the captain decided it (an answer), and as approval for held work to proceed (merge approval is a release). With its own note when the hold was the mate's or main's to decide, and then main may release what waits on main.
+- A note cannot release what waits on the captain. Only his exact words do, and they must be words he wrote: in a user-role message in the releasing mate's chat, or in a captain board entry.
+- A mate's `comment` that resolves a worker's decision key answers the worker and releases the hold that carried the key, when it was the last key. A comment cannot answer a decision that waits on the captain.
+- A board answer releases the whole hold, whichever option or own words the captain used. It reaches the owner, and main when the card is in a second mate's lane. The card's status moves on: With mate, or Merging for a merge approval, or Working for requested changes.
+- A comment of the captain on a card that waits on him is a steer. It goes back to the owner, and the card leaves Needs you. The owner releases the hold if the steer settles it, or holds the card again if it does not. It is the same hold.
+- If the work then reaches another gate, the owner holds the same card again, and the occurrence is recorded.
+- "Later" is an answer. The owner holds again with a date: the hold leaves the captain's list as Waiting, and returns on that date.
+- If a ship card is done and its hold is released with no merge approval in the record, the merge question is asked again.
 - When an answer changes what a card must build, the mate adds the captain's words to the card's intent and comments them to the worker. On a card in a second mate's lane, main comments the captain's words on the card. They reach the second mate, who steers its worker.
 
 ### 17.4 Questions that become moot
 
-If evidence shows that an ask no longer matters, the mate writes the evidence on the card and tells the captain. The mate closes the ask only after the captain agrees.
+If evidence shows that a hold no longer matters, the owner writes the evidence on the card and tells the captain. The owner releases a hold on the captain only with his words, so it waits until he agrees.
 
 ### 17.5 Worker decision keys
 
-A worker can have more than one open decision. Each has a key. A decision stays open until a `comment` with `resolves=<key>` answers it, or the worker reports `resolved` with the same key. A later `done` or `working` report never closes an open decision.
+A worker can have more than one open decision. Each has a key, and each new gate has a new key. A decision stays open until a `comment` with `resolves=<key>` answers it, or the worker reports `resolved` with the same key. A later `done` or `working` report never closes an open decision. The decisions are the keys of the card's one hold.
 
-A comment that resolves one key moves the card back to the worker only if no other key is open. Otherwise the card stays With mate, with a badge that shows the number of open decisions.
+A comment that resolves one key moves the card back to the worker only if no other key is open. Otherwise the card stays With mate.
 
 ## 18. Grants
 
 A grant is a recorded permission to act without asking the captain. See the fields in [section 6.7](#67-grant).
 
 - **Inside a grant**, act without asking. Log each change, with its undo, on the card.
-- **Outside a grant**, call `ask`.
+- **Outside a grant**, call `hold`.
 - **Where a grant sits.** On a lane (the default for all its cards) or on a card (for that card and its children). Child cards inherit the grant of their parent.
 - **Changes.** Only `grant` with the captain's words changes a grant. Never widen a grant by analogy. Never apply it to another card or action. Never turn one request into standing permission.
 - **Scope.** A grant can name a project and a branch. A scoped lane grant covers only cards for that project and branch.
@@ -1017,8 +1012,8 @@ This follows the Symphony approach, where the tracker creates a new ticket for e
 
 ### 19.3 Limits and scripts
 
-- Actions outside the grant are asks on the standing card.
-- Steps that only the captain can do, such as logins or access, are asks on the standing card.
+- Actions outside the grant are holds of the standing card.
+- Steps that only the captain can do, such as logins or access, are holds of the standing card.
 - Changes to the goal, grant, or schedule need the captain's words.
 - Mechanical loops stay as scripts on cron. They record their actions with `fleet note`. To add or remove such a script, dispatch a worker.
 - To stop the work, the captain drops the standing card. This stops the schedule. A worker then removes its cron scripts.
@@ -1066,8 +1061,8 @@ Do not add a separate reviewer or a manual approval step on top of a mode. If a 
 
 - The worker that starts a no-mistakes run drives it to the end. The mate never answers a gate for the worker.
 - Never pass `--yes` or `-y` to no-mistakes.
-- The worker never answers its own "ask-user" findings. It writes them, word for word, to a findings file. It reports `needs-decision` with the key `nm-<run>-<step>` and stops. The mate decides with the `ask-user-authority` procedure, or asks the captain. The mate answers with `comment(..., resolves=<key>)`.
-- The mate decides a finding when it agrees with the accepted intent. The mate asks the captain in these cases:
+- The worker never answers its own "ask-user" findings. It writes them, word for word, to a findings file. It reports `needs-decision` with the key `nm-<run>-<step>` and stops. The report holds the card: its mate decides with the `ask-user-authority` procedure, or escalates the hold. The mate answers with `comment(..., resolves=<key>)`. A new gate of the same review is a new key.
+- The mate decides a finding when it agrees with the accepted intent. The mate escalates the hold in these cases:
   - A fix would expand the contract, for example with new guarantees, subsystems, frameworks, or monitoring.
   - The intent does not settle a product call.
   - Findings with the same theme keep returning.
@@ -1107,7 +1102,7 @@ Do not add a separate reviewer or a manual approval step on top of a mode. If a 
 ### 20.6 Scouts and promotion
 
 - A scout writes a report that stands alone. The report says what the scout did, what it found (with evidence), and what it recommends. Its final section is "Decisions for the captain".
-- The mate relays the findings, not only "done". The mate turns each decision into an ask, creates queued cards for recommended work, and runs `cleanup`.
+- The mate relays the findings, not only "done". The mate bundles the decisions into one hold that points at the report, creates queued cards for recommended work, and runs `cleanup` once the hold is released.
 - For a Lavish review, the worker stays alive and uses `wait_review` for each round.
 - When implementation is approved, `card promote` changes the scout to a ship card. The worker then:
   1. Returns to a clean copy of the base branch.
@@ -1127,11 +1122,11 @@ Do not add a separate reviewer or a manual approval step on top of a mode. If a 
 
 | View | Contents |
 |---|---|
-| Board (default) | Three groups as columns: Needs you, Running, and Done. Needs you holds every card with a question for the captain, in every lane, with each question and its option buttons inline. Merge approvals show "Approve & merge" and "Request changes". Done shows the 20 most recent finished or dropped cards. Under the three groups, a Mates section shows each second mate's lane card, with the latest comment on it. The lane cards are not in the three groups. A lane filter and a project filter. Standing cards show their grant, their last and next run, and their child cards folded. A "since you were last here" summary appears at the top. |
+| Board (default) | Three groups as columns: Needs you, Running, and Done. Needs you holds only the holds that main escalated to the captain, in every lane, one card for each hold with all its questions and its option buttons inline. An answer, or the captain's own words, resolves the whole hold. A card whose hold waits on a mate or on main is in Running, and the board names who it waits on. Merge approvals show "Approve & merge" and "Request changes". Done shows the 20 most recent finished or dropped cards. Under the three groups, a Mates section shows each second mate's lane card, with the latest comment on it. The lane cards are not in the three groups. A lane filter and a project filter. Standing cards show their grant, their last and next run, and their child cards folded. A "since you were last here" summary appears at the top. |
 | List | The same groups, one after another. A narrow screen always gets the list. |
 | Card | Each card shows its title, its latest news in one line, its status, its lane, and its PR. It opens in place, never as a separate page or a drawer. Open, it shows one line for each update, and each line opens to its details. It also has a reply box, move and hold controls, and a "watch live" action. "Watch live" copies the herdr command that attaches to the worker's pane. |
 
-A card's thread shows what the captain reads: the captain's words, the mates' notes, questions, and outcomes, and the workers' reports. Job results, the timed check's findings, and the mate's instructions to the worker (the task message and its steers) stay out. On a lane card the mates' comments are the talk between main and the second mate, so they show. Nothing on the board scrolls sideways.
+A card's thread shows what the captain reads: the captain's words, the mates' notes, holds, decisions, and outcomes, and the workers' reports. A mate's answer to a worker's decision is the mate's decision, so it shows. Job results, the timed check's findings, and the mate's instructions to the worker (the task message and its steers) stay out. On a lane card the mates' comments are the talk between main and the second mate, so they show. Nothing on the board scrolls sideways.
 
 A **message box** on every view sends text into main's chat as a captain message. The board therefore never becomes a second conversation.
 
@@ -1186,7 +1181,7 @@ The new instructions are in `prompts/`. They ship in the Pi package.
 | `AGENTS.md` | Main and second mates | Identity and captain address; hard rules; cards and status; tools; intake; delivery and merge; handling fleet messages; grants and standing work; how to talk to the captain; knowledge files; captain instruction precedence. |
 | `worker.md` | Workers | Identity; message sources; the report verbs; `run_long` and `wait_review`; rules for isolation, branches, pushes, shared infrastructure, and project memory files. |
 | `task-message.md` | `dispatch` | The template of the worker's first message: the card, the captain's intent, the spec, and one "Definition of done" block for no-mistakes, direct-PR, local-only, or scout work. |
-| `skills/` | Mates, at stated triggers | Ported: `ask-user-authority`, `validation-supervision`, `ship-landing`, `scout-completion`. Replaced: `asks` (was captain holds), `worker-recovery` (was stuck-crewmate recovery). New: `standing-work`. |
+| `skills/` | Mates, at stated triggers | Ported: `ask-user-authority`, `validation-supervision`, `ship-landing`, `scout-completion`. Replaced: `holds` (was captain holds), `worker-recovery` (was stuck-crewmate recovery). New: `standing-work`. |
 | `skills.md` | Reviewers | The fate of each of the 28 current skills. |
 
 ### 22.1 Rules that the prompts keep from Firstmate
@@ -1208,8 +1203,8 @@ The new instructions are in `prompts/`. They ship in the Pi package.
 
 | Old prose rule | New enforcement |
 |---|---|
-| Ask the captain in a durable way | `ask` is the only way to ask. The mate gets a nudge if it asks in plain chat. |
-| Record the captain's exact words before closing a decision | `answer` verifies the words against the session file or a board entry. |
+| Ask the captain in a durable way | `hold` is the only way to hold a card for a decision, and one card has one hold. The mate gets a nudge if it asks in plain chat. |
+| Record the captain's exact words before closing a decision | `release` verifies the words against the session file or a board entry. |
 | Do not widen standing permissions | `grant` refuses without the captain's words. |
 | A ready signal must name a pushed commit | `report` rejects `done` if the latest commit is not pushed. |
 | Write a status line at each phase change | The extension nudges, then files `stopped`. |
@@ -1256,7 +1251,7 @@ The new instructions are in `prompts/`. They ship in the Pi package.
 
 ### 23.4 Who must act next
 
-Firstmate stores this only for the captain, as a hold on a backlog item. Everything else it calculates when asked: the wake drain prints "OPEN DECISIONS", and `/bearings` builds a "Captain's Call" list. Nothing records that a mate must act after a worker reports `done`. The new card status stores who must act next for every card, and each event updates it.
+Firstmate stores this only for the captain, as a hold on a backlog item. The new design keeps that hold and uses it for every card. Everything else it calculates when asked: the wake drain prints "OPEN DECISIONS", and `/bearings` builds a "Captain's Call" list. Nothing records that a mate must act after a worker reports `done`. The new card status shows who must act next for every card. It is derived from the card's phase and its hold, so no event sets it by hand.
 
 ### 23.5 Second mates
 
@@ -1264,14 +1259,14 @@ Firstmate stores this only for the captain, as a hold on a backlog item. Everyth
 |---|---|---|
 | Route work | A marked message with a correlation ID | A comment on the second mate's lane card. The mate creates its own card. |
 | Facts reach main | Scripts copy worker `done`, `failed`, and PR-ready lines to main as they happen | Main hears only after the second mate finishes the card, with its summary |
-| Questions for the captain | A line in the parent-channel status file. Main relays it in chat. | `ask` goes to main first (With first mate), with a 15-minute reminder to main. Only main's ask reaches the captain. |
+| Questions for the captain | A line in the parent-channel status file. Main relays it in chat. | The hold of the card waits on main first. Main escalates the same hold to the captain. No timer forwards it. |
 | Answers | Main relays them back with a marked message | The answer goes directly to the card |
 | A missing reply | `fm-pending-reply`: one recovery request, then one escalation | Nudge, reminders, then escalation to main |
 | Repeated crashes | Automatic relaunch, then "keeps exiting" | Relaunch, with a limit of three per hour |
 
 ### 23.6 New items
 
-- A stored "next actor" status on every card, with the With mate and With first mate statuses.
+- A status on every card that shows who acts next, derived from the card's phase and its hold.
 - A nudge to the worker before the automatic `stopped` report.
 - The `in-review` verb.
 - The `now` flag for urgent steers.
@@ -1287,6 +1282,7 @@ Firstmate stores this only for the captain, as a hold on a backlog item. Everyth
 - The supervision branch.
 - Correlation IDs and markers.
 - The captain-hold binding and reconciliation machinery, and the record-divergence check.
+- Question rows (`ask`, `answer`, `handback`), the With first mate status, and the 15-minute timer on questions.
 - Away mode and quiet mode.
 - The voice interface.
 - The extension binding host.
@@ -1344,7 +1340,7 @@ The cutover is one wave. There is no compatibility layer and no period with both
    4. Custom watcher checks become schedules on standing cards. Cleo growth is the first.
 3. Run end-to-end tests in an isolated herdr lab:
    1. The captain asks main, a worker asks a question, the captain answers on the board, the worker opens a PR, the merge happens, and cleanup runs.
-   2. The same flow through a second mate on P620, including a second-mate question through With first mate.
+   2. The same flow through a second mate on P620, including a second mate's hold, escalated through main to the captain.
    3. A standing card with a one-minute schedule: run cards appear, a missed run shows as overdue, and an action outside the grant becomes an ask.
    4. Kill a worker, `cardd`, and main during the flow. Confirm that nothing is lost.
    5. Overtaking: queue entry A as a follow-up while the worker runs a long tool call. Send entry B with `now`. Let B reach the model. Kill Pi before A is delivered. Relaunch. Confirm that recovery delivers A exactly once and does not deliver B again.
@@ -1425,8 +1421,8 @@ The first end-to-end tests must cover these items.
 | "In review" means agentic review (no-mistakes). Human approval is in Needs you. | The captain's choice. |
 | One rule for communication: comment on the agent's card. A second mate has a standing lane card. Main creates cards only in its own lane. | Main had no way to reach a second mate except a new card, and a comment on a lane card was refused. That led to dropped cards and lost words. A card for each agent gives one verb for every edge, and the captain can read the main to second-mate talk on the board. |
 | Rework is a badge, not a lane. | A change request usually means "fix what I commented", not "start again". |
-| Second-mate questions go to main, and only main's ask reaches the captain. After 15 minutes main gets a reminder, and the question does not move on. | The captain's rule: nothing is surfaceable to him except through main. Main filters, removes duplicates, and adds recommendations. A limit that forwarded the question itself broke that rule. |
-| Merge approvals go directly to Needs you. | Main cannot approve a merge alone, so a filter adds nothing. |
+| One hold for each card. Its holder climbs from the card's mate to main to the captain, one level at a time, and only main marks a hold as the captain's. | The captain's own words: "It should be one hold per card for sure" and "Nothing should be surfaceable to me except through main." This is Firstmate's captain-hold model. A mate's decision about a worker's question never reaches the captain, and four questions are answered once. |
+| Merge questions are part of the hold and go up through main. | The same chain of command applies to merge approvals. Main escalates a second mate's merge question, and the mates withdraw it while the PR is reworked. |
 | All outcomes from every lane reach main. | The captain's choice. |
 | Main hears a second mate's work only after the card is finished. | One owner for each card, and less noise. Questions still reach the captain at once. |
 | A progress report is not a handoff. A worker run can end only with a handoff, a tracked wait, or a queued continuation. | A worker that reports `working` and goes idle would otherwise hold its card with nobody to act. Firstmate's watcher covers this case today, so the rewrite must too. |
@@ -1462,7 +1458,6 @@ The first end-to-end tests must cover these items.
 | Stall threshold (no activity while running) | 15 minutes |
 | Mate reminders | 30 minutes, then 1 hour, 2 hours, and every 4 hours, only while the mate is idle |
 | Escalation of a second mate to main | 2 hours |
-| Reminder to main for a question in With first mate | 15 minutes |
 | Relaunch limit for mates | 3 per hour |
 | Burst folding window | About 1 second of quiet |
 | Websocket keepalive | 30 seconds |

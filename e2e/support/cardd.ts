@@ -5,7 +5,17 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseServerMessage, type Entry, type ServerMessage } from "@fleet/protocol";
+import {
+  BoardSchema,
+  check,
+  parseServerMessage,
+  ThreadSchema,
+  type Board,
+  type BoardAction,
+  type Entry,
+  type ServerMessage,
+  type Thread,
+} from "@fleet/protocol";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 const WAIT_MS = 10_000;
@@ -84,6 +94,31 @@ export class Cardd {
     });
     const body: unknown = await response.json();
     return { status: response.status, body };
+  }
+
+  private http(path: string): string {
+    return this.url.replace(/^ws/, "http").replace(/\/session$/, path);
+  }
+
+  /** The board as the captain's page reads it. */
+  async board(): Promise<Board> {
+    return check(BoardSchema, await (await fetch(this.http("/api/board"))).json());
+  }
+
+  /** A card's thread as the captain's page reads it. */
+  async thread(card: number): Promise<Thread> {
+    return check(ThreadSchema, await (await fetch(this.http(`/api/card/${String(card)}`))).json());
+  }
+
+  /** The captain's action on the board, on the card as it stands now. Resolves with the HTTP status. */
+  async act(card: number, action: BoardAction["action"]): Promise<number> {
+    const revision = (await this.board()).cards.find((each) => each.id === card)?.revision ?? -1;
+    const response = await fetch(this.http("/api/action"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ card, revision, action }),
+    });
+    return response.status;
   }
 
   async connect(token: string, inFile: readonly number[] = []): Promise<Session> {

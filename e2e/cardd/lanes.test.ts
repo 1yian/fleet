@@ -46,7 +46,7 @@ test("every second mate has an open lane card, and main has none", async () => {
   assert.equal((await cards(fleet.main)).filter((card) => card.kind === "standing").length, 1);
 });
 
-test("a lane card stays open: it cannot be dispatched, asked on, or closed", async () => {
+test("a lane card stays open: it cannot be dispatched, held, or closed", async () => {
   const lane = await laneCardOf("leo");
   const dispatch = { card: lane.id, host: "maverick", task: "x" };
   await assert.rejects(leo.call("attempt.begin", dispatch), /lane card of leo/);
@@ -54,7 +54,7 @@ test("a lane card stays open: it cannot be dispatched, asked on, or closed", asy
     message: `c-${String(lane.id)} belongs to lane leo`,
   });
   await assert.rejects(
-    leo.call("ask", { card: lane.id, question: "x?", options: ["a"] }),
+    leo.call("hold", { card: lane.id, question: "x?", options: ["a"] }),
     /lane card of leo/,
   );
   for (const mode of ["done", "dropped"]) {

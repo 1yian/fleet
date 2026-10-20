@@ -3,12 +3,12 @@
 // condition stays true, and clears when the condition stops. The check wakes
 // nobody when everything is in order.
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { STATUSES } from "@fleet/protocol";
 import { loseSilentJobs } from "./attempts.ts";
 import { applyChange } from "./change.ts";
 import { readPullRequest, type PullRequest } from "./github.ts";
-import type { Change } from "./status.ts";
-import { addEntry, getCard, workerOf } from "./store.ts";
+import { withdrawMerge } from "./holds.ts";
+import { factsFrom, type Change } from "./status.ts";
+import { addEntry, cardEntries, getCard, parentOf, phaseOf, workerOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
 
 interface Match {
@@ -18,16 +18,18 @@ interface Match {
   readonly text: string;
   /** The status change, if the finding moves the card. Reminders do not. */
   readonly change?: Change;
+  /** Whether the finding ends the merge question: it asks about a PR that is closed. */
+  readonly withdrawsMerge?: boolean;
   /** Whether a new finding may be written now. A finding that is already open stays open either way. */
   readonly ready?: boolean;
 }
 
-/** A worker card in Working or In review, with its live attempt and session. */
+/** A card whose work is in Working or In review, with its live attempt and session. */
 const WORKER_CARDS = `SELECT c.id AS card, c.lane AS lane, a.state AS attempt, a.created_at AS started,
     s.state AS state, s.last_seen AS seen, coalesce(c.last_activity, s.last_seen, 0) AS active, s.id AS session
   FROM cards c JOIN attempts a ON a.card = c.id AND a.state IN ('starting', 'active')
   JOIN sessions s ON s.attempt = a.id
-  WHERE c.status IN ('working', 'in-review')`;
+  WHERE c.phase IN ('working', 'in-review')`;
 
 const LATEST_REPORT = `(SELECT fields FROM entries WHERE card = w.card AND kind = 'report' ORDER BY id DESC LIMIT 1)`;
 
@@ -100,27 +102,37 @@ function reminderTier(waited: number, at: readonly number[]): number {
   return passed < at.length || gap <= 0 ? passed : passed + Math.floor((waited - last) / gap);
 }
 
-/** Cards that wait on their mate (spec section 13.1): a reminder for each tier, written while the mate is idle. */
+/** The lane that acts on a card that waits on its mate: its owner, or main when the hold waits on main. */
+function actingLane(db: DatabaseSync, card: number, lane: string): string {
+  const { hold } = factsFrom(cardEntries(db, card));
+  return hold?.holder === "main" ? (parentOf(db, lane) ?? lane) : lane;
+}
+
+/** Cards that wait on a mate (spec section 13.1): a reminder for each tier, written while that mate is idle. A hold that waits on main reminds main. */
 function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const waiting = rows(
     db,
-    `SELECT c.id AS card, c.lane AS lane, c.status AS status, m.state AS mate, max(c.updated_at,
-       coalesce((SELECT max(created_at) FROM entries WHERE card = c.id AND author = 'mate:' || c.lane), 0)) AS since
-     FROM cards c JOIN sessions m ON m.id = c.lane AND m.role = 'mate'
-     WHERE c.status IN ('with-mate', 'merging')`,
+    "SELECT id, lane, status, updated_at FROM cards WHERE status IN ('with-mate', 'merging')",
   );
   return waiting.flatMap((row) => {
-    const tier = reminderTier(now - Number(row["since"]), t.reminders);
+    const card = Number(row["id"]);
+    const lane = actingLane(db, card, String(row["lane"]));
+    const acted = db
+      .prepare("SELECT max(created_at) AS at FROM entries WHERE card = ? AND author = ?")
+      .get(card, `mate:${lane}`)?.["at"];
+    const since = Math.max(Number(row["updated_at"]), typeof acted === "number" ? acted : 0);
+    const tier = reminderTier(now - since, t.reminders);
     if (tier === 0) return [];
-    const minutes = Math.round((now - Number(row["since"])) / MINUTE);
+    const mate = db.prepare("SELECT state FROM sessions WHERE id = ? AND role = 'mate'").get(lane);
+    const minutes = Math.round((now - since) / MINUTE);
     const text = `reminder: this card has waited for you (${String(row["status"])}, ${String(minutes)} min)`;
     return [
       {
-        card: Number(row["card"]),
-        lane: String(row["lane"]),
+        card,
+        lane,
         condition: `reminder-${String(tier)}`,
         text,
-        ready: row["mate"] === "idle",
+        ready: mate?.["state"] === "idle",
       },
     ];
   });
@@ -155,56 +167,27 @@ function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
         [worker],
       );
     }
-    if (card.status === "working" || card.status === "in-review") applyChange(db, card, FINDING);
+    const phase = phaseOf(db, card.id);
+    if (phase === "working" || phase === "in-review") applyChange(db, card, FINDING);
     return worker === undefined ? [card.lane] : [card.lane, worker];
   });
 }
 
-/**
- * A second mate's question that main did not take within 15 minutes, or while main is away.
- * The question stays with main: only main's own ask reaches the captain. Main gets a reminder.
- */
-function firstMateMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
-  const waiting = rows(
-    db,
-    `SELECT c.id AS card, l.parent AS main, m.state AS state,
-       (SELECT max(id) FROM entries WHERE card = c.id AND kind = 'ask') AS ask,
-       (SELECT max(created_at) FROM entries WHERE card = c.id AND kind = 'ask') AS asked
-     FROM cards c JOIN lanes l ON l.name = c.lane LEFT JOIN sessions m ON m.id = l.parent
-     WHERE c.status = 'with-first-mate'`,
-  );
-  return waiting.flatMap((row) => {
-    if (now - Number(row["asked"]) <= t.firstMate) return [];
-    const minutes = Math.round((now - Number(row["asked"])) / MINUTE);
-    return [
-      {
-        card: Number(row["card"]),
-        lane: String(row["main"]),
-        condition: `first-mate:${String(row["ask"])}`,
-        text: `reminder: a second mate's question has waited for you (${String(minutes)} min). Answer it, hand it back, or ask the captain.`,
-        ready: row["state"] === "idle",
-      },
-    ];
-  });
-}
-
-/** A hold whose date passed: the card goes back to the status it had (spec section 7.3). */
+/** A hold whose date passed: it waits on its holder again, and that holder hears of it (spec section 17). */
 function holdMatches(db: DatabaseSync, now: number): Match[] {
-  const held = rows(
-    db,
-    "SELECT id, lane, return_status, held_until FROM cards WHERE status = 'waiting' AND held_until <= ?",
-    now,
-  );
+  const held = rows(db, "SELECT id, lane FROM cards WHERE status = 'waiting'");
   return held.flatMap((row) => {
-    const to = STATUSES.find((status) => status === row["return_status"]);
-    if (to === undefined) return [];
-    const change: Change = { kind: "unhold", to };
+    const card = Number(row["id"]);
+    const { hold } = factsFrom(cardEntries(db, card));
+    const until = hold?.until ?? null;
+    if (hold === undefined || until === null || until > now) return [];
+    const change: Change = { kind: "held" };
     return [
       {
-        card: Number(row["id"]),
-        lane: String(row["lane"]),
-        condition: `hold-ended:${String(row["held_until"])}`,
-        text: `hold ended; back to ${to}`,
+        card,
+        lane: actingLane(db, card, String(row["lane"])),
+        condition: `hold-ended:${String(until)}`,
+        text: `hold ended; it waits on ${hold.holder === "owner" ? "its mate" : hold.holder} again`,
         change,
       },
     ];
@@ -237,9 +220,9 @@ const PR_CONDITIONS: ReadonlySet<string> = new Set(["pr-merged", "pr-closed", "c
 function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | undefined>): Match[] {
   return [...prs].flatMap(([card, pr]): Match[] => {
     if (pr === undefined) return [];
-    const row = db.prepare("SELECT lane, status FROM cards WHERE id = ?").get(card);
+    const row = db.prepare("SELECT lane, phase FROM cards WHERE id = ?").get(card);
     const lane = String(row?.["lane"]);
-    const status = String(row?.["status"]);
+    const status = String(row?.["phase"]);
     if (pr.state === "MERGED") {
       const change: Change | undefined = status === "merging" ? undefined : { kind: "merged" };
       return [
@@ -254,7 +237,14 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
     }
     if (pr.state === "CLOSED")
       return [
-        { card, lane, condition: "pr-closed", text: "PR closed without a merge", change: FINDING },
+        {
+          card,
+          lane,
+          condition: "pr-closed",
+          text: "PR closed without a merge",
+          change: FINDING,
+          withdrawsMerge: true,
+        },
       ];
     if (status !== "merging" || pr.failed.length === 0) return [];
     return [
@@ -303,7 +293,6 @@ export function runCheck(
   const matches = [
     ...workerMatches(db, now, t),
     ...reminderMatches(db, now, t),
-    ...firstMateMatches(db, now, t),
     ...holdMatches(db, now),
     ...prMatches(db, prs),
   ];
@@ -314,10 +303,8 @@ export function runCheck(
       .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
       .get(match.card, match.condition);
     if (open !== undefined || match.ready === false) continue;
-    if (match.change?.kind === "unhold") {
-      db.prepare("UPDATE cards SET held_until = NULL, return_status = NULL WHERE id = ?").run(
-        match.card,
-      );
+    if (match.withdrawsMerge === true) {
+      for (const lane of withdrawMerge(db, getCard(db, match.card))) notify.add(lane);
     }
     if (match.change !== undefined) applyChange(db, getCard(db, match.card), match.change);
     const fields = { condition: match.condition };

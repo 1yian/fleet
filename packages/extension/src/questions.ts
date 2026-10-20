@@ -1,8 +1,8 @@
-// Mate tools for questions, holds, grants, and merges (spec sections 11.2, 17, 18, and 20.4). answer checks
+// Mate tools for holds, grants, and merges (spec sections 11.2, 17, 18, and 20.4). release checks
 // the captain's words where it can see them: a user-role message in this mate's
 // own session file. Otherwise cardd looks for them in the captain's board entries.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardSchema, check, Words } from "@fleet/protocol";
+import { CardSchema, check, OPS, Words } from "@fleet/protocol";
 import Type from "typebox";
 import { captainSaid, parseUtc } from "./inbox.ts";
 import type { Link } from "./link.ts";
@@ -28,33 +28,41 @@ export function registerQuestions(
 ): void {
   const sourceOf = sourceFrom(sessionFile);
   pi.registerTool({
-    name: "ask",
-    label: "Ask the captain",
+    name: "hold",
+    label: "Hold a card",
     description:
-      "Asks the captain a question on a card: evidence, consequence, options, and a recommendation. A second mate's question goes to main first.",
+      "Holds a card at a gate, with every question of the gate bundled in one hold: the evidence, the consequence, the options, and your recommendation. A card has one hold, so holding it again rewrites the same hold. A second mate's hold waits on main. Main's hold waits on the captain, and main escalates a second mate's hold with to=captain. until holds it until a date, such as when the captain says later.",
     parameters: Type.Object({
-      card: CardId,
-      question: Type.String({ minLength: 1 }),
-      options: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-    }),
-    execute: async (_id, params) => reply(`Asked. ${card(await link.call("ask", params))}`),
-  });
-  pi.registerTool({
-    name: "answer",
-    label: "Record the captain's answer",
-    description: "Records the captain's exact words as the answer to the open question on a card.",
-    parameters: Type.Object({
-      card: CardId,
-      words: Words,
-      choice: Type.Optional(
-        Type.String({ description: "For a merge question: Approve & merge, or Request changes" }),
+      ...OPS.hold.args.properties,
+      until: Type.Optional(
+        Type.String({
+          description: "ISO 8601 time with Z or an offset, like 2026-05-01T10:00:00Z",
+        }),
       ),
     }),
     execute: async (_id, params) => {
-      const source = sourceOf(params.words);
-      return reply(
-        `Recorded the answer. ${card(await link.call("answer", { ...params, source }))}`,
-      );
+      const until = params.until === undefined ? undefined : parseUtc(params.until);
+      const args = { ...params, ...(until === undefined ? {} : { until }) };
+      return reply(`Held. ${card(await link.call("hold", args))}`);
+    },
+  });
+  pi.registerTool({
+    name: "release",
+    label: "Release a hold",
+    description:
+      "Releases the card's hold. Give words, the captain's exact words, when the captain decided it, and for a merge approval. Give note, your own decision, when it was yours or main's to decide. Words are checked against what the captain wrote.",
+    parameters: Type.Object({
+      card: CardId,
+      words: Type.Optional(Words),
+      note: Type.Optional(Type.String({ minLength: 1 })),
+      choice: Type.Optional(
+        Type.String({ description: "For a merge hold: Approve & merge, or Request changes" }),
+      ),
+    }),
+    execute: async (_id, params) => {
+      const source = params.words === undefined ? undefined : sourceOf(params.words);
+      const args = { ...params, ...(source === undefined ? {} : { source }) };
+      return reply(`Released. ${card(await link.call("release", args))}`);
     },
   });
 }
@@ -104,32 +112,6 @@ export function registerAuthority(
       const args =
         params.words === undefined ? params : { ...params, source: sourceOf(params.words) };
       return reply(`Merged. ${card(await link.call("merge", args))}`);
-    },
-  });
-  pi.registerTool({
-    name: "handback",
-    label: "Hand a question back",
-    description:
-      "Main only: returns a second mate's question to that mate with guidance, when it is not the captain's to decide.",
-    parameters: Type.Object({ card: CardId, guidance: Type.String({ minLength: 1 }) }),
-    execute: async (_id, params) =>
-      reply(`Handed back. ${card(await link.call("handback", params))}`),
-  });
-  pi.registerTool({
-    name: "card_hold",
-    label: "Hold a card",
-    description:
-      "Moves a card to Waiting until a date. On that date it returns to its current status.",
-    parameters: Type.Object({
-      card: CardId,
-      until: Type.String({
-        description: "ISO 8601 time with Z or an offset, like 2026-05-01T10:00:00Z",
-      }),
-      reason: Type.String({ minLength: 1 }),
-    }),
-    execute: async (_id, params) => {
-      const until = parseUtc(params.until);
-      return reply(`Held. ${card(await link.call("hold", { ...params, until }))}`);
     },
   });
 }

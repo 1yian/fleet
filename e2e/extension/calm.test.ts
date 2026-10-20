@@ -87,14 +87,14 @@ function keep(name: string, screen: string): void {
 async function cleoAsks(title: string): Promise<void> {
   const card: unknown = await cleo.call("card.new", { title, kind: "scout" });
   const id: unknown = Reflect.get(Object(card), "id");
-  await cleo.call("ask", {
+  await cleo.call("hold", {
     card: id,
     question: `${title}?`,
     options: ["Yes"],
   });
 }
 
-const FLEET_ROW = "[fleet] cleo on c-2 (ask)";
+const FLEET_ROW = "[fleet] cleo on c-2 (hold)";
 const TOOL_ROW = "board";
 const NOTE = "Checking the board first.";
 const REPLY = "Cleo wants a decision on the scrollbar fix.";

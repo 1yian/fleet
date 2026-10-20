@@ -36,7 +36,7 @@ interface Props {
   readonly draft: string;
   readonly onDraft: (text: string) => void;
   readonly onClose: () => void;
-  readonly onAnswer: (ask: number, choice: string, written: boolean) => Promise<boolean>;
+  readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
   /** Resolves true when cardd took the message. */
   readonly onReply: (text: string) => Promise<boolean>;
   readonly onFail: (message: string) => void;
@@ -89,7 +89,7 @@ export function CardDetail(props: Props) {
   }, [last]);
 
   const asked = questions.length > 0;
-  const open = new Set(questions.map((question) => question.ask));
+  const open = new Set(questions.map((question) => question.hold));
   return (
     <div className="detail">
       <nav className="crumbs" aria-label="Breadcrumb">
@@ -117,7 +117,7 @@ export function CardDetail(props: Props) {
               <h2>Waiting for you</h2>
               {questions.map((question, index) => (
                 <Ask
-                  key={question.ask}
+                  key={question.hold}
                   question={question}
                   keys={index === 0}
                   onAnswer={props.onAnswer}

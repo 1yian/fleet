@@ -5,7 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
 import { applyChange, requireOrdinary } from "./change.ts";
 import { factsFrom } from "./status.ts";
-import { withEcho } from "./comments.ts";
+import { withEcho } from "./echo.ts";
 import { addEntry, cardEntries, getCard, mainLane, reachable, type Session } from "./store.ts";
 
 interface Done {
@@ -29,9 +29,9 @@ function closable(db: DatabaseSync, session: Session, id: number, mode: "done" |
   requireOrdinary(db, card);
   if (card.status === "done" || card.status === "dropped")
     throw new Error(`${name} is already ${card.status}`);
-  if (factsFrom(cardEntries(db, card.id)).openAsks > 0) {
+  if (factsFrom(cardEntries(db, card.id)).hold !== undefined) {
     throw new Error(
-      `${name} has an open question; the captain answers it, or agrees that it is moot, first`,
+      `${name} has an open hold; release it first, with the captain's words when it waits on him`,
     );
   }
   if (mode === "done" && !landed(db, card)) {

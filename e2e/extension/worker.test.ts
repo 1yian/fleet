@@ -13,6 +13,7 @@ import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
 const [START, OLDER, NEWER] = [1, 2, 3];
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 
+const PR = "https://github.com/acme/web/pull/1";
 let fleet: Fleet;
 let h: Harness;
 let card: Card;
@@ -56,7 +57,10 @@ const delivered = (id: number) => (event: Record<string, unknown>) =>
   event["type"] === "fleet_delivered" && event["entryId"] === id;
 
 test("the task message wakes a new worker, and its report reaches the mate", async () => {
-  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green and ready" } }));
+  h.onModel(() => ({
+    tool: "report",
+    args: { status: "done", text: "PR green and ready", pr: PR },
+  }));
   await worker("fix the scrollbar");
   await fleet.main.waitForEntries(1);
 

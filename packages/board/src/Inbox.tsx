@@ -15,7 +15,7 @@ interface Props {
   readonly onOpen: (card: number) => void;
   readonly onAnswer: (
     card: number,
-    ask: number,
+    hold: number,
     choice: string,
     written: boolean,
   ) => Promise<boolean>;
@@ -23,7 +23,7 @@ interface Props {
 
 export function Inbox(props: Props) {
   const { board, view } = props;
-  const asked = questionsByCard(board.questions);
+  const asked = questionsByCard(board.holds);
   const { needs, running, done, mates } = groups(board.cards, asked);
   const sections = [
     { tone: "needs", label: "Needs you", cards: needs, empty: "Nothing waits on you." },
@@ -33,7 +33,7 @@ export function Inbox(props: Props) {
     ...(mates.length === 0 ? [] : [{ tone: "mates", label: "Mates", cards: mates, empty: "" }]),
   ];
   // Number keys answer the first question on the board.
-  const keyed = board.questions[0]?.card;
+  const keyed = board.holds[0]?.card;
   return (
     <div className="inbox" data-view={view}>
       {sections.map((section) => (
@@ -54,7 +54,7 @@ export function Inbox(props: Props) {
               onOpen={() => {
                 props.onOpen(card.id);
               }}
-              onAnswer={(ask, choice, written) => props.onAnswer(card.id, ask, choice, written)}
+              onAnswer={(hold, choice, written) => props.onAnswer(card.id, hold, choice, written)}
             />
           ))}
         </section>
