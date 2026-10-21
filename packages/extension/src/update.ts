@@ -6,6 +6,8 @@ import { laneHomes } from "./homes.ts";
 const BRANCH = "main";
 const UPSTREAM = `origin/${BRANCH}`;
 const INSTALL_TIMEOUT_MS = 540_000;
+const ERROR_LINES = 6;
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 export type HostUpdate =
   | { readonly state: "refused"; readonly root: string; readonly problems: readonly string[] }
@@ -41,7 +43,9 @@ const attempt = (run: () => string): { ok: true; out: string } | { ok: false; er
   } catch (error) {
     const stderr: unknown = Reflect.get(Object(error), "stderr");
     const text = typeof stderr === "string" && stderr.trim() !== "" ? stderr : String(error);
-    return { ok: false, error: text.trim().split("\n").slice(-5).join(" | ") };
+    const lines = text.replaceAll(ANSI, "").split("\n");
+    const shown = lines.map((line) => line.trim()).filter((line) => line !== "");
+    return { ok: false, error: shown.slice(0, ERROR_LINES).join(" | ") };
   }
 };
 
@@ -99,6 +103,7 @@ const npm = (root: string, ...args: string[]): string =>
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: INSTALL_TIMEOUT_MS,
+    env: { ...process.env, NO_COLOR: "1" },
   });
 
 function build(

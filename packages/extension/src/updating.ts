@@ -67,18 +67,31 @@ function parseReply(host: string, out: string): HostReply {
   throw new Error(`fleet update on ${host} answered an unknown state: ${state}`);
 }
 
-async function onEveryHost(config: LaneConfig, args: readonly string[]): Promise<HostReply[]> {
+async function askHost(
+  config: LaneConfig,
+  host: string,
+  args: readonly string[],
+): Promise<HostReply> {
+  try {
+    return parseReply(host, await fleet(config, host, ["update", ...args], UPDATE_WAIT_MS));
+  } catch (error) {
+    const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
+    const message = error instanceof Error ? error.message : String(error);
+    return { state: "unreachable", lines: [`${host}: ${why} - ${message}`] };
+  }
+}
+
+async function untilOneFails(config: LaneConfig): Promise<HostReply[]> {
   const replies: HostReply[] = [];
   for (const host of hostsOf(config)) {
-    try {
-      replies.push(
-        parseReply(host, await fleet(config, host, ["update", ...args], UPDATE_WAIT_MS)),
-      );
-    } catch (error) {
-      const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-      const message = error instanceof Error ? error.message : String(error);
-      replies.push({ state: "unreachable", lines: [`${host}: ${why} - ${message}`] });
+    if (replies.some((reply) => reply.state !== "updated")) {
+      replies.push({
+        state: "failed",
+        lines: [`${host}: not updated, because the update stopped`],
+      });
+      continue;
     }
+    replies.push(await askHost(config, host, []));
   }
   return replies;
 }
@@ -86,14 +99,15 @@ async function onEveryHost(config: LaneConfig, args: readonly string[]): Promise
 const bullets = (lines: readonly string[]): string => lines.map((line) => `- ${line}`).join("\n");
 
 async function updateFleet(config: LaneConfig): Promise<{ ok: boolean; text: string }> {
-  const checked = await onEveryHost(config, ["--check"]);
+  const checked: HostReply[] = [];
+  for (const host of hostsOf(config)) checked.push(await askHost(config, host, ["--check"]));
   const blocking = checked.filter((reply) => reply.state !== "ready");
   if (blocking.length > 0)
     return {
       ok: false,
       text: `Fleet update stopped before any change: nothing was pulled, and no mate was restarted.\n${bullets(blocking.flatMap((reply) => reply.lines))}`,
     };
-  const replies = await onEveryHost(config, []);
+  const replies = await untilOneFails(config);
   const hostLines = bullets(replies.flatMap((reply) => reply.lines));
   if (replies.some((reply) => reply.state !== "updated"))
     return {
