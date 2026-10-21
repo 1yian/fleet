@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { CAPTAIN, howToReply, type Entry } from "@fleet/protocol";
+import { CAPTAIN, howToAnswerWake, howToReply, type Entry } from "@fleet/protocol";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -84,6 +84,12 @@ function formatReview(entry: Entry, card: string): string {
   return `[fleet] captain on ${card} (review page): ${feedback}\n${next}`;
 }
 
+function formatWake(entry: Entry): string {
+  if (field(entry, "wake") === "script") return `[fleet] ${entry.body}`;
+  const id = `r-${String(entry.id)}`;
+  return `[fleet] ${entry.body} (reply owed, ${id}: ${howToAnswerWake(entry.card, id)})`;
+}
+
 const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
 
 const laneNote = (entry: Entry): string => {
@@ -102,6 +108,7 @@ function formatOnce(entry: Entry, name: string): string {
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);
   if (entry.kind === "review-feedback") return formatReview(entry, card);
+  if (entry.kind === "comment" && field(entry, "wake") !== undefined) return formatWake(entry);
   const who = entry.author.replace(/^mate:/, "");
   const kind =
     entry.kind === "comment" ? laneNote(entry) : ` (${LABELS[entry.kind] ?? entry.kind})`;

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
@@ -5,6 +6,7 @@ import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { serve } from "./server.ts";
 import { DELIVERIES } from "@fleet/protocol";
 import { setCardDelivery } from "./attempts.ts";
+import { parsePlan, setNextPlan, showPlans } from "./plans.ts";
 import { addLane, addProject, setClone, setProjectDelivery, setRepo, setYolo } from "./store.ts";
 
 const { values, positionals } = parseArgs({
@@ -16,6 +18,7 @@ const { values, positionals } = parseArgs({
     hostname: { type: "string", multiple: true, default: [] },
     home: { type: "string" },
     parent: { type: "string" },
+    plan: { type: "string" },
     delivery: { type: "string" },
     clone: { type: "string", multiple: true, default: [] },
     yolo: { type: "boolean", default: false },
@@ -56,6 +59,16 @@ function deliveryMode(raw: string, flag: string): (typeof DELIVERIES)[number] {
   return mode;
 }
 
+function clockFrom(file: string | undefined): () => number {
+  if (file === undefined) return Date.now;
+  return () => {
+    const text = readFileSync(file, "utf8").trim();
+    const ms = Date.parse(text);
+    if (Number.isNaN(ms)) throw new Error(`CARDD_CLOCK_FILE ${file} holds ${text}, not a time`);
+    return ms;
+  };
+}
+
 function parseClone(pair: string): [string, string] {
   const split = pair.indexOf("=");
   const host = pair.slice(0, split);
@@ -73,7 +86,8 @@ if (command === "serve") {
     throw new Error(`--listen ${values.listen} must be <host>:<port>, with both parts set`);
   const scale = Number(process.env["CARDD_TIMING_SCALE"] ?? "1");
   if (!(scale > 0)) throw new Error("CARDD_TIMING_SCALE must be a positive number");
-  const url = await serve(db, host, Number(port), timings(scale), {
+  const clock = clockFrom(process.env["CARDD_CLOCK_FILE"]);
+  const url = await serve(db, host, Number(port), timings(scale, clock), {
     files: values.board,
     hostnames: values.hostname,
     hosts,
@@ -87,6 +101,9 @@ if (command === "serve") {
 ) {
   const lane = { name: rest[1], home: values.home };
   console.log(addLane(db, values.parent === undefined ? lane : { ...lane, parent: values.parent }));
+} else if (command === "lane" && rest[0] === "plan" && rest[1] !== undefined) {
+  if (values.plan !== undefined) setNextPlan(db, rest[1], parsePlan(values.plan));
+  console.log(JSON.stringify(showPlans(db, rest[1])));
 } else if (
   command === "project" &&
   rest[0] === "add" &&
@@ -144,6 +161,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> [--hosts <json>] | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
   );
 }

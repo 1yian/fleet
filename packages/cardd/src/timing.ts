@@ -12,9 +12,10 @@ export interface Timings {
   readonly reminders: readonly number[];
   readonly finished: readonly number[];
   readonly escalations: readonly number[];
+  readonly wall: () => number;
 }
 
-export function timings(scale: number): Timings {
+export function timings(scale: number, wall: () => number = Date.now): Timings {
   const at = (minutes: number): number => Math.max(1, Math.round(minutes * MINUTE * scale));
   return {
     every: at(1),
@@ -28,5 +29,6 @@ export function timings(scale: number): Timings {
     reminders: [at(30), at(60), at(120), at(360)],
     finished: [at(5), at(15), at(30), at(60), at(120), at(360)],
     escalations: [at(30), at(120), at(360)],
+    wall,
   };
 }

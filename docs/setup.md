@@ -195,6 +195,44 @@ On a remote host, `fleet` must work over a non-interactive SSH session, so Node 
 
 You do not start second mates by hand. Main starts them.
 
+### Goal and scheduled wakes
+
+A second mate can have a plan: a goal, and a schedule of wakes. The plan is on the lane card in `cardd`, and only the captain sets it, with the `cardd` command on its host (`$CARDD` as in section 2):
+
+```sh
+$CARDD lane plan cleo --db ~/.fleet/cards.db --plan '{
+  "goal": "Book demos at the lowest cost. Allowance: spend at most $50 a day, and never change a campaign.",
+  "timezone": "America/Chicago",
+  "wakes": [
+    { "at": "09:00", "purpose": "Review yesterday'"'"'s ad spend and clicks" },
+    { "at": "09:00", "days": ["mon"], "purpose": "Write the weekly summary" }
+  ]
+}'
+```
+
+Without `--plan`, the command prints the active plan and the plan waiting to start, as JSON. Setting a plan again replaces the one waiting.
+
+- `goal` is the lane's goal and standing instructions, as text. A limit, such as an allowance or a budget, is written in it. There is no field for a limit.
+- `timezone` is an IANA name, such as `America/Chicago`. It is required, and it never defaults. Every `at` is the wall-clock time in that zone, on a 24-hour clock.
+- A wake has an `at`, an optional `days` list (`mon` to `sun`, every day when left out), and a `purpose`: what the wake is for, in one line of at most 120 characters. A plan has at most 24 wakes. `cardd` refuses any other field, a bad time, a bad zone, and a purpose that is empty, has a line break, or is too long.
+- The goal and the schedule enter the mate's role contract at its start. A changed plan applies after the mate restarts: `lane(<lane>, "restart")` in main, or `fleet restart <lane>` on its host. Until then the mate keeps the plan it loaded, and `cardd` fires only that one. The plan counts from the minute the mate loaded it: a wake time before that minute does not fire.
+- `cardd` checks every minute. At a wake time it comments on the lane card for the mate: `[fleet] scheduled wake 2026-05-04T09:00 America/Chicago: Review yesterday's ad spend and clicks`. The reply is owed, so it uses the same tracking as any reply: the mate answers with `comment(card, text, replyTo)`, a silent mate gets one resend, then main is told once. Wakes due in the same minute come as one wake, with their purposes joined by `; `.
+- While a wake is unanswered, the next wake is skipped, and a note on the lane card says so. The reply stays open after the escalation, so wakes stay skipped until the mate answers or main withdraws it with `comment(lane, text, withdraws="r-N")`.
+- A wake dispatches no worker and makes no card. The mate decides what to do, inside the goal.
+- DST: a time that does not exist on a spring day fires when the clock first shows it or a later time. A time that happens twice on an autumn day fires once. A day is the calendar day in the plan's zone.
+- A wake whose time passed while `cardd` was down fires at the next check, once for each wake, with the other wakes due then. Only its latest slot is made up, never the earlier ones. When it is older than the newest time in the message, its purpose carries `[due <time>]`.
+- Restarts are safe. Each wake records the slots it covers on its own entry, so a restart of `cardd` or of the mate repeats none of them. A wake the mate had not taken in is delivered again at its next connect, as any message is.
+
+A script, such as a guard that runs from cron, wakes the mate with a note:
+
+```sh
+<checkout>/bin/fleet wake cleo "Spend is 40% over the cap" --script guard
+```
+
+It runs on the host of the mate's home, and uses that home's `config/lane.json` for the address and token. From another host, or without the command, `POST /call` with the lane's token does the same: `{"op": "wake", "args": {"note": "...", "script": "guard"}}`. The mate hears `[fleet] script wake guard: Spend is 40% over the cap`. A script wake owes no reply, and `cardd` does not limit it, so a script should wake the mate on a change, not on every run. The token is the lane's token: keep the script's file private.
+
+Main has no lane card, so it has no plan and no wakes.
+
 ## 6. Day to day
 
 ```sh
@@ -223,6 +261,7 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet home add <lane> ...`              | Makes a lane's home.                                                                        |
 | `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
 | `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
+| `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                 |
 | `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.

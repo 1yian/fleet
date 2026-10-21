@@ -278,7 +278,7 @@ export function addEntry(
   db: DatabaseSync,
   entry: Pick<Entry, "card" | "author" | "kind" | "body" | "fields">,
   recipients: readonly string[],
-): void {
+): number {
   const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
@@ -291,6 +291,7 @@ export function addEntry(
     "INSERT INTO deliveries (session, entry, state, updated_at) VALUES (?, ?, 'pending', ?)",
   );
   for (const session of recipients) deliver.run(session, lastInsertRowid, now);
+  return Number(lastInsertRowid);
 }
 
 export function workerOf(db: DatabaseSync, card: number): string | undefined {

@@ -57,7 +57,7 @@ CREATE TABLE cards (
   revision INTEGER NOT NULL DEFAULT 1,
   last_activity INTEGER,
   created_at INTEGER NOT NULL,
-  name TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '', plan TEXT CHECK (json_valid(plan)), plan_next TEXT CHECK (json_valid(plan_next)),
   CHECK (kind = 'standing' OR (schedule IS NULL AND runner IS NULL)),
   CHECK (kind = 'ship' OR delivery IS NULL),
   CHECK ((held_until IS NULL) = (return_status IS NULL)),

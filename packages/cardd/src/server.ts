@@ -5,6 +5,7 @@ import {
   check,
   HttpCallSchema,
   isOpName,
+  type HttpOutcome,
   parseClientMessage,
   type ClientMessage,
   type ServerMessage,
@@ -23,8 +24,6 @@ const CLOSE_NOT_LIVE = 4001;
 const CLOSE_SUPERSEDED = 4002;
 
 const EVERY_INTERFACE: ReadonlySet<string> = new Set(["0.0.0.0", "::", "::ffff:0.0.0.0"]);
-
-type Outcome = { ok: true; value: unknown } | { ok: false; error: string };
 
 class NotLive extends Error {}
 
@@ -98,7 +97,7 @@ class Hub {
       });
   }
 
-  async perform(session: Session, op: string, args: unknown): Promise<Outcome> {
+  async perform(session: Session, op: string, args: unknown): Promise<HttpOutcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
       const done = await performOp(this.db, session, op, args, this.timing);
@@ -150,7 +149,7 @@ class Hub {
   }
 
   async answerHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const reply = (status: number, outcome: Outcome): void => {
+    const reply = (status: number, outcome: HttpOutcome): void => {
       response
         .writeHead(status, { "content-type": "application/json" })
         .end(JSON.stringify(outcome));

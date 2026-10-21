@@ -192,7 +192,7 @@ test("a scheduled wake names its purpose and is answered, and the weekly entry j
   const [, second] = await hears(WAKE, 2);
   assert.match(
     second ?? "",
-    /^\[fleet\] scheduled wake 2026-05-05T09:00 UTC: Review ad spend \(reply owed, r-\d+:/,
+    /^\[fleet\] scheduled wake 2026-05-05T09:00 UTC: Review ad spend; Evening look \[due 2026-05-04T17:00\] \(reply owed, r-\d+:/,
   );
   await answered(2);
 
@@ -245,7 +245,7 @@ test("an unanswered wake is resent once, then main hears, and later wakes are sk
   const woken = (await hears(WAKE, 2))[1] ?? "";
   assert.match(
     woken,
-    /^\[fleet\] scheduled wake 2026-05-06T09:00 UTC: Review ad spend \(reply owed, r-\d+:/,
+    /^\[fleet\] scheduled wake 2026-05-06T09:00 UTC: Review ad spend; Evening look \[due 2026-05-05T17:00\] \(reply owed, r-\d+:/,
   );
   assert.deepEqual(
     (await cardd.board()).cards.map((card) => card.id),
@@ -276,7 +276,7 @@ test("a changed plan applies after the mate restarts, and a cardd restart repeat
 
   await cardd.restart();
   setClock("2026-05-05T17:00:00Z");
-  const evening = await hears(/Evening A/);
+  const evening = await hears(/2026-05-05T17:00 UTC: Evening A/);
   assert.match(
     evening[0] ?? "",
     /^\[fleet\] scheduled wake 2026-05-05T17:00 UTC: Evening A \(reply owed/,
@@ -323,7 +323,7 @@ test("a script wakes the mate with a note, no worker starts, and a bad plan or n
     assert.notEqual(out.status, 0, out.stdout);
     return out.stderr;
   };
-  assert.match(refused({ ...PLAN, allowance: 50 }), /additional properties/);
+  assert.match(refused({ ...PLAN, allowance: 50 }), /allowance/);
   assert.match(refused({ ...PLAN, timezone: "Mars/Base" }), /time zone/);
   assert.match(refused({ ...PLAN, wakes: [{ at: "25:00", purpose: "x" }] }), /at/);
   assert.match(refused({ ...PLAN, wakes: [{ at: "09:00", purpose: "x".repeat(200) }] }), /purpose/);

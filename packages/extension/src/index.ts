@@ -11,6 +11,7 @@ import { Jobs } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
 import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
+import { registerPlan } from "./plan.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
 import { registerQuestions } from "./questions.ts";
@@ -146,6 +147,7 @@ function start(
     link.stop();
   });
   registerIntake(pi, link);
+  if (role === "mate") registerPlan(pi, link);
   const active = (): void => {
     link.activity("running");
   };

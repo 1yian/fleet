@@ -17,9 +17,10 @@ import { convergeSharedPreferences } from "./standing.ts";
 import { hostProblems } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
+import { wakeMate } from "./wake.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -40,6 +41,7 @@ const VALUE_OPTIONS = new Set([
   "--running",
   "--restart",
   "--content",
+  "--script",
 ]);
 const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
   if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
@@ -74,6 +76,7 @@ const { values, positionals } = parseArgs({
     restart: { type: "string" },
     content: { type: "string" },
     absent: { type: "boolean" },
+    script: { type: "string" },
   },
 });
 const [command, ...rest] = positionals;
@@ -198,6 +201,21 @@ switch (command ?? "") {
         ? (checkCardd(carddRoot, db) ?? { state: "ready", root: carddRoot })
         : updateCardd(carddRoot, db, running, strings(json(command)));
     console.log(JSON.stringify(result));
+    break;
+  }
+  case "wake": {
+    const [name, note] = rest;
+    if (name === undefined || note === undefined) throw new Error(USAGE);
+    const args = values.script === undefined ? { note } : { note, script: values.script };
+    await wakeMate(existingHome(root, name), args).then(
+      () => {
+        console.log(`${name}: woken`);
+      },
+      (error: unknown) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      },
+    );
     break;
   }
   case "migrate":
