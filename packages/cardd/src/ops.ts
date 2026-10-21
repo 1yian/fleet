@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
 import {
   beginAttempt,
+  cancelReviewWaits,
   finishJob,
   localLanding,
   nameBranch,
@@ -83,6 +84,11 @@ const REWORK: ReadonlySet<ReportStatus> = new Set([
   "blocked",
   "stopped",
 ]);
+
+function rework(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
+  if (status === "stopped") cancelReviewWaits(db, card.id);
+  return REWORK.has(status) ? withdrawMerge(db, card) : [];
+}
 
 function reviewFeedback(
   db: DatabaseSync,
@@ -186,7 +192,7 @@ const HANDLERS: Record<OpName, Handler> = {
     requireOpen(db, card);
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
     const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
-    const withdrawn = REWORK.has(args.status) ? withdrawMerge(db, card) : [];
+    const withdrawn = rework(db, card, args.status);
     const fields = {
       status: args.status,
       key: args.key,

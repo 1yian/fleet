@@ -26,7 +26,31 @@ function liveAttempt(db: DatabaseSync, card: number): LiveAttempt | undefined {
   return { id, n, state, host };
 }
 
-function endAttempt(db: DatabaseSync, attempt: LiveAttempt, state: "ended" | "replaced"): void {
+export function cancelReviewWaits(db: DatabaseSync, card: number): void {
+  const waits = db
+    .prepare(
+      `UPDATE jobs SET state = 'finished', exit_code = 130, updated_at = ?
+       WHERE resolves IS NOT NULL AND state IN ('running', 'lost') AND attempt IN
+         (SELECT id FROM attempts WHERE card = ? AND state IN ('starting', 'active'))
+       RETURNING id, label, resolves`,
+    )
+    .all(Date.now(), card);
+  for (const row of waits) {
+    endReviewWait(db, card, {
+      id: Number(row["id"]),
+      label: String(row["label"]),
+      resolves: String(row["resolves"]),
+    });
+  }
+}
+
+function endAttempt(
+  db: DatabaseSync,
+  card: number,
+  attempt: LiveAttempt,
+  state: "ended" | "replaced",
+): void {
+  cancelReviewWaits(db, card);
   db.prepare("UPDATE attempts SET state = ?, updated_at = ? WHERE id = ?").run(
     state,
     Date.now(),
@@ -235,7 +259,7 @@ export function beginAttempt(
       delivery,
     };
   }
-  if (live !== undefined) endAttempt(db, live, "replaced");
+  if (live !== undefined) endAttempt(db, card.id, live, "replaced");
   const now = Date.now();
   const n = Number(
     db.prepare("SELECT count(*) + 1 AS n FROM attempts WHERE card = ?").get(card.id)?.["n"],
@@ -263,6 +287,18 @@ export function beginAttempt(
   };
   addEntry(db, task, [session]);
   return { session, token, resumed: false, active: false, connected: false, ...place, delivery };
+}
+
+export function endReviewWait(
+  db: DatabaseSync,
+  card: number,
+  wait: { id: number; label: string; resolves: string },
+  recipients: readonly string[] = [],
+): void {
+  const fields = { job: wait.id, label: wait.label, lost: true, resolves: wait.resolves };
+  const body = "the review wait ended without feedback. It is not run again.";
+  const entry = { card, author: `job:${String(wait.id)}`, kind: "job-result", body, fields };
+  addEntry(db, entry, recipients);
 }
 
 function attemptOf(db: DatabaseSync, session: string): number {
@@ -318,10 +354,10 @@ export function touchJob(db: DatabaseSync, session: string, job: number): boolea
 export function loseSilentJobs(
   db: DatabaseSync,
   before: number,
-): { id: number; label: string; card: number }[] {
+): { id: number; label: string; card: number; resolves: string | null }[] {
   const silent = db
     .prepare(
-      `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
+      `SELECT j.id AS id, j.label AS label, j.resolves AS resolves, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
        WHERE j.state = 'running' AND j.updated_at < ? AND a.state IN ('starting', 'active')
        ORDER BY j.id`,
     )
@@ -330,6 +366,7 @@ export function loseSilentJobs(
       id: Number(row["id"]),
       label: String(row["label"]),
       card: Number(row["card"]),
+      resolves: typeof row["resolves"] === "string" ? row["resolves"] : null,
     }));
   const lose = db.prepare("UPDATE jobs SET state = 'lost', updated_at = ? WHERE id = ?");
   for (const job of silent) lose.run(Date.now(), job.id);
