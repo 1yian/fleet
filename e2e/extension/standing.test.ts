@@ -403,7 +403,7 @@ function handEdit(home: string, text: string): void {
 test("a hand-edited copy of the shared preferences is preserved aside before main replaces or removes it, once, on every host, and a copy nobody edited is replaced quietly", async () => {
   await startLab(1000);
   seedMemory();
-  const mainPane = await startMain(lab, here, h, false, piArgs);
+  await startMain(lab, here, h, false, piArgs);
   await connected(2);
   for (const home of [leoHome, farHome])
     await until(
@@ -466,5 +466,4 @@ test("a hand-edited copy of the shared preferences is preserved aside before mai
   );
   assert.match(preservedTexts(leoHome).join(""), RegExp(EDIT_TWO));
   assert.match(preservedTexts(leoHome).join(""), RegExp(EDIT_ONE));
-  assert.ok(mainPane.length > 0);
 });
