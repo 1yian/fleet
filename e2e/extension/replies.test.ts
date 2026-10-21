@@ -310,7 +310,7 @@ test("a captain's board comment owes a reply from main, nagged once, and main's 
   const page = await browser.newPage();
   script("mate", (said) => {
     const id = idIn(said);
-    return /unanswered/.test(said) && id !== undefined
+    return said.includes("unanswered") && id !== undefined
       ? { tool: "comment", args: { card: 1, text: "Port 5173.", replyTo: id } }
       : undefined;
   });
