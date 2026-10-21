@@ -256,13 +256,13 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
       findings().map((body) => body.slice(0, 22)),
       ["job lost: job 1 (first"],
     );
-    assert.equal(await status(fleet.main, card), "with-mate");
     assert.match(
       lastUser(await h.waitForCall(3)) ?? "",
       /^\[fleet\] c-1 users-see-one-scrollbar job 1 \(first\) lost: no heartbeat arrived/,
     );
     const reported = (): boolean => fleet.main.entries.some(({ entry }) => entry.kind === "report");
     await until(() => (reported() ? true : undefined), "the worker's report");
+    assert.equal(await status(fleet.main, card), "with-mate");
 
     await fleet.main.call("comment", { card: card.id, text: "run another job" });
     process.kill(await wrapperOf(2, second.ready), "SIGKILL");
