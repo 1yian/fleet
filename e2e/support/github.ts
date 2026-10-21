@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseRecord } from "./json.ts";
+import { parseRecord, publishRecord } from "./json.ts";
 
 const FAKE = fileURLToPath(new URL("./fake-gh.ts", import.meta.url));
 
@@ -13,7 +13,7 @@ export class FakeGitHub {
   private readonly file = join(this.dir, "prs.json");
 
   constructor() {
-    writeFileSync(this.file, "{}");
+    publishRecord(this.file, {});
     const shim = join(this.dir, "gh");
     writeFileSync(shim, `#!/bin/sh\nexec node ${JSON.stringify(FAKE)} "$@"\n`);
     chmodSync(shim, 0o755);
@@ -34,12 +34,12 @@ export class FakeGitHub {
     const head: unknown =
       typeof kept === "object" && kept !== null ? Reflect.get(kept, "head") : undefined;
     const pr = { state, checks: list, ...(head === undefined ? {} : { head }) };
-    writeFileSync(this.file, JSON.stringify({ ...all, [url]: pr }));
+    publishRecord(this.file, { ...all, [url]: pr });
   }
 
   slow(ms: number): void {
     const all = parseRecord(readFileSync(this.file, "utf8"));
-    writeFileSync(this.file, JSON.stringify({ ...all, $delay: ms }));
+    publishRecord(this.file, { ...all, $delay: ms });
   }
 
   callsInFlight(): { started: number; now: number; most: number; pids: number[] } {
@@ -61,7 +61,7 @@ export class FakeGitHub {
     const all = parseRecord(readFileSync(this.file, "utf8"));
     const pr = all[url];
     if (typeof pr !== "object" || pr === null) throw new Error(`no PR ${url}: set it first`);
-    writeFileSync(this.file, JSON.stringify({ ...all, [url]: { ...pr, head } }));
+    publishRecord(this.file, { ...all, [url]: { ...pr, head } });
   }
 
   breakChecks(url: string): void {
@@ -76,7 +76,7 @@ export class FakeGitHub {
     const all = parseRecord(readFileSync(this.file, "utf8"));
     const pr = all[url];
     const kept = typeof pr === "object" && pr !== null ? pr : {};
-    writeFileSync(this.file, JSON.stringify({ ...all, [url]: { ...kept, ...change } }));
+    publishRecord(this.file, { ...all, [url]: { ...kept, ...change } });
   }
 
   state(url: string): unknown {
