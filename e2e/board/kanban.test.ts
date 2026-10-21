@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
-import { MERGE_OPTIONS, type Entry } from "@fleet/protocol";
+import { BoardActionSchema, check, MERGE_OPTIONS, type Entry } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { seedKanban, type Kanban } from "../support/kanban.ts";
 
@@ -290,15 +290,31 @@ test("Needs you: Later uses the hold action and the card moves to Later in Up ne
 
 test("Needs you: a click on a card that changed shows a notice in that card and sends nothing", async () => {
   await page.routeWebSocket(/\/live$/, () => undefined);
+  const snapshot = await cardd.board();
+  await page.route("**/api/board", (route) => route.fulfill({ json: snapshot }));
   await open();
   const title = "Pick the API version";
   const id = fleet.cards["simple"]?.id ?? 0;
+  const shown = snapshot.cards.find((each) => each.id === id);
+  const hold = snapshot.holds.find((each) => each.card === id);
+  assert.ok(shown);
+  assert.ok(hold);
   await main.call("hold", {
     card: id,
     question: "Which API version ships now?",
     options: ["v1", "v2"],
   });
-  await card(title).getByRole("button", { name: "v2" }).click();
+  const [response] = await Promise.all([
+    page.waitForResponse((each) => each.url().endsWith("/api/action")),
+    card(title).getByRole("button", { name: "v2" }).click(),
+  ]);
+  const sent: unknown = response.request().postDataJSON();
+  assert.deepEqual(check(BoardActionSchema, sent), {
+    card: id,
+    revision: shown.revision,
+    action: { kind: "answer", hold: hold.hold, choice: "v2" },
+  });
+  assert.equal(response.status(), 409);
   const stale = card(title).getByRole("alert");
   await stale.getByText(`c-${String(id)} changed since you looked`).waitFor();
   await stale.getByText("Nothing was sent").waitFor();
