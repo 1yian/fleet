@@ -9,7 +9,7 @@ import {
   touchJob,
 } from "./attempts.ts";
 import { boardView, cardView } from "./board.ts";
-import { applyChange, requireOrdinary, type Draft } from "./change.ts";
+import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
@@ -92,7 +92,7 @@ function reviewFeedback(
 ): void {
   const entry: Draft = { card: id, author: "captain", kind: "review-feedback", body, fields };
   const open = factsFrom(cardEntries(db, id)).hold?.keys.includes(fields.resolves) === true;
-  if (open) applyChange(db, getCard(db, id), { kind: "answered" }, [entry]);
+  if (open) requireOpen(db, getCard(db, id));
   addEntry(db, entry, [session]);
 }
 
@@ -122,7 +122,7 @@ const HANDLERS: Record<OpName, Handler> = {
   "attempt.begin": (db, session, raw) => {
     const args = check(OPS["attempt.begin"].args, raw);
     const card = ownCard(db, session, args.card);
-    requireOrdinary(db, card);
+    requireOpen(db, card);
     if (card.kind === "captain") {
       throw new Error(
         `c-${String(card.id)} is a captain card: it is for the captain alone, so no worker runs it`,
@@ -134,7 +134,6 @@ const HANDLERS: Record<OpName, Handler> = {
       task: args.task,
       delivery: args.delivery,
     });
-    if (!begun.resumed) applyChange(db, card, { kind: "dispatch" });
     return { value: begun, notify: [] };
   },
   "job.start": (db, session, raw, timing) => {
@@ -179,6 +178,7 @@ const HANDLERS: Record<OpName, Handler> = {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     const card = getCard(db, session.card);
+    requireOpen(db, card);
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
     const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
     const withdrawn = REWORK.has(args.status) ? withdrawMerge(db, card) : [];
@@ -199,12 +199,7 @@ const HANDLERS: Record<OpName, Handler> = {
     const approvable = !("prState" in pr) || pr.prState === "OPEN";
     const asked =
       args.status === "done" && approvable ? mergeQuestion(db, card, [report]) : undefined;
-    const statusAfter = applyChange(
-      db,
-      card,
-      { kind: "report", status: args.status },
-      asked === undefined ? [report] : [report, asked],
-    );
+    const statusAfter = statusWith(db, card, asked === undefined ? [report] : [report, asked]);
     addEntry(db, { ...report, fields: { ...fields, statusAfter } }, to);
     const merge = asked === undefined ? [] : writeMergeQuestion(db, card, asked);
     return { value: getCard(db, card.id), notify: [...to, ...withdrawn, ...merge] };

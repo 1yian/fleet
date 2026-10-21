@@ -171,6 +171,7 @@ const PHRASES: Record<Status, string> = {
   queued: "Queued",
   working: "Working",
   "in-review": "In review",
+  paused: "Paused",
   "with-mate": "With its mate",
   "needs-you": "Waiting for you",
   merging: "Merging",

@@ -36,13 +36,16 @@ cardd project yolo <name> on|off --db <file>
 - `store.ts` reads and writes `cards.db`. A mate's session ID is its lane name. Rows leave the database as JSON that SQLite builds, and are checked against the protocol schemas, so the types match the wire. A card from before names existed is known by its number.
 - A session's token is the HMAC of its role and ID under the database's key. The same session always gets the same token, and no mate can share a token with a worker.
 - `db.ts` applies every new migration in one transaction, so a failed migration leaves the database as it was. Foreign keys are off while migrations run, as SQLite's procedure for rebuilding a table requires: dropping a parent table counts each child row as a violation that its replacement never clears. Instead, every key is checked after each migration, and a violation names its rows. Every foreign key in the schema is one column.
-- Raising a card's revision without a status change makes the board refuse answers to a hold that changed.
+- Each entry that the card's status reads raises the card's revision, so the board refuses answers to a hold that changed.
+- The cards table stores no status, phase, or time of change. `store.ts` replays a card's entries through `status.ts` each time it reads the card.
 
 ### Status and holds
 
-- `status.ts` is pure. A card has a phase, where its work stands, and at most one hold. Its status is the phase seen through the hold. No operation sets a status.
+- `status.ts` is pure. A card's status is one function of its communication entries: the worker's reports, holds, the captain's answers, comments, and the close. Mostly the last report decides. An open hold wins. Nothing else feeds it: not GitHub, not the timed check's findings, not job results, not commands. No operation sets a status, and none is stored.
 - A hold that waits on the captain makes the card Needs you. A hold that waits on a mate makes it With mate. A hold with a future date is Waiting until then. A closed card has no hold.
-- `change.ts` is the only way a status changes. It applies the transition rules and guards of spec sections 7.3 and 7.4. The entries a caller writes next count: the hold is read as it will stand once they are written.
+- A `paused` report with a date shows the card as Paused until that date. A `blocked`, `failed`, or `stopped` report shows the card as With mate with red attention. Any later report, steer, or answer replaces both.
+- A captain's approval of the merge question, or yolo on a ship card's `done`, makes the card Merging. The worker's next `done` leaves it Merging, and the mate's close makes it Done or Dropped.
+- `change.ts` holds the guards of spec section 7.4: a Done or Dropped card refuses reports, holds, and steers, and a lane card refuses all of them. `statusWith` reads the status a report will give, with the entries a caller writes next counted.
 - `holds.ts`: a card has at most one hold, with every question of its gate bundled in it. The card's own mate owns it. It waits on the mate, then main, then the captain, and climbs one level at a time. Only main marks a hold as the captain's. Main's own cards skip main. Holding the same hold again writes nothing. A hold after a release is the next occurrence of the same hold.
 - Only the captain's exact words release what waits on the captain. Merge approval is such a release. Own words on a merge question request changes: only the Approve option approves.
 - A steer withdraws the merge question while the PR is reworked, because approving a PR that is about to change would approve the wrong head. The worker's next `done` asks again, as the same hold.

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
-import { applyChange, requireOrdinary } from "./change.ts";
+import { requireOrdinary } from "./change.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import {
@@ -8,8 +8,8 @@ import {
   cardEntries,
   getCard,
   listProjects,
+  loadCard,
   mainLane,
-  phaseOf,
   reachable,
   type Session,
 } from "./store.ts";
@@ -26,7 +26,7 @@ function notLanded(db: DatabaseSync, card: Card): string | undefined {
   if (card.kind !== "ship") return undefined;
   if (!worked) return "no worker ran it";
   if (card.delivery === "local-only")
-    return phaseOf(db, card.id) === "merging"
+    return loadCard(db, card.id).standing.stage === "merging"
       ? undefined
       : "its branch has not landed on the local base branch. close lands it once the landing is authorized: yolo on, or the captain's word for it on the merge question";
   if (card.pr !== null)
@@ -144,7 +144,6 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
   db.prepare(
     "UPDATE attempts SET state = 'ended', updated_at = ? WHERE card = ? AND state IN ('starting', 'active')",
   ).run(now, card.id);
-  applyChange(db, card, { kind: args.mode === "done" ? "cleanup" : "drop" });
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
   const closed = { outcome: args.mode, archives: args.archives, left: args.left };

@@ -164,7 +164,7 @@ test("a second done report does not add a second merge question", async () => {
   await assert.rejects(approve(card), { message: `c-${String(card.id)} has no open hold` });
 });
 
-test("a closed PR, and red checks while Merging, go back to the mate", async () => {
+test("a closed PR, and red checks while Merging, are reported to the mate and leave the status alone", async () => {
   gh.setPr(PR, "CLOSED");
   const closed = await newCard(fleet.main, "closed");
   await done(closed);
@@ -185,7 +185,7 @@ test("a closed PR, and red checks while Merging, go back to the mate", async () 
   );
   assert.deepEqual(
     [await status(fleet.main, closed), await status(fleet.main, merging)],
-    ["with-mate", "with-mate"],
+    ["with-mate", "merging"],
   );
 });
 
@@ -298,7 +298,7 @@ test("a PR merged by hand makes the open merge question moot, and the card close
 
   gh.setPr(PR, "MERGED");
   await fleet.main.waitForEntry((entry) => entry.fields["condition"] === "pr-merged", "the notice");
-  assert.equal(await status(fleet.main, card), "merging");
+  assert.equal(await status(fleet.main, card), "with-mate");
   const plan = check(OPS["close.begin"].result, await fleet.main.call("close.begin", close));
   assert.deepEqual([plan.mode, plan.verify], ["done", false]);
   await assert.rejects(fleet.main.call("close.begin", { ...close, landed: false }), {

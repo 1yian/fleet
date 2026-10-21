@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
-import { applyChange, type Draft } from "./change.ts";
+import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { holdOf, withdrawMerge } from "./holds.ts";
 import { askerOf, requireAskedBy, requireOwedBy } from "./replies.ts";
@@ -97,6 +97,7 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
   const owes = args.reply === true ? owesOf(route, recipient, card) : {};
   let withdrawn: string[] = [];
   if (route.kind === "worker") {
+    requireOpen(db, card);
     requireNotCaptains(db, card, args.resolves);
     withdrawn = withdrawMerge(db, card);
   }
@@ -116,7 +117,6 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
     body: args.text,
     fields: own,
   };
-  if (route.kind === "worker") applyChange(db, card, { kind: "comment" }, [draft]);
   addEntry(db, draft, to);
   return { value: getCard(db, card.id), notify: [...to, ...withdrawn] };
 }
