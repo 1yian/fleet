@@ -106,6 +106,10 @@ export class Harness {
     const server = createServer();
     const harness = new Harness(server, new WebSocketServer({ server, path: "/probe" }));
     server.on("request", (request, response) => {
+      if (request.method !== "POST" || request.url !== "/model") {
+        response.writeHead(404).end();
+        return;
+      }
       void harness.answerModel(request, response);
     });
     harness.sockets.on("connection", (socket) => {
