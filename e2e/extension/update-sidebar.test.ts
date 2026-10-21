@@ -103,9 +103,10 @@ async function standIn(label: string): Promise<void> {
 
 async function scrambledSidebarWithNoMateRunning(): Promise<void> {
   await standIn("~");
+  here.fleet(["stop", "ops"], { HERDR_SESSION: lab.name });
+  p620.fleet(["stop", "far"], { HERDR_SESSION: lab.name });
   pane = await startMain(lab, here, h);
   await untilSidebar(["~", "1stmate"]);
-  here.fleet(["stop", "ops"], { HERDR_SESSION: lab.name });
   await openWorker("ops", "ops-alpha");
   await openWorker("far", "far-one");
   await standIn("2ndmate-ops");
