@@ -11,6 +11,7 @@ import { Jobs } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
 import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
+import { registerPlan } from "./plan.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
 import { registerQuestions } from "./questions.ts";
@@ -132,6 +133,7 @@ function start(
     registerQuestions(pi, link, () => sessionFile);
     registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
     registerStow(pi, HOME(), lane);
+    registerPlan(pi, link);
   }
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);

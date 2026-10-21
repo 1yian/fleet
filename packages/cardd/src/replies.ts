@@ -1,5 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
-import { CAPTAIN, howToReply, type Card, type Entry, type OwedReply } from "@fleet/protocol";
+import {
+  CAPTAIN,
+  howToAnswerWake,
+  howToReply,
+  type Card,
+  type Entry,
+  type OwedReply,
+} from "@fleet/protocol";
 import { addEntry, cardEntries, loadCards, workerOf } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -8,12 +15,18 @@ type Recipient = "worker" | "mate";
 interface Owed extends OwedReply {
   readonly card: number;
   readonly to: Recipient;
+  readonly scheduled: boolean;
 }
 
 const RESENT = "reply-resent";
 const MISSED = "reply-missed";
 
 const replyId = (entry: number): string => `r-${String(entry)}`;
+
+const field = (entry: Entry, key: string): string | undefined => {
+  const value = entry.fields[key];
+  return typeof value === "string" ? value : undefined;
+};
 
 function askedIn(entry: Entry): Owed | undefined {
   const owes = entry.fields["owes"];
@@ -24,7 +37,8 @@ function askedIn(entry: Entry): Owed | undefined {
     id: replyId(entry.id),
     card: entry.card,
     to,
-    from: entry.author.replace(/^mate:/, ""),
+    scheduled: entry.fields["wake"] === "scheduled",
+    from: field(entry, "from") ?? entry.author.replace(/^mate:/, ""),
     owes,
     text: entry.body,
     askedAt: entry.createdAt,
@@ -54,6 +68,9 @@ function owedFrom(entries: readonly Entry[]): Owed[] {
   }
   return open;
 }
+
+export const unansweredWake = (entries: readonly Entry[]): OwedReply | undefined =>
+  owedFrom(entries).find((owed) => owed.scheduled);
 
 export const openReplies = (entries: readonly Entry[]): OwedReply[] =>
   owedFrom(entries).map(({ id, from, owes, text, askedAt, resentAt, escalatedAt }) => ({
@@ -91,8 +108,8 @@ export function requireAskedBy(db: DatabaseSync, card: Card, id: string, lane: s
 }
 
 export function askersOf(db: DatabaseSync, card: Card, id: string): string[] {
-  const { from } = askOn(db, card, id);
-  return from === CAPTAIN ? [] : [from];
+  const { from, scheduled } = askOn(db, card, id);
+  return from === CAPTAIN || scheduled ? [] : [from];
 }
 
 export function isCaptainsReply(db: DatabaseSync, card: Card, id: string): boolean {
@@ -126,9 +143,10 @@ function missed(
       recipient,
     ];
   const withdraw = `comment(card=${String(owed.card)}, text, withdraws="${owed.id}")`;
+  const got = owed.scheduled ? "the scheduled wake" : "your comment";
   return [
     MISSED,
-    `reply ${owed.id} unanswered: ${owed.owes} got your comment and one resend, and has not replied: ${asked}. Ask again, or withdraw it with ${withdraw}.`,
+    `reply ${owed.id} unanswered: ${owed.owes} got ${got} and one resend, and has not replied: ${asked}. Ask again, or withdraw it with ${withdraw}.`,
     owed.from,
   ];
 }
@@ -138,7 +156,9 @@ function nudge(db: DatabaseSync, owed: Owed, now: number, t: Timings, since: num
   if (now - since < t.reply || recipient === undefined) return [];
   if (!settled(db, recipient, now, t.reply)) return [];
   const asked = `"${firstLine(owed.text)}"`;
-  const how = howToReply(owed.to, owed.card, owed.id, owed.from);
+  const how = owed.scheduled
+    ? howToAnswerWake(owed.card, owed.id)
+    : howToReply(owed.to, owed.card, owed.id, owed.from);
   const [condition, body, to] =
     owed.resentAt === null
       ? [

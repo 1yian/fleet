@@ -17,10 +17,12 @@ import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { PullRequest } from "./github.ts";
+import { loadPlan } from "./plans.ts";
 import { lookUpPr } from "./pulls.ts";
 import { requireOwedBy } from "./replies.ts";
 import { factsFrom } from "./status.ts";
 import type { Timings } from "./timing.ts";
+import { scriptWake } from "./wakes.ts";
 import {
   addCard,
   addEntry,
@@ -126,6 +128,14 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment,
+  "lane.plan": (db, session, _raw, timing) => ({
+    value: loadPlan(db, session.lane, timing.wall()),
+    notify: [],
+  }),
+  wake: (db, session, raw) => {
+    const entry = scriptWake(db, session.lane, check(OPS.wake.args, raw));
+    return { value: { entry }, notify: [session.lane] };
+  },
   "attempt.begin": (db, session, raw) => {
     const args = check(OPS["attempt.begin"].args, raw);
     const card = ownCard(db, session, args.card);

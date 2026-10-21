@@ -1,5 +1,9 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
+import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
+
+export * from "./branch.ts";
+export * from "./wakes.ts";
 
 export const STATUSES = [
   "queued",
@@ -64,30 +68,6 @@ export const CardName = Type.String({
   maxLength: 40,
   description: "A short name: 2 to 4 lowercase words joined by dashes, such as ios-app-store",
 });
-
-export const BRANCH_TYPES = [
-  "feat",
-  "fix",
-  "refactor",
-  "perf",
-  "docs",
-  "test",
-  "chore",
-  "ci",
-  "build",
-] as const;
-const BRANCH_SLUG_MAX = 48;
-const BRANCH_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
-export function branchNameProblem(name: string): string | undefined {
-  const [type = "", ...rest] = name.split("/");
-  const slug = rest.join("/");
-  const shape = `<type>/<slug>, with a type of ${BRANCH_TYPES.join(", ")} and a lowercase kebab-case slug of at most ${String(BRANCH_SLUG_MAX)} characters, such as fix/mileage-readback`;
-  const typed = BRANCH_TYPES.some((each) => each === type);
-  if (rest.length === 1 && typed && slug.length <= BRANCH_SLUG_MAX && BRANCH_SLUG.test(slug))
-    return undefined;
-  return `branch name "${name}" must be ${shape}`;
-}
 
 export const CardSchema = Type.Object({
   id: Type.Integer(),
@@ -372,6 +352,16 @@ export const OPS = {
     args: Type.Object({}),
     result: Type.Array(Type.Object({ id: Type.Integer(), label: Type.String() })),
   },
+  "lane.plan": {
+    roles: ["mate"],
+    args: Type.Object({}),
+    result: PlanSchema,
+  },
+  wake: {
+    roles: ["mate"],
+    args: WakeArgsSchema,
+    result: Type.Object({ entry: Type.Integer() }),
+  },
   report: {
     roles: ["worker"],
     args: Type.Object({
@@ -449,6 +439,12 @@ export const BoardActionSchema = Type.Object({
 export type BoardAction = Static<typeof BoardActionSchema>;
 
 export const HttpCallSchema = Type.Object({ op: Type.String(), args: Type.Unknown() });
+
+export const HttpOutcomeSchema = Type.Union([
+  Type.Object({ ok: Type.Literal(true), value: Type.Unknown() }),
+  Type.Object({ ok: Type.Literal(false), error: Type.String() }),
+]);
+export type HttpOutcome = Static<typeof HttpOutcomeSchema>;
 
 export const PushedEntrySchema = Type.Object({
   entry: EntrySchema,

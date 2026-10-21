@@ -16,6 +16,7 @@ import {
   workerOf,
 } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
+import { scheduledWakes } from "./wakes.ts";
 
 interface Match {
   readonly card: number;
@@ -403,6 +404,7 @@ export function runCheck(
   const notify = new Set<string>([
     ...lostJobs(db, now, t),
     ...chaseIntake(db, now, t),
+    ...scheduledWakes(db, t.wall()),
     ...replyNudges(db, now, t),
   ]);
   writeFindings(db, now, matches, notify);
