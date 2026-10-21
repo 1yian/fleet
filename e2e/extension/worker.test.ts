@@ -33,17 +33,14 @@ async function worker(task = "the task"): Promise<Pi> {
 }
 const comment = (text: string, now = false): Promise<unknown> =>
   fleet.main.call("comment", { card: card.id, text, now });
-const fleetText = (text: string): string => `[fleet] main on c-${String(card.id)}: ${text}`;
+const fleetText = (text: string): string =>
+  `[fleet] main on c-${String(card.id)} users-see-one-scrollbar: ${text}`;
 const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
 const count = (turns: Turn[], text: string): number =>
   turns.filter((turn) => turn.text === text).length;
-const reports = (mate: Session): [unknown, string, unknown][] =>
-  mate.entries.map(({ entry }: { entry: Entry }) => [
-    entry.fields["status"],
-    entry.body,
-    entry.fields["re"],
-  ]);
+const reports = (mate: Session): [unknown, string][] =>
+  mate.entries.map(({ entry }: { entry: Entry }) => [entry.fields["status"], entry.body]);
 async function sessionFile(): Promise<string> {
   const file = (await h.waitFor((e) => e["type"] === "session", "session start"))["file"];
   if (typeof file !== "string") throw new Error("no session file");
@@ -60,7 +57,7 @@ test("the task message wakes a new worker, and its report reaches the mate", asy
   await fleet.main.waitForEntries(1);
 
   assert.equal(lastUser(await h.waitForCall(0)), fleetText("fix the scrollbar"));
-  assert.deepEqual(reports(fleet.main), [["done", "PR green and ready", "fix the scrollbar"]]);
+  assert.deepEqual(reports(fleet.main), [["done", "PR green and ready"]]);
   assert.equal(await status(fleet.main, card), "needs-you");
 });
 
@@ -83,10 +80,10 @@ test("a second mate's steer reaches its worker without main's comment to that ma
   await leo.waitForEntries(2);
   await leo.call("comment", { card: leoCard.id, text: "Use the password from the vault" });
 
-  const steer = `[fleet] leo on c-${String(leoCard.id)}: Use the password from the vault`;
+  const steer = `[fleet] leo on c-${String(leoCard.id)} credit-the-test-account: Use the password from the vault`;
   assert.equal(lastUser(await h.waitForCall(2)), steer);
   const echo = await fleet.main.waitForEntry((entry) => entry.author === "mate:leo", "the echo");
-  assert.equal(echo.fields["re"], "Captain: it can make an account with that password");
+  assert.equal(echo.body, "Use the password from the vault");
 });
 
 test("a run that ends without a handoff gets one nudge, then files stopped", async () => {
@@ -101,7 +98,7 @@ test("a run that ends without a handoff gets one nudge, then files stopped", asy
   );
   assert.equal(h.calls.length, 2);
   assert.deepEqual(reports(fleet.main), [
-    ["stopped", "ended the run without a handoff: still looking", "investigate the scrollbar"],
+    ["stopped", "ended the run without a handoff: still looking"],
   ]);
   assert.equal(await status(fleet.main, card), "with-mate");
 });
@@ -125,9 +122,9 @@ test("a worker woken from a pause is nudged and stopped when it ends a run on a 
     /^\[fleet\] Your run is ending without a handoff/,
   );
   assert.deepEqual(reports(fleet.main), [
-    ["paused", "waiting for CI", "start"],
-    ["working", "back at it", "any news?"],
-    ["stopped", "ended the run without a handoff: still nothing", undefined],
+    ["paused", "waiting for CI"],
+    ["working", "back at it"],
+    ["stopped", "ended the run without a handoff: still nothing"],
   ]);
 });
 
@@ -144,8 +141,8 @@ test("a worker that reports done and then working in the same run is nudged and 
     /^\[fleet\] Your run is ending without a handoff/,
   );
   assert.deepEqual(reports(fleet.main), [
-    ["done", "PR ready", "ship it"],
-    ["stopped", "ended the run without a handoff: still nothing", undefined],
+    ["done", "PR ready"],
+    ["stopped", "ended the run without a handoff: still nothing"],
   ]);
 });
 
@@ -161,9 +158,7 @@ test("a run stopped from the pane files stopped", async () => {
   await fleet.main.waitForEntries(1);
   held.open();
 
-  assert.deepEqual(reports(fleet.main), [
-    ["stopped", "stopped from the pane", "investigate the scrollbar"],
-  ]);
+  assert.deepEqual(reports(fleet.main), [["stopped", "stopped from the pane"]]);
 });
 
 test("after a crash, recovery delivers the older follow-up once and never repeats the newer steer", async () => {
@@ -195,7 +190,7 @@ test("after a crash, recovery delivers the older follow-up once and never repeat
   assert.equal(lastUser(after), fleetText("older follow-up"));
   assert.equal(count(after, fleetText("older follow-up")), 1);
   assert.equal(count(after, fleetText("newer steer")), 1);
-  assert.deepEqual(reports(fleet.main), [["done", "done after the crash", "newer steer"]]);
+  assert.deepEqual(reports(fleet.main), [["done", "done after the crash"]]);
 });
 
 test("a message lost before the session file existed is delivered again after a crash", async () => {
@@ -236,8 +231,8 @@ test("a session file with a torn last line does not stop the restarted worker fr
   await fleet.main.waitForEntries(2);
 
   assert.deepEqual(reports(fleet.main), [
-    ["done", "first done", "first"],
-    ["done", "second done", "again"],
+    ["done", "first done"],
+    ["done", "second done"],
   ]);
 });
 
@@ -260,9 +255,7 @@ test("a stopped report filed while cardd is down reaches the mate once cardd is 
   await main.waitForEntries(1);
   await main.call("board", {});
 
-  assert.deepEqual(reports(main), [
-    ["stopped", "ended the run without a handoff: still nothing", "investigate the scrollbar"],
-  ]);
+  assert.deepEqual(reports(main), [["stopped", "ended the run without a handoff: still nothing"]]);
 });
 
 test("a cardd restart does not repeat a message the worker already holds", async () => {

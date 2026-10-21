@@ -23,12 +23,8 @@ const laneCardOf = async (lane: string): Promise<Card> => {
   assert.ok(card, `lane ${lane} has a lane card`);
   return card;
 };
-const words = (session: Session): [string, string, string | undefined][] =>
-  session.entries.map(({ entry }: { entry: Entry }) => [
-    entry.author,
-    entry.body,
-    typeof entry.fields["re"] === "string" ? entry.fields["re"] : undefined,
-  ]);
+const words = (session: Session): [string, string][] =>
+  session.entries.map(({ entry }: { entry: Entry }) => [entry.author, entry.body]);
 
 async function leoCardWithWorker(): Promise<{ card: Card; worker: Session }> {
   const card = await newCard(leo, "Credit the test account", "ship");
@@ -123,7 +119,7 @@ test("one comment carries the captain's follow-up to the lane mate, whatever the
   assert.equal(await status(fleet.main, card), "with-mate");
 });
 
-test("the mate's next action reaches main once, with main's comment", async () => {
+test("the mate's next action reaches main once", async () => {
   const { card } = await leoCardWithWorker();
   await fleet.main.call("comment", { card: card.id, text: "Use the test account" });
   await leo.waitForEntries(1);
@@ -132,7 +128,7 @@ test("the mate's next action reaches main once, with main's comment", async () =
   await leo.call("comment", { card: card.id, text: "Second steer" });
   await fleet.main.waitForEntries(1);
   await fleet.main.call("board", {});
-  assert.deepEqual(words(fleet.main), [["mate:leo", "Steered the worker", "Use the test account"]]);
+  assert.deepEqual(words(fleet.main), [["mate:leo", "Steered the worker"]]);
 });
 
 test("a second mate's comment on its lane card reaches main", async () => {
@@ -154,8 +150,8 @@ test("main's comment and the mate's reply on the lane card echo once", async () 
   await leo.call("comment", { lane: "leo", text: "Anything else?" });
   await fleet.main.waitForEntries(2);
   assert.deepEqual(words(fleet.main), [
-    ["mate:leo", "Yes, done", "Can you credit the account?"],
-    ["mate:leo", "Anything else?", undefined],
+    ["mate:leo", "Yes, done"],
+    ["mate:leo", "Anything else?"],
   ]);
 });
 
@@ -180,21 +176,5 @@ test("comments reach only the agent of the card's owner", async () => {
   await assert.rejects(
     fleet.main.call("comment", { card: lane.id, text: "hi", resolves: "key" }),
     /only the mate of a card has one/,
-  );
-});
-
-test("a comment that reached no worker is not echoed in the next report", async () => {
-  const card = await newCard(leo, "Credit the test account", "ship");
-  await leo.call("comment", { card: card.id, text: "Heads up before any worker exists" });
-  const worker = await fleet.cardd.connect(await begin(leo, card, "the task"));
-  await worker.call("report", { status: "working", text: "started" });
-  await worker.call("report", { status: "done", text: "finished" });
-  await leo.waitForEntries(2);
-  assert.deepEqual(
-    leo.entries.map(({ entry }) => [entry.body, entry.fields["re"]]),
-    [
-      ["started", "the task"],
-      ["finished", undefined],
-    ],
   );
 });

@@ -342,6 +342,8 @@ export type BoardAction = Static<typeof BoardActionSchema>;
 
 export const HttpCallSchema = Type.Object({ op: Type.String(), args: Type.Unknown() });
 
+export const PushedEntrySchema = Type.Object({ entry: EntrySchema, name: Type.String() });
+
 const ServerMessage = Type.Union([
   Type.Object({
     t: Type.Literal("welcome"),
@@ -351,7 +353,7 @@ const ServerMessage = Type.Union([
   }),
   Type.Object({
     t: Type.Literal("entry"),
-    entry: EntrySchema,
+    ...PushedEntrySchema.properties,
     mode: Type.Enum(["steer", "followUp"]),
   }),
   Type.Object({

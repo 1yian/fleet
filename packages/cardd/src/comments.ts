@@ -61,19 +61,13 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
   }
   const delivered = recipient === undefined ? {} : { for: route.kind };
   const own = { resolves: args.resolves, now: args.now, ...delivered };
-  const { to, fields } = withEcho(
-    db,
-    session,
-    card,
-    recipient === undefined ? [] : [recipient],
-    own,
-  );
+  const to = withEcho(db, session, card, recipient === undefined ? [] : [recipient]);
   const draft: Draft = {
     card: card.id,
     author: `mate:${session.lane}`,
     kind: "comment",
     body: args.text,
-    fields,
+    fields: own,
   };
   if (route.kind === "worker") applyChange(db, card, { kind: "comment" }, [draft]);
   addEntry(db, draft, to);

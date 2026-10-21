@@ -100,10 +100,16 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
   const closed = { outcome: args.mode, archives: args.archives, left: args.left };
-  const { to, fields } = withEcho(db, session, card, other === session.lane ? [] : [other], closed);
+  const to = withEcho(db, session, card, other === session.lane ? [] : [other]);
   addEntry(
     db,
-    { card: card.id, author: `mate:${session.lane}`, kind: "cleanup", body: args.text, fields },
+    {
+      card: card.id,
+      author: `mate:${session.lane}`,
+      kind: "cleanup",
+      body: args.text,
+      fields: closed,
+    },
     to,
   );
   return { value: getCard(db, card.id), notify: to };

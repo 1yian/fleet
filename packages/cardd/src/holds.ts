@@ -136,10 +136,10 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     fields,
   };
   applyChange(db, card, { kind: "held" }, [draft]);
-  const echoed = withEcho(db, session, card, hearers(db, card, session.lane, [target]), fields);
-  addEntry(db, { ...draft, fields: echoed.fields }, echoed.to);
+  const to = withEcho(db, session, card, hearers(db, card, session.lane, [target]));
+  addEntry(db, draft, to);
   touchCard(db, card.id);
-  return { value: getCard(db, card.id), notify: echoed.to };
+  return { value: getCard(db, card.id), notify: to };
 }
 
 function mergeOutcome(choice: string | undefined): "approve" | "changes" {
@@ -215,16 +215,10 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
     fields,
   };
   applyChange(db, card, { kind: "released" }, [draft]);
-  const echoed = withEcho(
-    db,
-    session,
-    card,
-    hearers(db, card, session.lane, [open.holder]),
-    fields,
-  );
-  addEntry(db, { ...draft, fields: echoed.fields }, echoed.to);
+  const to = withEcho(db, session, card, hearers(db, card, session.lane, [open.holder]));
+  addEntry(db, draft, to);
   touchCard(db, card.id);
-  return { value: getCard(db, card.id), notify: [...echoed.to, ...askAgain(db, card)] };
+  return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
 
 export function withdrawMerge(

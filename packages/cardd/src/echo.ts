@@ -4,13 +4,9 @@ import { cardEntries, parentOf, type Session } from "./store.ts";
 
 const ACTIONS: ReadonlySet<string> = new Set(["comment", "hold", "release", "cleanup", "status"]);
 
-function echoTo(
-  db: DatabaseSync,
-  session: Session,
-  card: Card,
-): { readonly to: readonly string[]; readonly re?: string } {
+function echoTo(db: DatabaseSync, session: Session, card: Card): readonly string[] {
   const parent = parentOf(db, session.lane);
-  if (parent === null || card.lane !== session.lane) return { to: [] };
+  if (parent === null || card.lane !== session.lane) return [];
   const entries = cardEntries(db, card.id);
   const asked = entries.findLast(
     (entry) =>
@@ -18,7 +14,7 @@ function echoTo(
       entry.kind === "comment" &&
       entry.fields["for"] === "mate",
   );
-  if (asked === undefined) return { to: [] };
+  if (asked === undefined) return [];
   const acted = entries.some(
     (entry) =>
       entry.id > asked.id &&
@@ -26,7 +22,7 @@ function echoTo(
       entry.fields["task"] !== true &&
       ACTIONS.has(entry.kind),
   );
-  return acted ? { to: [] } : { to: [parent], re: asked.body };
+  return acted ? [] : [parent];
 }
 
 export function withEcho(
@@ -34,9 +30,6 @@ export function withEcho(
   session: Session,
   card: Card,
   to: readonly string[],
-  fields: Record<string, unknown>,
-): { to: string[]; fields: Record<string, unknown> } {
-  const echo = echoTo(db, session, card);
-  const both = [...new Set([...to, ...echo.to])];
-  return { to: both, fields: echo.re === undefined ? fields : { ...fields, re: echo.re } };
+): string[] {
+  return [...new Set([...to, ...echoTo(db, session, card)])];
 }

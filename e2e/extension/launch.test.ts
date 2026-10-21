@@ -75,7 +75,7 @@ test("fleet up starts a second mate in its own workspace once, and again on its 
   const asks = turns.filter((turn) => turn.role === "user").map((turn) => turn.text);
   assert.deepEqual(
     asks.map((text) => text.split(":")[0]),
-    ["[fleet] main on c-1", "[fleet] main on c-1"],
+    ["[fleet] main on c-1 cleo", "[fleet] main on c-1 cleo"],
   );
   assert.equal(readdirSync(join(h.dir, "sessions")).length, 1);
 });

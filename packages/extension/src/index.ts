@@ -69,13 +69,13 @@ function start(
       worker?.flush();
       jobs?.sync().catch(() => undefined);
     },
-    onPush: ({ entry, mode }) => {
+    onPush: ({ entry, name, mode }) => {
       if (injected.has(entry.id)) return;
       injected.add(entry.id);
       pi.sendMessage(
         {
           customType: "fleet",
-          content: format(entry),
+          content: format(entry, name),
           display: true,
           details: { entryId: entry.id },
         },

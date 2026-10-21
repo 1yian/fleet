@@ -101,11 +101,11 @@ test("a worker whose token begins with a dash starts on its task", async () => {
   mate.prompt("ship the scrollbar fix");
 
   const first = await h.waitForCall(0, "worker", WORKER_WAIT_MS);
-  assert.equal(lastUser(first), "[fleet] main on c-1: fix it");
+  assert.equal(lastUser(first), "[fleet] main on c-1 one-scrollbar: fix it");
   const woken = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(woken),
-    "[fleet] c-1 done: PR green (no PR has branch c-1-a1 as its head) (re your comment: fix it) (card now with-mate)",
+    `[fleet] c-1 one-scrollbar done: PR green (no PR has branch c-1-a1 as its head) (card now with-mate)`,
   );
   const launched = readFileSync(launchArgsOf(h), "utf8").split("\n");
   assert.match(launched.find((arg) => arg.startsWith("--fleet-token=")) ?? "", /^--fleet-token=-/);
