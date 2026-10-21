@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { check, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
-import { tagUntaggedWorkers } from "./arrange.ts";
+import { arrangeOn, tagUntaggedWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
 import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
 import { fleet, hostsOf, restartAll, withLanes } from "./lanes.ts";
@@ -257,15 +257,32 @@ async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolea
       text: `Fleet update stopped: cardd does not run the new code, so no mate was restarted, and main keeps running.\nHosts:\n${hostLines}`,
     };
   const lanes = await restartAll(config);
+  const sidebars = await arrangeAll(config);
   return {
     ok: true,
     text: [
       "Fleet updated.",
       `Hosts:\n${hostLines}`,
       `Lanes:\n${bullets(lanes)}`,
+      `Sidebars:\n${bullets(sidebars)}`,
       ...changeLines(replies, carddStep !== undefined),
     ].join("\n"),
   };
+}
+
+async function arrangeAll(config: LaneConfig): Promise<string[]> {
+  const lines: string[] = [];
+  for (const host of hostsOf(config)) {
+    try {
+      await arrangeOn(host, config.roots[host]);
+      lines.push(`${host}: ordered`);
+    } catch (error) {
+      lines.push(
+        `${host}: not ordered - ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return lines;
 }
 
 async function tagWorkers(config: LaneConfig, link: Link): Promise<void> {
@@ -334,7 +351,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     name: "update_fleet",
     label: "Update fleet",
     description:
-      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it restarts every lane that is not held, and restarts main on its conversation when this turn ends. Use it only when the captain asks to update the fleet.",
+      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it restarts every lane that is not held, reorders every host's herdr sidebar whether or not any mate started there and reports each host that could not be ordered, and restarts main on its conversation when this turn ends. Use it only when the captain asks to update the fleet.",
     parameters: Type.Object({}),
     execute: async () => {
       const result = await run();
@@ -345,7 +362,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
   });
   pi.registerCommand("updatefleet", {
     description:
-      "Update the fleet to the latest origin/main on every host and cardd, restart cardd when its code changed, restart every lane, then restart main on its conversation.",
+      "Update the fleet to the latest origin/main on every host and cardd, restart cardd when its code changed, restart every lane, arrange every host's herdr sidebar, then restart main on its conversation.",
     handler: async (_args, ctx) => {
       if (ctx.hasUI) ctx.ui.notify("Updating the fleet on every host...", "info");
       const result = await run().catch((error: unknown) => ({

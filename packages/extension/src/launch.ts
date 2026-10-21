@@ -120,7 +120,10 @@ switch (command ?? "") {
     show(await up(root, rest[0]));
     break;
   case "arrange":
-    await arrangeHere();
+    await arrangeHere().catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
     break;
   case "stop":
     await stop(root, lane());
