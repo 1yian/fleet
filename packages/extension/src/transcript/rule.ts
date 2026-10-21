@@ -1,7 +1,7 @@
 import { stripTerminalSequences, truncateToWidth } from "@earendil-works/pi-tui";
 
-export function messageRule(sender: string, width: number): string {
-  const head = truncateToWidth(`── ${sender} `, Math.max(width, 0), "");
+export function messageRule(sender: string | undefined, width: number): string {
+  const head = truncateToWidth(sender === undefined ? "" : `── ${sender} `, Math.max(width, 0), "");
   return head + "─".repeat(Math.max(width - head.length, 0));
 }
 

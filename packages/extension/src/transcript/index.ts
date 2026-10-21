@@ -1,17 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { readLaneConfig } from "../lane-config.ts";
 import { installPresentation } from "../patch.ts";
-import { mateTitle } from "../titles.ts";
-import { setConversationApart } from "./layout.ts";
+import { FLEET_ROW_TYPES, setConversationApart } from "./layout.ts";
 import { transcriptState } from "./state.ts";
-
-const FLEET_ROWS = ["fleet", "fleet-link", "fleet-update"];
 
 export default function transcript(pi: ExtensionAPI): void {
   installPresentation("Transcript", "message rule", setConversationApart);
 
-  for (const type of FLEET_ROWS) {
+  for (const type of FLEET_ROW_TYPES) {
     pi.registerMessageRenderer(type, (message, options, theme) => {
       const text =
         typeof message.content === "string"
@@ -23,11 +19,7 @@ export default function transcript(pi: ExtensionAPI): void {
     });
   }
 
-  const lane = readLaneConfig(process.cwd())?.lane;
   pi.on("session_start", (_event, ctx) => {
-    if (!ctx.hasUI) return;
-    const state = transcriptState();
-    state.theme = () => ctx.ui.theme;
-    if (lane !== undefined) state.mate = mateTitle(lane);
+    if (ctx.hasUI) transcriptState().theme = ctx.ui.theme;
   });
 }

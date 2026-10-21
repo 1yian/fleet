@@ -8,6 +8,7 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { gate, Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
+import { cloneWithRemote, landOnRemote } from "../support/remote.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -79,11 +80,16 @@ async function resize(pane: string, cols: number): Promise<void> {
   execFileSync("stty", [flag, `/dev/${tty}`, "cols", String(cols)]);
 }
 
-const RULE = /^── ([a-z0-9-]+) ─+$/;
+const RULE = /^(?:── ([a-z0-9-]+) ─+|─+)$/;
 const ESC = String.fromCharCode(27);
 const SGR = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
 const mutedRule = (line: string): boolean =>
   line.startsWith(`${ESC}[`) && RULE.test(line.replace(SGR, "").trimEnd());
+
+const senderOf = (rule: string): string => RULE.exec(rule)?.[1] ?? "";
+const tag = (rule: string): string => (senderOf(rule) === "" ? "──" : `── ${senderOf(rule)} ──`);
+const border = (line: string): boolean => /^─+$/.test(line);
+const editorTop = (line: string): boolean => border(line) || line.includes("Working");
 
 interface Transcript {
   readonly shown: string[];
@@ -94,7 +100,8 @@ interface Transcript {
 
 function transcript(screen: string): Transcript {
   const lines = screen.split("\n").map((line) => line.trimEnd());
-  const editor = lines.findIndex((line) => /^─+$/.test(line));
+  const bottom = lines.findLastIndex(border);
+  const editor = lines.slice(0, bottom).findLastIndex(editorTop);
   const width = lines[editor]?.length ?? 0;
   const start = lines.findIndex((line) => line.startsWith("[Extensions]"));
   const body = lines
@@ -107,7 +114,7 @@ function transcript(screen: string): Transcript {
     gaps: body.every((line, index) => !RULE.test(line) || index === 0 || body[index - 1] === ""),
     shown: body
       .filter((line) => line.trim() !== "" && !line.includes("Working"))
-      .map((line) => (RULE.test(line) ? `── ${RULE.exec(line)?.[1] ?? ""} ──` : line.trim())),
+      .map((line) => (RULE.test(line) ? tag(line) : line.trim())),
   };
 }
 
@@ -121,7 +128,7 @@ const RULING = "Cleo wants a ruling on the scrollbar.";
 const answered = [
   "── captain ──",
   CAPTAIN,
-  "── 1stmate ──",
+  "──",
   THINKING,
   "The board is quiet.",
   "Nothing waits on you.",
@@ -177,10 +184,7 @@ test("each message gets one muted rule and a sender label, through streaming, a 
   const squeezed = transcript(narrow);
   assert.ok(squeezed.rules.every((rule) => rule.length === NARROW));
   assert.ok(squeezed.gaps);
-  assert.deepEqual(
-    squeezed.rules.map((rule) => RULE.exec(rule)?.[1]),
-    ["captain", "1stmate", "captain"],
-  );
+  assert.deepEqual(squeezed.rules.map(senderOf), ["captain", "", "captain"]);
 });
 
 test("a restarted mate and a fleet row keep the same rules and labels", async () => {
@@ -203,11 +207,11 @@ test("a restarted mate and a fleet row keep the same rules and labels", async ()
   const expected = [
     "── captain ──",
     CAPTAIN,
-    "── 1stmate ──",
+    "──",
     SECOND,
     "── fleet ──",
     "[fleet] cleo on c-2 fix-the-scrollbar (hold): Fix the scrollbar?",
-    "── 1stmate ──",
+    "──",
     RULING,
   ];
   keep("5-fleet-row", live, await lab.coloredScreen(pane));
@@ -220,10 +224,51 @@ test("a restarted mate and a fleet row keep the same rules and labels", async ()
     assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
+  await lab.submit(pane, "clear");
+  await screenWhere(pane, "the cleared pane", (screen) => !screen.includes(RULING));
   await startMain(lab, scratch, h, true);
   const restored = await screenWhere(pane, "the restored conversation", (screen) =>
     screen.includes(RULING),
   );
   keep("6-restored", restored, await lab.coloredScreen(pane));
   assert.deepEqual(transcript(restored).shown, expected);
+});
+
+test("a clone report from the mate's own startup has one fleet label and no raw message type", async () => {
+  const app = cloneWithRemote(scratch.parent, "app");
+  landOnRemote(app.remote, "merged-pr");
+  writeFileSync(join(app.clone, "README"), "the captain's edit\n");
+  cardd.addProject("app", { local: app.clone });
+  h.onModel(() => ({ text: RULING }), "mate");
+  const pane = await startMain(lab, scratch, h);
+  const live = await screenWhere(pane, "the clone report and its reply", (screen) =>
+    screen.includes(RULING),
+  );
+  keep("7-clones-row", live, await lab.coloredScreen(pane));
+  const { shown } = transcript(live);
+  assert.equal(shown[0], "── fleet ──");
+  assert.ok(shown[1]?.startsWith("[fleet] clones: app on local: STUCK"));
+  assert.deepEqual(shown.slice(-2), ["──", RULING]);
+  assert.ok(!live.includes("[fleet-clones]"));
+});
+
+test("a new session keeps drawing the rules", async () => {
+  h.onModel(() => ({ text: SECOND }), "mate");
+  h.onModel(() => ({ text: RULING }), "mate");
+  const pane = await startMain(lab, scratch, h);
+  await screenWhere(pane, "the mate to start", (screen) => screen.includes("[Extensions]"));
+  await lab.submit(pane, CAPTAIN);
+  await screenWhere(
+    pane,
+    "the first reply to settle",
+    (screen) => screen.includes(SECOND) && !screen.includes("Working"),
+  );
+  await lab.submit(pane, "/new");
+  await screenWhere(pane, "the new session", (screen) => !screen.includes(SECOND));
+  await lab.submit(pane, CAPTAIN);
+  const fresh = await screenWhere(pane, "the reply in the new session", (screen) => {
+    return screen.includes(RULING) || screen.includes("To report this crash");
+  });
+  keep("8-new-session", fresh, await lab.coloredScreen(pane));
+  assert.deepEqual(transcript(fresh).shown.slice(-4), ["── captain ──", CAPTAIN, "──", RULING]);
 });

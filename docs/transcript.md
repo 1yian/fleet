@@ -1,12 +1,12 @@
 # Mate transcript
 
-Every fleet mate sets its messages apart in the terminal. Each message has one muted rule above it with the sender's name, so a long conversation reads as separate messages, not one wall of text.
+Every fleet mate sets its messages apart in the terminal. Each message has one muted rule above it, so a long conversation reads as separate messages, not one wall of text. The rule names the sender, except for the mate's own replies, which are the default voice and carry no name.
 
 ```
 ── captain ───────────────────────────────────
  What is on the board?
 
-── 1stmate ───────────────────────────────────
+───────────────────────────────────────────
  The board is quiet.
 
 ── fleet ─────────────────────────────────────
@@ -16,8 +16,8 @@ Every fleet mate sets its messages apart in the terminal. Each message has one m
 ## What it does
 
 - The captain's messages are labelled `captain`.
-- A mate's replies carry the mate's name: `1stmate` for main, `2ndmate-<lane>` for a second mate. It is the same name as the mate's workspace.
-- Rows that the fleet delivers (`fleet`, `fleet-link`, `fleet-update`) are labelled `fleet`. They are drawn as one tinted box without Pi's own `[fleet]` label above the text, because the text already starts with `[fleet]`.
+- A mate's replies have a rule with no name.
+- Rows that the fleet delivers (`fleet`, `fleet-link`, `fleet-update`, `fleet-clones`, `fleet-lanes`) are labelled `fleet`. They are drawn as one tinted box without Pi's own `[fleet]` label above the text, because the text already starts with `[fleet]`.
 - The rule is one muted color (the theme's `borderMuted`) and fills the width. It is redrawn at every width, so a resize keeps it whole.
 - There is one rule for each Pi message, not for each paragraph or text block. A reply with several paragraphs, several text blocks, or thinking before the text has one rule.
 - A reply with nothing to show has no rule. That covers an empty reply and a reply that only calls tools. Calm hides short working notes, and a message it empties has no rule either.
