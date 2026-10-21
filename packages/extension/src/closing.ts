@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { CardSchema, check, OPS } from "@fleet/protocol";
+import type { OpResult } from "@fleet/protocol";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
@@ -10,8 +10,7 @@ const ARCHIVE_SCRIPT = readFileSync(
   "utf8",
 );
 
-type Attempt = ReturnType<typeof parsePlan>["attempts"][number];
-const parsePlan = (value: unknown) => check(OPS["close.begin"].result, value);
+type Attempt = OpResult<"close.begin">["attempts"][number];
 
 const ORIGIN_BASE_IF_FETCHED = `origin=""
 if git -C "$clone" rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null; then
@@ -68,7 +67,7 @@ before=$(git -C "$clone" rev-parse --short HEAD)
 git -C "$clone" merge -q --ff-only "$branch"
 echo "$before..$(git -C "$clone" rev-parse --short HEAD)"`;
 
-async function landLocally(card: number, plan: ReturnType<typeof parsePlan>): Promise<string> {
+async function landLocally(card: number, plan: OpResult<"close.begin">): Promise<string> {
   const dirty: string[] = [];
   for (const attempt of plan.attempts) {
     try {
@@ -135,7 +134,7 @@ async function unlanded(attempt: Attempt): Promise<string> {
   return describe(await unlandedCounts(attempt), attempt.base);
 }
 
-async function requireLanded(card: number, plan: ReturnType<typeof parsePlan>): Promise<void> {
+async function requireLanded(card: number, plan: OpResult<"close.begin">): Promise<void> {
   const left: string[] = [];
   for (const attempt of plan.attempts) {
     try {
@@ -194,9 +193,10 @@ export async function close(
   request: { card: number; text: string; landed?: boolean | undefined },
 ): Promise<string> {
   const { card: id, text, landed } = request;
-  const plan = parsePlan(
-    await link.call("close.begin", { card: id, ...(landed === undefined ? {} : { landed }) }),
-  );
+  const plan = await link.call("close.begin", {
+    card: id,
+    ...(landed === undefined ? {} : { landed }),
+  });
   const moved = plan.land ? await landLocally(id, plan) : "";
   if (plan.verify) await requireLanded(id, plan);
   const archives: string[] = [];
@@ -211,7 +211,7 @@ export async function close(
     }
   }
   const finish = { card: id, mode: plan.mode, text, archives, left };
-  const card = check(CardSchema, await link.call("close.finish", finish));
+  const card = await link.call("close.finish", finish);
   const hostsJustUnreachable = new Set(left.map((each) => each.host));
   const found = await refreshClonesInTurn(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),

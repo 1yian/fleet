@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { check, OPS, VersionSchema, type Version } from "@fleet/protocol";
+import { check, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
 import { tagUntaggedWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
@@ -269,7 +269,7 @@ async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolea
 }
 
 async function tagWorkers(config: LaneConfig, link: Link): Promise<void> {
-  const cards = check(OPS.board.result, await link.call("board", {}));
+  const cards = await link.call("board", {});
   const laneOfCard = new Map(cards.map((card) => [card.id, card.lane]));
   for (const host of hostsOf(config))
     await tagUntaggedWorkers(host, laneOfCard).catch(() => undefined);

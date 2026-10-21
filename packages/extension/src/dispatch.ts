@@ -1,4 +1,4 @@
-import { check, OPS, type Delivery } from "@fleet/protocol";
+import type { Delivery, OpResult } from "@fleet/protocol";
 import { SYNC_FUNCTIONS } from "./clones.ts";
 import { fleetArgs } from "./fleet-args.ts";
 import { field, herdr, onHost, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
@@ -10,8 +10,7 @@ export interface Launch {
   readonly piArgs: readonly string[];
 }
 
-type Plan = ReturnType<typeof parsePlan>;
-const parsePlan = (value: unknown) => check(OPS["attempt.begin"].result, value);
+type Plan = OpResult<"attempt.begin">;
 
 const ADD_WORKTREE = `${SYNC_FUNCTIONS}
 set -eu
@@ -124,7 +123,7 @@ export async function dispatch(
     delivery?: Delivery | undefined;
   },
 ): Promise<string> {
-  const plan = parsePlan(await link.call("attempt.begin", request));
+  const plan = await link.call("attempt.begin", request);
   const where = `${plan.session} on ${request.host}`;
   const pane = await worktreePane(request.host, plan, request.card);
   if (await piRunning(request.host, pane)) {

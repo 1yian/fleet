@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardName, CardSchema, check, DELIVERIES, OPS, type Card } from "@fleet/protocol";
+import { CardName, DELIVERIES, OPS, type Card } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
@@ -87,16 +87,14 @@ const CloseParams = Type.Object({
 });
 
 async function oneCard(link: Link, params: BoardArgs & { card: number }): Promise<string> {
-  let value: unknown;
   try {
-    value = await link.call("card", { card: params.card });
+    return cardText(await link.call("card", { card: params.card }), params);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(errorText(message, ["Call `board()` to list the open cards"]), {
       cause: error,
     });
   }
-  return cardText(check(OPS.card.result, value), params);
 }
 
 async function wholeBoard(
@@ -104,8 +102,8 @@ async function wholeBoard(
   lanes: LaneStates | undefined,
   params: BoardArgs,
 ): Promise<string> {
-  const cards = check(OPS.board.result, await link.call("board", {}));
-  const projects = check(OPS.projects.result, await link.call("projects", {}));
+  const cards = await link.call("board", {});
+  const projects = await link.call("projects", {});
   const header = lanes === undefined ? { projects } : { projects, lanes: await lanes() };
   return boardText(cards, params, header);
 }
@@ -140,8 +138,7 @@ export function registerMate(
     description:
       "Creates a card in your own lane. A card must exist before any work starts. As main, never use lane: to hand work to a second mate, comment on its lane card.",
     parameters: Type.Object({ ...OPS["card.new"].args.properties, name: CardName }),
-    execute: async (_id, params) =>
-      reply(`Created ${line(check(CardSchema, await link.call("card.new", params)))}.`),
+    execute: async (_id, params) => reply(`Created ${line(await link.call("card.new", params))}.`),
   });
   pi.registerTool({
     name: "comment",
@@ -149,8 +146,7 @@ export function registerMate(
     description:
       "Talks to an agent through a card. On your own card it reaches the worker. As main, a comment on a second mate's lane card, or on any card in its lane, reaches that second mate, never its worker. As a second mate, a comment on your lane card reaches main. comment(lane, text) is the shorthand for a lane card. now delivers at the next tool boundary. reply=true asks for an answer that the fleet tracks: it resends once, then tells you. replyTo answers a reply you owe, including the one a captain board comment opens for main, which the board threads under his message; withdraws drops one you asked for.",
     parameters: OPS.comment.args,
-    execute: async (_id, params) =>
-      reply(`Commented. ${line(check(CardSchema, await link.call("comment", params)))}`),
+    execute: async (_id, params) => reply(`Commented. ${line(await link.call("comment", params))}`),
   });
   registerBoard(pi, link, lanes);
   pi.registerTool({

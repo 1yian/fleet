@@ -386,6 +386,7 @@ export const OPS = {
 } as const;
 export type OpName = keyof typeof OPS;
 export type OpArgs<O extends OpName> = Static<(typeof OPS)[O]["args"]>;
+export type OpResult<O extends OpName> = Static<(typeof OPS)[O]["result"]>;
 
 const ClientMessage = Type.Union([
   Type.Object({
@@ -486,6 +487,11 @@ export function check<T extends TSchema>(schema: T, value: unknown): Static<T> {
   if (Value.Check(schema, value)) return value;
   const [first] = Value.Errors(schema, value);
   throw new Error(`invalid ${first?.instancePath ?? ""}: ${first?.message ?? "bad value"}`);
+}
+
+export function checkResult<N extends OpName>(op: N, value: unknown): OpResult<N>;
+export function checkResult(op: OpName, value: unknown): unknown {
+  return check(OPS[op].result, value);
 }
 
 export const parseClientMessage = (text: string): ClientMessage =>

@@ -1,15 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardSchema, check, OPS } from "@fleet/protocol";
+import { OPS, type Card } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { captainSaid, parseUtc } from "./inbox.ts";
 import type { Link } from "./link.ts";
 
 const CardId = Type.Integer({ description: "The card number, such as 12 for c-12" });
 
-const card = (value: unknown): string => {
-  const parsed = check(CardSchema, value);
-  return `c-${String(parsed.id)} is now ${parsed.status}.`;
-};
+const card = (value: Card): string => `c-${String(value.id)} is now ${value.status}.`;
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
 const HoldParams = Type.Object({
