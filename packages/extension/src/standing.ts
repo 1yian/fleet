@@ -48,23 +48,46 @@ export function standingRules(home: string): string {
   return `\n\n${[...rules, ...sections].join("\n\n")}`;
 }
 
-function converge(home: string, bytes: string | undefined): "updated" | "removed" | "unchanged" {
+const publishedFile = (home: string): string => join(home, "state", "captain-shared.published");
+
+function preserveAside(home: string, current: string): string {
+  const stamp = new Date().toISOString().replaceAll(":", "-");
+  for (let n = 0; ; n += 1) {
+    const name = `captain-shared.edited-${stamp}${n === 0 ? "" : `-${String(n)}`}.md`;
+    try {
+      writeFileSync(join(home, "data", name), current, { flag: "wx", mode: 0o600 });
+      return name;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    }
+  }
+}
+
+function publish(path: string, bytes: string, mode: number): void {
+  const next = `${path}.${String(process.pid)}.tmp`;
+  writeFileSync(next, bytes, { mode });
+  renameSync(next, path);
+}
+
+function converge(home: string, bytes: string | undefined): string {
   mkdirSync(join(home, "data"), { recursive: true });
+  mkdirSync(join(home, "state"), { recursive: true });
   const target = pathOf(home, SHARED);
   const current = readIfPresent(target);
+  const published = readIfPresent(publishedFile(home));
+  const edited = current !== undefined && current !== bytes && current !== published;
+  const kept = edited ? preserveAside(home, current) : undefined;
+  const aside = kept === undefined ? "" : `, edited copy preserved as data/${kept}`;
   if (bytes === undefined) {
     if (current === undefined) return "unchanged";
     rmSync(target);
-    return "removed";
+    rmSync(publishedFile(home), { force: true });
+    return `removed${aside}`;
   }
-  if (current === bytes) {
-    chmodSync(target, READ_ONLY);
-    return "unchanged";
-  }
-  const next = `${target}.${String(process.pid)}.tmp`;
-  writeFileSync(next, bytes, { mode: READ_ONLY });
-  renameSync(next, target);
-  return "updated";
+  if (current !== bytes) publish(target, bytes, READ_ONLY);
+  chmodSync(target, READ_ONLY);
+  if (published !== bytes) publish(publishedFile(home), bytes, 0o600);
+  return current === bytes ? "unchanged" : `updated${aside}`;
 }
 
 export function convergeSharedPreferences(

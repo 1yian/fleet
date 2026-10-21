@@ -63,6 +63,12 @@ function sharedArgs(home: string): string[] {
   return ["shared", "--content", Buffer.from(bytes, "utf8").toString("base64")];
 }
 
+const preservedLines = (host: string, out: string): string[] =>
+  out
+    .split("\n")
+    .filter((line) => line.includes("preserved as"))
+    .map((line) => `${line} (on ${host})`);
+
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -70,14 +76,16 @@ export async function publishShared(home: string): Promise<string | undefined> {
   const config = readLaneConfig(home);
   if (config === undefined) return undefined;
   const failures: string[] = [];
+  const notes: string[] = [];
   for (const host of hostsOf(config)) {
-    await fleet(config, host, sharedArgs(home)).catch((error: unknown) => {
+    try {
+      notes.push(...preservedLines(host, await fleet(config, host, sharedArgs(home))));
+    } catch (error) {
       failures.push(`${host}: ${messageOf(error)}`);
-    });
+    }
   }
-  return failures.length === 0
-    ? undefined
-    : `Shared preferences did not reach ${failures.join("; ")}`;
+  if (failures.length > 0) notes.push(`Shared preferences did not reach ${failures.join("; ")}`);
+  return notes.length === 0 ? undefined : notes.join("\n");
 }
 
 export type LaneStates = () => Promise<{
@@ -190,7 +198,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   };
   const share = async (host: string): Promise<void> => {
     try {
-      await fleet(config, host, sharedArgs(home));
+      tell(preservedLines(host, await fleet(config, host, sharedArgs(home))), false);
       if (unshared.delete(host)) tell([`shared preferences reach ${host} again`], false);
     } catch (error) {
       if (error instanceof HostUnreachable) throw error;
