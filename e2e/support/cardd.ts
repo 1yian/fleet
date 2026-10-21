@@ -100,6 +100,14 @@ export class Cardd {
     });
   }
 
+  moveClone(project: string, host: string, path: string): string {
+    const args = [MAIN, "project", "clone", project, `${host}=${path}`, "--db", this.db];
+    return execFileSync("node", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  }
+
   yolo(project: string, on = true): string {
     const args = [MAIN, "project", "yolo", project, on ? "on" : "off", "--db", this.db];
     return execFileSync("node", args, { encoding: "utf8" }).trim();

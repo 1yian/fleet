@@ -148,6 +148,13 @@ export function addProject(
   );
 }
 
+export function setClone(db: DatabaseSync, project: string, host: string, path: string): void {
+  const { changes } = db
+    .prepare(`UPDATE projects SET clones = json_set(clones, '$."' || ? || '"', ?) WHERE name = ?`)
+    .run(host, path, project);
+  if (changes === 0) throw new Error(`project ${project} is not in the registry`);
+}
+
 export function setYolo(db: DatabaseSync, project: string, yolo: boolean): void {
   const { changes } = db
     .prepare("UPDATE projects SET yolo = ? WHERE name = ?")

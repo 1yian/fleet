@@ -55,10 +55,12 @@ $CARDD lane add main --db ~/.fleet/cards.db --home ~/Projects/fleet
 $CARDD lane add cleo --db ~/.fleet/cards.db --home /path/on/its/host --parent main
 $CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes \
   --clone maverick=/path/to/web --clone p620=/path/on/p620/web
+$CARDD project clone web p620=/new/path/on/p620/web --db ~/.fleet/cards.db
 $CARDD project yolo web on --db ~/.fleet/cards.db
 ```
 
 - A project's clone is a normal clone of the repository on that host. Dispatch creates each worker's worktree next to it, in `<clone>.worktrees/`.
+- To move a clone, move it, run `git worktree repair` with the paths of its worktrees, then run `project clone` with its new path. Workers that already run keep their worktrees, and close still finds them.
 - Use the same host names in `--clone` that mates pass to `dispatch`.
 - A project's yolo flag is the captain's standing merge authority: with it on, a mate tells the worker to merge a PR of that project with green checks, without asking the captain. Only the captain sets it, with `project add --yolo` or `project yolo <name> on|off`. No mate tool changes it.
 - `cardd` finds a ship card's PR on GitHub by the card's branch, so it needs the project's GitHub repository. It reads it from the `origin` remote of a clone on the `cardd` host, when the project is added and each time `cardd serve` starts. A project with no clone on that host needs `--repo <owner>/<name>` on `project add`.
