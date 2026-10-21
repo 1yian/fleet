@@ -62,6 +62,7 @@ $CARDD project yolo web on --db ~/.fleet/cards.db
 - Use the same host names in `--clone` that mates pass to `dispatch`.
 - A project's yolo flag is the captain's standing merge authority: with it on, a mate tells the worker to merge a PR of that project with green checks, without asking the captain. Only the captain sets it, with `project add --yolo` or `project yolo <name> on|off`. No mate tool changes it.
 - `cardd` finds a ship card's PR on GitHub by the card's branch, so it needs the project's GitHub repository. It reads it from the `origin` remote of a clone on the `cardd` host, when the project is added and each time `cardd serve` starts. A project with no clone on that host needs `--repo <owner>/<name>` on `project add`.
+- The fleet keeps clones current with their `origin`, as Firstmate did. Dispatch fetches first and branches from `origin/<base>`, and refuses when the fetch fails. When main starts, and after `close` ends a ship card, each clone is fetched, branches whose remote branch is gone are pruned, and a clean base branch is fast-forwarded. A clone with uncommitted changes, another branch checked out, or a diverged base is left alone and reported as `STUCK`. A clone that is a fleet home, such as main's checkout, is only fetched: update it with the steps in section 1.
 
 ## 4. Main
 
