@@ -216,10 +216,10 @@ test("a mate that keeps dying is held, and only naming it starts it again", asyn
   assert.match(here.fleet(["up", "loopy"], { HERDR_SESSION: lab.name }), /^loopy: started/);
 });
 
-test("main stops, restarts, and starts lanes with its tools, and never starts a lane held by hand", async () => {
+test("main stops, restarts, and starts lanes with lane, its board shows them, and it never starts a lane held by hand", async () => {
   let kicked: number | undefined;
   // 1. Stop ops.
-  h.onModel(() => ({ tool: "lane_stop", args: { lane: "ops" } }), "mate");
+  h.onModel(() => ({ tool: "lane", args: { name: "ops", action: "stop" } }), "mate");
   // 2. Ops stays stopped while main keeps running the rest: kill far, and wait for main to start it.
   h.onModel(async (turns) => {
     assert.match(toolResults(turns).at(-1) ?? "", /^ops \(local\): stopped$/);
@@ -228,33 +228,49 @@ test("main stops, restarts, and starts lanes with its tools, and never starts a 
     await until(async () => ((await groupOf("far")) === kicked ? undefined : true), "far to die");
     await waitState(p620, "far", "running");
     assert.equal(states(here)["ops"], "stopped");
-    return { tool: "lane_status", args: {} };
+    return { tool: "board", args: {} };
   }, "mate");
-  // 3. The status shows both hosts.
+  // 3. The board's header shows the lanes of both hosts, and points at the full list.
   h.onModel((turns) => {
-    const status = toolResults(turns).at(-1) ?? "";
-    assert.match(status, /^lanes\[\d+\]\{lane,host,state,detail\}:$/m);
-    assert.match(status, /^ {2}ops,local,stopped,stopped by hand$/m);
-    assert.match(status, /^ {2}far,p620,running,""$/m);
+    const board = toolResults(turns).at(-1) ?? "";
+    assert.match(board, /^lanes\[2\]\{name,state\}:\n {2}ops,stopped\n {2}far,running$/m);
+    assert.match(board, /^ {2}Call `board\(lanes=true\)` to see why a lane is down or stopped$/m);
     assert.match(
-      status,
-      /^ {2}Call `lane_start\(lane=<lane>\)` to start a lane that is down or stopped$/m,
+      board,
+      /^ {2}Call `lane\(name=<lane>, action="start"\)` to start a lane that is down or stopped$/m,
     );
-    return { tool: "lane_restart", args: { lane: "all" } };
+    return { tool: "board", args: { lanes: true } };
   }, "mate");
-  // 4. Restarting the fleet restarts far, and leaves the lane held by hand alone.
+  // 4. The full list names each lane's host and why it is in its state.
+  h.onModel((turns) => {
+    const board = toolResults(turns).at(-1) ?? "";
+    assert.match(board, /^ {2}ops,local,stopped,stopped by hand$/m);
+    assert.match(board, /^lanes\[2\]\{name,host,state,detail\}:$/m);
+    assert.match(board, /^ {2}far,p620,running,""$/m);
+    assert.doesNotMatch(board, /board\(lanes=true\)/);
+    return { tool: "lane", args: { name: "all", action: "stop" } };
+  }, "mate");
+  // 5. "all" only restarts.
+  h.onModel((turns) => {
+    assert.equal(
+      toolResults(turns).at(-1),
+      'lane "all" only restarts: name each lane to start or stop it',
+    );
+    return { tool: "lane", args: { name: "all", action: "restart" } };
+  }, "mate");
+  // 6. Restarting the fleet restarts far, and leaves the lane held by hand alone.
   h.onModel((turns) => {
     const restart = toolResults(turns).at(-1) ?? "";
     assert.match(restart, /far \(p620\): started/);
     assert.match(restart, /ops \(local\): stopped - stopped by hand/);
-    return { tool: "lane_start", args: { lane: "ops" } };
+    return { tool: "lane", args: { name: "ops", action: "start" } };
   }, "mate");
   h.onModel(() => ({ text: "all lanes run" }), "mate");
   await startMain(lab, here, h);
   await waitState(here, "ops", "running");
   await waitState(p620, "far", "running");
   await wakeMain("Check the lanes");
-  const turns = await h.waitForCall(4, "mate", WAIT_MS);
+  const turns = await h.waitForCall(6, "mate", WAIT_MS);
   assert.match(
     turns.filter((turn) => turn.role === "toolResult").at(-1)?.text ?? "",
     /^ops \(local\): started$/,

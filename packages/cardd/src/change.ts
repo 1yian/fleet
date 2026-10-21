@@ -3,7 +3,7 @@
 // status change in cardd goes through here: nothing sets a status by hand.
 import type { DatabaseSync } from "node:sqlite";
 import type { Card, Entry, Status } from "@fleet/protocol";
-import { effectiveGrant } from "./authority.ts";
+import { yoloFor } from "./authority.ts";
 import { factsFrom, nextPhase, statusOf, type Change } from "./status.ts";
 import { cardEntries, isLaneCard, phaseOf, setPhase, setStatus } from "./store.ts";
 
@@ -42,11 +42,8 @@ export function applyChange(
   const now = Date.now();
   const written = pending.map((draft) => ({ ...draft, id: 0, createdAt: now }));
   const facts = factsFrom([...cardEntries(db, card.id), ...written]);
-  const mergeGranted = effectiveGrant(db, card.id, now)?.merge === true;
-  const phase = nextPhase(
-    { ...facts, phase: phaseOf(db, card.id), kind: card.kind, mergeGranted },
-    change,
-  );
+  const yolo = yoloFor(db, card.id);
+  const phase = nextPhase({ ...facts, phase: phaseOf(db, card.id), kind: card.kind, yolo }, change);
   if (phase instanceof Error) throw phase;
   setPhase(db, card.id, phase);
   const status = statusOf(phase, facts.hold, now);

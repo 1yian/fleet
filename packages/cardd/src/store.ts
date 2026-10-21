@@ -139,13 +139,22 @@ export const isLaneCard = (db: DatabaseSync, card: Card): boolean =>
 
 export function addProject(
   db: DatabaseSync,
-  project: { name: string; delivery: string; clones: Record<string, string> },
+  project: { name: string; delivery: string; clones: Record<string, string>; yolo: boolean },
 ): void {
-  db.prepare("INSERT INTO projects (name, delivery, clones) VALUES (?, ?, ?)").run(
+  db.prepare("INSERT INTO projects (name, delivery, clones, yolo) VALUES (?, ?, ?, ?)").run(
     project.name,
     project.delivery,
     JSON.stringify(project.clones),
+    project.yolo ? 1 : 0,
   );
+}
+
+/** Turns a project's yolo flag on or off. Only the captain does, through the cardd command line. */
+export function setYolo(db: DatabaseSync, project: string, yolo: boolean): void {
+  const { changes } = db
+    .prepare("UPDATE projects SET yolo = ? WHERE name = ?")
+    .run(yolo ? 1 : 0, project);
+  if (changes === 0) throw new Error(`project ${project} is not in the registry`);
 }
 
 export function sessionByToken(db: DatabaseSync, token: string): Session | undefined {
@@ -294,12 +303,14 @@ export function mainLane(db: DatabaseSync): string {
   return name;
 }
 
-/** The project registry (spec section 6.4): each project, its delivery mode, base branch, and the hosts with a clone. */
+/** The project registry (spec section 6.4): each project, its delivery mode, base branch, the hosts with a clone, and its yolo flag. */
 export function listProjects(
   db: DatabaseSync,
-): { name: string; delivery: string; base: string; hosts: string[] }[] {
+): { name: string; delivery: string; base: string; hosts: string[]; yolo: boolean }[] {
   return db
-    .prepare("SELECT name, delivery, default_base AS base, clones FROM projects ORDER BY name")
+    .prepare(
+      "SELECT name, delivery, default_base AS base, clones, yolo FROM projects ORDER BY name",
+    )
     .all()
     .map((row) => {
       const clones: unknown = JSON.parse(String(row["clones"]));
@@ -309,16 +320,7 @@ export function listProjects(
         delivery: String(row["delivery"]),
         base: String(row["base"]),
         hosts,
+        yolo: row["yolo"] === 1,
       };
     });
-}
-
-/** A lane grant added by the operator, for example when importing a Firstmate yolo flag. */
-export function addLaneGrant(
-  db: DatabaseSync,
-  grant: { lane: string; words: string; may: string; merge: boolean; project?: string },
-): void {
-  db.prepare(
-    "INSERT INTO grants (lane, words, may, merge, scope_project, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(grant.lane, grant.words, grant.may, grant.merge ? 1 : 0, grant.project ?? null, Date.now());
 }

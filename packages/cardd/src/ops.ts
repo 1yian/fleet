@@ -8,7 +8,6 @@ import { applyChange, requireOrdinary, type Draft } from "./change.ts";
 import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
-import { grant } from "./grants.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { Timings } from "./timing.ts";
 import {
@@ -79,7 +78,6 @@ const REWORK: ReadonlySet<ReportStatus> = new Set([
 const HANDLERS: Record<OpName, Handler> = {
   "close.begin": closeBegin,
   "close.finish": closeFinish,
-  grant,
   hold,
   release,
   "card.new": (db, session, raw) => {

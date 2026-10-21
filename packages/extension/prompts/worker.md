@@ -23,7 +23,7 @@ You start in your own isolated copy of the project (a git worktree), on your own
 ## Rules
 
 1. Never push to the default branch. Never merge a PR on your own initiative.
-   Merge only when your first mate's comment tells you to: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>", pr="<full url>")`. If the merge fails, report `blocked` with the reason.
+   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>", pr="<full url>")`. If a check is red or pending, or the merge fails, report `blocked` with the reason.
 2. Keep project edits inside your copy. Keep proof and scratch output outside it, in a temporary folder. Leave your copy clean before you report `done`.
 3. Report with the `report` tool, in one short line. Each report reaches your first mate, so report sparingly.
    Anything longer, such as findings, evidence, or logs, goes in a file outside your copy, such as `/tmp/fleet-c-<N>/<topic>.md` (`c-<N>` is your card). The report names the file's absolute path and never restates or summarizes its content. Your first mate reads it on your host.

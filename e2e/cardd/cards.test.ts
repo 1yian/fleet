@@ -97,6 +97,12 @@ test("sessions call only the operations of their role and lane", async () => {
 
 test("projects lists the registry with each project's hosts", async () => {
   assert.deepEqual(await fleet.main.call("projects", {}), [
-    { name: "web", delivery: "no-mistakes", base: "main", hosts: ["maverick", "p620"] },
+    {
+      name: "web",
+      delivery: "no-mistakes",
+      base: "main",
+      hosts: ["maverick", "p620"],
+      yolo: false,
+    },
   ]);
 });

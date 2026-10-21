@@ -5,7 +5,7 @@
 // exact words when he decided it.
 import type { DatabaseSync } from "node:sqlite";
 import { check, MERGE_OPTIONS, OPS, type Card, type Holder } from "@fleet/protocol";
-import { effectiveGrant, requireCaptainWords } from "./authority.ts";
+import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { applyChange, settle, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { factsFrom, type Facts, type Hold } from "./status.ts";
@@ -225,14 +225,16 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
   const open = holdOf(db, card);
   if (open === undefined) throw new Error(`${name} has no open hold`);
   if ((args.words === undefined) === (args.note === undefined))
-    throw new Error("release needs the captain's exact words, or your own note, and not both");
+    throw new Error(
+      "clearing a hold needs the captain's exact words, or your own note, and not both",
+    );
   if (args.words !== undefined) {
     const source = args.source ?? "record";
     requireCaptainWords(db, args.words, source);
     return answerHold(db, session.lane, card, open, { ...args, words: args.words, source });
   }
   if (open.holder === "captain" || open.merge)
-    throw new Error(`${name} waits on the captain: release it with his exact words`);
+    throw new Error(`${name} waits on the captain: clear it with his exact words`);
   if (!own && open.holder !== "main")
     throw new Error(`${name} waits on ${card.lane}'s mate, who resolves it or escalates it`);
   const fields = { hold: open.entry, occurrence: open.occurrence };
@@ -284,7 +286,7 @@ export function withdrawMerge(
 }
 
 /**
- * The merge question of a ship card that is done without a grant for merging (spec section
+ * The merge question of a ship card that is done in a project without the yolo flag (spec section
  * 7.5), as the hold it would write, or undefined when none is due. The question is a hold of
  * the card. It waits on main, which escalates it, or on the captain when main owns the card.
  * It needs the PR, and it is not asked while another hold is open or while approval stands.
@@ -299,7 +301,7 @@ export function mergeQuestion(
   const facts = factsFrom([...cardEntries(db, card.id), ...written]);
   if (card.kind !== "ship" || card.pr === null || !facts.awaitingMerge) return undefined;
   if (facts.hold !== undefined || facts.mergeApproved) return undefined;
-  if (effectiveGrant(db, card.id, Date.now())?.merge === true) return undefined;
+  if (yoloFor(db, card.id)) return undefined;
   const holder: Holder = levelsOf(db, card).includes("main") ? "main" : "captain";
   const fields = {
     holder,

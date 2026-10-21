@@ -24,7 +24,7 @@ Calm is off until the first `/calm`. `/calm` flips it. The choice is saved in `<
 Every mate home loads calm: the repo's `.pi/extensions/fleet.ts` loads `packages/extension/src/calm/index.ts` next to the fleet extension in any folder that has `config/lane.json`. There is nothing to copy into a home and nothing to install in `~/.pi`. Workers do not load it.
 
 - A new mate home has `/calm` from its first start.
-- An existing mate has it after its next start. Restart the mate (`lane_restart` from main, or `fleet restart <lane>`). `/reload` is not enough, because the running Pi was started without the extension.
+- An existing mate has it after its next start. Restart the mate (`lane(name, "restart")` from main, or `fleet restart <lane>`). `/reload` is not enough, because the running Pi was started without the extension.
 - Each host runs its own checkout of this repository, so update the checkout on every host, including `p620`, then restart the mates there.
 
 Fleet mates run on Pi. There is no Claude Code version of calm.

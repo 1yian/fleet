@@ -1,4 +1,4 @@
-// cleanup and card drop (spec section 20.5), in this order: stop every writer
+// close (spec section 20.5), in this order: stop every writer
 // (close the worker's herdr workspace, which ends Pi and the job tabs), archive
 // and verify all unlanded work, remove the worktree, then close the card. Each
 // step finds its own result first, so a rerun converges.
@@ -74,7 +74,7 @@ async function unlanded(attempt: Attempt): Promise<string> {
 }
 
 /**
- * The landing test of cleanup: every attempt has nothing unlanded. An unreachable host of an
+ * The landing test of a Done close: every attempt has nothing unlanded. An unreachable host of an
  * attempt that no longer runs cannot be asked, and its work stays in place, as for a close.
  */
 async function requireLanded(card: number, plan: ReturnType<typeof parsePlan>): Promise<void> {
@@ -89,7 +89,7 @@ async function requireLanded(card: number, plan: ReturnType<typeof parsePlan>): 
   }
   if (left.length > 0) {
     throw new Error(
-      `c-${String(card)} has unlanded work, so it cannot close as Done: ${left.join("; ")}. Land it, or use card_drop, which archives it.`,
+      `c-${String(card)} did not land: ${left.join("; ")}. Land it, or end it with close(card, summary=<why it is dropped>, landed=false), which archives it.`,
     );
   }
 }
@@ -120,12 +120,15 @@ async function retire(attempt: Attempt): Promise<string | null> {
   return archive === "" ? null : archive;
 }
 
+/** Closes the card: Done when its work landed, Dropped when the mate says it did not (`landed` false). */
 export async function close(
   link: Link,
-  request: { card: number; mode: "done" | "dropped"; text: string; withoutPr?: boolean },
+  request: { card: number; text: string; landed?: boolean | undefined },
 ): Promise<string> {
-  const { card: id, mode, withoutPr } = request;
-  const plan = parsePlan(await link.call("close.begin", { card: id, mode, withoutPr }));
+  const { card: id, text, landed } = request;
+  const plan = parsePlan(
+    await link.call("close.begin", { card: id, ...(landed === undefined ? {} : { landed }) }),
+  );
   if (plan.verify) await requireLanded(id, plan);
   const archives: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
@@ -138,7 +141,8 @@ export async function close(
       left.push({ session: attempt.session, host: attempt.host, reason: error.message });
     }
   }
-  const card = check(CardSchema, await link.call("close.finish", { ...request, archives, left }));
+  const finish = { card: id, mode: plan.mode, text, archives, left };
+  const card = check(CardSchema, await link.call("close.finish", finish));
   const kept = archives.length === 0 ? "" : ` Unlanded work is archived in ${archives.join(", ")}.`;
   const stayed =
     left.length === 0

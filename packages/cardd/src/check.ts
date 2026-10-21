@@ -122,12 +122,12 @@ function actingLane(db: DatabaseSync, card: number, lane: string): string {
 
 /** What a mate does with a finished card, by kind and by how it landed. */
 function closeAdvice(kind: string, merged: boolean, hasPr: boolean): string {
-  if (merged) return "Close it now with cleanup(card, summary).";
+  if (merged) return "Close it now with close(card, summary).";
   if (kind !== "ship")
-    return "Relay the findings, then close it with cleanup(card, summary), or card_drop if it did not land.";
+    return "Relay the findings, then close it with close(card, summary), or close(card, summary=<why>, landed=false) if it did not land.";
   if (hasPr)
-    return "Once the merge is authorized, comment the worker to merge its PR, then cleanup(card, summary). Use card_drop if it will not land.";
-  return "If it made no code change, close it with cleanup(card, summary, without_pr). Otherwise use card_drop.";
+    return "Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge its PR, then close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
+  return "If it made no code change, close it with close(card, summary). Otherwise close(card, summary=<why>, landed=false).";
 }
 
 const minutesSince = (now: number, since: number): number => Math.round((now - since) / MINUTE);
@@ -140,7 +140,7 @@ const stateOf = (db: DatabaseSync, lane: string | null): unknown =>
  * A card whose work is finished and that only needs closing (spec section 13.1): the worker
  * reported done, or the PR merged, and no hold is open. Its mate is reminded sooner than for
  * other cards, and the lane's parent is told when a second mate leaves it open. Nothing closes
- * it but the mate: cleanup or card_drop.
+ * it but the mate, with close.
  */
 function finishedMatches(
   db: DatabaseSync,
@@ -310,7 +310,7 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
           card,
           lane,
           condition: "pr-merged",
-          text: "PR merged; run cleanup",
+          text: "PR merged; close it with close(card, summary)",
           withdrawsMerge: "merged" as const,
           ...(change === undefined ? {} : { change }),
         },
@@ -417,7 +417,7 @@ export function runCheck(
 }
 
 /**
- * Before cleanup, reads the PR of a card whose merge is not on record yet: a worker that just
+ * Before close, reads the PR of a card whose merge is not on record yet: a worker that just
  * merged it need not wait for the next check pass. A merged PR gets the check's own finding,
  * told to nobody, because the mate is closing the card. Returns the sessions to push to.
  */

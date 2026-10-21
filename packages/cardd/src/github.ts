@@ -1,5 +1,5 @@
 // gh, the GitHub command line (spec section 5). cardd reads PR state for the
-// timed check and for cleanup. Workers merge their own PRs.
+// timed check and for close. Workers merge their own PRs.
 import { execFile } from "node:child_process";
 
 export interface PullRequest {

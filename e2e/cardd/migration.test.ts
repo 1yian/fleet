@@ -205,10 +205,65 @@ test("the live fleet's database from before holds opens with every entry, delive
     );
     assert.equal(count("SELECT count(*) AS n FROM deliveries"), 22);
     assert.equal(count("SELECT entry AS n FROM findings WHERE id = 1"), 11);
-    assert.equal(count("SELECT source_entry AS n FROM grants WHERE id = 1"), 13);
-    assert.equal(count("SELECT user_version AS n FROM pragma_user_version"), 7);
+    // The card's grant ended with migration 008; its entry stays in the record.
+    assert.equal(count("SELECT count(*) AS n FROM sqlite_schema WHERE name = 'grants'"), 0);
+    assert.equal(count("SELECT group_concat(name || ' ' || yolo) AS n FROM projects"), "web 0");
+    assert.equal(count("SELECT user_version AS n FROM pragma_user_version"), 8);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     db.close();
+  } finally {
+    await cardd.stop();
+  }
+});
+
+/**
+ * Writes a database as cardd left it before the yolo flag (version 7), with grants shaped like the
+ * live fleet's: merge grants on a lane scoped to one project each, a card's grant for one PR, and
+ * the grants that do not carry over: an expired one, an ended one, one scoped to a branch, one
+ * that does not cover merging, and one on a lane with no project.
+ */
+function writeGrantsDatabase(file: string): void {
+  const db = writeDatabaseAt(file, 7);
+  db.exec(`
+    INSERT INTO lanes (name, home) VALUES ('main', '/homes/main');
+    INSERT INTO lanes (name, home, parent) VALUES ('leo', '/homes/leo', 'main');
+    INSERT INTO projects (name, delivery) VALUES ('dotfiles', 'direct-PR'), ('leo', 'direct-PR'),
+      ('fleet', 'direct-PR'), ('cleo', 'direct-PR'), ('old', 'direct-PR'), ('gone', 'direct-PR'),
+      ('branchy', 'direct-PR'), ('asks', 'direct-PR');
+    INSERT INTO cards (id, title, name, lane, project, kind, status, phase, created_at, updated_at)
+      VALUES (1, 'Merge Leo', 'merge-leo', 'leo', 'cleo', 'ship', 'working', 'working', ${String(T)}, ${String(T)});
+    INSERT INTO grants (lane, card, words, may, merge, scope_project, scope_branch, expires, ended_at, created_at) VALUES
+      ('main', NULL, 'Firstmate registry: dotfiles [direct-PR +yolo]', 'merge when CI is green', 1, 'dotfiles', NULL, NULL, NULL, ${String(T)}),
+      ('leo', NULL, 'Firstmate registry: leo [direct-PR +yolo]', 'merge when CI is green', 1, 'leo', NULL, NULL, NULL, ${String(T)}),
+      ('main', NULL, 'from now auto merge stuff for fleet', 'merge fleet PRs', 1, 'fleet', NULL, NULL, NULL, ${String(T)}),
+      (NULL, 1, 'merge it if green', 'merge the PR', 1, NULL, NULL, NULL, NULL, ${String(T)}),
+      ('main', NULL, 'merge old this week', 'merge', 1, 'old', NULL, ${String(T)}, NULL, ${String(T)}),
+      ('main', NULL, 'merge gone', 'merge', 1, 'gone', NULL, NULL, ${String(T)}, ${String(T)}),
+      ('main', NULL, 'merge branchy to main', 'merge', 1, 'branchy', 'main', NULL, NULL, ${String(T)}),
+      ('main', NULL, 'you may fix asks', 'fix', 0, 'asks', NULL, NULL, NULL, ${String(T)}),
+      ('main', NULL, 'merge anything', 'merge', 1, NULL, NULL, NULL, NULL, ${String(T)});
+  `);
+  db.close();
+}
+
+test("the live fleet's merge grants become each project's yolo flag, and no other grant carries over", async () => {
+  const cardd = await Cardd.start({}, [], writeGrantsDatabase);
+  try {
+    const main = await cardd.connect(cardd.addLane("other", "main"));
+    const projects = check(OPS.projects.result, await main.call("projects", {}));
+    assert.deepEqual(
+      projects.map(({ name, yolo }) => `${name} ${yolo ? "on" : "off"}`),
+      [
+        "asks off",
+        "branchy off",
+        "cleo off",
+        "dotfiles on",
+        "fleet on",
+        "gone off",
+        "leo on",
+        "old off",
+      ],
+    );
   } finally {
     await cardd.stop();
   }

@@ -60,13 +60,16 @@ function formatJob(entry: Entry, card: string): string {
   return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
 }
 
+/** Entry kinds that a mate reads by the name of the tool that wrote them. */
+const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
+
 /** The text the model reads. It starts with [fleet] so agents can tell it from the captain. */
 export function format(entry: Entry): string {
   const card = `c-${String(entry.card)}`;
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);
   const who = entry.author.replace(/^mate:/, "");
-  const kind = entry.kind === "comment" ? "" : ` (${entry.kind})`;
+  const kind = entry.kind === "comment" ? "" : ` (${LABELS[entry.kind] ?? entry.kind})`;
   const answers = suffix(entry, "resolves", "answers ");
   return `[fleet] ${who} on ${card}${kind}: ${entry.body}${answers}${suffix(entry, "re", "re your comment: ")}`;
 }

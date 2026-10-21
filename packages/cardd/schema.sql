@@ -2,8 +2,6 @@ CREATE INDEX cards_by_status ON cards (status);
 
 CREATE INDEX entries_by_card ON entries (card, id);
 
-CREATE UNIQUE INDEX one_card_grant ON grants (card) WHERE card IS NOT NULL AND ended_at IS NULL;
-
 CREATE UNIQUE INDEX one_live_attempt ON attempts (card) WHERE state IN ('starting', 'active');
 
 CREATE UNIQUE INDEX one_mate_per_lane ON sessions (lane) WHERE role = 'mate';
@@ -107,25 +105,6 @@ CREATE TABLE findings (
   cleared_at INTEGER
 ) STRICT;
 
-CREATE TABLE grants (
-  id INTEGER PRIMARY KEY,
-  lane TEXT REFERENCES lanes (name),
-  card INTEGER REFERENCES cards (id),
-  words TEXT NOT NULL,
-  source_entry INTEGER REFERENCES entries (id),
-  may TEXT NOT NULL,
-  limits TEXT NOT NULL DEFAULT '',
-  always_asks TEXT NOT NULL DEFAULT '',
-  reports TEXT NOT NULL DEFAULT '',
-  scope_project TEXT REFERENCES projects (name),
-  scope_branch TEXT,
-  expires INTEGER,
-  created_at INTEGER NOT NULL,
-  ended_at INTEGER, merge INTEGER NOT NULL DEFAULT 0 CHECK (merge IN (0, 1)),
-  CHECK ((lane IS NULL) <> (card IS NULL)),
-  CHECK (scope_branch IS NULL OR scope_project IS NOT NULL)
-) STRICT;
-
 CREATE TABLE jobs (
   id INTEGER PRIMARY KEY,
   attempt INTEGER NOT NULL REFERENCES attempts (id),
@@ -156,7 +135,7 @@ CREATE TABLE projects (
   ),
   branch_prefix TEXT NOT NULL DEFAULT '',
   default_base TEXT NOT NULL DEFAULT 'main',
-  profile TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profile))) STRICT;
+  profile TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profile)), yolo INTEGER NOT NULL DEFAULT 0 CHECK (yolo IN (0, 1))) STRICT;
 
 CREATE TABLE secrets (
   name TEXT PRIMARY KEY,
