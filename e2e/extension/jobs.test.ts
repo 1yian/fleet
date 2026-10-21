@@ -130,7 +130,10 @@ test("a timeout kills the whole command, exits 124, and leaves nothing behind", 
   worker();
   await fleet.main.waitForEntries(1);
 
-  assert.match(lastUser(await h.waitForCall(2)) ?? "", /^\[fleet\] c-1 job 1 \(slow\) exited 124:/);
+  assert.match(
+    lastUser(await h.waitForCall(2)) ?? "",
+    /^\[fleet\] c-1 users-see-one-scrollbar job 1 \(slow\) exited 124:/,
+  );
   await until(
     () => (pids(uniqueSleepSeconds(1)).length === 0 ? true : undefined),
     "the sleep to be gone",
@@ -159,7 +162,10 @@ test("a command that ignores SIGTERM is killed when the grace ends", async () =>
   try {
     worker();
     const woken = await h.waitForCall(2, "default", 30_000);
-    assert.match(lastUser(woken) ?? "", /^\[fleet\] c-1 job 1 \(stubborn\) exited 124:/);
+    assert.match(
+      lastUser(woken) ?? "",
+      /^\[fleet\] c-1 users-see-one-scrollbar job 1 \(stubborn\) exited 124:/,
+    );
     assert.deepEqual(pids(uniqueSleepSeconds(5)), []);
   } finally {
     for (const pid of pids(uniqueSleepSeconds(5))) process.kill(pid, "SIGKILL");
@@ -253,7 +259,7 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
     assert.equal(await status(fleet.main, card), "with-mate");
     assert.match(
       lastUser(await h.waitForCall(3)) ?? "",
-      /^\[fleet\] c-1 job 1 \(first\) lost: no heartbeat arrived/,
+      /^\[fleet\] c-1 users-see-one-scrollbar job 1 \(first\) lost: no heartbeat arrived/,
     );
     const reported = (): boolean => fleet.main.entries.some(({ entry }) => entry.kind === "report");
     await until(() => (reported() ? true : undefined), "the worker's report");
@@ -285,7 +291,7 @@ test("a result that arrives after the job was marked lost is still delivered onc
     await until(() => (findings().length > 0 ? true : undefined), "the finding");
     assert.match(
       lastUser(await h.waitForCall(3)) ?? "",
-      /^\[fleet\] c-1 job 1 \(late\) lost: no heartbeat arrived/,
+      /^\[fleet\] c-1 users-see-one-scrollbar job 1 \(late\) lost: no heartbeat arrived/,
     );
     await until(
       () => (fleet.main.entries.some(({ entry }) => entry.kind === "report") ? true : undefined),
