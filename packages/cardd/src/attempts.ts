@@ -1,8 +1,9 @@
 // Attempts and jobs (spec sections 6.9, 6.10, and 11.2). An attempt is one run
 // of a card by one worker. Its ID is the retry key for dispatch.
 import type { DatabaseSync } from "node:sqlite";
-import type { Card } from "@fleet/protocol";
-import { addEntry, hash, tokenFor } from "./store.ts";
+import { check, type Card, type CardView } from "@fleet/protocol";
+import Type from "typebox";
+import { addEntry, hash, json, tokenFor } from "./store.ts";
 
 interface LiveAttempt {
   readonly id: number;
@@ -35,6 +36,27 @@ function endAttempt(db: DatabaseSync, attempt: LiveAttempt, state: "ended" | "re
   );
   db.prepare("UPDATE sessions SET state = 'closed' WHERE attempt = ?").run(attempt.id);
 }
+
+const AttemptsSchema = Type.Array(
+  Type.Object({
+    n: Type.Integer(),
+    host: Type.String(),
+    state: Type.String(),
+    branch: Type.Union([Type.String(), Type.Null()]),
+  }),
+);
+
+/** Every attempt of a card, newest first: where it ran and on which branch. */
+export const attemptsOf = (db: DatabaseSync, card: number): CardView["attempts"] =>
+  check(
+    AttemptsSchema,
+    json(
+      db,
+      `SELECT json_object('n', n, 'host', host, 'state', state, 'branch', branch) AS j
+       FROM attempts WHERE card = ? ORDER BY n DESC`,
+      card,
+    ),
+  );
 
 export interface Begun {
   readonly session: string;

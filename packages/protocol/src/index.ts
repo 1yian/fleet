@@ -82,6 +82,41 @@ export const EntrySchema = Type.Object({
 });
 export type Entry = Static<typeof EntrySchema>;
 
+/** A card as the board shows it: the card and the latest thing the captain would read on it. */
+export const BoardCardSchema = Type.Object({
+  ...CardSchema.properties,
+  summary: Type.String(),
+  /** Whether the card is a second mate's lane card, which the board shows under Mates. */
+  mate: Type.Boolean(),
+  /** Who the card's open hold waits on, or null when it has none. */
+  holder: Nullable(Holder),
+});
+export type BoardCard = Static<typeof BoardCardSchema>;
+
+/** One card as a mate reads it: its open hold, its attempts, and every entry of its thread. */
+export const CardViewSchema = Type.Object({
+  card: BoardCardSchema,
+  hold: Nullable(
+    Type.Object({
+      holder: Holder,
+      question: Type.String(),
+      options: Type.Array(Type.String()),
+      /** The hold is deferred until this time, or null. */
+      until: Nullable(Type.Integer()),
+    }),
+  ),
+  attempts: Type.Array(
+    Type.Object({
+      n: Type.Integer(),
+      host: Type.String(),
+      state: Type.String(),
+      branch: Nullable(Type.String()),
+    }),
+  ),
+  entries: Type.Array(EntrySchema),
+});
+export type CardView = Static<typeof CardViewSchema>;
+
 /** Each operation: who may call it, its arguments, and its result. */
 export const OPS = {
   "card.new": {
@@ -102,7 +137,8 @@ export const OPS = {
     }),
     result: CardSchema,
   },
-  board: { roles: ["mate"], args: Type.Object({}), result: Type.Array(CardSchema) },
+  board: { roles: ["mate"], args: Type.Object({}), result: Type.Array(BoardCardSchema) },
+  card: { roles: ["mate"], args: Type.Object({ card: Type.Integer() }), result: CardViewSchema },
   projects: {
     roles: ["mate"],
     args: Type.Object({}),
@@ -304,17 +340,6 @@ const ClientMessage = Type.Union([
 export type ClientMessage = Static<typeof ClientMessage>;
 
 /** The board (spec section 21): what it shows, and the captain's actions. */
-/** A card as the board shows it: the card and the latest thing the captain would read on it. */
-export const BoardCardSchema = Type.Object({
-  ...CardSchema.properties,
-  summary: Type.String(),
-  /** Whether the card is a second mate's lane card, which the board shows under Mates. */
-  mate: Type.Boolean(),
-  /** Who the card's open hold waits on, or null when it has none. */
-  holder: Nullable(Holder),
-});
-export type BoardCard = Static<typeof BoardCardSchema>;
-
 export const BoardSchema = Type.Object({
   cards: Type.Array(BoardCardSchema),
   /** The holds that wait on the captain: at most one for each card. Nothing else is his to answer. */

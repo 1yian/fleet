@@ -5,6 +5,14 @@ import Type from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
 import type { Link } from "./link.ts";
+import {
+  boardText,
+  cardText,
+  errorText,
+  EXTRA_COLUMNS,
+  projectsText,
+  SELECTIONS,
+} from "./views.ts";
 
 const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${card.title}`;
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
@@ -21,6 +29,72 @@ const DispatchParams = Type.Object({
   }),
   replace: Type.Optional(Type.Boolean({ description: "Replace a live attempt on another host" })),
 });
+
+const BoardParams = Type.Object({
+  status: Type.Optional(
+    Type.Enum(SELECTIONS, {
+      description: "Which cards to list: open (the default), closed, all, or one status",
+    }),
+  ),
+  lane: Type.Optional(Type.String({ minLength: 1, description: "Only this lane's cards" })),
+  limit: Type.Optional(
+    Type.Integer({ minimum: 0, description: "The most closed cards to list, newest first (10)" }),
+  ),
+  fields: Type.Optional(
+    Type.String({
+      description: `More columns, comma separated, from: ${EXTRA_COLUMNS.join(", ")}`,
+    }),
+  ),
+});
+
+const CardParams = Type.Object({
+  card: Type.Integer({ description: "The card number, such as 12 for c-12" }),
+  entries: Type.Optional(
+    Type.Integer({ minimum: 1, description: "How many thread entries to show, newest first (10)" }),
+  ),
+  full: Type.Optional(Type.Boolean({ description: "Show every text whole, without cutting it" })),
+});
+
+/** The tools that read the fleet: projects, the board, and one card. They print TOON (views.ts). */
+function registerReads(pi: ExtensionAPI, link: Link): void {
+  pi.registerTool({
+    name: "projects",
+    label: "Projects",
+    description:
+      "Lists the registered projects: delivery mode, base branch, and the hosts that have a clone.",
+    parameters: OPS.projects.args,
+    execute: async () =>
+      reply(projectsText(check(OPS.projects.result, await link.call("projects", {})))),
+  });
+  pi.registerTool({
+    name: "board",
+    label: "Board",
+    description:
+      "Shows the open cards, the ones that need attention first, and counts the closed ones. Read one card with the card tool.",
+    parameters: BoardParams,
+    execute: async (_id, params) =>
+      reply(boardText(check(OPS.board.result, await link.call("board", {})), params)),
+  });
+  pi.registerTool({
+    name: "card",
+    label: "Card",
+    description:
+      "Shows one card: who its hold waits on and its question, its PR, its attempts and branches, the report path, and its thread newest first.",
+    parameters: CardParams,
+    execute: async (_id, params) => {
+      let value: unknown;
+      try {
+        value = await link.call("card", { card: params.card });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(errorText(message, ["Call `board()` to list the open cards"]), {
+          cause: error,
+        });
+      }
+      return reply(cardText(check(OPS.card.result, value), params));
+    },
+  });
+}
 
 export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void {
   pi.registerTool({
@@ -42,31 +116,7 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
     execute: async (_id, params) =>
       reply(`Commented. ${line(check(CardSchema, await link.call("comment", params)))}`),
   });
-  pi.registerTool({
-    name: "projects",
-    label: "Projects",
-    description:
-      "Lists the registered projects: delivery mode, base branch, and the hosts that have a clone.",
-    parameters: OPS.projects.args,
-    execute: async () => {
-      const list = check(OPS.projects.result, await link.call("projects", {}));
-      const lines = list.map(
-        (each) =>
-          `${each.name}: delivery ${each.delivery}, base ${each.base}, hosts ${each.hosts.join(", ")}`,
-      );
-      return reply(lines.length === 0 ? "No projects are registered." : lines.join("\n"));
-    },
-  });
-  pi.registerTool({
-    name: "board",
-    label: "Board",
-    description: "Lists the cards.",
-    parameters: OPS.board.args,
-    execute: async () => {
-      const cards = check(OPS.board.result, await link.call("board", {}));
-      return reply(cards.length === 0 ? "No cards." : cards.map(line).join("\n"));
-    },
-  });
+  registerReads(pi, link);
   pi.registerTool({
     name: "cleanup",
     label: "Clean up",
