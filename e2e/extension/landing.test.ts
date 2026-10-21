@@ -126,9 +126,9 @@ test("with yolo on, the mate comments the worker to merge without asking; the wo
   );
   const merged = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
   assert.equal(gh.state(pr), "MERGED");
-  assert.match(
-    lastUser(merged) ?? "",
-    /^\[fleet\] c-1 add-credit done: merged it .*\(card now merging\)$/,
+  assert.equal(
+    lastUser(merged),
+    `[fleet] c-1 add-credit done: merged it (PR ${pr}, merged) (card now merging)`,
   );
   const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "c-1 is done.");
@@ -158,11 +158,11 @@ test("a ship card done with no PR on its branch reaches the mate, which asks the
   const missing = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(missing),
-    "[fleet] c-1 done: fixed (no PR has branch c-1-a1 as its head) (re your comment: add the credit) (card now merging)",
+    "[fleet] c-1 add-credit done: fixed (no PR has branch c-1-a1 as its head) (card now merging)",
   );
   const found = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(found),
-    `[fleet] c-1 done: PR opened (PR ${pr}) (re your comment: Open your PR from your task branch.) (card now merging)`,
+    `[fleet] c-1 add-credit done: PR opened (PR ${pr}) (card now merging)`,
   );
 });
