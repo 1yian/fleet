@@ -25,23 +25,70 @@ export function readMigrations(): Migration[] {
   });
 }
 
-/** Opens cards.db and applies each new migration in its own transaction. */
+/** Opens cards.db, applies the new migrations, and turns foreign keys on. */
 export function openDatabase(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  const current = schemaVersion(db);
-  for (const migration of readMigrations().filter((m) => m.version > current)) {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      db.exec(migration.sql);
-      db.exec(`PRAGMA user_version = ${String(migration.version)}`);
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      throw error;
-    }
-  }
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+  migrate(db);
+  db.exec("PRAGMA foreign_keys = ON");
   return db;
+}
+
+/**
+ * Applies every new migration in one transaction, so a failed migration leaves the database as
+ * it was. Foreign keys are off while they run, as SQLite's procedure for rebuilding a table
+ * requires: dropping a parent table counts each child row as a violation that its replacement
+ * never clears. Instead every key is checked after each migration, and a violation names its rows.
+ */
+function migrate(db: DatabaseSync): void {
+  db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE");
+  try {
+    const current = schemaVersion(db);
+    const pending = readMigrations().filter((m) => m.version > current);
+    for (const migration of pending) {
+      try {
+        db.exec(migration.sql);
+      } catch (error) {
+        throw new Error(`migration ${migration.name} failed: ${String(error)}`, { cause: error });
+      }
+      const broken = brokenKeys(db);
+      if (broken.length > 0) {
+        throw new Error(
+          `foreign keys broken after migration ${migration.name}:\n${broken.join("\n")}`,
+        );
+      }
+    }
+    const last = pending.at(-1);
+    if (last !== undefined) db.exec(`PRAGMA user_version = ${String(last.version)}`);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * Each row whose foreign key points at a missing row, such as
+ * `entries.card -> cards.id: {"id":12,"card":999,...}`. Every key in the schema is one column.
+ */
+function brokenKeys(db: DatabaseSync): string[] {
+  const keys = db
+    .prepare(
+      `SELECT DISTINCT c."table" AS child, k."from" AS col, k."table" AS parent, k."to" AS key
+       FROM pragma_foreign_key_check() AS c
+       JOIN pragma_foreign_key_list(c."table") AS k ON k.id = c.fkid`,
+    )
+    .all();
+  return keys.flatMap(({ child, col, parent, key }) => {
+    const q = (name: unknown): string => `"${String(name)}"`;
+    const rows = db
+      .prepare(
+        `SELECT * FROM ${q(child)} WHERE ${q(col)} NOT IN (SELECT ${q(key)} FROM ${q(parent)})`,
+      )
+      .all();
+    const where = `${String(child)}.${String(col)} -> ${String(parent)}.${String(key)}`;
+    return rows.map((row) => `${where}: ${JSON.stringify(row)}`);
+  });
 }
 
 export function schemaVersion(db: DatabaseSync): number {
