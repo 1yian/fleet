@@ -43,6 +43,7 @@ const Attention = Type.Enum(ATTENTIONS);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const ReportStatus = Type.Enum(REPORT_STATUSES);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
+export const CAPTAIN = "captain";
 const ReplyId = Type.String({ pattern: "^r-[0-9]+$" });
 const ReplyTo = Type.Optional(
   Type.String({
@@ -128,11 +129,11 @@ export const OwedReplySchema = Type.Object({
 });
 export type OwedReply = Static<typeof OwedReplySchema>;
 
-export function howToReply(to: "worker" | "mate", card: number, id: string): string {
+export function howToReply(to: "worker" | "mate", card: number, id: string, from = ""): string {
   const on = `card=${String(card)}`;
-  return to === "worker"
-    ? `answer with report(status, text, replyTo="${id}")`
-    : `answer with comment(${on}, text, replyTo="${id}") or hold(${on}, question, replyTo="${id}")`;
+  if (to === "worker") return `answer with report(status, text, replyTo="${id}")`;
+  const how = `comment(${on}, text, replyTo="${id}") or hold(${on}, question, replyTo="${id}")`;
+  return from === CAPTAIN ? `answer the captain on the board with ${how}` : `answer with ${how}`;
 }
 
 export const BoardCardSchema = Type.Object({

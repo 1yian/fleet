@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
+  CAPTAIN,
   check,
   BoardActionSchema,
   MERGE_OPTIONS,
@@ -12,7 +13,7 @@ import {
 } from "@fleet/protocol";
 import { attemptsOf } from "./attempts.ts";
 import { requireOpen, type Draft } from "./change.ts";
-import { answerHold, hearers, holdOf, rewritten } from "./holds.ts";
+import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
 import { openReplies } from "./replies.ts";
 import { factsFrom, type Hold } from "./status.ts";
 import {
@@ -30,8 +31,13 @@ export class StaleCard extends Error {}
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
 const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
 
+const answersCaptain = (entry: Entry): boolean => entry.fields["for"] === CAPTAIN;
+
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
-  inThread(entry) && (laneCard || !(entry.kind === "comment" && entry.author.startsWith("mate:")));
+  inThread(entry) &&
+  (laneCard ||
+    answersCaptain(entry) ||
+    !(entry.kind === "comment" && entry.author.startsWith("mate:")));
 
 const firstLine = (text: string): string =>
   text
@@ -126,13 +132,14 @@ function answerOnBoard(
 
 function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
   const taken = holdOf(db, card)?.holder === "captain";
-  const to = taken ? hearers(db, card, null, ["main"]) : [card.lane];
+  const main = laneOf(db, card, "main") ?? card.lane;
+  const to = hearers(db, card, null, ["main"]);
   const draft: Draft = {
     card: card.id,
-    author: "captain",
+    author: CAPTAIN,
     kind: "comment",
     body: text,
-    fields: {},
+    fields: { owes: main, for: "mate" },
   };
   if (taken) requireOpen(db, card);
   addEntry(db, draft, to);

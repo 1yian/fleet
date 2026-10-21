@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { howToReply, type Card, type Entry, type OwedReply } from "@fleet/protocol";
+import { CAPTAIN, howToReply, type Card, type Entry, type OwedReply } from "@fleet/protocol";
 import { addEntry, cardEntries, loadCards, workerOf } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -90,8 +90,13 @@ export function requireAskedBy(db: DatabaseSync, card: Card, id: string, lane: s
     throw new Error(`${id} was asked by ${asked.from}, so only it can withdraw it`);
 }
 
-export function askerOf(db: DatabaseSync, card: Card, id: string): string {
-  return askOn(db, card, id).from;
+export function askersOf(db: DatabaseSync, card: Card, id: string): string[] {
+  const { from } = askOn(db, card, id);
+  return from === CAPTAIN ? [] : [from];
+}
+
+export function isCaptainsReply(db: DatabaseSync, card: Card, id: string): boolean {
+  return askOn(db, card, id).from === CAPTAIN;
 }
 
 const firstLine = (text: string): string =>
@@ -108,24 +113,40 @@ function settled(db: DatabaseSync, session: string, now: number, grace: number):
   return quiet && typeof seen === "number" && now - seen >= grace;
 }
 
+function missed(
+  owed: Owed,
+  recipient: string,
+  asked: string,
+  how: string,
+): [string, string, string] {
+  if (owed.from === CAPTAIN)
+    return [
+      MISSED,
+      `reply ${owed.id} unanswered: the captain asked on the board, and you got it and one resend, and have not replied: ${asked}. Do it now: ${how}.`,
+      recipient,
+    ];
+  const withdraw = `comment(card=${String(owed.card)}, text, withdraws="${owed.id}")`;
+  return [
+    MISSED,
+    `reply ${owed.id} unanswered: ${owed.owes} got your comment and one resend, and has not replied: ${asked}. Ask again, or withdraw it with ${withdraw}.`,
+    owed.from,
+  ];
+}
+
 function nudge(db: DatabaseSync, owed: Owed, now: number, t: Timings, since: number): string[] {
   const recipient = owed.to === "worker" ? workerOf(db, owed.card) : owed.owes;
   if (now - since < t.reply || recipient === undefined) return [];
   if (!settled(db, recipient, now, t.reply)) return [];
   const asked = `"${firstLine(owed.text)}"`;
-  const card = String(owed.card);
+  const how = howToReply(owed.to, owed.card, owed.id, owed.from);
   const [condition, body, to] =
     owed.resentAt === null
       ? [
           RESENT,
-          `reply ${owed.id} is still owed to ${owed.from}: ${asked}. Please ${howToReply(owed.to, owed.card, owed.id)}.`,
+          `reply ${owed.id} is still owed to ${owed.from}: ${asked}. Please ${how}.`,
           recipient,
         ]
-      : [
-          MISSED,
-          `reply ${owed.id} unanswered: ${owed.owes} got your comment and one resend, and has not replied: ${asked}. Ask again, or withdraw it with comment(card=${card}, text, withdraws="${owed.id}").`,
-          owed.from,
-        ];
+      : missed(owed, recipient, asked, how);
   const fields = { condition, reply: owed.id };
   addEntry(db, { card: owed.card, author: "check", kind: "finding", body, fields }, [to]);
   return [to];
@@ -144,10 +165,12 @@ export function replyNudges(db: DatabaseSync, now: number, t: Timings): string[]
     ({ card }) => asking.has(card.id) && card.status !== "done" && card.status !== "dropped",
   );
   return cards.flatMap(({ entries, standing }) => {
-    if (standing.facts.hold !== undefined) return [];
+    const { hold } = standing.facts;
+    const waiting = (owed: Owed): boolean =>
+      hold !== undefined && (owed.from !== CAPTAIN || hold.holder === "captain");
     const freed = entries.findLast((entry) => entry.kind === "release" || entry.kind === "answer");
     return owedFrom(entries)
-      .filter((owed) => owed.escalatedAt === null)
+      .filter((owed) => owed.escalatedAt === null && !waiting(owed))
       .flatMap((owed) => {
         const since = Math.max(owed.resentAt ?? owed.askedAt, freed?.createdAt ?? 0);
         return nudge(db, owed, now, t, since);
