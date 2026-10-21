@@ -390,8 +390,12 @@ test("main relays a second mate's answer to the captain, and the relay stays on 
   await nested.getByRole("button", { name: /In reply to your message/ }).waitFor();
 
   const top = page.locator(".thread > li");
-  assert.deepEqual(await top.locator("> header .name").allTextContents(), ["You", "main", "cleo"]);
-  assert.deepEqual(await top.locator("> header .tag").allTextContents(), ["First mate", "Mate"]);
+  assert.deepEqual(await top.locator("> header .flow, > .event-head .flow").allInnerTexts(), [
+    "You → main",
+    "main → cleo",
+    "cleo → main",
+  ]);
+  assert.equal(await page.locator(".thread > .event.quiet").count(), 2);
   await top.getByText("Cleo, is it under budget?").waitFor();
   await top.getByText("Under budget by $40.").waitFor();
   assert.deepEqual((await onBoard(ads)).replies, []);

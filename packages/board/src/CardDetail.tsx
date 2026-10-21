@@ -9,9 +9,11 @@ import {
 import type { BoardCard, Thread } from "@fleet/protocol";
 import { loadThread, unreachable } from "./api.ts";
 import { Ask } from "./Ask.tsx";
-import { Collapsible } from "./Collapsible.tsx";
 import { Stale } from "./Stale.tsx";
+import { idLabel } from "./text.ts";
+import { Collapsible } from "./Collapsible.tsx";
 import { Entries } from "./Thread.tsx";
+import { LiveChip } from "./TaskCard.tsx";
 import { glyphOf, phraseOf, prLabel, since, type Question } from "./format.ts";
 import { BackIcon, SendIcon, StatusIcon } from "./icons.tsx";
 
@@ -53,7 +55,7 @@ export function CardDetail(props: Props) {
 
   useEffect(() => {
     const before = document.title;
-    document.title = `c-${String(card.id)} ${card.title} · Fleet`;
+    document.title = `${idLabel(card.id)} ${card.title} · Fleet`;
     return () => {
       document.title = before;
     };
@@ -84,7 +86,7 @@ export function CardDetail(props: Props) {
         <span className="sep" aria-hidden="true">
           /
         </span>
-        <span className="card-id">c-{card.id}</span>
+        <span className="card-id">{idLabel(card.id)}</span>
         <kbd className="esc" title="Escape closes the card">
           Esc
         </kbd>
@@ -103,21 +105,24 @@ export function CardDetail(props: Props) {
             <Waiting question={question} onAnswer={props.onAnswer} onLater={props.onLater} />
           )}
           <section className="activity" aria-label="Activity">
-            <h2>Activity</h2>
+            <header className="activity-head">
+              <h2>Activity</h2>
+              <LiveChip card={card} now={now} always />
+            </header>
             {thread === undefined ? (
               <p className="muted">Loading…</p>
             ) : (
-              <Entries entries={thread.entries} open={open} now={now} owed={card.replies} />
+              <Entries
+                entries={thread.entries}
+                lane={card.lane}
+                open={open}
+                now={now}
+                owed={card.replies}
+              />
             )}
           </section>
           <div ref={end} className="end" />
-          <Composer
-            lane={card.lane}
-            mate={card.mate}
-            draft={props.draft}
-            onDraft={props.onDraft}
-            onReply={props.onReply}
-          />
+          <Composer draft={props.draft} onDraft={props.onDraft} onReply={props.onReply} />
         </div>
       </article>
     </div>
@@ -152,7 +157,7 @@ export function NoCard({ id, onClose }: { readonly id: number; readonly onClose:
           Fleet
         </button>
       </nav>
-      <p className="empty">c-{id} is not on the board.</p>
+      <p className="empty">{idLabel(id)} is not on the board.</p>
     </div>
   );
 }
@@ -253,13 +258,11 @@ function Description({ card }: { readonly card: BoardCard }) {
 }
 
 function Composer(props: {
-  readonly lane: string;
-  readonly mate: boolean;
   readonly draft: string;
   readonly onDraft: (text: string) => void;
   readonly onReply: (text: string) => Promise<boolean>;
 }) {
-  const { lane, mate, draft, onDraft } = props;
+  const { draft, onDraft } = props;
   const [sending, setSending] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   const empty = draft.trim() === "";
@@ -296,7 +299,7 @@ function Composer(props: {
           aria-label="Comment"
           rows={1}
           value={draft}
-          placeholder={mate ? `Message ${lane}` : `Message ${lane} about this card`}
+          placeholder="Message main about this card"
           onChange={(event) => {
             onDraft(event.target.value);
           }}
@@ -306,7 +309,9 @@ function Composer(props: {
           <SendIcon />
         </button>
       </div>
-      <p className="hint">Goes to {lane}. Enter to send, Shift+Enter for a new line.</p>
+      <p className="hint">
+        Goes to main only, who passes it on if needed. Enter to send, Shift+Enter for a new line.
+      </p>
     </form>
   );
 }

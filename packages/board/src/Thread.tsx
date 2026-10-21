@@ -1,111 +1,84 @@
-import { useState } from "react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { Entry, OwedReply } from "@fleet/protocol";
 import { Collapsible } from "./Collapsible.tsx";
-import {
-  authorOf,
-  bodyOf,
-  firstLine,
-  isMessage,
-  keyOf,
-  since,
-  verb,
-  type Author,
-} from "./format.ts";
+import { Rich } from "./Rich.tsx";
+import { authorOf, firstLine, isMessage, keyOf, since, verb, type Author } from "./format.ts";
+import { threadRows, type Flow, type Row } from "./thread.ts";
 
 const LONG_LINE = 90;
 
-const REPLY_ID = /^r-(\d+)$/;
+type Open = ReadonlySet<number>;
 
-function answeredIn(entry: Entry, asked: ReadonlyMap<number, Entry>): number | undefined {
-  const to = entry.fields["replyTo"];
-  const id = typeof to === "string" ? Number(REPLY_ID.exec(to)?.[1]) : Number.NaN;
-  return asked.has(id) ? id : undefined;
-}
-
-function Row(props: {
-  readonly entry: Entry;
-  readonly open: ReadonlySet<number>;
+function ThreadRow(props: {
+  readonly row: Row;
+  readonly open: Open;
   readonly now: number;
-  readonly to?: Entry;
   readonly children?: ReactNode;
 }) {
-  const { entry, open, now, to, children } = props;
-  const waiting = open.has(entry.id);
-  if (isMessage(entry) && !waiting)
-    return (
-      <Message entry={entry} now={now} to={to}>
-        {children}
-      </Message>
-    );
-  return (
-    <Event entry={entry} now={now} waiting={waiting} to={to}>
+  const { row, open, now, children } = props;
+  const waiting = open.has(row.entry.id);
+  return isMessage(row.entry) && !row.quiet && !waiting ? (
+    <Message row={row} now={now}>
+      {children}
+    </Message>
+  ) : (
+    <Event row={row} now={now} waiting={waiting}>
       {children}
     </Event>
   );
 }
 
-export function Entries(props: {
-  readonly entries: readonly Entry[];
-  readonly open: ReadonlySet<number>;
+function Replies(props: {
+  readonly rows: readonly Row[];
+  readonly open: Open;
   readonly now: number;
-  readonly owed: readonly OwedReply[];
+  readonly waiting: boolean;
 }) {
-  const { entries, open, now, owed } = props;
-  if (entries.length === 0) return <p className="muted">No activity yet.</p>;
-  const asked = new Map(
-    entries
-      .filter((entry) => entry.author === "captain" && entry.kind === "comment")
-      .map((entry) => [entry.id, entry]),
-  );
-  const replies = new Map<number, Entry[]>();
-  for (const entry of entries) {
-    const to = answeredIn(entry, asked);
-    if (to !== undefined) replies.set(to, [...(replies.get(to) ?? []), entry]);
-  }
-  const nested = new Set([...replies.values()].flat().map((entry) => entry.id));
+  if (props.rows.length === 0 && !props.waiting) return null;
   return (
-    <ol className="thread" aria-label="Thread">
-      {entries
-        .filter((entry) => !nested.has(entry.id))
-        .map((entry) => {
-          const answers = replies.get(entry.id) ?? [];
-          const waiting = owed.some((each) => each.id === `r-${String(entry.id)}`);
-          return (
-            <Row key={entry.id} entry={entry} open={open} now={now}>
-              {answers.length === 0 && !waiting ? null : (
-                <ol className="replies" aria-label="Replies">
-                  {answers.map((answer) => (
-                    <Row key={answer.id} entry={answer} open={open} now={now} to={entry} />
-                  ))}
-                  {waiting && answers.length === 0 ? (
-                    <li className="reply-owed">Waiting for a reply</li>
-                  ) : null}
-                </ol>
-              )}
-            </Row>
-          );
-        })}
+    <ol className="replies" aria-label="Replies">
+      {props.rows.map((row) => (
+        <ThreadRow key={row.entry.id} row={row} open={props.open} now={props.now} />
+      ))}
+      {props.rows.length === 0 && props.waiting ? (
+        <li className="reply-owed">Waiting for a reply</li>
+      ) : null}
     </ol>
   );
 }
 
-function ReplyLink({ to }: { readonly to: Entry }) {
-  const author = authorOf(to.author);
-  const show = (): void => {
-    const target = document.getElementById(`entry-${String(to.id)}`);
-    target?.scrollIntoView({ block: "center", behavior: "smooth" });
-    target?.classList.add("flash");
-    window.setTimeout(() => target?.classList.remove("flash"), 1200);
-  };
+export function Entries(props: {
+  readonly entries: readonly Entry[];
+  readonly lane: string;
+  readonly open: Open;
+  readonly now: number;
+  readonly owed: readonly OwedReply[];
+}) {
+  if (props.entries.length === 0) return <p className="muted">No activity yet.</p>;
+  const rows = threadRows(props.entries, { lane: props.lane });
+  const replies = new Map<number, Row[]>();
+  for (const row of rows) {
+    if (row.replyTo?.author === "captain") {
+      const id = row.replyTo.id;
+      replies.set(id, [...(replies.get(id) ?? []), row]);
+    }
+  }
+  const nested = new Set([...replies.values()].flat().map((row) => row.entry.id));
   return (
-    <button type="button" className="reply-link" onClick={show}>
-      <span className="label">
-        <span aria-hidden="true">↳</span> In reply to{" "}
-        {author.name === "You" ? "your message" : author.name}
-      </span>
-      <span className="quoted">{firstLine(bodyOf(to))}</span>
-    </button>
+    <ol className="thread" aria-label="Thread">
+      {rows
+        .filter((row) => !nested.has(row.entry.id))
+        .map((row) => (
+          <ThreadRow key={row.entry.id} row={row} open={props.open} now={props.now}>
+            <Replies
+              rows={replies.get(row.entry.id) ?? []}
+              open={props.open}
+              now={props.now}
+              waiting={props.owed.some((each) => each.id === `r-${String(row.entry.id)}`)}
+            />
+          </ThreadRow>
+        ))}
+    </ol>
   );
 }
 
@@ -126,94 +99,156 @@ function Time({ entry, now }: { readonly entry: Entry; readonly now: number }) {
   );
 }
 
-function Message(props: {
-  readonly entry: Entry;
-  readonly now: number;
-  readonly to: Entry | undefined;
-  readonly children: ReactNode;
-}) {
-  const { entry, now, to, children } = props;
+function Direction(props: { readonly flow: Flow | undefined; readonly name: string }) {
+  const { flow } = props;
+  if (flow === undefined) return <span className="name">{props.name}</span>;
+  return (
+    <span className="flow">
+      <span className="name from">{flow.from}</span>{" "}
+      <span className="arrow" aria-hidden="true">
+        →
+      </span>{" "}
+      <span className="to">{flow.to}</span>
+    </span>
+  );
+}
+
+function InReply({ entry }: { readonly entry: Entry }) {
+  const who = authorOf(entry.author).name;
+  const show = (): void => {
+    const target = document.getElementById(`entry-${String(entry.id)}`);
+    target?.scrollIntoView({ block: "center", behavior: "smooth" });
+    target?.classList.add("flash");
+    target?.addEventListener(
+      "animationend",
+      () => {
+        target.classList.remove("flash");
+      },
+      { once: true },
+    );
+  };
+  return (
+    <button type="button" className="reply-link" onClick={show}>
+      <span className="label">
+        <span aria-hidden="true">↳</span> In reply to {who === "You" ? "your message" : who}
+      </span>
+      <span className="quoted">{firstLine(entry.body)}</span>
+    </button>
+  );
+}
+
+function Message(props: { readonly row: Row; readonly now: number; readonly children: ReactNode }) {
+  const { row, now, children } = props;
+  const { entry, flow } = row;
   const author = authorOf(entry.author);
   return (
     <li
       id={`entry-${String(entry.id)}`}
       className={`message ${author.role}`}
       data-kind={entry.kind}
-      data-reply-to={to?.id}
+      data-reply-to={row.replyTo?.id}
     >
-      {to === undefined ? null : <ReplyLink to={to} />}
       <header>
         <Avatar author={author} />
-        <span className="name">{author.name}</span>
-        {author.tag === "" ? null : <span className="tag">{author.tag}</span>}
+        <Direction flow={flow} name={author.name} />
+        {flow !== undefined || author.tag === "" ? null : <span className="tag">{author.tag}</span>}
         <span className="verb">{verb(entry)}</span>
         {keyOf(entry) === undefined ? null : <span className="key">{keyOf(entry)}</span>}
         <Time entry={entry} now={now} />
       </header>
-      <Collapsible text={bodyOf(entry)} />
+      {row.replyTo === undefined ? null : <InReply entry={row.replyTo} />}
+      <Collapsible text={row.text} />
       {children}
     </li>
   );
 }
 
-function EventHead(props: {
-  readonly entry: Entry;
-  readonly now: number;
-  readonly waiting: boolean;
-  readonly open: boolean;
-  readonly line: string;
-}) {
-  const { entry, now, waiting, open, line } = props;
-  const author = authorOf(entry.author);
-  const shown = waiting ? "waiting for your answer above" : line;
+function waitingText(row: Row): string {
+  if (row.asker === undefined) return "waiting for your answer above";
+  return `escalated by ${authorOf(row.entry.author).name} · waiting for your answer above`;
+}
+
+function withAsker(row: Row): Flow | undefined {
+  if (row.asker === undefined || row.flow === undefined) return row.flow;
+  return { ...row.flow, from: row.asker };
+}
+
+function Line(props: { readonly row: Row; readonly waiting: boolean; readonly links: boolean }) {
+  const { row } = props;
   return (
-    <>
-      <span className="dot" aria-hidden="true" />
-      <span className="name">{author.name}</span>
-      <span className="verb">{waiting ? "asked a question" : verb(entry)}</span>
-      <span className="line">{open ? "" : shown}</span>
-      <Time entry={entry} now={now} />
-    </>
+    <span className="line">
+      {props.waiting ? waitingText(row) : <Rich text={firstLine(row.text)} links={props.links} />}
+    </span>
   );
 }
 
-function Event(props: {
-  readonly entry: Entry;
-  readonly now: number;
-  readonly waiting: boolean;
-  readonly to: Entry | undefined;
+function Head(props: {
+  readonly expands: boolean;
+  readonly open: boolean;
+  readonly onToggle: () => void;
   readonly children: ReactNode;
 }) {
-  const { entry, now, waiting, to, children } = props;
+  if (!props.expands) return <div className="event-head">{props.children}</div>;
+  return (
+    <button
+      type="button"
+      className="event-head"
+      aria-expanded={props.open}
+      onClick={props.onToggle}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+const eventClass = (row: Row, open: boolean): string =>
+  `event${open ? " open" : ""}${row.quiet ? " quiet" : ""}`;
+
+function Event(props: {
+  readonly row: Row;
+  readonly now: number;
+  readonly waiting: boolean;
+  readonly children: ReactNode;
+}) {
+  const { row, now, waiting } = props;
+  const { entry } = row;
   const [open, setOpen] = useState(false);
-  const body = waiting ? "" : bodyOf(entry).trim();
-  const line = firstLine(body);
-  const expands = body !== line || line.length > LONG_LINE;
-  const head = <EventHead entry={entry} now={now} waiting={waiting} open={open} line={line} />;
+  const body = waiting ? "" : row.text.trim();
+  const expands = body !== firstLine(body) || firstLine(body).length > LONG_LINE;
+  const reply = row.replyTo === undefined ? null : <InReply entry={row.replyTo} />;
+  const flow = waiting ? withAsker(row) : row.flow;
+  const head = (
+    <>
+      <span className="dot" aria-hidden="true" />
+      <Direction flow={flow} name={authorOf(entry.author).name} />
+      <span className="verb">{waiting ? "asked a question" : verb(entry)}</span>
+      {open ? <span className="line" /> : <Line row={row} waiting={waiting} links={!expands} />}
+      <Time entry={entry} now={now} />
+    </>
+  );
   return (
     <li
       id={`entry-${String(entry.id)}`}
-      className={`event${open ? " open" : ""}`}
+      className={eventClass(row, open)}
       data-kind={entry.kind}
-      data-reply-to={to?.id}
+      data-reply-to={row.replyTo?.id}
     >
-      {to === undefined ? null : <ReplyLink to={to} />}
-      {expands ? (
-        <button
-          type="button"
-          className="event-head"
-          aria-expanded={open}
-          onClick={() => {
-            setOpen(!open);
-          }}
-        >
-          {head}
-        </button>
-      ) : (
-        <div className="event-head">{head}</div>
-      )}
-      {open ? <p className="event-more">{body}</p> : null}
-      {children}
+      <Head
+        expands={expands}
+        open={open}
+        onToggle={() => {
+          setOpen(!open);
+        }}
+      >
+        {head}
+      </Head>
+      {reply}
+      {open ? (
+        <p className="event-more">
+          <Rich text={body} />
+        </p>
+      ) : null}
+      {props.children}
     </li>
   );
 }

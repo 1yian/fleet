@@ -7,13 +7,16 @@ import {
   glyphOf,
   laneColor,
   laterLabel,
+  liveOf,
   mergingLabel,
   prLabel,
   withWho,
   type Facts,
   type Question,
 } from "./format.ts";
+import { Rich } from "./Rich.tsx";
 import { Stale } from "./Stale.tsx";
+import { idLabel } from "./text.ts";
 import { ClockIcon, PrIcon, SpinnerIcon, StatusIcon } from "./icons.tsx";
 
 interface Handlers {
@@ -62,6 +65,26 @@ export function LaneAvatar({ lane }: { readonly lane: string }) {
   return (
     <span className="av" style={{ background: laneColor(lane) }} title={lane} aria-hidden="true">
       {lane.charAt(0)}
+    </span>
+  );
+}
+
+const worksNow = (card: BoardCard): boolean =>
+  card.mate || card.status === "working" || card.status === "in-review";
+
+export function LiveChip(props: {
+  readonly card: BoardCard;
+  readonly now: number;
+  readonly always?: boolean;
+}) {
+  const { card, now } = props;
+  if (card.activity === null) return null;
+  if (card.activity.state === "idle" && !worksNow(card) && props.always !== true) return null;
+  const live = liveOf(card.activity, now);
+  return (
+    <span className={`chip live ${live.tone}`} title="What the agent on this card is doing now">
+      <span className="pulse" aria-hidden="true" />
+      {live.text}
     </span>
   );
 }
@@ -117,6 +140,7 @@ function OwedChip({ card }: { readonly card: BoardCard }) {
 function glanceOf(card: BoardCard, facts: Facts | undefined, now: number): string {
   if (card.status === "waiting" && facts?.until !== undefined) return laterLabel(facts.until, now);
   if (card.status === "with-mate") return `with ${withWho(card)}`;
+  if (card.activity !== null && card.status === "working") return liveOf(card.activity, now).text;
   if (card.pr !== null) return prLabel(card.pr);
   return GLANCE[card.status] ?? card.status;
 }
@@ -135,11 +159,10 @@ function IdRow({
 }) {
   return (
     <div className="idrow">
-      <span className="id">c-{card.id}</span>
+      <span className="id">{idLabel(card.id)}</span>
       <span className="what">
-        {card.kind} · {card.project ?? card.lane}
+        {card.kind} · {card.lane}
       </span>
-      <LaneAvatar lane={card.lane} />
       <span className={asked ? "age due" : "age"}>
         {asked ? waiting(card.updatedAt, now) : age(card.updatedAt, now)}
       </span>
@@ -183,10 +206,13 @@ export function TaskCard(props: CardProps) {
         {asked ? null : <span className="glance">{glanceOf(card, facts, now)}</span>}
       </h3>
       {card.status === "with-mate" && card.summary !== "" ? (
-        <p className="latest">{card.summary}</p>
+        <p className="latest">
+          <Rich text={card.summary} />
+        </p>
       ) : null}
       <div className="meta">
         <StatusChip card={card} facts={facts} now={now} />
+        <LiveChip card={card} now={now} />
         {card.pr === null ? null : <PrChip url={card.pr} />}
         <OwedChip card={card} />
       </div>
@@ -257,7 +283,10 @@ export function MateRow(props: {
           <TitleLink card={card} onOpen={open} />
           <span className="age">{age(card.updatedAt, props.now)}</span>
         </div>
-        <p className="line">{card.summary === "" ? "No messages yet" : card.summary}</p>
+        <p className="line">
+          {card.summary === "" ? "No messages yet" : <Rich text={card.summary} />}
+        </p>
+        <LiveChip card={card} now={props.now} />
         <OwedChip card={card} />
       </div>
     </article>

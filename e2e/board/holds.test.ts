@@ -49,7 +49,7 @@ test("a hold with several questions is one card with one set of answers, and one
   assert.equal(await needs.getByRole("button", { name: "Take all my recommendations" }).count(), 1);
 
   await page.getByRole("button", { name: "Take all my recommendations" }).click();
-  await page.getByText("Nothing waits on you.").waitFor();
+  await page.getByText("Nothing for you").waitFor();
   const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
   assert.equal(answer.body, "Take all my recommendations");
   assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 1);

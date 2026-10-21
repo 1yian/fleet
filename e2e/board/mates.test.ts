@@ -31,7 +31,7 @@ const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/
 
 test("the Mates section shows each second mate's lane card, and its detail is the talk with main", async () => {
   await page.goto(http());
-  await page.getByText("Nothing waits on you.").waitFor();
+  await page.getByText("Nothing for you").waitFor();
   assert.equal(await page.getByRole("region", { name: "Mates" }).count(), 0);
 
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
@@ -49,11 +49,14 @@ test("the Mates section shows each second mate's lane card, and its detail is th
   const thread = page.getByRole("list", { name: "Thread" });
   await thread.getByText("The captain asks: how are ads doing?").waitFor();
   await thread.getByText("Ads are under budget, 3 of 5 convert.").waitFor();
-  assert.deepEqual(await thread.locator(".name").allTextContents(), ["main", "cleo"]);
+  assert.deepEqual(await thread.locator(".flow").allInnerTexts(), ["main → cleo", "cleo → main"]);
   await page.getByRole("textbox", { name: "Comment" }).fill("Thanks, cleo");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  const heard = await cleo.waitForEntry((entry) => entry.author === "captain", "the captain");
+  const heard = await main.waitForEntry((entry) => entry.author === "captain", "the captain");
   assert.equal(heard.body, "Thanks, cleo");
+  await main.call("comment", { lane: "cleo", text: "Nothing more from the captain" });
+  await cleo.waitForEntry((entry) => entry.body === "Nothing more from the captain", "main");
+  assert.equal(cleo.entries.filter(({ entry }) => entry.author === "captain").length, 0);
 });
 
 test("a second mate's hold is not in Needs you until main escalates it", async () => {
@@ -71,7 +74,7 @@ test("a second mate's hold is not in Needs you until main escalates it", async (
   const running = page.getByRole("region", { name: "In progress" });
   await running.getByText("Asks main: Which channel?").waitFor();
   await running.locator(".chip", { hasText: "with main" }).waitFor();
-  await page.getByText("Nothing waits on you.").waitFor();
+  await page.getByText("Nothing for you").waitFor();
   assert.equal(await page.getByRole("button", { name: "search" }).count(), 0);
 
   await main.call("hold", {

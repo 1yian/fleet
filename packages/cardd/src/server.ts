@@ -123,8 +123,9 @@ class Hub {
         session = this.hello(socket, message);
         token = session === undefined ? undefined : message.token;
       } else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
-      else if (message.t === "activity") setSessionState(this.db, live().id, message.state);
-      else {
+      else if (message.t === "activity") {
+        if (setSessionState(this.db, live().id, message.state)) this.web.changed();
+      } else {
         const id = message.id;
         void this.perform(live(), message.op, message.args).then((outcome) => {
           send(socket, { t: "result", id, ...outcome });
@@ -143,7 +144,8 @@ class Hub {
     socket.on("close", (code) => {
       if (session === undefined || this.sockets.get(session.id) !== socket) return;
       this.sockets.delete(session.id);
-      setSessionState(this.db, session.id, code === 1000 ? "exited" : "lost");
+      if (setSessionState(this.db, session.id, code === 1000 ? "exited" : "lost"))
+        this.web.changed();
     });
   }
 
@@ -187,6 +189,7 @@ class Hub {
       setSessionState(this.db, session.id, "idle");
       return confirm(this.db, session.id, message.inFile);
     });
+    this.web.changed();
     send(socket, { t: "welcome", session: session.id, role: session.role, lowWater });
     this.flush(session.id, true);
     return session;

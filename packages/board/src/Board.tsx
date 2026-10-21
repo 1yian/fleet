@@ -1,6 +1,14 @@
 import { useState, type ReactNode } from "react";
 import type { Board as BoardData, BoardCard } from "@fleet/protocol";
-import { arrange, questionsByCard, type Columns, type Facts } from "./format.ts";
+import {
+  arrange,
+  openIn,
+  questionsByCard,
+  swimlanes,
+  type Columns,
+  type Facts,
+  type Swimlane,
+} from "./format.ts";
 import { ChevronIcon, ClockIcon, StatusIcon, type Glyph } from "./icons.tsx";
 import { DoneRow, MateRow, TaskCard } from "./TaskCard.tsx";
 
@@ -24,7 +32,7 @@ interface Props {
   readonly notices: ReadonlyMap<number, string>;
 }
 
-function Column(props: {
+function Cell(props: {
   readonly name: string;
   readonly label: string;
   readonly glyph: Glyph;
@@ -32,27 +40,26 @@ function Column(props: {
   readonly children: ReactNode;
 }) {
   return (
-    <section className={`col ${props.name}`} aria-label={props.label}>
-      <header className="col-head">
+    <section
+      className={`cell ${props.name}${props.count === 0 ? " none" : ""}`}
+      aria-label={props.label}
+    >
+      <header className="cell-head">
         <StatusIcon glyph={props.glyph} />
-        <h2>{props.label}</h2>
+        <h3>{props.label}</h3>
         <span className="n">{props.count}</span>
       </header>
-      <div className="col-body">{props.children}</div>
+      <div className="cell-body">{props.children}</div>
     </section>
   );
 }
-
-const empty = (text: string) => <p className="empty">{text}</p>;
 
 type Render = (card: BoardCard) => ReactNode;
 
 function UpNext(props: { readonly columns: Columns; readonly render: Render }) {
   const { queued, later } = props.columns;
-  const count = queued.length + later.length;
   return (
-    <Column name="up-next" label="Up next" glyph="queued" count={count}>
-      {count === 0 ? empty("Nothing is queued.") : null}
+    <Cell name="up-next" label="Up next" glyph="queued" count={queued.length + later.length}>
       {queued.length > 0 && later.length > 0 ? <p className="sub">Queued</p> : null}
       {queued.map(props.render)}
       {later.length > 0 ? (
@@ -62,7 +69,7 @@ function UpNext(props: { readonly columns: Columns; readonly render: Render }) {
         </p>
       ) : null}
       {later.map(props.render)}
-    </Column>
+    </Cell>
   );
 }
 
@@ -70,8 +77,7 @@ function DoneToday(props: { readonly cards: readonly BoardCard[]; readonly rende
   const [more, setMore] = useState(false);
   const { cards } = props;
   return (
-    <Column name="done" label="Done today" glyph="done" count={cards.length}>
-      {cards.length === 0 ? empty("Nothing has finished today.") : null}
+    <Cell name="done" label="Done today" glyph="done" count={cards.length}>
       {(more ? cards : cards.slice(0, TODAY_SHOWN)).map(props.render)}
       {cards.length > TODAY_SHOWN ? (
         <button
@@ -85,7 +91,61 @@ function DoneToday(props: { readonly cards: readonly BoardCard[]; readonly rende
           {more ? "Show fewer" : `${String(cards.length - TODAY_SHOWN)} more today`}
         </button>
       ) : null}
-    </Column>
+    </Cell>
+  );
+}
+
+function Lane(props: { readonly lane: Swimlane; readonly render: Render; readonly row: Render }) {
+  const { lane, render, row } = props;
+  const { columns } = lane;
+  return (
+    <section className="swimlane" aria-label={lane.project}>
+      <header className="lane-head">
+        <h2>{lane.project}</h2>
+        <span className="n">{openIn(lane)} open</span>
+        {lane.needs === 0 ? null : <span className="need-count">{lane.needs} for you</span>}
+      </header>
+      <div className="cells">
+        <UpNext columns={columns} render={render} />
+        <Cell name="progress" label="In progress" glyph="working" count={columns.progress.length}>
+          {columns.progress.map(render)}
+        </Cell>
+        <Cell name="needs" label="Needs you" glyph="needs" count={columns.needs.length}>
+          {columns.needs.map(render)}
+        </Cell>
+        <Cell name="merging" label="Merging" glyph="merging" count={columns.merging.length}>
+          {columns.merging.map(render)}
+        </Cell>
+        <DoneToday cards={columns.today} render={row} />
+      </div>
+    </section>
+  );
+}
+
+function Heads(props: { readonly columns: Columns }) {
+  const { columns } = props;
+  const heads: readonly { name: string; label: string; glyph: Glyph; count: number }[] = [
+    {
+      name: "up-next",
+      label: "Up next",
+      glyph: "queued",
+      count: columns.queued.length + columns.later.length,
+    },
+    { name: "progress", label: "In progress", glyph: "working", count: columns.progress.length },
+    { name: "needs", label: "Needs you", glyph: "needs", count: columns.needs.length },
+    { name: "merging", label: "Merging", glyph: "merging", count: columns.merging.length },
+    { name: "done", label: "Done today", glyph: "done", count: columns.today.length },
+  ];
+  return (
+    <div className="col-heads" aria-hidden="true">
+      {heads.map((head) => (
+        <div key={head.name} className={`col-head ${head.name}`}>
+          <StatusIcon glyph={head.glyph} />
+          <span className="name">{head.label}</span>
+          <span className="n">{head.count}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -129,6 +189,7 @@ export function Kanban(props: Props) {
     (card) => card.mate || props.lane === undefined || card.lane === props.lane,
   );
   const columns = arrange(shown, asked, now);
+  const lanes = swimlanes(shown, asked, now);
   const cardOf: Render = (card) => (
     <TaskCard
       key={card.id}
@@ -147,22 +208,14 @@ export function Kanban(props: Props) {
     <DoneRow key={card.id} card={card} facts={facts.get(card.id)} now={now} onOpen={props.onOpen} />
   );
   return (
-    <div className={columns.merging.length === 0 ? "columns no-merging" : "columns"}>
-      <UpNext columns={columns} render={cardOf} />
-      <Column name="progress" label="In progress" glyph="working" count={columns.progress.length}>
-        {columns.progress.length === 0 ? empty("Nothing is running.") : null}
-        {columns.progress.map(cardOf)}
-      </Column>
-      <Column name="needs" label="Needs you" glyph="needs" count={columns.needs.length}>
-        {columns.needs.length === 0 ? empty("Nothing waits on you.") : null}
-        {columns.needs.map(cardOf)}
-      </Column>
-      {columns.merging.length === 0 ? null : (
-        <Column name="merging" label="Merging" glyph="merging" count={columns.merging.length}>
-          {columns.merging.map(cardOf)}
-        </Column>
-      )}
-      <DoneToday cards={columns.today} render={row} />
+    <div className={columns.merging.length === 0 ? "board-body no-merging" : "board-body"}>
+      <div className="swimlanes">
+        <Heads columns={columns} />
+        {lanes.length === 0 ? <p className="empty">Nothing is on the board.</p> : null}
+        {lanes.map((lane) => (
+          <Lane key={lane.project} lane={lane} render={cardOf} row={row} />
+        ))}
+      </div>
       <Rail columns={columns} now={now} row={row} onOpen={props.onOpen} />
     </div>
   );

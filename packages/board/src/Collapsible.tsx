@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { Rich } from "./Rich.tsx";
 
 export function Collapsible({ text }: { readonly text: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -20,7 +21,7 @@ export function Collapsible({ text }: { readonly text: string }) {
   return (
     <div className="collapsible">
       <div ref={box} className={expanded ? "body" : "body clamped"}>
-        {text}
+        <Rich text={text} />
       </div>
       {overflows || expanded ? (
         <button

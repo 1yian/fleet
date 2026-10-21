@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { MERGE_OPTIONS } from "@fleet/protocol";
 import type { Question } from "./format.ts";
 import { ClockIcon, PenIcon } from "./icons.tsx";
+import { Rich } from "./Rich.tsx";
 
 const HOUR = 3_600_000;
 const MORNING = 9;
@@ -48,7 +49,7 @@ function Question(props: { readonly text: string; readonly onRead: (() => void) 
   return (
     <div className="question">
       <p ref={box} className={clamp ? "ask-text clamped" : "ask-text"}>
-        {props.text}
+        <Rich text={props.text} />
       </p>
       {onRead !== undefined && clipped ? (
         <button type="button" className="read" onClick={onRead}>

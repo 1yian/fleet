@@ -5,6 +5,7 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import type { Card } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
+import { freezeBoardUntilAction } from "../support/board.ts";
 import { CardSchema, check, OPS } from "@fleet/protocol";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
@@ -55,14 +56,14 @@ test("Needs you shows a hold, and one click answers it", async () => {
   await page.getByText("Pick the API version?").waitFor();
 
   await page.getByRole("button", { name: "v2" }).click();
-  await page.getByText("Nothing waits on you.").waitFor();
+  await page.getByText("Nothing for you").waitFor();
   const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
   assert.deepEqual([answer.author, answer.body], ["captain", "v2"]);
 });
 
 test("a click on a card that changed since the captain looked is refused", async () => {
-  await page.routeWebSocket(/\/live$/, () => undefined);
   const card = await question("Renew the certificate", ["now", "later"]);
+  await freezeBoardUntilAction(page, await cardd.board());
   await page.goto(http());
   await page.getByText("Renew the certificate?").waitFor();
   await main.call("hold", {
@@ -73,7 +74,7 @@ test("a click on a card that changed since the captain looked is refused", async
 
   await page.getByRole("button", { name: "now" }).click();
   const stale = page.getByRole("article", { name: "Renew the certificate" }).getByRole("alert");
-  await stale.getByText(`c-${String(card.id)} changed since you looked`).waitFor();
+  await stale.getByText(`#${String(card.id)} changed since you looked`).waitFor();
   await stale.getByText("Nothing was sent").waitFor();
   assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 0);
   await stale.getByRole("button", { name: "Dismiss" }).click();
@@ -123,7 +124,7 @@ test("a card's address opens it directly, and a card that does not exist says so
   assert.equal(new URL(page.url()).hash, "");
 
   await page.goto(`${http()}#/c-99`);
-  await page.getByText("c-99 is not on the board.").waitFor();
+  await page.getByText("#99 is not on the board.").waitFor();
 });
 
 test("the thread is the conversation between the owner and its mate, with each author and the mate's decisions", async () => {
@@ -155,15 +156,21 @@ test("the thread is the conversation between the owner and its mate, with each a
 
   const items = await thread.getByRole("listitem").allInnerTexts();
   const lines = items.map((item) => item.replace(/\s+/g, " "));
-  assert.match(lines[0] ?? "", /cleo sent the task .*fix it/);
-  assert.match(lines[1] ?? "", /Worker .*the scrollbar is doubled/);
-  assert.match(lines[2] ?? "", /Worker needs a decision scope .*Fix R1 only, or R1 and R2\?/);
-  assert.match(lines[3] ?? "", /cleo Mate decided scope .*fix both R1 and R2/);
-  assert.match(lines[4] ?? "", /cleo Mate asked .*Keep the footer\?/);
-  assert.match(lines[5] ?? "", /main First mate escalated it .*Keep the footer\? I say yes\./);
-  assert.match(lines[6] ?? "", /You answered .*yes/);
-  assert.match(lines[7] ?? "", /Worker is done .*a final note/);
-  assert.match(lines[8] ?? "", /Fleet asked .*Merge https:\/\/github\.com\/acme\/web\/pull\/3/);
+  assert.match(lines[0] ?? "", /cleo → worker sent the task .*fix it/);
+  assert.match(lines[1] ?? "", /worker → cleo .*the scrollbar is doubled/);
+  assert.match(
+    lines[2] ?? "",
+    /worker → cleo needs a decision scope .*Fix R1 only, or R1 and R2\?/,
+  );
+  assert.match(lines[3] ?? "", /cleo → worker decided scope .*fix both R1 and R2/);
+  assert.match(lines[4] ?? "", /cleo → main asked .*Keep the footer\?/);
+  assert.match(lines[5] ?? "", /main → You escalated it .*Keep the footer\? I say yes\./);
+  assert.match(lines[6] ?? "", /You → cleo, main answered .*yes/);
+  assert.match(lines[7] ?? "", /worker → cleo is done .*a final note/);
+  assert.match(
+    lines[8] ?? "",
+    /Fleet → main asked .*Merge https:\/\/github\.com\/acme\/web\/pull\/3/,
+  );
   assert.equal(lines.length, 9);
   await worker.close();
 });
@@ -201,21 +208,27 @@ test("a long message collapses, and Show more opens it", async () => {
   await worker.close();
 });
 
-test("the captain chats on a card: Enter sends to the card's mate, Shift+Enter starts a new line", async () => {
+test("the captain chats on a card: Enter sends to main and no one else, Shift+Enter starts a new line", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
   await page.goto(`${http()}#/c-${String(card.id)}`);
   const composer = page.getByRole("textbox", { name: "Comment" });
+  assert.equal(await composer.getAttribute("placeholder"), "Message main about this card");
+  await page.getByText("Goes to main only").waitFor();
   await composer.fill("first line");
   await composer.press("Shift+Enter");
   await composer.pressSequentially("second line");
-  assert.equal(cleo.entries.length, 0);
+  assert.equal(main.entries.filter(({ entry }) => entry.author === "captain").length, 0);
   await composer.press("Enter");
 
-  const comment = await cleo.waitForEntry((entry) => entry.kind === "comment", "the comment");
+  const comment = await main.waitForEntry((entry) => entry.author === "captain", "the comment");
   assert.deepEqual([comment.author, comment.body], ["captain", "first line\nsecond line"]);
-  const owed = await main.waitForEntry((entry) => entry.kind === "comment", "the comment for main");
-  assert.deepEqual([owed.id, owed.fields["owes"]], [comment.id, "main"]);
+  assert.equal(comment.card, card.id);
+  assert.equal(comment.fields["lane"], "cleo");
+  assert.equal(comment.fields["owes"], "main");
+  await main.call("comment", { lane: "cleo", text: "relayed" });
+  await cleo.waitForEntry((entry) => entry.body === "relayed", "main's relay");
+  assert.equal(cleo.entries.filter(({ entry }) => entry.author === "captain").length, 0);
   const thread = page.getByRole("list", { name: "Thread" });
   await thread.getByText("second line").waitFor();
   assert.equal(await composer.inputValue(), "");
@@ -286,7 +299,7 @@ test("Your words answers the question in the captain's words, for the card's mat
   );
   assert.equal(answer.fields["source"], "board");
   assert.equal(answer.fields["written"], true);
-  await page.getByText("Nothing waits on you.").waitFor();
+  await page.getByText("Nothing for you").waitFor();
 });
 
 test("Escape closes the answer box and not the card", async () => {
@@ -302,7 +315,7 @@ test("Escape closes the answer box and not the card", async () => {
 
 test("the board reloads after its live socket reconnects", async () => {
   await page.goto(http());
-  await page.getByText("Nothing waits on you.").waitFor();
+  await page.getByText("Nothing for you").waitFor();
 
   await cardd.restart();
   main = await cardd.connect(mainToken);

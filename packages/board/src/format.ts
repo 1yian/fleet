@@ -1,5 +1,6 @@
 import {
   MERGE_OPTIONS,
+  type Activity,
   type Board,
   type BoardCard,
   type Entry,
@@ -69,6 +70,70 @@ export function arrange(
     dropped: inColumn("dropped").sort(recentFirst),
     mates: inColumn("mates").sort((a, b) => a.lane.localeCompare(b.lane)),
   };
+}
+
+const NO_PROJECT = "No project";
+
+export interface Swimlane {
+  readonly project: string;
+  readonly columns: Columns;
+  readonly needs: number;
+}
+
+export function swimlanes(
+  cards: readonly BoardCard[],
+  asked: ReadonlyMap<number, Question>,
+  now: number,
+): Swimlane[] {
+  const projects = [
+    ...new Set(cards.filter((card) => !card.mate).map((card) => card.project ?? NO_PROJECT)),
+  ];
+  return projects
+    .map((project) => {
+      const own = cards.filter((card) => !card.mate && (card.project ?? NO_PROJECT) === project);
+      const columns = arrange(own, asked, now);
+      return { project, columns, needs: columns.needs.length };
+    })
+    .filter(({ columns: each }) =>
+      [each.queued, each.later, each.progress, each.needs, each.merging, each.today].some(
+        (column) => column.length > 0,
+      ),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.needs > 0) - Number(a.needs > 0) ||
+        Number(a.project === NO_PROJECT) - Number(b.project === NO_PROJECT) ||
+        a.project.localeCompare(b.project),
+    );
+}
+
+export const openIn = (lane: Swimlane): number => {
+  const { columns } = lane;
+  return (
+    columns.queued.length +
+    columns.later.length +
+    columns.progress.length +
+    columns.needs.length +
+    columns.merging.length
+  );
+};
+
+export interface Live {
+  readonly text: string;
+  readonly tone: "running" | "quiet" | "lost";
+}
+
+export function liveOf(activity: Activity, now: number): Live {
+  const quiet = age(activity.at, now);
+  if (activity.state === "running")
+    return quiet === "now"
+      ? { text: "running", tone: "running" }
+      : { text: `running · quiet ${quiet}`, tone: "running" };
+  if (activity.state === "waiting") return { text: "waiting on a job", tone: "quiet" };
+  if (activity.state === "starting") return { text: "starting", tone: "quiet" };
+  if (activity.state === "idle")
+    return { text: quiet === "now" ? "idle" : `idle ${quiet}`, tone: "quiet" };
+  return { text: quiet === "now" ? "disconnected" : `disconnected ${quiet}`, tone: "lost" };
 }
 
 const GLYPHS: Readonly<Record<Status, Glyph>> = {
