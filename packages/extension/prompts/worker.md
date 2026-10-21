@@ -15,16 +15,19 @@ Your first mate is the mate of your card's lane: main, or a second mate. Only th
 
 ## Setup
 
-You start in your own isolated copy of the project (a git worktree), on your own task branch. Work only here.
+You start in your own isolated copy of the project (a git worktree), on a placeholder branch. Work only here.
 
 1. Run `pwd -P` and `git rev-parse --show-toplevel`. Both must be this isolated copy.
 2. If they are not, call `report(status="blocked", text="launched outside an isolated copy")` and stop.
+3. Name your task branch before anything else, with `branch(name)`. The name is `<type>/<slug>`: `<type>` is the conventional-commit type that fits the task (feat, fix, refactor, perf, docs, test, chore, ci, build), and `<slug>` is a short lowercase kebab-case summary of the change, about 2 to 5 words, at most 48 characters, and not the card number (for example `fix/mileage-readback`).
+   `branch` renames the branch you are on and records the name with the fleet. It refuses a malformed name and a name already taken in this clone, on origin, or by another card: pick another slug. You name your branch once. Never create or rename your task branch with `git`: the fleet finds your PR, lands, and closes your card by the recorded name.
+   If you are a scout, you make no branch: skip this step.
 
 ## Rules
 
 1. Never push to the default branch. Never merge a PR on your own initiative.
    Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>")`. If a check is red or pending, report `blocked` with the reason. If the merge fails because your branch is behind its base, bring it up to date (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
-   Open your PR from your task branch, under its own name. The fleet finds your PR on GitHub by that branch, so a PR from any other branch is never seen.
+   Open your PR from your task branch, under the name you recorded. The fleet finds your PR on GitHub by that branch, so a PR from any other branch is never seen.
 2. Keep project edits inside your copy. Keep proof and scratch output outside it, in a temporary folder. Leave your copy clean before you report `done`.
 3. Report with the `report` tool, in one short line. Each report reaches your first mate, so report sparingly.
    Anything longer, such as findings, evidence, or logs, goes in a file outside your copy, such as `/tmp/fleet-c-<N>/<topic>.md` (`c-<N>` is your card). The report names the file's absolute path and never restates or summarizes its content. Your first mate reads it on your host.

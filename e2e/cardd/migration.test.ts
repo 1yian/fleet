@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -271,4 +272,54 @@ test("a migration that meets a broken foreign key names the row and leaves the d
     /foreign keys broken after migration 005-lane-card\.sql:\nentries\.card -> cards\.id: \{"id":16,"card":99,/,
   );
   assert.equal(contents(file), before);
+});
+
+const KEY = createHash("sha256").update("legacy-token-key").digest();
+const tokenOf = (role: string, session: string): string =>
+  createHmac("sha256", KEY).update(`${role}:${session}`).digest("base64url");
+const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+function writeLegacyAttemptDatabase(file: string): void {
+  const db = writeDatabaseAt(file, 11);
+  db.prepare("INSERT INTO secrets (name, value) VALUES ('token-key', ?)").run(KEY);
+  db.exec(`
+    INSERT INTO lanes (name, home) VALUES ('main', '/homes/main');
+    INSERT INTO projects (name, delivery, clones, repo)
+      VALUES ('web', 'no-mistakes', '{"maverick":"/clones/web"}', 'acme/web');
+    INSERT INTO cards (id, title, name, lane, project, kind, status, delivery, created_at, updated_at)
+      VALUES (1, 'Ship the listing', 'ship-the-listing', 'main', 'web', 'ship', 'working', 'no-mistakes', ${String(T)}, ${String(T)});
+    INSERT INTO attempts (id, card, n, host, state, branch, created_at, updated_at)
+      VALUES (1, 1, 1, 'maverick', 'active', 'fm/c-1', ${String(T)}, ${String(T)});
+    INSERT INTO sessions (id, role, lane, attempt, host, token_hash, state) VALUES
+      ('main', 'mate', 'main', NULL, '', '${sha(tokenOf("mate", "main"))}', 'exited'),
+      ('c-1-a1', 'worker', 'main', 1, 'maverick', '${sha(tokenOf("worker", "c-1-a1"))}', 'idle');
+  `);
+  db.close();
+}
+
+test("an attempt made before workers named their branches keeps its branch, through a restart, and the worker cannot rename it", async () => {
+  const cardd = await Cardd.start({}, [], writeLegacyAttemptDatabase);
+  try {
+    const main = await cardd.connect(tokenOf("mate", "main"));
+    const view = check(OPS.card.result, await main.call("card", { card: 1 }));
+    assert.deepEqual(
+      view.attempts.map(({ branch }) => branch),
+      ["fm/c-1"],
+    );
+    const worker = await cardd.connect(tokenOf("worker", "c-1-a1"));
+    await assert.rejects(worker.call("branch.name", { name: "fix/listing-copy" }), {
+      message: "c-1-a1 already has its branch fm/c-1. Keep working on it: a branch is named once",
+    });
+
+    const pr = "https://github.com/acme/web/pull/5";
+    cardd.gh.setPr(pr, "MERGED");
+    cardd.gh.setHead(pr, "fm/c-1");
+    await worker.call("report", { status: "done", text: "merged" });
+    const report = await main.waitForEntry((entry) => entry.kind === "report", "the report");
+    assert.equal(report.fields["pr"], pr);
+    const plan = check(OPS["close.begin"].result, await main.call("close.begin", { card: 1 }));
+    assert.deepEqual([plan.mode, plan.attempts.map(({ branch }) => branch)], ["done", ["fm/c-1"]]);
+  } finally {
+    await cardd.stop();
+  }
 });

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, type Card, type CardView, type Delivery } from "@fleet/protocol";
+import { branchNameProblem, check, type Card, type CardView, type Delivery } from "@fleet/protocol";
 import Type from "typebox";
 import { addEntry, hash, json, registeredDelivery, tokenFor } from "./store.ts";
 
@@ -54,6 +54,69 @@ export const attemptsOf = (db: DatabaseSync, card: number): CardView["attempts"]
       card,
     ),
   );
+
+function recordedBranch(db: DatabaseSync, card: number, n: number): string | undefined {
+  const branch = db.prepare("SELECT branch FROM attempts WHERE card = ? AND n = ?").get(card, n)?.[
+    "branch"
+  ];
+  return typeof branch === "string" ? branch : undefined;
+}
+
+interface BranchRow {
+  readonly id: number;
+  readonly branch: string;
+  readonly named: boolean;
+  readonly project: string | null;
+}
+
+function branchRow(db: DatabaseSync, session: string): BranchRow {
+  const row = db
+    .prepare(
+      `SELECT a.id AS id, a.branch AS branch, a.branch_named AS named, c.project AS project
+       FROM sessions s JOIN attempts a ON a.id = s.attempt JOIN cards c ON c.id = a.card
+       WHERE s.id = ?`,
+    )
+    .get(session);
+  const { id, branch, named, project } = row ?? {};
+  if (typeof id !== "number" || typeof branch !== "string")
+    throw new Error(`${session} has no branch to name`);
+  return { id, branch, named: named === 1, project: typeof project === "string" ? project : null };
+}
+
+function requireUnclaimed(db: DatabaseSync, row: BranchRow, name: string): void {
+  const taken = db
+    .prepare(
+      `SELECT c.id AS card FROM attempts a JOIN cards c ON c.id = a.card
+       WHERE a.id != ? AND a.branch = ? AND a.state IN ('starting', 'active') AND c.project IS ?`,
+    )
+    .get(row.id, name, row.project);
+  if (taken !== undefined)
+    throw new Error(`branch ${name} is already the branch of c-${String(taken["card"])}`);
+}
+
+export function nameBranch(
+  db: DatabaseSync,
+  session: string,
+  name: string,
+): { branch: string; previous: string } {
+  const problem = branchNameProblem(name);
+  if (problem !== undefined) throw new Error(problem);
+  const row = branchRow(db, session);
+  const previous = row.branch;
+  if (row.named) {
+    if (previous === name) return { branch: name, previous };
+    throw new Error(
+      `${session} already has its branch ${previous}. Keep working on it: a branch is named once`,
+    );
+  }
+  requireUnclaimed(db, row, name);
+  db.prepare("UPDATE attempts SET branch = ?, branch_named = 1, updated_at = ? WHERE id = ?").run(
+    name,
+    Date.now(),
+    row.id,
+  );
+  return { branch: name, previous };
+}
 
 export function localLanding(
   db: DatabaseSync,
@@ -160,6 +223,7 @@ export function beginAttempt(
         `c-${String(card.id)}'s worker ${session} already runs with Delivery: ${before}. Dispatch with replace=true to start it over with ${String(delivery)}, or comment the worker`,
       );
     const place = placeOf(db, card, request.host, session);
+    const branch = recordedBranch(db, card.id, live.n) ?? place.branch;
     return {
       session,
       token: tokenFor(db, "worker", session),
@@ -167,6 +231,7 @@ export function beginAttempt(
       active: live.state === "active",
       connected: connected(db, session),
       ...place,
+      branch,
       delivery,
     };
   }
@@ -181,8 +246,8 @@ export function beginAttempt(
   const token = tokenFor(db, "worker", session);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO attempts (card, n, host, state, branch, created_at, updated_at)
-       VALUES (?, ?, ?, 'starting', ?, ?, ?)`,
+      `INSERT INTO attempts (card, n, host, state, branch, branch_named, created_at, updated_at)
+       VALUES (?, ?, ?, 'starting', ?, 0, ?, ?)`,
     )
     .run(card.id, n, request.host, place.branch, now, now);
   db.prepare(
