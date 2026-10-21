@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { check, OPS } from "@fleet/protocol";
-import { HostUnreachable, onHost } from "./host.ts";
+import { HostUnreachable, NoTransport, onHost } from "./host.ts";
 import type { Link } from "./link.ts";
 
 export const SYNC_FUNCTIONS = readFileSync(
@@ -33,6 +33,10 @@ export async function refreshClonesInTurn(clones: readonly Clone[]): Promise<str
       const out = await onHost(host, argv, SLOW_FETCH_TIMEOUT_MS);
       lines.push(...out.split("\n").filter((line) => line !== ""));
     } catch (error) {
+      if (error instanceof NoTransport) {
+        lines.push(`${label}: skipped: ${error.message}`);
+        continue;
+      }
       const why = error instanceof HostUnreachable ? "cannot be reached" : "refresh failed";
       lines.push(`${label}: ${why}: ${error instanceof Error ? error.message : String(error)}`);
     }

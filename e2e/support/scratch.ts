@@ -71,6 +71,7 @@ export class Scratch {
       url: string;
       token: string;
       args?: readonly string[];
+      host?: string;
       hosts?: unknown;
       roots?: unknown;
       direnv?: string;
@@ -85,6 +86,7 @@ export class Scratch {
       JSON.stringify(settings.roots ?? {}),
     );
     if (settings.direnv !== undefined) args.push("--direnv", settings.direnv);
+    if (settings.host !== undefined) args.push("--host", settings.host);
     return this.fleet(args).trim();
   }
 

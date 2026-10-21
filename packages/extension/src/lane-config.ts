@@ -13,6 +13,7 @@ export interface LaneConfig {
   readonly lane: string;
   readonly url: string;
   readonly token: string;
+  readonly host?: string;
   readonly hosts: Record<string, unknown>;
   readonly roots: Record<string, string>;
   readonly args: readonly string[];
@@ -36,6 +37,21 @@ function direnvFolder(file: string, value: unknown): string | undefined {
     throw new Error(`${file}: "direnv" must be an absolute folder or start with ~`);
   }
   return folder;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(isRecord(value) ? value : {}).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+
+function ownHost(file: string, value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value === "")
+    throw new Error(`${file}: "host" must be this host's name`);
+  return value;
 }
 
 function carddConfig(file: string, value: unknown): CarddConfig | undefined {
@@ -66,19 +82,16 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
   if (typeof lane !== "string" || typeof url !== "string" || typeof token !== "string") {
     throw new Error(`${file} needs "lane", "url", and "token"`);
   }
-  const roots = isRecord(config["roots"]) ? config["roots"] : {};
   const folder = direnvFolder(file, config["direnv"]);
   const cardd = carddConfig(file, config["cardd"]);
+  const own = ownHost(file, config["host"]);
   return {
     lane,
     url,
     token,
+    ...(own === undefined ? {} : { host: own }),
     hosts: isRecord(config["hosts"]) ? config["hosts"] : {},
-    roots: Object.fromEntries(
-      Object.entries(roots).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
-    ),
+    roots: stringRecord(config["roots"]),
     args: strings(config["args"]),
     workerArgs: strings(config["workerArgs"]),
     ...(folder === undefined ? {} : { direnv: folder }),
