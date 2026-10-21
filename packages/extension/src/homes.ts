@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { arrangeHere, claimFollowers } from "./arrange.ts";
 import { field, herdr as herdrOn, piRunning, quote, records } from "./host.ts";
+import { withLifecycleLock } from "./lifecycle-lock.ts";
 import { isRecord, LANE_FILE, readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { isMateWorkspace, mateTitle } from "./titles.ts";
 
@@ -192,26 +193,28 @@ const named = (root: string, lane: string | undefined): LaneHome[] => {
   return found;
 };
 
+async function upOne(root: string, info: LaneHome, only: string | undefined): Promise<Outcome> {
+  const { lane, home } = info;
+  if (only !== undefined && heldReason(home) !== undefined) {
+    rmSync(stoppedFile(home), { force: true });
+    rmSync(startsFile(home), { force: true });
+  }
+  const reason = heldReason(home);
+  if (reason !== undefined) return { lane, action: "stopped", detail: reason };
+  if (await running(lane)) return { lane, action: "running" };
+  if (recentStarts(home, Date.now()).length >= STARTS_BEFORE_HOLD) {
+    const detail = `started ${String(STARTS_BEFORE_HOLD)} times in ${String(CRASH_WINDOW_MS / 60_000)} minutes`;
+    writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
+    return { lane, action: "held", detail };
+  }
+  await start(root, info);
+  return { lane, action: "started" };
+}
+
 export async function up(root: string, only?: string): Promise<Outcome[]> {
   const out: Outcome[] = [];
-  for (const info of named(root, only)) {
-    const { lane, home } = info;
-    if (only !== undefined && heldReason(home) !== undefined) {
-      rmSync(stoppedFile(home), { force: true });
-      rmSync(startsFile(home), { force: true });
-    }
-    const reason = heldReason(home);
-    if (reason !== undefined) out.push({ lane, action: "stopped", detail: reason });
-    else if (await running(lane)) out.push({ lane, action: "running" });
-    else if (recentStarts(home, Date.now()).length >= STARTS_BEFORE_HOLD) {
-      const detail = `started ${String(STARTS_BEFORE_HOLD)} times in ${String(CRASH_WINDOW_MS / 60_000)} minutes`;
-      writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
-      out.push({ lane, action: "held", detail });
-    } else {
-      await start(root, info);
-      out.push({ lane, action: "started" });
-    }
-  }
+  for (const info of named(root, only))
+    out.push(await withLifecycleLock(info.home, info.lane, () => upOne(root, info, only)));
   return out;
 }
 
@@ -223,25 +226,31 @@ async function close(lane: string): Promise<void> {
 
 export async function stop(root: string, lane: string): Promise<void> {
   for (const info of named(root, lane)) {
-    mkdirSync(join(info.home, "state"), { recursive: true });
-    writeFileSync(stoppedFile(info.home), "stopped by hand\n");
-    await close(info.lane);
+    await withLifecycleLock(info.home, info.lane, async () => {
+      mkdirSync(join(info.home, "state"), { recursive: true });
+      writeFileSync(stoppedFile(info.home), "stopped by hand\n");
+      await close(info.lane);
+    });
   }
+}
+
+async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
+  const held = heldReason(info.home);
+  if (all && held !== undefined) return { lane: info.lane, action: "stopped", detail: held };
+  await close(info.lane);
+  rmSync(stoppedFile(info.home), { force: true });
+  rmSync(startsFile(info.home), { force: true });
+  await start(root, info);
+  return { lane: info.lane, action: "started" };
 }
 
 export async function restart(root: string, lane: string | undefined): Promise<Outcome[]> {
   const out: Outcome[] = [];
-  for (const info of named(root, lane)) {
-    const held = heldReason(info.home);
-    if (lane === undefined && held !== undefined) {
-      out.push({ lane: info.lane, action: "stopped", detail: held });
-      continue;
-    }
-    await close(info.lane);
-    rmSync(stoppedFile(info.home), { force: true });
-    rmSync(startsFile(info.home), { force: true });
-    await start(root, info);
-    out.push({ lane: info.lane, action: "started" });
-  }
+  for (const info of named(root, lane))
+    out.push(
+      await withLifecycleLock(info.home, info.lane, () =>
+        restartOne(root, info, lane === undefined),
+      ),
+    );
   return out;
 }
