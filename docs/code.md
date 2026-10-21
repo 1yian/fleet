@@ -20,9 +20,11 @@ Code in this repository has no comments. A lint rule fails on any comment. What 
 ```
 cardd serve --db <file> [--listen <host:port>] [--board <built board folder>] [--hostname <name>]...
 cardd lane add <name> --db <file> --home <path> [--parent <lane>]
-cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo]
+cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>]
 cardd project yolo <name> on|off --db <file>
 ```
+
+`project add` without `--repo` reads the project's GitHub repository from the `origin` remote of a clone on the `cardd` host. `serve` fills in any that are missing at each start.
 
 `lane add` prints the mate's token. `CARDD_TIMING_SCALE=0.01` speeds up every timer, for tests. `project yolo` sets the captain's standing merge authority for a project. Only the captain sets it, through this command line.
 
@@ -60,10 +62,12 @@ cardd project yolo <name> on|off --db <file>
 ### The timed check
 
 - `check.ts` is one level-triggered pass over `cards.db`. Each rule finds (card, condition) pairs. A finding is written once while its condition holds and clears when it stops. When everything is in order, the check wakes nobody.
+- Workers never name their PR. `pulls.ts` finds a ship card's PR on GitHub by its attempts' branches, newest first, in the project's repository (`projects.repo`): `gh pr list --repo --head <branch> --state all`. It looks it up for a worker's done report, for each check pass, and before close, each time fresh. The URL found last is kept on the card only for the board and the merge question's text. A project with no repository on record is never looked up.
 - PR state is read with `gh` before the check's transaction. A PR that could not be read keeps its PR findings open.
+- A done report on a ship card carries what the lookup found, for the mate to read: the PR's URL and state, a note that no PR has the card's branch as its head, or why the lookup failed. A done with no PR still reaches the mate, which asks the worker to open one. A PR found already merged or closed raises no merge question.
 - A finished card (done reported or PR merged, no hold) only needs closing, so its mate is reminded sooner, and the lane's parent hears when a second mate leaves it open. Only the mate closes it.
 - Past the list of reminder times, one more fires for each repeat of the last gap.
-- Before close, `cardd` reads the PR of a card whose merge is not on record yet, so a worker that just merged need not wait for the next pass. That finding is told to nobody, because the mate is closing the card.
+- Before close, `cardd` finds the PR of a ship card whose merge is not on record yet, so a worker that just merged need not wait for the next pass. That finding is told to nobody, because the mate is closing the card.
 - `github.ts`: `gh pr checks` exits non-zero while checks fail or pend, so its JSON decides. A failed read is an error, not an empty list. Only "no checks reported" is empty.
 - `timing.ts` holds the timers of spec section 28. Three missed job heartbeats make a job lost.
 
@@ -146,7 +150,7 @@ cardd project yolo <name> on|off --db <file>
 - `e2e/support/scratch.ts` makes a scratch copy of the repository with its own lane homes. A home with a memory profile needs a short base folder, because the socket path must fit 103 bytes on macOS.
 - `e2e/support/fake-model.ts` is a Pi extension that posts each model call to the test's control server and returns the move the test chooses. Everything else in Pi stays real.
 - `e2e/support/herdr.ts` runs an isolated herdr session whose name starts with `fleet-lab-`, so a test never touches the captain's session.
-- `e2e/support/fake-gh.ts` keeps PR state in the JSON file named by `FAKE_GH_STATE`. `broken` makes `gh pr checks` fail like a network error. `down` makes every call fail.
+- `e2e/support/fake-gh.ts` keeps PR state in the JSON file named by `FAKE_GH_STATE`. A PR's repository is the owner/name in its URL, and `head` is the branch it was opened from, which `gh pr list --repo --head` matches. `broken` makes `gh pr checks` fail like a network error. `down` makes every call that reaches the PR fail. Every `Cardd` in the tests runs this fake gh, so no test reaches GitHub. The trial runs the real one.
 - `e2e/support/flaky-transport.ts` behaves like ssh whose connection drops right after the worker started: the first `herdr agent start` that succeeds loses its output and exits 255. `switch-transport.ts` fails like an unreachable host once its marker file exists. A marker that starts with `hang` hangs instead, and one that starts with `flood` floods every command but herdr's.
 - `e2e/extension/memory.test.ts` reads the private memory loader from a dotfiles checkout, `FLEET_DOTFILES` at `FLEET_DOTFILES_REF`. Without one, as in CI, it is skipped.
 - `e2e/trial/trial.ts` is a real-model trial, not a test: `node e2e/trial/trial.ts <project clone> [model]`.

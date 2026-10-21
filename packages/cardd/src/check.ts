@@ -1,8 +1,9 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs } from "./attempts.ts";
 import { applyChange } from "./change.ts";
-import { readPullRequest, type PullRequest } from "./github.ts";
+import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
+import { lookUpPr } from "./pulls.ts";
 import { factsFrom, finishFrom, type Change } from "./status.ts";
 import {
   addEntry,
@@ -113,7 +114,7 @@ function closeAdvice(kind: string, merged: boolean, hasPr: boolean): string {
     return "Relay the findings, then close it with close(card, summary), or close(card, summary=<why>, landed=false) if it did not land.";
   if (hasPr)
     return "Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge its PR, then close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
-  return "If it made no code change, close it with close(card, summary). Otherwise close(card, summary=<why>, landed=false).";
+  return "No PR was found for its branch: comment the worker to open one from its task branch. If it made no code change, close it with close(card, summary). Otherwise close(card, summary=<why>, landed=false).";
 }
 
 const minutesSince = (now: number, since: number): number => Math.round((now - since) / MINUTE);
@@ -256,18 +257,24 @@ export async function readPullRequests(
 ): Promise<Map<number, PullRequest | undefined>> {
   const cards = rows(
     db,
-    "SELECT id, pr FROM cards WHERE pr IS NOT NULL AND status NOT IN ('done', 'dropped')",
+    `SELECT c.id AS id FROM cards c JOIN projects p ON p.name = c.project
+       WHERE c.kind = 'ship' AND c.status NOT IN ('done', 'dropped') AND p.repo IS NOT NULL
+         AND EXISTS (SELECT 1 FROM attempts a WHERE a.card = c.id)`,
   );
   const read = await Promise.all(
     cards.map(async (row) => {
-      const pr = await readPullRequest(String(row["pr"])).catch((error: unknown) => {
-        console.error(`timed check: ${String(error)}`);
-        return undefined;
-      });
-      return [Number(row["id"]), pr] as const;
+      const card = Number(row["id"]);
+      const found = await lookUpPr(db, card);
+      if (found.kind === "unknown")
+        console.error(`timed check: c-${String(card)}: ${found.reason}`);
+      return [card, found] as const;
     }),
   );
-  return new Map(read);
+  return new Map(
+    read.flatMap(([card, found]): [number, PullRequest | undefined][] =>
+      found.kind === "none" ? [] : [[card, found.kind === "found" ? found.pr : undefined]],
+    ),
+  );
 }
 
 const PR_CONDITIONS: ReadonlySet<string> = new Set(["pr-merged", "pr-closed", "checks-failed"]);
@@ -389,10 +396,10 @@ export function runCheck(
 }
 
 export async function recordMerge(db: DatabaseSync, card: number): Promise<string[]> {
-  const url = getCard(db, card).pr;
-  if (url === null || finishFrom(cardEntries(db, card)).merged) return [];
-  const pr = await readPullRequest(url).catch(() => undefined);
-  if (pr?.state !== "MERGED") return [];
+  if (getCard(db, card).kind !== "ship" || finishFrom(cardEntries(db, card)).merged) return [];
+  const found = await lookUpPr(db, card);
+  if (found.kind !== "found" || found.pr.state !== "MERGED") return [];
+  const pr = found.pr;
   return transaction(db, () => {
     const notify = new Set<string>();
     const matches = prMatches(db, new Map([[card, pr]])).map((match) => ({

@@ -30,7 +30,18 @@ export class FakeGitHub {
   ): void {
     const all = parseRecord(readFileSync(this.file, "utf8"));
     const list = Object.entries(checks).map(([name, bucket]) => ({ name, bucket }));
-    writeFileSync(this.file, JSON.stringify({ ...all, [url]: { state, checks: list } }));
+    const kept = all[url];
+    const head: unknown =
+      typeof kept === "object" && kept !== null ? Reflect.get(kept, "head") : undefined;
+    const pr = { state, checks: list, ...(head === undefined ? {} : { head }) };
+    writeFileSync(this.file, JSON.stringify({ ...all, [url]: pr }));
+  }
+
+  setHead(url: string, head: string): void {
+    const all = parseRecord(readFileSync(this.file, "utf8"));
+    const pr = all[url];
+    if (typeof pr !== "object" || pr === null) throw new Error(`no PR ${url}: set it first`);
+    writeFileSync(this.file, JSON.stringify({ ...all, [url]: { ...pr, head } }));
   }
 
   breakChecks(url: string): void {

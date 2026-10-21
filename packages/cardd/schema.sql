@@ -135,7 +135,7 @@ CREATE TABLE projects (
   ),
   branch_prefix TEXT NOT NULL DEFAULT '',
   default_base TEXT NOT NULL DEFAULT 'main',
-  profile TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profile)), yolo INTEGER NOT NULL DEFAULT 0 CHECK (yolo IN (0, 1))) STRICT;
+  profile TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profile)), yolo INTEGER NOT NULL DEFAULT 0 CHECK (yolo IN (0, 1)), repo TEXT) STRICT;
 
 CREATE TABLE secrets (
   name TEXT PRIMARY KEY,

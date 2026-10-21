@@ -127,13 +127,22 @@ export const isLaneCard = (db: DatabaseSync, card: Card): boolean =>
 
 export function addProject(
   db: DatabaseSync,
-  project: { name: string; delivery: string; clones: Record<string, string>; yolo: boolean },
+  project: {
+    name: string;
+    delivery: string;
+    clones: Record<string, string>;
+    yolo: boolean;
+    repo: string | null;
+  },
 ): void {
-  db.prepare("INSERT INTO projects (name, delivery, clones, yolo) VALUES (?, ?, ?, ?)").run(
+  db.prepare(
+    "INSERT INTO projects (name, delivery, clones, yolo, repo) VALUES (?, ?, ?, ?, ?)",
+  ).run(
     project.name,
     project.delivery,
     JSON.stringify(project.clones),
     project.yolo ? 1 : 0,
+    project.repo,
   );
 }
 

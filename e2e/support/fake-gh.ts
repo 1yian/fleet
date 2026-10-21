@@ -1,29 +1,45 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { isRecord, records } from "./json.ts";
+import { parseArgs } from "node:util";
+import { isRecord, parseRecord, records } from "./json.ts";
 
 const file = process.env["FAKE_GH_STATE"] ?? "";
-const prs: unknown = JSON.parse(readFileSync(file, "utf8"));
-const [noun, verb, url = ""] = process.argv.slice(2);
-const pr = isRecord(prs) && isRecord(prs[url]) ? prs[url] : undefined;
-if (noun !== "pr" || pr === undefined || !isRecord(prs)) {
-  console.error(`fake gh: no PR ${url}`);
+const prs = parseRecord(readFileSync(file, "utf8"));
+const { positionals, values } = parseArgs({
+  allowPositionals: true,
+  strict: false,
+  options: { repo: { type: "string" }, head: { type: "string" } },
+});
+const [noun, verb, url = ""] = positionals;
+
+function fail(message: string): never {
+  console.error(message);
   process.exit(1);
 }
-if (pr["down"] === true) {
-  console.error("HTTP 502: Bad Gateway");
-  process.exit(1);
+
+const down = (pr: Record<string, unknown>): void => {
+  if (pr["down"] === true) fail("HTTP 502: Bad Gateway");
+};
+
+if (noun === "pr" && verb === "list") {
+  const repo = `https://github.com/${String(values.repo)}/pull/`;
+  const found = Object.entries(prs)
+    .flatMap(([each, pr]) => (isRecord(pr) ? [{ url: each, pr }] : []))
+    .filter((each) => each.url.startsWith(repo) && each.pr["head"] === values.head)
+    .reverse();
+  for (const each of found) down(each.pr);
+  console.log(
+    JSON.stringify(found.slice(0, 1).map((each) => ({ url: each.url, state: each.pr["state"] }))),
+  );
+  process.exit(0);
 }
-if (verb === "view") console.log(JSON.stringify({ state: pr["state"] }));
+
+const pr = prs[url];
+if (noun !== "pr" || !isRecord(pr)) fail(`fake gh: no PR ${url}`);
+down(pr);
 if (verb === "checks") {
-  if (pr["broken"] === true) {
-    console.error("HTTP 502: Bad Gateway");
-    process.exit(1);
-  }
+  if (pr["broken"] === true) fail("HTTP 502: Bad Gateway");
   const checks = records(pr["checks"]);
-  if (checks.length === 0) {
-    console.error("no checks reported on the 'feature' branch");
-    process.exit(1);
-  }
+  if (checks.length === 0) fail("no checks reported on the 'feature' branch");
   console.log(JSON.stringify(checks));
   process.exitCode = checks.some((check) => check["bucket"] === "fail") ? 1 : 0;
 }

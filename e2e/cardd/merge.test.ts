@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, test } from "node:test";
 import { BoardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
-import { FakeGitHub } from "../support/github.ts";
+import { begin, branchOf, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import type { FakeGitHub } from "../support/github.ts";
 
 const PR = "https://github.com/acme/web/pull/7";
 const [APPROVE, CHANGES] = MERGE_OPTIONS;
@@ -12,8 +12,8 @@ const [APPROVE, CHANGES] = MERGE_OPTIONS;
 let fleet: Fleet;
 let gh: FakeGitHub;
 beforeEach(async () => {
-  gh = new FakeGitHub();
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001", ...gh.env });
+  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  gh = fleet.cardd.gh;
 });
 afterEach(async () => {
   await fleet.cardd.stop();
@@ -21,7 +21,8 @@ afterEach(async () => {
 
 async function done(card: Card, pr = PR): Promise<Session> {
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  await worker.call("report", { status: "done", text: "PR green and ready", pr });
+  gh.setHead(pr, branchOf(card));
+  await worker.call("report", { status: "done", text: "PR green and ready" });
   return worker;
 }
 const approve = (card: Card, choice: string = APPROVE) =>
@@ -37,6 +38,9 @@ test("a done ship card asks the captain; approval, the worker's merge, and the m
   const card = await newCard(fleet.main, "Users see one scrollbar");
   const worker = await done(card);
   assert.equal(await status(fleet.main, card), "needs-you");
+  const report = await fleet.main.waitForEntry((entry) => entry.kind === "report", "the report");
+  assert.equal(report.fields["pr"], PR);
+  assert.equal((await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.pr, PR);
   await assert.rejects(approve(card, "sure"), {
     message: `a merge question needs the choice "${APPROVE}" or "${CHANGES}"`,
   });
@@ -46,13 +50,31 @@ test("a done ship card asks the captain; approval, the worker's merge, and the m
   await fleet.main.call("comment", { card: card.id, text: "Merge your PR now." });
   assert.equal(await status(fleet.main, card), "merging");
   merge();
-  await worker.call("report", { status: "done", text: `merged ${PR}`, pr: PR });
+  await worker.call("report", { status: "done", text: `merged ${PR}` });
   assert.equal(await status(fleet.main, card), "merging");
   const notice = await fleet.main.waitForEntry(
     (entry) => entry.fields["condition"] === "pr-merged",
     "the notice",
   );
   assert.equal(notice.body, "PR merged; close it with close(card, summary)");
+});
+
+test("a done ship card whose branch has no PR reaches its mate, with no merge question", async () => {
+  gh.setPr(PR, "OPEN", { ci: "pass" });
+  gh.setHead(PR, "someone-elses-branch");
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await worker.call("report", { status: "done", text: `PR ${PR} opened` });
+
+  const report = await fleet.main.waitForEntry((entry) => entry.kind === "report", "the report");
+  assert.equal(report.fields["prNote"], `no PR has branch ${branchOf(card)} as its head`);
+  assert.equal(report.fields["pr"], undefined);
+  assert.equal(await status(fleet.main, card), "with-mate");
+  assert.deepEqual((await fleet.cardd.board()).holds, []);
+
+  gh.setHead(PR, branchOf(card));
+  await worker.call("report", { status: "done", text: `PR ${PR} opened` });
+  assert.equal(await status(fleet.main, card), "needs-you");
 });
 
 test("request changes sends the card back to the worker", async () => {
@@ -68,7 +90,8 @@ test("a done report while another hold is open adds no second hold: the merge qu
   const card = await newCard(fleet.main, "Users see one scrollbar");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   await holdFor(card, "Which name?");
-  await worker.call("report", { status: "done", text: "PR green and ready", pr: PR });
+  gh.setHead(PR, branchOf(card));
+  await worker.call("report", { status: "done", text: "PR green and ready" });
   const open = () => fleet.cardd.board().then((board) => board.holds);
   assert.deepEqual(
     (await open()).map((hold) => [hold.card, hold.merge]),
@@ -114,6 +137,7 @@ test("a project's yolo flag sends a done card to Merging without a question, but
 
   fleet.cardd.yolo("web", false);
   const after = await newCard(fleet.main, "after the flag");
+  gh.setPr("https://github.com/acme/web/pull/9", "OPEN", { ci: "pass" });
   await done(after, "https://github.com/acme/web/pull/9");
   assert.equal(await status(fleet.main, after), "needs-you");
 });
@@ -135,7 +159,7 @@ test("a second done report does not add a second merge question", async () => {
   gh.setPr(PR, "OPEN", { ci: "pass" });
   const card = await newCard(fleet.main, "Users see one scrollbar");
   const worker = await done(card);
-  await worker.call("report", { status: "done", text: "still green", pr: PR });
+  await worker.call("report", { status: "done", text: "still green" });
   await approve(card);
   await assert.rejects(approve(card), { message: `c-${String(card.id)} has no open hold` });
 });
@@ -207,7 +231,8 @@ test("a second mate's merge question waits on main, which escalates it to the ca
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const card = await newCard(cleo, "Ads stay under budget");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
-  await worker.call("report", { status: "done", text: "PR green", pr: PR });
+  gh.setHead(PR, branchOf(card));
+  await worker.call("report", { status: "done", text: "PR green" });
 
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual((await fleet.cardd.board()).holds, []);

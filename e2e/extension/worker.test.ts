@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { begin, branchOf, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
 
 const [START, OLDER, NEWER] = [1, 2, 3];
@@ -53,10 +53,9 @@ const delivered = (id: number) => (event: Record<string, unknown>) =>
   event["type"] === "fleet_delivered" && event["entryId"] === id;
 
 test("the task message wakes a new worker, and its report reaches the mate", async () => {
-  h.onModel(() => ({
-    tool: "report",
-    args: { status: "done", text: "PR green and ready", pr: PR },
-  }));
+  fleet.cardd.gh.setPr(PR, "OPEN", { ci: "pass" });
+  fleet.cardd.gh.setHead(PR, branchOf(card));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green and ready" } }));
   await worker("fix the scrollbar");
   await fleet.main.waitForEntries(1);
 

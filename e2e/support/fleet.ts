@@ -10,7 +10,7 @@ export interface Fleet {
 export async function startFleet(env: Record<string, string> = {}): Promise<Fleet> {
   const cardd = await Cardd.start(env);
   const mainToken = cardd.addLane("main");
-  cardd.addProject("web", { maverick: "/clones/web", p620: "/clones/web" });
+  cardd.addProject("web", { maverick: "/clones/web", p620: "/clones/web" }, "acme/web");
   return { cardd, mainToken, main: await cardd.connect(mainToken) };
 }
 
@@ -26,6 +26,9 @@ export async function begin(mate: Session, card: Card, task = "the task"): Promi
   const value = await mate.call("attempt.begin", { card: card.id, host: "maverick", task });
   return check(OPS["attempt.begin"].result, value).token;
 }
+
+export const branchOf = (card: Card, attempt = 1): string =>
+  `c-${String(card.id)}-a${String(attempt)}`;
 
 export async function status(mate: Session, card: Card): Promise<Card["status"]> {
   const cards = check(OPS.board.result, await mate.call("board", {}));

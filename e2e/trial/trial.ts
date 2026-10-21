@@ -20,7 +20,7 @@ writeFileSync(
   "# Main lane\n\nThis lane owns every project in the registry.\n",
 );
 
-const cardd = await Cardd.start({}, ["--board", BOARD]);
+const cardd = await Cardd.start({ PATH: process.env["PATH"] ?? "" }, ["--board", BOARD]);
 const token = cardd.addLane("main", undefined, home);
 const name = clone.split("/").at(-1) ?? "project";
 cardd.addProject(name, { local: clone });

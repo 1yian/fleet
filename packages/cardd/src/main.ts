@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
+import { fillRepos } from "./pulls.ts";
 import { serve } from "./server.ts";
 import { addLane, addProject, setYolo } from "./store.ts";
 
@@ -16,6 +17,7 @@ const { values, positionals } = parseArgs({
     delivery: { type: "string" },
     clone: { type: "string", multiple: true, default: [] },
     yolo: { type: "boolean", default: false },
+    repo: { type: "string" },
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
@@ -30,6 +32,7 @@ if (command === "serve") {
     throw new Error(`--listen ${values.listen} must be <host>:<port>, with both parts set`);
   const scale = Number(process.env["CARDD_TIMING_SCALE"] ?? "1");
   if (!(scale > 0)) throw new Error("CARDD_TIMING_SCALE must be a positive number");
+  fillRepos(db);
   console.log(
     `cardd listening on ${await serve(db, host, Number(port), timings(scale), values.board, values.hostname)}`,
   );
@@ -56,12 +59,11 @@ if (command === "serve") {
       throw new Error(`--clone ${pair} must be <host>=<path>, with both parts set`);
     clones[host] = path;
   }
-  addProject(db, {
-    name: rest[1],
-    delivery: values.delivery,
-    clones,
-    yolo: values.yolo,
-  });
+  if (values.repo !== undefined && !/^[^/\s]+\/[^/\s]+$/.test(values.repo))
+    throw new Error(`--repo ${values.repo} must be <owner>/<name>`);
+  const repo = values.repo ?? null;
+  addProject(db, { name: rest[1], delivery: values.delivery, clones, yolo: values.yolo, repo });
+  fillRepos(db);
 } else if (
   command === "project" &&
   rest[0] === "yolo" &&
@@ -72,6 +74,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] | cardd project yolo <name> on|off --db <file>",
+    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] | cardd project yolo <name> on|off --db <file>",
   );
 }

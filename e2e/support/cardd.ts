@@ -16,6 +16,7 @@ import {
   type ServerMessage,
   type Thread,
 } from "@fleet/protocol";
+import { FakeGitHub } from "./github.ts";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 const WAIT_MS = 10_000;
@@ -32,6 +33,7 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
 
 export class Cardd {
   readonly db = join(mkdtempSync(join(tmpdir(), "fleet-cardd-")), "cards.db");
+  readonly gh = new FakeGitHub();
   url = "";
   private child: ChildProcess | undefined;
   private readonly env: NodeJS.ProcessEnv;
@@ -39,7 +41,7 @@ export class Cardd {
   private readonly args: readonly string[];
 
   private constructor(env: NodeJS.ProcessEnv, args: readonly string[]) {
-    this.env = { ...process.env, ...env };
+    this.env = { ...process.env, ...this.gh.env, ...env };
     this.args = args;
   }
 
@@ -74,17 +76,19 @@ export class Cardd {
     }).trim();
   }
 
-  addProject(name: string, clones: Record<string, string> = {}): void {
-    this.addProjectWithCloneArgs(
-      name,
-      Object.entries(clones).map(([host, path]) => `${host}=${path}`),
-    );
+  addProject(name: string, clones: Record<string, string> = {}, repo?: string): void {
+    const cloneArgs = Object.entries(clones).map(([host, path]) => `${host}=${path}`);
+    this.addProjectWithCloneArgs(name, cloneArgs, repo === undefined ? [] : ["--repo", repo]);
   }
 
-  addProjectWithCloneArgs(name: string, clones: readonly string[]): void {
+  addProjectWithCloneArgs(
+    name: string,
+    clones: readonly string[],
+    more: readonly string[] = [],
+  ): void {
     const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", "no-mistakes"];
     const cloneArgs = clones.flatMap((clone) => ["--clone", clone]);
-    execFileSync("node", [...args, ...cloneArgs], {
+    execFileSync("node", [...args, ...cloneArgs, ...more], {
       stdio: ["ignore", "pipe", "pipe"],
     });
   }
