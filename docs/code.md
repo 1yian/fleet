@@ -179,6 +179,17 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `ship-sprite.ts` owns the geometry, the bounce track, and the two linked cadences. Every tick moves the water a quarter cell, and every fourth tick moves the boat one cell, so the trough stays under the boat. Ticks, not wall time, drive every change. Hiding freezes the sprite at its last painted frame, and the next run resumes there. A fresh session resets it. State never sits in a module-level singleton. The boat at an endpoint already carries the new direction. A resize recomputes and clamps the track before the next frame.
 - `ship.ts` paints runs with standard ANSI codes only: one blue for water, so the swell reads through glyph height, and one yellow for the whole boat. It recomputes the track from the render width on every frame. The widget key `calm-working-ship` is shared with Firstmate's calm and the standalone Pi calm, so a session that loads more than one shows a single boat. Its timer never keeps Pi's process alive.
 
+### Transcript
+
+[transcript.md](transcript.md) owns what the captain sees. Inside:
+
+- Pi has no hook around a whole message. Its Markdown transform sees one text block at a time and has no message identity, and `registerMessageRenderer` covers only custom messages. So `transcript/layout.ts` patches the `render` of `UserMessageComponent`, `AssistantMessageComponent`, and `CustomMessageComponent`, as Calm does, and each patch draws the rule around the lines Pi drew. A Markdown transformer would draw one rule for each text block.
+- The patch keeps no state about earlier messages. Pi draws every message again at each frame, on a resize, and when a restart replays the history, so a rule that depended on the last message drawn would repeat or vanish. The rule depends only on the message and the width.
+- Pi's assistant and custom rows start with their own blank line, and the rule goes under it. A user row has its blank line outside it, in a `Spacer` that Pi adds before the row, so the rule goes first. An empty row stays empty, which is why a silent reply has no rule.
+- `state.ts` holds the mate's name and a getter for the live theme, in one process-wide object like Calm's. The getter, not a copy of the theme, so a theme change reaches rows already on screen. Without a terminal nothing sets it and nothing is drawn.
+- `patch.ts` is shared with Calm: install a patch once per process, probe the Pi member it replaces, and report a missing one with a line. Each patch loses only its own part if a Pi release moves the member.
+- `index.ts` registers a message renderer for the fleet's own rows. It draws the text in Pi's custom-message box without its `[fleet]` label. `@earendil-works/pi-tui` is a peer dependency of the extension, as `pi-coding-agent` is, because the renderer builds `Box` and `Text` at run time.
+
 ## Board
 
 - `App.tsx` reloads the board on every change and keeps only the newest load. It keeps what the captain started to write on each card when he goes back to the board.

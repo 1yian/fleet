@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +67,16 @@ function keep(name: string, screen: string, colored: string): void {
   mkdirSync(EVIDENCE, { recursive: true });
   writeFileSync(join(EVIDENCE, `${name}.txt`), screen);
   writeFileSync(join(EVIDENCE, `${name}.ansi`), colored);
+}
+
+const NARROW = 61;
+
+async function resize(pane: string, cols: number): Promise<void> {
+  const info = await lab.run(["pane", "process-info", "--pane", pane]);
+  const shell = records([info["process_info"]])[0]?.["shell_pid"];
+  const tty = execFileSync("ps", ["-o", "tty=", "-p", String(shell)], { encoding: "utf8" }).trim();
+  const flag = process.platform === "darwin" ? "-f" : "-F";
+  execFileSync("stty", [flag, `/dev/${tty}`, "cols", String(cols)]);
 }
 
 const RULE = /^── ([a-z0-9-]+) ─+$/;
@@ -153,14 +164,14 @@ test("each message gets one muted rule and a sender label, through streaming, a 
   keep("3-silent-yield", yielded, await lab.coloredScreen(pane));
   assert.deepEqual(transcript(yielded).shown, answered);
 
-  await lab.run(["pane", "split", "--pane", pane, "--direction", "right"]);
+  await resize(pane, NARROW);
   const narrow = await screenWhere(pane, "the narrow pane", (screen) => {
     const now = transcript(screen);
-    return now.width > 0 && now.width < first.width && now.shown.length >= answered.length;
+    return now.width === NARROW && now.shown.length >= answered.length;
   });
   keep("4-narrow", narrow, await lab.coloredScreen(pane));
   const squeezed = transcript(narrow);
-  assert.ok(squeezed.rules.every((rule) => rule.length === squeezed.width));
+  assert.ok(squeezed.rules.every((rule) => rule.length === NARROW));
   assert.ok(squeezed.gaps);
   assert.deepEqual(
     squeezed.rules.map((rule) => RULE.exec(rule)?.[1]),

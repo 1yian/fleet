@@ -9,5 +9,5 @@ export function setApart(body: readonly string[], rule: string): string[] {
   const [first, ...rest] = body;
   if (first === undefined) return [];
   if (stripTerminalSequences(first) === "") return [first, rule, ...rest];
-  return ["", rule, ...body];
+  return [rule, ...body];
 }
