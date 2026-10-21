@@ -297,7 +297,7 @@ export function endReviewWait(
 ): void {
   const fields = { job: wait.id, label: wait.label, lost: true, resolves: wait.resolves };
   const body = "the review wait ended without feedback. It is not run again.";
-  const entry = { card, author: `job:${String(wait.id)}`, kind: "job-result", body, fields };
+  const entry = { card, author: `job:${String(wait.id)}`, kind: "review-feedback", body, fields };
   addEntry(db, entry, recipients);
 }
 

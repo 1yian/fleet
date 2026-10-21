@@ -212,9 +212,6 @@ const ENTRY_EFFECTS: Partial<Record<string, (basis: Basis, tally: Tally, entry: 
   report: (basis, tally, entry) => {
     REPORT_EFFECTS[text(entry, "status") ?? ""]?.(basis, tally, entry, text(entry, "key") ?? "");
   },
-  "job-result": (_basis, tally, entry) => {
-    if (answerKey(tally, text(entry, "resolves") ?? "")) resume(tally);
-  },
   "review-feedback": (_basis, tally, entry) => {
     if (answerKey(tally, text(entry, "resolves") ?? "")) resume(tally);
   },
