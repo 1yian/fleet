@@ -118,7 +118,7 @@ const users = (turns: Turn[]): string =>
 
 async function fleetRunning(): Promise<{ main: number; ops: number; far: number }> {
   return until(async () => {
-    const [main, ops, far] = await Promise.all(["fleet-main", "fleet-ops", "fleet-far"].map(piOf));
+    const [main, ops, far] = await Promise.all(["1stmate", "2ndmate-ops", "2ndmate-far"].map(piOf));
     return main === undefined || ops === undefined || far === undefined
       ? undefined
       : { main, ops, far };
