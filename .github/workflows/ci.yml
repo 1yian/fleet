@@ -160,9 +160,14 @@ jobs:
       - run: node --test --test-concurrency=1 "e2e/cardd/**/*.test.ts"
 
   e2e-extension:
+    name: e2e-extension (${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.extension-e2e == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -186,7 +191,7 @@ jobs:
         run: npm install -g lavish-axi@0.1.90
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: node --test --test-concurrency=1 "e2e/extension/**/*.test.ts"
+      - run: node --test --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 "e2e/extension/**/*.test.ts"
 
   e2e-board:
     needs: changes
