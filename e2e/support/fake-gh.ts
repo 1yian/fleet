@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { isRecord, parseRecord, records } from "./json.ts";
 
@@ -10,6 +10,15 @@ const { positionals, values } = parseArgs({
   options: { repo: { type: "string" }, head: { type: "string" } },
 });
 const [noun, verb, url = ""] = positionals;
+const log = (mark: "+" | "-"): void => {
+  appendFileSync(`${file}.log`, `${mark} ${String(process.pid)}\n`);
+};
+const delay = prs["$delay"];
+log("+");
+if (typeof delay === "number") await new Promise((resolve) => setTimeout(resolve, delay));
+process.on("exit", () => {
+  log("-");
+});
 
 function fail(message: string): never {
   console.error(message);

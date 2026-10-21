@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { guardCleanup } from "./guarded.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
 import "./tool-stubs.ts";
 
@@ -10,9 +11,12 @@ const WAIT_MS = 30_000;
 export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
   private server: ChildProcess | undefined;
+  private disarm = (): void => undefined;
 
   static async start(env: Record<string, string>): Promise<HerdrLab> {
     const lab = new HerdrLab();
+    const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
+    lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawn("herdr", ["server", "--session", lab.name], {
       env: { ...process.env, ...env, HERDR_SESSION: lab.name },
       stdio: "ignore",
@@ -78,6 +82,7 @@ export class HerdrLab {
       await exited;
     }
     await this.text(["session", "delete", this.name]);
+    this.disarm();
   }
 
   private async report(): Promise<string> {

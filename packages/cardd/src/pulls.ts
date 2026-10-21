@@ -38,7 +38,33 @@ async function findOrView({ repo, pr, branches }: Place): Promise<PrLookup> {
   return found === undefined ? { kind: "none", branches } : { kind: "found", pr: found };
 }
 
-export async function lookUpPr(db: DatabaseSync, card: number): Promise<PrLookup> {
+interface Slot {
+  running: Promise<PrLookup> | undefined;
+  queued: Promise<PrLookup> | undefined;
+}
+
+const slots = new Map<number, Slot>();
+
+export function lookUpPr(db: DatabaseSync, card: number): Promise<PrLookup> {
+  const slot: Slot = slots.get(card) ?? { running: undefined, queued: undefined };
+  slots.set(card, slot);
+  if (slot.queued !== undefined) return slot.queued;
+  const start = (): Promise<PrLookup> => {
+    slot.queued = undefined;
+    const run = readPr(db, card);
+    slot.running = run;
+    void run.finally(() => {
+      slot.running = undefined;
+      if (slot.queued === undefined) slots.delete(card);
+    });
+    return run;
+  };
+  if (slot.running === undefined) return start();
+  slot.queued = slot.running.then(start);
+  return slot.queued;
+}
+
+async function readPr(db: DatabaseSync, card: number): Promise<PrLookup> {
   try {
     const found = await findOrView(placeOf(db, card));
     if (found.kind === "found")

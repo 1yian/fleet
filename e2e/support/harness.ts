@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import { spawnGuarded } from "./guarded.ts";
 import { isRecord, messageText, optionalNumber, parseRecord, type JsonRecord } from "./json.ts";
 
 export interface Turn {
@@ -163,7 +164,7 @@ export class Harness {
       extensions.flatMap((path) => ["-e", path]),
       ["--session-id", sessionId],
     ].flat();
-    const child = spawn(PI_BIN, args, {
+    const child = spawnGuarded(PI_BIN, args, {
       cwd: workDir,
       stdio: ["pipe", "pipe", "inherit"],
       env: {

@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,26 @@ export class FakeGitHub {
       typeof kept === "object" && kept !== null ? Reflect.get(kept, "head") : undefined;
     const pr = { state, checks: list, ...(head === undefined ? {} : { head }) };
     writeFileSync(this.file, JSON.stringify({ ...all, [url]: pr }));
+  }
+
+  slow(ms: number): void {
+    const all = parseRecord(readFileSync(this.file, "utf8"));
+    writeFileSync(this.file, JSON.stringify({ ...all, $delay: ms }));
+  }
+
+  callsInFlight(): { started: number; now: number; most: number; pids: number[] } {
+    const log = `${this.file}.log`;
+    const marks = existsSync(log) ? readFileSync(log, "utf8").split("\n") : [];
+    let now = 0;
+    let most = 0;
+    const pids: number[] = [];
+    for (const line of marks) {
+      const [mark, pid] = line.split(" ");
+      now += mark === "+" ? 1 : mark === "-" ? -1 : 0;
+      if (mark === "+") pids.push(Number(pid));
+      most = Math.max(most, now);
+    }
+    return { started: pids.length, now, most, pids };
   }
 
   setHead(url: string, head: string): void {

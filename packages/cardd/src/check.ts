@@ -251,6 +251,19 @@ function holdMatches(db: DatabaseSync, now: number): Match[] {
   });
 }
 
+const PR_LOOKUPS_AT_ONCE = 4;
+
+async function inBatches<T, R>(
+  items: readonly T[],
+  size: number,
+  each: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let at = 0; at < items.length; at += size)
+    results.push(...(await Promise.all(items.slice(at, at + size).map(each))));
+  return results;
+}
+
 export async function readPullRequests(
   db: DatabaseSync,
 ): Promise<Map<number, PullRequest | undefined>> {
@@ -265,15 +278,12 @@ export async function readPullRequests(
     const { status } = getCard(db, Number(row["id"]));
     return status !== "done" && status !== "dropped";
   });
-  const read = await Promise.all(
-    open.map(async (row) => {
-      const card = Number(row["id"]);
-      const found = await lookUpPr(db, card);
-      if (found.kind === "unknown")
-        console.error(`timed check: c-${String(card)}: ${found.reason}`);
-      return [card, found] as const;
-    }),
-  );
+  const read = await inBatches(open, PR_LOOKUPS_AT_ONCE, async (row) => {
+    const card = Number(row["id"]);
+    const found = await lookUpPr(db, card);
+    if (found.kind === "unknown") console.error(`timed check: c-${String(card)}: ${found.reason}`);
+    return [card, found] as const;
+  });
   return new Map(
     read.flatMap(([card, found]): [number, PullRequest | undefined][] =>
       found.kind === "none" ? [] : [[card, found.kind === "found" ? found.pr : undefined]],
