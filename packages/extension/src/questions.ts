@@ -1,4 +1,4 @@
-// Mate tools for holds, grants, and merges (spec sections 11.2, 17, 18, and 20.4). release checks
+// Mate tools for holds and grants (spec sections 11.2, 17, and 18). release checks
 // the captain's words where it can see them: a user-role message in this mate's
 // own session file. Otherwise cardd looks for them in the captain's board entries.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -67,7 +67,7 @@ export function registerQuestions(
   });
 }
 
-/** grant and merge: both act on the captain's authority. */
+/** grant: acts on the captain's authority. */
 export function registerAuthority(
   pi: ExtensionAPI,
   link: Link,
@@ -100,18 +100,6 @@ export function registerAuthority(
       };
       await link.call("grant", args);
       return reply("Recorded the grant.");
-    },
-  });
-  pi.registerTool({
-    name: "merge",
-    label: "Merge",
-    description:
-      "Merges a card's PR through the guarded path. It needs a grant, the captain's approval, or the captain's quoted words. It refuses red or pending checks.",
-    parameters: Type.Object({ card: CardId, words: Type.Optional(Words) }),
-    execute: async (_id, params) => {
-      const args =
-        params.words === undefined ? params : { ...params, source: sourceOf(params.words) };
-      return reply(`Merged. ${card(await link.call("merge", args))}`);
     },
   });
 }

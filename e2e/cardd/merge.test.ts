@@ -1,6 +1,7 @@
-// Grants, merge approvals, the guarded merge, and PR state (spec sections 7.5,
+// Grants, merge approvals, the worker's merge, and PR state (spec sections 7.5,
 // 13.1, 18, and 20.4), against a real cardd and a fake gh.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, test } from "node:test";
 import { BoardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
@@ -29,7 +30,10 @@ const approve = (card: Card, choice: string = APPROVE) =>
   fleet.main.call("release", { card: card.id, words: "yes, merge it", source: "chat", choice });
 const holdFor = (card: Card, question: string) =>
   fleet.main.call("hold", { card: card.id, question, options: ["a", "b"] });
-const merge = (card: Card) => fleet.main.call("merge", { card: card.id });
+/** The worker merges its PR with gh, as its mate's comment tells it to. */
+const merge = (pr = PR): void => {
+  execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
+};
 const grant = (project: string) =>
   fleet.main.call("grant", {
     lane: "main",
@@ -40,10 +44,10 @@ const grant = (project: string) =>
     merge: true,
   });
 
-test("a done ship card asks the captain; approval, the merge, and the merged notice follow", async () => {
+test("a done ship card asks the captain; approval, the worker's merge, and the merged notice follow", async () => {
   gh.setPr(PR, "OPEN", { ci: "pass" });
   const card = await newCard(fleet.main, "Users see one scrollbar");
-  await done(card);
+  const worker = await done(card);
   assert.equal(await status(fleet.main, card), "needs-you");
   await assert.rejects(approve(card, "sure"), {
     message: `a merge question needs the choice "${APPROVE}" or "${CHANGES}"`,
@@ -51,8 +55,11 @@ test("a done ship card asks the captain; approval, the merge, and the merged not
 
   await approve(card);
   assert.equal(await status(fleet.main, card), "merging");
-  await merge(card);
-  assert.equal(gh.state(PR), "MERGED");
+  await fleet.main.call("comment", { card: card.id, text: "Merge your PR now." });
+  assert.equal(await status(fleet.main, card), "merging");
+  merge();
+  await worker.call("report", { status: "done", text: `merged ${PR}`, pr: PR });
+  assert.equal(await status(fleet.main, card), "merging");
   const notice = await fleet.main.waitForEntry(
     (entry) => entry.fields["condition"] === "pr-merged",
     "the notice",
@@ -109,44 +116,6 @@ test("a lane grant for merging sends a done card to Merging, but only in its pro
   assert.equal(await status(fleet.main, inside), "merging");
 });
 
-test("merge refuses without authority, and refuses red or pending checks", async () => {
-  gh.setPr(PR, "OPEN", { ci: "fail" });
-  const card = await newCard(fleet.main, "Users see one scrollbar");
-  await done(card);
-  await assert.rejects(merge(card), {
-    message: `no authority to merge c-${String(card.id)}: it needs a grant or the captain's approval`,
-  });
-  const quoted = () =>
-    fleet.main.call("merge", { card: card.id, words: "merge it", source: "chat" });
-  await assert.rejects(quoted(), { message: "checks failed: ci" });
-  gh.setPr(PR, "OPEN", { ci: "pending" });
-  await assert.rejects(quoted(), { message: "checks have not reported yet: ci" });
-  assert.equal(gh.state(PR), "OPEN");
-});
-
-test("quoted words merge only on a card with an open merge question, and they answer it", async () => {
-  gh.setPr(PR, "OPEN", { ci: "pass" });
-  const blocked = await newCard(fleet.main, "unrelated question");
-  const blockedWorker = await fleet.cardd.connect(await begin(fleet.main, blocked));
-  await blockedWorker.call("report", { status: "blocked", text: "stuck", pr: PR });
-  await holdFor(blocked, "Which way?");
-  assert.equal(await status(fleet.main, blocked), "needs-you");
-  const quoted = (card: Card) =>
-    fleet.main.call("merge", { card: card.id, words: "merge it", source: "chat" });
-  await assert.rejects(quoted(blocked), {
-    message: `no authority to merge c-${String(blocked.id)}: it needs a grant or the captain's approval`,
-  });
-  assert.equal(gh.state(PR), "OPEN");
-
-  const card = await newCard(fleet.main, "Users see one scrollbar");
-  await done(card, "https://github.com/acme/web/pull/11");
-  gh.setPr("https://github.com/acme/web/pull/11", "OPEN", { ci: "pass" });
-  await quoted(card);
-  assert.equal(gh.state("https://github.com/acme/web/pull/11"), "MERGED");
-  assert.equal(await status(fleet.main, card), "merging");
-  await assert.rejects(approve(card), { message: `c-${String(card.id)} has no open hold` });
-});
-
 test("a second done report does not add a second merge question", async () => {
   gh.setPr(PR, "OPEN", { ci: "pass" });
   const card = await newCard(fleet.main, "Users see one scrollbar");
@@ -154,26 +123,6 @@ test("a second done report does not add a second merge question", async () => {
   await worker.call("report", { status: "done", text: "still green", pr: PR });
   await approve(card);
   await assert.rejects(approve(card), { message: `c-${String(card.id)} has no open hold` });
-});
-
-test("merge does not run when gh cannot read the checks", async () => {
-  gh.setPr(PR, "OPEN", { ci: "pass" });
-  const card = await newCard(fleet.main, "Users see one scrollbar");
-  await done(card);
-  gh.breakChecks(PR);
-  await assert.rejects(
-    fleet.main.call("merge", { card: card.id, words: "merge it", source: "chat" }),
-    /gh pr checks .* failed: HTTP 502/,
-  );
-  assert.equal(gh.state(PR), "OPEN");
-});
-
-test("a PR with no checks reported merges", async () => {
-  gh.setPr(PR, "OPEN");
-  const card = await newCard(fleet.main, "Users see one scrollbar");
-  await done(card);
-  await fleet.main.call("merge", { card: card.id, words: "merge it", source: "chat" });
-  assert.equal(gh.state(PR), "MERGED");
 });
 
 test("a closed PR, and red checks while Merging, go back to the mate", async () => {
@@ -206,7 +155,7 @@ test("a gh read that fails for one pass does not repeat a PR notice", async () =
   const card = await newCard(fleet.main, "Users see one scrollbar");
   await done(card);
   await approve(card);
-  await merge(card);
+  merge();
   await fleet.main.waitForEntry(
     (entry) => entry.card === card.id && entry.fields["condition"] === "pr-merged",
     "the notice",
@@ -266,8 +215,14 @@ test("an approval still stands after a later question takes the card back to the
   await holdFor(card, "Also clean up the old run?");
   assert.equal(await status(fleet.main, card), "needs-you");
 
-  await merge(card);
-  assert.equal(gh.state(PR), "MERGED");
+  await fleet.main.call("release", {
+    card: card.id,
+    words: "a it is",
+    source: "chat",
+    choice: "a",
+  });
+  assert.equal(await status(fleet.main, card), "merging");
+  assert.deepEqual((await fleet.cardd.board()).holds, []);
 });
 
 test("a merge grant imported with the command line covers its project", async () => {
@@ -296,7 +251,7 @@ test("the captain's own words on a merge question from the board ask for changes
   assert.equal(response.status, 200);
 
   assert.equal(await status(fleet.main, card), "working");
-  await assert.rejects(merge(card), { message: /no authority to merge/ });
+  assert.deepEqual((await fleet.cardd.board()).holds, []);
 });
 
 test("a PR merged by hand makes the open merge question moot, and the card closes as Done", async () => {

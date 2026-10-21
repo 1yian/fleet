@@ -217,15 +217,6 @@ export const OPS = {
     }),
     result: Type.Object({ grant: Type.Integer() }),
   },
-  merge: {
-    roles: ["mate"],
-    args: Type.Object({
-      card: Type.Integer(),
-      words: Type.Optional(Words),
-      source: Type.Optional(Type.Enum(["chat", "board", "record"])),
-    }),
-    result: CardSchema,
-  },
   "close.begin": {
     roles: ["mate"],
     args: Type.Object({
