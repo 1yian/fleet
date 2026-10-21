@@ -7,9 +7,10 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { gate, Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
-import { configureMain, Scratch, startMain } from "../support/scratch.ts";
+import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
+const LABEL_RESETTER = fileURLToPath(new URL("../support/thinking-label.ts", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["CALM_EVIDENCE_DIR"];
 
@@ -166,4 +167,77 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   );
   keep("6-calm-off", off);
   assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "off\n");
+});
+
+const THINKING_LABEL = "Thinking...";
+const WEIGHING = "Weighing whether Cleo needs a ruling.";
+const CHECKING = "Checking the board before answering.";
+const SETTLED = "Nothing needs you.";
+const NEXT = "Still nothing.";
+
+test("calm shows no Thinking... label for hidden thinking, in a live turn with a tool call, after another extension resets the label, after /calm toggles, and after a restart", async () => {
+  mkdirSync(join(h.dir, "agent"), { recursive: true });
+  writeFileSync(join(h.dir, "agent", "settings.json"), JSON.stringify({ hideThinkingBlock: true }));
+  mkdirSync(join(scratch.root, "config"), { recursive: true });
+  writeFileSync(join(scratch.root, "config", "calm"), "on\n");
+  const working = gate();
+  h.onModel(async () => {
+    await working.wait;
+    return { thinking: CHECKING, tool: "board" };
+  }, "mate");
+  h.onModel(() => ({ thinking: WEIGHING, text: SETTLED }), "mate");
+  h.onModel(() => ({ thinking: WEIGHING, text: NEXT }), "mate");
+  const args = [...mateArgs(h), "-e", LABEL_RESETTER];
+  const pane = await startMain(lab, scratch, h, false, args);
+  await screenWhere(pane, "the mate to start", showing(["[Extensions]"]));
+
+  await lab.submit(pane, CAPTAIN);
+  const pending = await screenWhere(pane, "the boat", showing(["◿│◣"]));
+  keep("7-thinking-pending", pending);
+  assert.ok(!pending.includes(THINKING_LABEL));
+  working.open();
+  const live = await screenWhere(
+    pane,
+    "the answer",
+    showing([SETTLED], [THINKING_LABEL, WEIGHING]),
+  );
+  keep("8-calm-thinking-hidden", live);
+
+  await lab.submit(pane, "/calm");
+  const normal = await screenWhere(
+    pane,
+    "the label to return",
+    showing([THINKING_LABEL, SETTLED]),
+    true,
+  );
+  keep("9-normal-thinking-label", normal);
+
+  await lab.submit(pane, "/calm");
+  const again = await screenWhere(
+    pane,
+    "the label to go away",
+    showing([SETTLED], [THINKING_LABEL]),
+  );
+  keep("10-calm-again", again);
+
+  await lab.submit(pane, CAPTAIN);
+  const next = await screenWhere(pane, "the next answer", showing([NEXT]));
+  assert.ok(!next.includes(THINKING_LABEL));
+  keep("11-calm-next-turn", next);
+
+  const { group, shell } = await matePane();
+  process.kill(-group, "SIGKILL");
+  const deadline = Date.now() + 30_000;
+  while ((await matePane()).group !== shell) {
+    assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  await startMain(lab, scratch, h, true, args);
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted mate to connect");
+  const restarted = await screenWhere(
+    pane,
+    "the restored conversation, still calm",
+    showing([NEXT], [THINKING_LABEL]),
+  );
+  keep("12-calm-thinking-restart", restarted);
 });

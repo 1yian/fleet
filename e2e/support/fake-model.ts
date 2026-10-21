@@ -33,10 +33,15 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
   const tool = optionalString(move, "tool");
   const text = optionalString(move, "text");
   if (tool !== undefined) {
+    const thought = optionalString(move, "thinking");
+    const thinking = thought === undefined ? [] : [fauxThinking(thought)];
     const note = text === undefined ? [] : [fauxText(text)];
-    return fauxAssistantMessage([...note, fauxToolCall(tool, scalarArgs(move["args"]))], {
-      stopReason: "toolUse",
-    });
+    return fauxAssistantMessage(
+      [...thinking, ...note, fauxToolCall(tool, scalarArgs(move["args"]))],
+      {
+        stopReason: "toolUse",
+      },
+    );
   }
   const thinking = optionalString(move, "thinking");
   const texts = move["texts"];

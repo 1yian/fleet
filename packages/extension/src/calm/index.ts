@@ -15,6 +15,10 @@ function install(name: string, patch: () => void): void {
   installPresentation("Calm", name, patch);
 }
 
+function redrawAssistantRows(ui: ExtensionUIContext): void {
+  ui.setHiddenThinkingLabel(undefined);
+}
+
 export default function calm(pi: ExtensionAPI): void {
   install("tool row", hideToolRows);
   install("fleet message", hideFleetMessages);
@@ -43,7 +47,7 @@ export default function calm(pi: ExtensionAPI): void {
     setCalmActive(active);
     pi.events.emit(PRESENTATION_EVENT, { active, stockExportRendering: false });
     showBoat(ui, true);
-    ui.setHiddenThinkingLabel(active ? "" : undefined);
+    redrawAssistantRows(ui);
   };
 
   pi.on("session_start", (_event, ctx) => {

@@ -53,10 +53,7 @@ export function hideAssistantChrome(): void {
       isStreaming?: boolean,
     ) {
       const active = calmActive();
-      const dropThinking =
-        active &&
-        Reflect.get(this, "hiddenThinkingLabel") === "" &&
-        Reflect.get(this, "hideThinkingBlock") === true;
+      const dropThinking = active && Reflect.get(this, "hideThinkingBlock") === true;
       const dropNotes = active && midTurn(message);
       const shown = message.content.filter(
         (block) =>
