@@ -33,13 +33,14 @@ import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const DOTFILES = process.env["FLEET_DOTFILES"] ?? join(homedir(), "Projects", "dotfiles");
-// The loader that treats any turn-starting custom message as a notification:
-// https://github.com/1yian/dotfiles/pull/34. Bump it when the loader changes.
-const REF = process.env["FLEET_DOTFILES_REF"] ?? "44c622fac3fbc5af288c3f123800eae67fc2d792";
+// The loader that labels a fleet message with just "[fleet]", once:
+// https://github.com/1yian/dotfiles/pull/35. Bump it when the loader changes.
+const REF = process.env["FLEET_DOTFILES_REF"] ?? "b1abeff18f245f49f05f19088cc2f0e377dc5a50";
 const AGENT_FILES = ["home/.pi/agent/extensions/fm-optchat", "home/.pi/agent/optchat"];
 const PACKAGE = dirname(fileURLToPath(import.meta.resolve("pi-optchat/package.json")));
 const PROBE = fileURLToPath(new URL("../support/probe.ts", import.meta.url));
-const NOTICE = "[firstmate] Operational notification (fleet)";
+// The one label the model and the memory see on a fleet message.
+const NOTICE = "[fleet]";
 const IDLE_WORD = "PINEAPPLE";
 const BUSY_WORD = "KUMQUAT";
 
@@ -118,6 +119,27 @@ const isMains = (turns: readonly Turn[]): boolean =>
 const mentions = (turns: readonly Turn[], word: string): boolean =>
   turns.some((turn) => turn.text.includes(word));
 
+/** How many times a text holds the label. */
+const labels = (text: string): number => text.split(NOTICE).length - 1;
+
+/**
+ * Asserts that a text is a fleet message labelled "[fleet]" once, and nothing else. The model's
+ * turn may start with the memory's own context block, so the message there starts after it.
+ */
+function assertLabelled(text: string, what: string): void {
+  const message = text.replace(/^<chat>[\s\S]*<\/chat>/, "");
+  assert.ok(message.startsWith(`${NOTICE} `), `${what} does not start with ${NOTICE}: ${text}`);
+  assert.equal(labels(text), 1, `${what} has ${NOTICE} more than once: ${text}`);
+  assert.ok(!text.includes("Operational notification"), `${what} has the old notice: ${text}`);
+}
+
+/** The user turn that carries a word in the model's calls. */
+function userTurn(calls: readonly (readonly Turn[])[], word: string): string {
+  const found = calls.flat().find((turn) => turn.role === "user" && turn.text.includes(word));
+  assert.ok(found !== undefined, `the model never got a user turn with ${word}`);
+  return found.text;
+}
+
 /** The records of every .jsonl file under a folder. */
 function jsonl(folder: string): JsonRecord[] {
   if (!existsSync(folder)) return [];
@@ -183,6 +205,9 @@ test(
       calls.some((turns) => turns.at(-1)?.role === "user" && mentions(turns, BUSY_WORD)),
       "the model never got the mid-turn message",
     );
+    // The model sees each one labelled "[fleet]" once, with no other notice.
+    for (const word of [IDLE_WORD, BUSY_WORD])
+      assertLabelled(userTurn(calls, word), `the model's ${word} message`);
     // No turn was cut short.
     const settled = h.events.filter((event) => event["type"] === "settled");
     assert.deepEqual(
@@ -206,10 +231,7 @@ test(
     }, "both messages in the memory journal");
     for (const item of items) {
       assert.equal(item["kind"], "user");
-      assert.ok(
-        String(item["text"]).startsWith(NOTICE),
-        `not a notification: ${String(item["text"])}`,
-      );
+      assertLabelled(String(item["text"]), "the journal item");
     }
     const tree = await until(() => {
       const found = jsonl(join(memoryHome, "profiles", "main", "tree"));
@@ -273,10 +295,8 @@ test(
       "the message in leo's memory journal",
     );
     assert.equal(item["kind"], "user");
-    assert.ok(
-      String(item["text"]).startsWith(NOTICE),
-      `not a notification: ${String(item["text"])}`,
-    );
+    assertLabelled(String(item["text"]), "leo's journal item");
+    assertLabelled(userTurn(h.callsOf("mate"), IDLE_WORD), "leo's model message");
     assert.ok(!existsSync(join(scratch.root, "state", "optchat-activation.json")));
   },
 );
