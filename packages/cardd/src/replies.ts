@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { howToReply, type Card, type Entry, type OwedReply } from "@fleet/protocol";
-import { factsFrom } from "./status.ts";
-import { addEntry, cardEntries, workerOf } from "./store.ts";
+import { addEntry, cardEntries, loadCards, workerOf } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
 type Recipient = "worker" | "mate";
@@ -133,16 +132,19 @@ function nudge(db: DatabaseSync, owed: Owed, now: number, t: Timings, since: num
 }
 
 export function replyNudges(db: DatabaseSync, now: number, t: Timings): string[] {
-  const cards = db
-    .prepare(
-      `SELECT DISTINCT e.card AS card FROM entries e JOIN cards c ON c.id = e.card
-       WHERE e.kind = 'comment' AND json_extract(e.fields, '$.owes') IS NOT NULL
-         AND c.phase NOT IN ('done', 'dropped')`,
-    )
-    .all();
-  return cards.flatMap((row) => {
-    const entries = cardEntries(db, Number(row["card"]));
-    if (factsFrom(entries).hold !== undefined) return [];
+  const asking = new Set(
+    db
+      .prepare(
+        "SELECT DISTINCT card FROM entries WHERE kind = 'comment' AND json_extract(fields, '$.owes') IS NOT NULL",
+      )
+      .all()
+      .map((row) => Number(row["card"])),
+  );
+  const cards = loadCards(db).filter(
+    ({ card }) => asking.has(card.id) && card.status !== "done" && card.status !== "dropped",
+  );
+  return cards.flatMap(({ entries, standing }) => {
+    if (standing.facts.hold !== undefined) return [];
     const freed = entries.findLast((entry) => entry.kind === "release" || entry.kind === "answer");
     return owedFrom(entries)
       .filter((owed) => owed.escalatedAt === null)
