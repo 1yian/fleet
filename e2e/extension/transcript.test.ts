@@ -97,12 +97,14 @@ function transcript(screen: string): Transcript {
   const editor = lines.findIndex((line) => /^─+$/.test(line));
   const width = lines[editor]?.length ?? 0;
   const start = lines.findIndex((line) => line.startsWith("[Extensions]"));
-  const body = lines.slice(start + 2, editor);
+  const body = lines
+    .slice(start + 1, editor)
+    .filter((line) => !line.startsWith("Warning:") && !line.startsWith("  fake-model"));
   const rules = body.filter((line) => RULE.test(line));
   return {
     width,
     rules,
-    gaps: body.every((line, index) => !RULE.test(line) || body[index - 1] === ""),
+    gaps: body.every((line, index) => !RULE.test(line) || index === 0 || body[index - 1] === ""),
     shown: body
       .filter((line) => line.trim() !== "" && !line.includes("Working"))
       .map((line) => (RULE.test(line) ? `── ${RULE.exec(line)?.[1] ?? ""} ──` : line.trim())),
