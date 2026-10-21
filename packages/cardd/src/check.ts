@@ -1,5 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { loseSilentJobs } from "./attempts.ts";
+import { endReviewWait, loseSilentJobs } from "./attempts.ts";
 import { chaseIntake } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
@@ -221,13 +221,16 @@ function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
       [card.lane],
     );
     const worker = workerOf(db, card.id);
-    if (worker !== undefined) {
+    const heard = worker === undefined ? [] : [worker];
+    if (job.resolves !== null) {
+      endReviewWait(db, card.id, { id: job.id, label: job.label, resolves: job.resolves }, heard);
+    } else if (worker !== undefined) {
       const fields = { job: job.id, label: job.label, lost: true };
       const note = "no heartbeat arrived. It is not run again.";
       addEntry(
         db,
         { card: card.id, author: `job:${String(job.id)}`, kind: "job-result", body: note, fields },
-        [worker],
+        heard,
       );
     }
     return worker === undefined ? [card.lane] : [card.lane, worker];

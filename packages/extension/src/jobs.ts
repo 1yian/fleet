@@ -25,7 +25,17 @@ interface JobOptions {
   readonly review?: string;
 }
 
+const POLL = /\blavish-axi['"]?\s+poll\b/;
+const POLL_OF_PAGE =
+  /^\s*lavish-axi\s+poll\s+('[^']*'|"[^"`$\\]*"|[^\s'"`$;&|<>()\\]+)(?:\s+--owner\s+(?:'[^']*'|"[^"`$\\]*"|[^\s'"`$;&|<>()\\]+))?\s*$/;
+
+function polledPage(command: string): string | undefined {
+  const quoted = POLL_OF_PAGE.exec(command)?.[1];
+  return quoted?.replace(/^(['"])(.*)\1$/, "$2");
+}
+
 export class Jobs {
+  private waitOnPage: ((page: string) => Promise<string>) | undefined;
   private readonly running = new Map<number, string>();
   private readonly link: Link;
   private readonly cardd: { url: string; token: string };
@@ -41,6 +51,10 @@ export class Jobs {
 
   get reviewing(): boolean {
     return [...this.running.values()].includes(REVIEW_LABEL);
+  }
+
+  waitOnPolledPages(wait: (page: string) => Promise<string>): void {
+    this.waitOnPage = wait;
   }
 
   finished(job: unknown): void {
@@ -79,6 +93,7 @@ export class Jobs {
         command,
         timeoutMs,
         heartbeatMs,
+        review: review !== undefined,
         tailLines,
         lineChars,
       };
@@ -120,6 +135,15 @@ export class Jobs {
       execute: async (_id, params) => {
         const { label, command } = params;
         if (label === REVIEW_LABEL) throw new Error("wait on a review page with wait_review");
+        if (POLL.test(command)) {
+          const page = polledPage(command);
+          if (page === undefined || this.waitOnPage === undefined)
+            throw new Error("wait on a review page with wait_review, not a lavish-axi poll job");
+          return {
+            content: [{ type: "text", text: await this.waitOnPage(page) }],
+            details: {},
+          };
+        }
         const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
         const { job, tab } = await this.launch(label, command, { timeoutMs });
         const text = `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`;

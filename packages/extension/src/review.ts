@@ -57,7 +57,30 @@ async function answer(page: string, reply: string): Promise<void> {
   }
 }
 
+async function waitOnPage(jobs: Jobs, file: string, reply?: string): Promise<string> {
+  const problem = lavishProblem();
+  if (problem !== undefined) throw new Error(problem);
+  if (jobs.reviewing) {
+    throw new Error(
+      "You already wait on the captain's review. His feedback arrives as a [fleet] message.",
+    );
+  }
+  const page = resolve(file);
+  if (reply !== undefined) await answer(page, reply);
+  const url = await open(page, reply === undefined);
+  const owner = `fleet-${basename(process.cwd())}`;
+  const command = `lavish-axi poll ${quote(page)} --owner ${quote(owner)}`;
+  const review = `The captain's review page waits for his feedback: ${url} (${page}). His feedback comes back to me.`;
+  const { job, tab } = await jobs.launch(REVIEW_LABEL, command, {
+    timeoutMs: REVIEW_TIMEOUT_MS,
+    ...FEEDBACK,
+    review,
+  });
+  return `The page is open for the captain at ${url}. Job ${String(job)} waits for his feedback in tab ${tab}, and the card waits on him. His feedback arrives as a [fleet] message; you may end this run.`;
+}
+
 export function registerReview(pi: ExtensionAPI, jobs: Jobs): void {
+  jobs.waitOnPolledPages((page) => waitOnPage(jobs, page));
   pi.registerTool({
     name: "wait_review",
     label: "Wait for review",
@@ -65,25 +88,7 @@ export function registerReview(pi: ExtensionAPI, jobs: Jobs): void {
       "Shows the captain an HTML page with Lavish and waits for his feedback in its own herdr tab. Returns at once: the card waits on the captain, and his feedback arrives later as a [fleet] message. Answer it, then call wait_review again with reply for the next round. Never run lavish-axi to open or poll a page yourself.",
     parameters: ReviewParams,
     execute: async (_id, { file, reply }) => {
-      const problem = lavishProblem();
-      if (problem !== undefined) throw new Error(problem);
-      if (jobs.reviewing) {
-        throw new Error(
-          "You already wait on the captain's review. His feedback arrives as a [fleet] message.",
-        );
-      }
-      const page = resolve(file);
-      if (reply !== undefined) await answer(page, reply);
-      const url = await open(page, reply === undefined);
-      const owner = `fleet-${basename(process.cwd())}`;
-      const command = `lavish-axi poll ${quote(page)} --owner ${quote(owner)}`;
-      const review = `The captain's review page waits for his feedback: ${url} (${page}). His feedback comes back to me.`;
-      const { job, tab } = await jobs.launch(REVIEW_LABEL, command, {
-        timeoutMs: REVIEW_TIMEOUT_MS,
-        ...FEEDBACK,
-        review,
-      });
-      const text = `The page is open for the captain at ${url}. Job ${String(job)} waits for his feedback in tab ${tab}, and the card waits on him. His feedback arrives as a [fleet] message; you may end this run.`;
+      const text = await waitOnPage(jobs, file, reply);
       return { content: [{ type: "text", text }], details: {} };
     },
   });
