@@ -7,6 +7,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
+import { parseRecord } from "../support/json.ts";
 import { configureMain, mateArgs, Scratch } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -111,6 +112,12 @@ const hears = (pattern: RegExp, count = 1): Promise<string[]> =>
     return found.length >= count ? found : undefined;
   }, `the mate to hear ${pattern.source}`);
 
+const callWith = (text: string): Promise<Turn[]> =>
+  until(
+    () => h.callsOf("mate").find((turns) => turns.some((turn) => turn.text === text)),
+    "the model call that heard it",
+  );
+
 const WAKE = /^\[fleet\] scheduled wake/;
 
 const systemOf = (turns: readonly Turn[]): string =>
@@ -121,19 +128,11 @@ function setPlan(plan: unknown): void {
   assert.equal(set.status, 0, set.stderr);
 }
 
-interface Shown {
-  readonly active: Record<string, unknown> | null;
-  readonly next: Record<string, unknown> | null;
-}
-
-function shown(): Shown {
+function shown(): { active: unknown; next: unknown } {
   const out = cardd.admin("lane", "plan", "ads");
   assert.equal(out.status, 0, out.stderr);
-  const parsed: unknown = JSON.parse(out.stdout);
-  return {
-    active: Reflect.get(Object(parsed), "active"),
-    next: Reflect.get(Object(parsed), "next"),
-  };
+  const { active, next } = parseRecord(out.stdout);
+  return { active, next };
 }
 
 const startMate = (verb: "up" | "restart"): string =>
@@ -176,12 +175,7 @@ test("a scheduled wake names its purpose and is answered, and the weekly entry j
     first,
     `[fleet] scheduled wake 2026-05-04T09:00 UTC: Review ad spend; Write the weekly summary (reply owed, ${id}: answer with comment(card=1, text, replyTo="${id}"))`,
   );
-  const system = systemOf(
-    await until(
-      () => h.callsOf("mate").find((turns) => turns.some((turn) => turn.text === first)),
-      "the first model call",
-    ),
-  );
+  const system = systemOf(await callWith(first));
   assert.match(system, /spend at most \$50 a day, and never change a campaign/);
   assert.match(system, /- every day at 09:00: Review ad spend/);
   assert.match(system, /- every mon at 09:00: Write the weekly summary/);
@@ -268,7 +262,7 @@ test("a changed plan applies after the mate restarts, and a cardd restart repeat
   await answered(1);
 
   setPlan({ ...PLAN, wakes: [{ at: "09:00", purpose: "Morning B" }] });
-  assert.equal(shown().next?.["wakes"] !== undefined, true);
+  assert.notEqual(shown().next, null);
   setClock("2026-05-05T09:00:00Z");
   await hears(/2026-05-05T09:00 UTC: Morning A/);
   await answered(2);

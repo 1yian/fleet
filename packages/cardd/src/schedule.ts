@@ -17,7 +17,7 @@ export function timeZoneProblem(timeZone: string): string | undefined {
   }
 }
 
-export function localMinute(ms: number, timeZone: string): string {
+function localMinute(ms: number, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     hourCycle: "h23",

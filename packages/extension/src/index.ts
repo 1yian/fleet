@@ -133,6 +133,7 @@ function start(
     registerQuestions(pi, link, () => sessionFile);
     registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
     registerStow(pi, HOME(), lane);
+    registerPlan(pi, link);
   }
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
@@ -147,7 +148,6 @@ function start(
     link.stop();
   });
   registerIntake(pi, link);
-  if (role === "mate") registerPlan(pi, link);
   const active = (): void => {
     link.activity("running");
   };

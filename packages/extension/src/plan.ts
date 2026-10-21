@@ -9,7 +9,7 @@ const cadence = ({ at, days }: Wake): string => {
   return `every ${on} at ${at}`;
 };
 
-export function planPrompt(plan: Plan): string {
+function planPrompt(plan: Plan): string {
   const goal = plan.goal.trim();
   if (goal === "" && plan.wakes.length === 0) return "";
   const parts = ["## Your goal and scheduled wakes"];
