@@ -99,7 +99,7 @@ function transcript(screen: string): Transcript {
   const start = lines.findIndex((line) => line.startsWith("[Extensions]"));
   const body = lines
     .slice(start + 1, editor)
-    .filter((line) => !line.startsWith("Warning:") && !line.startsWith("  fake-model"));
+    .filter((line) => !line.trim().startsWith("Warning:") && !line.startsWith("  fake-model"));
   const rules = body.filter((line) => RULE.test(line));
   return {
     width,
