@@ -40,6 +40,10 @@ export class HerdrLab {
     return this.text(["pane", "read", pane, "--source", "visible"]);
   }
 
+  async history(pane: string): Promise<string> {
+    return this.text(["pane", "read", pane, "--source", "recent", "--lines", "200"]);
+  }
+
   async coloredScreen(pane: string): Promise<string> {
     return this.text(["pane", "read", pane, "--source", "visible", "--ansi"]);
   }
