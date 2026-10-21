@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { check, VersionSchema, type Version } from "@fleet/protocol";
+import { check, OPS, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
+import { tagUntaggedWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
 import { readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
 import { fleet, hostsOf, restartAll, withLanes } from "./lanes.ts";
+import type { Link } from "./link.ts";
 
 const UPDATE_WAIT_MS = 900_000;
 const CARDD_WAIT_MS = Number(process.env["FLEET_CARDD_WAIT_MS"]) || 60_000;
@@ -227,7 +229,7 @@ async function checkCardd(config: LaneConfig, cardd: CarddConfig): Promise<HostR
     : reply;
 }
 
-async function updateFleet(config: LaneConfig): Promise<{ ok: boolean; text: string }> {
+async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolean; text: string }> {
   const checked: HostReply[] = [];
   for (const host of hostsOf(config)) checked.push(await askHost(config, host, ["--check"]));
   if (config.cardd !== undefined) checked.push(await checkCardd(config, config.cardd));
@@ -237,6 +239,7 @@ async function updateFleet(config: LaneConfig): Promise<{ ok: boolean; text: str
       ok: false,
       text: `Fleet update stopped before any change: nothing was pulled, and no mate was restarted.\n${bullets(blocking.flatMap((reply) => reply.lines))}`,
     };
+  await tagWorkers(config, link).catch(() => undefined);
   const replies = await untilOneFails(config);
   if (replies.some((reply) => reply.state !== "updated"))
     return {
@@ -263,6 +266,13 @@ async function updateFleet(config: LaneConfig): Promise<{ ok: boolean; text: str
       ...changeLines(replies, carddStep !== undefined),
     ].join("\n"),
   };
+}
+
+async function tagWorkers(config: LaneConfig, link: Link): Promise<void> {
+  const cards = check(OPS.board.result, await link.call("board", {}));
+  const laneOfCard = new Map(cards.map((card) => [card.id, card.lane]));
+  for (const host of hostsOf(config))
+    await tagUntaggedWorkers(host, laneOfCard).catch(() => undefined);
 }
 
 function changeLines(replies: readonly HostReply[], carddUpdated: boolean): string[] {
@@ -304,7 +314,7 @@ function restartMain(ctx: ExtensionContext): void {
 
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
-export function registerUpdate(pi: ExtensionAPI, home: string): void {
+export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void {
   const config = readLaneConfig(home);
   if (config === undefined) return;
   let restartPending = false;
@@ -313,7 +323,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string): void {
     if (running) throw new Error("the fleet update is already running");
     running = true;
     try {
-      const result = await withLanes(() => updateFleet(config));
+      const result = await withLanes(() => updateFleet(config, link));
       return result.ok ? { ok: true, text: `${result.text}\n${mainLine()}` } : result;
     } finally {
       running = false;

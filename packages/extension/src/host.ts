@@ -92,6 +92,17 @@ export async function onHost(
   });
 }
 
+const FLEET_ON_ROOT = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
+
+export function onFleetRoot(
+  host: string,
+  root: string | undefined,
+  args: readonly string[],
+  timeout?: number,
+): Promise<string> {
+  return onHost(host, ["sh", "-c", FLEET_ON_ROOT, "fleet", root ?? "", ...args], timeout);
+}
+
 export const records = (value: unknown): Record<string, unknown>[] =>
   Array.isArray(value) ? value.filter(isRecord) : [];
 export const field = (

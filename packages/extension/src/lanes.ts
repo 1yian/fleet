@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
-import { HostUnreachable, onHost, records } from "./host.ts";
+import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import type { LaneRow } from "./views.ts";
 
@@ -18,9 +18,7 @@ export async function fleet(
   wait = REMOTE_WAIT_MS,
 ): Promise<string> {
   if (host === "local") return onHost(host, [process.execPath, LAUNCH, ...args], wait);
-  const script = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
-  const argv = ["sh", "-c", script, "fleet", config.roots[host] ?? "", ...args];
-  return onHost(host, argv, wait);
+  return onFleetRoot(host, config.roots[host], args, wait);
 }
 
 async function rows(
