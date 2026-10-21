@@ -1,4 +1,3 @@
-// Mate sessions: the board, the card tools, close, and dispatch (spec section 11.2).
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardName, CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
@@ -104,7 +103,6 @@ async function wholeBoard(
   return boardText(cards, params, header);
 }
 
-/** board: the fleet's header and its cards, or one card. It prints TOON (views.ts). */
 function registerBoard(pi: ExtensionAPI, link: Link, lanes: LaneStates | undefined): void {
   pi.registerTool({
     name: "board",
@@ -134,7 +132,6 @@ export function registerMate(
     label: "New card",
     description:
       "Creates a card in your own lane. A card must exist before any work starts. As main, never use lane: to hand work to a second mate, comment on its lane card.",
-    // The mate always names its cards; cardd also accepts cards without a name.
     parameters: Type.Object({ ...OPS["card.new"].args.properties, name: CardName }),
     execute: async (_id, params) =>
       reply(`Created ${line(check(CardSchema, await link.call("card.new", params)))}.`),

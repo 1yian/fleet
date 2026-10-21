@@ -1,9 +1,3 @@
-// The run_long wrapper (spec section 11.1). It runs one command in the herdr tab
-// where the captain can watch it, keeps the last lines of output, and posts the
-// result to cardd once, retrying while cardd is down. It tells cardd that it is
-// alive until the result is taken. It reads its job from a private file, so the
-// token never appears in shell history.
-// Usage: node job.ts <job file>
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
@@ -53,7 +47,6 @@ class Stream {
   private readonly decoder = new StringDecoder("utf8");
   private rest = "";
 
-  /** The complete lines in this chunk. A carriage return ends a line too. The unfinished line waits for the next chunk. */
   write(chunk: Buffer): string[] {
     const parts = (this.rest + this.decoder.write(chunk)).split(/\r\n|\r(?!$)|\n/);
     this.rest = (parts.pop() ?? "").slice(-MAX_LINE_CHARS);
@@ -65,7 +58,6 @@ class Stream {
   }
 }
 
-/** The last lines of the output. A line split across reads, or a character split across bytes, stays whole. */
 class Tail {
   private lines: string[] = [];
   readonly out = new Stream();
@@ -75,7 +67,6 @@ class Tail {
     this.lines = this.lines.concat(lines).slice(-TAIL_LINES);
   }
 
-  /** Moves each stream's unfinished line into the tail. Call it once, when the output is over. */
   flush(): void {
     this.add([this.out.end(), this.err.end()].filter((line) => line !== ""));
   }
@@ -90,7 +81,6 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-/** Copies output to the tab. If the tab is gone, it stops copying and the job goes on. */
 function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
   let open = true;
   out.on("error", () => {
@@ -147,9 +137,6 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   };
   const onSignal = (): void => {
     stop("interrupted");
-    // A closed tab can take this process down soon after its hangup, so report early: as
-    // soon as the command ends or a moment passes. The full result follows if there is time;
-    // cardd records only the first.
     void Promise.race([exited, sleep(EARLY_REPORT_MS)]).then(() => {
       tail.flush();
       const outputTail = `${tail.text()}\ninterrupted`.trim();
@@ -174,7 +161,6 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   return { exitCode: reason === undefined ? (code ?? 1) : forced, outputTail: tail.text() };
 }
 
-/** Calls an operation on cardd as the worker. Returns the HTTP status, or 0 if cardd did not answer. */
 function call(job: Job, op: string, args: object): Promise<number> {
   const headers = { authorization: `Bearer ${job.token}`, "content-type": "application/json" };
   const body = JSON.stringify({ op, args });
@@ -184,7 +170,6 @@ function call(job: Job, op: string, args: object): Promise<number> {
   );
 }
 
-/** Posts the result until cardd answers. A 401 means the attempt ended: nobody waits for it. */
 async function post(job: Job, result: { exitCode: number; outputTail: string }): Promise<void> {
   for (let wait = 1000; ; wait = Math.min(wait * 2, MAX_RETRY_MS)) {
     const status = await call(job, "job.finish", { job: job.job, ...result });

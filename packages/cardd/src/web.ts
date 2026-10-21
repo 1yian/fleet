@@ -1,6 +1,3 @@
-// The board's side of cardd (spec section 21): its JSON API, its live socket,
-// and its built files. Only the Tailscale network reaches cardd. Every board
-// request must name an allowed Host (see permits), which closes DNS rebinding.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
@@ -29,7 +26,6 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
-/** The authority the way a browser writes it: lower case, and without the default port 80. */
 function canonical(authority: string): string | undefined {
   if (/[\s/?#@\\]/.test(authority)) return undefined;
   try {
@@ -42,7 +38,6 @@ function canonical(authority: string): string | undefined {
 export class Web {
   private readonly hosts = new Set<string>();
 
-  /** The only authorities that reach the board: cardd's listen address, and the extra names the captain gave. */
   allow(authorities: readonly string[]): void {
     for (const authority of authorities) {
       const host = canonical(authority);
@@ -52,7 +47,6 @@ export class Web {
     }
   }
 
-  /** A board request must name an allowed host, and its Origin, when present, must be an allowed origin. */
   permits(request: IncomingMessage): boolean {
     const header = request.headers.host;
     const host = header === undefined ? undefined : canonical(header);
@@ -78,7 +72,6 @@ export class Web {
     this.files = files === undefined ? undefined : resolve(files);
   }
 
-  /** A board page that wants to hear when cards.db changes. */
   watch(socket: WebSocket): void {
     this.live.add(socket);
     socket.on("close", () => this.live.delete(socket));
@@ -107,7 +100,6 @@ export class Web {
     }
   }
 
-  /** The API's answer, or undefined for a request that is not an API call. */
   private async route(request: IncomingMessage): Promise<unknown> {
     const path = new URL(request.url ?? "/", "http://board").pathname;
     const card = /^\/api\/card\/(\d+)$/.exec(path)?.[1];

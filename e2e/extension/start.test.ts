@@ -1,7 +1,3 @@
-// How dispatch knows that a worker started (spec section 11.2). herdr's own
-// readiness check waits until the agent is idle, but a worker starts on its
-// task at once. Dispatch therefore looks at the worker's pane, so the mate is
-// not held while the worker works.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
@@ -38,15 +34,11 @@ test("dispatch returns while the worker is still busy with its first turn", asyn
   };
   h.onModel(() => ({ tool: "card_new", args: card }), "mate");
   h.onModel(() => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix it" } }), "mate");
-  // herdr's start command waits for the worker to idle, up to its own timeout, and this worker stays
-  // busy. So the mate must hear back while that command still runs. A clock on the whole dispatch would
-  // also count the new shell's start and herdr's refusals, which load stretches.
   let herdrWaiting: boolean | undefined;
   h.onModel(() => {
     herdrWaiting = herdrStartRunning(lab, "c-1-a1");
     return { text: "dispatched" };
   }, "mate");
-  // The worker's first model call does not answer until the test lets it, so the worker stays busy.
   const busy = gate();
   h.onModel(async () => {
     await busy.wait;
@@ -67,7 +59,6 @@ test("dispatch returns while the worker is still busy with its first turn", asyn
 
 test("a worker that starts but never connects goes back to its mate, and dispatch did not wait for it", async () => {
   await stopDispatchLab(parts);
-  // The worker's Pi runs, but its cardd URL is a port where nothing listens. cardd's timers run fast.
   parts = await startDispatchLab({
     cardd: { CARDD_TIMING_SCALE: "0.01" },
     workerArgs: ["--fleet-url", "ws://127.0.0.1:1"],
@@ -94,7 +85,6 @@ test("a worker that starts but never connects goes back to its mate, and dispatc
 
 test("a worker whose token begins with a dash starts on its task", async () => {
   await stopDispatchLab(parts);
-  // 1 token in 64 begins with "-", and this worker's does. Pi must read it as the token, not as an option.
   parts = await startDispatchLab({ dashTokens: ["worker:c-1-a1"] });
   const { h, mate } = parts;
   const card = {

@@ -1,5 +1,3 @@
-// A real worker: Pi with the fleet extension and the scripted model, connected
-// to a real cardd. The mate is a test session. Spec sections 9, 12.3, and 25.
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -9,7 +7,6 @@ import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
 
-// Entry IDs in a fresh cardd: the task message, then the second and third comment.
 const [START, OLDER, NEWER] = [1, 2, 3];
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 
@@ -29,7 +26,6 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-/** Dispatches the card with this task message on the first call, then starts (or restarts) its worker. */
 async function worker(task = "the task"): Promise<Pi> {
   token ??= await begin(fleet.main, card, task);
   const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
@@ -90,7 +86,6 @@ test("a second mate's steer reaches its worker without main's comment to that ma
 
   const steer = `[fleet] leo on c-${String(leoCard.id)}: Use the password from the vault`;
   assert.equal(lastUser(await h.waitForCall(2)), steer);
-  // Main still gets the echo: the steer is leo's first action after main's comment.
   const echo = await fleet.main.waitForEntry((entry) => entry.author === "mate:leo", "the echo");
   assert.equal(echo.fields["re"], "Captain: it can make an account with that password");
 });

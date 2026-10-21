@@ -1,6 +1,3 @@
-// A dispatch lab (spec sections 11.2 and 25, test 8): cardd, the scripted fake
-// model, a herdr lab session, a git clone of project "site", and a real mate Pi
-// with the fleet extension that dispatches real worker Pis into the lab.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,10 +8,6 @@ import { Harness, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 
-/**
- * A worker's first model call comes within a few seconds of dispatch, on CI too. The wait leaves a
- * slow runner room. A worker that misses it did not start: a failed lab test prints its pane.
- */
 export const WORKER_WAIT_MS = 60_000;
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const SWITCH = fileURLToPath(new URL("./switch-transport.ts", import.meta.url));
@@ -30,10 +23,8 @@ export interface DispatchLab {
   readonly home: string;
 }
 
-/** The file where the lab's worker launches record their arguments. */
 export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
 
-/** Variations of the lab: cardd's environment, sessions whose tokens begin with "-", and extra arguments for every worker's Pi. */
 export interface LabOptions {
   readonly cardd?: Record<string, string>;
   readonly dashTokens?: readonly string[];
@@ -79,7 +70,6 @@ export async function startDispatchLab({
   return { cardd, h, lab, clone, mate, home };
 }
 
-/** Stops everything even if one part fails, so no process outlives the test. */
 export async function stopDispatchLab({ lab, h, cardd }: DispatchLab): Promise<void> {
   const stopped = await Promise.allSettled([lab.stop(), h.stop(), cardd.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");
@@ -93,18 +83,15 @@ export const lastUser = (turns: Turn[]): string | undefined =>
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
 
-/** Whether the herdr command that starts an attempt's worker still runs. It waits for the worker to idle. */
 export function herdrStartRunning(lab: HerdrLab, attempt: string): boolean {
   try {
     execFileSync("pgrep", ["-f", `herdr agent start ${attempt} .*--session ${lab.name}`]);
     return true;
   } catch {
-    // pgrep exits 1 when no process matches.
     return false;
   }
 }
 
-/** The clone's worktrees, by branch. */
 export const worktreesOf = (clone: string): string[] =>
   execFileSync("git", ["-C", clone, "worktree", "list", "--porcelain"], { encoding: "utf8" })
     .split("\n")
@@ -115,13 +102,11 @@ export const branchesOf = (clone: string): string[] =>
     .split("\n")
     .filter((line) => line !== "");
 
-/** The workspace labels in herdr's sidebar, top to bottom. */
 export const sidebarOf = async (lab: HerdrLab): Promise<string[]> =>
   records((await lab.run(["workspace", "list"]))["workspaces"]).map((each) =>
     String(each["label"]),
   );
 
-/** Each pane in a worktree: its attempt, and the foreground group of the Pi that runs there, if one does. */
 async function attemptPanes(lab: HerdrLab): Promise<{ attempt: string; pi: number | undefined }[]> {
   const panes = records((await lab.run(["pane", "list"]))["panes"]);
   const found = [];
@@ -139,14 +124,12 @@ async function attemptPanes(lab: HerdrLab): Promise<{ attempt: string; pi: numbe
   return found;
 }
 
-/** The attempts whose pane runs a Pi: the live workers. A job tab in the same worktree does not count. */
 export const workersOf = async (lab: HerdrLab): Promise<string[]> =>
   (await attemptPanes(lab))
     .filter((pane) => pane.pi !== undefined)
     .map((pane) => pane.attempt)
     .sort();
 
-/** The foreground process group of an attempt's worker Pi, to kill the worker in a test. */
 export async function workerGroupOf(lab: HerdrLab, attempt: string): Promise<number | undefined> {
   return (await attemptPanes(lab)).find((each) => each.attempt === attempt && each.pi !== undefined)
     ?.pi;

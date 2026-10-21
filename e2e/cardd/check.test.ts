@@ -1,7 +1,3 @@
-// The timed check (spec section 13), against a real cardd whose timers run a
-// thousand times faster: the check runs every 60 ms, a worker counts as never
-// connected or idle after 120 ms, stalled after 900 ms, and reminders come
-// after 1.8 s and 3.6 s.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
@@ -152,7 +148,6 @@ test("a finished card that its lane mate leaves open is reminded early, then rep
     escalation.body,
     new RegExp(`^escalation: ${name} finished \\d+ min ago and cleo has not closed it`),
   );
-  // The reminders are for the lane mate. Main hears only the escalation.
   assert.deepEqual(
     fleet.main.entries
       .map(({ entry }) => String(entry.fields["condition"]))
@@ -160,7 +155,6 @@ test("a finished card that its lane mate leaves open is reminded early, then rep
     [],
   );
 
-  // Main closes it, as the escalation says, and nothing more follows.
   await fleet.main.call("close.finish", {
     card: card.id,
     mode: "done",

@@ -1,5 +1,3 @@
-// Narrowing helpers for JSON that crosses a process boundary in tests.
-
 export type JsonRecord = Record<string, unknown>;
 
 export function isRecord(value: unknown): value is JsonRecord {
@@ -22,7 +20,6 @@ export function optionalNumber(record: JsonRecord, key: string): number | undefi
   return typeof value === "number" ? value : undefined;
 }
 
-/** The text of a Pi message: its string content, or its text blocks joined. */
 export function messageText(message: JsonRecord): string {
   const content = message["content"];
   if (typeof content === "string") return content;
@@ -33,6 +30,5 @@ export function messageText(message: JsonRecord): string {
     .join("");
 }
 
-/** The objects in an array field. */
 export const records = (value: unknown): JsonRecord[] =>
   Array.isArray(value) ? value.filter(isRecord) : [];

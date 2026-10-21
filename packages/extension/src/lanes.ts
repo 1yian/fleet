@@ -1,8 +1,3 @@
-// Main's lane tool, the lane states that its board shows, and the loop that keeps the fleet running
-// (docs/setup.md).
-// Each host runs its own `fleet` command (launch.ts) for the lanes configured there. Main reaches
-// this host directly and every other host over its transport, so the same words work everywhere.
-// cardd is not a lane: it runs under launchd and main never starts, stops, or checks it.
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
@@ -14,19 +9,15 @@ const LAUNCH = fileURLToPath(new URL("./launch.ts", import.meta.url));
 const REMOTE_WAIT_MS = 90_000;
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
-/** The host that runs this process is "local". Every other host is a key of the lane's `hosts`. */
 const hostsOf = (config: LaneConfig): string[] => ["local", ...Object.keys(config.hosts)];
 
-/** Runs `fleet <args>` on a host and returns what it printed. */
 async function fleet(config: LaneConfig, host: string, args: readonly string[]): Promise<string> {
   if (host === "local") return onHost(host, [process.execPath, LAUNCH, ...args], REMOTE_WAIT_MS);
-  // The checkout of this repository on that host. A non-interactive shell does not expand "~".
   const script = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
   const argv = ["sh", "-c", script, "fleet", config.roots[host] ?? "", ...args];
   return onHost(host, argv, REMOTE_WAIT_MS);
 }
 
-/** The records that `fleet ... --json` printed. */
 async function rows(
   config: LaneConfig,
   host: string,
@@ -46,7 +37,6 @@ const describe = (host: string, row: Record<string, unknown>): string => {
   return `${text(row, "lane")} (${host}): ${state}${more === "" ? "" : ` - ${more}`}`;
 };
 
-/** Every lane on every host. A host that cannot be reached is named, never skipped silently. */
 async function everyLane(
   config: LaneConfig,
 ): Promise<{ host: string; row: Record<string, unknown> }[]> {
@@ -63,7 +53,6 @@ async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
   return found.host;
 }
 
-/** Every lane on every host, and the hosts that could not be asked. */
 export type LaneStates = () => Promise<{
   lanes: LaneRow[];
   unreachable: { host: string; error: string }[];
@@ -77,7 +66,6 @@ const LaneParams = Type.Object({
   action: Type.Enum(["start", "stop", "restart"]),
 });
 
-/** Restarts every lane that is not held, on every host. A host that cannot be reached is named. */
 async function restartAll(config: LaneConfig): Promise<string[]> {
   const lines: string[] = [];
   for (const host of hostsOf(config)) {
@@ -92,7 +80,6 @@ async function restartAll(config: LaneConfig): Promise<string[]> {
   return lines.length === 0 ? ["No lanes are configured."] : lines;
 }
 
-/** One lane's action on its host. */
 async function act(
   config: LaneConfig,
   lane: string,
@@ -107,7 +94,6 @@ async function act(
   return out.map((row) => describe(host, row)).join("\n");
 }
 
-/** Main's lane tool, and the loop that keeps the lanes running. Returns how the board reads the lanes. */
 export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | undefined {
   const config = readLaneConfig(home);
   if (config === undefined) return undefined;
@@ -144,12 +130,6 @@ export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | unde
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
-/**
- * Brings up every lane that does not run, now and then every minute: at start, after a mate dies,
- * and after a host reboots. A lane that is stopped on purpose stays stopped. A lane that keeps
- * crashing is held by `fleet up`, and the captain hears of it once. A host that cannot be reached
- * is reported once, until it answers again.
- */
 function keepRunning(pi: ExtensionAPI, config: LaneConfig): void {
   const unreachable = new Set<string>();
   let ticking = false;

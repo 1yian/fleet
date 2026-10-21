@@ -1,5 +1,3 @@
-// Runs a real cardd process on a temporary database, and connects sessions to
-// it the way the fleet extension does.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
@@ -45,7 +43,6 @@ export class Cardd {
     this.args = args;
   }
 
-  /** Starts cardd. `env` sets variables such as CARDD_TIMING_SCALE for it. `seed` may write a database file before cardd opens it. */
   static async start(
     env: Record<string, string> = {},
     args: readonly string[] = [],
@@ -57,11 +54,6 @@ export class Cardd {
     return cardd;
   }
 
-  /**
-   * Gives cardd a token key under which each listed session's token begins with "-", as 1 token in
-   * 64 does. A session is "<role>:<name>", such as "mate:main". Call it before cardd hands out a token.
-   * A test still checks that the token it got begins with "-".
-   */
   dashTokens(sessions: readonly string[]): void {
     for (let seed = 0; ; seed += 1) {
       const key = createHash("sha256").update(String(seed)).digest();
@@ -75,7 +67,6 @@ export class Cardd {
     }
   }
 
-  /** Adds a lane with the cardd command line. Returns the mate's token. */
   addLane(name: string, parent?: string, home = `/homes/${name}`): string {
     const args = [MAIN, "lane", "add", name, "--db", this.db, "--home", home];
     return execFileSync("node", parent === undefined ? args : [...args, "--parent", parent], {
@@ -90,7 +81,6 @@ export class Cardd {
     );
   }
 
-  /** Like addProject, with each --clone value given as written on the command line. */
   addProjectWithCloneArgs(name: string, clones: readonly string[]): void {
     const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", "no-mistakes"];
     const cloneArgs = clones.flatMap((clone) => ["--clone", clone]);
@@ -99,13 +89,11 @@ export class Cardd {
     });
   }
 
-  /** Turns a project's yolo flag on or off with the cardd command line, as the captain does. Returns what it printed. */
   yolo(project: string, on = true): string {
     const args = [MAIN, "project", "yolo", project, on ? "on" : "off", "--db", this.db];
     return execFileSync("node", args, { encoding: "utf8" }).trim();
   }
 
-  /** POST /call as the session that owns the token. */
   async post(token: string, op: string, args: unknown): Promise<{ status: number; body: unknown }> {
     const response = await fetch(this.url.replace(/^ws/, "http").replace(/\/session$/, "/call"), {
       method: "POST",
@@ -120,17 +108,14 @@ export class Cardd {
     return this.url.replace(/^ws/, "http").replace(/\/session$/, path);
   }
 
-  /** The board as the captain's page reads it. */
   async board(): Promise<Board> {
     return check(BoardSchema, await (await fetch(this.http("/api/board"))).json());
   }
 
-  /** A card's thread as the captain's page reads it. */
   async thread(card: number): Promise<Thread> {
     return check(ThreadSchema, await (await fetch(this.http(`/api/card/${String(card)}`))).json());
   }
 
-  /** The captain's action on the board, on the card as it stands now. Resolves with the HTTP status. */
   async act(card: number, action: BoardAction["action"]): Promise<number> {
     const revision = (await this.board()).cards.find((each) => each.id === card)?.revision ?? -1;
     const response = await fetch(this.http("/api/action"), {
@@ -149,7 +134,6 @@ export class Cardd {
     return session;
   }
 
-  /** Kills cardd and starts it again on the same database and port. */
   async restart(): Promise<void> {
     await this.stop();
     await this.boot(new URL(this.url.replace(/^ws/, "http")).port);
@@ -185,7 +169,6 @@ type Outgoing =
   | { t: "activity"; state: "running" | "idle" | "waiting" }
   | { t: "call"; id: number; op: string; args: unknown };
 
-/** One session's connection, as the fleet extension holds it. */
 export class Session {
   readonly entries: Extract<ServerMessage, { t: "entry" }>[] = [];
   readonly opened: Promise<void>;
@@ -212,7 +195,6 @@ export class Session {
     this.socket.send(JSON.stringify(message));
   }
 
-  /** Calls an operation. Rejects with cardd's error message. */
   async call(op: string, args: unknown): Promise<unknown> {
     const id = this.nextId++;
     this.send({ t: "call", id, op, args });

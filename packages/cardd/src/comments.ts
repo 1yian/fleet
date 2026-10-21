@@ -1,7 +1,3 @@
-// comment (spec sections 9.1, 10.1, and 10.3): the one way to talk to an agent. A
-// comment on a card goes to the agent that owns it. A worker's card hears its mate.
-// A second mate's lane card, or any card in that lane, hears main when main speaks and
-// main hears the second mate when it answers. Main never steers another lane's worker.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
 import { applyChange, type Draft } from "./change.ts";
@@ -23,7 +19,6 @@ interface Done {
   readonly notify: readonly string[];
 }
 
-/** The card the comment is for: the card given, or the lane card of the lane given. */
 function target(db: DatabaseSync, session: Session, args: { card?: number; lane?: string }): Card {
   if ((args.card === undefined) === (args.lane === undefined)) {
     throw new Error("comment needs either card or lane, and not both");
@@ -38,7 +33,6 @@ function target(db: DatabaseSync, session: Session, args: { card?: number; lane?
   return getCard(db, card);
 }
 
-/** Where a comment goes, and what it does to the card. */
 type Route =
   | { readonly kind: "worker" }
   | { readonly kind: "mate"; readonly to: string }
@@ -60,13 +54,11 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
   }
   const worker = route.kind === "worker" ? workerOf(db, card.id) : undefined;
   const recipient = route.kind === "worker" ? worker : route.to;
-  // A steer opens the work again, so a merge question about the old head no longer stands.
   let withdrawn: string[] = [];
   if (route.kind === "worker") {
     requireNotCaptains(db, card, args.resolves);
     withdrawn = withdrawMerge(db, card);
   }
-  // `for` marks a comment that reached a session: the first report or action after it answers it.
   const delivered = recipient === undefined ? {} : { for: route.kind };
   const own = { resolves: args.resolves, now: args.now, ...delivered };
   const { to, fields } = withEcho(
@@ -88,7 +80,6 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
   return { value: getCard(db, card.id), notify: [...to, ...withdrawn] };
 }
 
-/** A comment cannot answer a worker's decision that waits on the captain: his words release it first. */
 function requireNotCaptains(db: DatabaseSync, card: Card, resolves: string | undefined): void {
   const open = holdOf(db, card);
   if (resolves !== undefined && open?.holder === "captain" && open.keys.includes(resolves)) {

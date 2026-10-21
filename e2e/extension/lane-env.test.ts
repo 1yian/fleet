@@ -1,7 +1,3 @@
-// A lane whose settings name a direnv folder (docs/setup.md): its mate runs with that folder's
-// environment, while its home stays where it is. The folder is a scratch folder with its own
-// .envrc, which a scratch direnv configuration trusts. Its .envrc sets the name that the scripted model
-// files the mate's calls under, so a call under that name proves the mate got the environment.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,7 +25,6 @@ beforeEach(async () => {
   h = await Harness.start();
   scratch = new Scratch();
   dir = mkdtempSync(join(tmpdir(), "fleet-direnv-"));
-  // direnv reads its configuration from DIRENV_CONFIG. The scratch one trusts only the test's folder.
   env = { DIRENV_CONFIG: join(dir, "direnv") };
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
@@ -69,7 +64,6 @@ test("a lane with a direnv folder starts and restarts its mate with that folder'
 
   assert.match(fleet("up", "cnp"), /cnp: started/);
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to join the fleet");
-  // fleet sees the mate under direnv as running, so the minute loop does not start it again.
   assert.deepEqual(JSON.parse(fleet("status", "--json")), [{ lane: "cnp", state: "running" }]);
   await main.call("comment", { lane: "cnp", text: "Are you there?" });
   const first = await h.waitForCall(0, ENV_AGENT, WAIT_MS);

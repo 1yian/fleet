@@ -1,5 +1,3 @@
-// The yolo flag, merge approvals, the worker's merge, and PR state (spec sections 7.5,
-// 13.1, 18, and 20.4), against a real cardd and a fake gh.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, test } from "node:test";
@@ -30,7 +28,6 @@ const approve = (card: Card, choice: string = APPROVE) =>
   fleet.main.call("release", { card: card.id, words: "yes, merge it", source: "chat", choice });
 const holdFor = (card: Card, question: string) =>
   fleet.main.call("hold", { card: card.id, question, options: ["a", "b"] });
-/** The worker merges its PR with gh, as its mate's comment tells it to. */
 const merge = (pr = PR): void => {
   execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
 };
@@ -108,7 +105,6 @@ test("a project's yolo flag sends a done card to Merging without a question, but
   await done(inside, pr);
   assert.equal(await status(fleet.main, inside), "merging");
   assert.equal((await fleet.cardd.board()).holds.length, 1);
-  // yolo authorizes the mate's comment; the worker merges, and the card closes as Done.
   merge(pr);
   const plan = check(
     OPS["close.begin"].result,
@@ -116,7 +112,6 @@ test("a project's yolo flag sends a done card to Merging without a question, but
   );
   assert.deepEqual([plan.mode, plan.verify], ["done", false]);
 
-  // Turned off again, the next PR asks the captain.
   fleet.cardd.yolo("web", false);
   const after = await newCard(fleet.main, "after the flag");
   await done(after, "https://github.com/acme/web/pull/9");
@@ -279,10 +274,8 @@ test("a PR merged by hand makes the open merge question moot, and the card close
   gh.setPr(PR, "MERGED");
   await fleet.main.waitForEntry((entry) => entry.fields["condition"] === "pr-merged", "the notice");
   assert.equal(await status(fleet.main, card), "merging");
-  // A merged PR landed the work: it closes as Done, and the host has nothing to confirm.
   const plan = check(OPS["close.begin"].result, await fleet.main.call("close.begin", close));
   assert.deepEqual([plan.mode, plan.verify], ["done", false]);
-  // Work that landed is never dropped.
   await assert.rejects(fleet.main.call("close.begin", { ...close, landed: false }), {
     message: `c-${String(card.id)}'s PR merged, so its work landed: close it without landed=false`,
   });

@@ -1,5 +1,3 @@
-// Pi 1.3.0 behavior that the fleet extension depends on (spec sections 9 and
-// 12.3). If a Pi upgrade changes any of it, these tests fail first.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
@@ -21,7 +19,6 @@ async function sessionFile(): Promise<string> {
   return file;
 }
 
-/** Starts a run that is inside a tool call, then queues 101 as a follow-up and 102 as a steer. */
 async function queueDuringToolCall(sessionId: string): Promise<{ pi: Pi; file: string }> {
   const pi = h.startPi(sessionId);
   const file = await sessionFile();

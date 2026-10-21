@@ -1,4 +1,3 @@
-// A question for the captain: its text, its options, and a way to write his own answer.
 import { useState, type KeyboardEvent } from "react";
 import type { Question } from "./format.ts";
 import { PencilIcon } from "./icons.tsx";
@@ -7,14 +6,11 @@ const LONG_OPTION = 32;
 
 interface Props {
   readonly question: Question;
-  /** Whether number keys answer this question. */
   readonly keys: boolean;
-  /** Resolves true when cardd took the answer. */
   readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
 }
 
 export function Ask({ question, keys, onAnswer }: Props) {
-  // Options longer than a few words read better as a list of choices than as buttons in a row.
   const long = question.options.some((option) => option.length > LONG_OPTION);
   const [writing, setWriting] = useState(false);
   return (
@@ -60,7 +56,6 @@ export function Ask({ question, keys, onAnswer }: Props) {
   );
 }
 
-/** Every question can be answered in the captain's own words. A refused answer stays in the box. */
 function WriteYourOwn(
   props: Pick<Props, "question" | "onAnswer"> & { readonly onCancel: () => void },
 ) {
@@ -77,7 +72,6 @@ function WriteYourOwn(
   };
   const key = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
-      // Closes the box, not the card that holds it.
       event.stopPropagation();
       onCancel();
     }

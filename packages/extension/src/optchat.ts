@@ -1,11 +1,3 @@
-// Conversation memory for every mate, the way Firstmate's homes have it (optchat). The memory
-// loader is the user-level extension ~/.pi/agent/extensions/fm-optchat. It stays idle unless FM_HOME names
-// the Pi's own folder, and Firstmate sets that with `optpi`. A fleet home has no launcher, so
-// this extension gives the loader that answer: when the home has config/optchat.json, it loads
-// the loader again with FM_HOME set to the home. Pi evaluates a module each time it is loaded,
-// so the second load sees the variable. Without that file, or without the loader, this does nothing.
-// The loader reads config/optchat.json, config/optchat/<package>, data/optchat, and state/ in the home.
-// `fleet home memory <lane>` (memory.ts) writes them.
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

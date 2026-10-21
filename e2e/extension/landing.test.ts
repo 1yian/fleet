@@ -1,7 +1,3 @@
-// close's landing test on the host (spec section 20.5), through a real mate Pi, a real worker Pi
-// in a herdr lab, a real git worktree, and a fake gh: nothing unlanded closes the card as Done, a
-// PR that the worker merged on its mate's comment closes it at once, and work that did not land is
-// refused until the mate drops it.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
@@ -38,7 +34,6 @@ afterEach(async () => {
 
 const mateConnected = () => connected(h);
 
-/** The captain turned site's yolo flag on. The mate makes a ship card and dispatches it; the worker's script is `work`. */
 function scriptOperation(work: Parameters<Harness["onModel"]>[0]): void {
   parts.cardd.yolo("site");
   h.onModel(
@@ -67,7 +62,6 @@ test("close finds that an operation landed, closes it as Done, and removes its w
 
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "c-1 is done.");
-  // Nothing was unlanded, so there is nothing to archive.
   assert.equal(existsSync(`${clone}.archive`), false);
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(branchesOf(clone), ["main"]);
@@ -113,7 +107,6 @@ test("with yolo on, the mate comments the worker to merge without asking; the wo
     args: { status: "done", text: `PR ${pr} opened`, pr },
   }));
   h.onModel(() => ({ text: "reported" }), "worker");
-  // The worker merges only when the comment tells it to, as its contract says.
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /Merge your PR now/);
     execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
@@ -128,12 +121,10 @@ test("with yolo on, the mate comments the worker to merge without asking; the wo
   await mateConnected();
   mate.prompt("add credit");
 
-  // The done report put the card straight in Merging: yolo asked no merge question.
   const asked = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.match(lastUser(asked) ?? "", /^\[fleet\] c-1 done: PR .* \(card now merging\)/);
   const merged = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
   assert.equal(gh.state(pr), "MERGED");
-  // The mate closes on the worker's done, before any check pass saw the merge: close reads GitHub itself.
   assert.match(lastUser(merged) ?? "", /^\[fleet\] c-1 done: merged .* \(card now merging\)/);
   const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "c-1 is done.");

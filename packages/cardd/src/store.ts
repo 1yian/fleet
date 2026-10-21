@@ -1,5 +1,3 @@
-// Reads and writes cards.db. A mate's session ID is its lane name. Rows leave the database as JSON built by SQLite and
-// are checked against the protocol schemas, so the types match the wire.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
@@ -28,11 +26,9 @@ const SessionSchema = Type.Object({
   live: Type.Boolean(),
 });
 
-// A card without a name, from before names existed, is known by its number.
 const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', project,
   'kind', kind, 'status', status, 'revision', revision, 'pr', pr, 'intent', intent, 'spec', spec,
   'createdAt', created_at, 'updatedAt', updated_at)`;
-/** SQL that builds an entry's wire JSON from table alias `e`. */
 export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
   'body', e.body, 'fields', json(e.fields), 'createdAt', e.created_at)`;
 const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'card', a.card,
@@ -40,7 +36,6 @@ const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'c
 
 export const hash = (token: string): string => createHash("sha256").update(token).digest("hex");
 
-/** The token of a session: the HMAC of its role and ID under the database's key. The same session gives the same token, and no mate can share a token with a worker. */
 export function tokenFor(db: DatabaseSync, role: "mate" | "worker", session: string): string {
   db.prepare("INSERT OR IGNORE INTO secrets (name, value) VALUES ('token-key', ?)").run(
     randomBytes(32),
@@ -50,7 +45,6 @@ export function tokenFor(db: DatabaseSync, role: "mate" | "worker", session: str
   return createHmac("sha256", key).update(`${role}:${session}`).digest("base64url");
 }
 
-/** Runs a query whose one column `j` is JSON, and parses each row. */
 export function json(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): unknown[] {
   return db
     .prepare(sql)
@@ -75,7 +69,6 @@ export function transaction<T>(db: DatabaseSync, work: () => T): T {
   }
 }
 
-/** Adds a lane and its mate session. Returns the mate's token. */
 export function addLane(
   db: DatabaseSync,
   lane: { name: string; home: string; parent?: string },
@@ -94,7 +87,6 @@ export function addLane(
       "INSERT INTO sessions (id, role, lane, host, token_hash, state) VALUES (?, 'mate', ?, '', ?, 'exited')",
     ).run(lane.name, lane.name, hash(token));
     if (lane.parent !== undefined) {
-      // The lane card: where the parent and this second mate talk (spec section 6.3).
       const card = addCard(db, {
         lane: lane.name,
         title: lane.name,
@@ -109,19 +101,16 @@ export function addLane(
   return token;
 }
 
-/** The parent of a lane: main for a second mate, null for main. */
 export function parentOf(db: DatabaseSync, lane: string): string | null {
   const parent = db.prepare("SELECT parent FROM lanes WHERE name = ?").get(lane)?.["parent"];
   return typeof parent === "string" ? parent : null;
 }
 
-/** The lane card of a lane, if it has one. Only a second mate's lane does. */
 export function laneCardOf(db: DatabaseSync, lane: string): number | undefined {
   const card = db.prepare("SELECT card FROM lanes WHERE name = ?").get(lane)?.["card"];
   return typeof card === "number" ? card : undefined;
 }
 
-/** The card, if the session's lane owns it or is the parent of the lane that does. */
 export function reachable(
   db: DatabaseSync,
   session: Session,
@@ -133,7 +122,6 @@ export function reachable(
   throw new Error(`c-${String(id)} belongs to lane ${card.lane}`);
 }
 
-/** Whether the card is the lane card of its lane. */
 export const isLaneCard = (db: DatabaseSync, card: Card): boolean =>
   laneCardOf(db, card.lane) === card.id;
 
@@ -149,7 +137,6 @@ export function addProject(
   );
 }
 
-/** Turns a project's yolo flag on or off. Only the captain does, through the cardd command line. */
 export function setYolo(db: DatabaseSync, project: string, yolo: boolean): void {
   const { changes } = db
     .prepare("UPDATE projects SET yolo = ? WHERE name = ?")
@@ -178,7 +165,6 @@ export const cardEntries = (db: DatabaseSync, card: number): Entry[] =>
     check(EntrySchema, row),
   );
 
-/** A name made from the title's first words, for a card created without one. */
 function nameFrom(title: string): string {
   const words = title.toLowerCase().match(/[a-z0-9]+/g) ?? [];
   return words.slice(0, 4).join("-").slice(0, 40).replace(/-+$/, "");
@@ -225,7 +211,6 @@ export function setStatus(db: DatabaseSync, card: number, status: Status): void 
   );
 }
 
-/** Where the card's work stands, under its hold (see status.ts). */
 export function phaseOf(db: DatabaseSync, card: number): Phase {
   const phase = db.prepare("SELECT phase FROM cards WHERE id = ?").get(card)?.["phase"];
   const found = PHASES.find((each) => each === phase);
@@ -237,12 +222,10 @@ export function setPhase(db: DatabaseSync, card: number, phase: Phase): void {
   db.prepare("UPDATE cards SET phase = ? WHERE id = ? AND phase <> ?").run(phase, card, phase);
 }
 
-/** Raises the card's revision without changing its status. A changed hold must refuse the board's answers to the old one. */
 export function touchCard(db: DatabaseSync, card: number): void {
   db.prepare("UPDATE cards SET revision = revision + 1 WHERE id = ?").run(card);
 }
 
-/** Writes an entry and a Pending delivery record for each recipient session. */
 export function addEntry(
   db: DatabaseSync,
   entry: Pick<Entry, "card" | "author" | "kind" | "body" | "fields">,
@@ -260,7 +243,6 @@ export function addEntry(
   for (const session of recipients) deliver.run(session, lastInsertRowid, now);
 }
 
-/** The session of the card's live attempt, if there is one. */
 export function workerOf(db: DatabaseSync, card: number): string | undefined {
   const row = db
     .prepare(
@@ -274,7 +256,6 @@ export function workerOf(db: DatabaseSync, card: number): string | undefined {
 
 export type SessionState = "idle" | "running" | "waiting" | "exited" | "lost";
 
-/** Records a session state. A worker's first connect makes its attempt Active. */
 export function setSessionState(db: DatabaseSync, session: string, state: SessionState): void {
   const now = Date.now();
   db.prepare("UPDATE sessions SET state = ?, last_seen = ? WHERE id = ? AND state <> 'closed'").run(
@@ -294,7 +275,6 @@ export function setSessionState(db: DatabaseSync, session: string, state: Sessio
   }
 }
 
-/** Main's lane: the one lane with no parent. */
 export function mainLane(db: DatabaseSync): string {
   const name = db
     .prepare("SELECT name FROM lanes WHERE parent IS NULL ORDER BY name LIMIT 1")
@@ -303,7 +283,6 @@ export function mainLane(db: DatabaseSync): string {
   return name;
 }
 
-/** The project registry (spec section 6.4): each project, its delivery mode, base branch, the hosts with a clone, and its yolo flag. */
 export function listProjects(
   db: DatabaseSync,
 ): { name: string; delivery: string; base: string; hosts: string[]; yolo: boolean }[] {

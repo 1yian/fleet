@@ -1,7 +1,3 @@
-// One websocket per session (spec section 12.1), and POST /call for scripts.
-// The first websocket message must be hello with the session token. Every
-// later message re-checks that the session is still live, so an ended or
-// replaced attempt loses access at once.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { DatabaseSync } from "node:sqlite";
@@ -29,7 +25,6 @@ const EVERY_INTERFACE: ReadonlySet<string> = new Set(["0.0.0.0", "::", "::ffff:0
 
 type Outcome = { ok: true; value: unknown } | { ok: false; error: string };
 
-/** The session's attempt ended or was replaced. The socket closes with CLOSE_NOT_LIVE. */
 class NotLive extends Error {}
 
 function text(data: RawData): string {
@@ -74,7 +69,6 @@ class Hub {
     );
   }
 
-  /** One pass of the timed check (spec section 13): read PR state with gh, then check. Pushes the findings it wrote. */
   check(): void {
     if (this.checking) return;
     this.checking = true;
@@ -89,7 +83,6 @@ class Hub {
       });
   }
 
-  /** Runs an operation, then pushes its new entries. Websocket calls and POST /call share it. */
   async perform(session: Session, op: string, args: unknown): Promise<Outcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
@@ -139,7 +132,6 @@ class Hub {
     });
   }
 
-  /** POST /call with `Authorization: Bearer <token>`: a script acts as that session. */
   async answerHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const reply = (status: number, outcome: Outcome): void => {
       response
@@ -202,7 +194,6 @@ export async function serve(
   files?: string,
   hostnames: readonly string[] = [],
 ): Promise<string> {
-  // Convergent start: no session is connected yet. Live sessions reconnect and become idle.
   db.prepare(
     "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state IN ('idle', 'running', 'waiting')",
   ).run(Date.now());
@@ -213,7 +204,6 @@ export async function serve(
   const server = createServer((request, response) => {
     void hub.answerHttp(request, response);
   });
-  // Two socket paths on one server: sessions, and board pages that watch for changes.
   const sessions = new WebSocketServer({ noServer: true });
   const boards = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
@@ -234,7 +224,6 @@ export async function serve(
   await new Promise<void>((resolve) => server.listen(port, host, resolve));
   const address: AddressInfo | string | null = server.address();
   if (address === null || typeof address === "string") throw new Error("the server has no address");
-  // The board has no login: only the Tailscale network may reach cardd (spec section 21.4).
   if (EVERY_INTERFACE.has(address.address)) {
     server.close();
     throw new Error("cardd binds to the Tailscale address, never to every interface");

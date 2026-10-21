@@ -1,6 +1,3 @@
-// run_long (spec section 11.1 and cutover test 11). A real worker Pi runs a job
-// in a herdr lab tab. The job's result arrives as a fleet entry, also after a
-// Pi restart, and the job never runs twice.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -37,7 +34,6 @@ beforeEach(async () => {
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);
-  // Stop everything even if one part fails, so no process outlives the test.
   const stopped = await Promise.allSettled([lab.stop(), h.stop(), fleet.cardd.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
@@ -93,7 +89,6 @@ test("a job keeps running across a worker restart, and its result arrives once",
   assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "run\n");
 });
 
-/** Pids of the processes whose command line holds `text`. */
 function pids(text: string): number[] {
   try {
     return execFileSync("pgrep", ["-f", text], { encoding: "utf8" })
@@ -115,11 +110,10 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
   }
 }
 
-/** A sleep duration that no other process uses, so its process can be found by its command line. */
-const marker = (n: number): string => `4${String(process.pid)}${String(n)}`;
+const uniqueSleepSeconds = (n: number): string => `4${String(process.pid)}${String(n)}`;
 
 test("a timeout kills the whole command, exits 124, and leaves nothing behind", async () => {
-  const command = `sleep ${marker(1)} & wait`;
+  const command = `sleep ${uniqueSleepSeconds(1)} & wait`;
   h.onModel(() => ({ tool: "run_long", args: { label: "slow", command, timeout_minutes: 0.02 } }));
   h.onModel(() => ({ text: "waiting" }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "it timed out" } }));
@@ -127,7 +121,10 @@ test("a timeout kills the whole command, exits 124, and leaves nothing behind", 
   await fleet.main.waitForEntries(1);
 
   assert.match(lastUser(await h.waitForCall(2)) ?? "", /^\[fleet\] c-1 job 1 \(slow\) exited 124:/);
-  await until(() => (pids(marker(1)).length === 0 ? true : undefined), "the sleep to be gone");
+  await until(
+    () => (pids(uniqueSleepSeconds(1)).length === 0 ? true : undefined),
+    "the sleep to be gone",
+  );
 });
 
 test("a carriage return ends a line, and an endless line is cut to its last 2000 characters", async () => {
@@ -143,7 +140,7 @@ test("a carriage return ends a line, and an endless line is cut to its last 2000
 });
 
 test("a command that ignores SIGTERM is killed when the grace ends", async () => {
-  const command = `(trap '' TERM; exec sleep ${marker(5)}) & wait`;
+  const command = `(trap '' TERM; exec sleep ${uniqueSleepSeconds(5)}) & wait`;
   h.onModel(() => ({
     tool: "run_long",
     args: { label: "stubborn", command, timeout_minutes: 0.01 },
@@ -153,15 +150,15 @@ test("a command that ignores SIGTERM is killed when the grace ends", async () =>
     worker();
     const woken = await h.waitForCall(2, "default", 30_000);
     assert.match(lastUser(woken) ?? "", /^\[fleet\] c-1 job 1 \(stubborn\) exited 124:/);
-    assert.deepEqual(pids(marker(5)), []);
+    assert.deepEqual(pids(uniqueSleepSeconds(5)), []);
   } finally {
-    for (const pid of pids(marker(5))) process.kill(pid, "SIGKILL");
+    for (const pid of pids(uniqueSleepSeconds(5))) process.kill(pid, "SIGKILL");
   }
 });
 
 test("an interrupted job reports exit 130, with the unfinished line before it", async () => {
   const ready = join(h.dir, "ready");
-  const command = `echo started; printf partial; touch ${ready}; sleep ${marker(2)}`;
+  const command = `echo started; printf partial; touch ${ready}; sleep ${uniqueSleepSeconds(2)}`;
   h.onModel(() => ({ tool: "run_long", args: { label: "wait", command } }));
   h.onModel(() => ({ text: "waiting" }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "interrupted" } }));
@@ -176,12 +173,15 @@ test("an interrupted job reports exit 130, with the unfinished line before it", 
     lastUser(await h.waitForCall(2)),
     "[fleet] c-1 job 1 (wait) exited 130: started\npartial\ninterrupted",
   );
-  await until(() => (pids(marker(2)).length === 0 ? true : undefined), "the sleep to be gone");
+  await until(
+    () => (pids(uniqueSleepSeconds(2)).length === 0 ? true : undefined),
+    "the sleep to be gone",
+  );
 });
 
 test("closing the job tab still reaches the worker: the result, or a lost job", async () => {
   const ready = join(h.dir, "ready-tab");
-  const command = `trap 'echo dying; exit 3' TERM; echo started; touch ${ready}; sleep ${marker(6)} & wait`;
+  const command = `trap 'echo dying; exit 3' TERM; echo started; touch ${ready}; sleep ${uniqueSleepSeconds(6)} & wait`;
   h.onModel(() => ({ tool: "run_long", args: { label: "tab", command } }));
   h.onModel(() => ({ text: "waiting" }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "the tab was closed" } }));
@@ -193,10 +193,6 @@ test("closing the job tab still reaches the worker: the result, or a lost job", 
     assert.equal(typeof tab?.["tab_id"], "string");
     await lab.run(["tab", "close", String(tab?.["tab_id"])]);
 
-    // herdr hangs up the tab. The wrapper then posts what the command printed as it died,
-    // unless the tab's processes are gone first: then the heartbeat check reports the job lost.
-    // Which one wins depends on the platform and timing. Either way the worker hears exactly
-    // what happened to its job, once.
     const woken = lastUser(await h.waitForCall(2, "default", 20_000)) ?? "";
     assert.ok(
       [
@@ -206,15 +202,14 @@ test("closing the job tab still reaches the worker: the result, or a lost job", 
       woken,
     );
   } finally {
-    for (const pid of pids(marker(6))) process.kill(pid, "SIGKILL");
+    for (const pid of pids(uniqueSleepSeconds(6))) process.kill(pid, "SIGKILL");
   }
 });
 
 const findings = (): string[] =>
   fleet.main.entries.filter(({ entry }) => entry.kind === "finding").map(({ entry }) => entry.body);
 
-/** Starts a command that waits for the file `go`, and tells when it runs. */
-const waiting = (n: number): { command: string; ready: string; go: string } => {
+const commandAwaitingGo = (n: number): { command: string; ready: string; go: string } => {
   const ready = join(h.dir, `ready-${String(n)}`);
   const go = join(h.dir, `go-${String(n)}`);
   const command = `touch ${ready}; while [ ! -f ${go} ]; do sleep 0.1; done; echo late`;
@@ -229,8 +224,8 @@ const wrapperOf = async (job: number, ready: string): Promise<number> => {
 };
 
 test("a job whose wrapper died is lost once: the mate and the worker are told", async () => {
-  const first = waiting(1);
-  const second = waiting(2);
+  const first = commandAwaitingGo(1);
+  const second = commandAwaitingGo(2);
   h.onModel(() => ({ tool: "run_long", args: { label: "first", command: first.command } }));
   h.onModel(() => ({ text: "waiting for the first job" }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "the first job is lost" } }));
@@ -267,7 +262,7 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
 });
 
 test("a result that arrives after the job was marked lost is still delivered once", async () => {
-  const slow = waiting(3);
+  const slow = commandAwaitingGo(3);
   h.onModel(() => ({ tool: "run_long", args: { label: "late", command: slow.command } }));
   h.onModel(() => ({ text: "waiting for the job" }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "the job is lost" } }));

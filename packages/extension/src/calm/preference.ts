@@ -1,11 +1,7 @@
-// The Calm preference: one file per mate home, config/calm, holding "on" or "off".
-// An absent, unreadable, or unrecognized file means off. Each write replaces the file
-// atomically, so a crash never leaves half a value.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-/** The mate's home is the folder Pi runs in. */
 export function preferenceFile(): string {
   return join(process.cwd(), "config", "calm");
 }

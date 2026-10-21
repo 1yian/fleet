@@ -1,5 +1,3 @@
-// Attempts, dispatch retries, replacement, and jobs (spec sections
-// 6.9, 6.10, and 11), against a real cardd.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";

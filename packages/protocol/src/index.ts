@@ -1,5 +1,3 @@
-// The wire protocol between cardd, the fleet extension, and the board. Each
-// schema is the single source of its type and its validator.
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 
@@ -27,19 +25,16 @@ export const REPORT_STATUSES = [
   "stopped",
 ] as const;
 
-/** Who a hold waits on. The owner is the card's own mate. Main is the owner of its own cards. */
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
 
-/** The options of a merge question (spec section 7.5). */
 export const MERGE_OPTIONS = ["Approve & merge", "Request changes"] as const;
 
 const Status = Type.Enum(STATUSES);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const ReportStatus = Type.Enum(REPORT_STATUSES);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
-/** The captain's quoted words: at least one character that is not whitespace. */
 export const Words = Type.String({ pattern: "\\S" });
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 
@@ -47,7 +42,6 @@ export type Status = Static<typeof Status>;
 export type CardKind = Static<typeof CardKind>;
 export type ReportStatus = Static<typeof ReportStatus>;
 
-/** A card's short name, like a task ID: lowercase words joined by dashes. herdr shows it. */
 export const CardName = Type.String({
   pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
   maxLength: 40,
@@ -82,18 +76,14 @@ export const EntrySchema = Type.Object({
 });
 export type Entry = Static<typeof EntrySchema>;
 
-/** A card as the board shows it: the card and the latest thing the captain would read on it. */
 export const BoardCardSchema = Type.Object({
   ...CardSchema.properties,
   summary: Type.String(),
-  /** Whether the card is a second mate's lane card, which the board shows under Mates. */
   mate: Type.Boolean(),
-  /** Who the card's open hold waits on, or null when it has none. */
   holder: Nullable(Holder),
 });
 export type BoardCard = Static<typeof BoardCardSchema>;
 
-/** One card as a mate reads it: its open hold, its attempts, and every entry of its thread. */
 export const CardViewSchema = Type.Object({
   card: BoardCardSchema,
   hold: Nullable(
@@ -101,7 +91,6 @@ export const CardViewSchema = Type.Object({
       holder: Holder,
       question: Type.String(),
       options: Type.Array(Type.String()),
-      /** The hold is deferred until this time, or null. */
       until: Nullable(Type.Integer()),
     }),
   ),
@@ -117,7 +106,6 @@ export const CardViewSchema = Type.Object({
 });
 export type CardView = Static<typeof CardViewSchema>;
 
-/** Each operation: who may call it, its arguments, and its result. */
 export const OPS = {
   "card.new": {
     roles: ["mate"],
@@ -148,7 +136,6 @@ export const OPS = {
         delivery: Type.String(),
         base: Type.String(),
         hosts: Type.Array(Type.String()),
-        /** The captain's standing merge authority for the project: a mate has the worker merge a green PR without asking. */
         yolo: Type.Boolean(),
       }),
     ),
@@ -206,13 +193,10 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
-      /** False ends work that did not land as Dropped. Otherwise cardd closes it as Done only if it landed. */
       landed: Type.Optional(Type.Boolean()),
     }),
     result: Type.Object({
-      /** How the card closes: done when its work landed, dropped when the mate said it did not. */
       mode: Type.Enum(["done", "dropped"]),
-      /** Whether the host must confirm that no attempt has unlanded work before the card closes as Done. */
       verify: Type.Boolean(),
       attempts: Type.Array(
         Type.Object({
@@ -256,7 +240,6 @@ export const OPS = {
       clone: Type.String(),
       base: Type.String(),
       branch: Type.String(),
-      /** The card's name and lane, for the worker's place in herdr. */
       name: Type.String(),
       lane: Type.String(),
     }),
@@ -316,14 +299,11 @@ const ClientMessage = Type.Union([
 ]);
 export type ClientMessage = Static<typeof ClientMessage>;
 
-/** The board (spec section 21): what it shows, and the captain's actions. */
 export const BoardSchema = Type.Object({
   cards: Type.Array(BoardCardSchema),
-  /** The holds that wait on the captain: at most one for each card. Nothing else is his to answer. */
   holds: Type.Array(
     Type.Object({
       card: Type.Integer(),
-      /** The entry that wrote the hold as it stands. An answer names it, so an answer to an older hold is refused. */
       hold: Type.Integer(),
       question: Type.String(),
       options: Type.Array(Type.String()),
@@ -344,7 +324,6 @@ export const BoardActionSchema = Type.Object({
       kind: Type.Literal("answer"),
       hold: Type.Integer(),
       choice: Type.String({ minLength: 1 }),
-      /** The captain typed the answer instead of picking an option. */
       written: Type.Optional(Type.Boolean()),
     }),
     Type.Object({ kind: Type.Literal("comment"), text: Type.String({ minLength: 1 }) }),
@@ -357,7 +336,6 @@ export const BoardActionSchema = Type.Object({
 });
 export type BoardAction = Static<typeof BoardActionSchema>;
 
-/** The body of POST /call, for scripts that act as a session with its token. */
 export const HttpCallSchema = Type.Object({ op: Type.String(), args: Type.Unknown() });
 
 const ServerMessage = Type.Union([
@@ -387,7 +365,6 @@ const ServerMessage = Type.Union([
 ]);
 export type ServerMessage = Static<typeof ServerMessage>;
 
-/** Checks a value against a schema. Throws one readable error that names the first problem. */
 export function check<T extends TSchema>(schema: T, value: unknown): Static<T> {
   if (Value.Check(schema, value)) return value;
   const [first] = Value.Errors(schema, value);

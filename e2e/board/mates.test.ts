@@ -1,6 +1,3 @@
-/// <reference lib="dom" />
-// Second mates on the board (spec sections 6.3, 17.2, and 21.2): their lane cards, and their
-// questions, which reach Needs you only when main puts them to the captain.
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
@@ -73,7 +70,6 @@ test("a second mate's hold is not in Needs you until main escalates it", async (
   const cards = check(OPS.board.result, await cleo.call("board", {}));
   assert.equal(cards.find((each) => each.id === card.id)?.status, "with-mate");
 
-  // With main: the card shows in Running, with the question as its news, and no buttons.
   await page.goto(http());
   const running = page.getByRole("region", { name: "Running" });
   await running.getByText("Asks main: Which channel?").waitFor();
@@ -81,7 +77,6 @@ test("a second mate's hold is not in Needs you until main escalates it", async (
   await page.getByText("Nothing waits on you.").waitFor();
   assert.equal(await page.getByRole("button", { name: "search" }).count(), 0);
 
-  // Main puts it to the captain, and now it needs him.
   await main.call("hold", {
     card: card.id,
     to: "captain",

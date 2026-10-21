@@ -1,6 +1,3 @@
-// dispatch through herdr (spec sections 11.2 and 25, test 8). A real mate Pi
-// with the fleet extension dispatches a real worker Pi into a herdr lab
-// session, in its own git worktree. Both use the scripted fake model.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -27,12 +24,7 @@ import type { HerdrLab } from "../support/herdr.ts";
 
 const PR = "https://github.com/acme/web/pull/1";
 
-/**
- * herdr can still hold a dead worker's agent name for a few seconds, up to 4 s on CI, and refuses to
- * start a Pi under it until then. A refused start used to wait 10 s for a Pi that herdr never typed. So
- * the restart must hold the mate for less than that wait alone, however slow the rest is under load.
- */
-const RESTART_WAIT_MS = 10_000;
+const FORMER_REFUSED_START_WAIT_MS = 10_000;
 
 let parts: DispatchLab;
 let h: Harness;
@@ -97,7 +89,6 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
   );
   const workerFirst = await h.waitForCall(0, "worker");
   assert.equal(lastUser(workerFirst), "[fleet] main on c-1: fix the scrollbar");
-  // The emitted system prompt carries each role's contract.
   assert.match(
     workerFirst.find((turn) => turn.role === "system")?.text ?? "",
     /^# Worker role contract$/m,
@@ -110,7 +101,6 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await workers(), ["c-1-a1"]);
-  // In the sidebar the worker sits under its mate's workspace, by the card's name.
   assert.deepEqual(await sidebar(), ["fleet-main", "└ one-scrollbar", "fleet-cleo"]);
 });
 
@@ -121,7 +111,6 @@ test("a dispatch whose connection drops after the worker started finds it, and a
   const woken = await h.waitForCall(4, "mate", WORKER_WAIT_MS);
 
   const results = toolResults(await h.waitForCall(3, "mate"));
-  // herdr's answer was lost, but the pane shows that Pi started.
   assert.equal(results.at(-2), "Dispatched c-1-a1 on flaky, branch c-1-a1.");
   const launched = readFileSync(launchArgs(), "utf8").split("\n");
   const token = launched
@@ -175,7 +164,6 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
     const tree = `${clone}.worktrees/c-1-a1`;
     const git = (...args: string[]) =>
       execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
-    // Workers name their own branch, as a PR branch.
     git("switch", "-q", "-c", "feat/one-scrollbar");
     writeFileSync(join(tree, "committed.txt"), "one\n");
     git("add", "committed.txt");
@@ -445,20 +433,16 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
     returned = Date.now();
     return { text: "restarted" };
   }, "mate");
-  // The worker waits on a long job, so it ends its run without telling the mate anything.
   h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
   h.onModel(() => ({ text: "waiting for the job" }), "worker");
   await mateConnected();
   mate.prompt("ship the scrollbar fix");
   await h.waitForCall(1, "worker", WORKER_WAIT_MS);
-  // The first dispatch has returned, so only the worker's Pi still carries these arguments.
   await h.waitForCall(2, "mate", 120_000);
 
-  // Kill only this test's worker: the Pi in the lab pane of attempt c-1-a1.
   const group = await workerGroupOf(lab, "c-1-a1");
   assert.ok(group !== undefined && group > 0);
   process.kill(-group, "SIGKILL");
-  // Wait until no Pi runs in the pane.
   const deadline = Date.now() + 30_000;
   while ((await workers()).includes("c-1-a1")) {
     assert.ok(Date.now() < deadline, "the killed worker still runs");
@@ -469,7 +453,7 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "Restarted c-1-a1 on local on its own session, branch c-1-a1.");
   assert.ok(
-    returned - asked < RESTART_WAIT_MS,
+    returned - asked < FORMER_REFUSED_START_WAIT_MS,
     `the restart held the mate for ${String(returned - asked)} ms`,
   );
   const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);

@@ -1,5 +1,3 @@
-// Attempts and jobs (spec sections 6.9, 6.10, and 11.2). An attempt is one run
-// of a card by one worker. Its ID is the retry key for dispatch.
 import type { DatabaseSync } from "node:sqlite";
 import { check, type Card, type CardView } from "@fleet/protocol";
 import Type from "typebox";
@@ -46,7 +44,6 @@ const AttemptsSchema = Type.Array(
   }),
 );
 
-/** Every attempt of a card, newest first: where it ran and on which branch. */
 export const attemptsOf = (db: DatabaseSync, card: number): CardView["attempts"] =>
   check(
     AttemptsSchema,
@@ -63,7 +60,6 @@ export interface Begun {
   readonly token: string;
   readonly resumed: boolean;
   readonly active: boolean;
-  /** Whether the worker's Pi is connected to cardd right now. */
   readonly connected: boolean;
   readonly clone: string;
   readonly base: string;
@@ -72,7 +68,6 @@ export interface Begun {
   readonly lane: string;
 }
 
-/** Where the attempt runs on the host: the project clone, the base branch, and the task branch. */
 function placeOf(
   db: DatabaseSync,
   card: Card,
@@ -99,12 +94,6 @@ function connected(db: DatabaseSync, session: string): boolean {
   return state === "idle" || state === "running" || state === "waiting";
 }
 
-/**
- * Starts an attempt, or finds the one a lost dispatch already started on the same
- * host: same session, same token, and no second task message. With replace, the
- * live attempt becomes Replaced and its token stops working. A new attempt gets
- * its task message in the same transaction, so a retry can neither lose it nor repeat it.
- */
 export function beginAttempt(
   db: DatabaseSync,
   card: Card,
@@ -156,7 +145,6 @@ export function beginAttempt(
   return { session, token, resumed: false, active: false, connected: false, ...place };
 }
 
-/** The attempt behind a worker session. */
 function attemptOf(db: DatabaseSync, session: string): number {
   const id = db.prepare("SELECT attempt FROM sessions WHERE id = ?").get(session)?.["attempt"];
   if (typeof id !== "number") throw new Error(`${session} is not a worker session`);
@@ -178,7 +166,6 @@ export function startJob(
   return Number(lastInsertRowid);
 }
 
-/** Records a job's result once, also for a job marked lost that ran on. Returns its label, or undefined if it had already finished. */
 export function finishJob(
   db: DatabaseSync,
   session: string,
@@ -194,7 +181,6 @@ export function finishJob(
   return typeof label === "string" ? label : undefined;
 }
 
-/** Records that a job's wrapper is alive. Returns whether the job is still running. */
 export function touchJob(db: DatabaseSync, session: string, job: number): boolean {
   const row = db
     .prepare(
@@ -204,7 +190,6 @@ export function touchJob(db: DatabaseSync, session: string, job: number): boolea
   return row !== undefined;
 }
 
-/** Marks running jobs of live attempts as lost when no heartbeat came since `before`. */
 export function loseSilentJobs(
   db: DatabaseSync,
   before: number,

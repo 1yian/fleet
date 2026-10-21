@@ -1,4 +1,3 @@
-// Delivery records and recovery (spec section 9.4).
 import type { DatabaseSync } from "node:sqlite";
 import { check, EntrySchema, type Entry } from "@fleet/protocol";
 import { ENTRY_JSON, json } from "./store.ts";
@@ -8,7 +7,6 @@ export interface Push {
   readonly mode: "steer" | "followUp";
 }
 
-/** Marks the entries found in the session file Confirmed. Returns the new low-water mark. */
 export function confirm(db: DatabaseSync, session: string, inFile: readonly number[]): number {
   const mark = db.prepare(
     "UPDATE deliveries SET state = 'confirmed', updated_at = ? WHERE session = ? AND entry = ?",
@@ -27,19 +25,12 @@ export function confirm(db: DatabaseSync, session: string, inFile: readonly numb
   return low;
 }
 
-/**
- * The entry as this session reads it. The echo (`re`, spec section 10.3) quotes a comment that
- * a mate received, so only a mate reads it. A worker shares an entry with an echo when its
- * second mate steers it right after main's comment: the worker gets the steer alone, never
- * main's words to its mate.
- */
 function asReadBy(entry: Entry, role: unknown): Entry {
   if (role === "mate" || !("re" in entry.fields)) return entry;
   const fields = Object.fromEntries(Object.entries(entry.fields).filter(([key]) => key !== "re"));
   return { ...entry, fields };
 }
 
-/** The entries to push, in entry order: every unconfirmed one at a connect, otherwise the pending ones. */
 export function toPush(db: DatabaseSync, session: string, atConnect: boolean): Push[] {
   const role = db.prepare("SELECT role FROM sessions WHERE id = ?").get(session)?.["role"];
   const states = atConnect ? "('pending', 'pushed', 'acknowledged')" : "('pending')";

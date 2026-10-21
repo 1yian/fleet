@@ -1,5 +1,3 @@
-// close: its guards, and how cardd decides Done or Dropped (spec sections 7.4, 10.5, and 20.5),
-// against a real cardd. The host steps are in e2e/extension/dispatch.test.ts.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
@@ -103,7 +101,6 @@ test("a ship card that no worker ran does not close as Done", async () => {
     fleet.main.call("close.begin", { card: card.id }),
     notLanded(card.id, "no worker ran it"),
   );
-  // A captain card has no worker: once the captain acted, it closes as Done.
   const decision = await newCard(fleet.main, "Pick the API version", "captain");
   const plan = check(
     OPS["close.begin"].result,
@@ -150,7 +147,6 @@ test("when main closes a second mate's card, that mate hears of it and main does
 
   const outcome = await cleo.waitForEntry((entry) => entry.kind === "cleanup", "the outcome");
   assert.deepEqual([outcome.author, outcome.body], ["mate:main", text]);
-  // A call's result follows every entry that cardd sent before it on the same connection.
   await fleet.main.call("board", {});
   assert.deepEqual(
     fleet.main.entries.filter((push) => push.entry.kind === "cleanup"),
@@ -166,7 +162,6 @@ test("a ship card that only did an operation closes as Done, as c-9 did", async 
   await worker.call("report", { status: "done", text: "credit added, no code change" });
   const name = `c-${String(card.id)}`;
 
-  // A ship card with no PR closes as Done once the host confirms that nothing is unlanded.
   const plan = await leo.call("close.begin", { card: card.id });
   assert.deepEqual(plan, {
     mode: "done",
@@ -207,7 +202,6 @@ test("close needs the worker's latest handoff to be done, and a steer takes it b
   await worker.call("report", { status: "done", text: "credit added" });
   assert.equal((await fleet.main.call("close.begin", close)) !== undefined, true);
 
-  // The mate steers the worker after its done, so the worker has to report again.
   await fleet.main.call("comment", { card: card.id, text: "also check the invoice" });
   await assert.rejects(fleet.main.call("close.begin", close), unfinished);
   await worker.call("report", { status: "done", text: "invoice checked" });

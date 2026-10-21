@@ -1,6 +1,3 @@
-// run_long (spec section 11.1): one command in one named herdr tab that the
-// captain can watch. cardd records the job first. The wrapper posts the result,
-// which arrives as a fleet entry, also after a Pi restart. Nothing runs a job again.
 import { randomBytes } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +18,6 @@ const RunLongParams = Type.Object({
   timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 24 * 60 })),
 });
 
-/** Running jobs are a tracked wait: the worker may end its run while one runs. */
 export class Jobs {
   private readonly running = new Set<number>();
   private readonly link: Link;
@@ -38,7 +34,6 @@ export class Jobs {
     if (typeof job === "number") this.running.delete(job);
   }
 
-  /** Restores the running jobs after a connect, for example after a Pi restart. */
   async sync(): Promise<void> {
     const jobs = check(OPS.jobs.result, await this.link.call("jobs", {}));
     this.running.clear();

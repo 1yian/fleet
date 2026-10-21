@@ -1,10 +1,6 @@
-// What the mate's read tools print (https://axi.md): TOON records, a few fields by default,
-// counts up front, long text cut with its size, an explicit empty state, and next steps.
-// Pure: data in, text out.
 import type { BoardCard, CardView, Entry, Status } from "@fleet/protocol";
 import { encode } from "@toon-format/toon";
 
-/** The statuses in the order that needs attention: the captain's holds first, then the mate's, then running work. */
 const ORDER = [
   "needs-you",
   "with-mate",
@@ -16,7 +12,6 @@ const ORDER = [
   "done",
   "dropped",
 ] as const satisfies readonly Status[];
-/** Who moves a card in each status when no hold names someone. */
 const MOVER: Record<Status, "lane" | "worker" | "merge" | "nobody"> = {
   "needs-you": "lane",
   "with-mate": "lane",
@@ -34,14 +29,12 @@ const isClosed = (card: BoardCard): boolean => MOVER[card.status] === "nobody";
 export const SELECTIONS = ["open", "closed", "all", ...ORDER] as const;
 type Selection = (typeof SELECTIONS)[number];
 
-/** Who acts next on the card: who its hold waits on, else who moves its work. */
 function waits(card: BoardCard): string {
   if (card.holder === "captain" || card.holder === "main") return card.holder;
   const mover = card.holder === "owner" ? "lane" : MOVER[card.status];
   return mover === "lane" ? card.lane : mover;
 }
 
-/** How long ago, or how long until, a time: 45s ago, 12m ago, in 3h, 2d ago. */
 function ago(at: number, now = Date.now()): string {
   const seconds = Math.round(Math.abs(now - at) / 1000);
   const [value, unit] =
@@ -55,13 +48,11 @@ function ago(at: number, now = Date.now()): string {
   return at > now ? `in ${String(value)}${unit}` : `${String(value)}${unit} ago`;
 }
 
-/** Text cut to `max` characters, with its full size and the way to see it all. */
 function cut(text: string, max: number, full: boolean): string {
   if (full || text.length <= max) return text;
   return `${text.slice(0, max).trimEnd()}... (truncated, ${String(text.length)} chars total, full=true shows all)`;
 }
 
-/** Columns a board row can show. The first four show by default. */
 const COLUMNS = {
   card: (card: BoardCard) => card.id,
   status: (card: BoardCard) => card.status,
@@ -81,17 +72,14 @@ const isColumn = (name: string): name is Column => Object.hasOwn(COLUMNS, name);
 const isDefault = (name: string): boolean => DEFAULT_COLUMNS.some((each) => each === name);
 export const EXTRA_COLUMNS = Object.keys(COLUMNS).filter((each) => !isDefault(each));
 
-/** Help lines in the AXI shape: a counted list of next steps, one per line. */
 const helpLines = (lines: readonly string[]): string =>
   lines.length === 0
     ? ""
     : `\nhelp[${String(lines.length)}]:\n${lines.map((line) => `  ${line}`).join("\n")}`;
 
-/** A structured error: what went wrong and the calls that fix it. */
 export const errorText = (message: string, help: readonly string[]): string =>
   encode({ error: message }) + helpLines(help);
 
-/** "3 (needs-you 1, working 2)": a total and its nonzero counts by status, in attention order. */
 function tally(cards: readonly BoardCard[]): string | number {
   const parts = ORDER.flatMap((status) => {
     const n = cards.filter((card) => card.status === status).length;
@@ -100,7 +88,6 @@ function tally(cards: readonly BoardCard[]): string | number {
   return parts.length === 0 ? 0 : `${String(cards.length)} (${parts.join(", ")})`;
 }
 
-/** The default columns and the asked ones. Throws a structured error for a name that is not a column. */
 function columnsOf(fields: string | undefined): Column[] {
   const asked = (fields ?? "")
     .split(",")
@@ -116,12 +103,9 @@ function columnsOf(fields: string | undefined): Column[] {
 
 export interface BoardQuery {
   readonly status?: Selection;
-  /** Every project, with its base branch. */
   readonly projects?: boolean;
-  /** Every lane, with its host and why it is in its state. */
   readonly lanes?: boolean;
   readonly lane?: string;
-  /** The most closed cards to list, newest first. */
   readonly limit?: number;
   readonly fields?: string;
 }
@@ -137,7 +121,6 @@ const selects = (selection: Selection, card: BoardCard): boolean => {
 const byAttention = (a: BoardCard, b: BoardCard): number =>
   rank(a) - rank(b) || b.updatedAt - a.updatedAt;
 
-/** The rows a query lists: matching open cards by attention, then the newest matching closed cards. */
 function rowsOf(cards: readonly BoardCard[], selection: Selection, limit: number) {
   const matched = cards.filter((card) => selects(selection, card)).sort(byAttention);
   const open = matched.filter((card) => !isClosed(card));
@@ -145,10 +128,6 @@ function rowsOf(cards: readonly BoardCard[], selection: Selection, limit: number
   return { rows: [...open, ...closed.slice(0, limit)], hidden: Math.max(0, closed.length - limit) };
 }
 
-/**
- * The board: a header with the projects and, for main, the lanes (AXI ambient context), then the
- * live cards first in the order that needs attention, closed cards only when asked and counted always.
- */
 export function boardText(all: readonly BoardCard[], query: BoardQuery, header: Header): string {
   const columns = columnsOf(query.fields);
   const selection = query.status ?? "open";
@@ -193,21 +172,17 @@ function boardHelp(query: BoardQuery, rows: number, closed: number, hidden: numb
 }
 
 export interface CardQuery {
-  /** How many entries to show, newest first. */
   readonly entries?: number;
-  /** Show every text whole. */
   readonly full?: boolean;
 }
 
 const ENTRY_LIMIT = 10;
 
-/** A report's status or a hold's holder, next to the entry kind: report/done, hold/captain. */
 function kindOf(entry: Entry): string {
   const detail = entry.fields[entry.kind === "hold" ? "holder" : "status"];
   return typeof detail === "string" && detail !== "" ? `${entry.kind}/${detail}` : entry.kind;
 }
 
-/** The path a scout's done report names, as in "report written: /tmp/report.md". */
 function reportPath(entries: readonly Entry[]): string | undefined {
   for (const entry of [...entries].reverse()) {
     if (entry.kind !== "report") continue;
@@ -219,7 +194,6 @@ function reportPath(entries: readonly Entry[]): string | undefined {
 
 type Cut = (text: string, max: number) => string;
 
-/** The card's own fields, and its open hold. */
 function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
   const record: Record<string, unknown> = {
     card: {
@@ -245,7 +219,6 @@ function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
   return record;
 }
 
-/** One card: what it is, who it waits on, where its work runs, and its thread, newest first. */
 export function cardText(view: CardView, query: CardQuery): string {
   const full = query.full === true;
   const cuts = { made: false };
@@ -277,7 +250,6 @@ export function cardText(view: CardView, query: CardQuery): string {
   return encode(record) + helpLines(help);
 }
 
-/** Next steps on a card. `thread` is the thread's size when some entries are hidden, else 0. Read the hidden entries, read the cut texts whole, and steer it while it is open. */
 function cardHelp(card: BoardCard, thread: number, clipped: boolean): string[] {
   const id = String(card.id);
   const help: string[] = [];
@@ -303,7 +275,6 @@ export interface LaneRow {
   readonly detail: string;
 }
 
-/** What the board's header shows. `lanes` is main's alone: other mates have none. */
 export interface Header {
   readonly projects: readonly ProjectRow[];
   readonly lanes?: {
@@ -312,7 +283,6 @@ export interface Header {
   };
 }
 
-/** The header lists every project up to this many. Past it, only those with open cards or yolo on. */
 const HEADER_PROJECTS = 8;
 
 function projectsOf(
@@ -351,7 +321,6 @@ function lanesOf(lanes: NonNullable<Header["lanes"]>, every: boolean): Record<st
   return record;
 }
 
-/** The header's record and its next steps. */
 function headerOf(
   header: Header,
   open: readonly BoardCard[],

@@ -1,8 +1,3 @@
-// A worker never runs on its mate's tier. The fleet repo's .pi/settings.json puts main on the
-// orchestrator tier, and every worktree of the repo has that file, so a worker dispatched into one
-// used to start on the orchestrator tier too. Main here is a plain Pi in a scratch copy of the
-// repo that picks its model from its settings, as the captain's does. The scripted model answers
-// as the captain's tiers and tells the test which model each call went to.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,16 +23,12 @@ beforeEach(async () => {
   scratch = new Scratch();
   mainToken = cardd.addLane("main", undefined, scratch.root);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-  // The fleet repo is a project like any other: its workers run in worktrees of it.
   cardd.addProject("fleet", { local: scratch.root });
-  // Pi's global default, as in the captain's own settings.
   mkdirSync(join(h.dir, "agent"), { recursive: true });
   writeFileSync(
     join(h.dir, "agent", "settings.json"),
     JSON.stringify({ defaultProvider: "tier", defaultModel: "auto" }),
   );
-  // A key for the scripted tiers, as the captain has keys for the real ones. Pi picks a model from
-  // its settings only when it knows a key for the model's provider when the session starts.
   writeFileSync(
     join(h.dir, "agent", "models.json"),
     JSON.stringify({ providers: { tier: { apiKey: "scripted" } } }),
@@ -56,11 +47,6 @@ const systemOf = (turns: Turn[]): string =>
   turns.find((turn) => turn.role === "system")?.text ?? "";
 const isWorker = (turns: Turn[]): boolean => systemOf(turns).includes("# Worker role contract");
 
-/**
- * Main, woken by a question from cleo, makes a card in the fleet project and dispatches it. Main and
- * its worker share the lab's model agent, so the system prompt tells their calls apart. Returns the
- * model of main's first call and of the worker's first call.
- */
 async function dispatchWorker(): Promise<{ main: string; worker: string }> {
   h.onModel(
     () => ({
@@ -86,7 +72,6 @@ async function dispatchWorker(): Promise<{ main: string; worker: string }> {
     question: "Ship the fix?",
     options: ["Yes"],
   });
-  // Main's first two calls make the card and dispatch it. The worker's first call comes after them.
   for (let index = 2; ; index += 1) {
     const turns = await h.waitForCall(index, "mate", WAIT_MS);
     if (isWorker(turns))
@@ -94,7 +79,6 @@ async function dispatchWorker(): Promise<{ main: string; worker: string }> {
   }
 }
 
-/** Pi arguments for main's workers in lane.json, besides any model: the scripted model's extension and isolation. */
 const workerBase = (): string[] => settingsArgs(h);
 
 test("a worker in a worktree of the fleet repo starts on Pi's global default, while main stays on the orchestrator tier", async () => {

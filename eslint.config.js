@@ -1,9 +1,22 @@
-// Quality gates. Inline disable comments are off (noInlineConfig), so a rule
-// can only change here, in review.
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
+
+const typeLibraryReference = (comment) =>
+  comment.type === "Line" && /^\/ <reference lib="[a-z.]+" \/>$/.test(comment.value);
+
+const noComments = {
+  meta: { type: "suggestion", messages: { comment: "Comments are not allowed in code." } },
+  create: (context) => ({
+    Program: () => {
+      for (const comment of context.sourceCode.getAllComments()) {
+        if (!typeLibraryReference(comment))
+          context.report({ loc: comment.loc, messageId: "comment" });
+      }
+    },
+  }),
+};
 
 export default defineConfig(
   { ignores: ["**/node_modules/", "**/dist/", "packages/board/src/vendor/"] },
@@ -15,8 +28,9 @@ export default defineConfig(
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
     },
     linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: "error" },
+    plugins: { fleet: { rules: { "no-comments": noComments } } },
     rules: {
-      // type safety
+      "fleet/no-comments": "error",
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-non-null-assertion": "error",
@@ -29,7 +43,6 @@ export default defineConfig(
         { considerDefaultExhaustiveForUnions: false, requireDefaultForNonUnion: true },
       ],
       "@typescript-eslint/consistent-type-imports": "error",
-      // unused code and promises
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
       "@typescript-eslint/no-floating-promises": [
         "error",
@@ -41,7 +54,6 @@ export default defineConfig(
       ],
       "@typescript-eslint/no-misused-promises": "error",
       "no-unreachable": "error",
-      // complexity
       complexity: ["error", 10],
       "max-lines": ["error", { max: 500, skipBlankLines: false, skipComments: false }],
       "max-lines-per-function": ["error", { max: 100, skipBlankLines: false, skipComments: false }],

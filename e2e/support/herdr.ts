@@ -1,5 +1,3 @@
-// An isolated herdr lab session for dispatch tests. The name always starts with
-// fleet-lab-, so a test can never touch the captain's default session.
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -12,7 +10,6 @@ export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
   private server: ChildProcess | undefined;
 
-  /** Starts the lab server. Panes inherit `env`, so workers there can reach the test. */
   static async start(env: Record<string, string>): Promise<HerdrLab> {
     const lab = new HerdrLab();
     lab.server = spawn("herdr", ["server", "--session", lab.name], {
@@ -27,18 +24,15 @@ export class HerdrLab {
     return lab;
   }
 
-  /** Runs a herdr command in the lab and returns its `result`. */
   async run(args: readonly string[]): Promise<JsonRecord> {
     const reply = await this.raw(args);
     return isRecord(reply["result"]) ? reply["result"] : {};
   }
 
-  /** The text on a pane's screen right now. */
   async screen(pane: string): Promise<string> {
     return this.text(["pane", "read", pane, "--source", "visible"]);
   }
 
-  /** Types into a pane, then presses Enter. */
   async submit(pane: string, text: string): Promise<void> {
     await this.text(["pane", "send-text", pane, text]);
     await this.text(["pane", "send-keys", pane, "enter"]);
@@ -63,13 +57,11 @@ export class HerdrLab {
     return out;
   }
 
-  /** After a failed test, prints what the lab shows. Call it before anything stops, since stop deletes the log. */
   async printIfFailed(context: object): Promise<void> {
     if (!("passed" in context) || context.passed !== false) return;
     process.stderr.write(await this.report().catch((error: unknown) => `${String(error)}\n`));
   }
 
-  /** Stops the lab server and its panes, then deletes the session. These commands print text, not JSON. */
   async stop(): Promise<void> {
     await this.text(["session", "stop", this.name]).catch(() => "");
     const server = this.server;
@@ -81,7 +73,6 @@ export class HerdrLab {
     await this.text(["session", "delete", this.name]);
   }
 
-  /** Each pane's workspace, foreground processes, and recent screen, then the end of herdr's log. */
   private async report(): Promise<string> {
     const lines = [`--- herdr lab ${this.name} at ${new Date().toISOString()}`];
     const workspaces = records((await this.run(["workspace", "list"]))["workspaces"]);

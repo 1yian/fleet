@@ -1,7 +1,3 @@
-// Migration gate. Applies every migration to an empty database, checks the
-// result, and compares it with the committed schema.sql. With MIGRATIONS_BASE
-// set to a git ref, it also fails if a migration that exists at that ref was
-// changed, renamed, or removed. Run with --write to update schema.sql.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { openDatabase, readMigrations, schemaVersion } from "../src/db.ts";

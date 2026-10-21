@@ -1,5 +1,3 @@
-// A real mate Pi with the fleet extension (spec sections 9.6, 11.2, and 17.3): holds set and
-// cleared, and what a project's yolo flag lets through to a merge.
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -27,7 +25,6 @@ afterEach(async () => {
 const toolResults = (turns: Turn[]): string[] =>
   turns.filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
 
-/** Starts a mate Pi for the lane with this token, and waits for it to connect. */
 async function startMate(name: string, token: string) {
   const mate = h.startPi(
     name,
@@ -41,7 +38,6 @@ async function startMate(name: string, token: string) {
 const cardIn = async (mate: Session, title: string, project: string): Promise<Card> =>
   check(CardSchema, await mate.call("card.new", { title, kind: "ship", project }));
 
-/** A worker on the card that reports done with its PR. */
 async function doneWith(mate: Session, card: Card, pr: string): Promise<void> {
   const worker = await fleet.cardd.connect(await begin(mate, card));
   await worker.call("report", { status: "done", text: "PR green and ready", pr });

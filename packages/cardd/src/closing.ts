@@ -1,7 +1,3 @@
-// close (spec sections 7.4 and 20.5): Done for work that landed, Dropped for work that did not.
-// cardd checks the guards, decides the outcome from the record, and gives the mate's extension
-// the attempt's place. The extension stops the writers, archives, and removes the worktree, then
-// cardd closes the card.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
 import { applyChange, requireOrdinary } from "./change.ts";
@@ -14,7 +10,6 @@ interface Done {
   readonly notify: readonly string[];
 }
 
-/** Why the card's record shows that its work did not land, or undefined when it may have. */
 function notLanded(db: DatabaseSync, card: Card): string | undefined {
   const { workerDone } = finishFrom(cardEntries(db, card.id));
   const worked = db.prepare("SELECT 1 FROM attempts WHERE card = ?").get(card.id) !== undefined;
@@ -25,14 +20,6 @@ function notLanded(db: DatabaseSync, card: Card): string | undefined {
   return worked ? undefined : "no worker ran it";
 }
 
-/**
- * How the card closes (guard 7, spec section 20.5), judged the way Firstmate's teardown did:
- * Done means landed, and close decides that itself. A merged PR landed everything. Otherwise
- * the record must show the work finished: the worker reported done, and a ship card has no
- * unmerged PR. Then the host confirms for a ship card, such as an operation, that no attempt
- * has a commit off the base branch or an uncommitted file (`verify`). Dropped is never a
- * fallback: the mate asks for it with landed=false, and a merged PR refuses it.
- */
 function outcome(
   db: DatabaseSync,
   card: Card,
@@ -100,7 +87,6 @@ export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Do
 
 export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS["close.finish"].args, raw);
-  // The host already confirmed the landing for a Done close. The record is checked again here.
   const { card } = closable(db, session, { card: args.card, landed: args.mode === "done" });
   const now = Date.now();
   db.prepare(
@@ -111,8 +97,6 @@ export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): D
     "UPDATE attempts SET state = 'ended', updated_at = ? WHERE card = ? AND state IN ('starting', 'active')",
   ).run(now, card.id);
   applyChange(db, card, { kind: args.mode === "done" ? "cleanup" : "drop" });
-  // The other mate hears of it: main when a second mate closes its own card,
-  // and the card's mate when main closes it. Nobody hears of their own close.
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
   const closed = { outcome: args.mode, archives: args.archives, left: args.left };

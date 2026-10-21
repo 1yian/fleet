@@ -1,6 +1,3 @@
-// /calm in a real mate (docs/calm.md). Main is a plain Pi in a scratch copy of the repo, in a
-// herdr pane, with the scripted model. The test reads what the pane shows before and after /calm.
-// It writes each screen to CALM_EVIDENCE_DIR when that is set.
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,11 +52,6 @@ async function matePane(): Promise<{ pane: string; group: number; shell: number 
   };
 }
 
-/**
- * Waits until the pane's screen satisfies `ready`, and returns that screen. A read can catch Pi's frame
- * half drawn, more so under load, so `ready` states the whole screen that a step expects, including what
- * must be gone. A check on the returned screen alone could see a frame that is not finished.
- */
 async function screenWhere(pane: string, what: string, ready: (s: string) => boolean) {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
@@ -93,7 +85,6 @@ const REPLY = "Cleo wants a decision on the scrollbar fix.";
 const CAPTAIN = "Any news for me?";
 const ANSWER = "Nothing else is waiting.";
 const BANNER_REPLY = "The banner can go.";
-/** A screen that shows every `shown` text and none of the `hidden` ones. */
 const showing =
   (shown: readonly string[], hidden: readonly string[] = []) =>
   (screen: string): boolean =>
@@ -111,7 +102,6 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   const pane = await startMain(lab, scratch, h);
   await cleoAsks("Ship the scrollbar fix");
 
-  // Calm is off until the first /calm: every row shows.
   const before = await screenWhere(
     pane,
     "every row of the first turn",
@@ -119,7 +109,6 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   );
   keep("1-before-calm", before);
 
-  // The mate's reply stays. The fleet row, the tool row, and the short note before the tool call hide.
   await lab.submit(pane, "/calm");
   const after = await screenWhere(
     pane,
@@ -129,9 +118,7 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   keep("2-after-calm", after);
   assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "on\n");
 
-  // The captain's prompt and the answer stay; a new fleet message stays out of sight.
   await lab.submit(pane, CAPTAIN);
-  // While the mate works, the boat replaces Pi's own working row.
   const sailing = await screenWhere(pane, "the boat", showing(["◿│◣"], ["Working"]));
   keep("3-calm-working-boat", sailing);
   working.open();
@@ -144,13 +131,11 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     showing([CAPTAIN, ANSWER, BANNER_REPLY], ["[fleet]"]),
   );
   keep("4-calm-conversation", live);
-  // Nothing was dropped from the model's context.
   const context = turns.map((turn) => `${turn.role}: ${turn.text}`).join("\n");
   assert.ok(
     context.includes(FLEET_ROW) && context.includes("toolResult:") && context.includes(NOTE),
   );
 
-  // The choice is saved per home: a restarted mate comes back calm.
   const { group, shell } = await matePane();
   process.kill(-group, "SIGKILL");
   const deadline = Date.now() + 30_000;
@@ -159,7 +144,6 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   await startMain(lab, scratch, h, true);
-  // The old screen stays until the new Pi draws its own, so wait for the new Pi to join the fleet.
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted mate to connect");
   const restarted = await screenWhere(
     pane,
@@ -168,7 +152,6 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   );
   keep("5-after-restart", restarted);
 
-  // /calm again turns it off and every row comes back.
   await lab.submit(pane, "/calm");
   const off = await screenWhere(pane, "the rows to return", showing([FLEET_ROW, NOTE, TOOL_ROW]));
   keep("6-calm-off", off);

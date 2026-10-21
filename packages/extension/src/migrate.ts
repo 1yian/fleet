@@ -1,14 +1,3 @@
-// Moves the earlier layout into the current one (docs/setup.md, "Moving from the earlier layout").
-// Before, each mate's settings were in ~/.config/fleet/<lane>.json and its home was a plain folder.
-// Now a home is a checkout of this repository that holds its own config/lane.json.
-// Migrating only copies. For each settings file it:
-//   - writes <home>/config/lane.json, where the home is this repository for main and a new
-//     worktree for any other lane;
-//   - copies the old home's AGENTS.md to <home>/data/charter.md and its config/ folder to <home>/config/;
-//   - copies the Pi conversations of the old home to the new home, so `pi --continue` resumes them;
-//   - renames the settings file to <lane>.json.migrated, so nothing starts the lane twice.
-// Nothing in the old home, in cardd, or in Pi's sessions is changed or deleted. Undoing a
-// migration renames the settings back and sets aside each home's lane.json.
 import {
   cpSync,
   existsSync,
@@ -39,7 +28,6 @@ const real = (path: string): string => {
   }
 };
 
-/** Pi keeps a folder's conversations in a folder named after it. */
 const sessionFolder = (cwd: string): string =>
   join(
     sessionsDir(),
@@ -86,12 +74,10 @@ function readLegacy(file: string, lane: string): { config: LaneConfig; home: str
   return { config, home };
 }
 
-/** Copies a file or folder only when the target does not have it, so a repeat never overwrites edits. */
 function copyMissing(from: string, to: string): void {
   if (existsSync(from) && !existsSync(to)) cpSync(from, to, { recursive: true });
 }
 
-/** Makes one lane's new home from its settings file. Returns what it copied. */
 function migrateLane(root: string, from: string, file: string): string {
   const lane = file.slice(0, -".json".length);
   const { config, home: old } = readLegacy(join(from, file), lane);

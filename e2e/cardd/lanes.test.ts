@@ -1,5 +1,3 @@
-// Lane cards and one way to talk to an agent: comment on its card (spec sections 6.3, 10, and 16),
-// against a real cardd on a scratch database with scratch lanes.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
@@ -32,7 +30,6 @@ const words = (session: Session): [string, string, string | undefined][] =>
     typeof entry.fields["re"] === "string" ? entry.fields["re"] : undefined,
   ]);
 
-/** The Leo c-8 case: leo's card has a worker, and the captain has a follow-up for it. */
 async function leoCardWithWorker(): Promise<{ card: Card; worker: Session }> {
   const card = await newCard(leo, "Credit the test account", "ship");
   const worker = await fleet.cardd.connect(await begin(leo, card, "credit the account"));
@@ -112,7 +109,6 @@ test("one comment carries the captain's follow-up to the lane mate, whatever the
   assert.equal(heard.card, card.id);
   assert.equal(await status(fleet.main, card), "working");
 
-  // The mate decides what its worker hears. The worker never hears main.
   await leo.call("comment", { card: card.id, text: "Create the account with that password" });
   await worker.waitForEntries(2);
   assert.deepEqual(
@@ -120,7 +116,6 @@ test("one comment carries the captain's follow-up to the lane mate, whatever the
     ["mate:leo", "mate:leo"],
   );
 
-  // Even with the card With mate, main's comment changes nothing but who hears it.
   await worker.call("report", { status: "blocked", text: "stuck" });
   assert.equal(await status(fleet.main, card), "with-mate");
   await fleet.main.call("comment", { card: card.id, text: "Never mind the password" });

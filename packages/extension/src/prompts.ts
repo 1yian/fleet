@@ -1,6 +1,3 @@
-// The role contracts (packages/extension/prompts). The extension adds the one
-// for this session's role to the system prompt of every run, so the contract
-// follows the role wherever Pi starts.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 

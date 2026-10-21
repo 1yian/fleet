@@ -1,20 +1,3 @@
-// The fleet command: the lanes on this host. Main's home is this repository, so the captain
-// starts main with plain `pi` here. This command keeps the other lanes running.
-//   fleet status [--json]        every lane on this host: running, down, or stopped.
-//   fleet up [lane] [--json]     starts each lane whose mate does not run, in its own herdr
-//                                workspace, fleet-<lane>. A stopped lane stays stopped unless named.
-//   fleet stop <lane>            closes the lane's workspace and holds the lane.
-//   fleet restart [lane] [--json] stops and starts the mate again on its own conversation.
-//                                Without a lane, every lane that is not held.
-//   fleet home add <lane> --url <ws://cardd/session> --token <t> [--args <json>] [--worker-args <json>]
-//                 [--hosts <json>] [--roots <json>] [--direnv <folder>]
-//                                makes the lane's home: a git worktree of this repository.
-//   fleet home memory <lane> [--seed <profile>] [--source <pi-optchat>] [--compactor <provider/model>]
-//                 [--thinking <level>]
-//                                turns on conversation memory in the lane's home (memory.ts).
-//   fleet migrate [--from <dir>] [--undo]
-//                                moves the settings of the earlier layout into homes (docs/setup.md).
-// FLEET_ROOT overrides the repository that holds the homes. It is found from this file otherwise.
 import { parseArgs } from "node:util";
 import {
   codeRoot,
@@ -33,7 +16,6 @@ import { migrate, undoMigration } from "./migrate.ts";
 const USAGE =
   "usage: fleet status | up [lane] | stop <lane> | restart [lane] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
 
-/** A token can start with "-", which parseArgs takes for an option. `--token <value>` becomes `--token=<value>`. */
 const VALUE_OPTIONS = new Set([
   "--from",
   "--url",
