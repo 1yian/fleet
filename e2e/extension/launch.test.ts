@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
@@ -9,6 +8,7 @@ import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 import { mateArgs, Scratch } from "../support/scratch.ts";
+import { pathWithout } from "../support/tool-stubs.ts";
 
 const COLD_START_WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -81,23 +81,30 @@ test("fleet up starts a second mate in its own workspace once, and again on its 
   assert.equal(readdirSync(join(h.dir, "sessions")).length, 1);
 });
 
-test("fleet up starts no mate on a host whose lavish-axi is too old, and says how to install it", () => {
+function oldLavish(): string {
   const bin = join(h.dir, "old-lavish");
   mkdirSync(bin);
   writeFileSync(join(bin, "lavish-axi"), "#!/bin/sh\necho 0.1.10\n");
   chmodSync(join(bin, "lavish-axi"), 0o755);
-  const PATH = `${bin}:${process.env["PATH"] ?? ""}`;
+  return [bin, pathWithout("lavish-axi")].join(delimiter);
+}
 
-  assert.throws(
-    () => scratch.fleet(["up"], { HERDR_SESSION: lab.name, PATH }),
-    (error: unknown) => {
-      const stderr = error instanceof Error ? String(Reflect.get(error, "stderr")) : "";
-      assert.equal(
-        stderr,
-        `lavish-axi 0.1.10 is too old on ${hostname()} (need 0.1.80 or later). Fix: npm install -g lavish-axi\n`,
-      );
-      return true;
-    },
-  );
-  assert.equal(scratch.fleet(["status"], { HERDR_SESSION: lab.name, PATH }), "cleo: down\n");
-});
+for (const [state, path] of [
+  ["missing", () => pathWithout("lavish-axi")],
+  ["too old", oldLavish],
+] as const) {
+  test(`fleet up starts the mate on a host whose lavish-axi is ${state}, with no problem to fix`, async () => {
+    const PATH = path();
+    assert.equal(
+      scratch.fleet(["up"], { HERDR_SESSION: lab.name, PATH }),
+      "cleo: started in 2ndmate-cleo\n",
+    );
+    await mainSays("Ship the scrollbar fix");
+    await h.waitForCall(0, "mate", COLD_START_WAIT_MS);
+    assert.equal(
+      scratch.fleet(["up"], { HERDR_SESSION: lab.name, PATH }),
+      "cleo: already running in 2ndmate-cleo\n",
+    );
+    assert.equal(scratch.fleet(["status"], { HERDR_SESSION: lab.name, PATH }), "cleo: running\n");
+  });
+}
