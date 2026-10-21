@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
@@ -14,31 +15,43 @@ import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.
 const WAIT_MS = 120_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
+const MIGRATIONS = fileURLToPath(new URL("../../packages/cardd/migrations", import.meta.url));
+const SCHEMA = readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).length;
+const NEXT_MIGRATION = `packages/cardd/migrations/${String(SCHEMA + 1).padStart(3, "0")}-update.sql`;
+const CARDD_WAIT_S = 15;
 
 let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
 let here: Scratch;
 let p620: Scratch;
+let app: Scratch;
 let remote: string;
 let ghost: Session;
 let marker: string;
 let opsHome: string;
 let farHome: string;
+function cloneOf(remote: string, name: string): Scratch {
+  const scratch = new Scratch(name);
+  git(scratch.root, "remote", "add", "origin", remote);
+  git(scratch.root, "fetch", "-q", "origin");
+  git(scratch.root, "reset", "-q", "--hard", "origin/main");
+  return scratch;
+}
+
 beforeEach(async () => {
-  cardd = await Cardd.start();
   h = await Harness.start();
   here = new Scratch();
-  p620 = new Scratch();
   remote = addRemote(here.root);
-  git(p620.root, "remote", "add", "origin", remote);
-  git(p620.root, "fetch", "-q", "origin");
-  git(p620.root, "reset", "-q", "--hard", "origin/main");
+  p620 = cloneOf(remote, "fleet");
+  app = cloneOf(remote, "app");
+  cardd = await Cardd.underKeepAlive(app.root);
   marker = join(here.parent, "p620-down");
   const mainToken = cardd.addLane("main", undefined, here.root);
   configureMain(here, cardd.url, mainToken, {
     hosts: { p620: ["node", TRANSPORT, marker] },
     roots: { p620: p620.root },
+    cardd: { root: app.root, db: cardd.db, restart: cardd.restartCommand },
   });
   const settings = (lane: string) => ({
     url: cardd.url,
@@ -52,6 +65,7 @@ beforeEach(async () => {
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "1000",
+    FLEET_CARDD_WAIT_MS: String(CARDD_WAIT_S * 1000),
   });
 });
 afterEach(async (t) => {
@@ -59,6 +73,7 @@ afterEach(async (t) => {
   const stopped = await Promise.allSettled([ghost.close(), lab.stop(), h.stop(), cardd.stop()]);
   here.dispose();
   p620.dispose();
+  app.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -125,7 +140,7 @@ async function fleetRunning(): Promise<{ main: number; ops: number; far: number 
   }, "main, ops, and far to run Pi");
 }
 
-test("/updatefleet pulls origin's new commit into every home on every host, restarts every mate, then restarts main on its conversation", async () => {
+test("/updatefleet pulls origin's new commit into every home on every host and cardd's checkout, leaves cardd running when its code did not change, restarts every mate, then restarts main on its conversation", async () => {
   const pane = await startMain(lab, here, h);
   const before = await fleetRunning();
   const old = tip(here.root);
@@ -164,11 +179,11 @@ test("/updatefleet pulls origin's new commit into every home on every host, rest
       "Hosts:",
       `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
       `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
+      `- local cardd (${app.root}): updated ${range}; board built; its code did not change, so it was not restarted`,
       "Lanes:",
       "- ops (local): started",
       "- far (p620): started",
       "Board: unchanged.",
-      "cardd: its code did not change, so it needs no restart.",
       "Main: restarts on its own conversation when this turn ends.",
     ].join("\n"),
   );
@@ -202,4 +217,129 @@ test("update_fleet stops before any change when a lane home has uncommitted chan
   for (const home of [here.root, opsHome, p620.root, farHome]) assert.equal(tip(home, "HEAD"), old);
   assert.equal(readFileSync(join(opsHome, "README.md"), "utf8"), "a mate's edit\n");
   assert.deepEqual(await fleetRunning(), before);
+});
+
+const schemaOf = (db: string): number => {
+  const open = new DatabaseSync(db, { readOnly: true });
+  try {
+    return Number(open.prepare("PRAGMA user_version").get()?.["user_version"]);
+  } finally {
+    open.close();
+  }
+};
+
+const backups = (): string[] =>
+  readdirSync(dirname(cardd.db))
+    .filter((name) => /^cards-backup-.+\.db$/.test(name))
+    .map((name) => join(dirname(cardd.db), name));
+
+const liveMates = (): string[] => {
+  const open = new DatabaseSync(cardd.db, { readOnly: true });
+  try {
+    return open
+      .prepare(
+        "SELECT lane FROM sessions WHERE role = 'mate' AND state IN ('idle', 'running', 'waiting') ORDER BY lane",
+      )
+      .all()
+      .map((row) => String(row["lane"]));
+  } finally {
+    open.close();
+  }
+};
+
+async function carddCommit(): Promise<string | undefined> {
+  const response = await fetch(
+    cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/api/version"),
+  );
+  const body: unknown = await response.json();
+  const commit: unknown = Reflect.get(Object(body), "commit");
+  return typeof commit === "string" ? commit : undefined;
+}
+
+test("/updatefleet backs up cardd's database and restarts cardd on the new code with its migrations before it restarts the lanes, and every mate reconnects", async () => {
+  const pane = await startMain(lab, here, h);
+  const before = await fleetRunning();
+  const old = tip(here.root);
+  assert.equal(await carddCommit(), old);
+  const fresh = landOnRemote(
+    remote,
+    "cardd-change",
+    NEXT_MIGRATION,
+    "CREATE TABLE update_probe (id INTEGER PRIMARY KEY) STRICT;\n",
+  );
+
+  await lab.submit(pane, "/updatefleet");
+  await until(
+    () => (sessionText().includes("[fleet] update: Fleet updated.") ? true : undefined),
+    "main to record the update's report",
+  );
+  await until(async () => {
+    const now = await fleetRunning();
+    return now.main !== before.main && now.ops !== before.ops && now.far !== before.far
+      ? now
+      : undefined;
+  }, "every mate and main to run a new Pi");
+
+  assert.equal(await carddCommit(), fresh);
+  assert.equal(tip(app.root, "HEAD"), fresh);
+  const [backup, ...more] = backups();
+  assert.equal(more.length, 0);
+  assert.ok(backup !== undefined);
+  assert.equal(schemaOf(backup), SCHEMA);
+  assert.equal(schemaOf(cardd.db), SCHEMA + 1);
+  await until(
+    () => (liveMates().join(",") === "far,main,ops" ? true : undefined),
+    "main, ops, and far to reconnect to the restarted cardd",
+  );
+
+  await ghost.close();
+  ghost = await cardd.connect(cardd.addLane("ghost2", "main"));
+  h.onModel(() => ({ text: "noted" }), "mate");
+  const calls = h.callsOf("mate").length;
+  await wakeMain("Check cardd");
+  const said = users(await h.waitForCall(calls, "mate", WAIT_MS));
+  const range = `${old.slice(0, 7)}..${fresh.slice(0, 7)} (1 commit)`;
+  const start = said.indexOf("[fleet] update:");
+  assert.equal(
+    said.slice(start, said.indexOf("\nLanes:", start)),
+    [
+      "[fleet] update: Fleet updated.",
+      "Hosts:",
+      `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
+      `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
+      `- local cardd (${app.root}): updated ${range}; board built; database backed up to ${backup}; restarted and answers on ${fresh.slice(0, 7)}; schema ${String(SCHEMA)} -> ${String(SCHEMA + 1)}`,
+    ].join("\n"),
+  );
+  assert.match(said, /Check cardd\?/);
+});
+
+test("update_fleet stops before any lane restarts when cardd does not come back on the new code", async () => {
+  h.onModel(() => ({ tool: "update_fleet", args: {} }), "mate");
+  let result = "";
+  h.onModel((turns) => {
+    result = toolResults(turns).at(-1) ?? "";
+    return { text: "the update stopped" };
+  }, "mate");
+  await startMain(lab, here, h);
+  const before = await fleetRunning();
+  const old = tip(here.root);
+  const fresh = landOnRemote(remote, "broken-migration", NEXT_MIGRATION, "THIS IS NOT SQL;\n");
+
+  await wakeMain("Update the fleet");
+  await h.waitForCall(1, "mate", WAIT_MS);
+
+  const [backup] = backups();
+  const range = `${old.slice(0, 7)}..${fresh.slice(0, 7)} (1 commit)`;
+  assert.equal(
+    result,
+    [
+      "Fleet update stopped: cardd does not run the new code, so no mate was restarted, and main keeps running.",
+      "Hosts:",
+      `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
+      `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
+      `- local cardd (${app.root}): updated ${range}; board built; database backed up to ${backup ?? ""}; restarted, but it did not answer on ${fresh.slice(0, 7)} within ${String(CARDD_WAIT_S)} s`,
+    ].join("\n"),
+  );
+  assert.deepEqual(await fleetRunning(), before);
+  assert.equal(schemaOf(cardd.db), SCHEMA);
 });

@@ -12,7 +12,7 @@ A mate is a Pi that runs in a lane home: a folder with a private `config/lane.js
 - `config/`, `data/`, and `state/` are private and gitignored. `config/lane.json` holds your lane's cardd URL and token. `data/` holds your records and charter. `state/` holds runtime files. Never commit them, never print the token, and never copy a home's files into another home.
 - This repository is a project like any other. Do not edit, commit, or run state-changing commands in it: dispatch a worker. Main's checkout is the code that every lane runs, so changes reach the lanes only after they merge and the checkout is pulled.
 - Main keeps the other lanes running on every host: it starts the lanes that are down, starts a mate that died, and tells the captain about a crash loop or an unreachable host. `board` shows each lane's state, and `lane(name, action)` starts, stops, or restarts one (`lane("all", "restart")` restarts the fleet). A lane stopped with `lane(name, "stop")` stays stopped until `lane(name, "start")`.
-- `cardd` is not a lane. It runs under launchd. Never start, stop, or restart it.
+- `cardd` is not a lane. It runs under launchd. It restarts only through `/updatefleet`, never by hand: never start, stop, or restart it any other way.
 - [docs/setup.md](docs/setup.md) owns how homes are made, started, moved, and updated.
 
 ## Working in this repository

@@ -14,10 +14,10 @@ import { lavishProblem } from "./lavish.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { mateTitle } from "./titles.ts";
-import { checkHost, updateHost } from "./update.ts";
+import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | restart [lane] | update [--check] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | restart [lane] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -32,6 +32,10 @@ const VALUE_OPTIONS = new Set([
   "--source",
   "--compactor",
   "--thinking",
+  "--root",
+  "--db",
+  "--running",
+  "--restart",
 ]);
 const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
   if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
@@ -59,6 +63,10 @@ const { values, positionals } = parseArgs({
     source: { type: "string" },
     compactor: { type: "string" },
     thinking: { type: "string" },
+    root: { type: "string" },
+    db: { type: "string" },
+    running: { type: "string" },
+    restart: { type: "string" },
   },
 });
 const [command, ...rest] = positionals;
@@ -155,6 +163,16 @@ switch (command ?? "") {
   case "update": {
     const result =
       values.check === true ? (checkHost(root) ?? { state: "ready", root }) : updateHost(root);
+    console.log(JSON.stringify(result));
+    break;
+  }
+  case "cardd": {
+    const { root: carddRoot, db, running, restart: command } = values;
+    if (carddRoot === undefined || db === undefined) throw new Error(USAGE);
+    const result =
+      values.check === true
+        ? (checkCardd(carddRoot, db) ?? { state: "ready", root: carddRoot })
+        : updateCardd(carddRoot, db, running, strings(json(command)));
     console.log(JSON.stringify(result));
     break;
   }

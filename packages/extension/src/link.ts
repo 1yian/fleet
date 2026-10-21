@@ -9,6 +9,7 @@ type Push = Extract<ServerMessage, { t: "entry" }>;
 type Result = Extract<ServerMessage, { t: "result" }>;
 
 const CLOSE_NOT_LIVE = 4001;
+const CLOSE_UNREADABLE = 4003;
 const MAX_BACKOFF_MS = 10_000;
 
 export interface LinkOptions {
@@ -17,6 +18,7 @@ export interface LinkOptions {
   readonly inFile: () => number[];
   readonly onPush: (push: Push) => void;
   readonly onConnect: () => void;
+  readonly onUnreadable: (error: string) => void;
 }
 
 export class Link {
@@ -41,7 +43,15 @@ export class Link {
       this.send({ t: "hello", token: this.options.token, inFile: this.options.inFile() });
     });
     socket.addEventListener("message", (event) => {
-      this.receive(parseServerMessage(String(event.data)));
+      let message: ServerMessage;
+      try {
+        message = parseServerMessage(String(event.data));
+      } catch (error) {
+        this.options.onUnreadable(error instanceof Error ? error.message : String(error));
+        socket.close(CLOSE_UNREADABLE, "this session cannot read a message from cardd");
+        return;
+      }
+      this.receive(message);
     });
     socket.addEventListener("close", (event) => {
       this.connected = false;

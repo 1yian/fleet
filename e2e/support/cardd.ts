@@ -1,6 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,21 @@ import {
 import { FakeGitHub } from "./github.ts";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
+const KEEPALIVE = fileURLToPath(new URL("./keepalive.ts", import.meta.url));
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      server.close(() => {
+        resolve(port);
+      });
+    });
+  });
+}
 const WAIT_MS = 10_000;
 
 async function until<T>(read: () => T | undefined, what: string): Promise<T> {
@@ -36,7 +52,9 @@ export class Cardd {
   readonly gh = new FakeGitHub();
   url = "";
   private child: ChildProcess | undefined;
+  private supervised = false;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly pidFile = join(mkdtempSync(join(tmpdir(), "fleet-keepalive-")), "cardd.pid");
 
   private readonly args: readonly string[];
 
@@ -54,6 +72,16 @@ export class Cardd {
     seed?.(cardd.db);
     await cardd.boot();
     return cardd;
+  }
+
+  static async underKeepAlive(root: string): Promise<Cardd> {
+    const cardd = new Cardd({}, []);
+    await cardd.supervise(join(root, "packages", "cardd", "src", "main.ts"));
+    return cardd;
+  }
+
+  get restartCommand(): string[] {
+    return ["sh", "-c", `kill "$(cat '${this.pidFile}')"`];
   }
 
   dashTokens(sessions: readonly string[]): void {
@@ -154,8 +182,23 @@ export class Cardd {
     const child = this.child;
     if (child?.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise((resolve) => child.once("exit", resolve));
-    child.kill("SIGKILL");
+    if (this.supervised) child.kill("SIGTERM");
+    else child.kill("SIGKILL");
     await exited;
+  }
+
+  private async supervise(main: string): Promise<void> {
+    const port = await freePort();
+    const serve = [main, "serve", "--db", this.db, "--listen", `127.0.0.1:${String(port)}`];
+    const child = spawn("node", [KEEPALIVE, this.pidFile, "node", ...serve], {
+      stdio: ["ignore", "pipe", "inherit"],
+      env: this.env,
+    });
+    this.child = child;
+    this.supervised = true;
+    let out = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
+    this.url = await until(() => /listening on (\S+)/.exec(out)?.[1], "cardd to listen");
   }
 
   private async boot(port = "0"): Promise<void> {

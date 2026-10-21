@@ -374,6 +374,12 @@ export const BoardSchema = Type.Object({
 });
 export type Board = Static<typeof BoardSchema>;
 
+export const VersionSchema = Type.Object({
+  commit: Type.Union([Type.String(), Type.Null()]),
+  schema: Type.Integer(),
+});
+export type Version = Static<typeof VersionSchema>;
+
 export const ThreadSchema = Type.Object({ card: CardSchema, entries: Type.Array(EntrySchema) });
 export type Thread = Static<typeof ThreadSchema>;
 

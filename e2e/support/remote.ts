@@ -26,10 +26,15 @@ export function cloneWithRemote(dir: string, name: string): { clone: string; rem
   return { clone, remote: addRemote(clone) };
 }
 
-export function landOnRemote(remote: string, message: string): string {
+export function landOnRemote(
+  remote: string,
+  message: string,
+  file = `${message}.txt`,
+  content = `${message}\n`,
+): string {
   const other = join(mkdtempSync(join(dirname(remote), "other-")), "repo");
   execFileSync("git", ["clone", "-q", remote, other]);
-  writeFileSync(join(other, `${message}.txt`), `${message}\n`);
+  writeFileSync(join(other, file), content);
   git(other, "add", "-A");
   git(other, "commit", "-q", "-m", message);
   git(other, "push", "-q", "origin", "main");
