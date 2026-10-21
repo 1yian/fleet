@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { FakeGitHub } from "../support/github.ts";
 import { parseRecord } from "../support/json.ts";
+import "../support/tool-stubs.ts";
 
 const PR = "https://github.com/example/app/pull/1";
 
