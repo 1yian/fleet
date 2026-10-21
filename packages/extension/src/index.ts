@@ -40,6 +40,7 @@ function config(pi: ExtensionAPI): Config | undefined {
   const lane = readLaneConfig(HOME());
   if (lane === undefined) return undefined;
   process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
+  process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
   process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...workerPiArgs(lane)]);
   return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane };
 }
@@ -117,7 +118,7 @@ function start(
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
-    registerUpdate(pi, HOME());
+    registerUpdate(pi, HOME(), link);
   }
 
   pi.on("before_agent_start", (event) => ({

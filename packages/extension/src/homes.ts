@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { arrangeHere, claimFollowers } from "./arrange.ts";
 import { field, herdr as herdrOn, piRunning, quote, records } from "./host.ts";
 import { isRecord, LANE_FILE, readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { isMateWorkspace, mateTitle } from "./titles.ts";
@@ -181,6 +182,7 @@ async function start(root: string, info: LaneHome): Promise<void> {
   mkdirSync(join(info.home, "state"), { recursive: true });
   const starts = [...recentStarts(info.home, Date.now()), Date.now()];
   writeFileSync(startsFile(info.home), `${starts.join("\n")}\n`);
+  await arrangeHere().catch(() => undefined);
 }
 
 const named = (root: string, lane: string | undefined): LaneHome[] => {
@@ -214,6 +216,7 @@ export async function up(root: string, only?: string): Promise<Outcome[]> {
 }
 
 async function close(lane: string): Promise<void> {
+  await claimFollowers(lane).catch(() => undefined);
   const workspace = await workspaceOf(lane);
   if (workspace !== undefined) await herdr(["workspace", "close", workspace]);
 }

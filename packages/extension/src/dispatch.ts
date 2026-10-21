@@ -34,7 +34,7 @@ if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1
 fi
 git -C "$clone" worktree add -q --no-track -b "$branch" "$path" "$start"`;
 
-async function worktreePane(host: string, plan: Plan): Promise<string> {
+async function worktreePane(host: string, plan: Plan, card: number): Promise<string> {
   const tree = worktreeOf(
     await herdr(host, ["worktree", "list", "--cwd", plan.clone]),
     plan.session,
@@ -52,7 +52,7 @@ async function worktreePane(host: string, plan: Plan): Promise<string> {
     const args = [plan.clone, path, plan.branch, plan.base, from];
     await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", ...args]);
   }
-  return openWorkerWorkspace(host, path, plan);
+  return openWorkerWorkspace(host, path, { id: card, name: plan.name, lane: plan.lane });
 }
 
 const SHELL_WAIT_MS = 20_000;
@@ -126,7 +126,7 @@ export async function dispatch(
 ): Promise<string> {
   const plan = parsePlan(await link.call("attempt.begin", request));
   const where = `${plan.session} on ${request.host}`;
-  const pane = await worktreePane(request.host, plan);
+  const pane = await worktreePane(request.host, plan, request.card);
   if (await piRunning(request.host, pane)) {
     return plan.connected
       ? `c-${String(request.card)} is already running as ${where}.`

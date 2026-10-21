@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { arrangeHere } from "./arrange.ts";
 import {
   codeRoot,
   existingHome,
@@ -17,7 +18,7 @@ import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | restart [lane] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -115,6 +116,9 @@ switch (command ?? "") {
   }
   case "up":
     show(await up(root, rest[0]));
+    break;
+  case "arrange":
+    await arrangeHere();
     break;
   case "stop":
     await stop(root, lane());

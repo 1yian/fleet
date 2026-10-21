@@ -25,7 +25,9 @@ export class HerdrLab {
   }
 
   async run(args: readonly string[]): Promise<JsonRecord> {
-    const reply = await this.raw(args);
+    const text = await this.text(args);
+    if (text.trim() === "") return {};
+    const reply = parseRecord(text);
     return isRecord(reply["result"]) ? reply["result"] : {};
   }
 
