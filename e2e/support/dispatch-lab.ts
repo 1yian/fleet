@@ -29,6 +29,7 @@ export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
 
 export interface LabOptions {
   readonly cardd?: Record<string, string>;
+  readonly mate?: Record<string, string>;
   readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
   readonly remote?: boolean;
@@ -75,6 +76,7 @@ function addSite(
 
 export async function startDispatchLab({
   cardd: carddEnv,
+  mate: mateEnv,
   dashTokens = [],
   workerArgs = [],
   ...site
@@ -99,6 +101,7 @@ export async function startDispatchLab({
       FLEET_FAKE_AGENT: "mate",
       HERDR_SESSION: lab.name,
       ...env,
+      ...mateEnv,
       FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", EXTENSION, ...workerArgs]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],
