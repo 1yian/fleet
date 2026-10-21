@@ -137,7 +137,7 @@ test("a silent worker gets one resend, then its mate gets one escalation, and th
   const escalation = `[fleet] check on c-1 dev-port (finding): reply ${id} unanswered: c-1-a1 got your comment and one resend, and has not replied: "Which port does the dev server use?". Ask again, or withdraw it with comment(card=1, text, withdraws="${id}").`;
   assert.deepEqual(await hears("mate", /unanswered/), [escalation]);
   assert.deepEqual(heard("mate", /paused: still building/), [
-    "[fleet] c-1 dev-port paused: still building (card now working)",
+    "[fleet] c-1 dev-port paused: still building",
   ]);
 
   const shown = await until(
@@ -197,7 +197,7 @@ test("a correlated report answers the reply and stops its nudges, and a wrong id
   const [asked] = await hears("default", /reply owed/);
   const id = idIn(asked ?? "") ?? "";
   assert.deepEqual(await hears("mate", /\(replies r-/), [
-    `[fleet] c-1 dev-port paused: port 5173 (card now working) (replies ${id})`,
+    `[fleet] c-1 dev-port paused: port 5173 (replies ${id})`,
   ]);
   const refused = h
     .callsOf("default")
