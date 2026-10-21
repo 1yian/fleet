@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Card, Entry } from "@fleet/protocol";
+import { CardViewSchema, check, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
@@ -12,10 +12,9 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-const findings = (card: Card): string[] =>
-  fleet.main.entries
-    .map(({ entry }: { entry: Entry }) => entry)
-    .filter((entry) => entry.card === card.id && entry.author === "check")
+const findings = async (card: Card): Promise<string[]> =>
+  check(CardViewSchema, await fleet.main.call("card", { card: card.id }))
+    .entries.filter((entry) => entry.kind === "finding" && entry.author === "check")
     .map((entry) => String(entry.fields["condition"]));
 const findingFor = (card: Card, condition: string): Promise<Entry> =>
   fleet.main.waitForEntry(
@@ -38,7 +37,7 @@ test("a worker that never connects is reported to its mate, once, and the card s
   const later = await newCard(fleet.main, "a later card");
   await begin(fleet.main, later);
   await findingFor(later, "worker-never-connected");
-  assert.deepEqual(findings(card), ["worker-never-connected"]);
+  assert.deepEqual(await findings(card), ["worker-never-connected"]);
 });
 
 test("a worker that disconnects, and a worker that stalls, are reported to their mate and stay Working", async () => {
@@ -50,7 +49,7 @@ test("a worker that disconnects, and a worker that stalls, are reported to their
   await findingFor(gone, "worker-not-connected");
   await findingFor(stuck, "worker-stalled");
   assert.deepEqual(
-    [findings(gone), findings(stuck)],
+    [await findings(gone), await findings(stuck)],
     [["worker-not-connected"], ["worker-stalled"]],
   );
   assert.deepEqual(
@@ -76,7 +75,7 @@ test("an idle worker without a handoff is reported to its mate, but a paused one
 
   await findingFor(idle, "worker-idle");
   assert.equal(await status(fleet.main, idle), "working");
-  assert.deepEqual(findings(paused), []);
+  assert.deepEqual(await findings(paused), []);
   assert.equal(await status(fleet.main, paused), "paused");
 });
 
@@ -86,7 +85,7 @@ test("a card that waits on an idle mate gets one reminder for each tier", async 
   await worker.call("report", { status: "blocked", text: "the API is down" });
 
   await findingFor(card, "reminder-2");
-  assert.deepEqual(findings(card), ["reminder-1", "reminder-2"]);
+  assert.deepEqual(await findings(card), ["reminder-1", "reminder-2"]);
   assert.match(
     fleet.main.entries.at(-1)?.entry.body ?? "",
     /^reminder: this card has waited for you \(with-mate, \d+ min\)$/,
@@ -122,7 +121,7 @@ test("a mate that is busy and then idle again is not reminded twice for the same
   await fleet.main.call("board", {});
 
   await findingFor(card, "reminder-2");
-  assert.deepEqual(findings(card), ["reminder-1", "reminder-2"]);
+  assert.deepEqual(await findings(card), ["reminder-1", "reminder-2"]);
 });
 
 test("a finished card that its lane mate leaves open is reminded early, then reported to main", async () => {
@@ -171,7 +170,7 @@ test("main's own finished card is reminded, and never reported to anyone", async
   await worker.call("report", { status: "done", text: "report written" });
 
   await findingFor(card, "finished-4");
-  assert.deepEqual(findings(card), ["finished-1", "finished-2", "finished-3", "finished-4"]);
+  assert.deepEqual(await findings(card), ["finished-1", "finished-2", "finished-3", "finished-4"]);
 });
 
 test("a ship card that only did an operation is reminded how to close it", async () => {
