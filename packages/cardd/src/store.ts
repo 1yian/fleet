@@ -292,9 +292,15 @@ export function mainLane(db: DatabaseSync): string {
   return name;
 }
 
-export function listProjects(
-  db: DatabaseSync,
-): { name: string; delivery: string; base: string; hosts: string[]; yolo: boolean }[] {
+interface Project {
+  readonly name: string;
+  readonly delivery: string;
+  readonly base: string;
+  readonly clones: { host: string; path: string }[];
+  readonly yolo: boolean;
+}
+
+export function listProjects(db: DatabaseSync): Project[] {
   return db
     .prepare(
       "SELECT name, delivery, default_base AS base, clones, yolo FROM projects ORDER BY name",
@@ -302,12 +308,12 @@ export function listProjects(
     .all()
     .map((row) => {
       const clones: unknown = JSON.parse(String(row["clones"]));
-      const hosts = typeof clones === "object" && clones !== null ? Object.keys(clones) : [];
+      const paths = typeof clones === "object" && clones !== null ? Object.entries(clones) : [];
       return {
         name: String(row["name"]),
         delivery: String(row["delivery"]),
         base: String(row["base"]),
-        hosts,
+        clones: paths.map(([host, path]) => ({ host, path: String(path) })),
         yolo: row["yolo"] === 1,
       };
     });

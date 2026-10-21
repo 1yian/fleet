@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Jobs } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs } from "./lane-config.ts";
@@ -95,6 +96,7 @@ function start(
   const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
   if (role === "mate") registerQuestions(pi, link, () => sessionFile);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
+  if (lane === "main") refreshEveryCloneOnFirstConnect(pi, link);
 
   pi.on("before_agent_start", (event) => ({
     systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? charter() : ""}`,

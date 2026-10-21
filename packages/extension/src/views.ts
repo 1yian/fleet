@@ -264,7 +264,7 @@ interface ProjectRow {
   readonly name: string;
   readonly delivery: string;
   readonly base: string;
-  readonly hosts: readonly string[];
+  readonly clones: readonly { host: string }[];
   readonly yolo: boolean;
 }
 
@@ -300,7 +300,7 @@ function projectsOf(
     name: each.name,
     delivery: each.delivery,
     ...(every ? { base: each.base } : {}),
-    hosts: each.hosts.join(" "),
+    hosts: each.clones.map((clone) => clone.host).join(" "),
     yolo: each.yolo ? "on" : "off",
   }));
   return { rows, hidden: projects.length - shown.length };

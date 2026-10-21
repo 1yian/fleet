@@ -7,6 +7,7 @@ import { Cardd } from "./cardd.ts";
 import { Harness, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
+import { addRemote } from "./remote.ts";
 
 export const WORKER_WAIT_MS = 60_000;
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
@@ -19,6 +20,7 @@ export interface DispatchLab {
   readonly h: Harness;
   readonly lab: HerdrLab;
   readonly clone: string;
+  readonly remote: string | undefined;
   readonly mate: Pi;
   readonly home: string;
 }
@@ -29,12 +31,14 @@ export interface LabOptions {
   readonly cardd?: Record<string, string>;
   readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
+  readonly remote?: boolean;
 }
 
 export async function startDispatchLab({
   cardd: carddEnv,
   dashTokens = [],
   workerArgs = [],
+  remote: withRemote = false,
 }: LabOptions = {}): Promise<DispatchLab> {
   const cardd = await Cardd.start(carddEnv);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
@@ -42,9 +46,14 @@ export async function startDispatchLab({
   const mainToken = cardd.addLane("main", undefined, home);
   const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
   const git = "git -c user.name=t -c user.email=t@t";
-  const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init && git -C site remote add origin https://github.com/acme/site.git`;
+  const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
   execFileSync("sh", ["-c", init], { cwd: dirname(clone) });
-  cardd.addProject("site", { local: clone, flaky: clone, far: clone });
+  const remote = withRemote ? addRemote(clone) : undefined;
+  cardd.addProject(
+    "site",
+    remote === undefined ? { local: clone, flaky: clone, far: clone } : { local: clone },
+    "acme/site",
+  );
   const h = await Harness.start();
   const lab = await HerdrLab.start({
     ...h.piEnv("worker"),
@@ -67,7 +76,7 @@ export async function startDispatchLab({
     },
     [EXTENSION],
   );
-  return { cardd, h, lab, clone, mate, home };
+  return { cardd, h, lab, clone, remote, mate, home };
 }
 
 export async function stopDispatchLab({ lab, h, cardd }: DispatchLab): Promise<void> {

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CardSchema, check, OPS } from "@fleet/protocol";
+import { refreshClonesInTurn } from "./clones.ts";
 import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
 
@@ -12,8 +13,14 @@ const ARCHIVE_SCRIPT = readFileSync(
 type Attempt = ReturnType<typeof parsePlan>["attempts"][number];
 const parsePlan = (value: unknown) => check(OPS["close.begin"].result, value);
 
+const ORIGIN_BASE_IF_FETCHED = `origin=""
+if git -C "$clone" rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null; then
+  origin="origin/$base"
+fi`;
+
 const DELETE_ARCHIVED_BRANCH_SCRIPT = `set -eu
 clone=$1 branch=$2 base=$3 out=$4
+${ORIGIN_BASE_IF_FETCHED}
 status=0
 git -C "$clone" show-ref --verify -q "refs/heads/$branch" || status=$?
 if [ "$status" -eq 0 ]; then
@@ -21,7 +28,7 @@ if [ "$status" -eq 0 ]; then
   if [ -f "$out" ]; then
     drop=1
   else
-    ahead=$(git -C "$clone" rev-list --count "$base..refs/heads/$branch")
+    ahead=$(git -C "$clone" rev-list --count "refs/heads/$branch" --not "$base" \${origin:+"$origin"})
     if [ "$ahead" -eq 0 ]; then drop=1; fi
   fi
   if [ "$drop" -eq 1 ]; then git -C "$clone" branch -D "$branch" >/dev/null; fi
@@ -32,12 +39,13 @@ if [ -f "$out" ]; then echo "$out"; fi`;
 
 const UNLANDED_COUNTS_SCRIPT = `set -eu
 wt=$1 clone=$2 branch=$3 base=$4
+${ORIGIN_BASE_IF_FETCHED}
 ahead=0 dirty=0
 if [ -d "$wt" ]; then
-  ahead=$(git -C "$wt" rev-list --count "$base..HEAD")
+  ahead=$(git -C "$wt" rev-list --count HEAD --not "$base" \${origin:+"$origin"})
   dirty=$(git -C "$wt" status --porcelain | wc -l | tr -d ' ')
 elif git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
-  ahead=$(git -C "$clone" rev-list --count "$base..refs/heads/$branch")
+  ahead=$(git -C "$clone" rev-list --count "refs/heads/$branch" --not "$base" \${origin:+"$origin"})
 fi
 echo "$ahead $dirty"`;
 
@@ -135,10 +143,23 @@ export async function close(
   }
   const finish = { card: id, mode: plan.mode, text, archives, left };
   const card = check(CardSchema, await link.call("close.finish", finish));
+  const hostsJustUnreachable = new Set(left.map((each) => each.host));
+  const found = await refreshClonesInTurn(
+    plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
+  );
+  return `c-${String(card.id)} is ${card.status}.${outcome(archives, left, found)}`;
+}
+
+function outcome(
+  archives: readonly string[],
+  left: readonly { session: string; host: string; reason: string }[],
+  clones: readonly string[],
+): string {
   const kept = archives.length === 0 ? "" : ` Unlanded work is archived in ${archives.join(", ")}.`;
   const stayed =
     left.length === 0
       ? ""
       : ` Left in place: ${left.map((each) => `${each.host} ${each.session} (${each.reason})`).join("; ")}.`;
-  return `c-${String(card.id)} is ${card.status}.${kept}${stayed}`;
+  const found = clones.length === 0 ? "" : ` Clones: ${clones.join("; ")}.`;
+  return `${kept}${stayed}${found}`;
 }

@@ -8,6 +8,7 @@ import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { toolResults } from "../support/dispatch-lab.ts";
 import { isRecord, records, type JsonRecord } from "../support/json.ts";
+import { cloneWithRemote, landOnRemote, tip } from "../support/remote.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -161,6 +162,28 @@ test("main brings up every lane on both hosts, and starts a mate that dies", asy
   );
   await waitState(p620, "far", "running");
   assert.notEqual(await groupOf("far"), before);
+});
+
+test("main refreshes every project clone when it starts: a clean one fast-forwards, and a dirty one is left alone and reported", async () => {
+  const site = cloneWithRemote(here.parent, "site");
+  const app = cloneWithRemote(here.parent, "app");
+  const fresh = landOnRemote(site.remote, "merged-pr");
+  landOnRemote(app.remote, "merged-pr");
+  const appBefore = tip(app.clone);
+  writeFileSync(join(app.clone, "README"), "the captain's edit\n");
+  cardd.addProject("site", { local: site.clone });
+  cardd.addProject("app", { local: app.clone });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+
+  const turns = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(
+    users(turns),
+    /\[fleet\] clones: app on local: STUCK: on branch main with uncommitted changes, 1 commits behind origin\/main - needs attention; site on local: synced [0-9a-f]+\.\.[0-9a-f]+$/m,
+  );
+  assert.equal(tip(site.clone), fresh);
+  assert.equal(tip(app.clone), appBefore);
+  assert.equal(readFileSync(join(app.clone, "README"), "utf8"), "the captain's edit\n");
 });
 
 test("main tells the captain when a host cannot be reached, and when it is back", async () => {
