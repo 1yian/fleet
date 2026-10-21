@@ -3,7 +3,9 @@ import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { serve } from "./server.ts";
-import { addLane, addProject, setClone, setRepo, setYolo } from "./store.ts";
+import { DELIVERIES } from "@fleet/protocol";
+import { setCardDelivery } from "./attempts.ts";
+import { addLane, addProject, setClone, setProjectDelivery, setRepo, setYolo } from "./store.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -46,6 +48,12 @@ function parseHosts(raw: string): Hosts {
 function ownerName(repo: string, flag: string): string {
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) throw new Error(`${flag} ${repo} must be <owner>/<name>`);
   return repo;
+}
+
+function deliveryMode(raw: string, flag: string): (typeof DELIVERIES)[number] {
+  const mode = DELIVERIES.find((each) => each === raw);
+  if (mode === undefined) throw new Error(`${flag} ${raw} must be one of ${DELIVERIES.join(", ")}`);
+  return mode;
 }
 
 function parseClone(pair: string): [string, string] {
@@ -112,6 +120,22 @@ if (command === "serve") {
   console.log(`${rest[1]}: clone on ${host} is ${path}`);
 } else if (
   command === "project" &&
+  rest[0] === "delivery" &&
+  rest[1] !== undefined &&
+  rest[2] !== undefined
+) {
+  setProjectDelivery(db, rest[1], deliveryMode(rest[2], "project delivery"));
+  console.log(`${rest[1]}: delivery ${rest[2]}`);
+} else if (
+  command === "card" &&
+  rest[0] === "delivery" &&
+  rest[1] !== undefined &&
+  rest[2] !== undefined
+) {
+  if (!/^[1-9][0-9]*$/.test(rest[1])) throw new Error(`card ${rest[1]} must be a card number`);
+  console.log(setCardDelivery(db, Number(rest[1]), deliveryMode(rest[2], "card delivery")));
+} else if (
+  command === "project" &&
   rest[0] === "yolo" &&
   rest[1] !== undefined &&
   (rest[2] === "on" || rest[2] === "off")
@@ -120,6 +144,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> [--hosts <json>] | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
   );
 }

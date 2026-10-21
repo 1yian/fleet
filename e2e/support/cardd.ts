@@ -1,4 +1,4 @@
-import { execFileSync, type ChildProcess } from "node:child_process";
+import { execFileSync, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { createServer } from "node:net";
@@ -135,6 +135,13 @@ export class Cardd {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
+  }
+
+  admin(...args: readonly string[]): { status: number | null; stdout: string; stderr: string } {
+    const { status, stdout, stderr } = spawnSync("node", [MAIN, ...args, "--db", this.db], {
+      encoding: "utf8",
+    });
+    return { status, stdout: stdout.trim(), stderr };
   }
 
   recordPrByHand(card: number, url: string): void {
