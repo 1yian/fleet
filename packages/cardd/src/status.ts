@@ -332,7 +332,7 @@ export function finishFrom(entries: readonly Entry[]): Finish {
     if (isMerge(entry)) {
       finish.merged = true;
       finish.at = entry.createdAt;
-    } else if (entry.kind === "comment") {
+    } else if (entry.kind === "comment" && toWorker(entry)) {
       finish.workerDone = false;
     } else if (entry.kind === "report" && status !== undefined && HANDOFF_REPORTS.has(status)) {
       finish.workerDone = status === "done";

@@ -247,13 +247,30 @@ test("a delivered scout keeps its completion across coordination comments, repli
     "main's coordination",
   );
   const done = { card: card.id };
-  assert.equal((await cnp.call("close.begin", done)) !== undefined, true);
+  assert.equal(check(OPS["close.begin"].result, await cnp.call("close.begin", done)).mode, "done");
   await cnp.call("comment", {
     card: card.id,
     text: "The assessment is delivered.",
     replyTo: `r-${String(request.id)}`,
   });
-  assert.equal((await cnp.call("close.begin", done)) !== undefined, true);
+  assert.equal(check(OPS["close.begin"].result, await cnp.call("close.begin", done)).mode, "done");
+  await cnp.call("comment", {
+    card: card.id,
+    text: "Confirm the report is complete and unchanged.",
+  });
+  await assert.rejects(
+    cnp.call("close.begin", done),
+    notLanded(card.id, "the worker has not reported done"),
+  );
+  await worker.call("report", {
+    status: "done",
+    text: "assessment complete, no project changes or unlanded work",
+  });
+  await fleet.main.call("comment", {
+    card: card.id,
+    text: "Coordinate normal report close-out; implementation stays separate.",
+  });
+  assert.equal(check(OPS["close.begin"].result, await cnp.call("close.begin", done)).mode, "done");
   assert.equal(
     await fleet.cardd.act(card.id, { kind: "comment", text: "Relay the findings." }),
     200,
