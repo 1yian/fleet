@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
+import "./hermetic-env.ts";
 
 const REAPER = fileURLToPath(new URL("./reaper.ts", import.meta.url));
 let reaper: ChildProcess | undefined;
