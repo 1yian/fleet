@@ -7,6 +7,7 @@ import { parseRecord } from "../support/json.ts";
 
 const RUNNER = fileURLToPath(new URL("../support/orphan-runner.ts", import.meta.url));
 const WAIT_MS = 30_000;
+const PI_COMMAND = /^pi\b|node .*\/pi\b/;
 
 interface Running {
   readonly pid: number;
@@ -50,6 +51,11 @@ function pgrep(pattern: string): number[] {
 
 const alive = ({ pid, command }: Running): boolean => commandOf(pid) === command;
 
+function labListed(lab: string): boolean {
+  const listing = execFileSync("herdr", ["session", "list"], { encoding: "utf8" });
+  return listing.split("\n").some((line) => line.trim().split(/\s+/)[0] === lab);
+}
+
 async function readyLine(runner: ReturnType<typeof spawn>): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let out = "";
@@ -65,6 +71,15 @@ async function readyLine(runner: ReturnType<typeof spawn>): Promise<Record<strin
   });
 }
 
+function killIfAlive(each: Running): void {
+  if (!alive(each)) return;
+  try {
+    process.kill(each.pid, "SIGKILL");
+  } catch {
+    return;
+  }
+}
+
 function removeLab(lab: string): void {
   for (const verb of ["stop", "delete"]) {
     try {
@@ -75,8 +90,11 @@ function removeLab(lab: string): void {
   }
 }
 
-test("a test runner killed with SIGKILL leaves no cardd, herdr, pi, or pane process behind", async () => {
-  const runner = spawn("node", [RUNNER], { stdio: ["ignore", "pipe", "pipe"] });
+test("SIGKILL of a test runner removes its cardd, direct Pi, shell-owned Pi, pane jobs, and herdr lab session", async (t) => {
+  const runner = spawn("node", [RUNNER], { stdio: ["pipe", "pipe", "pipe"] });
+  t.after(() => {
+    runner.kill("SIGKILL");
+  });
   const exited = new Promise((resolve) => runner.once("exit", resolve));
   const ready = await readyLine(runner).catch((error: unknown) => {
     runner.kill("SIGKILL");
@@ -98,22 +116,34 @@ test("a test runner killed with SIGKILL leaves no cardd, herdr, pi, or pane proc
   const kinds = [
     /cardd\/src\/main\.ts serve/,
     /^herdr server/,
-    /^pi\b|--mode rpc/,
+    PI_COMMAND,
     new RegExp(`^${sleeper}`),
   ];
   const missing = kinds.filter((kind) => !running.some((each) => kind.test(each.command)));
+  const panePi = running.find((each) => each.pid === ready["panePi"]);
+  const lab = String(ready["lab"]);
+  const listedBefore = labListed(lab);
   runner.kill("SIGKILL");
   await exited;
 
   const deadline = Date.now() + WAIT_MS;
   let left = running.filter(alive);
-  while (left.length > 0 && Date.now() < deadline) {
+  let listedAfter = labListed(lab);
+  while ((left.length > 0 || listedAfter) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
     left = left.filter(alive);
+    listedAfter = labListed(lab);
   }
-  const lab = String(ready["lab"]);
   const dirs = Array.isArray(ready["dirs"]) ? ready["dirs"].map(String) : [];
   try {
+    assert.ok(panePi, "a real Pi was running in the lab's shell before SIGKILL");
+    assert.match(panePi.command, PI_COMMAND);
+    assert.equal(
+      running.filter((each) => PI_COMMAND.test(each.command)).length,
+      2,
+      "both a direct Pi and a pane-owned Pi were running before SIGKILL",
+    );
+    assert.equal(listedBefore, true, "the lab session was registered before SIGKILL");
     assert.deepEqual(
       missing.map(String),
       [],
@@ -124,11 +154,12 @@ test("a test runner killed with SIGKILL leaves no cardd, herdr, pi, or pane proc
       [],
       "processes the runner started outlived it",
     );
+    assert.equal(listedAfter, false, "the runner left a herdr lab session record behind");
   } finally {
     runner.stdout.destroy();
     runner.stderr.destroy();
-    for (const { pid } of left) process.kill(pid, "SIGKILL");
+    if (left.length > 0 || listedAfter) removeLab(lab);
+    for (const each of left) killIfAlive(each);
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
-    if (left.length > 0) removeLab(lab);
   }
 });
