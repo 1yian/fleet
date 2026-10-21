@@ -6,8 +6,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import { stream, wireCall, type WireCall } from "./anthropic-wire.ts";
 import { spawnGuarded } from "./guarded.ts";
-import { isRecord, messageText, optionalNumber, parseRecord, type JsonRecord } from "./json.ts";
+import {
+  isRecord,
+  messageText,
+  optionalNumber,
+  optionalString,
+  parseRecord,
+  type JsonRecord,
+} from "./json.ts";
 
 export interface Turn {
   readonly role: string;
@@ -88,6 +96,7 @@ export class Pi {
 export class Harness {
   readonly dir = mkdtempSync(join(tmpdir(), "fleet-e2e-"));
   readonly calls: Turn[][] = [];
+  readonly wire: WireCall[] = [];
   private readonly agentCalls = new Map<string, Turn[][]>();
   private readonly agentModels = new Map<string, string[]>();
   readonly events: JsonRecord[] = [];
@@ -107,12 +116,17 @@ export class Harness {
     const server = createServer();
     const harness = new Harness(server, new WebSocketServer({ server, path: "/probe" }));
     server.on("request", (request, response) => {
+      if (request.method === "POST" && request.url?.startsWith("/anthropic/v1/messages") === true) {
+        void harness.answerWire(request, response);
+        return;
+      }
       if (request.method !== "POST" || request.url !== "/model") {
         response.writeHead(404).end();
         return;
       }
       void harness.answerModel(request, response);
     });
+
     harness.sockets.on("connection", (socket) => {
       harness.probe = socket;
       socket.on("message", (data) => harness.events.push(parseRecord(rawText(data))));
@@ -206,6 +220,10 @@ export class Harness {
     return poll(() => this.events.filter(match)[n - 1], what);
   }
 
+  async waitForWire(match: (call: WireCall) => boolean, what: string): Promise<WireCall> {
+    return poll(() => this.wire.find(match), what);
+  }
+
   async waitForCall(index: number, agent = "default", waitMs = WAIT_MS): Promise<Turn[]> {
     try {
       return await poll(() => this.callsOf(agent)[index], `model call ${String(index)}`, waitMs);
@@ -244,17 +262,34 @@ export class Harness {
   private async answerModel(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const turns = toTurns(parseRecord(await readBody(request)));
     const header = request.headers["x-fake-agent"];
-    const agent = typeof header === "string" ? header : "default";
     const model = request.headers["x-fake-model"];
-    this.agentModels.set(agent, [
-      ...this.modelsOf(agent),
+    const move = await this.scripted(
+      typeof header === "string" ? header : "default",
       typeof model === "string" ? model : "unknown",
-    ]);
+      turns,
+    );
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(move));
+  }
+
+  private async answerWire(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = parseRecord(await readBody(request));
+    const call = wireCall(body);
+    this.wire.push(call);
+    const header = request.headers["x-fake-agent"];
+    const agent =
+      call.role === "worker" ? "worker" : typeof header === "string" ? header : "default";
+    const move = call.warm
+      ? { text: "warm" }
+      : await this.scripted(agent, optionalString(body, "model") ?? "unknown", [...call.turns]);
+    response.writeHead(200, { "content-type": "text/event-stream" }).end(stream(move));
+  }
+
+  private async scripted(agent: string, model: string, turns: Turn[]): Promise<Move> {
+    this.agentModels.set(agent, [...this.modelsOf(agent), model]);
     if (agent === "default") this.calls.push(turns);
     else this.agentCalls.set(agent, [...this.callsOf(agent), turns]);
     const handler = this.handlers.get(agent)?.shift() ?? (() => ({ text: "ok" }));
-    const move = await handler(turns);
-    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(move));
+    return handler(turns);
   }
 }
 
