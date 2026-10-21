@@ -1,5 +1,6 @@
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
+import { spawnGuarded } from "./guarded.ts";
 
 export class Lavish {
   readonly env: Record<string, string>;
@@ -13,7 +14,7 @@ export class Lavish {
       LAVISH_AXI_HOST: "127.0.0.1",
       LAVISH_AXI_NO_OPEN: "1",
     };
-    this.child = spawn("lavish-axi", ["server", "--port", "0"], {
+    this.child = spawnGuarded("lavish-axi", ["server", "--port", "0"], {
       env: { ...process.env, ...this.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
