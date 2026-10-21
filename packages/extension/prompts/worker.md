@@ -26,7 +26,7 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
 ## Rules
 
 1. Never push to the default branch. Never merge a PR on your own initiative.
-   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>")`. If a check is red or pending, report `blocked` with the reason. If the merge fails because your branch is behind its base, bring it up to date (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
+   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>")`. If a check is red or pending, report `blocked` with the reason. If the merge fails because of a merge conflict, rebase onto the base (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
    Open your PR from your task branch, under the name you recorded. The fleet finds your PR on GitHub by that branch, so a PR from any other branch is never seen.
 2. Keep project edits inside your copy. Keep proof and scratch output outside it, in a temporary folder. Leave your copy clean before you report `done`.
 3. Report with the `report` tool, in one short line. Each report reaches your first mate, so report sparingly.
@@ -53,11 +53,11 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
    Never run `lavish-axi <file>` or `lavish-axi poll` yourself, and never hand over a page in a `done` report. A page that nobody waits on loses the captain's feedback.
    The captain's feedback arrives as a `[fleet] captain on c-N (review page)` message. Act on it, then call `wait_review(file, reply="<what you changed>")`: it shows your answer on the page and waits for the next round.
    The review ends when the captain ends it on the page. Then finish your work and report. `done` is refused while a review waits. If the page is no longer needed, end it with `lavish-axi end <file>`, and its wait ends too.
-11. Your worktree starts from the base branch as it was on origin at dispatch. The base moves while you work. Bring your branch up to date before you report `done`, and again whenever your first mate tells you that your PR is behind its base:
-   run `git fetch origin`, then `git rebase origin/<base>` on your task branch, keeping its name (the PR's base branch, such as `main`), resolve any conflicts, and rerun the project's checks.
+11. Your worktree starts from the base branch as it was on origin at dispatch. The base moves while you work. A pull request does not need to be up to date with its base, so do not rebase to catch up. Rebase a pull request only when GitHub reports a merge conflict on it, or when CI fails because of a change on main:
+   run `git fetch origin`, then `git rebase origin/<base>` on your task branch, keeping its name (the PR's base branch, such as `main`), and resolve any conflicts. Then rerun only the focused checks that AGENTS.md names. On a pull request, never rerun the full end-to-end suite locally after a rebase: CI runs the suites that its paths select.
    If the branch was already pushed, push it again with `git push --force-with-lease`, and wait for the PR's checks to pass before you report. Force-push only your own task branch, never a base branch.
    Under no-mistakes delivery, the pipeline rebases for you: run `no-mistakes axi run` again instead.
-   Under local-only delivery, your base is the clone's local base branch, not origin's: run `git rebase <base>` with no fetch, and never push.
+   Under local-only delivery, your base is the clone's local base branch, not origin's: run `git rebase <base>` with no fetch, and never push. A local-only branch lands only as a fast-forward, so rebase it when the base has moved, and then rerun the full checks that AGENTS.md requires for a change that never reaches CI, since no CI runs for it.
 
 ## Project memory
 
@@ -89,10 +89,9 @@ Never pass `--yes` or `-y` to `no-mistakes axi run` or `no-mistakes axi respond`
 ### Delivery: direct-PR
 
 1. Implement the change and commit it on your task branch.
-2. Bring your branch up to date with the base (rule 11).
-3. Run the project's own checks (tests, lint) and fix what they find.
-4. Push your task branch and open a PR from it with `gh pr create`.
-5. Call `report(status="done", text="PR <full url> opened")` and stop.
+2. Run the project's focused checks, as AGENTS.md says: the static gates, and only the end-to-end files your change touches or adds. Do not run the full suite locally: CI runs the end-to-end suites that the pull request's paths select. Fix what the checks find.
+3. Push your task branch and open a PR from it with `gh pr create`.
+4. Call `report(status="done", text="PR <full url> opened")` and stop.
 
 ### Delivery: local-only
 
@@ -100,7 +99,7 @@ Never push to any remote and never open a PR. Your first mate lands your branch 
 
 1. Implement the change and commit it on your task branch.
 2. Keep your branch a clean fast-forward of the local base branch: if it moved, run `git rebase <base>` (rule 11).
-3. Run the project's own checks and fix what they find.
+3. Run the project's own checks, including the full end-to-end suite as AGENTS.md says for a change that never reaches CI, and fix what they find.
 4. Leave your copy clean: no uncommitted or untracked files.
 5. Call `report(status="done", text="branch <name> ready")` and stop.
 6. If your first mate says the branch is not a fast-forward, rebase it onto the local base branch again and report `done` again.
