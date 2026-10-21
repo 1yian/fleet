@@ -136,7 +136,7 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
 }
 
 test(
-  "with memory on, main's model and memory get a [fleet] message that arrives idle and one that arrives mid-turn",
+  "with memory on, main yields silently and keeps idle and mid-turn fleet messages in conversation memory",
   { skip: existsSync(DOTFILES) ? false : `no dotfiles checkout at ${DOTFILES}` },
   async () => {
     installMemory();
@@ -145,7 +145,7 @@ test(
         const last = turns.at(-1);
         if (isMains(turns) && last?.role === "user" && last.text.includes(IDLE_WORD))
           return { tool: "slow_tool" };
-        return { text: "noted" };
+        return isMains(turns) ? { tool: "yield" } : { text: "noted" };
       }, "mate");
     await startMain(lab, scratch, h);
     await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
@@ -180,13 +180,27 @@ test(
       settled.map(() => false),
     );
     const file = optionalString(session, "file") ?? "";
-    const errors = readFileSync(file, "utf8")
+    const messages = readFileSync(file, "utf8")
       .split("\n")
       .filter((line) => line.trim() !== "")
       .map(parseRecord)
       .map((entry) => entry["message"])
-      .filter((message) => isRecord(message) && message["stopReason"] === "error");
-    assert.deepEqual(errors, [], "a turn ended with an error");
+      .filter(isRecord);
+    assert.deepEqual(
+      messages.filter((message) => message["stopReason"] === "error"),
+      [],
+      "a turn ended with an error",
+    );
+    const assistant = messages.filter((message) => message["role"] === "assistant");
+    assert.equal(assistant.length, 3);
+    for (const message of assistant) {
+      const content = message["content"];
+      assert.ok(Array.isArray(content));
+      assert.deepEqual(
+        content.filter(isRecord).map((block) => block["type"]),
+        ["toolCall"],
+      );
+    }
 
     const items = await until(() => {
       const found = jsonl(join(memoryHome, "profiles", "main", "main"));
