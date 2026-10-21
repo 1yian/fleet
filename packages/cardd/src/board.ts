@@ -12,7 +12,7 @@ import {
 } from "@fleet/protocol";
 import { attemptsOf } from "./attempts.ts";
 import { requireOpen, type Draft } from "./change.ts";
-import { answerHold, hearers, holdOf, rewritten } from "./holds.ts";
+import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
 import { openReplies } from "./replies.ts";
 import { factsFrom, type Hold } from "./status.ts";
 import {
@@ -23,7 +23,6 @@ import {
   isLaneCard,
   loadCard,
   loadCards,
-  mainLane,
   type Loaded,
 } from "./store.ts";
 
@@ -33,7 +32,10 @@ const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "revie
 const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
 
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
-  inThread(entry) && (laneCard || !(entry.kind === "comment" && entry.author.startsWith("mate:")));
+  inThread(entry) &&
+  (laneCard ||
+    entry.fields["for"] === "captain" ||
+    !(entry.kind === "comment" && entry.author.startsWith("mate:")));
 
 const firstLine = (text: string): string =>
   text
@@ -129,7 +131,7 @@ function answerOnBoard(
 
 function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
   const taken = holdOf(db, card)?.holder === "captain";
-  const main = mainLane(db);
+  const main = laneOf(db, card, "main") ?? card.lane;
   const to = [main];
   const draft: Draft = {
     card: card.id,

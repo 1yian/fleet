@@ -132,7 +132,7 @@ function InReply({ entry }: { readonly entry: Entry }) {
       <span className="label">
         <span aria-hidden="true">↳</span> In reply to {who === "You" ? "your message" : who}
       </span>
-      <span className="quoted">{firstLine(entry.body)}</span>
+      {entry.author === "captain" ? <span className="quoted">{firstLine(entry.body)}</span> : null}
     </button>
   );
 }

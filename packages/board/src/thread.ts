@@ -93,7 +93,11 @@ const isRepeat = (entry: Entry, before: readonly Entry[]): boolean =>
   text(entry, "by") !== "board" &&
   before.some(
     (earlier) =>
-      earlier.author === "captain" && words(earlier) === words(entry) && earlier.id < entry.id,
+      earlier.author === "captain" &&
+      earlier.kind === "comment" &&
+      typeof entry.fields["hold"] === "number" &&
+      earlier.id > entry.fields["hold"] &&
+      words(earlier) === words(entry),
   );
 
 function withoutQuotes(body: string, said: readonly string[]): string {

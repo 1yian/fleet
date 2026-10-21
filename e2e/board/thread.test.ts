@@ -181,3 +181,25 @@ test("an entry that carries a reply-to shows a link to the message it answers", 
   await reply.click();
   await page.locator(`#entry-${String(asked.id)}`).waitFor();
 });
+
+test("the same short answer to a later question is not mistaken for a duplicated hold clear", async () => {
+  const card = await scout(main, "Two separate approvals");
+  await main.call("hold", {
+    card: card.id,
+    question: "Start the first experiment?",
+    options: ["Yes"],
+  });
+  assert.equal(await cardd.act(card.id, { kind: "comment", text: "Yes" }), 200);
+  await main.call("release", { card: card.id, words: "Yes", source: "board" });
+  await main.call("hold", {
+    card: card.id,
+    question: "Start the second experiment?",
+    options: ["Yes"],
+  });
+  await main.call("release", { card: card.id, words: "Yes", source: "chat" });
+  await open(card);
+  const answers = thread().locator('li[data-kind="answer"]');
+  await answers.getByText("Yes", { exact: true }).waitFor();
+  assert.equal(await answers.count(), 1);
+  assert.equal(await thread().locator("li.message.captain .body", { hasText: /^Yes$/ }).count(), 2);
+});
