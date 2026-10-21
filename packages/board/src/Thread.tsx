@@ -113,6 +113,11 @@ function Direction(props: { readonly flow: Flow | undefined; readonly name: stri
   );
 }
 
+function Key({ entry }: { readonly entry: Entry }) {
+  const key = keyOf(entry);
+  return key === undefined ? null : <span className="key">{key}</span>;
+}
+
 function InReply({ entry }: { readonly entry: Entry }) {
   const who = authorOf(entry.author).name;
   const show = (): void => {
@@ -153,7 +158,7 @@ function Message(props: { readonly row: Row; readonly now: number; readonly chil
         <Direction flow={flow} name={author.name} />
         {flow !== undefined || author.tag === "" ? null : <span className="tag">{author.tag}</span>}
         <span className="verb">{verb(entry)}</span>
-        {keyOf(entry) === undefined ? null : <span className="key">{keyOf(entry)}</span>}
+        <Key entry={entry} />
         <Time entry={entry} now={now} />
       </header>
       {row.replyTo === undefined ? null : <InReply entry={row.replyTo} />}
@@ -213,8 +218,9 @@ function Event(props: {
   const { row, now, waiting } = props;
   const { entry } = row;
   const [open, setOpen] = useState(false);
-  const body = waiting ? "" : row.text.trim();
-  const expands = body !== firstLine(body) || firstLine(body).length > LONG_LINE;
+  const body = waiting ? "" : row.original.trim();
+  const summary = firstLine(row.text);
+  const expands = !waiting && (body !== summary || summary.length > LONG_LINE);
   const reply = row.replyTo === undefined ? null : <InReply entry={row.replyTo} />;
   const flow = waiting ? withAsker(row) : row.flow;
   const head = (
@@ -222,6 +228,7 @@ function Event(props: {
       <span className="dot" aria-hidden="true" />
       <Direction flow={flow} name={authorOf(entry.author).name} />
       <span className="verb">{waiting ? "asked a question" : verb(entry)}</span>
+      <Key entry={entry} />
       {open ? <span className="line" /> : <Line row={row} waiting={waiting} links={!expands} />}
       <Time entry={entry} now={now} />
     </>

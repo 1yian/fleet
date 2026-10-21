@@ -203,3 +203,75 @@ test("the same short answer to a later question is not mistaken for a duplicated
   assert.equal(await answers.count(), 1);
   assert.equal(await thread().locator("li.message.captain .body", { hasText: /^Yes$/ }).count(), 2);
 });
+
+const ASK =
+  "Is more of the frontend not referencing assets right now? Where do the components live?";
+
+test("the thread is the captain's talk with main, and every relay or report in between is one quiet line", async () => {
+  const { card, worker } = await shipped("Import the brand assets");
+  await worker.call("report", { status: "working", text: "reading the footer code" });
+  assert.equal(await cardd.act(card.id, { kind: "comment", text: ASK }), 200);
+  const asked = await main.waitForEntry((entry) => entry.author === "captain", "the question");
+  await main.call("comment", {
+    card: card.id,
+    text: `The captain asked on this card: "${ASK}" Please answer with evidence from the repo.\nPut the detail in a report file.`,
+  });
+  await main.call("comment", {
+    card: card.id,
+    text: "Components live under brand/components.",
+    replyTo: `r-${String(asked.id)}`,
+  });
+  await cleo.call("comment", { card: card.id, text: "Count the files that skip the tokens." });
+  await worker.call("report", {
+    status: "done",
+    text: "Counted 14 files.\nThe list is in the report.",
+  });
+  await cleo.call("hold", { card: card.id, question: "Merge as a merge commit?" });
+  await main.call("hold", {
+    card: card.id,
+    to: "captain",
+    question: "Merge as a merge commit?",
+    options: ["Approve", "Squash instead"],
+  });
+  await open(card);
+  await thread().getByText("Components live under brand/components.").waitFor();
+  await shoot("thread-conversation");
+
+  assert.deepEqual(await thread().locator("li.message .flow").allInnerTexts(), [
+    "You → main",
+    "main → You",
+  ]);
+  const quiet = thread().locator("li.event.quiet");
+  assert.deepEqual(await quiet.locator(".flow").allInnerTexts(), [
+    "cleo → worker",
+    "worker → cleo",
+    "main → cleo",
+    "cleo → worker",
+    "worker → cleo",
+    "cleo → main",
+  ]);
+  assert.equal(await thread().locator("li.message.captain", { hasText: ASK }).count(), 1);
+
+  const relay = quiet.filter({ hasText: "main → cleo" });
+  assert.equal(await relay.getByText(ASK).count(), 0);
+  const head = relay.getByRole("button", { expanded: false });
+  await head.focus();
+  await page.keyboard.press("Enter");
+  await relay.getByRole("button", { expanded: true }).waitFor();
+  const original = await relay.locator(".event-more").innerText();
+  assert.ok(original.includes(`"${ASK}"`));
+  assert.ok(original.includes("Put the detail in a report file."));
+  await shoot("thread-conversation-expanded");
+  await page.keyboard.press("Enter");
+  await relay.getByRole("button", { expanded: false }).waitFor();
+
+  const link = thread().getByRole("button", { name: /In reply to your message/ });
+  assert.equal(await link.count(), 1);
+  await link.click();
+  await page.locator(`#entry-${String(asked.id)}.message.captain`).waitFor();
+
+  await page.goto(`${http()}#/`);
+  const needs = page.getByRole("region", { name: "Needs you" });
+  await needs.getByRole("button", { name: "Approve" }).waitFor();
+  await needs.getByRole("button", { name: "Squash instead" }).waitFor();
+});
