@@ -338,6 +338,9 @@ test("a board load that finishes late does not replace a newer one", async () =>
   assert.equal(await page.getByText("Renew the certificate?").isVisible(), true);
 });
 
+const UNREACHABLE = /The board could not reach cardd/;
+const unreachableNotice = () => page.locator('p.notice[role="alert"]', { hasText: UNREACHABLE });
+
 test("a request that cannot reach cardd shows a notice, and a refused reply stays in the box", async () => {
   await question("Pick the API version", ["v1", "v2"]);
   await page.route("**/api/action", (route) => route.abort());
@@ -345,18 +348,16 @@ test("a request that cannot reach cardd shows a notice, and a refused reply stay
   await page.getByText("Pick the API version?").waitFor();
   await page.getByRole("button", { name: "v1" }).click();
   await page
+    .getByRole("article", { name: "Pick the API version" })
     .getByRole("alert")
-    .getByText(/The board could not reach cardd/)
+    .getByText(UNREACHABLE)
     .waitFor();
 
   await page.getByRole("link", { name: /Pick the API version/ }).click();
   const composer = page.getByRole("textbox", { name: "Comment" });
   await composer.fill("I prefer v2 because");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await page
-    .getByRole("alert")
-    .getByText(/The board could not reach cardd/)
-    .waitFor();
+  await unreachableNotice().waitFor();
   assert.equal(await composer.inputValue(), "I prefer v2 because");
 });
 
@@ -365,10 +366,7 @@ test("a board load that cannot reach cardd shows a notice that goes away when lo
   let blocked = true;
   await page.route("**/api/board", (route) => (blocked ? route.abort() : route.continue()));
   await page.goto(http());
-  await page
-    .getByRole("alert")
-    .getByText(/The board could not reach cardd/)
-    .waitFor();
+  await unreachableNotice().waitFor();
 
   blocked = false;
   await main.call("comment", { card: 1, text: "wake the board" });
