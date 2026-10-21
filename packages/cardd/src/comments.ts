@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
+import { CAPTAIN, check, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { holdOf, withdrawMerge } from "./holds.ts";
-import { askerOf, requireAskedBy, requireOwedBy } from "./replies.ts";
+import { askersOf, isCaptainsReply, requireAskedBy, requireOwedBy } from "./replies.ts";
 import {
   addEntry,
   getCard,
@@ -53,8 +53,9 @@ function answerReply(db: DatabaseSync, session: Session, card: Card, args: Comme
   if (args.reply === true || args.resolves !== undefined || args.withdraws !== undefined)
     throw new Error("replyTo answers a reply you owe: give it with text alone");
   requireOwedBy(db, card, id, `mate:${session.lane}`);
-  const to = withEcho(db, session, card, [askerOf(db, card, id)]);
-  const fields = { replyTo: id, now: args.now };
+  const to = withEcho(db, session, card, askersOf(db, card, id));
+  const toCaptain = isCaptainsReply(db, card, id) ? { for: CAPTAIN } : {};
+  const fields = { replyTo: id, now: args.now, ...toCaptain };
   const draft = {
     card: card.id,
     author: `mate:${session.lane}`,

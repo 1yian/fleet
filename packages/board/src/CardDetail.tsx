@@ -6,24 +6,13 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import type { BoardCard, Entry, Thread } from "@fleet/protocol";
+import type { BoardCard, Thread } from "@fleet/protocol";
 import { loadThread, unreachable } from "./api.ts";
 import { Ask } from "./Ask.tsx";
+import { Collapsible } from "./Collapsible.tsx";
 import { Stale } from "./Stale.tsx";
-import {
-  authorOf,
-  bodyOf,
-  firstLine,
-  glyphOf,
-  isMessage,
-  keyOf,
-  phraseOf,
-  prLabel,
-  since,
-  verb,
-  type Author,
-  type Question,
-} from "./format.ts";
+import { Entries } from "./Thread.tsx";
+import { glyphOf, phraseOf, prLabel, since, type Question } from "./format.ts";
 import { BackIcon, SendIcon, StatusIcon } from "./icons.tsx";
 
 interface Props {
@@ -41,8 +30,6 @@ interface Props {
   readonly onReply: (text: string) => Promise<boolean>;
   readonly onFail: (message: string) => void;
 }
-
-const LONG_LINE = 90;
 
 const NEAR_BOTTOM = 240;
 
@@ -120,7 +107,7 @@ export function CardDetail(props: Props) {
             {thread === undefined ? (
               <p className="muted">Loading…</p>
             ) : (
-              <Entries entries={thread.entries} open={open} now={now} />
+              <Entries entries={thread.entries} open={open} now={now} owed={card.replies} />
             )}
           </section>
           <div ref={end} className="end" />
@@ -262,138 +249,6 @@ function Description({ card }: { readonly card: BoardCard }) {
         </div>
       )}
     </section>
-  );
-}
-
-function Collapsible({ text }: { readonly text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const element = box.current;
-    if (element === null || expanded) return;
-    const measure = (): void => {
-      setOverflows(element.scrollHeight > element.clientHeight + 1);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-    };
-  }, [text, expanded]);
-  return (
-    <div className="collapsible">
-      <div ref={box} className={expanded ? "body" : "body clamped"}>
-        {text}
-      </div>
-      {overflows || expanded ? (
-        <button
-          type="button"
-          className="more"
-          aria-expanded={expanded}
-          onClick={() => {
-            setExpanded(!expanded);
-          }}
-        >
-          {expanded ? "Show less" : "Show more"}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function Entries(props: {
-  readonly entries: readonly Entry[];
-  readonly open: ReadonlySet<number>;
-  readonly now: number;
-}) {
-  if (props.entries.length === 0) return <p className="muted">No activity yet.</p>;
-  return (
-    <ol className="thread" aria-label="Thread">
-      {props.entries.map((entry) =>
-        isMessage(entry) && !props.open.has(entry.id) ? (
-          <Message key={entry.id} entry={entry} now={props.now} />
-        ) : (
-          <Event key={entry.id} entry={entry} now={props.now} waiting={props.open.has(entry.id)} />
-        ),
-      )}
-    </ol>
-  );
-}
-
-function Avatar({ author }: { readonly author: Author }) {
-  return (
-    <span className={`avatar ${author.role}`} aria-hidden="true">
-      {author.name.charAt(0).toUpperCase()}
-    </span>
-  );
-}
-
-function Time({ entry, now }: { readonly entry: Entry; readonly now: number }) {
-  const at = new Date(entry.createdAt);
-  return (
-    <time dateTime={at.toISOString()} title={at.toLocaleString()}>
-      {since(entry.createdAt, now)}
-    </time>
-  );
-}
-
-function Message({ entry, now }: { readonly entry: Entry; readonly now: number }) {
-  const author = authorOf(entry.author);
-  return (
-    <li className={`message ${author.role}`} data-kind={entry.kind}>
-      <header>
-        <Avatar author={author} />
-        <span className="name">{author.name}</span>
-        {author.tag === "" ? null : <span className="tag">{author.tag}</span>}
-        <span className="verb">{verb(entry)}</span>
-        {keyOf(entry) === undefined ? null : <span className="key">{keyOf(entry)}</span>}
-        <Time entry={entry} now={now} />
-      </header>
-      <Collapsible text={bodyOf(entry)} />
-    </li>
-  );
-}
-
-function Event(props: { readonly entry: Entry; readonly now: number; readonly waiting: boolean }) {
-  const { entry, now, waiting } = props;
-  const [open, setOpen] = useState(false);
-  const author = authorOf(entry.author);
-  const body = waiting ? "" : bodyOf(entry).trim();
-  const line = firstLine(body);
-  const expands = body !== line || line.length > LONG_LINE;
-  const head = (
-    <>
-      <span className="dot" aria-hidden="true" />
-      <span className="name">{author.name}</span>
-      <span className="verb">{waiting ? "asked a question" : verb(entry)}</span>
-      {open ? (
-        <span className="line" />
-      ) : (
-        <span className="line">{waiting ? "waiting for your answer above" : line}</span>
-      )}
-      <Time entry={entry} now={now} />
-    </>
-  );
-  return (
-    <li className={`event${open ? " open" : ""}`} data-kind={entry.kind}>
-      {expands ? (
-        <button
-          type="button"
-          className="event-head"
-          aria-expanded={open}
-          onClick={() => {
-            setOpen(!open);
-          }}
-        >
-          {head}
-        </button>
-      ) : (
-        <div className="event-head">{head}</div>
-      )}
-      {open ? <p className="event-more">{body}</p> : null}
-    </li>
   );
 }
 

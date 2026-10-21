@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, test } from "node:test";
+import { after, afterEach, before, beforeEach, test } from "node:test";
+import { chromium, type Browser, type Page } from "playwright";
 import { CardSchema, check, OPS, type BoardCard, type Card } from "@fleet/protocol";
 import { Cardd } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
@@ -8,6 +9,7 @@ import { HerdrLab } from "../support/herdr.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
+const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const LATER = new Date(Date.now() + 86_400_000).toISOString();
@@ -17,8 +19,15 @@ let h: Harness;
 let lab: HerdrLab;
 let scratch: Scratch;
 let mainToken: string;
+let browser: Browser;
+before(async () => {
+  browser = await chromium.launch();
+});
+after(async () => {
+  await browser.close();
+});
 beforeEach(async () => {
-  cardd = await Cardd.start({ CARDD_TIMING_SCALE: "0.005" });
+  cardd = await Cardd.start({ CARDD_TIMING_SCALE: "0.005" }, ["--board", BOARD]);
   cardd.addProject("web", { maverick: "/clones/web" });
   h = await Harness.start();
   scratch = new Scratch();
@@ -285,4 +294,106 @@ test("a second mate's uncorrelated comment leaves the reply open, and its correl
   await hears("mate", /unanswered/);
   assert.deepEqual(heard("mate", new RegExp(`${id} unanswered`)), []);
   assert.equal((await onBoard(lane)).replies.length, 1);
+});
+
+const boardUrl = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
+
+async function captainAsks(page: Page, card: number, text: string): Promise<void> {
+  await page.goto(`${boardUrl()}#/c-${String(card)}`);
+  const box = page.getByRole("textbox", { name: "Comment" });
+  await box.fill(text);
+  await box.press("Enter");
+  await page.getByRole("list", { name: "Thread" }).getByText(text).waitFor();
+}
+
+test("a captain's board comment owes a reply from main, nagged once, and main's answer is threaded under it", async () => {
+  const page = await browser.newPage();
+  script("mate", (said) => {
+    const id = idIn(said);
+    return said.includes("unanswered") && id !== undefined
+      ? { tool: "comment", args: { card: 1, text: "Port 5173.", replyTo: id } }
+      : undefined;
+  });
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  const card = check(
+    CardSchema,
+    await asMain("card.new", { title: "dev-port", name: "dev-port", kind: "scout" }),
+  );
+
+  await captainAsks(page, card.id, "Which port does the dev server use?");
+  const [asked] = await hears("mate", /reply owed/);
+  const id = idIn(asked ?? "") ?? "";
+  assert.equal(
+    asked,
+    `[fleet] captain on c-1 dev-port: Which port does the dev server use? (reply owed by main, ${id}: answer the captain on the board with comment(card=1, text, replyTo="${id}") or hold(card=1, question, replyTo="${id}"))`,
+  );
+  assert.deepEqual(
+    (await onBoard(card)).replies.map((each) => [each.id, each.from, each.owes]),
+    [[id, "captain", "main"]],
+  );
+  await page.getByText("Waiting for a reply").waitFor();
+
+  assert.deepEqual(await hears("mate", /still owed/), [
+    `[fleet] check on c-1 dev-port (finding): reply ${id} is still owed to captain: "Which port does the dev server use?". Please answer the captain on the board with comment(card=1, text, replyTo="${id}") or hold(card=1, question, replyTo="${id}").`,
+  ]);
+  assert.deepEqual(await hears("mate", /unanswered/), [
+    `[fleet] check on c-1 dev-port (finding): reply ${id} unanswered: the captain asked on the board, and you got it and one resend, and have not replied: "Which port does the dev server use?". Do it now: answer the captain on the board with comment(card=1, text, replyTo="${id}") or hold(card=1, question, replyTo="${id}").`,
+  ]);
+
+  const nested = page.locator(".message.captain > .replies > .message");
+  await nested.getByText("Port 5173.").waitFor();
+  assert.equal(await nested.locator(".name").textContent(), "main");
+  const link = nested.getByRole("button", { name: /In reply to your message/ });
+  assert.match((await link.textContent()) ?? "", /Which port does the dev server use\?/);
+  assert.deepEqual(
+    await page
+      .locator(".thread > li > header .name, .thread > li > .event-head .name")
+      .allTextContents(),
+    ["You"],
+  );
+  assert.equal(await page.getByText("Waiting for a reply").count(), 0);
+  assert.deepEqual((await onBoard(card)).replies, []);
+  assert.equal(
+    (await onBoard(card)).summary,
+    "Port 5173.",
+    "the board card leads with main's answer to the captain",
+  );
+  await page.close();
+});
+
+test("main relays a second mate's answer to the captain, and the relay stays on the thread", async () => {
+  const page = await browser.newPage();
+  let captainsId = "";
+  script("mate", (said) => {
+    const owed = /reply owed by main, (r-\d+)/.exec(said)?.[1];
+    if (owed !== undefined) {
+      captainsId = owed;
+      return { tool: "comment", args: { card: 2, text: "Cleo, is it under budget?", reply: true } };
+    }
+    return said.includes("(replies r-") && captainsId !== ""
+      ? { tool: "comment", args: { card: 2, text: "Yes, under budget.", replyTo: captainsId } }
+      : undefined;
+  });
+  script("default", (said) => {
+    const id = /\(reply owed, (r-\d+)/.exec(said)?.[1];
+    return id === undefined
+      ? undefined
+      : { tool: "comment", args: { card: 2, text: "Under budget by $40.", replyTo: id } };
+  });
+  const { ads } = await mainWithCleo();
+
+  await captainAsks(page, ads.id, "Are the ads under budget?");
+  const nested = page.locator(".message.captain > .replies > .message");
+  await nested.getByText("Yes, under budget.").waitFor();
+  assert.deepEqual(await nested.locator(".name").allTextContents(), ["main"]);
+  await nested.getByRole("button", { name: /In reply to your message/ }).waitFor();
+
+  const top = page.locator(".thread > li");
+  assert.deepEqual(await top.locator("> header .name").allTextContents(), ["You", "main", "cleo"]);
+  assert.deepEqual(await top.locator("> header .tag").allTextContents(), ["First mate", "Mate"]);
+  await top.getByText("Cleo, is it under budget?").waitFor();
+  await top.getByText("Under budget by $40.").waitFor();
+  assert.deepEqual((await onBoard(ads)).replies, []);
+  await page.close();
 });

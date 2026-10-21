@@ -147,7 +147,7 @@ export function registerMate(
     name: "comment",
     label: "Comment",
     description:
-      "Talks to an agent through a card. On your own card it reaches the worker. As main, a comment on a second mate's lane card, or on any card in its lane, reaches that second mate, never its worker. As a second mate, a comment on your lane card reaches main. comment(lane, text) is the shorthand for a lane card. now delivers at the next tool boundary. reply=true asks for an answer that the fleet tracks: it resends once, then tells you. replyTo answers a reply you owe; withdraws drops one you asked for.",
+      "Talks to an agent through a card. On your own card it reaches the worker. As main, a comment on a second mate's lane card, or on any card in its lane, reaches that second mate, never its worker. As a second mate, a comment on your lane card reaches main. comment(lane, text) is the shorthand for a lane card. now delivers at the next tool boundary. reply=true asks for an answer that the fleet tracks: it resends once, then tells you. replyTo answers a reply you owe, including the one a captain board comment opens for main, which the board threads under his message; withdraws drops one you asked for.",
     parameters: OPS.comment.args,
     execute: async (_id, params) =>
       reply(`Commented. ${line(check(CardSchema, await link.call("comment", params)))}`),

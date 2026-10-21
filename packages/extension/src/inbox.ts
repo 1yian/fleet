@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { howToReply, type Entry } from "@fleet/protocol";
+import { CAPTAIN, howToReply, type Entry } from "@fleet/protocol";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -51,7 +51,8 @@ function replySuffix(entry: Entry): string {
   const to = field(entry, "for");
   if (field(entry, "owes") !== undefined && (to === "worker" || to === "mate")) {
     const id = `r-${String(entry.id)}`;
-    return ` (reply owed, ${id}: ${howToReply(to, entry.card, id)})`;
+    const by = entry.author === CAPTAIN ? ` by ${field(entry, "owes") ?? ""}` : "";
+    return ` (reply owed${by}, ${id}: ${howToReply(to, entry.card, id, entry.author)})`;
   }
   return `${suffix(entry, "replyTo", "replies ")}${suffix(entry, "withdraws", "withdraws ")}`;
 }

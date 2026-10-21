@@ -4,7 +4,7 @@ import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
-import { askerOf, requireOwedBy } from "./replies.ts";
+import { askersOf, requireOwedBy } from "./replies.ts";
 import { factsFrom, type Facts, type Hold } from "./status.ts";
 import { addEntry, cardEntries, getCard, parentOf, reachable, type Session } from "./store.ts";
 
@@ -22,7 +22,7 @@ function openMergeHold(db: DatabaseSync, card: Card): Hold | undefined {
   return hold?.merge === true ? hold : undefined;
 }
 
-function laneOf(db: DatabaseSync, card: Card, holder: Holder): string | undefined {
+export function laneOf(db: DatabaseSync, card: Card, holder: Holder): string | undefined {
   if (holder === "owner") return card.lane;
   return holder === "main" ? (parentOf(db, card.lane) ?? card.lane) : undefined;
 }
@@ -113,7 +113,7 @@ function answeredBy(
 ): string[] {
   if (replyTo === undefined) return [];
   requireOwedBy(db, card, replyTo, `mate:${session.lane}`);
-  return [askerOf(db, card, replyTo)];
+  return askersOf(db, card, replyTo);
 }
 
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
@@ -137,7 +137,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     until: base.until,
     options,
   });
-  if (same && asker.length === 0) return { value: card, notify: [] };
+  if (same && replyTo === undefined) return { value: card, notify: [] };
   const escalated = open !== undefined && target !== current;
   const fields = { ...base, options, ...(escalated ? { escalated } : {}), replyTo };
   const draft: Draft = {

@@ -1316,6 +1316,62 @@ button.event-head:hover .line {
   overflow-wrap: anywhere;
 }
 
+.replies {
+  list-style: none;
+  margin: 10px 0 0 10px;
+  padding: 0 0 0 14px;
+  border-left: 2px solid #dbe6fb;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.replies .message {
+  background: var(--panel);
+}
+.reply-link {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.reply-link:hover {
+  color: var(--ink);
+}
+.reply-link .label {
+  flex: none;
+  white-space: nowrap;
+}
+.reply-link .quoted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}
+.reply-owed {
+  color: var(--muted);
+  font-size: 13px;
+}
+.flash {
+  animation: flash 1.2s ease-out;
+}
+@keyframes flash {
+  from {
+    box-shadow: 0 0 0 3px #dbe6fb;
+  }
+  to {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
 /* The box for writing to the card's mate */
 .end {
   height: 0;
