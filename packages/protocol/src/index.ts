@@ -135,7 +135,7 @@ export const OPS = {
         name: Type.String(),
         delivery: Type.String(),
         base: Type.String(),
-        hosts: Type.Array(Type.String()),
+        clones: Type.Array(Type.Object({ host: Type.String(), path: Type.String() })),
         yolo: Type.Boolean(),
       }),
     ),
@@ -206,6 +206,14 @@ export const OPS = {
           branch: Type.String(),
           base: Type.String(),
           live: Type.Boolean(),
+        }),
+      ),
+      refresh: Type.Array(
+        Type.Object({
+          project: Type.String(),
+          host: Type.String(),
+          path: Type.String(),
+          base: Type.String(),
         }),
       ),
     }),

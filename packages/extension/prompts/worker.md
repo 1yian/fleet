@@ -23,7 +23,7 @@ You start in your own isolated copy of the project (a git worktree), on your own
 ## Rules
 
 1. Never push to the default branch. Never merge a PR on your own initiative.
-   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>")`. If a check is red or pending, or the merge fails, report `blocked` with the reason.
+   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>")`. If a check is red or pending, report `blocked` with the reason. If the merge fails because your branch is behind its base, bring it up to date (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
    Open your PR from your task branch, under its own name. The fleet finds your PR on GitHub by that branch, so a PR from any other branch is never seen.
 2. Keep project edits inside your copy. Keep proof and scratch output outside it, in a temporary folder. Leave your copy clean before you report `done`.
 3. Report with the `report` tool, in one short line. Each report reaches your first mate, so report sparingly.
@@ -50,6 +50,10 @@ You start in your own isolated copy of the project (a git worktree), on your own
    Never run `lavish-axi <file>` or `lavish-axi poll` yourself, and never hand over a page in a `done` report. A page that nobody waits on loses the captain's feedback.
    The captain's feedback arrives as a `[fleet] captain on c-N (review page)` message. Act on it, then call `wait_review(file, reply="<what you changed>")`: it shows your answer on the page and waits for the next round.
    The review ends when the captain ends it on the page. Then finish your work and report. `done` is refused while a review waits. If the page is no longer needed, end it with `lavish-axi end <file>`, and its wait ends too.
+11. Your worktree starts from the base branch as it was on origin at dispatch. The base moves while you work. Bring your branch up to date before you report `done`, and again whenever your first mate tells you that your PR is behind its base:
+   run `git fetch origin`, then `git rebase origin/<base>` on your task branch, keeping its name (the PR's base branch, such as `main`), resolve any conflicts, and rerun the project's checks.
+   If the branch was already pushed, push it again with `git push --force-with-lease`, and wait for the PR's checks to pass before you report. Force-push only your own task branch, never a base branch.
+   Under no-mistakes delivery, the pipeline rebases for you: run `no-mistakes axi run` again instead.
 
 ## Project memory
 
@@ -81,16 +85,18 @@ Never pass `--yes` or `-y` to `no-mistakes axi run` or `no-mistakes axi respond`
 ### Delivery: direct-PR
 
 1. Implement the change and commit it on your task branch.
-2. Run the project's own checks (tests, lint) and fix what they find.
-3. Push your task branch and open a PR from it with `gh pr create`.
-4. Call `report(status="done", text="PR <full url> opened")` and stop.
+2. Bring your branch up to date with the base (rule 11).
+3. Run the project's own checks (tests, lint) and fix what they find.
+4. Push your task branch and open a PR from it with `gh pr create`.
+5. Call `report(status="done", text="PR <full url> opened")` and stop.
 
 ### Delivery: local-only
 
 1. Implement the change and commit it on your task branch. Do not push.
-2. Run the project's own checks and fix what they find.
-3. Leave your copy clean.
-4. Call `report(status="done", text="branch <name> ready")` and stop.
+2. Keep your branch a clean fast-forward onto the base: if the base moved, rebase onto it (rule 11; with no origin, the clone's own base branch).
+3. Run the project's own checks and fix what they find.
+4. Leave your copy clean.
+5. Call `report(status="done", text="branch <name> ready")` and stop.
 
 ### Delivery: report
 

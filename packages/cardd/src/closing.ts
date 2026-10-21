@@ -3,7 +3,15 @@ import { check, OPS, type Card } from "@fleet/protocol";
 import { applyChange, requireOrdinary } from "./change.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
-import { addEntry, cardEntries, getCard, mainLane, reachable, type Session } from "./store.ts";
+import {
+  addEntry,
+  cardEntries,
+  getCard,
+  listProjects,
+  mainLane,
+  reachable,
+  type Session,
+} from "./store.ts";
 
 interface Done {
   readonly value: unknown;
@@ -82,7 +90,25 @@ export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Do
       ? [{ session, host, branch, base, clone, live: live === 1 }]
       : [];
   });
-  return { value: { mode, verify, attempts }, notify: [] };
+  return {
+    value: { mode, verify, attempts, refresh: shipCardClonesToRefresh(db, card) },
+    notify: [],
+  };
+}
+
+function shipCardClonesToRefresh(
+  db: DatabaseSync,
+  card: Card,
+): { project: string; host: string; path: string; base: string }[] {
+  if (card.kind !== "ship") return [];
+  const project = listProjects(db).find((each) => each.name === card.project);
+  if (project === undefined) return [];
+  return project.clones.map(({ host, path }) => ({
+    project: project.name,
+    host,
+    path,
+    base: project.base,
+  }));
 }
 
 export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): Done {

@@ -1,4 +1,5 @@
 import { check, OPS } from "@fleet/protocol";
+import { SYNC_FUNCTIONS } from "./clones.ts";
 import { fleetArgs } from "./fleet-args.ts";
 import { field, herdr, onHost, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
@@ -12,13 +13,26 @@ export interface Launch {
 type Plan = ReturnType<typeof parsePlan>;
 const parsePlan = (value: unknown) => check(OPS["attempt.begin"].result, value);
 
-const ADD_WORKTREE = `set -eu
+const ADD_WORKTREE = `${SYNC_FUNCTIONS}
+set -eu
 clone=$1 path=$2 branch=$3 base=$4
 if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
   git -C "$clone" worktree add -q "$path" "$branch"
-else
-  git -C "$clone" worktree add -q -b "$branch" "$path" "$base"
-fi`;
+  exit 0
+fi
+start=$base
+if git -C "$clone" remote get-url origin >/dev/null 2>&1; then
+  if ! fetch_origin "$clone"; then
+    echo "could not fetch origin in $clone, so the worker would start from a stale base: $(printf '%s\\n' "$fetched" | head -n 1)" >&2
+    exit 1
+  fi
+  start=origin/$base
+  if ! git -C "$clone" rev-parse -q --verify "refs/remotes/$start^{commit}" >/dev/null; then
+    echo "origin of $clone has no branch $base to start from" >&2
+    exit 1
+  fi
+fi
+git -C "$clone" worktree add -q --no-track -b "$branch" "$path" "$start"`;
 
 async function worktreePane(host: string, plan: Plan): Promise<string> {
   const tree = worktreeOf(
