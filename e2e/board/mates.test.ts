@@ -41,12 +41,9 @@ test("the Mates section shows each second mate's lane card, and its detail is th
 
   const mates = page.getByRole("region", { name: "Mates" });
   await mates.getByText("Ads are under budget, 3 of 5 convert.").waitFor();
-  assert.deepEqual(await mates.locator(".task-title").allTextContents(), ["cleo"]);
-  await mates.getByText("Second mate").waitFor();
-  const running = page.getByRole("region", { name: "Running" });
-  assert.deepEqual(await running.locator(".task-title").allTextContents(), [
-    "Users see one scrollbar",
-  ]);
+  assert.deepEqual(await mates.locator(".title").allTextContents(), ["cleo"]);
+  const queued = page.getByRole("region", { name: "Up next" });
+  assert.deepEqual(await queued.locator(".title").allTextContents(), ["Users see one scrollbar"]);
 
   await mates.getByRole("link", { name: /cleo/ }).click();
   const thread = page.getByRole("list", { name: "Thread" });
@@ -71,9 +68,9 @@ test("a second mate's hold is not in Needs you until main escalates it", async (
   assert.equal(cards.find((each) => each.id === card.id)?.status, "with-mate");
 
   await page.goto(http());
-  const running = page.getByRole("region", { name: "Running" });
+  const running = page.getByRole("region", { name: "In progress" });
   await running.getByText("Asks main: Which channel?").waitFor();
-  await running.getByText("With main").waitFor();
+  await running.locator(".chip", { hasText: "with main" }).waitFor();
   await page.getByText("Nothing waits on you.").waitFor();
   assert.equal(await page.getByRole("button", { name: "search" }).count(), 0);
 
@@ -117,7 +114,7 @@ test("a reply that a second mate owes main shows on its lane card and in its det
   await page.goto(http());
   const mates = page.getByRole("region", { name: "Mates" });
   await mates.getByText("Reply owed").waitFor();
-  assert.equal(await mates.locator(".tag.owed").getAttribute("title"), "cleo owes main a reply");
+  assert.equal(await mates.locator(".chip.owed").getAttribute("title"), "cleo owes main a reply");
 
   await mates.getByRole("link", { name: /cleo/ }).click();
   const replies = page.getByRole("list").filter({ hasText: "cleo owes main" });

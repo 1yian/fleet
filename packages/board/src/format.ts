@@ -1,53 +1,171 @@
-import type { Board, BoardCard, Entry, Status } from "@fleet/protocol";
+import {
+  MERGE_OPTIONS,
+  type Board,
+  type BoardCard,
+  type Entry,
+  type Status,
+} from "@fleet/protocol";
+import type { Glyph } from "./icons.tsx";
 
 export type Question = Board["holds"][number];
-export type Tone = "needs" | "running" | "done" | "dropped" | "mate";
+type Column = "up-next" | "progress" | "needs" | "merging" | "done" | "dropped" | "mates";
 
-const DONE_SHOWN = 20;
-
-const closed = (card: BoardCard): boolean => card.status === "done" || card.status === "dropped";
 const recentFirst = (a: BoardCard, b: BoardCard): number => b.updatedAt - a.updatedAt;
 
-export function questionsByCard(questions: readonly Question[]): Map<number, Question[]> {
-  const byCard = new Map<number, Question[]>();
-  for (const question of questions) {
-    byCard.set(question.card, [...(byCard.get(question.card) ?? []), question]);
-  }
-  return byCard;
+export function questionsByCard(questions: readonly Question[]): Map<number, Question> {
+  return new Map(questions.map((question) => [question.card, question]));
 }
 
-export function groups(
+const COLUMNS: Readonly<Record<Status, Column>> = {
+  queued: "up-next",
+  waiting: "up-next",
+  working: "progress",
+  "in-review": "progress",
+  "with-mate": "progress",
+  "needs-you": "needs",
+  merging: "merging",
+  done: "done",
+  dropped: "dropped",
+};
+
+function columnOf(card: BoardCard, asked: boolean): Column {
+  if (card.mate) return "mates";
+  return asked ? "needs" : COLUMNS[card.status];
+}
+
+export interface Columns {
+  readonly queued: readonly BoardCard[];
+  readonly later: readonly BoardCard[];
+  readonly progress: readonly BoardCard[];
+  readonly needs: readonly BoardCard[];
+  readonly merging: readonly BoardCard[];
+  readonly today: readonly BoardCard[];
+  readonly older: readonly BoardCard[];
+  readonly dropped: readonly BoardCard[];
+  readonly mates: readonly BoardCard[];
+}
+
+export const startOfDay = (now: number): number => new Date(now).setHours(0, 0, 0, 0);
+
+export function arrange(
   cards: readonly BoardCard[],
-  asked: ReadonlyMap<number, Question[]>,
-): Record<"needs" | "running" | "done" | "mates", BoardCard[]> {
+  asked: ReadonlyMap<number, Question>,
+  now: number,
+): Columns {
+  const inColumn = (column: Column): BoardCard[] =>
+    cards.filter((card) => columnOf(card, asked.has(card.id)) === column);
   const order = [...asked.keys()];
-  const rank = (card: BoardCard): number => {
-    const index = order.indexOf(card.id);
-    return index === -1 ? order.length : index;
-  };
-  const work = cards.filter((card) => !card.mate);
-  const needs = work
-    .filter((card) => asked.has(card.id) || card.status === "needs-you")
-    .sort((a, b) => rank(a) - rank(b));
-  const rest = work.filter((card) => !needs.includes(card));
+  const done = inColumn("done").sort(recentFirst);
+  const upNext = inColumn("up-next");
   return {
-    needs,
-    mates: cards.filter((card) => card.mate).sort((a, b) => a.lane.localeCompare(b.lane)),
-    running: rest.filter((card) => !closed(card)).sort(recentFirst),
-    done: rest.filter(closed).sort(recentFirst).slice(0, DONE_SHOWN),
+    queued: upNext.filter((card) => card.status === "queued").sort((a, b) => a.id - b.id),
+    later: upNext.filter((card) => card.status === "waiting").sort(recentFirst),
+    progress: inColumn("progress").sort(recentFirst),
+    needs: inColumn("needs").sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)),
+    merging: inColumn("merging").sort(recentFirst),
+    today: done.filter((card) => card.updatedAt >= startOfDay(now)),
+    older: done.filter((card) => card.updatedAt < startOfDay(now)),
+    dropped: inColumn("dropped").sort(recentFirst),
+    mates: inColumn("mates").sort((a, b) => a.lane.localeCompare(b.lane)),
   };
 }
 
-export function toneOf(card: BoardCard, asked: boolean): Tone {
-  if (card.mate) return "mate";
-  if (asked || card.status === "needs-you") return "needs";
-  if (card.status === "done") return "done";
-  if (card.status === "dropped") return "dropped";
-  return "running";
+const GLYPHS: Readonly<Record<Status, Glyph>> = {
+  queued: "queued",
+  waiting: "later",
+  working: "working",
+  "in-review": "review",
+  "with-mate": "mate",
+  "needs-you": "needs",
+  merging: "merging",
+  done: "done",
+  dropped: "dropped",
+};
+
+export const glyphOf = (card: BoardCard, asked: boolean): Glyph =>
+  asked ? "needs" : GLYPHS[card.status];
+
+export function needsFacts(card: BoardCard, today: number): boolean {
+  if (card.mate) return false;
+  if (card.status === "waiting") return true;
+  const landing = card.kind === "ship" && (card.status === "merging" || card.status === "done");
+  return landing && (card.status === "merging" || card.updatedAt >= today);
 }
 
-export const isActive = (card: BoardCard): boolean =>
-  card.status === "working" || card.status === "in-review" || card.status === "merging";
+export interface Facts {
+  readonly until: number | undefined;
+  readonly approval: "you" | "automatic" | "other";
+}
+
+export function factsOf(entries: readonly Entry[]): Facts {
+  const until = entries.findLast(
+    (entry) => entry.kind === "hold" && typeof entry.fields["until"] === "number",
+  )?.fields["until"];
+  const approved = entries.some(
+    (entry) => entry.kind === "answer" && entry.fields["choice"] === MERGE_OPTIONS[0],
+  );
+  const asked = entries.some((entry) => entry.kind === "hold" && entry.fields["merge"] === true);
+  return {
+    until: typeof until === "number" ? until : undefined,
+    approval: approved ? "you" : asked ? "other" : "automatic",
+  };
+}
+
+export const prLabel = (url: string): string => {
+  const match = /^https:\/\/[^/]+\/[^/]+\/([^/]+)\/pull\/(\d+)/.exec(url);
+  return match === null ? url.replace(/^https:\/\//, "") : `${match[1] ?? ""}#${match[2] ?? ""}`;
+};
+
+const landing = (card: BoardCard): string => (card.delivery === "local-only" ? "Landed" : "Merged");
+
+export function doneLabel(card: BoardCard, facts: Facts | undefined): string {
+  if (card.status === "dropped") return "Dropped";
+  if (card.kind !== "ship" || (card.pr === null && card.delivery !== "local-only")) return "Done";
+  return facts?.approval === "automatic" ? `${landing(card)} automatically` : landing(card);
+}
+
+export function mergingLabel(facts: Facts | undefined): string {
+  if (facts?.approval === "you") return "you approved · landing";
+  return facts?.approval === "automatic" ? "merging automatically" : "landing";
+}
+
+const DAY = 86_400_000;
+
+export function laterLabel(until: number, now: number): string {
+  const at = new Date(until);
+  const time = at.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  if (new Date(now).toDateString() === at.toDateString()) return time;
+  if (until - now < 6 * DAY)
+    return `${at.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+  return at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export function age(from: number, now: number): string {
+  const minutes = Math.floor((now - from) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${String(minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${String(hours)}h`;
+  return `${String(Math.floor(hours / 24))}d`;
+}
+
+const LANE_COLORS = ["#c2410c", "#0e7490", "#9d174d", "#4d7c0f", "#a16207", "#1d4ed8", "#be123c"];
+
+export function laneColor(lane: string): string {
+  if (lane === "main") return "#6d5bd0";
+  let hash = 0;
+  for (const char of lane) hash = (hash * 31 + char.charCodeAt(0)) % 997;
+  return LANE_COLORS[hash % LANE_COLORS.length] ?? "#52525b";
+}
+
+export function lanesOf(cards: readonly BoardCard[]): string[] {
+  const lanes = [...new Set(cards.map((card) => card.lane))];
+  return lanes.sort((a, b) => (a === "main" ? -1 : b === "main" ? 1 : a.localeCompare(b)));
+}
 
 const PHRASES: Record<Status, string> = {
   queued: "Queued",
@@ -70,16 +188,13 @@ export function since(from: number, now: number): string {
   return `${String(Math.floor(hours / 24))}d ago`;
 }
 
-const withWho = (card: BoardCard): string => (card.holder === "main" ? "main" : card.lane);
+export const withWho = (card: BoardCard): string => (card.holder === "main" ? "main" : card.lane);
 
 export function phraseOf(card: BoardCard, asked: boolean): string {
   if (card.mate) return "Second mate";
   const phrase = asked && card.status !== "needs-you" ? PHRASES["needs-you"] : PHRASES[card.status];
   return card.status === "with-mate" ? `With ${withWho(card)}` : phrase;
 }
-
-export const statusLine = (card: BoardCard, asked: boolean, now: number): string =>
-  `${phraseOf(card, asked)} · ${since(card.updatedAt, now)}`;
 
 export const firstLine = (text: string): string =>
   text
