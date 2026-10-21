@@ -19,8 +19,9 @@ A mate is a Pi that runs in a lane home: a folder with a private `config/lane.js
 
 ### Commands
 
-- `npm run check` runs every static gate: format, lint, typecheck, knip, dependency-cruiser, and the migration check.
-- `npm run test:e2e` builds the board, then runs every end-to-end test. Board tests drive Chromium through playwright, so run `npx playwright install chromium` once.
+- `npm run check` runs every static gate: format, lint, typecheck, knip, dependency-cruiser, and the migration check. Run it for every change.
+- Locally, run only the end-to-end files that your change touches or adds: `npm run build`, then `node --test --test-concurrency=1 <file>...`. Board tests drive Chromium through playwright, so run `npx playwright install chromium` once.
+- CI owns the full end-to-end suite. On a pull request, CI runs the suites that its paths select (`.github/workflows/ci.yml`), and `ci-ok` gates the merge. A change that never reaches CI (local-only delivery) runs `npm run test:e2e` before it lands, which builds the board and then runs every end-to-end test.
 
 ### Rules
 
