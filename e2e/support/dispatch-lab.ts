@@ -33,19 +33,13 @@ export interface LabOptions {
   readonly workerArgs?: readonly string[];
   readonly remote?: boolean;
   readonly delivery?: string;
+  readonly repo?: boolean;
 }
 
-export async function startDispatchLab({
-  cardd: carddEnv,
-  dashTokens = [],
-  workerArgs = [],
-  remote: withRemote = false,
-  delivery = "no-mistakes",
-}: LabOptions = {}): Promise<DispatchLab> {
-  const cardd = await Cardd.start(carddEnv);
-  if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
-  const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
-  const mainToken = cardd.addLane("main", undefined, home);
+function addSite(
+  cardd: Cardd,
+  { remote: withRemote = false, delivery = "no-mistakes", repo = true }: LabOptions,
+): { clone: string; remote: string | undefined } {
   const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
   const git = "git -c user.name=t -c user.email=t@t";
   const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
@@ -54,9 +48,23 @@ export async function startDispatchLab({
   cardd.addProject(
     "site",
     remote === undefined ? { local: clone, flaky: clone, far: clone } : { local: clone },
-    "acme/site",
+    repo ? "acme/site" : undefined,
     delivery,
   );
+  return { clone, remote };
+}
+
+export async function startDispatchLab({
+  cardd: carddEnv,
+  dashTokens = [],
+  workerArgs = [],
+  ...site
+}: LabOptions = {}): Promise<DispatchLab> {
+  const cardd = await Cardd.start(carddEnv);
+  if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
+  const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
+  const mainToken = cardd.addLane("main", undefined, home);
+  const { clone, remote } = addSite(cardd, site);
   const h = await Harness.start();
   const lab = await HerdrLab.start({
     ...h.piEnv("worker"),

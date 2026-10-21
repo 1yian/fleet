@@ -97,10 +97,25 @@ export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Do
       ? [{ session, host, branch, base, clone, live: live === 1 }]
       : [];
   });
+  const hint =
+    verify && !land && card.project !== null ? noRepoHint(db, card.id, card.project) : undefined;
   return {
-    value: { mode, verify, land, attempts, refresh: shipCardClonesToRefresh(db, card) },
+    value: {
+      mode,
+      verify,
+      land,
+      attempts,
+      refresh: shipCardClonesToRefresh(db, card),
+      ...(hint === undefined ? {} : { noRepoHint: hint }),
+    },
     notify: [],
   };
+}
+
+function noRepoHint(db: DatabaseSync, card: number, project: string): string | undefined {
+  const row = db.prepare("SELECT repo FROM projects WHERE name = ?").get(project);
+  if (row?.["repo"] !== null) return undefined;
+  return `c-${String(card)}'s project ${project} has no GitHub repo on record, so close cannot see whether its PR merged. Set it on the cardd host with \`cardd project repo ${project} <owner>/<name> --db <cards.db>\`, then close again`;
 }
 
 function shipCardClonesToRefresh(

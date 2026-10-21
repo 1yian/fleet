@@ -272,7 +272,7 @@ export async function readPullRequests(
     db,
     `SELECT c.id AS id FROM cards c JOIN projects p ON p.name = c.project
        WHERE c.kind = 'ship' AND c.delivery IS NOT 'local-only' AND c.status NOT IN ('done', 'dropped')
-         AND p.repo IS NOT NULL
+         AND (p.repo IS NOT NULL OR c.pr IS NOT NULL)
          AND EXISTS (SELECT 1 FROM attempts a WHERE a.card = c.id)`,
   );
   const read = await Promise.all(

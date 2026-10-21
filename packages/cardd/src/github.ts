@@ -35,11 +35,11 @@ async function readChecks(url: string): Promise<Record<string, unknown>[]> {
   return Array.isArray(list) ? list.filter(isRecord) : [];
 }
 
-function listed(item: unknown, branch: string): Pick<PullRequest, "url" | "state"> {
+function listed(item: unknown, command: string): Pick<PullRequest, "url" | "state"> {
   const url = isRecord(item) ? item["url"] : undefined;
   const state = isRecord(item) ? item["state"] : undefined;
   if (typeof url !== "string" || (state !== "OPEN" && state !== "MERGED" && state !== "CLOSED"))
-    throw new Error(`gh pr list --head ${branch} gave an unknown PR: ${JSON.stringify(item)}`);
+    throw new Error(`${command} gave an unknown PR: ${JSON.stringify(item)}`);
   return { url, state };
 }
 
@@ -53,7 +53,16 @@ async function findOnBranch(
   if (!Array.isArray(parsed))
     throw new Error(`gh pr list --head ${branch} failed: ${list.err.trim() || list.out.trim()}`);
   const first: unknown = parsed[0];
-  return first === undefined ? undefined : listed(first, branch);
+  return first === undefined ? undefined : listed(first, `gh pr list --head ${branch}`);
+}
+
+async function withChecks(found: Pick<PullRequest, "url" | "state">): Promise<PullRequest> {
+  const items = found.state === "OPEN" ? await readChecks(found.url) : [];
+  const named = (bucket: string[]): string[] =>
+    items
+      .filter((item) => bucket.includes(String(item["bucket"])))
+      .map((item) => String(item["name"]));
+  return { ...found, failed: named(["fail", "cancel"]), pending: named(["pending"]) };
 }
 
 export async function findPullRequest(
@@ -62,15 +71,17 @@ export async function findPullRequest(
 ): Promise<PullRequest | undefined> {
   for (const branch of branches) {
     const found = await findOnBranch(repo, branch);
-    if (found === undefined) continue;
-    const items = found.state === "OPEN" ? await readChecks(found.url) : [];
-    const named = (bucket: string[]): string[] =>
-      items
-        .filter((item) => bucket.includes(String(item["bucket"])))
-        .map((item) => String(item["name"]));
-    return { ...found, failed: named(["fail", "cancel"]), pending: named(["pending"]) };
+    if (found !== undefined) return withChecks(found);
   }
   return undefined;
+}
+
+export async function viewPullRequest(url: string): Promise<PullRequest> {
+  const view = await gh(["pr", "view", url, "--json", "url,state"]);
+  const parsed: unknown = view.code === 0 ? JSON.parse(view.out) : undefined;
+  if (parsed === undefined)
+    throw new Error(`gh pr view ${url} failed: ${view.err.trim() || view.out.trim()}`);
+  return withChecks(listed(parsed, `gh pr view ${url}`));
 }
 
 const GITHUB_REMOTE = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/;

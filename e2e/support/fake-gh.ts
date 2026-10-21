@@ -36,6 +36,7 @@ if (noun === "pr" && verb === "list") {
 const pr = prs[url];
 if (noun !== "pr" || !isRecord(pr)) fail(`fake gh: no PR ${url}`);
 down(pr);
+if (verb === "view") console.log(JSON.stringify({ url, state: pr["state"] }));
 if (verb === "checks") {
   if (pr["broken"] === true) fail("HTTP 502: Bad Gateway");
   const checks = records(pr["checks"]);

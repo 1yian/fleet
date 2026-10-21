@@ -136,6 +136,20 @@ export class Cardd {
     }).trim();
   }
 
+  recordPrByHand(card: number, url: string): void {
+    const db = new DatabaseSync(this.db);
+    db.prepare("UPDATE cards SET pr = ? WHERE id = ?").run(url, card);
+    db.close();
+  }
+
+  setRepo(project: string, repo: string): string {
+    const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
+    return execFileSync("node", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  }
+
   yolo(project: string, on = true): string {
     const args = [MAIN, "project", "yolo", project, on ? "on" : "off", "--db", this.db];
     return execFileSync("node", args, { encoding: "utf8" }).trim();
