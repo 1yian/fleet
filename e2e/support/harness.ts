@@ -92,6 +92,8 @@ export class Harness {
   /** Model calls of the default agent. Other agents are in `callsOf`. */
   readonly calls: Turn[][] = [];
   private readonly agentCalls = new Map<string, Turn[][]>();
+  /** The model that each call went to, such as "tier/auto", in the order of `callsOf`. */
+  private readonly agentModels = new Map<string, string[]>();
   readonly events: JsonRecord[] = [];
   private readonly handlers = new Map<string, ModelHandler[]>();
   private readonly pis: Pi[] = [];
@@ -129,6 +131,11 @@ export class Harness {
 
   callsOf(agent: string): Turn[][] {
     return agent === "default" ? this.calls : (this.agentCalls.get(agent) ?? []);
+  }
+
+  /** The models that an agent's calls went to, one for each call in `callsOf`. */
+  modelsOf(agent: string): string[] {
+    return this.agentModels.get(agent) ?? [];
   }
 
   /** Pi arguments that isolate a Pi from the user's setup and give it the fake model. */
@@ -248,6 +255,11 @@ export class Harness {
     const turns = toTurns(parseRecord(await readBody(request)));
     const header = request.headers["x-fake-agent"];
     const agent = typeof header === "string" ? header : "default";
+    const model = request.headers["x-fake-model"];
+    this.agentModels.set(agent, [
+      ...this.modelsOf(agent),
+      typeof model === "string" ? model : "unknown",
+    ]);
     if (agent === "default") this.calls.push(turns);
     else this.agentCalls.set(agent, [...this.callsOf(agent), turns]);
     const handler = this.handlers.get(agent)?.shift() ?? (() => ({ text: "ok" }));

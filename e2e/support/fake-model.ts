@@ -1,6 +1,8 @@
 // Pi extension: a scripted model. Each model call posts the transcript to the
 // test's control server and returns the move that the test chooses. Every
-// other mechanism in Pi stays real.
+// other mechanism in Pi stays real. Besides fake/scripted, it answers as the
+// captain's tiers (tier/orchestrator, tier/auto, tier/quick), so a test can see
+// which model a Pi chose from its settings.
 import { writeFileSync } from "node:fs";
 import {
   fauxAssistantMessage,
@@ -45,12 +47,13 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
   return fauxAssistantMessage([fauxText(text ?? "")]);
 }
 
-const respond: FauxResponseFactory = async (context, options) => {
+const respond: FauxResponseFactory = async (context, options, _state, model) => {
   const init: RequestInit = {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-fake-agent": process.env["FLEET_FAKE_AGENT"] ?? "default",
+      "x-fake-model": `${model.provider}/${model.id}`,
     },
     body: JSON.stringify({ messages: context.messages }),
   };
@@ -62,7 +65,15 @@ const respond: FauxResponseFactory = async (context, options) => {
 export default function fakeModel(pi: ExtensionAPI): void {
   const argvFile = process.env["FLEET_ARGV_FILE"];
   if (argvFile !== undefined) writeFileSync(argvFile, `${process.argv.join("\n")}\n`);
-  const faux = fauxProvider({ provider: "fake", models: [{ id: "scripted" }] });
-  faux.setResponses(Array.from({ length: CALLS }, () => respond));
-  pi.registerProvider(faux.provider);
+  const providers = [
+    fauxProvider({ provider: "fake", models: [{ id: "scripted" }] }),
+    fauxProvider({
+      provider: "tier",
+      models: [{ id: "orchestrator" }, { id: "auto" }, { id: "quick" }],
+    }),
+  ];
+  for (const faux of providers) {
+    faux.setResponses(Array.from({ length: CALLS }, () => respond));
+    pi.registerProvider(faux.provider);
+  }
 }

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
 import { Jobs } from "./jobs.ts";
-import { readLaneConfig } from "./lane-config.ts";
+import { readLaneConfig, workerPiArgs } from "./lane-config.ts";
 import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
@@ -42,7 +42,7 @@ function config(pi: ExtensionAPI): Config | undefined {
   if (lane === undefined) return undefined;
   // What the lane's own commands and workers need, from the same file.
   process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
-  process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...lane.workerArgs]);
+  process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...workerPiArgs(lane)]);
   return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane };
 }
 
