@@ -10,6 +10,7 @@ import {
   type Outcome,
 } from "./homes.ts";
 import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
+import { lavishProblem } from "./lavish.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 
@@ -80,6 +81,14 @@ function lane(): string {
   const [name] = rest;
   if (name === undefined) throw new Error(USAGE);
   return name;
+}
+
+if (command === "up" || command === "restart") {
+  const problem = lavishProblem();
+  if (problem !== undefined) {
+    console.error(problem);
+    process.exit(1);
+  }
 }
 
 switch (command ?? "") {

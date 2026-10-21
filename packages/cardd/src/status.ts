@@ -55,7 +55,8 @@ export type Change =
   | { readonly kind: "held" }
   | { readonly kind: "released"; readonly outcome?: "approve" | "changes" | "withdrawn" }
   | { readonly kind: "report"; readonly status: ReportStatus }
-  | { readonly kind: "comment" };
+  | { readonly kind: "comment" }
+  | { readonly kind: "answered" };
 
 const isFixed = (change: Change): change is FixedChange => Object.hasOwn(FIXED, change.kind);
 
@@ -81,6 +82,7 @@ function byKind(card: CardFacts, change: Change): Phase {
     case "report":
       return afterReport(card, change.status);
     case "comment":
+    case "answered":
       return afterComment(card);
   }
 }
@@ -219,6 +221,9 @@ const ENTRY_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry) => void
   },
   report: (tally, entry) =>
     REPORT_EFFECTS[text(entry, "status") ?? ""]?.(tally, entry, text(entry, "key") ?? ""),
+  "review-feedback": (tally, entry) => {
+    answerKey(tally, text(entry, "resolves") ?? "");
+  },
 };
 
 export interface Facts {

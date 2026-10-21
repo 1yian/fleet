@@ -18,7 +18,8 @@ import { addEntry, cardEntries, getCard, isLaneCard, listCards, touchCard } from
 
 export class StaleCard extends Error {}
 
-const inThread = (entry: Entry): boolean => entry.kind !== "job-result" && entry.kind !== "finding";
+const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
+const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
 
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
   inThread(entry) && (laneCard || !(entry.kind === "comment" && entry.author.startsWith("mate:")));

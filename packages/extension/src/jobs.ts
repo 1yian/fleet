@@ -11,6 +11,7 @@ import type { Link } from "./link.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
+export const REVIEW_LABEL = "review";
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
@@ -18,16 +19,29 @@ const RunLongParams = Type.Object({
   timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 24 * 60 })),
 });
 
-export class Jobs {
-  private readonly running = new Set<number>();
-  private readonly link: Link;
+interface JobOptions {
+  readonly timeoutMs: number;
+  readonly tailLines?: number;
+  readonly lineChars?: number;
+  readonly review?: string;
+}
 
-  constructor(link: Link) {
+export class Jobs {
+  private readonly running = new Map<number, string>();
+  private readonly link: Link;
+  private readonly cardd: { url: string; token: string };
+
+  constructor(link: Link, cardd: { url: string; token: string }) {
     this.link = link;
+    this.cardd = cardd;
   }
 
   get waiting(): boolean {
     return this.running.size > 0;
+  }
+
+  get reviewing(): boolean {
+    return [...this.running.values()].includes(REVIEW_LABEL);
   }
 
   finished(job: unknown): void {
@@ -37,10 +51,70 @@ export class Jobs {
   async sync(): Promise<void> {
     const jobs = check(OPS.jobs.result, await this.link.call("jobs", {}));
     this.running.clear();
-    for (const { id } of jobs) this.running.add(id);
+    for (const { id, label } of jobs) this.running.set(id, label);
   }
 
-  register(pi: ExtensionAPI, cardd: { url: string; token: string }): void {
+  async launch(
+    label: string,
+    command: string,
+    options: JobOptions,
+  ): Promise<{ job: number; key: string | null; tab: string }> {
+    const workspace = process.env["HERDR_WORKSPACE_ID"];
+    if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
+    const { review } = options;
+    const { job, heartbeatMs, key } = check(
+      OPS["job.start"].result,
+      await this.link.call("job.start", {
+        label,
+        command,
+        ...(review === undefined ? {} : { review }),
+      }),
+    );
+    this.running.set(job, label);
+    const file = join(tmpdir(), `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`);
+    const tab = `job-${String(job)}-${label}`;
+    try {
+      const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
+      const { timeoutMs, tailLines, lineChars } = options;
+      const body = {
+        url,
+        token: this.cardd.token,
+        job,
+        command,
+        timeoutMs,
+        heartbeatMs,
+        tailLines,
+        lineChars,
+      };
+      writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
+      const created = await herdr("local", [
+        "tab",
+        "create",
+        "--workspace",
+        workspace,
+        "--cwd",
+        process.cwd(),
+        "--label",
+        tab,
+        "--no-focus",
+      ]);
+      await herdr("local", [
+        "pane",
+        "run",
+        rootPane(created),
+        `node ${quote(WRAPPER)} ${quote(file)}`,
+      ]);
+    } catch (error) {
+      rmSync(file, { force: true });
+      this.running.delete(job);
+      const outputTail = `could not start: ${error instanceof Error ? error.message : String(error)}`;
+      await this.link.call("job.finish", { job, exitCode: 127, outputTail }).catch(() => 0);
+      throw error;
+    }
+    return { job, key, tab };
+  }
+
+  register(pi: ExtensionAPI): void {
     pi.registerTool({
       name: "run_long",
       label: "Run long",
@@ -48,48 +122,10 @@ export class Jobs {
         "Runs a long command in its own herdr tab and returns at once. The result arrives later as a [fleet] message. You may end your run while it runs. It stops the command after timeout_minutes (default 60), so never wrap the command in timeout or gtimeout.",
       parameters: RunLongParams,
       execute: async (_id, params) => {
-        const workspace = process.env["HERDR_WORKSPACE_ID"];
-        if (workspace === undefined) throw new Error("run_long needs a worker inside a herdr pane");
         const { label, command } = params;
-        const { job, heartbeatMs } = check(
-          OPS["job.start"].result,
-          await this.link.call("job.start", { label, command }),
-        );
-        this.running.add(job);
-        const file = join(
-          tmpdir(),
-          `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`,
-        );
-        const tab = `job-${String(job)}-${label}`;
-        try {
-          const url = cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
-          const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
-          const body = { url, token: cardd.token, job, command, timeoutMs, heartbeatMs };
-          writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
-          const created = await herdr("local", [
-            "tab",
-            "create",
-            "--workspace",
-            workspace,
-            "--cwd",
-            process.cwd(),
-            "--label",
-            tab,
-            "--no-focus",
-          ]);
-          await herdr("local", [
-            "pane",
-            "run",
-            rootPane(created),
-            `node ${quote(WRAPPER)} ${quote(file)}`,
-          ]);
-        } catch (error) {
-          rmSync(file, { force: true });
-          this.running.delete(job);
-          const outputTail = `could not start: ${error instanceof Error ? error.message : String(error)}`;
-          await this.link.call("job.finish", { job, exitCode: 127, outputTail }).catch(() => 0);
-          throw error;
-        }
+        if (label === REVIEW_LABEL) throw new Error("wait on a review page with wait_review");
+        const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
+        const { job, tab } = await this.launch(label, command, { timeoutMs });
         const text = `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`;
         return { content: [{ type: "text", text }], details: {} };
       },

@@ -11,6 +11,11 @@ const NUDGE =
   "[fleet] Your run is ending without a handoff. Report done, failed, blocked, or " +
   "needs-decision, or report paused with an until date. Otherwise your card goes back to your mate as stopped.";
 
+const UNATTENDED =
+  "The captain's review page is still open, and its feedback comes back to you. You are not done " +
+  "until the review ends: answer each round of feedback with wait_review(file, reply). When the " +
+  "captain ends the review, or no longer needs the page (end it with lavish-axi end <file>), report done.";
+
 const ReportParams = Type.Object({
   status: Type.Enum(
     [
@@ -76,6 +81,7 @@ export class WorkerRun {
       description: "Records a report on your card. End every run with a handoff or a tracked wait.",
       parameters: ReportParams,
       execute: async (_id, params) => {
+        if (params.status === "done" && this.jobs.reviewing) throw new Error(UNATTENDED);
         const until = untilMs(params.status, params.until);
         const args = {
           status: params.status,

@@ -193,7 +193,8 @@ test("the live fleet's database from before holds opens with every entry, delive
     assert.equal(count("SELECT entry AS n FROM findings WHERE id = 1"), 11);
     assert.equal(count("SELECT count(*) AS n FROM sqlite_schema WHERE name = 'grants'"), 0);
     assert.equal(count("SELECT group_concat(name || ' ' || yolo) AS n FROM projects"), "web 0");
-    assert.equal(count("SELECT user_version AS n FROM pragma_user_version"), 9);
+    const latest = readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).length;
+    assert.equal(count("SELECT user_version AS n FROM pragma_user_version"), latest);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     db.close();
   } finally {

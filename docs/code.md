@@ -108,6 +108,14 @@ cardd project yolo <name> on|off --db <file>
 - `jobs.ts`: `cardd` records a job first. The wrapper posts the result, which arrives as a fleet entry, also after a Pi restart. Nothing runs a job again. A running job is a tracked wait.
 - `job.ts` is the wrapper. It reads its job from a private file, so the token never appears in shell history. It keeps the last lines of output, whole across split reads and split characters. It sends heartbeats until the result is taken. A closed tab can take the wrapper down soon after its hangup, so it reports as soon as the command ends or a moment passes, and `cardd` keeps only the first result. A 401 means the attempt ended and nobody waits.
 
+### Review pages
+
+- Lavish is a prerequisite of the fleet. `lavish.ts` checks that `lavish-axi` is on the `PATH` at or above its floor, 0.1.80, the first release whose `reply` confirms that the page took the answer. `fleet up` and `fleet restart` refuse without it, so main tells the captain about the host.
+- `review.ts` is `wait_review`, which mirrors Firstmate's crew-hosted Lavish boards. The worker owns its page, but never polls it: a review job runs `lavish-axi poll` in its own tab through the `run_long` wrapper. A review job keeps the whole feedback, not the last lines, and waits up to a week.
+- `cardd` opens the round's decision, key `review-<job>`, in the same transaction that records the job, so feedback can never come before its decision. The job's result is a `review-feedback` entry that answers that key, which ends the hold and sends the card back to work, as a mate's answer does. It stays off the board's thread: the captain wrote it on the page.
+- Lavish's own next steps in the feedback say to poll the page again. The review job does that, so `inbox.ts` drops them and gives the fleet's next step.
+- `report(done)` is refused while a review waits, so a worker cannot leave a page whose feedback nobody reads.
+
 ### Closing on the host
 
 `closing.ts` runs close in this order: stop every writer (close the worker's workspace, which ends Pi and its job tabs), archive and verify all unlanded work, remove the worktree, then close the card. Each step finds its own result first, so a rerun converges. A worker may have moved its worktree to its own branch, which goes too, after the archive. An unreachable host of an attempt that no longer runs cannot be asked, and its work stays in place. `UNLANDED_COUNTS_SCRIPT` prints the commits not on the base branch and the changed or untracked files: the worktree decides while it exists, and its branch after. `DELETE_ARCHIVED_BRANCH_SCRIPT` deletes the task branch once its work is archived or on the base branch. It tolerates only a missing branch, and is safe to rerun.

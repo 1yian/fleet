@@ -19,7 +19,16 @@ git clone https://github.com/1yian/fleet ~/.fleet/app         # on a host that o
 cd <checkout> && npm ci && npm run build
 ```
 
-Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Each host needs Node 24 or later, Pi, herdr, git, `gh` (logged in), `zstd`, and `no-mistakes` for projects that use it.
+Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Each host needs Node 24 or later, Pi, herdr, git, `gh` (logged in), `zstd`, `lavish-axi` 0.1.80 or later, and `no-mistakes` for projects that use it.
+
+`lavish-axi` is a prerequisite of the fleet. Workers show the captain HTML review pages with it, and the fleet waits on the captain's feedback with it. Install it on each host, so that it is on the `PATH` of the mates' and workers' shells and of a non-interactive SSH session:
+
+```sh
+npm install -g lavish-axi
+lavish-axi --version     # 0.1.80 or later
+```
+
+`fleet up` and `fleet restart` refuse to start a mate on a host whose `lavish-axi` is missing or too old, and say how to install it. Main runs `fleet up` on every host when it starts and every minute after, so it tells the captain about such a host. A worker's `wait_review` refuses the same way. Each host runs its own Lavish server, so the captain's browser must reach that host, as it does over Tailscale.
 
 To update later: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`. The lanes move to the new commit when their mates next start, so then run `lane("all", "restart")` from main (or `fleet restart` on that host). A lane home with uncommitted changes stays where it is.
 

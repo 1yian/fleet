@@ -64,12 +64,25 @@ function formatJob(entry: Entry, card: string): string {
   return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
 }
 
+function formatReview(entry: Entry, card: string): string {
+  if (entry.fields["exitCode"] !== 0) return formatJob(entry, card);
+  const feedback = entry.body
+    .split("\n")
+    .filter((line) => !/^(\[lavish-axi\]|next_step:)/.test(line))
+    .join("\n")
+    .trim();
+  const next =
+    "Answer it, then call wait_review with reply for the next round. If the review ended, finish your work and report.";
+  return `[fleet] captain on ${card} (review page): ${feedback}\n${next}`;
+}
+
 const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
 
 export function format(entry: Entry): string {
   const card = `c-${String(entry.card)}`;
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);
+  if (entry.kind === "review-feedback") return formatReview(entry, card);
   const who = entry.author.replace(/^mate:/, "");
   const kind = entry.kind === "comment" ? "" : ` (${LABELS[entry.kind] ?? entry.kind})`;
   const answers = suffix(entry, "resolves", "answers ");

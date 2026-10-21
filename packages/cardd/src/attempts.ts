@@ -154,31 +154,36 @@ function attemptOf(db: DatabaseSync, session: string): number {
 export function startJob(
   db: DatabaseSync,
   session: string,
-  label: string,
-  command: string,
-): number {
+  job: { label: string; command: string; review: boolean },
+): { id: number; key: string | null } {
   const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
       "INSERT INTO jobs (attempt, label, command, state, created_at, updated_at) VALUES (?, ?, ?, 'running', ?, ?)",
     )
-    .run(attemptOf(db, session), label, command, now, now);
-  return Number(lastInsertRowid);
+    .run(attemptOf(db, session), job.label, job.command, now, now);
+  const id = Number(lastInsertRowid);
+  if (!job.review) return { id, key: null };
+  const key = `review-${String(id)}`;
+  db.prepare("UPDATE jobs SET resolves = ? WHERE id = ?").run(key, id);
+  return { id, key };
 }
 
 export function finishJob(
   db: DatabaseSync,
   session: string,
   job: { id: number; exitCode: number; outputTail: string },
-): string | undefined {
+): { label: string; resolves: string | null } | undefined {
   const row = db
     .prepare(
       `UPDATE jobs SET state = 'finished', exit_code = ?, output_tail = ?, updated_at = ?
-       WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING label`,
+       WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING label, resolves`,
     )
     .get(job.exitCode, job.outputTail, Date.now(), job.id, attemptOf(db, session));
   const label = row?.["label"];
-  return typeof label === "string" ? label : undefined;
+  const resolves = row?.["resolves"];
+  if (typeof label !== "string") return undefined;
+  return { label, resolves: typeof resolves === "string" ? resolves : null };
 }
 
 export function touchJob(db: DatabaseSync, session: string, job: number): boolean {
