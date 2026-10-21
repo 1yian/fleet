@@ -52,10 +52,15 @@ async function matePane(): Promise<{ pane: string; group: number; shell: number 
   };
 }
 
-async function screenWhere(pane: string, what: string, ready: (s: string) => boolean) {
+async function screenWhere(
+  pane: string,
+  what: string,
+  ready: (s: string) => boolean,
+  scrollback = false,
+) {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const screen = await lab.screen(pane);
+    const screen = scrollback ? await lab.history(pane) : await lab.screen(pane);
     if (ready(screen)) return screen;
     assert.ok(Date.now() < deadline, `timed out waiting for ${what}:\n${screen}`);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -153,7 +158,12 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   keep("5-after-restart", restarted);
 
   await lab.submit(pane, "/calm");
-  const off = await screenWhere(pane, "the rows to return", showing([FLEET_ROW, NOTE, TOOL_ROW]));
+  const off = await screenWhere(
+    pane,
+    "the rows to return",
+    showing([FLEET_ROW, NOTE, TOOL_ROW]),
+    true,
+  );
   keep("6-calm-off", off);
   assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "off\n");
 });
