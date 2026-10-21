@@ -1,20 +1,36 @@
 import { execFile } from "node:child_process";
+import { hostname } from "node:os";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+export class HostUnreachable extends Error {}
+
+export class NoTransport extends HostUnreachable {}
+
+const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
+
+function ownNames(): string[] {
+  const named = process.env["FLEET_HOST"];
+  if (named !== undefined && named !== "") return [named.toLowerCase(), firstLabel(named)];
+  return [hostname().toLowerCase(), firstLabel(hostname())];
+}
+
+const ownsHostName = (host: string): boolean =>
+  host === "local" || ownNames().includes(host.toLowerCase());
+
 function transport(host: string): string[] {
   const hosts: unknown = JSON.parse(process.env["FLEET_HOSTS"] ?? "{}");
   const entry = isRecord(hosts) ? hosts[host] : undefined;
-  return Array.isArray(entry) ? entry.filter((part) => typeof part === "string") : [];
+  if (Array.isArray(entry)) return entry.filter((part) => typeof part === "string");
+  if (ownsHostName(host)) return [];
+  throw new NoTransport(`no transport for ${host}`);
 }
 
 export const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 const scrub = (message: string): string =>
   message.replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]");
-
-export class HostUnreachable extends Error {}
 
 const PROBE_TIMEOUT_MS = 60_000;
 

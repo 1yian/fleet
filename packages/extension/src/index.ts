@@ -6,7 +6,7 @@ import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs } from "./jobs.ts";
-import { readLaneConfig, workerPiArgs } from "./lane-config.ts";
+import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
 import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
@@ -27,6 +27,12 @@ interface Config {
 const EXTENSION = fileURLToPath(import.meta.url);
 const HOME = (): string => process.cwd();
 
+function exportHosts(lane: LaneConfig): void {
+  process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
+  process.env["FLEET_HOST"] ??= lane.host ?? "";
+  process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
+}
+
 function config(pi: ExtensionAPI): Config | undefined {
   const value = (flag: string, env: string): string | undefined => {
     const fromFlag = pi.getFlag(flag);
@@ -39,8 +45,7 @@ function config(pi: ExtensionAPI): Config | undefined {
     return { url, token, role };
   const lane = readLaneConfig(HOME());
   if (lane === undefined) return undefined;
-  process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
-  process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
+  exportHosts(lane);
   process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...workerPiArgs(lane)]);
   return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane };
 }

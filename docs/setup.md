@@ -101,7 +101,8 @@ $EDITOR data/charter.md      # the lane table, main's own projects, and where it
 pi
 ```
 
-- `hosts` names the hosts that main reaches over SSH. A host that is not listed runs here. `roots` is each remote host's checkout, and defaults to `~/.fleet/app`.
+- `host` is the name of the host this lane runs on, the same name that `--clone` and `dispatch` use for it. It defaults to this machine's hostname, first label, lower case. Set it when the hostname differs from the fleet's name for the host, such as `"host": "maverick"`.
+- `hosts` names the hosts that main reaches over SSH. A host that is neither listed nor this lane's own host has no transport: the fleet never runs its commands here, and says `no transport for <host>`. `roots` is each remote host's checkout, and defaults to `~/.fleet/app`.
 - `cardd` tells `/updatefleet` how to update `cardd` (section 7). `host` is the host that runs it, `local` by default or a name from `hosts`. `root` is the checkout it runs from, and `db` its database, both on that host, where `~` is that host's home. `restart` is the command that restarts its service on that host: for launchd, `launchctl kickstart -k gui/<uid>/<label>`, with the uid from `id -u`. Without `cardd`, the update leaves `cardd` alone and says when its code changed.
 - `workerArgs` are extra Pi arguments for main's workers. A `--model` in them picks the workers' model. Without one, workers start on Pi's global default model, `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json` of the host where the mate runs. A worker never takes its model from its folder, so a worker in a worktree of this repository does not run on the mates' tier.
 - For main's own Pi, use Pi's settings: `.pi/settings.json` sets `tier/orchestrator`. `args` is only used when `fleet up` starts a second mate.
@@ -136,7 +137,8 @@ On the host where a mate runs, from that host's checkout:
 
 ```sh
 <checkout>/bin/fleet home add cleo --url ws://<cardd>:7420/session --token <the token from lane add cleo> \
-  --args '["--model","tier/default"]' --worker-args '["--model","tier/quick"]'
+  --args '["--model","tier/default"]' --worker-args '["--model","tier/quick"]' \
+  --host p620 --hosts '{"maverick":["ssh","maverick"]}'
 <checkout>/bin/fleet home memory cleo --compactor tier/compact --thinking low
 $EDITOR <checkout>.worktrees/lane-cleo/data/charter.md     # cleo's charter
 ```
@@ -144,7 +146,7 @@ $EDITOR <checkout>.worktrees/lane-cleo/data/charter.md     # cleo's charter
 This makes the home as a worktree of the checkout, with `config/lane.json`, and turns on its conversation memory (section 4). The mate's own settings:
 
 - `args` are extra Pi arguments for the mate. `workerArgs` are for its workers, and pick their model as they do for main.
-- `hosts` and `roots` work as for main, when this mate dispatches to other hosts.
+- `host`, `hosts`, and `roots` work as for main. Give a mate the transport of every other host that has a clone of a project it works on: when it closes a ship card, it refreshes the project's clone on each host, and a host with no transport is skipped with `no transport for <host>`. Main refreshes it when it next starts, and `/updatefleet` still moves a fleet home.
 - `direnv` names a folder whose direnv environment the mate runs in, such as `"~/cnp"` (`--direnv` on `home add`). The mate starts as `direnv exec <folder> pi`, so it gets what that folder's `.envrc` exports, and its home stays where it is. Every start, restart, and restart of a dead mate does this. The folder's `.envrc` must be allowed (`direnv allow <folder>`). The setting does not reach the mate's workers: a worker gets that environment only from its own pane's shell, such as a shell with the direnv hook in a worktree under that folder.
 - `data/charter.md` is the lane's charter, added to its role contract.
 

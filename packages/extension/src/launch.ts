@@ -26,6 +26,7 @@ const VALUE_OPTIONS = new Set([
   "--token",
   "--args",
   "--worker-args",
+  "--host",
   "--hosts",
   "--roots",
   "--direnv",
@@ -57,6 +58,7 @@ const { values, positionals } = parseArgs({
     token: { type: "string" },
     args: { type: "string" },
     "worker-args": { type: "string" },
+    host: { type: "string" },
     hosts: { type: "string" },
     roots: { type: "string" },
     direnv: { type: "string" },
@@ -153,6 +155,7 @@ switch (command ?? "") {
       lane: rest[1],
       url: values.url,
       token: values.token,
+      ...(values.host === undefined ? {} : { host: values.host }),
       hosts: isRecord(hosts) ? hosts : {},
       roots: isRecord(roots)
         ? Object.fromEntries(Object.entries(roots).map(([k, v]) => [k, String(v)]))
