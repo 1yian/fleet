@@ -8,7 +8,7 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { toolResults } from "../support/dispatch-lab.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import { optionalString, records } from "../support/json.ts";
+import { optionalString, parseRecord, records } from "../support/json.ts";
 import { addRemote, git, landOnRemote, tip } from "../support/remote.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
@@ -311,6 +311,35 @@ test("/updatefleet backs up cardd's database and restarts cardd on the new code 
     ].join("\n"),
   );
   assert.match(said, /Check cardd\?/);
+});
+
+test("/updatefleet reads config/lane.json when it runs, so a cardd entry added after main started still pulls cardd's checkout and restarts cardd", async () => {
+  const configFile = join(here.root, "config", "lane.json");
+  const { cardd: entry, ...withoutCardd } = parseRecord(readFileSync(configFile, "utf8"));
+  writeFileSync(configFile, JSON.stringify(withoutCardd));
+  const pane = await startMain(lab, here, h);
+  const before = await fleetRunning();
+  const old = tip(app.root);
+  assert.equal(await carddCommit(), old);
+  writeFileSync(configFile, JSON.stringify({ ...withoutCardd, cardd: entry }));
+  const fresh = landOnRemote(remote, "cardd-change", NEXT_MIGRATION, "SELECT 1;\n");
+
+  await lab.submit(pane, "/updatefleet");
+  await until(
+    () => (sessionText().includes("[fleet] update: Fleet updated.") ? true : undefined),
+    "main to record the update's report",
+  );
+  await until(async () => {
+    const now = await fleetRunning();
+    return now.main !== before.main && now.ops !== before.ops && now.far !== before.far
+      ? now
+      : undefined;
+  }, "every mate and main to run a new Pi");
+
+  assert.equal(tip(app.root, "HEAD"), fresh);
+  assert.equal(await carddCommit(), fresh);
+  assert.equal(backups().length, 1);
+  assert.match(sessionText(), /local cardd \(.*restarted and answers on/);
 });
 
 test("update_fleet stops before any lane restarts when cardd does not come back on the new code", async () => {
