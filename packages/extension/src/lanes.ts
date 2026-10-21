@@ -9,13 +9,18 @@ const LAUNCH = fileURLToPath(new URL("./launch.ts", import.meta.url));
 const REMOTE_WAIT_MS = 90_000;
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
-const hostsOf = (config: LaneConfig): string[] => ["local", ...Object.keys(config.hosts)];
+export const hostsOf = (config: LaneConfig): string[] => ["local", ...Object.keys(config.hosts)];
 
-async function fleet(config: LaneConfig, host: string, args: readonly string[]): Promise<string> {
-  if (host === "local") return onHost(host, [process.execPath, LAUNCH, ...args], REMOTE_WAIT_MS);
+export async function fleet(
+  config: LaneConfig,
+  host: string,
+  args: readonly string[],
+  wait = REMOTE_WAIT_MS,
+): Promise<string> {
+  if (host === "local") return onHost(host, [process.execPath, LAUNCH, ...args], wait);
   const script = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
   const argv = ["sh", "-c", script, "fleet", config.roots[host] ?? "", ...args];
-  return onHost(host, argv, REMOTE_WAIT_MS);
+  return onHost(host, argv, wait);
 }
 
 async function rows(
@@ -66,7 +71,26 @@ const LaneParams = Type.Object({
   action: Type.Enum(["start", "stop", "restart"]),
 });
 
-async function restartAll(config: LaneConfig): Promise<string[]> {
+let lanesHeld = false;
+let lanesQueue: Promise<void> = Promise.resolve();
+
+export function withLanes<T>(work: () => Promise<T>): Promise<T> {
+  const run = lanesQueue.then(async () => {
+    lanesHeld = true;
+    try {
+      return await work();
+    } finally {
+      lanesHeld = false;
+    }
+  });
+  lanesQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+export async function restartAll(config: LaneConfig): Promise<string[]> {
   const lines: string[] = [];
   for (const host of hostsOf(config)) {
     try {
@@ -104,10 +128,10 @@ export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | unde
       "Starts, stops, or restarts a second mate's lane on its host. start also starts a lane that was stopped by hand or held for crashing; a mate that runs is left alone. stop holds the lane, so nothing restarts it until start; its conversation stays. restart starts the mate again on its own conversation. name \"all\" with restart restarts every lane that is not held, on every host: that restarts the fleet. Never touches cardd. board shows each lane's state.",
     parameters: LaneParams,
     execute: async (_id, { name, action }) => {
-      if (name !== "all") return reply(await act(config, name, action));
+      if (name !== "all") return reply(await withLanes(() => act(config, name, action)));
       if (action !== "restart")
         throw new Error('lane "all" only restarts: name each lane to start or stop it');
-      return reply((await restartAll(config)).join("\n"));
+      return reply((await withLanes(() => restartAll(config))).join("\n"));
     },
   });
   keepRunning(pi, config);
@@ -161,10 +185,12 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig): void {
     }
   };
   const tick = async (): Promise<void> => {
-    if (ticking) return;
+    if (ticking || lanesHeld) return;
     ticking = true;
     try {
-      for (const host of hostsOf(config)) await checkHost(host);
+      await withLanes(async () => {
+        for (const host of hostsOf(config)) await checkHost(host);
+      });
     } finally {
       ticking = false;
     }

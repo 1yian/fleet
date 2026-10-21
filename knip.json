@@ -15,6 +15,7 @@
         "src/index.ts",
         "src/job.ts",
         "src/launch.ts",
+        "src/relaunch.ts",
         "src/calm/index.ts",
         "src/optchat.ts"
       ]

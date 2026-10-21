@@ -93,11 +93,11 @@ refresh_clone() {
   [ -z "$recovery" ] || echo "$label: recovered: $recovery"
   prune_gone "$clone" "$label"
   git -C "$clone" rev-parse -q --verify "$remote^{commit}" >/dev/null || { echo "$label: skipped: $remote does not exist"; return 0; }
-  # A fleet home runs the fleet's code: it moves only with the update in docs/setup.md, which also builds and restarts.
+  # A fleet home runs the fleet's code: it moves only with /updatefleet, which also builds and restarts.
   if [ -f "$clone/config/lane.json" ]; then
     behind=$(git -C "$clone" rev-list --count "HEAD..$remote")
     if [ "$behind" -gt 0 ]; then
-      echo "$label: fleet home: $behind commits behind $remote, left for the update in docs/setup.md"
+      echo "$label: fleet home: $behind commits behind $remote, left for /updatefleet"
     else
       echo "$label: already current"
     fi

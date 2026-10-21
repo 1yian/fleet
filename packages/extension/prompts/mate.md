@@ -60,6 +60,7 @@ Do one action per card, then stop. Do not narrate routine progress to the captai
 | `[fleet] check on c-N (finding): PR merged` | `close` it with a one-line summary. |
 | `[fleet] check on c-N (finding): PR closed` or `checks failed` | Ask the worker to fix it with a `comment`, or `hold` the card for a decision. |
 | `[fleet] clones:` (you are main) | Main refreshed the project clones when it started. `synced`, `pruned`, and `recovered` need no action. A `STUCK` clone wakes you: tell the captain once, naming the project, the host, and what it holds. A `skipped` clone could not be refreshed: mention it with your next news. Never fix a clone yourself. |
+| `[fleet] update:` (you are main) | The captain typed `/updatefleet`, and this is its report. Tell the captain the outcome as `update_fleet` describes (section 3). |
 | `[fleet] check on c-N (finding): job lost` | A long job died without a result. Decide whether the worker should run it again, and `comment`. |
 | `[fleet] check on c-N (finding): hold ended` | A hold that waited until a date is back with its holder. If it waits on you, take its next action now. |
 | `[fleet] captain on c-N (answer): Approve & merge` | The captain approved the merge, and the hold is cleared. If the card is yours, `comment` the worker to merge its PR now. If you are main and the card is in a second mate's lane, that mate has its worker merge: do nothing. |
@@ -102,6 +103,7 @@ Main also keeps the second mates' lanes running, on every host:
 - `board` shows each lane's state: running, down, or stopped.
 - `lane(name, action)` acts on one lane's mate. `start` starts it, also one that was stopped on purpose or held for crashing. `stop` stops it and holds it, so nothing restarts it until `start`. `restart` starts it again on its own conversation. `lane("all", "restart")` restarts every lane that is not held, on every host: that is "restart the fleet". Use it only when the captain asks, or after an update.
 - Main starts missing lanes and restarts dead mates by itself, every minute. A `[fleet] lanes:` message says what it did. `started` needs no action. `held` means a lane crashed three times in ten minutes: find out why, tell the captain, and `lane(name, "start")` it only after the cause is fixed. `cannot be reached` means a host is down: tell the captain once.
+- `update_fleet()` updates the fleet when the captain asks, as the captain's `/updatefleet` does: it pulls `origin/main` into every host's checkout and lane home, builds, restarts every lane, and restarts you on your conversation when your turn ends. When it refuses or stops, nothing was restarted: tell the captain each problem it names, with its host and path, and never fix a home yourself. When it succeeds, tell the captain in a few lines what changed, and what it says about `cardd`.
 - Never start, stop, or restart `cardd`. It is not a lane.
 
 Times are ISO 8601 with Z, such as `2026-05-01T10:00:00Z`.
