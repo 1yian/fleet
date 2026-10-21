@@ -1,5 +1,6 @@
 import {
-  checkResult,
+  check,
+  OPS,
   parseServerMessage,
   type OpResult,
   type ClientMessage,
@@ -13,6 +14,11 @@ type Result = Extract<ServerMessage, { t: "result" }>;
 const CLOSE_NOT_LIVE = 4001;
 const CLOSE_UNREADABLE = 4003;
 const MAX_BACKOFF_MS = 10_000;
+
+function checkResult<N extends OpName>(op: N, value: unknown): OpResult<N>;
+function checkResult(op: OpName, value: unknown): unknown {
+  return check(OPS[op].result, value);
+}
 
 const unreadableResult = (op: OpName, error: unknown): string =>
   `cardd's answer to ${op} cannot be read by this session (${error instanceof Error ? error.message : String(error)}). This session runs other code than cardd, most likely loaded before an update: restart this session so it loads the current code (main: lane(<lane>, "restart")).`;

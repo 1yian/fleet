@@ -489,11 +489,6 @@ export function check<T extends TSchema>(schema: T, value: unknown): Static<T> {
   throw new Error(`invalid ${first?.instancePath ?? ""}: ${first?.message ?? "bad value"}`);
 }
 
-export function checkResult<N extends OpName>(op: N, value: unknown): OpResult<N>;
-export function checkResult(op: OpName, value: unknown): unknown {
-  return check(OPS[op].result, value);
-}
-
 export const parseClientMessage = (text: string): ClientMessage =>
   check(ClientMessage, JSON.parse(text));
 export const parseServerMessage = (text: string): ServerMessage =>
