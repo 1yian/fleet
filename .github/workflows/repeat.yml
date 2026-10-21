@@ -44,6 +44,8 @@ jobs:
           curl -fsSL -o herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
           echo "${HERDR_SHA256}  herdr" | sha256sum -c -
           chmod +x herdr && sudo mv herdr /usr/local/bin/herdr
+      - name: Install direnv
+        run: sudo apt-get update -q && sudo apt-get install -y -q direnv
       - name: Run the tests ${{ env.ROUNDS }} times
         run: |
           set -o pipefail

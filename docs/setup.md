@@ -80,18 +80,25 @@ pi
 
 ### Conversation memory (optchat)
 
-Main has conversation memory the way Firstmate's home does. The loader is the user-level `~/.pi/agent/extensions/fm-optchat`. Firstmate sets `FM_HOME` for it with `optpi`. Here, `.pi/extensions/fleet.ts` loads it again with `FM_HOME` set to this folder, when `config/optchat.json` exists. Nothing else changes in `~/.pi`.
+Every mate has conversation memory the way Firstmate's homes do. The loader is the user-level `~/.pi/agent/extensions/fm-optchat`, from the dotfiles. Firstmate sets `FM_HOME` for it with `optpi`. Here, `.pi/extensions/fleet.ts` loads it again with `FM_HOME` set to the home, when the home has `config/optchat.json`. Nothing else changes in `~/.pi`.
+
+One command turns memory on in a home, for main and for each second mate alike:
 
 ```sh
-node ~/.pi/agent/optchat/package.mjs prepare /path/to/published/pi-optchat config/optchat/package
-mkdir -p data/optchat/profiles/main
-cp <firstmate>/data/optchat/profiles/main/{AGENTS.md,config.json} data/optchat/profiles/main/
-cat > config/optchat.json <<'JSON'
-{ "enabled": true, "package": "config/optchat/package", "memoryHome": "data/optchat", "profile": "main", "thinking": "xhigh", "compactorModel": "compact", "compactorProvider": "tier" }
-JSON
+<checkout>/bin/fleet home memory <lane> [--seed <profile folder>] [--compactor tier/compact] [--thinking low]
 ```
 
-This is a fresh profile. Firstmate's own memory stays with Firstmate. `/firstmate-memory` shows whether it is active. To turn it off, set `"enabled": false` and restart.
+It does three things, all inside that lane's home, and skips each one that is done already:
+
+- prepares the pinned pi-optchat package in `config/optchat/package` with the loader's own helper, `~/.pi/agent/optchat/package.mjs`. It fetches the version that the helper pins with `npm pack`. `--source <folder>` prepares it from a published copy that is already on disk instead.
+- makes the lane's profile in `data/optchat/profiles/<lane>`. With `--seed`, it copies only `AGENTS.md` and `config.json` from that folder, such as the lane's old Firstmate profile. Without it, the profile is new. Either way the memory starts empty.
+- writes `config/optchat.json`: the package, `data/optchat` as the memory home, and the lane as the profile. `--compactor` and `--thinking` pick the memory's compactor. Without `--compactor`, the memory uses the mate's own model.
+
+Each lane has its own profile in its own home. Never copy one home's `config/`, `data/`, or `state/` into another. The profile's lock socket must fit a socket path (103 bytes on macOS), so the command refuses a home whose path is too long.
+
+The mate gets memory at its next start. `/firstmate-memory` shows whether it is active, and `state/optchat-activation.json` in the home is the receipt. To turn it off, set `"enabled": false` in `config/optchat.json` and restart the mate.
+
+The loader must treat a `[fleet]` message as a normal turn that enters memory. That needs the dotfiles at or after https://github.com/1yian/dotfiles/pull/34 on every host that runs a mate. `e2e/extension/memory.test.ts` checks it for main and for a second mate.
 
 ## 5. Second mates
 
@@ -100,13 +107,15 @@ On the host where a mate runs, from that host's checkout:
 ```sh
 <checkout>/bin/fleet home add cleo --url ws://<cardd>:7420/session --token <the token from lane add cleo> \
   --args '["--model","tier/default"]' --worker-args '["--model","tier/quick"]'
+<checkout>/bin/fleet home memory cleo --compactor tier/compact --thinking low
 $EDITOR <checkout>.worktrees/lane-cleo/data/charter.md     # cleo's charter
 ```
 
-This makes the home as a worktree of the checkout, with `config/lane.json`. The mate's own settings:
+This makes the home as a worktree of the checkout, with `config/lane.json`, and turns on its conversation memory (section 4). The mate's own settings:
 
 - `args` are extra Pi arguments for the mate. `workerArgs` are for its workers.
 - `hosts` and `roots` work as for main, when this mate dispatches to other hosts.
+- `direnv` names a folder whose direnv environment the mate runs in, such as `"~/cnp"` (`--direnv` on `home add`). The mate starts as `direnv exec <folder> pi`, so it gets what that folder's `.envrc` exports, and its home stays where it is. Every start, restart, and restart of a dead mate does this. The folder's `.envrc` must be allowed (`direnv allow <folder>`). The setting does not reach the mate's workers: a worker gets that environment only from its own pane's shell, such as a shell with the direnv hook in a worktree under that folder.
 - `data/charter.md` is the lane's charter, added to its role contract.
 
 On a remote host, `fleet` must work over a non-interactive SSH session, so Node must be on that session's `PATH`. Check it from main's host: `ssh p620 '~/.fleet/app/bin/fleet status'`.
@@ -136,6 +145,7 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet stop <lane>`         | Closes the lane's workspace and holds the lane.                                       |
 | `fleet restart [lane]`      | Starts the mate again on its conversation. No lane means every lane that is not held. |
 | `fleet home add <lane> ...` | Makes a lane's home.                                                                  |
+| `fleet home memory <lane>`  | Turns on the lane's conversation memory (section 4).                                  |
 | `fleet migrate [--undo]`    | Moves the earlier layout into homes (below).                                          |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
@@ -155,7 +165,7 @@ Before this layout, main's home was `~/fleet-homes/main`, each mate's settings w
    A repeat finds nothing to migrate.
 
 4. Records that lived outside the home, such as Firstmate's `data`, stay where they are. The charter names them by path.
-5. Set up conversation memory (section 4) if you want it, then `cd ~/Projects/fleet && pi`.
+5. Set up conversation memory (section 4) for each lane, then `cd ~/Projects/fleet && pi`.
 6. Retire the old pieces when you are satisfied: `~/fleet-homes/main`, and `~/.fleet/app` on maverick if cardd does not run from it.
 
 To go back, run `<checkout>/bin/fleet migrate --undo` on each host. It renames each `<lane>.json.migrated` to `<lane>.json` and sets aside each home's `config/lane.json` as `lane.json.undone`, so the new layout starts no lane. Then start the mates with the earlier code: check out the commit before this change in each checkout. The new homes stay on disk. Remove one with `git worktree remove <home>`.

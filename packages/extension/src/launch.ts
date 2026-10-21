@@ -7,18 +7,31 @@
 //   fleet restart [lane] [--json] stops and starts the mate again on its own conversation.
 //                                Without a lane, every lane that is not held.
 //   fleet home add <lane> --url <ws://cardd/session> --token <t> [--args <json>] [--worker-args <json>]
-//                 [--hosts <json>] [--roots <json>]
+//                 [--hosts <json>] [--roots <json>] [--direnv <folder>]
 //                                makes the lane's home: a git worktree of this repository.
+//   fleet home memory <lane> [--seed <profile>] [--source <pi-optchat>] [--compactor <provider/model>]
+//                 [--thinking <level>]
+//                                turns on conversation memory in the lane's home (memory.ts).
 //   fleet migrate [--from <dir>] [--undo]
 //                                moves the settings of the earlier layout into homes (docs/setup.md).
 // FLEET_ROOT overrides the repository that holds the homes. It is found from this file otherwise.
 import { parseArgs } from "node:util";
-import { codeRoot, provision, restart, status, stop, up, type Outcome } from "./homes.ts";
+import {
+  codeRoot,
+  existingHome,
+  provision,
+  restart,
+  status,
+  stop,
+  up,
+  type Outcome,
+} from "./homes.ts";
 import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
+import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | restart [lane] | home add <lane> --url U --token T | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | restart [lane] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
 
 /** A token can start with "-", which parseArgs takes for an option. `--token <value>` becomes `--token=<value>`. */
 const VALUE_OPTIONS = new Set([
@@ -29,6 +42,11 @@ const VALUE_OPTIONS = new Set([
   "--worker-args",
   "--hosts",
   "--roots",
+  "--direnv",
+  "--seed",
+  "--source",
+  "--compactor",
+  "--thinking",
 ]);
 const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
   if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
@@ -50,6 +68,11 @@ const { values, positionals } = parseArgs({
     "worker-args": { type: "string" },
     hosts: { type: "string" },
     roots: { type: "string" },
+    direnv: { type: "string" },
+    seed: { type: "string" },
+    source: { type: "string" },
+    compactor: { type: "string" },
+    thinking: { type: "string" },
   },
 });
 const [command, ...rest] = positionals;
@@ -99,6 +122,18 @@ switch (command ?? "") {
     show(await restart(root, rest[0]));
     break;
   case "home": {
+    if (rest[0] === "memory" && rest[1] !== undefined) {
+      const { seed, source, compactor, thinking } = values;
+      const options = {
+        ...(seed === undefined ? {} : { seed }),
+        ...(source === undefined ? {} : { source }),
+        ...(compactor === undefined ? {} : { compactor }),
+        ...(thinking === undefined ? {} : { thinking }),
+      };
+      for (const line of setUpMemory(existingHome(root, rest[1]), rest[1], options))
+        console.log(`${rest[1]}: ${line}`);
+      break;
+    }
     if (
       rest[0] !== "add" ||
       rest[1] === undefined ||
@@ -118,6 +153,7 @@ switch (command ?? "") {
         : {},
       args: strings(json(values.args)),
       workerArgs: strings(json(values["worker-args"])),
+      ...(values.direnv === undefined ? {} : { direnv: values.direnv }),
     };
     console.log(provision(root, config));
     break;
