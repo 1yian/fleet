@@ -4,6 +4,7 @@ import {
   beginAttempt,
   finishJob,
   localLanding,
+  nameBranch,
   runningJobs,
   startJob,
   touchJob,
@@ -135,6 +136,10 @@ const HANDLERS: Record<OpName, Handler> = {
       delivery: args.delivery,
     });
     return { value: begun, notify: [] };
+  },
+  "branch.name": (db, session, raw) => {
+    const args = check(OPS["branch.name"].args, raw);
+    return { value: nameBranch(db, session.id, args.name), notify: [] };
   },
   "job.start": (db, session, raw, timing) => {
     const args = check(OPS["job.start"].args, raw);

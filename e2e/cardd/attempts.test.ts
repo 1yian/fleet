@@ -206,3 +206,58 @@ test("POST /call refuses an unknown token and a mate-only operation from a worke
     body: { ok: false, error: "worker sessions cannot call board" },
   });
 });
+
+test("a worker records its branch name once, a restart finds it, and the card shows it", async () => {
+  const first = await begin("maverick");
+  assert.equal(first.branch, c("-a1"));
+  const worker = await fleet.cardd.connect(first.token);
+
+  const named = await worker.call("branch.name", { name: "fix/scrollbar-doubles" });
+  assert.deepEqual(named, { branch: "fix/scrollbar-doubles", previous: c("-a1") });
+  assert.deepEqual(await worker.call("branch.name", { name: "fix/scrollbar-doubles" }), {
+    branch: "fix/scrollbar-doubles",
+    previous: "fix/scrollbar-doubles",
+  });
+  await assert.rejects(worker.call("branch.name", { name: "fix/another-name" }), {
+    message: `${c("-a1")} already has its branch fix/scrollbar-doubles. Keep working on it: a branch is named once`,
+  });
+
+  assert.equal((await begin("maverick")).branch, "fix/scrollbar-doubles");
+  const view = check(OPS.card.result, await fleet.main.call("card", { card: card.id }));
+  assert.deepEqual(
+    view.attempts.map(({ n, branch }) => [n, branch]),
+    [[1, "fix/scrollbar-doubles"]],
+  );
+});
+
+test("a branch name must be <type>/<slug>, and another live attempt's name is refused", async () => {
+  const worker = await fleet.cardd.connect((await begin("maverick")).token);
+  const shape =
+    "must be <type>/<slug>, with a type of feat, fix, refactor, perf, docs, test, chore, ci, build and a lowercase kebab-case slug of at most 48 characters, such as fix/mileage-readback";
+  for (const name of [
+    c("-a1"),
+    "fix",
+    "fix/",
+    "fix/Upper-Case",
+    "fix/two--dashes",
+    "fix/a/b",
+    "wip/something",
+    `fix/${"a".repeat(49)}`,
+  ]) {
+    await assert.rejects(worker.call("branch.name", { name }), {
+      message: `branch name "${name}" ${shape}`,
+    });
+  }
+  await worker.call("branch.name", { name: `fix/${"a".repeat(48)}` });
+
+  const other = await newCard(fleet.main, "Another card");
+  const begun = check(
+    OPS["attempt.begin"].result,
+    await fleet.main.call("attempt.begin", { card: other.id, host: "maverick", task: "go" }),
+  );
+  const second = await fleet.cardd.connect(begun.token);
+  await assert.rejects(second.call("branch.name", { name: `fix/${"a".repeat(48)}` }), {
+    message: `branch fix/${"a".repeat(48)} is already the branch of c-${String(card.id)}`,
+  });
+  await second.call("branch.name", { name: "fix/other-work" });
+});

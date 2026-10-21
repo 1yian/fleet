@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerBranch } from "./branch.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { registerIntake } from "./intake.ts";
@@ -110,7 +111,10 @@ function start(
   });
   const jobs = role === "worker" ? new Jobs(link, { url, token }) : undefined;
   jobs?.register(pi);
-  if (jobs !== undefined) registerReview(pi, jobs);
+  if (jobs !== undefined) {
+    registerReview(pi, jobs);
+    registerBranch(pi, link);
+  }
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
