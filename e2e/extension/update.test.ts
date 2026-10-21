@@ -19,6 +19,7 @@ const MIGRATIONS = fileURLToPath(new URL("../../packages/cardd/migrations", impo
 const SCHEMA = readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).length;
 const NEXT_MIGRATION = `packages/cardd/migrations/${String(SCHEMA + 1).padStart(3, "0")}-update.sql`;
 const CARDD_WAIT_S = 15;
+const CARDD_DOWN_WAIT_S = 3;
 
 let cardd: Cardd;
 let h: Harness;
@@ -38,6 +39,14 @@ function cloneOf(remote: string, name: string): Scratch {
   git(scratch.root, "reset", "-q", "--hard", "origin/main");
   return scratch;
 }
+
+const startLab = (carddWaitS: number): Promise<HerdrLab> =>
+  HerdrLab.start({
+    ...h.piEnv("mate"),
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    FLEET_SUPERVISE_MS: "1000",
+    FLEET_CARDD_WAIT_MS: String(carddWaitS * 1000),
+  });
 
 beforeEach(async () => {
   h = await Harness.start();
@@ -61,12 +70,7 @@ beforeEach(async () => {
   opsHome = here.addLane("ops", settings("ops"));
   farHome = p620.addLane("far", settings("far"));
   ghost = await cardd.connect(cardd.addLane("ghost", "main"));
-  lab = await HerdrLab.start({
-    ...h.piEnv("mate"),
-    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
-    FLEET_SUPERVISE_MS: "1000",
-    FLEET_CARDD_WAIT_MS: String(CARDD_WAIT_S * 1000),
-  });
+  lab = await startLab(CARDD_WAIT_S);
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);
@@ -349,6 +353,8 @@ test("update_fleet stops before any lane restarts when cardd does not come back 
     result = toolResults(turns).at(-1) ?? "";
     return { text: "the update stopped" };
   }, "mate");
+  await lab.stop();
+  lab = await startLab(CARDD_DOWN_WAIT_S);
   await startMain(lab, here, h);
   const before = await fleetRunning();
   const old = tip(here.root);
@@ -366,7 +372,7 @@ test("update_fleet stops before any lane restarts when cardd does not come back 
       "Hosts:",
       `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
       `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
-      `- local cardd (${app.root}): updated ${range}; board built; database backed up to ${backup ?? ""}; restarted, but it did not answer on ${fresh.slice(0, 7)} within ${String(CARDD_WAIT_S)} s`,
+      `- local cardd (${app.root}): updated ${range}; board built; database backed up to ${backup ?? ""}; restarted, but it did not answer on ${fresh.slice(0, 7)} within ${String(CARDD_DOWN_WAIT_S)} s`,
     ].join("\n"),
   );
   assert.deepEqual(await fleetRunning(), before);

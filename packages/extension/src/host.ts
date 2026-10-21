@@ -32,7 +32,7 @@ export const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'
 const scrub = (message: string): string =>
   message.replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]");
 
-const PROBE_TIMEOUT_MS = 60_000;
+const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 60_000;
 
 const failure = (
   via: readonly string[],

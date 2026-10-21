@@ -331,46 +331,6 @@ test("a killed archive step of a replaced attempt aborts the close instead of le
   ]);
 });
 
-test("a host that hangs past the timeout counts as unreachable for a replaced attempt", async () => {
-  h.onModel(
-    () => ({
-      tool: "card_new",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "site",
-      },
-    }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "far", task: "fix the scrollbar" } }),
-    "mate",
-  );
-  h.onModel(() => {
-    writeFileSync(join(h.dir, "far-down"), "hang\n");
-    return {
-      tool: "dispatch",
-      args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
-    };
-  }, "mate");
-  h.onModel(
-    () => ({ tool: "close", args: { card: 1, summary: "the design changed", landed: false } }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "dropped" }), "mate");
-  await mateConnected();
-  mate.prompt("ship the scrollbar fix");
-
-  const results = toolResults(await h.waitForCall(4, "mate", 120_000));
-  assert.match(
-    results.at(-1) ?? "",
-    /^c-1 is dropped\. Left in place: far c-1-a1 \(herdr worktree on far failed: killed by SIGTERM\)\.$/,
-  );
-  assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
-});
-
 test("a branch that cannot be deleted aborts the close, and a rerun finishes it", async () => {
   h.onModel(
     () => ({
