@@ -231,6 +231,87 @@ test("a scout closes as Done once its worker reported done, with nothing for the
   assert.deepEqual(plan.refresh, []);
 });
 
+test("a delivered scout keeps its completion across coordination comments, replies, holds, and a cardd restart", async () => {
+  const token = fleet.cardd.addLane("cnp", "main");
+  const cnp = await fleet.cardd.connect(token);
+  const card = await newCard(cnp, "Assess the lifecycle", "scout");
+  const worker = await fleet.cardd.connect(await begin(cnp, card));
+  await worker.call("report", { status: "done", text: "assessment delivered, no project changes" });
+  await fleet.main.call("comment", {
+    card: card.id,
+    text: "Implementation belongs to other cards.",
+    reply: true,
+  });
+  const request = await cnp.waitForEntry(
+    (entry) => entry.body === "Implementation belongs to other cards.",
+    "main's coordination",
+  );
+  const done = { card: card.id };
+  assert.equal((await cnp.call("close.begin", done)) !== undefined, true);
+  await cnp.call("comment", {
+    card: card.id,
+    text: "The assessment is delivered.",
+    replyTo: `r-${String(request.id)}`,
+  });
+  assert.equal((await cnp.call("close.begin", done)) !== undefined, true);
+  assert.equal(
+    await fleet.cardd.act(card.id, { kind: "comment", text: "Relay the findings." }),
+    200,
+  );
+  const captain = (await fleet.cardd.thread(card.id)).entries.findLast(
+    (entry) => entry.author === "captain",
+  );
+  assert.ok(captain !== undefined);
+  await fleet.main.call("comment", {
+    card: card.id,
+    text: "Findings relayed.",
+    replyTo: `r-${String(captain.id)}`,
+  });
+  await cnp.call("hold", { card: card.id, question: "Review the assessment?" });
+  await assert.rejects(cnp.call("close.begin", done), /has an open hold/);
+  await cnp.call("release", { card: card.id, note: "Reviewed; implementation is separate." });
+  await fleet.cardd.restart();
+  const resumed = await fleet.cardd.connect(token);
+  const plan = check(OPS["close.begin"].result, await resumed.call("close.begin", done));
+  assert.equal(plan.mode, "done");
+  await resumed.call("close.finish", {
+    card: card.id,
+    mode: "done",
+    text: "Assessment delivered.",
+    archives: [],
+    left: [],
+  });
+  assert.equal(await status(resumed, card), "done");
+});
+
+test("new worker input, a replacement attempt, and incomplete handoffs still prevent normal close", async () => {
+  const card = await newCard(fleet.main, "Assess the lifecycle", "scout");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  const done = { card: card.id };
+  const unfinished = notLanded(card.id, "the worker has not reported done");
+  await worker.call("report", { status: "done", text: "assessment delivered" });
+  await fleet.main.call("comment", { card: card.id, text: "Check the missing evidence." });
+  await assert.rejects(fleet.main.call("close.begin", done), unfinished);
+  await worker.call("report", { status: "done", text: "evidence checked" });
+  const replacement = check(
+    OPS["attempt.begin"].result,
+    await fleet.main.call("attempt.begin", {
+      card: card.id,
+      host: "maverick",
+      task: "Reassess the lifecycle",
+      replace: true,
+    }),
+  );
+  await assert.rejects(fleet.main.call("close.begin", done), unfinished);
+  const current = await fleet.cardd.connect(replacement.token);
+  for (const state of ["in-review", "blocked", "failed", "stopped"] as const) {
+    await current.call("report", { status: "done", text: "assessment delivered" });
+    await current.call("report", { status: state, text: "not complete" });
+    await assert.rejects(fleet.main.call("close.begin", done), unfinished);
+  }
+  assert.equal(await status(fleet.main, card), "with-mate");
+});
+
 test("dispatch refuses a captain card", async () => {
   const card = await newCard(fleet.main, "Pick the API version", "captain");
   await assert.rejects(begin(fleet.main, card), {
