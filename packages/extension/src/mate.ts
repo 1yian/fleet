@@ -133,6 +133,17 @@ export function registerMate(
   lanes: LaneStates | undefined,
 ): void {
   pi.registerTool({
+    name: "yield",
+    label: "Yield",
+    description:
+      "Ends this turn silently when routine fleet notifications leave no update for the user. First finish required card actions and answer any reply owed with comment or hold. Call yield alone, without chat text. Never use it instead of delivering outcomes, findings, review or merge requests, decisions, or real blockers.",
+    parameters: Type.Object({}),
+    execute: () => Promise.resolve({ content: [], details: {}, terminate: true }),
+    renderShell: "self",
+    renderCall: () => ({ render: () => [], invalidate: () => undefined }),
+    renderResult: () => ({ render: () => [], invalidate: () => undefined }),
+  });
+  pi.registerTool({
     name: "card_new",
     label: "New card",
     description:
