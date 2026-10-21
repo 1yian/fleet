@@ -117,7 +117,7 @@ test("close of a project with no GitHub repo on record says so, and names the co
   await mateConnected();
   mate.prompt("add credit");
 
-  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.equal(
     results.at(-1),
     "c-1's project site has no GitHub repo on record, so close cannot see whether its PR merged. Set it on the cardd host with `cardd project repo site <owner>/<name> --db <cards.db>`, then close again. In its clones, c-1-a1 on local has 1 commit not on main. If that work did not merge, land it, or end it with close(card, summary=<why it is dropped>, landed=false), which archives it.",
