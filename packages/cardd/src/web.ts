@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket } from "ws";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { getCard, transaction } from "./store.ts";
+import { version } from "./version.ts";
 
 const TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
@@ -12,6 +13,11 @@ const TYPES: Readonly<Record<string, string>> = {
   ".css": "text/css",
   ".svg": "image/svg+xml",
   ".json": "application/json",
+};
+
+const READS: Readonly<Record<string, (db: DatabaseSync) => unknown>> = {
+  "/api/board": boardView,
+  "/api/version": version,
 };
 
 function readBody(request: IncomingMessage): Promise<string> {
@@ -103,7 +109,8 @@ export class Web {
   private async route(request: IncomingMessage): Promise<unknown> {
     const path = new URL(request.url ?? "/", "http://board").pathname;
     const card = /^\/api\/card\/(\d+)$/.exec(path)?.[1];
-    if (request.method === "GET" && path === "/api/board") return boardView(this.db);
+    const read = request.method === "GET" ? READS[path] : undefined;
+    if (read !== undefined) return read(this.db);
     if (request.method === "GET" && card !== undefined) return thread(this.db, Number(card));
     if (request.method === "POST" && path === "/api/action") return this.act(request);
     return undefined;

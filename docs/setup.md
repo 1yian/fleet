@@ -9,7 +9,7 @@ The captain's routine is one step: open a terminal in the fleet repository and r
 - **Main's home is this repository.** `.pi/extensions/fleet.ts` loads the fleet extension, `/calm`, and conversation memory. `.pi/settings.json` starts Pi on the `orchestrator` tier. `AGENTS.md` holds the standing instructions. Main's private files are in `config/`, `data/`, and `state/`, which git ignores.
 - **Each second mate's home is a git worktree of this repository**, at `<repo>.worktrees/lane-<lane>`, with its own private `config/`, `data/`, and `state/`. A mate is `pi` run in its home. On a host that does not have main, the checkout there plays the same part: it is the root of that host's lane homes.
 - **A lane home is a folder with `config/lane.json`.** Pi started anywhere else loads none of this. A worker in a worktree of this repository gets only the extension that dispatch passes with `-e`, and needs no installed packages.
-- **cardd is not part of main.** It runs under launchd on one host. Main never starts, stops, or restarts it.
+- **cardd is not part of main.** It runs under launchd on one host, from its own checkout. Only `/updatefleet` restarts it (section 7). Never start, stop, or restart it by hand.
 
 ## 1. A checkout on each host
 
@@ -44,7 +44,9 @@ NAME=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sy
 $CARDD serve --db ~/.fleet/cards.db --listen "$IP:7420" --hostname "$NAME:7420" --board ~/.fleet/app/packages/board/dist
 ```
 
-On macOS, run it under launchd with `KeepAlive` so it restarts after a crash or a reboot. The board is then at `http://<NAME>:7420/`. Update it by hand, apart from main: pull its checkout, build, and restart its launchd job.
+On macOS, run it under launchd with `KeepAlive` so it restarts after a crash or a reboot, as the job `dev.fleet.cardd` in `~/Library/LaunchAgents/dev.fleet.cardd.plist`. The board is then at `http://<NAME>:7420/`.
+
+`/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). Do not update or restart it by hand. `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
 
 ## 3. Lanes and projects
 
@@ -78,7 +80,13 @@ cat > config/lane.json <<'JSON'
   "token": "<the token from lane add main>",
   "hosts": { "p620": ["ssh", "p620"] },
   "roots": { "p620": "/home/me/.fleet/app" },
-  "workerArgs": ["--model", "tier/quick"]
+  "workerArgs": ["--model", "tier/quick"],
+  "cardd": {
+    "host": "local",
+    "root": "~/.fleet/app",
+    "db": "~/.fleet/cards.db",
+    "restart": ["launchctl", "kickstart", "-k", "gui/<your uid>/dev.fleet.cardd"]
+  }
 }
 JSON
 $EDITOR data/charter.md      # the lane table, main's own projects, and where its records are
@@ -86,6 +94,7 @@ pi
 ```
 
 - `hosts` names the hosts that main reaches over SSH. A host that is not listed runs here. `roots` is each remote host's checkout, and defaults to `~/.fleet/app`.
+- `cardd` tells `/updatefleet` how to update `cardd` (section 7). `host` is the host that runs it, `local` by default or a name from `hosts`. `root` is the checkout it runs from, and `db` its database, both on that host, where `~` is that host's home. `restart` is the command that restarts its service on that host: for launchd, `launchctl kickstart -k gui/<uid>/<label>`, with the uid from `id -u`. Without `cardd`, the update leaves `cardd` alone and says when its code changed.
 - `workerArgs` are extra Pi arguments for main's workers. A `--model` in them picks the workers' model. Without one, workers start on Pi's global default model, `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json` of the host where the mate runs. A worker never takes its model from its folder, so a worker in a worktree of this repository does not run on the mates' tier.
 - For main's own Pi, use Pi's settings: `.pi/settings.json` sets `tier/orchestrator`. `args` is only used when `fleet up` starts a second mate.
 - `data/charter.md` is added to main's role contract at every start. Keep the lane table there: each lane's name, host, and scope. Keep the captain's preferences and records here too, under `data/`.
@@ -151,16 +160,17 @@ Main starts, and within a minute it has brought up every lane on every host that
 
 The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
-| Command                     | Does                                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------- |
-| `fleet status [--json]`     | Shows each lane on this host: running, down, or stopped.                              |
-| `fleet up [lane]`           | Starts each lane that does not run. A stopped lane stays stopped unless it is named.  |
-| `fleet stop <lane>`         | Closes the lane's workspace and holds the lane.                                       |
-| `fleet restart [lane]`      | Starts the mate again on its conversation. No lane means every lane that is not held. |
-| `fleet update [--check]`    | Updates this host's checkout and lane homes for `/updatefleet` (section 7).           |
-| `fleet home add <lane> ...` | Makes a lane's home.                                                                  |
-| `fleet home memory <lane>`  | Turns on the lane's conversation memory (section 4).                                  |
-| `fleet migrate [--undo]`    | Moves the earlier layout into homes (below).                                          |
+| Command                                 | Does                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------- |
+| `fleet status [--json]`                 | Shows each lane on this host: running, down, or stopped.                              |
+| `fleet up [lane]`                       | Starts each lane that does not run. A stopped lane stays stopped unless it is named.  |
+| `fleet stop <lane>`                     | Closes the lane's workspace and holds the lane.                                       |
+| `fleet restart [lane]`                  | Starts the mate again on its conversation. No lane means every lane that is not held. |
+| `fleet update [--check]`                | Updates this host's checkout and lane homes for `/updatefleet` (section 7).           |
+| `fleet cardd --root R --db D [--check]` | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).               |
+| `fleet home add <lane> ...`             | Makes a lane's home.                                                                  |
+| `fleet home memory <lane>`              | Turns on the lane's conversation memory (section 4).                                  |
+| `fleet migrate [--undo]`                | Moves the earlier layout into homes (below).                                          |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 
@@ -168,14 +178,17 @@ When a lane starts, its home moves to the commit its checkout has, unless the ho
 
 Type `/updatefleet` in main, or ask main in plain words to update the fleet (its `update_fleet` tool). It updates every host in main's `config/lane.json` to the latest `origin/main`, restarts every lane, and then restarts main. It is Firstmate's `/updatefirstmate` for the fleet.
 
-1. **Check every host first.** On each host, `fleet update --check` fetches `origin` and looks at the checkout and every lane home on that host. Any of these stops the whole update before anything changes: a host that cannot be reached, a checkout that is not on `main`, uncommitted changes in a checkout or a lane home, or commits in either that are not on `origin/main`. Main reports each problem with its host and path. Nothing is pulled, and no mate restarts. Fix what it names, then run the update again.
+1. **Check every host first.** On each host, `fleet update --check` fetches `origin` and looks at the checkout and every lane home on that host. On `cardd`'s host, `fleet cardd --check` looks at `cardd`'s checkout and its database the same way. Any of these stops the whole update before anything changes: a host that cannot be reached, a checkout that is not on `main`, uncommitted changes in a checkout or a lane home, commits in either that are not on `origin/main`, or a missing `cardd` database. Main reports each problem with its host and path. Nothing is pulled, and no mate restarts. Fix what it names, then run the update again.
 2. **Update each host in turn.** `fleet update` checks again, fast-forwards the checkout to `origin/main`, runs `npm ci` when `package-lock.json` changed, builds the board, and moves every lane home on that host to the new commit. It never forces, merges, or stashes, and it never touches a home's `config/`, `data/`, or `state/`. A failed pull, install, or build stops the update there: no mate restarts, main keeps running, and the report says which hosts were already updated. Run the update again once the cause is fixed. A host that is already current is rebuilt, so a rerun converges.
-3. **Restart every lane**, on every host, as `lane("all", "restart")` does. A held lane stays held. Each mate continues its conversation.
-4. **Report and restart main.** The report names each host with its old and new commit, whether packages were installed, and the lane homes it moved, then each lane's restart. It also says whether the board or `cardd` changed. Main tells you the outcome, and when that turn ends it restarts on its own conversation, so the report stays in it.
+3. **Update cardd**, when main's `config/lane.json` has a `cardd` entry (section 4). Main asks `cardd` which commit it runs. On `cardd`'s host, `fleet cardd` fast-forwards its checkout to `origin/main` and builds it, as for a host. When the code that `cardd` runs differs from the new commit in `packages/cardd`, `packages/protocol`, or `package-lock.json`, or `cardd` cannot say which commit it runs, it backs up the database to a timestamped copy next to it, such as `~/.fleet/cards-backup-2026-10-21T14-22-33Z.db`, and runs the `restart` command. `cardd` applies pending migrations itself when it starts, which is the supported way. Main then waits up to a minute until `cardd` answers on the new commit. When it does not, the update stops: no mate restarts, main keeps running, and the report names the backup. Read `cardd`'s log (`~/.fleet/cardd.log`), fix the cause, and run the update again. When `cardd`'s code did not change, it keeps running.
+4. **Restart every lane**, on every host, as `lane("all", "restart")` does. A held lane stays held. Each mate continues its conversation.
+5. **Report and restart main.** The report names each host with its old and new commit, whether packages were installed, and the lane homes it moved, then `cardd`: its checkout's commits, the backup, whether it restarted, and its schema version before and after the migrations. Then it names each lane's restart, and whether the board changed. Main tells you the outcome, and when that turn ends it restarts on its own conversation, so the report stays in it.
 
 Main restarts itself only when it runs in a herdr pane. Otherwise the report says so: restart it with `pi -c` in its home.
 
-The update never touches `cardd`. `cardd` reads the board's files from disk at each request, so a new board needs no restart when `cardd` serves this checkout's build. When the update changes `packages/cardd` or `packages/protocol`, the report says that `cardd` still runs the old code. Update its checkout and restart its launchd job yourself (section 2).
+`cardd` reads the board's files from disk at each request, so a new board needs no restart. Without a `cardd` entry, the update does not touch `cardd`, and when it changes `packages/cardd` or `packages/protocol`, the report says that `cardd` still runs the old code.
+
+A mate that gets a message from `cardd` that it cannot read, as when `cardd` runs other code, does not crash. It says so once in its conversation and keeps reconnecting, so the update can bring `cardd` and the mates back onto one commit.
 
 A host updates with the code it already has. A host whose checkout predates `fleet update` cannot take part, so update it once by hand: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`, then `fleet restart` on that host.
 

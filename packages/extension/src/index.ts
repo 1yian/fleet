@@ -65,11 +65,25 @@ function start(
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
+  let unreadable: string | undefined;
   const link = new Link({
     url,
     token,
     inFile: () => idsInSessionFile(sessionFile),
+    onUnreadable: (error) => {
+      if (unreadable === error) return;
+      unreadable = error;
+      pi.sendMessage(
+        {
+          customType: "fleet-link",
+          content: `[fleet] link: cardd sent a message this session cannot read (${error}). It may run other code than this extension. The session keeps reconnecting.`,
+          display: true,
+        },
+        { triggerTurn: false },
+      );
+    },
     onConnect: () => {
+      unreadable = undefined;
       pi.events.emit("fleet:connected", {});
       worker?.flush();
       jobs?.sync().catch(() => undefined);
