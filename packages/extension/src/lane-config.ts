@@ -19,7 +19,7 @@ export interface LaneConfig {
   readonly roots: Record<string, string>;
   /** Extra Pi arguments for the mate itself, such as a model. */
   readonly args: readonly string[];
-  /** Extra Pi arguments for the mate's workers. */
+  /** Extra Pi arguments for the mate's workers. A --model here picks the workers' model. */
   readonly workerArgs: readonly string[];
   /**
    * A folder whose direnv environment the mate runs in: `fleet` starts the mate with
@@ -77,4 +77,32 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
     workerArgs: strings(config["workerArgs"]),
     ...(folder === undefined ? {} : { direnv: folder }),
   };
+}
+
+/**
+ * The Pi arguments for a lane's workers. A worker never takes its model from its folder: the fleet
+ * repo's .pi/settings.json puts the mates on the orchestrator tier, and every worktree of the repo
+ * has that file. So unless workerArgs name a model, workers start on Pi's global default model.
+ */
+export function workerPiArgs(lane: LaneConfig): string[] {
+  const own = lane.workerArgs;
+  if (own.some((arg) => arg === "--model" || arg.startsWith("--model="))) return [...own];
+  return [...globalModel(), ...own];
+}
+
+/** Pi's global default model as Pi arguments, from the agent folder's settings.json. Empty when it names none. */
+function globalModel(): string[] {
+  const dir = process.env["PI_CODING_AGENT_DIR"] ?? join(homedir(), ".pi", "agent");
+  let settings: unknown;
+  try {
+    settings = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  if (!isRecord(settings)) return [];
+  const { defaultProvider: provider, defaultModel: model } = settings;
+  if (typeof model !== "string") return [];
+  return typeof provider === "string"
+    ? ["--provider", provider, "--model", model]
+    : ["--model", model];
 }
