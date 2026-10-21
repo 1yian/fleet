@@ -184,6 +184,8 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q direnv
       - name: Install lavish-axi, a prerequisite of the fleet (docs/setup.md)
         run: npm install -g lavish-axi@0.1.90
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
       - run: node --test --test-concurrency=1 "e2e/extension/**/*.test.ts"
 
   e2e-board:
