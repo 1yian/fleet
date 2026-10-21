@@ -306,3 +306,47 @@ test(
     assert.equal(item["kind"], "user");
   },
 );
+
+test(
+  "`fleet home memory` prepares a second mate's package again when the loader no longer accepts it",
+  { skip: existsSync(DOTFILES) ? false : `no dotfiles checkout at ${DOTFILES}` },
+  async () => {
+    installLoader();
+    const agent = { PI_CODING_AGENT_DIR: join(h.dir, "agent") };
+    const token = cardd.addLane("cnp", "main");
+    const home = scratch.addLane("cnp", {
+      url: cardd.url,
+      token,
+      args: [...mateArgs(h), "-e", PROBE],
+    });
+    scratch.fleet(
+      ["home", "memory", "cnp", "--source", PACKAGE, "--compactor", "fake/scripted"],
+      agent,
+    );
+    const browser = join(home, "config", "optchat", "package", "src", "browser.ts");
+    writeFileSync(browser, `${readFileSync(browser, "utf8")}\nexport const stale = true;\n`);
+
+    const again = scratch.fleet(["home", "memory", "cnp", "--source", PACKAGE], agent);
+    assert.match(again, /cnp: package: prepared again in config\/optchat\/package/);
+    assert.ok(!readFileSync(browser, "utf8").includes("stale"), "the stale package stayed");
+    const third = scratch.fleet(["home", "memory", "cnp", "--source", PACKAGE], agent);
+    assert.equal(third.match(/is there already/g)?.length, 3, third);
+
+    h.onModel(() => ({ text: "noted" }), "mate");
+    scratch.fleet(["up", "cnp"], { ...agent, HERDR_SESSION: lab.name });
+    await h.waitFor((event) => event["type"] === "fleet_connected", "cnp to join the fleet");
+    const main = await cardd.connect(mainToken);
+    await main.call("comment", { lane: "cnp", text: `Ship the report: ${IDLE_WORD}.` });
+    await main.close();
+
+    const receipt = await until(() => {
+      const file = join(home, "state", "optchat-activation.json");
+      return existsSync(file) ? parseRecord(readFileSync(file, "utf8")) : undefined;
+    }, "cnp's memory to load");
+    assert.equal(receipt["profile"], "cnp");
+    await until(
+      () => withText(jsonl(join(home, "data", "optchat", "profiles", "cnp", "main")), IDLE_WORD),
+      "the message in cnp's memory journal",
+    );
+  },
+);
