@@ -42,16 +42,19 @@ export class FakeGitHub {
     writeFileSync(this.file, JSON.stringify({ ...all, $delay: ms }));
   }
 
-  callsInFlight(): { started: number; now: number; most: number } {
+  callsInFlight(): { started: number; now: number; most: number; pids: number[] } {
     const log = `${this.file}.log`;
     const marks = existsSync(log) ? readFileSync(log, "utf8").split("\n") : [];
     let now = 0;
     let most = 0;
-    for (const mark of marks) {
+    const pids: number[] = [];
+    for (const line of marks) {
+      const [mark, pid] = line.split(" ");
       now += mark === "+" ? 1 : mark === "-" ? -1 : 0;
+      if (mark === "+") pids.push(Number(pid));
       most = Math.max(most, now);
     }
-    return { started: marks.filter((mark) => mark === "+").length, now, most };
+    return { started: pids.length, now, most, pids };
   }
 
   setHead(url: string, head: string): void {

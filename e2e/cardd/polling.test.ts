@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
 import { begin, branchOf, newCard, startFleet, type Fleet } from "../support/fleet.ts";
@@ -45,4 +46,38 @@ test("a close that comes while a timed gh read is in flight sees the PR as it is
     await fleet.main.call("close.begin", { card: card.id }),
   );
   assert.deepEqual([plan.mode, plan.verify], ["done", false]);
+});
+
+function runningGh(pids: readonly number[]): number[] {
+  return pids.filter((pid) => {
+    try {
+      return execFileSync("ps", ["-o", "command=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).includes("fake-gh.ts");
+    } catch {
+      return false;
+    }
+  });
+}
+
+test("stopping cardd also stops the gh read it has in flight", async () => {
+  fleet.cardd.gh.slow(60_000);
+  await begin(fleet.main, await newCard(fleet.main, "gh outlives its cardd"));
+  for (const deadline = Date.now() + 10_000; fleet.cardd.gh.callsInFlight().started === 0;) {
+    assert.ok(Date.now() < deadline, "cardd did not start gh");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const pids = fleet.cardd.gh.callsInFlight().pids;
+  assert.deepEqual(runningGh(pids), pids, "the gh read was running when cardd stopped");
+  await fleet.cardd.stop();
+  let left = runningGh(pids);
+  try {
+    for (const deadline = Date.now() + 10_000; left.length > 0 && Date.now() < deadline;) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      left = runningGh(pids);
+    }
+    assert.deepEqual(left, [], "gh survived cardd's exit");
+  } finally {
+    for (const pid of left) process.kill(pid, "SIGKILL");
+  }
 });

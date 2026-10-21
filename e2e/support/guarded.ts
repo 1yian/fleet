@@ -22,6 +22,14 @@ export function guardCleanup(name: string, argv: readonly string[]): () => void 
   };
 }
 
+function killGroup(pid: number): void {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    return;
+  }
+}
+
 export function spawnGuarded(
   command: string,
   args: readonly string[],
@@ -32,6 +40,7 @@ export function spawnGuarded(
   if (pid !== undefined) {
     tell(`watch ${String(pid)}`);
     child.once("exit", () => {
+      killGroup(pid);
       tell(`release ${String(pid)}`);
     });
   }

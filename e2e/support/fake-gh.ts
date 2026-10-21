@@ -11,7 +11,7 @@ const { positionals, values } = parseArgs({
 });
 const [noun, verb, url = ""] = positionals;
 const log = (mark: "+" | "-"): void => {
-  appendFileSync(`${file}.log`, `${mark}\n`);
+  appendFileSync(`${file}.log`, `${mark} ${String(process.pid)}\n`);
 };
 const delay = prs["$delay"];
 log("+");
