@@ -224,11 +224,11 @@ test("a restarted mate and a fleet row keep the same rules and labels", async ()
     assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
+  await lab.submit(pane, "clear");
+  await screenWhere(pane, "the cleared pane", (screen) => !screen.includes(RULING));
   await startMain(lab, scratch, h, true);
-  const restored = await screenWhere(
-    pane,
-    "the restored conversation",
-    (screen) => screen.includes(RULING) && !screen.includes("killed"),
+  const restored = await screenWhere(pane, "the restored conversation", (screen) =>
+    screen.includes(RULING),
   );
   keep("6-restored", restored, await lab.coloredScreen(pane));
   assert.deepEqual(transcript(restored).shown, expected);

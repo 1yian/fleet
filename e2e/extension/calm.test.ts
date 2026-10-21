@@ -232,6 +232,8 @@ test("calm shows no Thinking... label for hidden thinking, in a live turn with a
     assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
+  await lab.submit(pane, "clear");
+  await screenWhere(pane, "the cleared pane", (screen) => !screen.includes(NEXT));
   await startMain(lab, scratch, h, true, args);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted mate to connect");
   const restarted = await screenWhere(
