@@ -59,9 +59,16 @@ async function landed(cardd: Cardd, mate: Session, card: Card, worker: Session, 
   });
 }
 
-function backdate(cardd: Cardd, card: Card, ms: number): void {
+function closeLongAgo(cardd: Cardd, card: Card, ms: number, text: string): void {
   const db = new DatabaseSync(cardd.db);
-  db.prepare("UPDATE cards SET updated_at = ? WHERE id = ?").run(Date.now() - ms, card.id);
+  db.prepare(
+    "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, 'mate:main', 'cleanup', ?, ?, ?)",
+  ).run(
+    card.id,
+    text,
+    JSON.stringify({ outcome: "done", archives: [], left: [] }),
+    Date.now() - ms,
+  );
   db.close();
 }
 
@@ -190,14 +197,7 @@ async function seedClosed(cardd: Cardd, main: Session, leo: Session, cards: Card
     CardSchema,
     await main.call("card.new", { title: "Migrate the live cardd", kind: "scout" }),
   );
-  await main.call("close.finish", {
-    card: cards["old"].id,
-    mode: "done",
-    text: "Migrated.",
-    archives: [],
-    left: [],
-  });
-  backdate(cardd, cards["old"], 3 * DAY);
+  closeLongAgo(cardd, cards["old"], 3 * DAY, "Migrated.");
   cards["dropped"] = check(
     CardSchema,
     await main.call("card.new", { title: "Try the dock", kind: "scout" }),
