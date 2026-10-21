@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerBranch } from "./branch.ts";
+import { applyCachePolicy } from "./cache-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { registerIntake } from "./intake.ts";
@@ -137,6 +138,7 @@ function start(
     registerUpdate(pi, HOME(), link);
   }
 
+  applyCachePolicy(role);
   pi.on("before_agent_start", (event) => ({
     systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? mateContract() : ""}`,
   }));
