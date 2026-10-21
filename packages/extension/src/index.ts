@@ -10,6 +10,7 @@ import { registerLanes } from "./lanes.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
 import { registerQuestions } from "./questions.ts";
+import { registerReview } from "./review.ts";
 import { WorkerRun } from "./worker.ts";
 
 interface Config {
@@ -81,12 +82,14 @@ function start(
         { triggerTurn: true, deliverAs: mode },
       );
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-      if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
+      if (entry.kind === "job-result" || entry.kind === "review-feedback")
+        jobs?.finished(entry.fields["job"]);
       worker?.reset();
     },
   });
-  const jobs = role === "worker" ? new Jobs(link) : undefined;
-  jobs?.register(pi, { url, token });
+  const jobs = role === "worker" ? new Jobs(link, { url, token }) : undefined;
+  jobs?.register(pi);
+  if (jobs !== undefined) registerReview(pi, jobs);
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;

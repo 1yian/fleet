@@ -9,6 +9,7 @@ import { comment } from "./comments.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { PullRequest } from "./github.ts";
 import { lookUpPr } from "./pulls.ts";
+import { factsFrom } from "./status.ts";
 import type { Timings } from "./timing.ts";
 import {
   addCard,
@@ -78,6 +79,19 @@ const REWORK: ReadonlySet<ReportStatus> = new Set([
   "stopped",
 ]);
 
+function reviewFeedback(
+  db: DatabaseSync,
+  id: number,
+  fields: { job: number; label: string; exitCode: number; resolves: string },
+  body: string,
+  session: string,
+): void {
+  const entry: Draft = { card: id, author: "captain", kind: "review-feedback", body, fields };
+  const open = factsFrom(cardEntries(db, id)).hold?.keys.includes(fields.resolves) === true;
+  if (open) applyChange(db, getCard(db, id), { kind: "answered" }, [entry]);
+  addEntry(db, entry, [session]);
+}
+
 const HANDLERS: Record<OpName, Handler> = {
   "close.begin": closeBegin,
   "close.finish": closeFinish,
@@ -120,8 +134,11 @@ const HANDLERS: Record<OpName, Handler> = {
   },
   "job.start": (db, session, raw, timing) => {
     const args = check(OPS["job.start"].args, raw);
-    const job = startJob(db, session.id, args.label, args.command);
-    return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
+    const { id, key } = startJob(db, session.id, { ...args, review: args.review !== undefined });
+    const value = { job: id, heartbeatMs: timing.heartbeat, key };
+    if (key === null || args.review === undefined) return { value, notify: [] };
+    const decision = { status: "needs-decision", key, text: args.review };
+    return { value, notify: HANDLERS.report(db, session, decision, timing, {}).notify };
   },
   "job.alive": (db, session, raw) => {
     const args = check(OPS["job.alive"].args, raw);
@@ -129,14 +146,19 @@ const HANDLERS: Record<OpName, Handler> = {
   },
   "job.finish": (db, session, raw) => {
     const args = check(OPS["job.finish"].args, raw);
-    const label = finishJob(db, session.id, {
+    const finished = finishJob(db, session.id, {
       id: args.job,
       exitCode: args.exitCode,
       outputTail: args.outputTail,
     });
-    if (label === undefined || session.card === null)
+    if (finished === undefined || session.card === null)
       return { value: { recorded: false }, notify: [] };
+    const { label, resolves } = finished;
     const fields = { job: args.job, label, exitCode: args.exitCode };
+    if (resolves !== null) {
+      reviewFeedback(db, session.card, { ...fields, resolves }, args.outputTail, session.id);
+      return { value: { recorded: true }, notify: [session.id] };
+    }
     const entry = {
       card: session.card,
       author: `job:${String(args.job)}`,

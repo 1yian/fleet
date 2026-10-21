@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -78,4 +78,25 @@ test("fleet up starts a second mate in its own workspace once, and again on its 
     ["[fleet] main on c-1", "[fleet] main on c-1"],
   );
   assert.equal(readdirSync(join(h.dir, "sessions")).length, 1);
+});
+
+test("fleet up starts no mate on a host whose lavish-axi is too old, and says how to install it", () => {
+  const bin = join(h.dir, "old-lavish");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "lavish-axi"), "#!/bin/sh\necho 0.1.10\n");
+  chmodSync(join(bin, "lavish-axi"), 0o755);
+  const PATH = `${bin}:${process.env["PATH"] ?? ""}`;
+
+  assert.throws(
+    () => scratch.fleet(["up"], { HERDR_SESSION: lab.name, PATH }),
+    (error: unknown) => {
+      const stderr = error instanceof Error ? String(Reflect.get(error, "stderr")) : "";
+      assert.equal(
+        stderr,
+        "lavish-axi 0.1.10 is too old. The fleet needs lavish-axi 0.1.80 or later on every host. Install it with: npm install -g lavish-axi\n",
+      );
+      return true;
+    },
+  );
+  assert.equal(scratch.fleet(["status"], { HERDR_SESSION: lab.name, PATH }), "cleo: down\n");
 });

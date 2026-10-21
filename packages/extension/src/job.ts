@@ -20,6 +20,12 @@ interface Job {
   readonly command: string;
   readonly timeoutMs: number;
   readonly heartbeatMs: number;
+  readonly keep: Keep;
+}
+
+interface Keep {
+  readonly lines: number;
+  readonly lineChars: number;
 }
 
 function readJob(file: string): Job {
@@ -27,44 +33,62 @@ function readJob(file: string): Job {
   rmSync(file);
   if (typeof value !== "object" || value === null) throw new Error("the job file holds no object");
   const field = (key: string): unknown => Reflect.get(value, key);
-  const [url, token, job, command, timeoutMs, heartbeatMs] = [
+  const [url, token, job, command, timeoutMs, heartbeatMs, tailLines, lineChars] = [
     "url",
     "token",
     "job",
     "command",
     "timeoutMs",
     "heartbeatMs",
+    "tailLines",
+    "lineChars",
   ].map(field);
   if (typeof url !== "string" || typeof token !== "string" || typeof command !== "string") {
     throw new Error("the job file lacks url, token, or command");
   }
   if (typeof job !== "number" || typeof timeoutMs !== "number" || typeof heartbeatMs !== "number")
     throw new Error("the job file lacks job, timeoutMs, or heartbeatMs");
-  return { url, token, job, command, timeoutMs, heartbeatMs };
+  const keep = { lines: count(tailLines, TAIL_LINES), lineChars: count(lineChars, MAX_LINE_CHARS) };
+  return { url, token, job, command, timeoutMs, heartbeatMs, keep };
 }
+
+const count = (value: unknown, otherwise: number): number =>
+  typeof value === "number" ? value : otherwise;
 
 class Stream {
   private readonly decoder = new StringDecoder("utf8");
   private rest = "";
+  private readonly max: number;
+
+  constructor(max: number) {
+    this.max = max;
+  }
 
   write(chunk: Buffer): string[] {
     const parts = (this.rest + this.decoder.write(chunk)).split(/\r\n|\r(?!$)|\n/);
-    this.rest = (parts.pop() ?? "").slice(-MAX_LINE_CHARS);
-    return parts.map((line) => line.slice(-MAX_LINE_CHARS));
+    this.rest = (parts.pop() ?? "").slice(-this.max);
+    return parts.map((line) => line.slice(-this.max));
   }
 
   end(): string {
-    return (this.rest + this.decoder.end()).replace(/\r$/, "").slice(-MAX_LINE_CHARS);
+    return (this.rest + this.decoder.end()).replace(/\r$/, "").slice(-this.max);
   }
 }
 
 class Tail {
   private lines: string[] = [];
-  readonly out = new Stream();
-  readonly err = new Stream();
+  readonly out: Stream;
+  readonly err: Stream;
+  private readonly keep: number;
+
+  constructor({ lines, lineChars }: Keep) {
+    this.keep = lines;
+    this.out = new Stream(lineChars);
+    this.err = new Stream(lineChars);
+  }
 
   add(lines: string[]): void {
-    this.lines = this.lines.concat(lines).slice(-TAIL_LINES);
+    this.lines = this.lines.concat(lines).slice(-this.keep);
   }
 
   flush(): void {
@@ -92,7 +116,7 @@ function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
 }
 
 async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> {
-  const tail = new Tail();
+  const tail = new Tail(job.keep);
   const child = spawn("sh", ["-c", job.command], {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
