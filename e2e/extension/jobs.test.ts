@@ -57,7 +57,10 @@ test("a run_long result wakes the worker, and the wait is not a stall", async ()
   worker();
   await fleet.main.waitForEntries(1);
 
-  assert.equal(lastUser(await h.waitForCall(2)), "[fleet] c-1 job 1 (tests) exited 3: one\ntwo");
+  assert.equal(
+    lastUser(await h.waitForCall(2)),
+    "[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 3: one\ntwo",
+  );
   assert.ok(said("Started job 1 (tests) in tab job-1-tests."));
   assert.equal(said("Your run is ending without a handoff"), false);
   assert.deepEqual(
@@ -84,8 +87,15 @@ test("a job keeps running across a worker restart, and its result arrives once",
   worker();
   await h.waitForNth((e) => e["type"] === "fleet_delivered", 2, "the job result after the restart");
   const after = await h.waitForCall(2);
-  assert.equal(lastUser(after), "[fleet] c-1 job 1 (wait) exited 0: finished");
-  assert.equal(after.filter((turn) => turn.text.startsWith("[fleet] c-1 job 1")).length, 1);
+  assert.equal(
+    lastUser(after),
+    "[fleet] c-1 users-see-one-scrollbar job 1 (wait) exited 0: finished",
+  );
+  assert.equal(
+    after.filter((turn) => turn.text.startsWith("[fleet] c-1 users-see-one-scrollbar job 1"))
+      .length,
+    1,
+  );
   assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "run\n");
 });
 
@@ -135,7 +145,7 @@ test("a carriage return ends a line, and an endless line is cut to its last 2000
   worker();
   await fleet.main.waitForEntries(1);
 
-  const expected = `[fleet] c-1 job 1 (progress) exited 0: x\ny\n${"a".repeat(2000)}`;
+  const expected = `[fleet] c-1 users-see-one-scrollbar job 1 (progress) exited 0: x\ny\n${"a".repeat(2000)}`;
   assert.equal(lastUser(await h.waitForCall(2)), expected);
 });
 
@@ -171,7 +181,7 @@ test("an interrupted job reports exit 130, with the unfinished line before it", 
 
   assert.equal(
     lastUser(await h.waitForCall(2)),
-    "[fleet] c-1 job 1 (wait) exited 130: started\npartial\ninterrupted",
+    "[fleet] c-1 users-see-one-scrollbar job 1 (wait) exited 130: started\npartial\ninterrupted",
   );
   await until(
     () => (pids(uniqueSleepSeconds(2)).length === 0 ? true : undefined),
@@ -196,8 +206,8 @@ test("closing the job tab still reaches the worker: the result, or a lost job", 
     const woken = lastUser(await h.waitForCall(2, "default", 20_000)) ?? "";
     assert.ok(
       [
-        "[fleet] c-1 job 1 (tab) exited 130: started\ndying\ninterrupted",
-        "[fleet] c-1 job 1 (tab) lost: no heartbeat arrived. It is not run again.",
+        "[fleet] c-1 users-see-one-scrollbar job 1 (tab) exited 130: started\ndying\ninterrupted",
+        "[fleet] c-1 users-see-one-scrollbar job 1 (tab) lost: no heartbeat arrived. It is not run again.",
       ].includes(woken),
       woken,
     );
@@ -287,6 +297,6 @@ test("a result that arrives after the job was marked lost is still delivered onc
   }
 
   const after = await h.waitForCall(5);
-  assert.equal(lastUser(after), "[fleet] c-1 job 1 (late) exited 0: late");
+  assert.equal(lastUser(after), "[fleet] c-1 users-see-one-scrollbar job 1 (late) exited 0: late");
   assert.equal(after.filter((turn) => turn.text.includes("exited 0")).length, 1);
 });

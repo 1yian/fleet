@@ -78,7 +78,7 @@ async function cleoAsks(title: string): Promise<void> {
   });
 }
 
-const FLEET_ROW = "[fleet] cleo on c-2 (hold)";
+const FLEET_ROW = "[fleet] cleo on c-2 ship-the-scrollbar-fix (hold)";
 const TOOL_ROW = "board";
 const NOTE = "Checking the board first.";
 const REPLY = "Cleo wants a decision on the scrollbar fix.";

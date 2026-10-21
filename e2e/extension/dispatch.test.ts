@@ -87,7 +87,7 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
     "Dispatched c-1-a1 on local, branch c-1-a1.",
   );
   const workerFirst = await h.waitForCall(0, "worker");
-  assert.equal(lastUser(workerFirst), "[fleet] main on c-1: fix the scrollbar");
+  assert.equal(lastUser(workerFirst), "[fleet] main on c-1 one-scrollbar: fix the scrollbar");
   assert.match(
     workerFirst.find((turn) => turn.role === "system")?.text ?? "",
     /^# Worker role contract$/m,
@@ -96,7 +96,7 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
   assert.match(mateFirst.find((turn) => turn.role === "system")?.text ?? "", /^# Firstmate$/m);
   assert.equal(
     lastUser(woken),
-    `[fleet] c-1 done: PR green (PR ${PR}) (re your comment: fix the scrollbar) (card now needs-you)`,
+    `[fleet] c-1 one-scrollbar done: PR green (PR ${PR}) (card now needs-you)`,
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await workers(), ["c-1-a1"]);
@@ -126,13 +126,15 @@ test("a dispatch whose connection drops after the worker started finds it, and a
   );
   assert.equal(
     lastUser(woken),
-    `[fleet] c-1 done: PR green (PR ${PR}) (re your comment: fix the scrollbar) (card now needs-you)`,
+    `[fleet] c-1 one-scrollbar done: PR green (PR ${PR}) (card now needs-you)`,
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await workers(), ["c-1-a1"]);
   const workerTurns = h.callsOf("worker").at(-1) ?? [];
   assert.equal(
-    workerTurns.filter((turn) => turn.text === "[fleet] main on c-1: fix the scrollbar").length,
+    workerTurns.filter(
+      (turn) => turn.text === "[fleet] main on c-1 one-scrollbar: fix the scrollbar",
+    ).length,
     1,
   );
 });
@@ -458,8 +460,10 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
   assert.equal(
     lastUser(resumed),
-    "[fleet] main on c-1: Your session was restarted. Continue your task from where you stopped.",
+    "[fleet] main on c-1 one-scrollbar: Your session was restarted. Continue your task from where you stopped.",
   );
-  assert.ok(resumed.some((turn) => turn.text === "[fleet] main on c-1: fix the scrollbar"));
+  assert.ok(
+    resumed.some((turn) => turn.text === "[fleet] main on c-1 one-scrollbar: fix the scrollbar"),
+  );
   assert.deepEqual(await workers(), ["c-1-a1"]);
 });

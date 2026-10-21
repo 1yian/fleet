@@ -73,8 +73,9 @@ Do one action per card, then stop. Do not narrate routine progress to the captai
 | `[fleet] fleet on c-N (hold): Merge` (you are main) | A second mate's PR waits for the captain's approval, and the hold waits on you. Escalate it with `hold(card, to="captain", question=<the PR URL and what it changes>)`, then tell the captain in chat with the full PR URL. |
 | `[fleet] <lane> on c-N (close):` (you are main) | A second mate's card landed or finished. Relay the outcome to the captain. For a question, read the report it names and relay the answer itself (section 8). |
 
-Each report ends with `(card now <status>)`, the card's status after the report.
-A message that ends with `(re your comment: ...)` is the first action of the agent you commented, and it follows that comment. Check that it did what you asked. You get it once for each comment.
+Each message names its card by number and short name, such as `[fleet] c-50 ban-code-comments working:`. The table writes it `c-N`.
+A report ends with `(card now <status>)`, the card's status after the report, when it differs from the report's status.
+The first report or action after your comment answers that comment. Check that it did what you asked.
 
 ## 3. Tools
 

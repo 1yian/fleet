@@ -48,14 +48,12 @@ function prSuffix(entry: Entry): string {
 }
 
 function formatReport(entry: Entry, card: string): string {
+  const status = field(entry, "status") ?? "report";
   const key = field(entry, "key");
-  const head = `[fleet] ${card} ${field(entry, "status") ?? "report"}${key === undefined ? "" : ` [${key}]`}: ${entry.body}`;
-  return (
-    head +
-    prSuffix(entry) +
-    suffix(entry, "re", "re your comment: ") +
-    suffix(entry, "statusAfter", "card now ")
-  );
+  const after = field(entry, "statusAfter");
+  const head = `[fleet] ${card} ${status}${key === undefined ? "" : ` [${key}]`}: ${entry.body}`;
+  const now = after === undefined || after === status ? "" : ` (card now ${after})`;
+  return `${head}${prSuffix(entry)}${now}`;
 }
 
 function formatJob(entry: Entry, card: string): string {
@@ -66,14 +64,13 @@ function formatJob(entry: Entry, card: string): string {
 
 const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
 
-export function format(entry: Entry): string {
-  const card = `c-${String(entry.card)}`;
+export function format(entry: Entry, name: string): string {
+  const card = name === "" ? `c-${String(entry.card)}` : `c-${String(entry.card)} ${name}`;
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);
   const who = entry.author.replace(/^mate:/, "");
   const kind = entry.kind === "comment" ? "" : ` (${LABELS[entry.kind] ?? entry.kind})`;
-  const answers = suffix(entry, "resolves", "answers ");
-  return `[fleet] ${who} on ${card}${kind}: ${entry.body}${answers}${suffix(entry, "re", "re your comment: ")}`;
+  return `[fleet] ${who} on ${card}${kind}: ${entry.body}${suffix(entry, "resolves", "answers ")}`;
 }
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;

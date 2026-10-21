@@ -53,11 +53,7 @@ function ownCard(db: DatabaseSync, session: Session, id: number): Card {
   return card;
 }
 
-function reportRoute(
-  db: DatabaseSync,
-  card: Card,
-  status: ReportStatus,
-): { to: string[]; re?: string } {
+function reportRoute(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
   const entries = cardEntries(db, card.id);
   const comment = entries.findLast(
     (entry) =>
@@ -66,8 +62,7 @@ function reportRoute(
   );
   const report = entries.findLast((entry) => entry.kind === "report");
   const firstAfterComment = comment !== undefined && comment.id > (report?.id ?? 0);
-  if (firstAfterComment) return { to: [card.lane], re: comment.body };
-  return { to: TO_MATE.has(status) ? [card.lane] : [] };
+  return firstAfterComment || TO_MATE.has(status) ? [card.lane] : [];
 }
 
 const REWORK: ReadonlySet<ReportStatus> = new Set([
@@ -152,9 +147,9 @@ const HANDLERS: Record<OpName, Handler> = {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     const card = getCard(db, session.card);
-    const { to, re } = reportRoute(db, card, args.status);
+    const to = reportRoute(db, card, args.status);
     const withdrawn = REWORK.has(args.status) ? withdrawMerge(db, card) : [];
-    const fields = { status: args.status, key: args.key, until: args.until, re, ...pr };
+    const fields = { status: args.status, key: args.key, until: args.until, ...pr };
     const report: Draft = {
       card: card.id,
       author: `worker:${session.id}`,
