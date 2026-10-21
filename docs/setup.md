@@ -30,7 +30,7 @@ lavish-axi --version     # 0.1.80 or later
 
 `fleet up` and `fleet restart` refuse to start a mate on a host whose `lavish-axi` is missing or too old, and say how to install it. Main runs `fleet up` on every host when it starts and every minute after, so it tells the captain about such a host. A worker's `wait_review` refuses the same way. Each host runs its own Lavish server, so the captain's browser must reach that host, as it does over Tailscale.
 
-To update later: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`. The lanes move to the new commit when their mates next start, so then run `lane("all", "restart")` from main (or `fleet restart` on that host). A lane home with uncommitted changes stays where it is.
+To update later, type `/updatefleet` in main, or ask main to update the fleet. Section 7 says what it does.
 
 ## 2. cardd
 
@@ -62,7 +62,7 @@ $CARDD project yolo web on --db ~/.fleet/cards.db
 - Use the same host names in `--clone` that mates pass to `dispatch`.
 - A project's yolo flag is the captain's standing merge authority: with it on, a mate tells the worker to merge a PR of that project with green checks, without asking the captain. Only the captain sets it, with `project add --yolo` or `project yolo <name> on|off`. No mate tool changes it.
 - `cardd` finds a ship card's PR on GitHub by the card's branch, so it needs the project's GitHub repository. It reads it from the `origin` remote of a clone on the `cardd` host, when the project is added and each time `cardd serve` starts. A project with no clone on that host needs `--repo <owner>/<name>` on `project add`.
-- The fleet keeps clones current with their `origin`, as Firstmate did. Dispatch fetches first and branches from `origin/<base>`, and refuses when the fetch fails. When main starts, and after `close` ends a ship card, each clone is fetched, branches whose remote branch is gone are pruned, and a clean base branch is fast-forwarded. A clone with uncommitted changes, another branch checked out, or a diverged base is left alone and reported as `STUCK`. A clone that is a fleet home, such as main's checkout, is only fetched: update it with the steps in section 1.
+- The fleet keeps clones current with their `origin`, as Firstmate did. Dispatch fetches first and branches from `origin/<base>`, and refuses when the fetch fails. When main starts, and after `close` ends a ship card, each clone is fetched, branches whose remote branch is gone are pruned, and a clean base branch is fast-forwarded. A clone with uncommitted changes, another branch checked out, or a diverged base is left alone and reported as `STUCK`. A clone that is a fleet home, such as main's checkout, is only fetched: update it with `/updatefleet` (section 7).
 
 ## 4. Main
 
@@ -157,11 +157,27 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet up [lane]`           | Starts each lane that does not run. A stopped lane stays stopped unless it is named.  |
 | `fleet stop <lane>`         | Closes the lane's workspace and holds the lane.                                       |
 | `fleet restart [lane]`      | Starts the mate again on its conversation. No lane means every lane that is not held. |
+| `fleet update [--check]`    | Updates this host's checkout and lane homes for `/updatefleet` (section 7).           |
 | `fleet home add <lane> ...` | Makes a lane's home.                                                                  |
 | `fleet home memory <lane>`  | Turns on the lane's conversation memory (section 4).                                  |
 | `fleet migrate [--undo]`    | Moves the earlier layout into homes (below).                                          |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
+
+## 7. Updating the fleet
+
+Type `/updatefleet` in main, or ask main in plain words to update the fleet (its `update_fleet` tool). It updates every host in main's `config/lane.json` to the latest `origin/main`, restarts every lane, and then restarts main. It is Firstmate's `/updatefirstmate` for the fleet.
+
+1. **Check every host first.** On each host, `fleet update --check` fetches `origin` and looks at the checkout and every lane home on that host. Any of these stops the whole update before anything changes: a host that cannot be reached, a checkout that is not on `main`, uncommitted changes in a checkout or a lane home, or commits in either that are not on `origin/main`. Main reports each problem with its host and path. Nothing is pulled, and no mate restarts. Fix what it names, then run the update again.
+2. **Update each host in turn.** `fleet update` checks again, fast-forwards the checkout to `origin/main`, runs `npm ci` when `package-lock.json` changed, builds the board, and moves every lane home on that host to the new commit. It never forces, merges, or stashes, and it never touches a home's `config/`, `data/`, or `state/`. A failed pull, install, or build stops the update there: no mate restarts, main keeps running, and the report says which hosts were already updated. Run the update again once the cause is fixed. A host that is already current is rebuilt, so a rerun converges.
+3. **Restart every lane**, on every host, as `lane("all", "restart")` does. A held lane stays held. Each mate continues its conversation.
+4. **Report and restart main.** The report names each host with its old and new commit, whether packages were installed, and the lane homes it moved, then each lane's restart. It also says whether the board or `cardd` changed. Main tells you the outcome, and when that turn ends it restarts on its own conversation, so the report stays in it.
+
+Main restarts itself only when it runs in a herdr pane. Otherwise the report says so: restart it with `pi -c` in its home.
+
+The update never touches `cardd`. `cardd` reads the board's files from disk at each request, so a new board needs no restart when `cardd` serves this checkout's build. When the update changes `packages/cardd` or `packages/protocol`, the report says that `cardd` still runs the old code. Update its checkout and restart its launchd job yourself (section 2).
+
+A host updates with the code it already has. A host whose checkout predates `fleet update` cannot take part, so update it once by hand: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`, then `fleet restart` on that host.
 
 ## Moving from the earlier layout
 

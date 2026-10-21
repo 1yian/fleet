@@ -13,6 +13,7 @@ import { registerMate } from "./mate.ts";
 import { registerQuestions } from "./questions.ts";
 import { registerReview } from "./review.ts";
 import { titleMate } from "./titles.ts";
+import { registerUpdate } from "./updating.ts";
 import { WorkerRun } from "./worker.ts";
 
 interface Config {
@@ -97,7 +98,10 @@ function start(
   const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
   if (role === "mate") registerQuestions(pi, link, () => sessionFile);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
-  if (lane === "main") refreshEveryCloneOnFirstConnect(pi, link);
+  if (lane === "main") {
+    refreshEveryCloneOnFirstConnect(pi, link);
+    registerUpdate(pi, HOME());
+  }
 
   pi.on("before_agent_start", (event) => ({
     systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? charter() : ""}`,

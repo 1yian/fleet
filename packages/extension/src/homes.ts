@@ -56,7 +56,7 @@ export function existingHome(root: string, lane: string): string {
   return home;
 }
 
-function laneHomes(root: string): LaneHome[] {
+export function laneHomes(root: string): LaneHome[] {
   const dir = `${root}.worktrees`;
   if (!existsSync(dir)) return [];
   return readdirSync(dir)

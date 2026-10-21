@@ -14,9 +14,10 @@ import { lavishProblem } from "./lavish.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { mateTitle } from "./titles.ts";
+import { checkHost, updateHost } from "./update.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | restart [lane] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | restart [lane] | update [--check] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -45,6 +46,7 @@ const { values, positionals } = parseArgs({
   options: {
     json: { type: "boolean" },
     undo: { type: "boolean" },
+    check: { type: "boolean" },
     from: { type: "string" },
     url: { type: "string" },
     token: { type: "string" },
@@ -148,6 +150,12 @@ switch (command ?? "") {
       ...(values.direnv === undefined ? {} : { direnv: values.direnv }),
     };
     console.log(provision(root, config));
+    break;
+  }
+  case "update": {
+    const result =
+      values.check === true ? (checkHost(root) ?? { state: "ready", root }) : updateHost(root);
+    console.log(JSON.stringify(result));
     break;
   }
   case "migrate":
