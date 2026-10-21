@@ -49,13 +49,13 @@ cardd project yolo <name> on|off --db <file>
 
 - `comments.ts`: a comment is the one way to talk to an agent. A worker's card hears its mate. A second mate's lane card, or any card in its lane, hears main when main speaks, and main hears the second mate when it answers. Main never steers another lane's worker. A comment cannot answer a worker's decision that waits on the captain.
 - `ops.ts`: a report reaches the mate when its status hands off, or when it is the first report after a comment that reached the worker (spec section 10.3). Each operation runs in one transaction.
-- `echo.ts`: when a parent commented on a card and the mate has not acted on it since, the mate's next action also reaches the parent, with that comment. It is written once, because the next action ends the wait.
+- `echo.ts`: when a parent commented on a card and the mate has not acted on it since, the mate's next action also reaches the parent. It is sent once, because the next action ends the wait.
 - `authority.ts`: the mate's extension checks chat words against its own session file. For any other source, the words must be in a captain entry: a board comment, an option click, or an earlier answer. A project's yolo flag lets its mate have the worker merge a green PR without asking. A done PR in such a project goes straight to Merging.
 
 ### Attempts, delivery, and the server
 
 - `attempts.ts`: an attempt is one run of a card by one worker. Its ID is the retry key for dispatch. A dispatch retry on the same host finds the same attempt, with the same token and no second task message. A new attempt gets its task message in the same transaction, so a retry can neither lose it nor repeat it.
-- `deliveries.ts`: every unconfirmed entry is pushed at a connect, otherwise only the pending ones. The echo (`re`, spec section 10.3) quotes a comment that a mate received, so only a mate reads it. When a second mate steers its worker right after main's comment, the worker gets the steer alone, never main's words to its mate.
+- `deliveries.ts`: every unconfirmed entry is pushed at a connect, otherwise only the pending ones. Each push carries its card's short name, which the message shows after the card number. No entry quotes the comment it answers, so when a second mate steers its worker right after main's comment, the worker gets the steer alone, never main's words to its mate.
 - `server.ts`: one websocket per session, plus `POST /call` with a bearer token for scripts. The first message must be hello with the token. Every later message checks that the session is still live, so an ended or replaced attempt loses access at once. At start no session is connected: live sessions reconnect and become idle.
 - `web.ts`: the board has no login, and only the Tailscale network reaches `cardd` (spec section 21.4). Every board request must name an allowed Host, which closes DNS rebinding, and its Origin, when present, must be allowed.
 
