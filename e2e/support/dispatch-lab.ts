@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,7 @@ import { Cardd } from "./cardd.ts";
 import { Harness, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
-import { addRemote } from "./remote.ts";
+import { addRemote, git as gitIn } from "./remote.ts";
 
 export const WORKER_WAIT_MS = 60_000;
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
@@ -34,24 +34,43 @@ export interface LabOptions {
   readonly remote?: boolean;
   readonly delivery?: string;
   readonly repo?: boolean;
+  readonly gate?: "allowed" | "blocked";
+}
+
+function gateRemote(
+  clone: string,
+  remote: string,
+  gate: "allowed" | "blocked",
+): Record<string, string> {
+  const folder = realpathSync(dirname(clone));
+  const envrc = join(folder, ".envrc");
+  const rewrite = `export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.${remote}.insteadOf GIT_CONFIG_VALUE_0=gated://site\n`;
+  writeFileSync(envrc, rewrite);
+  const config = join(folder, "direnv-config");
+  mkdirSync(config);
+  const exact = gate === "allowed" ? JSON.stringify(envrc) : "";
+  writeFileSync(join(config, "direnv.toml"), `[whitelist]\nexact = [${exact}]\n`);
+  gitIn(clone, "remote", "set-url", "origin", "gated://site");
+  return { DIRENV_CONFIG: config };
 }
 
 function addSite(
   cardd: Cardd,
-  { remote: withRemote = false, delivery = "no-mistakes", repo = true }: LabOptions,
-): { clone: string; remote: string | undefined } {
+  { remote: withRemote = false, delivery = "no-mistakes", repo = true, gate }: LabOptions,
+): { clone: string; remote: string | undefined; env: Record<string, string> } {
   const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
   const git = "git -c user.name=t -c user.email=t@t";
   const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
   execFileSync("sh", ["-c", init], { cwd: dirname(clone) });
   const remote = withRemote ? addRemote(clone) : undefined;
+  const env = gate === undefined || remote === undefined ? {} : gateRemote(clone, remote, gate);
   cardd.addProject(
     "site",
     remote === undefined ? { local: clone, flaky: clone, far: clone } : { local: clone },
     repo ? "acme/site" : undefined,
     delivery,
   );
-  return { clone, remote };
+  return { clone, remote, env };
 }
 
 export async function startDispatchLab({
@@ -64,7 +83,7 @@ export async function startDispatchLab({
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
   const mainToken = cardd.addLane("main", undefined, home);
-  const { clone, remote } = addSite(cardd, site);
+  const { clone, remote, env } = addSite(cardd, site);
   const h = await Harness.start();
   const lab = await HerdrLab.start({
     ...h.piEnv("worker"),
@@ -79,6 +98,7 @@ export async function startDispatchLab({
       FLEET_ROLE: "mate",
       FLEET_FAKE_AGENT: "mate",
       HERDR_SESSION: lab.name,
+      ...env,
       FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", EXTENSION, ...workerArgs]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],

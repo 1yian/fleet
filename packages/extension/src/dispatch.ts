@@ -23,7 +23,7 @@ fi
 start=$base
 if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1; then
   if ! fetch_origin "$clone"; then
-    echo "could not fetch origin in $clone, so the worker would start from a stale base: $(printf '%s\\n' "$fetched" | head -n 1)" >&2
+    echo "could not fetch origin in $clone, so the worker would start from a stale base: $(fetch_reason)" >&2
     exit 1
   fi
   start=origin/$base
