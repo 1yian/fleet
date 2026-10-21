@@ -1,8 +1,9 @@
-// Main with conversation memory on (docs/setup.md). Main's memory is the captain's own loader,
+// Mates with conversation memory on (docs/setup.md). The memory is the captain's own loader,
 // fm-optchat from his dotfiles, and the pinned pi-optchat package it prepares. Every [fleet]
-// message must reach main's model and main's memory like any other message: one that arrives
-// while main is idle starts a turn, and one that arrives mid-turn follows it. The memory journal
+// message must reach the mate's model and memory like any other message: one that arrives
+// while the mate is idle starts a turn, and one that arrives mid-turn follows it. The memory journal
 // keeps both as notification entries, which merge into the tree with the rest of the talk.
+// Main's memory is set up by hand here. A second mate's is set up by `fleet home memory`.
 //
 // The loader is private, so the test reads it from a dotfiles checkout at a pinned commit:
 // FLEET_DOTFILES (default ~/Projects/dotfiles) at FLEET_DOTFILES_REF (default the commit below).
@@ -27,7 +28,7 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, optionalString, parseRecord, type JsonRecord } from "../support/json.ts";
-import { configureMain, Scratch, startMain } from "../support/scratch.ts";
+import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -37,6 +38,7 @@ const DOTFILES = process.env["FLEET_DOTFILES"] ?? join(homedir(), "Projects", "d
 const REF = process.env["FLEET_DOTFILES_REF"] ?? "44c622fac3fbc5af288c3f123800eae67fc2d792";
 const AGENT_FILES = ["home/.pi/agent/extensions/fm-optchat", "home/.pi/agent/optchat"];
 const PACKAGE = dirname(fileURLToPath(import.meta.resolve("pi-optchat/package.json")));
+const PROBE = fileURLToPath(new URL("../support/probe.ts", import.meta.url));
 const NOTICE = "[firstmate] Operational notification (fleet)";
 const IDLE_WORD = "PINEAPPLE";
 const BUSY_WORD = "KUMQUAT";
@@ -47,11 +49,14 @@ let lab: HerdrLab;
 let scratch: Scratch;
 let cleo: Session;
 let memoryHome: string;
+let mainToken: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
-  scratch = new Scratch();
-  configureMain(scratch, cardd.url, cardd.addLane("main", undefined, scratch.root));
+  // A second mate's profile sits in its home, and its lock socket must fit 103 bytes on macOS.
+  scratch = new Scratch("fleet", "/tmp");
+  mainToken = cardd.addLane("main", undefined, scratch.root);
+  configureMain(scratch, cardd.url, mainToken);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   // The profile's lock socket must fit the 103-byte socket path of macOS, so memory sits in /tmp.
   memoryHome = mkdtempSync("/tmp/fleet-memory-");
@@ -69,11 +74,8 @@ afterEach(async (t) => {
 const dotfiles = (...args: string[]): Buffer =>
   execFileSync("git", ["-C", DOTFILES, ...args], { stdio: ["ignore", "pipe", "pipe"] });
 
-/**
- * Installs memory the way the captain does: the loader and the package helper into the Pi agent
- * folder, the pinned package prepared into main's home, a profile, and config/optchat.json.
- */
-function installMemory(): void {
+/** Installs the loader and the package helper into the Pi agent folder, as the dotfiles do. */
+function installLoader(): void {
   const agent = join(h.dir, "agent");
   const listed = dotfiles("ls-tree", "-r", "--name-only", REF, "--", ...AGENT_FILES);
   for (const file of listed.toString("utf8").split("\n").filter(Boolean)) {
@@ -81,6 +83,15 @@ function installMemory(): void {
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, dotfiles("show", `${REF}:${file}`));
   }
+}
+
+/**
+ * Installs memory for main the way the captain did: the loader, the pinned package prepared into
+ * main's home, a profile, and config/optchat.json.
+ */
+function installMemory(): void {
+  installLoader();
+  const agent = join(h.dir, "agent");
   const prepared = join(scratch.root, "config", "optchat", "package");
   // The helper runs only when its path is its real path, and the temporary folder is a symlink on macOS.
   const helper = realpathSync(join(agent, "optchat", "package.mjs"));
@@ -214,5 +225,58 @@ test(
       const leaf = tree.find((node) => node["l"] === 0 && String(node["text"]).includes(word));
       assert.ok(String(leaf?.["text"]).startsWith(`notification: ${NOTICE}`));
     }
+  },
+);
+
+test(
+  "a second mate whose home got memory from `fleet home memory` keeps a [fleet] message in its own memory",
+  { skip: existsSync(DOTFILES) ? false : `no dotfiles checkout at ${DOTFILES}` },
+  async () => {
+    installLoader();
+    const agent = { PI_CODING_AGENT_DIR: join(h.dir, "agent") };
+    // The probe says when the mate has joined the fleet.
+    const token = cardd.addLane("leo", "main");
+    const home = scratch.addLane("leo", {
+      url: cardd.url,
+      token,
+      args: [...mateArgs(h), "-e", PROBE],
+    });
+    // The pinned package comes from the test's own copy instead of npm.
+    const made = scratch.fleet(["home", "memory", "leo", "--source", PACKAGE], agent);
+    assert.match(made, /leo: package: prepared/);
+    assert.match(made, /leo: profile: leo, new/);
+    // A second run finds every step done and changes nothing.
+    const again = scratch.fleet(["home", "memory", "leo", "--source", PACKAGE], agent);
+    assert.equal(again.match(/is there already/g)?.length, 3, again);
+
+    h.onModel(() => ({ text: "noted" }), "mate");
+    scratch.fleet(["up", "leo"], { ...agent, HERDR_SESSION: lab.name });
+    await h.waitFor((event) => event["type"] === "fleet_connected", "leo to join the fleet");
+    const main = await cardd.connect(mainToken);
+    await main.call("comment", { lane: "leo", text: `Ship the parser: ${IDLE_WORD}.` });
+    await main.close();
+
+    // The message started leo's turn, and leo's model got it.
+    await until(
+      () => (h.callsOf("mate").some((turns) => mentions(turns, IDLE_WORD)) ? true : undefined),
+      "leo's model to get the message",
+    );
+    // Leo's memory is its own: its profile, in its own home.
+    const receipt = await until(() => {
+      const file = join(home, "state", "optchat-activation.json");
+      return existsSync(file) ? parseRecord(readFileSync(file, "utf8")) : undefined;
+    }, "leo's memory to load");
+    assert.equal(receipt["profile"], "leo");
+    assert.equal(receipt["memoryHome"], join(realpathSync(home), "data", "optchat"));
+    const item = await until(
+      () => withText(jsonl(join(home, "data", "optchat", "profiles", "leo", "main")), IDLE_WORD),
+      "the message in leo's memory journal",
+    );
+    assert.equal(item["kind"], "user");
+    assert.ok(
+      String(item["text"]).startsWith(NOTICE),
+      `not a notification: ${String(item["text"])}`,
+    );
+    assert.ok(!existsSync(join(scratch.root, "state", "optchat-activation.json")));
   },
 );

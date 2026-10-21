@@ -25,10 +25,15 @@ const git = (cwd: string, ...args: string[]): string =>
 
 export class Scratch {
   readonly root: string;
-  private readonly dir = mkdtempSync(join(tmpdir(), "fleet-scratch-"));
+  private readonly dir: string;
 
-  /** A copy of the repository at `<dir>/<name>`, with lane homes next to it in `<name>.worktrees`. */
-  constructor(name = "fleet") {
+  /**
+   * A copy of the repository at `<dir>/<name>`, with lane homes next to it in `<name>.worktrees`.
+   * `<dir>` is a new folder in `base`. A home that holds a memory profile needs a short `base`,
+   * because the profile's socket path must fit 103 bytes on macOS.
+   */
+  constructor(name = "fleet", base = tmpdir()) {
+    this.dir = mkdtempSync(join(base, "fleet-scratch-"));
     this.root = join(this.dir, name);
     mkdirSync(this.root, { recursive: true });
     const files = git(REPO, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
@@ -80,6 +85,7 @@ export class Scratch {
       args?: readonly string[];
       hosts?: unknown;
       roots?: unknown;
+      direnv?: string;
     },
   ): string {
     const args = ["home", "add", lane, "--url", settings.url, "--token", settings.token];
@@ -90,6 +96,7 @@ export class Scratch {
       "--roots",
       JSON.stringify(settings.roots ?? {}),
     );
+    if (settings.direnv !== undefined) args.push("--direnv", settings.direnv);
     return this.fleet(args).trim();
   }
 

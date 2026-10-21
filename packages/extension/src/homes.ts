@@ -57,6 +57,14 @@ export function codeRoot(): string {
 export const homeOf = (root: string, lane: string): string =>
   join(`${root}.worktrees`, `lane-${lane}`);
 
+/** The home of a lane on this host: the root for main, a worktree of it for any other lane. */
+export function existingHome(root: string, lane: string): string {
+  if (readLaneConfig(root)?.lane === lane) return root;
+  const home = homeOf(root, lane);
+  if (readLaneConfig(home)?.lane !== lane) throw new Error(`no lane ${lane} on this host`);
+  return home;
+}
+
 /** The lane homes of this host: worktrees of the root that hold a config/lane.json. */
 function laneHomes(root: string): LaneHome[] {
   const dir = `${root}.worktrees`;
@@ -184,8 +192,11 @@ async function start(root: string, info: LaneHome): Promise<void> {
   } else pane = await panesOf(workspace);
   if (pane === undefined) throw new Error(`workspace fleet-${info.lane} has no pane`);
   // --continue picks the mate's conversation up again, so a restart keeps it.
-  const pi = ["pi", "--continue", ...info.config.args].map(quote).join(" ");
-  await herdr(["pane", "run", pane, `cd ${quote(info.home)} && ${pi}`]);
+  const pi = ["pi", "--continue", ...info.config.args];
+  // direnv exec loads the folder's .envrc and then replaces itself with Pi, so the pane runs Pi.
+  const { direnv } = info.config;
+  const command = direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi];
+  await herdr(["pane", "run", pane, `cd ${quote(info.home)} && ${command.map(quote).join(" ")}`]);
   await seen(pane);
   mkdirSync(join(info.home, "state"), { recursive: true });
   const starts = [...recentStarts(info.home, Date.now()), Date.now()];
