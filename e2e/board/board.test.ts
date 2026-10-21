@@ -214,7 +214,8 @@ test("the captain chats on a card: Enter sends to the card's mate, Shift+Enter s
 
   const comment = await cleo.waitForEntry((entry) => entry.kind === "comment", "the comment");
   assert.deepEqual([comment.author, comment.body], ["captain", "first line\nsecond line"]);
-  assert.equal(main.entries.filter(({ entry }) => entry.kind === "comment").length, 0);
+  const owed = await main.waitForEntry((entry) => entry.kind === "comment", "the comment for main");
+  assert.deepEqual([owed.id, owed.fields["owes"]], [comment.id, "main"]);
   const thread = page.getByRole("list", { name: "Thread" });
   await thread.getByText("second line").waitFor();
   assert.equal(await composer.inputValue(), "");

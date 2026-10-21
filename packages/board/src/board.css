@@ -1345,6 +1345,10 @@ button.event-head:hover .line {
 .reply-link:hover {
   color: var(--ink);
 }
+.reply-link .label {
+  flex: none;
+  white-space: nowrap;
+}
 .reply-link .quoted {
   min-width: 0;
   overflow: hidden;

@@ -100,8 +100,10 @@ function ReplyLink({ to }: { readonly to: Entry }) {
   };
   return (
     <button type="button" className="reply-link" onClick={show}>
-      <span aria-hidden="true">↳</span> In reply to{" "}
-      {author.name === "You" ? "your message" : author.name}
+      <span className="label">
+        <span aria-hidden="true">↳</span> In reply to{" "}
+        {author.name === "You" ? "your message" : author.name}
+      </span>
       <span className="quoted">{firstLine(bodyOf(to))}</span>
     </button>
   );
