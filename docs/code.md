@@ -7,6 +7,7 @@ Code in this repository has no comments. A lint rule fails on any comment. What 
 - `eslint.config.js` holds the lint rules. Inline disable comments are off (`noInlineConfig`), so a rule changes only there, in review.
 - `fleet/no-comments` is a local rule in `eslint.config.js`. It allows one comment that the toolchain reads: a triple-slash `<reference lib="..." />` directive, which `e2e/board/board.test.ts` needs for the DOM types of the code it runs in the browser.
 - `.dependency-cruiser.cjs` holds the module boundaries. `cardd`, the extension, and the board share only the wire protocol. End-to-end tests drive real processes, so they import only the protocol.
+- `ci.yml` puts each pull request's runs in one concurrency group, so a new push cancels the run it supersedes. Each push to `main` gets a group of its own, keyed by its run id. With one group for `main`, a merge cancelled the run of the merge before it, both in progress and while it waited, so that commit never got a full result.
 - `packages/cardd/scripts/check-migrations.ts` applies every migration to an empty database, checks the result, and compares it with the committed `schema.sql`. With `MIGRATIONS_BASE` set to a git ref, it also fails when a migration that exists at that ref was changed, renamed, or removed. `--write` updates `schema.sql`.
 
 ## Protocol
