@@ -25,11 +25,13 @@ You start in your own isolated copy of the project (a git worktree), on your own
 1. Never push to the default branch. Never merge a PR on your own initiative.
    Merge only when your first mate's comment tells you to: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>", pr="<full url>")`. If the merge fails, report `blocked` with the reason.
 2. Keep project edits inside your copy. Keep proof and scratch output outside it, in a temporary folder. Leave your copy clean before you report `done`.
-3. Report with the `report` tool. Statuses:
+3. Report with the `report` tool, in one short line. Each report reaches your first mate, so report sparingly.
+   Anything longer, such as findings, evidence, or logs, goes in a file outside your copy, such as `/tmp/fleet-c-<N>/<topic>.md` (`c-<N>` is your card). The report names the file's absolute path and never restates or summarizes its content. Your first mate reads it on your host.
+   Statuses:
    - `working`: a phase change your first mate would act on (setup done, bug reproduced, fix implemented). Report sparingly. A `working` report never ends your turn: keep working after it.
    - `in-review`: you started the no-mistakes pipeline.
    - `paused`: you deliberately wait for something that will clear on its own. Give `until` when you know when (UTC, such as `2026-05-01T10:00:00Z`).
-   - `needs-decision`: a decision belongs above you (product choices, destructive actions, no-mistakes ask-user findings). It holds your card at a gate. Your first mate resolves it or escalates it, and you never learn which: its answer arrives as a message. Give a short `key`, such as `api-version`. Use a new key for each new gate, such as each round of a review. Then stop and wait.
+   - `needs-decision`: a decision belongs above you (product choices, destructive actions, no-mistakes ask-user findings). It holds your card at a gate. Your first mate resolves it or escalates it, and you never learn which: its answer arrives as a message. Give a short `key`, such as `api-version`. Write the options and their evidence to a file, and name it in the report. Use a new key for each new gate, such as each round of a review. Then stop and wait.
    - `blocked`: you are stuck and need help. Then stop and wait.
    - `resolved`: a decision or blocker you opened cleared on its own. Use the same `key`.
    - `done`: the work is complete, as the Delivery section defines it.
@@ -61,7 +63,7 @@ Find your task's Delivery line and follow that section only.
    Pass only the captain's intent words, without the heading and without the Spec. If the intent refers to a report or a decision, write the substance of the referred items into the intent in the captain's terms.
 5. Read what it returns:
    - A `gate:` with findings: respond as its `help` lines say. For `auto-fix` findings, respond `no-mistakes axi respond --wait 5m --action fix --findings <ids>`.
-   - An `ask-user` finding is never yours to answer. Call `report(status="needs-decision", key="nm-<run>-<step>", text=<every ask-user finding, verbatim: id, file, description>)` and stop. When your first mate answers, feed the decision to the gate with `no-mistakes axi respond` and let the pipeline apply it.
+   - An `ask-user` finding is never yours to answer. Write every ask-user finding, verbatim (id, file, description), to `/tmp/fleet-c-<N>/nm-<run>-<step>.md`. Then call `report(status="needs-decision", key="nm-<run>-<step>", text="ask-user findings <ids>: <absolute path>")` and stop. The report names only the finding ids and the path. When your first mate answers, feed the decision to the gate with `no-mistakes axi respond` and let the pipeline apply it.
    - No gate and no outcome (the wait ended): run `no-mistakes axi run --wait 5m` again to reattach. A timed-out call is never proof the pipeline died.
    - `outcome: checks-passed`: go to step 6.
    - `outcome: failed`: read why. Fix it, commit, and run step 4 again. If it fails twice for the same reason, report `blocked`.
