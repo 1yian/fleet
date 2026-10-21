@@ -139,8 +139,10 @@ test("each message gets one muted rule and a sender label, through streaming, a 
   await screenWhere(pane, "the mate to start", (screen) => screen.includes("[Extensions]"));
 
   await lab.submit(pane, CAPTAIN);
-  const waiting = await screenWhere(pane, "the captain's rule", (screen) =>
-    screen.includes(CAPTAIN),
+  const waiting = await screenWhere(
+    pane,
+    "the mate to start working",
+    (screen) => screen.includes(CAPTAIN) && screen.includes("Working"),
   );
   keep("1-streaming", waiting, await lab.coloredScreen(pane));
   assert.deepEqual(transcript(waiting).shown, ["── captain ──", CAPTAIN]);
