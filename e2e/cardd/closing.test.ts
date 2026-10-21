@@ -3,6 +3,11 @@ import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
+const WEB_CLONES_REFRESHED_AFTER_A_SHIP_CLOSE = [
+  { project: "web", host: "maverick", path: "/clones/web", base: "main" },
+  { project: "web", host: "p620", path: "/clones/web", base: "main" },
+];
+
 let fleet: Fleet;
 beforeEach(async () => {
   fleet = await startFleet();
@@ -40,6 +45,7 @@ test("close refuses Done for work whose worker has not reported done, and landed
         live: true,
       },
     ],
+    refresh: WEB_CLONES_REFRESHED_AFTER_A_SHIP_CLOSE,
   });
   await fleet.main.call("close.finish", {
     card: card.id,
@@ -82,6 +88,7 @@ test("close.begin lists every attempt of the card, including a replaced one", as
         live: true,
       },
     ],
+    refresh: WEB_CLONES_REFRESHED_AFTER_A_SHIP_CLOSE,
   });
 });
 
@@ -176,6 +183,7 @@ test("a ship card that only did an operation closes as Done, as c-9 did", async 
         live: true,
       },
     ],
+    refresh: WEB_CLONES_REFRESHED_AFTER_A_SHIP_CLOSE,
   });
   await leo.call("close.finish", {
     card: card.id,
@@ -208,7 +216,7 @@ test("close needs the worker's latest handoff to be done, and a steer takes it b
   assert.equal((await fleet.main.call("close.begin", close)) !== undefined, true);
 });
 
-test("a scout closes as Done once its worker reported done, with nothing for the host to confirm", async () => {
+test("a scout closes as Done once its worker reported done, with nothing for the host to confirm, and refreshes no clone", async () => {
   const card = await newCard(fleet.main, "Which ads convert?", "scout");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   await worker.call("report", { status: "done", text: "report written" });
@@ -217,6 +225,7 @@ test("a scout closes as Done once its worker reported done, with nothing for the
     await fleet.main.call("close.begin", { card: card.id }),
   );
   assert.deepEqual([plan.mode, plan.verify], ["done", false]);
+  assert.deepEqual(plan.refresh, []);
 });
 
 test("dispatch refuses a captain card", async () => {
