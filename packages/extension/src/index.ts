@@ -14,7 +14,7 @@ import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
-import { registerAuthority, registerQuestions } from "./questions.ts";
+import { registerQuestions } from "./questions.ts";
 import { WorkerRun } from "./worker.ts";
 
 interface Config {
@@ -98,11 +98,10 @@ function start(
   jobs?.register(pi, { url, token });
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
+  // Main keeps the rest of the fleet running (docs/setup.md), and its board shows the lanes.
+  const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
   if (role === "mate") registerQuestions(pi, link, () => sessionFile);
-  if (role === "mate") registerAuthority(pi, link, () => sessionFile);
-  if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() });
-  // Main keeps the rest of the fleet running (docs/setup.md).
-  if (lane === "main") registerLanes(pi, HOME());
+  if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
 
   pi.on("before_agent_start", (event) => ({
     systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? charter() : ""}`,

@@ -183,15 +183,11 @@ test("main's own finished card is reminded, and never reported to anyone", async
 test("a ship card that only did an operation is reminded how to close it", async () => {
   const card = await newCard(fleet.main, "Add credit");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  await fleet.main.call("grant", {
-    lane: "main",
-    project: "web",
-    words: "You may merge web when CI is green",
-    source: "chat",
-    may: "merge when CI is green",
-    merge: true,
-  });
+  fleet.cardd.yolo("web");
   await worker.call("report", { status: "done", text: "credit added" });
   const reminder = await findingFor(card, "finished-1");
-  assert.match(reminder.body, /\(merging, \d+ min\)\. If it made no code change.*without_pr/);
+  assert.match(
+    reminder.body,
+    /\(merging, \d+ min\)\. If it made no code change, close it with close\(card, summary\)\. Otherwise close\(card, summary=<why>, landed=false\)\.$/,
+  );
 });

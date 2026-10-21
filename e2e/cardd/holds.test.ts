@@ -74,7 +74,7 @@ test("a worker's decision that climbs to the captain is answered by him, and the
 
   // The captain holds it: the mate cannot answer the worker around him.
   await assert.rejects(cleo.call("comment", { card: card.id, text: "Use v2.", resolves: "api" }), {
-    message: /the captain holds c-\d+: release it with his exact words/,
+    message: /the captain holds c-\d+: clear the hold with his exact words/,
   });
   const open = await theHold();
   assert.equal(
@@ -277,13 +277,13 @@ test("a hold is released with the captain's words, or with a mate's own decision
 
   // Main's own decision settles what waits on main. The mate hears it.
   await assert.rejects(cleo.call("release", { card: card.id }), {
-    message: "release needs the captain's exact words, or your own note, and not both",
+    message: "clearing a hold needs the captain's exact words, or your own note, and not both",
   });
-  await fleet.main.call("release", { card: card.id, note: "Your grant covers this. Decide it." });
+  await fleet.main.call("release", { card: card.id, note: "The spec covers this. Decide it." });
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual(await needsYou(), []);
   const note = await cleo.waitForEntry((entry) => entry.kind === "release", "main's decision");
-  assert.equal(note.body, "Your grant covers this. Decide it.");
+  assert.equal(note.body, "The spec covers this. Decide it.");
   await assert.rejects(cleo.call("release", { card: card.id, note: "again" }), {
     message: `c-${String(card.id)} has no open hold`,
   });
@@ -292,7 +292,7 @@ test("a hold is released with the captain's words, or with a mate's own decision
   await cleo.call("hold", ask(card));
   await fleet.main.call("hold", ask(card, { to: "captain" }));
   await assert.rejects(cleo.call("release", { card: card.id, note: "I decide" }), {
-    message: /waits on the captain: release it with his exact words/,
+    message: /waits on the captain: clear it with his exact words/,
   });
   await assert.rejects(cleo.call("release", { card: card.id, words: "use v3", source: "record" }), {
     message: /not in the captain's messages or board entries/,
@@ -371,7 +371,7 @@ test("a ship card that is done without a PR raises no merge question", async () 
   assert.deepEqual(kinds(fleet.main), []);
 });
 
-test("an open hold stops cleanup, and a hold held until a date leaves Needs you until then", async () => {
+test("an open hold stops close, and a hold held until a date leaves Needs you until then", async () => {
   await fleet.cardd.stop();
   fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
   const held = await newCard(fleet.main, "Renew the certificate", "scout");
@@ -381,8 +381,8 @@ test("an open hold stops cleanup, and a hold held until a date leaves Needs you 
     options: ["Yes", "Later"],
   });
   assert.deepEqual(await needsYou(), [held.id]);
-  await assert.rejects(fleet.main.call("close.begin", { card: held.id, mode: "dropped" }), {
-    message: /has an open hold; release it first/,
+  await assert.rejects(fleet.main.call("close.begin", { card: held.id, landed: false }), {
+    message: /has an open hold; clear it first/,
   });
 
   // The captain says later: the same hold, held until a date.

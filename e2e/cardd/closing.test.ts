@@ -1,4 +1,4 @@
-// cleanup and card drop guards and outcomes (spec sections 7.4, 10.5, and 20.5),
+// close: its guards, and how cardd decides Done or Dropped (spec sections 7.4, 10.5, and 20.5),
 // against a real cardd. The host steps are in e2e/extension/dispatch.test.ts.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
@@ -13,14 +13,24 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-test("cleanup refuses work whose worker has not reported done, and card_drop takes it", async () => {
+const notLanded = (card: number, why: string) => ({
+  message: `c-${String(card)} did not land: ${why}. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
+});
+
+test("close refuses Done for work whose worker has not reported done, and landed=false drops it", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   await begin(fleet.main, card);
-  await assert.rejects(fleet.main.call("close.begin", { card: card.id, mode: "done" }), {
-    message: `c-${String(card.id)} is not finished: the worker has not reported done. Use card_drop if the work will not finish.`,
-  });
+  await assert.rejects(
+    fleet.main.call("close.begin", { card: card.id }),
+    notLanded(card.id, "the worker has not reported done"),
+  );
+  await assert.rejects(
+    fleet.main.call("close.begin", { card: card.id, landed: true }),
+    notLanded(card.id, "the worker has not reported done"),
+  );
 
-  assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, mode: "dropped" }), {
+  assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, landed: false }), {
+    mode: "dropped",
     verify: false,
     attempts: [
       {
@@ -53,7 +63,8 @@ test("close.begin lists every attempt of the card, including a replaced one", as
     replace: true,
   });
   const name = (n: number): string => `c-${String(card.id)}-a${String(n)}`;
-  assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, mode: "dropped" }), {
+  assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, landed: false }), {
+    mode: "dropped",
     verify: false,
     attempts: [
       {
@@ -76,12 +87,29 @@ test("close.begin lists every attempt of the card, including a replaced one", as
   });
 });
 
-test("cleanup and drop wait while a hold is open", async () => {
+test("close waits while a hold is open, for Done and for Dropped", async () => {
   const card = await newCard(fleet.main, "Pick the API version", "captain");
   await fleet.main.call("hold", { card: card.id, question: "v1 or v2?", options: ["v1", "v2"] });
-  await assert.rejects(fleet.main.call("close.begin", { card: card.id, mode: "dropped" }), {
-    message: `c-${String(card.id)} has an open hold; release it first, with the captain's words when it waits on him`,
-  });
+  const held = {
+    message: `c-${String(card.id)} has an open hold; clear it first with hold(card, clear=true), with the captain's words when it waits on him`,
+  };
+  await assert.rejects(fleet.main.call("close.begin", { card: card.id }), held);
+  await assert.rejects(fleet.main.call("close.begin", { card: card.id, landed: false }), held);
+});
+
+test("a ship card that no worker ran does not close as Done", async () => {
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await assert.rejects(
+    fleet.main.call("close.begin", { card: card.id }),
+    notLanded(card.id, "no worker ran it"),
+  );
+  // A captain card has no worker: once the captain acted, it closes as Done.
+  const decision = await newCard(fleet.main, "Pick the API version", "captain");
+  const plan = check(
+    OPS["close.begin"].result,
+    await fleet.main.call("close.begin", { card: decision.id }),
+  );
+  assert.deepEqual([plan.mode, plan.verify], ["done", false]);
 });
 
 test("a second mate's finished card reaches main with its summary, and its worker loses access", async () => {
@@ -103,7 +131,7 @@ test("a second mate's finished card reaches main with its summary, and its worke
   await assert.rejects(worker.call("report", { status: "note", text: "late" }), {
     message: "the connection closed with 4001",
   });
-  await assert.rejects(cleo.call("close.begin", { card: card.id, mode: "done" }), {
+  await assert.rejects(cleo.call("close.begin", { card: card.id }), {
     message: `c-${String(card.id)} is already done`,
   });
 });
@@ -132,25 +160,16 @@ test("when main closes a second mate's card, that mate hears of it and main does
 
 test("a ship card that only did an operation closes as Done, as c-9 did", async () => {
   const leo = await fleet.cardd.connect(fleet.cardd.addLane("leo", "main"));
-  await leo.call("grant", {
-    lane: "leo",
-    project: "web",
-    words: "You may merge web when CI is green",
-    source: "chat",
-    may: "merge when CI is green",
-    merge: true,
-  });
+  fleet.cardd.yolo("web");
   const card = await newCard(leo, "Add $10 of credit to the captain's account");
   const worker = await fleet.cardd.connect(await begin(leo, card));
   await worker.call("report", { status: "done", text: "credit added, no code change" });
   const name = `c-${String(card.id)}`;
 
-  // A ship card with no merged PR must say that it made no code change.
-  await assert.rejects(leo.call("close.begin", { card: card.id, mode: "done" }), {
-    message: new RegExp(`^${name} is a ship card with no merged PR\\. .*without_pr`),
-  });
-  const plan = await leo.call("close.begin", { card: card.id, mode: "done", withoutPr: true });
+  // A ship card with no PR closes as Done once the host confirms that nothing is unlanded.
+  const plan = await leo.call("close.begin", { card: card.id });
   assert.deepEqual(plan, {
+    mode: "done",
     verify: true,
     attempts: [
       {
@@ -167,31 +186,21 @@ test("a ship card that only did an operation closes as Done, as c-9 did", async 
     card: card.id,
     mode: "done",
     text: "Added $10 of credit. No code change.",
-    withoutPr: true,
     archives: [],
     left: [],
   });
 
   assert.equal(await status(leo, card), "done");
   const outcome = await fleet.main.waitForEntry((entry) => entry.kind === "cleanup", "the outcome");
-  assert.deepEqual([outcome.fields["outcome"], outcome.fields["withoutPr"]], ["done", true]);
+  assert.equal(outcome.fields["outcome"], "done");
 });
 
-test("cleanup needs the worker's latest handoff to be done, and a steer takes it back", async () => {
-  await fleet.main.call("grant", {
-    lane: "main",
-    project: "web",
-    words: "You may merge web when CI is green",
-    source: "chat",
-    may: "merge when CI is green",
-    merge: true,
-  });
+test("close needs the worker's latest handoff to be done, and a steer takes it back", async () => {
+  fleet.cardd.yolo("web");
   const card = await newCard(fleet.main, "Add credit", "ship");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  const close = { card: card.id, mode: "done", withoutPr: true };
-  const unfinished = {
-    message: `c-${String(card.id)} is not finished: the worker has not reported done. Use card_drop if the work will not finish.`,
-  };
+  const close = { card: card.id };
+  const unfinished = notLanded(card.id, "the worker has not reported done");
 
   await worker.call("report", { status: "failed", text: "the dashboard is down" });
   await assert.rejects(fleet.main.call("close.begin", close), unfinished);
@@ -205,12 +214,15 @@ test("cleanup needs the worker's latest handoff to be done, and a steer takes it
   assert.equal((await fleet.main.call("close.begin", close)) !== undefined, true);
 });
 
-test("a scout closes as Done once its worker reported done, with no marker", async () => {
+test("a scout closes as Done once its worker reported done, with nothing for the host to confirm", async () => {
   const card = await newCard(fleet.main, "Which ads convert?", "scout");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   await worker.call("report", { status: "done", text: "report written" });
-  const plan = await fleet.main.call("close.begin", { card: card.id, mode: "done" });
-  assert.equal(check(OPS["close.begin"].result, plan).verify, false);
+  const plan = check(
+    OPS["close.begin"].result,
+    await fleet.main.call("close.begin", { card: card.id }),
+  );
+  assert.deepEqual([plan.mode, plan.verify], ["done", false]);
 });
 
 test("dispatch refuses a captain card", async () => {

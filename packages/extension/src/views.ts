@@ -116,6 +116,10 @@ function columnsOf(fields: string | undefined): Column[] {
 
 export interface BoardQuery {
   readonly status?: Selection;
+  /** Every project, with its base branch. */
+  readonly projects?: boolean;
+  /** Every lane, with its host and why it is in its state. */
+  readonly lanes?: boolean;
   readonly lane?: string;
   /** The most closed cards to list, newest first. */
   readonly limit?: number;
@@ -141,8 +145,11 @@ function rowsOf(cards: readonly BoardCard[], selection: Selection, limit: number
   return { rows: [...open, ...closed.slice(0, limit)], hidden: Math.max(0, closed.length - limit) };
 }
 
-/** The board: live cards first in the order that needs attention, closed cards only when asked and counted always. */
-export function boardText(all: readonly BoardCard[], query: BoardQuery): string {
+/**
+ * The board: a header with the projects and, for main, the lanes (AXI ambient context), then the
+ * live cards first in the order that needs attention, closed cards only when asked and counted always.
+ */
+export function boardText(all: readonly BoardCard[], query: BoardQuery, header: Header): string {
   const columns = columnsOf(query.fields);
   const selection = query.status ?? "open";
   const lane = query.lane;
@@ -150,7 +157,12 @@ export function boardText(all: readonly BoardCard[], query: BoardQuery): string 
   const { rows, hidden } = rowsOf(cards, selection, query.limit ?? CLOSED_LIMIT);
   const closed = cards.filter(isClosed);
 
-  const record: Record<string, unknown> = lane === undefined ? {} : { lane };
+  const open = all.filter((card) => !isClosed(card));
+  const top = headerOf(header, open, query);
+  const record: Record<string, unknown> = {
+    ...top.record,
+    ...(lane === undefined ? {} : { lane }),
+  };
   record["open"] = tally(cards.filter((card) => !isClosed(card)));
   record["closed"] = tally(closed);
   if (hidden > 0) record["hidden"] = `${String(hidden)} older closed cards`;
@@ -159,13 +171,16 @@ export function boardText(all: readonly BoardCard[], query: BoardQuery): string 
     rows.length === 0
       ? `0 ${what}`
       : rows.map((card) => Object.fromEntries(columns.map((each) => [each, COLUMNS[each](card)])));
-  return encode(record) + helpLines(boardHelp(query, rows.length, closed.length, hidden));
+  return (
+    encode(record) +
+    helpLines([...top.help, ...boardHelp(query, rows.length, closed.length, hidden)])
+  );
 }
 
 function boardHelp(query: BoardQuery, rows: number, closed: number, hidden: number): string[] {
   const help: string[] = [];
   if (rows > 0)
-    help.push("Call `card(card=<card>)` to read a card: its hold, PR, branch, and thread");
+    help.push("Call `board(card=<card>)` to read a card: its hold, PR, branch, and thread");
   if ((query.status ?? "open") === "open" && closed > 0)
     help.push('Call `board(status="closed")` to list the newest closed cards');
   if (hidden > 0)
@@ -267,29 +282,18 @@ function cardHelp(card: BoardCard, thread: number, clipped: boolean): string[] {
   const id = String(card.id);
   const help: string[] = [];
   if (thread > 0)
-    help.push(`Call \`card(card=${id}, entries=${String(thread)})\` to read the whole thread`);
-  if (clipped) help.push(`Call \`card(card=${id}, full=true)\` to see every text whole`);
+    help.push(`Call \`board(card=${id}, entries=${String(thread)})\` to read the whole thread`);
+  if (clipped) help.push(`Call \`board(card=${id}, full=true)\` to see every text whole`);
   if (!isClosed(card)) help.push(`Call \`comment(card=${id}, text=<text>)\` to steer the card`);
   return help;
 }
 
-export interface ProjectRow {
+interface ProjectRow {
   readonly name: string;
   readonly delivery: string;
   readonly base: string;
   readonly hosts: readonly string[];
-}
-
-export function projectsText(projects: readonly ProjectRow[]): string {
-  if (projects.length === 0) return encode({ projects: "0 registered" });
-  const rows = projects.map((each) => ({
-    name: each.name,
-    delivery: each.delivery,
-    base: each.base,
-    hosts: each.hosts.join(" "),
-  }));
-  const next = "Call `card_new(title=<title>, kind=<kind>, project=<name>)` to start work on one";
-  return encode({ count: projects.length, projects: rows }) + helpLines([next]);
+  readonly yolo: boolean;
 }
 
 export interface LaneRow {
@@ -299,22 +303,74 @@ export interface LaneRow {
   readonly detail: string;
 }
 
-/** Every lane on every host, counted by state, and the hosts that did not answer. */
-export function lanesText(
-  lanes: readonly LaneRow[],
-  unreachable: readonly { host: string; error: string }[],
-): string {
-  const states = [...new Set(lanes.map((each) => each.state))];
-  const counts = states.map(
-    (state) => `${state} ${String(lanes.filter((each) => each.state === state).length)}`,
-  );
-  const record: Record<string, unknown> = {
-    count: lanes.length === 0 ? "0 lanes" : `${String(lanes.length)} (${counts.join(", ")})`,
+/** What the board's header shows. `lanes` is main's alone: other mates have none. */
+export interface Header {
+  readonly projects: readonly ProjectRow[];
+  readonly lanes?: {
+    readonly lanes: readonly LaneRow[];
+    readonly unreachable: readonly { host: string; error: string }[];
   };
-  if (lanes.length > 0) record["lanes"] = lanes;
-  if (unreachable.length > 0) record["unreachable"] = unreachable;
-  const help = lanes.some((each) => each.state !== "running")
-    ? ["Call `lane_start(lane=<lane>)` to start a lane that is down or stopped"]
-    : [];
-  return encode(record) + helpLines(help);
+}
+
+/** The header lists every project up to this many. Past it, only those with open cards or yolo on. */
+const HEADER_PROJECTS = 8;
+
+function projectsOf(
+  projects: readonly ProjectRow[],
+  open: readonly BoardCard[],
+  every: boolean,
+): { rows: Record<string, unknown>[] | string; hidden: number } {
+  if (projects.length === 0) return { rows: "0 registered", hidden: 0 };
+  const used = new Set(open.map((card) => card.project));
+  const shown =
+    every || projects.length <= HEADER_PROJECTS
+      ? projects
+      : projects.filter((each) => each.yolo || used.has(each.name));
+  const rows = shown.map((each) => ({
+    name: each.name,
+    delivery: each.delivery,
+    ...(every ? { base: each.base } : {}),
+    hosts: each.hosts.join(" "),
+    yolo: each.yolo ? "on" : "off",
+  }));
+  return { rows, hidden: projects.length - shown.length };
+}
+
+function lanesOf(lanes: NonNullable<Header["lanes"]>, every: boolean): Record<string, unknown> {
+  const record: Record<string, unknown> = {
+    lanes:
+      lanes.lanes.length === 0
+        ? "0 lanes"
+        : lanes.lanes.map((each) =>
+            every
+              ? { name: each.lane, host: each.host, state: each.state, detail: each.detail }
+              : { name: each.lane, state: each.state },
+          ),
+  };
+  if (lanes.unreachable.length > 0) record["unreachable"] = lanes.unreachable;
+  return record;
+}
+
+/** The header's record and its next steps. */
+function headerOf(
+  header: Header,
+  open: readonly BoardCard[],
+  query: BoardQuery,
+): { record: Record<string, unknown>; help: string[] } {
+  const projects = projectsOf(header.projects, open, query.projects === true);
+  const record: Record<string, unknown> = { projects: projects.rows };
+  const help: string[] = [];
+  if (projects.hidden > 0)
+    help.push(
+      `Call \`board(projects=true)\` to list ${String(projects.hidden)} more projects, with their base branch`,
+    );
+  if (header.lanes !== undefined) {
+    Object.assign(record, lanesOf(header.lanes, query.lanes === true));
+    const down = header.lanes.lanes.some((each) => each.state !== "running");
+    if (down && query.lanes !== true)
+      help.push("Call `board(lanes=true)` to see why a lane is down or stopped");
+    if (down)
+      help.push('Call `lane(name=<lane>, action="start")` to start a lane that is down or stopped');
+  }
+  return { record, help };
 }

@@ -1,4 +1,5 @@
-// Main's tools for the rest of the fleet, and the loop that keeps it running (docs/setup.md).
+// Main's lane tool, the lane states that its board shows, and the loop that keeps the fleet running
+// (docs/setup.md).
 // Each host runs its own `fleet` command (launch.ts) for the lanes configured there. Main reaches
 // this host directly and every other host over its transport, so the same words work everywhere.
 // cardd is not a lane: it runs under launchd and main never starts, stops, or checks it.
@@ -7,7 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { HostUnreachable, onHost, records } from "./host.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
-import { lanesText, type LaneRow } from "./views.ts";
+import type { LaneRow } from "./views.ts";
 
 const LAUNCH = fileURLToPath(new URL("./launch.ts", import.meta.url));
 const REMOTE_WAIT_MS = 90_000;
@@ -62,88 +63,83 @@ async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
   return found.host;
 }
 
+/** Every lane on every host, and the hosts that could not be asked. */
+export type LaneStates = () => Promise<{
+  lanes: LaneRow[];
+  unreachable: { host: string; error: string }[];
+}>;
+
 const LaneParams = Type.Object({
-  lane: Type.String({ minLength: 1, description: "The lane name, such as cleo" }),
+  name: Type.String({
+    minLength: 1,
+    description: 'The lane name, such as cleo, or "all" to restart every lane',
+  }),
+  action: Type.Enum(["start", "stop", "restart"]),
 });
 
-export function registerLanes(pi: ExtensionAPI, home: string): void {
+/** Restarts every lane that is not held, on every host. A host that cannot be reached is named. */
+async function restartAll(config: LaneConfig): Promise<string[]> {
+  const lines: string[] = [];
+  for (const host of hostsOf(config)) {
+    try {
+      for (const row of await rows(config, host, ["restart"])) lines.push(describe(host, row));
+    } catch (error) {
+      lines.push(
+        `${host}: cannot be reached - ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return lines.length === 0 ? ["No lanes are configured."] : lines;
+}
+
+/** One lane's action on its host. */
+async function act(
+  config: LaneConfig,
+  lane: string,
+  action: "start" | "stop" | "restart",
+): Promise<string> {
+  const host = await hostOfLane(config, lane);
+  if (action === "stop") {
+    await fleet(config, host, ["stop", lane]);
+    return `${lane} (${host}): stopped`;
+  }
+  const out = await rows(config, host, [action === "start" ? "up" : "restart", lane]);
+  return out.map((row) => describe(host, row)).join("\n");
+}
+
+/** Main's lane tool, and the loop that keeps the lanes running. Returns how the board reads the lanes. */
+export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | undefined {
   const config = readLaneConfig(home);
-  if (config === undefined) return;
+  if (config === undefined) return undefined;
   pi.registerTool({
-    name: "lane_status",
-    label: "Lane status",
+    name: "lane",
+    label: "Lane",
     description:
-      "Shows every second mate's lane on every host: running, down (should run, does not), or stopped (held on purpose).",
-    parameters: Type.Object({}),
-    execute: async () => {
-      const lanes: LaneRow[] = [];
-      const unreachable: { host: string; error: string }[] = [];
-      for (const host of hostsOf(config)) {
-        try {
-          for (const row of await rows(config, host, ["status"])) {
-            const state = text(row, "state");
-            lanes.push({ lane: text(row, "lane"), host, state, detail: text(row, "reason") });
-          }
-        } catch (error) {
-          unreachable.push({
-            host,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-      return reply(lanesText(lanes, unreachable));
-    },
-  });
-  pi.registerTool({
-    name: "lane_start",
-    label: "Start a lane",
-    description:
-      "Starts a lane's mate on its host, also when it was stopped by hand or held for crashing. A mate that runs is left alone.",
+      "Starts, stops, or restarts a second mate's lane on its host. start also starts a lane that was stopped by hand or held for crashing; a mate that runs is left alone. stop holds the lane, so nothing restarts it until start; its conversation stays. restart starts the mate again on its own conversation. name \"all\" with restart restarts every lane that is not held, on every host: that restarts the fleet. Never touches cardd. board shows each lane's state.",
     parameters: LaneParams,
-    execute: async (_id, params) => {
-      const host = await hostOfLane(config, params.lane);
-      const out = await rows(config, host, ["up", params.lane]);
-      return reply(out.map((row) => describe(host, row)).join("\n"));
-    },
-  });
-  pi.registerTool({
-    name: "lane_stop",
-    label: "Stop a lane",
-    description:
-      "Stops a lane's mate and holds it, so the loop that restarts dead mates leaves it alone until lane_start. Its conversation stays.",
-    parameters: LaneParams,
-    execute: async (_id, params) => {
-      const host = await hostOfLane(config, params.lane);
-      await fleet(config, host, ["stop", params.lane]);
-      return reply(`${params.lane} (${host}): stopped`);
-    },
-  });
-  pi.registerTool({
-    name: "lane_restart",
-    label: "Restart a lane",
-    description:
-      'Stops a lane\'s mate and starts it again on its own conversation. Use lane "all" to restart every lane that is not held, on every host: this restarts the fleet. Never touches cardd.',
-    parameters: LaneParams,
-    execute: async (_id, params) => {
-      if (params.lane !== "all") {
-        const host = await hostOfLane(config, params.lane);
-        const out = await rows(config, host, ["restart", params.lane]);
-        return reply(out.map((row) => describe(host, row)).join("\n"));
-      }
-      const lines: string[] = [];
-      for (const host of hostsOf(config)) {
-        try {
-          for (const row of await rows(config, host, ["restart"])) lines.push(describe(host, row));
-        } catch (error) {
-          lines.push(
-            `${host}: cannot be reached - ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-      return reply(lines.length === 0 ? "No lanes are configured." : lines.join("\n"));
+    execute: async (_id, { name, action }) => {
+      if (name !== "all") return reply(await act(config, name, action));
+      if (action !== "restart")
+        throw new Error('lane "all" only restarts: name each lane to start or stop it');
+      return reply((await restartAll(config)).join("\n"));
     },
   });
   keepRunning(pi, config);
+  return async () => {
+    const lanes: LaneRow[] = [];
+    const unreachable: { host: string; error: string }[] = [];
+    for (const host of hostsOf(config)) {
+      try {
+        for (const row of await rows(config, host, ["status"])) {
+          const detail = text(row, "reason") || text(row, "detail");
+          lanes.push({ lane: text(row, "lane"), host, state: text(row, "state"), detail });
+        }
+      } catch (error) {
+        unreachable.push({ host, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { lanes, unreachable };
+  };
 }
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;

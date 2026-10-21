@@ -1,4 +1,4 @@
-// The captain's authority (spec sections 9.6 and 18): his words, and grants.
+// The captain's authority (spec sections 9.6 and 18): his words, and each project's yolo flag.
 import type { DatabaseSync } from "node:sqlite";
 
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
@@ -25,28 +25,15 @@ export function requireCaptainWords(db: DatabaseSync, words: string, source: str
   }
 }
 
-export interface Grant {
-  readonly id: number;
-  readonly merge: boolean;
-}
-
 /**
- * The grant that applies to a card (spec section 18): its own grant, else its
- * parent card's grant, else a lane grant whose scope matches it. Expired and
- * ended grants do not apply. Grants do not combine: the first match is the grant.
+ * Whether the card's project has the captain's yolo flag on: its mate merges a green PR without
+ * asking. Only the captain sets the flag, through the cardd command line.
  */
-export function effectiveGrant(db: DatabaseSync, card: number, now: number): Grant | undefined {
+export function yoloFor(db: DatabaseSync, card: number): boolean {
   const row = db
     .prepare(
-      `SELECT g.id AS id, g.merge AS merge FROM grants g JOIN cards c ON c.id = ?1
-       WHERE g.ended_at IS NULL AND (g.expires IS NULL OR g.expires > ?2) AND (
-         g.card = c.id OR g.card = c.parent OR (g.lane = c.lane
-           AND (g.scope_project IS NULL OR g.scope_project = c.project)
-           AND (g.scope_branch IS NULL OR g.scope_branch = c.base_branch)))
-       ORDER BY CASE WHEN g.card = c.id THEN 0 WHEN g.card IS NOT NULL THEN 1
-         WHEN g.scope_project IS NOT NULL THEN 2 ELSE 3 END, g.id DESC
-       LIMIT 1`,
+      "SELECT p.yolo AS yolo FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ?",
     )
-    .get(card, now);
-  return row === undefined ? undefined : { id: Number(row["id"]), merge: row["merge"] === 1 };
+    .get(card);
+  return row?.["yolo"] === 1;
 }

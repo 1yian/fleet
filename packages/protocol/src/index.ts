@@ -148,6 +148,8 @@ export const OPS = {
         delivery: Type.String(),
         base: Type.String(),
         hosts: Type.Array(Type.String()),
+        /** The captain's standing merge authority for the project: a mate has the worker merge a green PR without asking. */
+        yolo: Type.Boolean(),
       }),
     ),
   },
@@ -200,31 +202,16 @@ export const OPS = {
     }),
     result: CardSchema,
   },
-  grant: {
-    roles: ["mate"],
-    args: Type.Object({
-      lane: Type.Optional(Type.String()),
-      card: Type.Optional(Type.Integer()),
-      words: Words,
-      source: Type.Enum(["chat", "board", "record"]),
-      may: Type.String({ minLength: 1 }),
-      merge: Type.Boolean(),
-      limits: Type.Optional(Type.String()),
-      alwaysAsks: Type.Optional(Type.String()),
-      project: Type.Optional(Type.String()),
-      branch: Type.Optional(Type.String()),
-      expires: Type.Optional(Type.Integer()),
-    }),
-    result: Type.Object({ grant: Type.Integer() }),
-  },
   "close.begin": {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
-      mode: Type.Enum(["done", "dropped"]),
-      withoutPr: Type.Optional(Type.Boolean()),
+      /** False ends work that did not land as Dropped. Otherwise cardd closes it as Done only if it landed. */
+      landed: Type.Optional(Type.Boolean()),
     }),
     result: Type.Object({
+      /** How the card closes: done when its work landed, dropped when the mate said it did not. */
+      mode: Type.Enum(["done", "dropped"]),
       /** Whether the host must confirm that no attempt has unlanded work before the card closes as Done. */
       verify: Type.Boolean(),
       attempts: Type.Array(
@@ -245,7 +232,6 @@ export const OPS = {
       card: Type.Integer(),
       mode: Type.Enum(["done", "dropped"]),
       text: Type.String({ minLength: 1 }),
-      withoutPr: Type.Optional(Type.Boolean()),
       archives: Type.Array(Type.String()),
       left: Type.Array(
         Type.Object({ session: Type.String(), host: Type.String(), reason: Type.String() }),

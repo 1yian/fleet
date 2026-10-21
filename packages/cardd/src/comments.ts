@@ -93,7 +93,7 @@ function requireNotCaptains(db: DatabaseSync, card: Card, resolves: string | und
   const open = holdOf(db, card);
   if (resolves !== undefined && open?.holder === "captain" && open.keys.includes(resolves)) {
     throw new Error(
-      `the captain holds c-${String(card.id)}: release it with his exact words, then answer the worker`,
+      `the captain holds c-${String(card.id)}: clear the hold with his exact words, then answer the worker`,
     );
   }
 }

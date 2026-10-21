@@ -1,6 +1,6 @@
-// A mate reads the fleet with its tools, never with sqlite: the board shows the live cards and
-// counts the closed ones, and the card tool shows one card's hold, attempts, and thread. Both
-// print TOON with counts, cut text, explicit empty states, and next steps (https://axi.md).
+// A mate reads the fleet with board, never with sqlite: a header with the projects and their yolo
+// flag, the live cards, and a count of the closed ones; board(card=N) shows one card's hold,
+// attempts, and thread. It prints TOON with counts, cut text, explicit empty states, and next steps (https://axi.md).
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -74,6 +74,8 @@ test("board shows the open cards by what needs attention, and counts the closed 
   assert.equal(
     board,
     [
+      "projects[1]{name,delivery,hosts,yolo}:",
+      "  web,no-mistakes,maverick p620,off",
       'open: "5 (needs-you 1, with-mate 1, working 1, queued 1, waiting 1)"',
       'closed: "2 (done 1, dropped 1)"',
       "cards[5]{card,status,waits,title}:",
@@ -83,7 +85,7 @@ test("board shows the open cards by what needs attention, and counts the closed 
       "  4,queued,main,Write the docs",
       "  1,waiting,cleo,cleo",
       "help[3]:",
-      "  Call `card(card=<card>)` to read a card: its hold, PR, branch, and thread",
+      "  Call `board(card=<card>)` to read a card: its hold, PR, branch, and thread",
       '  Call `board(status="closed")` to list the newest closed cards',
       '  Call `board(fields="lane,pr")` for more columns: name, lane, kind, project, pr, summary, updated',
     ].join("\n"),
@@ -107,6 +109,8 @@ test("board filters by status and lane, caps the closed cards, adds fields, and 
   assert.equal(
     cleo,
     [
+      "projects[1]{name,delivery,hosts,yolo}:",
+      "  web,no-mistakes,maverick p620,off",
       "lane: cleo",
       'open: "2 (with-mate 1, waiting 1)"',
       "closed: 0",
@@ -114,7 +118,7 @@ test("board filters by status and lane, caps the closed cards, adds fields, and 
       "  7,with-mate,main,Pick an ad channel",
       "  1,waiting,cleo,cleo",
       "help[2]:",
-      "  Call `card(card=<card>)` to read a card: its hold, PR, branch, and thread",
+      "  Call `board(card=<card>)` to read a card: its hold, PR, branch, and thread",
       '  Call `board(fields="lane,pr")` for more columns: name, lane, kind, project, pr, summary, updated',
     ].join("\n"),
   );
@@ -144,17 +148,18 @@ test("an empty board says so", async () => {
     ["board", {}],
     ["board", { lane: "cleo", status: "all" }],
   ]);
-  assert.equal(board, "open: 0\nclosed: 0\ncards: 0 open cards");
-  assert.equal(lane, "lane: cleo\nopen: 0\nclosed: 0\ncards: 0 cards in lane cleo");
+  const header = "projects[1]{name,delivery,hosts,yolo}:\n  web,no-mistakes,maverick p620,off\n";
+  assert.equal(board, `${header}open: 0\nclosed: 0\ncards: 0 open cards`);
+  assert.equal(lane, `${header}lane: cleo\nopen: 0\nclosed: 0\ncards: 0 cards in lane cleo`);
 });
 
-test("card shows one card's hold, attempt, report, and thread, cut until full", async () => {
+test("board(card=N) shows one card's hold, attempt, report, and thread, cut until full", async () => {
   const sessions = await seed();
   const [scroll, whole, api, missing] = await mainCalls([
-    ["card", { card: 3 }],
-    ["card", { card: 3, full: true, entries: 1 }],
-    ["card", { card: 2 }],
-    ["card", { card: 99 }],
+    ["board", { card: 3 }],
+    ["board", { card: 3, full: true, entries: 1 }],
+    ["board", { card: 2 }],
+    ["board", { card: 99 }],
   ]);
   const view = scroll ?? "";
   assert.match(
@@ -169,12 +174,12 @@ test("card shows one card's hold, attempt, report, and thread, cut until full", 
     view,
     /^entries\[2\]\{id,age,from,kind,body\}:\n {2}\d+,\d+s ago,"worker:c-3-a1",report\/working,"The scrollbar doubles[^"\n]*\.\.\. \(truncated, 437 chars total, full=true shows all\)"\n {2}\d+,\d+s ago,"mate:main",comment,Fix the double scrollbar$/m,
   );
-  assert.match(view, /^ {2}Call `card\(card=3, full=true\)` to see every text whole$/m);
+  assert.match(view, /^ {2}Call `board\(card=3, full=true\)` to see every text whole$/m);
 
   // full shows the whole text, and entries=1 hides the older entry and says how to see it.
   assert.ok((whole ?? "").includes(LONG_NOTE));
   assert.match(whole ?? "", /^hidden: 1 older entries$/m);
-  assert.match(whole ?? "", /^ {2}Call `card\(card=3, entries=2\)` to read the whole thread$/m);
+  assert.match(whole ?? "", /^ {2}Call `board\(card=3, entries=2\)` to read the whole thread$/m);
 
   assert.match(
     api ?? "",
@@ -187,16 +192,26 @@ test("card shows one card's hold, attempt, report, and thread, cut until full", 
   await Promise.all([sessions.cleo.close(), sessions.worker.close()]);
 });
 
-test("projects lists the registry in TOON with its count", async () => {
-  const [projects] = await mainCalls([["projects", {}]]);
-  assert.equal(
-    projects,
-    [
-      "count: 1",
-      "projects[1]{name,delivery,base,hosts}:",
-      "  web,no-mistakes,main,maverick p620",
-      "help[1]:",
-      "  Call `card_new(title=<title>, kind=<kind>, project=<name>)` to start work on one",
-    ].join("\n"),
+test("board lists every project with board(projects=true), and past 8 projects the header keeps those in use or with yolo on", async () => {
+  for (const name of ["api", "app", "docs", "infra", "ios", "site", "tools", "www"])
+    fleet.cardd.addProject(name, { maverick: `/clones/${name}` });
+  fleet.cardd.yolo("ios");
+  await newCard(fleet.main, "Fix the scrollbar");
+  const [header, every] = await mainCalls([
+    ["board", {}],
+    ["board", { projects: true }],
+  ]);
+  assert.match(
+    header ?? "",
+    /^projects\[2\]\{name,delivery,hosts,yolo\}:\n {2}ios,no-mistakes,maverick,on\n {2}web,no-mistakes,maverick p620,off\n/,
   );
+  assert.match(
+    header ?? "",
+    /^ {2}Call `board\(projects=true\)` to list 7 more projects, with their base branch$/m,
+  );
+  assert.match(
+    every ?? "",
+    /^projects\[9\]\{name,delivery,base,hosts,yolo\}:\n {2}api,no-mistakes,main,maverick,off$/m,
+  );
+  assert.doesNotMatch(every ?? "", /projects=true/);
 });

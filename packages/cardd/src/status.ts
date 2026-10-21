@@ -48,8 +48,8 @@ export interface CardFacts {
   readonly kind: CardKind;
   readonly hold: Hold | undefined;
   readonly inPipeline: boolean;
-  /** Whether the card's grant covers merging (spec section 18). */
-  readonly mergeGranted: boolean;
+  /** Whether the card's project has the captain's yolo flag on: a done PR goes to Merging. */
+  readonly yolo: boolean;
 }
 
 /** Changes whose new phase depends on nothing else. */
@@ -111,11 +111,11 @@ function afterRelease(
   return outcome === "approve" || card.phase === "merging" ? "merging" : "with-mate";
 }
 
-/** Done goes to Merging when a grant covers the merge, and stays there after an approved merge: the worker that merged it reports done again. */
+/** Done goes to Merging when the project's yolo flag covers the merge, and stays there after an approved merge: the worker that merged it reports done again. */
 function afterReport(card: CardFacts, status: ReportStatus): Phase {
   if (status === "in-review") return "in-review";
   if (status === "done")
-    return card.phase === "merging" || (card.kind === "ship" && card.mergeGranted)
+    return card.phase === "merging" || (card.kind === "ship" && card.yolo)
       ? "merging"
       : "with-mate";
   return HANDOFFS.has(status) ? "with-mate" : card.phase;
@@ -273,7 +273,7 @@ export function factsFrom(entries: readonly Entry[]): Facts {
 
 /** How a card's entries show that its work is finished (spec section 20.5). */
 export interface Finish {
-  /** A PR of the card merged on GitHub, as the check or cleanup read it. */
+  /** A PR of the card merged on GitHub, as the check or close read it. */
   readonly merged: boolean;
   /** The worker's latest handoff is `done`, and no comment steered it since. */
   readonly workerDone: boolean;

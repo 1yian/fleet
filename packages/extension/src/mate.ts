@@ -1,18 +1,12 @@
-// Mate sessions: the card tools and dispatch (spec section 11.2).
+// Mate sessions: the board, the card tools, close, and dispatch (spec section 11.2).
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardName, CardSchema, check, OPS, type Card } from "@fleet/protocol";
-import Type from "typebox";
+import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
+import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
-import {
-  boardText,
-  cardText,
-  errorText,
-  EXTRA_COLUMNS,
-  projectsText,
-  SELECTIONS,
-} from "./views.ts";
+import { boardText, cardText, errorText, EXTRA_COLUMNS, SELECTIONS } from "./views.ts";
 
 const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${card.title}`;
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
@@ -31,6 +25,21 @@ const DispatchParams = Type.Object({
 });
 
 const BoardParams = Type.Object({
+  card: Type.Optional(
+    Type.Integer({
+      description:
+        "Shows this one card: its hold, PR, attempts and branches, report path, and thread, newest first",
+    }),
+  ),
+  entries: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      description: "With card: how many thread entries to show, newest first (10)",
+    }),
+  ),
+  full: Type.Optional(
+    Type.Boolean({ description: "With card: show every text whole, without cutting it" }),
+  ),
   status: Type.Optional(
     Type.Enum(SELECTIONS, {
       description: "Which cards to list: open (the default), closed, all, or one status",
@@ -45,58 +54,81 @@ const BoardParams = Type.Object({
       description: `More columns, comma separated, from: ${EXTRA_COLUMNS.join(", ")}`,
     }),
   ),
-});
-
-const CardParams = Type.Object({
-  card: Type.Integer({ description: "The card number, such as 12 for c-12" }),
-  entries: Type.Optional(
-    Type.Integer({ minimum: 1, description: "How many thread entries to show, newest first (10)" }),
+  projects: Type.Optional(
+    Type.Boolean({ description: "List every registered project, with its base branch" }),
   ),
-  full: Type.Optional(Type.Boolean({ description: "Show every text whole, without cutting it" })),
+  lanes: Type.Optional(
+    Type.Boolean({
+      description: "As main: list every lane with its host and why it is in its state",
+    }),
+  ),
+});
+type BoardArgs = Static<typeof BoardParams>;
+
+const CloseParams = Type.Object({
+  card: Type.Integer(),
+  summary: Type.String({
+    minLength: 1,
+    description:
+      "What landed, as the captain should hear it. With landed=false: why the work is dropped",
+  }),
+  landed: Type.Optional(
+    Type.Boolean({
+      description:
+        "Leave it out: close checks for itself whether the work landed, and refuses Done when it did not. Set false only to end work that did not land as Dropped",
+    }),
+  ),
 });
 
-/** The tools that read the fleet: projects, the board, and one card. They print TOON (views.ts). */
-function registerReads(pi: ExtensionAPI, link: Link): void {
-  pi.registerTool({
-    name: "projects",
-    label: "Projects",
-    description:
-      "Lists the registered projects: delivery mode, base branch, and the hosts that have a clone.",
-    parameters: OPS.projects.args,
-    execute: async () =>
-      reply(projectsText(check(OPS.projects.result, await link.call("projects", {})))),
-  });
+async function oneCard(link: Link, params: BoardArgs & { card: number }): Promise<string> {
+  let value: unknown;
+  try {
+    value = await link.call("card", { card: params.card });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(errorText(message, ["Call `board()` to list the open cards"]), {
+      cause: error,
+    });
+  }
+  return cardText(check(OPS.card.result, value), params);
+}
+
+async function wholeBoard(
+  link: Link,
+  lanes: LaneStates | undefined,
+  params: BoardArgs,
+): Promise<string> {
+  const cards = check(OPS.board.result, await link.call("board", {}));
+  const projects = check(OPS.projects.result, await link.call("projects", {}));
+  const header = lanes === undefined ? { projects } : { projects, lanes: await lanes() };
+  return boardText(cards, params, header);
+}
+
+/** board: the fleet's header and its cards, or one card. It prints TOON (views.ts). */
+function registerBoard(pi: ExtensionAPI, link: Link, lanes: LaneStates | undefined): void {
   pi.registerTool({
     name: "board",
     label: "Board",
     description:
-      "Shows the open cards, the ones that need attention first, and counts the closed ones. Read one card with the card tool.",
+      "Shows the fleet. Its header lists the projects (delivery mode, hosts, yolo) and, as main, the lanes (running, down, or stopped). Then the open cards, the ones that need attention first, and a count of the closed ones. board(card=N) shows one card: its hold, PR, attempts and branches, report path, and thread.",
     parameters: BoardParams,
-    execute: async (_id, params) =>
-      reply(boardText(check(OPS.board.result, await link.call("board", {})), params)),
-  });
-  pi.registerTool({
-    name: "card",
-    label: "Card",
-    description:
-      "Shows one card: who its hold waits on and its question, its PR, its attempts and branches, the report path, and its thread newest first.",
-    parameters: CardParams,
     execute: async (_id, params) => {
-      let value: unknown;
-      try {
-        value = await link.call("card", { card: params.card });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(errorText(message, ["Call `board()` to list the open cards"]), {
-          cause: error,
-        });
-      }
-      return reply(cardText(check(OPS.card.result, value), params));
+      const { card } = params;
+      return reply(
+        card === undefined
+          ? await wholeBoard(link, lanes, params)
+          : await oneCard(link, { ...params, card }),
+      );
     },
   });
 }
 
-export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void {
+export function registerMate(
+  pi: ExtensionAPI,
+  link: Link,
+  launch: Launch,
+  lanes: LaneStates | undefined,
+): void {
   pi.registerTool({
     name: "card_new",
     label: "New card",
@@ -116,40 +148,15 @@ export function registerMate(pi: ExtensionAPI, link: Link, launch: Launch): void
     execute: async (_id, params) =>
       reply(`Commented. ${line(check(CardSchema, await link.call("comment", params)))}`),
   });
-  registerReads(pi, link);
+  registerBoard(pi, link, lanes);
   pi.registerTool({
-    name: "cleanup",
-    label: "Clean up",
+    name: "close",
+    label: "Close",
     description:
-      "Ends a card whose work landed: stops the worker, archives anything left over, removes the worktree, and marks it Done. Needs the worker's done, and a merged PR for a ship card. A ship card that made no code change, such as an operation, closes with without_pr set, and its worktree must have nothing unlanded. Main relays the summary to the captain.",
-    parameters: Type.Object({
-      card: Type.Integer(),
-      summary: Type.String({ minLength: 1 }),
-      without_pr: Type.Optional(
-        Type.Boolean({
-          description:
-            "A ship card with no merged PR: it made no code change, or its commits are already on the base branch. Say so in the summary.",
-        }),
-      ),
-    }),
+      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. Then the card is Done. If the work did not land it refuses, and close(card, summary=<why>, landed=false) ends it as Dropped. It refuses while the card has a hold. Main relays the summary to the captain.",
+    parameters: CloseParams,
     execute: async (_id, params) =>
-      reply(
-        await close(link, {
-          card: params.card,
-          mode: "done",
-          text: params.summary,
-          withoutPr: params.without_pr === true,
-        }),
-      ),
-  });
-  pi.registerTool({
-    name: "card_drop",
-    label: "Drop a card",
-    description:
-      "Ends a card that did not land: stops the worker, archives its unlanded work, removes the worktree, and marks it Dropped. The reason is required.",
-    parameters: Type.Object({ card: Type.Integer(), reason: Type.String({ minLength: 1 }) }),
-    execute: async (_id, params) =>
-      reply(await close(link, { card: params.card, mode: "dropped", text: params.reason })),
+      reply(await close(link, { card: params.card, text: params.summary, landed: params.landed })),
   });
   pi.registerTool({
     name: "dispatch",

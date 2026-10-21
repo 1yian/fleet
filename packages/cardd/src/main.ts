@@ -1,13 +1,13 @@
 // cardd command line.
 //   cardd serve --db <file> [--listen <host:port>] [--board <built board folder>] [--hostname <name>]...   (CARDD_TIMING_SCALE=0.01 speeds up every timer, for tests)
 //   cardd lane add <name> --db <file> --home <path> [--parent <lane>]   (prints the mate token)
-//   cardd grant add --db <file> --lane <lane> --words <source> [--project <name>] [--may <text>] [--merge]
-//   cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]...
+//   cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo]
+//   cardd project yolo <name> on|off --db <file>   (the captain's standing merge authority for the project)
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
 import { serve } from "./server.ts";
-import { addLane, addLaneGrant, addProject } from "./store.ts";
+import { addLane, addProject, setYolo } from "./store.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -20,11 +20,7 @@ const { values, positionals } = parseArgs({
     parent: { type: "string" },
     delivery: { type: "string" },
     clone: { type: "string", multiple: true, default: [] },
-    lane: { type: "string" },
-    project: { type: "string" },
-    words: { type: "string" },
-    may: { type: "string" },
-    merge: { type: "boolean", default: false },
+    yolo: { type: "boolean", default: false },
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
@@ -69,23 +65,18 @@ if (command === "serve") {
     name: rest[1],
     delivery: values.delivery,
     clones,
+    yolo: values.yolo,
   });
 } else if (
-  command === "grant" &&
-  rest[0] === "add" &&
-  values.lane !== undefined &&
-  values.words !== undefined
+  command === "project" &&
+  rest[0] === "yolo" &&
+  rest[1] !== undefined &&
+  (rest[2] === "on" || rest[2] === "off")
 ) {
-  // An operator import, such as a Firstmate yolo flag. The words record where the permission came from.
-  const grant = {
-    lane: values.lane,
-    words: values.words,
-    may: values.may ?? "merge when CI is green",
-    merge: values.merge,
-  };
-  addLaneGrant(db, values.project === undefined ? grant : { ...grant, project: values.project });
+  setYolo(db, rest[1], rest[2] === "on");
+  console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]...",
+    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] | cardd project yolo <name> on|off --db <file>",
   );
 }

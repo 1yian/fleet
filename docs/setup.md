@@ -21,7 +21,7 @@ cd <checkout> && npm ci && npm run build
 
 Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Each host needs Node 24 or later, Pi, herdr, git, `gh` (logged in), `zstd`, and `no-mistakes` for projects that use it.
 
-To update later: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`. The lanes move to the new commit when their mates next start, so then run `lane_restart` with lane `all` from main (or `fleet restart` on that host). A lane home with uncommitted changes stays where it is.
+To update later: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`. The lanes move to the new commit when their mates next start, so then run `lane("all", "restart")` from main (or `fleet restart` on that host). A lane home with uncommitted changes stays where it is.
 
 ## 2. cardd
 
@@ -46,11 +46,12 @@ $CARDD lane add main --db ~/.fleet/cards.db --home ~/Projects/fleet
 $CARDD lane add cleo --db ~/.fleet/cards.db --home /path/on/its/host --parent main
 $CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes \
   --clone maverick=/path/to/web --clone p620=/path/on/p620/web
-$CARDD grant add --db ~/.fleet/cards.db --lane main --project web --merge --words "<where the permission came from>"
+$CARDD project yolo web on --db ~/.fleet/cards.db
 ```
 
 - A project's clone is a normal clone of the repository on that host. Dispatch creates each worker's worktree next to it, in `<clone>.worktrees/`.
 - Use the same host names in `--clone` that mates pass to `dispatch`.
+- A project's yolo flag is the captain's standing merge authority: with it on, a mate tells the worker to merge a PR of that project with green checks, without asking the captain. Only the captain sets it, with `project add --yolo` or `project yolo <name> on|off`. No mate tool changes it.
 
 ## 4. Main
 
@@ -134,7 +135,7 @@ Main starts, and within a minute it has brought up every lane on every host that
 - Main starts a mate that died, on whichever host it runs. It says so in its thread.
 - A lane that starts three times in ten minutes is held, and main tells the captain once.
 - A host that cannot be reached is reported once, and again when it answers.
-- `lane_stop` stops a lane and holds it, so main leaves it alone. `lane_start` starts it. `lane_restart` restarts one lane, or every lane that is not held with lane `all`, on every host. Ask main in plain words: "restart the fleet".
+- `lane(name, "stop")` stops a lane and holds it, so main leaves it alone. `lane(name, "start")` starts it. `lane(name, "restart")` restarts one lane, and `lane("all", "restart")` every lane that is not held, on every host. Ask main in plain words: "restart the fleet".
 - Each mate runs in its own herdr workspace, `fleet-<lane>`, in that host's `default` session, and continues its conversation when it starts again. To see another host's workspaces in the herdr you already use, add the host once as a machine: `herdr machine add p620 --remote-session default`.
 
 The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):

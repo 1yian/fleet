@@ -167,7 +167,10 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(() => ({ tool: "card_drop", args: { card: 1, reason: "the design changed" } }), "mate");
+  h.onModel(
+    () => ({ tool: "close", args: { card: 1, summary: "the design changed", landed: false } }),
+    "mate",
+  );
   h.onModel(() => {
     const tree = `${clone}.worktrees/c-1-a1`;
     const git = (...args: string[]) =>
@@ -209,7 +212,7 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
   );
 });
 
-test("a rerun of cleanup after the worktree is gone still deletes the branch and reports the archive", async () => {
+test("a rerun of close after the worktree is gone still deletes the branch and reports the archive", async () => {
   h.onModel(
     () => ({
       tool: "card_new",
@@ -238,7 +241,7 @@ test("a rerun of cleanup after the worktree is gone still deletes the branch and
       "--force",
       `${clone}.worktrees/c-1-a1`,
     ]);
-    return { tool: "card_drop", args: { card: 1, reason: "the design changed" } };
+    return { tool: "close", args: { card: 1, summary: "the design changed", landed: false } };
   }, "mate");
   h.onModel(() => ({ tool: "report", args: { status: "blocked", text: "unclear" } }), "worker");
   await mateConnected();
@@ -277,7 +280,10 @@ test("an unreachable host of a replaced attempt does not block closing, and its 
       args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
     };
   }, "mate");
-  h.onModel(() => ({ tool: "card_drop", args: { card: 1, reason: "the design changed" } }), "mate");
+  h.onModel(
+    () => ({ tool: "close", args: { card: 1, summary: "the design changed", landed: false } }),
+    "mate",
+  );
   h.onModel(() => ({ text: "dropped" }), "mate");
   await mateConnected();
   mate.prompt("ship the scrollbar fix");
@@ -314,7 +320,10 @@ test("a killed archive step of a replaced attempt aborts the close instead of le
       args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
     };
   }, "mate");
-  h.onModel(() => ({ tool: "card_drop", args: { card: 1, reason: "the design changed" } }), "mate");
+  h.onModel(
+    () => ({ tool: "close", args: { card: 1, summary: "the design changed", landed: false } }),
+    "mate",
+  );
   h.onModel(() => ({ text: "dropped" }), "mate");
   await mateConnected();
   mate.prompt("ship the scrollbar fix");
@@ -352,7 +361,10 @@ test("a host that hangs past the timeout counts as unreachable for a replaced at
       args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
     };
   }, "mate");
-  h.onModel(() => ({ tool: "card_drop", args: { card: 1, reason: "the design changed" } }), "mate");
+  h.onModel(
+    () => ({ tool: "close", args: { card: 1, summary: "the design changed", landed: false } }),
+    "mate",
+  );
   h.onModel(() => ({ text: "dropped" }), "mate");
   await mateConnected();
   mate.prompt("ship the scrollbar fix");
@@ -385,11 +397,11 @@ test("a branch that cannot be deleted aborts the close, and a rerun finishes it"
   const lock = `${clone}/.git/refs/heads/c-1-a1.lock`;
   h.onModel(() => {
     writeFileSync(lock, "");
-    return { tool: "card_drop", args: { card: 1, reason: "the design changed" } };
+    return { tool: "close", args: { card: 1, summary: "the design changed", landed: false } };
   }, "mate");
   h.onModel(() => {
     rmSync(lock);
-    return { tool: "card_drop", args: { card: 1, reason: "the design changed" } };
+    return { tool: "close", args: { card: 1, summary: "the design changed", landed: false } };
   }, "mate");
   h.onModel(() => ({ text: "dropped" }), "mate");
   await mateConnected();

@@ -99,10 +99,10 @@ export class Cardd {
     });
   }
 
-  /** Adds a lane grant with the cardd command line, as an import from Firstmate does. */
-  addMergeGrant(lane: string, project: string): void {
-    const args = [MAIN, "grant", "add", "--db", this.db, "--lane", lane, "--project", project];
-    execFileSync("node", [...args, "--words", "Firstmate yolo flag", "--merge"]);
+  /** Turns a project's yolo flag on or off with the cardd command line, as the captain does. Returns what it printed. */
+  yolo(project: string, on = true): string {
+    const args = [MAIN, "project", "yolo", project, on ? "on" : "off", "--db", this.db];
+    return execFileSync("node", args, { encoding: "utf8" }).trim();
   }
 
   /** POST /call as the session that owns the token. */
