@@ -95,7 +95,12 @@ test("a test runner killed with SIGKILL leaves no cardd, herdr, pi, or pane proc
   const running: Running[] = [...new Set(known)]
     .map((pid) => ({ pid, command: commandOf(pid) }))
     .filter((each) => each.command !== "");
-  const kinds = [/cardd\/src\/main\.ts serve/, /^herdr server/, /^pi\b/, new RegExp(`^${sleeper}`)];
+  const kinds = [
+    /cardd\/src\/main\.ts serve/,
+    /^herdr server/,
+    /^pi\b|--mode rpc/,
+    new RegExp(`^${sleeper}`),
+  ];
   const missing = kinds.filter((kind) => !running.some((each) => kind.test(each.command)));
   runner.kill("SIGKILL");
   await exited;
