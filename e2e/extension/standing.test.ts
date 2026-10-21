@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
   appendFileSync,
+  chmodSync,
+  readdirSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -382,4 +384,87 @@ test("/stow in a second mate curates only its own home, leaves main's shared cop
   assert.match(after, RegExp(SHARED_ONE));
   assert.doesNotMatch(after, RegExp(LEO_OLD));
   assert.doesNotMatch(after, RegExp(MAIN_FRESH));
+});
+
+const preserved = (home: string): string[] =>
+  readdirSync(join(home, "data"))
+    .filter((name) => name.startsWith("captain-shared.edited-"))
+    .sort();
+
+const preservedTexts = (home: string): string[] =>
+  preserved(home).map((name) => readFileSync(join(home, "data", name), "utf8"));
+
+function handEdit(home: string, text: string): void {
+  const file = dataFile(home, "captain-shared.md");
+  chmodSync(file, 0o644);
+  writeFileSync(file, text);
+}
+
+test("a hand-edited copy of the shared preferences is preserved aside before main replaces or removes it, once, on every host, and a copy nobody edited is replaced quietly", async () => {
+  await startLab(1000);
+  seedMemory();
+  const mainPane = await startMain(lab, here, h, false, piArgs);
+  await connected(2);
+  for (const home of [leoHome, farHome])
+    await until(
+      () => (read(home, "captain-shared.md") === `- ${SHARED_ONE}\n` ? true : undefined),
+      `${home} to hold main's shared preferences`,
+    );
+
+  put(here.root, "captain-shared.md", `- ${SHARED_TWO}\n`);
+  for (const home of [leoHome, farHome])
+    await until(
+      () => (read(home, "captain-shared.md") === `- ${SHARED_TWO}\n` ? true : undefined),
+      `${home} to hold the new shared preferences`,
+    );
+  for (const home of [leoHome, farHome])
+    assert.deepEqual(preserved(home), [], `${home} kept a copy of a file nobody edited`);
+
+  const EDIT_ONE = "LEO-HAND-EDIT-ONE";
+  const EDIT_FAR = "FAR-HAND-EDIT";
+  handEdit(leoHome, `- ${SHARED_TWO}\n- ${EDIT_ONE}\n`);
+  handEdit(farHome, `- ${EDIT_FAR}\n`);
+  for (const [home, word] of [
+    [leoHome, EDIT_ONE],
+    [farHome, EDIT_FAR],
+  ] as const) {
+    await until(
+      () => (preserved(home).length === 1 ? true : undefined),
+      `${home} to keep the edit`,
+    );
+    assert.match(preservedTexts(home).join(""), RegExp(word));
+    await until(
+      () => (read(home, "captain-shared.md") === `- ${SHARED_TWO}\n` ? true : undefined),
+      `${home} to hold main's shared preferences again`,
+    );
+    assert.ok(readOnly(dataFile(home, "captain-shared.md")));
+  }
+
+  const leoPane = await paneOf("2ndmate-leo");
+  await lab.submit(leoPane, "HELLO-LEO-EDITED");
+  const contract = systemOf(await asked("HELLO-LEO-EDITED"));
+  assert.match(contract, RegExp(SHARED_TWO));
+  assert.doesNotMatch(contract, RegExp(EDIT_ONE));
+
+  put(here.root, "captain-shared.md", `- ${SHARED_ONE}\n`);
+  await until(
+    () => (read(leoHome, "captain-shared.md") === `- ${SHARED_ONE}\n` ? true : undefined),
+    "leo to hold the next shared preferences",
+  );
+  assert.equal(preserved(leoHome).length, 1, "an untouched copy was preserved again");
+
+  const EDIT_TWO = "LEO-HAND-EDIT-TWO";
+  handEdit(leoHome, `- ${EDIT_TWO}\n`);
+  rmSync(dataFile(here.root, "captain-shared.md"));
+  await until(
+    () => (existsSync(dataFile(leoHome, "captain-shared.md")) ? undefined : true),
+    "leo to lose the shared preferences main removed",
+  );
+  await until(
+    () => (preserved(leoHome).length === 2 ? true : undefined),
+    "leo to keep the second edit",
+  );
+  assert.match(preservedTexts(leoHome).join(""), RegExp(EDIT_TWO));
+  assert.match(preservedTexts(leoHome).join(""), RegExp(EDIT_ONE));
+  assert.ok(mainPane.length > 0);
 });
