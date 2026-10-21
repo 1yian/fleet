@@ -310,6 +310,15 @@ test("an attempt made before workers named their branches keeps its branch, thro
     await assert.rejects(worker.call("branch.name", { name: "fix/listing-copy" }), {
       message: "c-1-a1 already has its branch fm/c-1. Keep working on it: a branch is named once",
     });
+
+    const pr = "https://github.com/acme/web/pull/5";
+    cardd.gh.setPr(pr, "MERGED");
+    cardd.gh.setHead(pr, "fm/c-1");
+    await worker.call("report", { status: "done", text: "merged" });
+    const report = await main.waitForEntry((entry) => entry.kind === "report", "the report");
+    assert.equal(report.fields["pr"], pr);
+    const plan = check(OPS["close.begin"].result, await main.call("close.begin", { card: 1 }));
+    assert.deepEqual([plan.mode, plan.attempts.map(({ branch }) => branch)], ["done", ["fm/c-1"]]);
   } finally {
     await cardd.stop();
   }
