@@ -8,7 +8,14 @@
       "entry": ["src/main.ts", "scripts/*.ts"]
     },
     "e2e": {
-      "entry": ["**/*.test.ts", "support/fake-model.ts", "support/probe.ts", "trial/*.ts"]
+      "entry": [
+        "**/*.test.ts",
+        "support/fake-model.ts",
+        "support/probe.ts",
+        "support/orphan-runner.ts",
+        "support/reaper.ts",
+        "trial/*.ts"
+      ]
     },
     "packages/extension": {
       "entry": [

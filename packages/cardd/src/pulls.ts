@@ -38,7 +38,19 @@ async function findOrView({ repo, pr, branches }: Place): Promise<PrLookup> {
   return found === undefined ? { kind: "none", branches } : { kind: "found", pr: found };
 }
 
-export async function lookUpPr(db: DatabaseSync, card: number): Promise<PrLookup> {
+const lookups = new Map<number, Promise<PrLookup>>();
+
+export function lookUpPr(db: DatabaseSync, card: number): Promise<PrLookup> {
+  const running = lookups.get(card);
+  if (running !== undefined) return running;
+  const started = readPr(db, card).finally(() => {
+    lookups.delete(card);
+  });
+  lookups.set(card, started);
+  return started;
+}
+
+async function readPr(db: DatabaseSync, card: number): Promise<PrLookup> {
   try {
     const found = await findOrView(placeOf(db, card));
     if (found.kind === "found")

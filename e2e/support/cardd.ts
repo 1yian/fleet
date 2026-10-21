@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { createServer } from "node:net";
@@ -18,6 +18,7 @@ import {
   type Thread,
 } from "@fleet/protocol";
 import { FakeGitHub } from "./github.ts";
+import { spawnGuarded } from "./guarded.ts";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 const KEEPALIVE = fileURLToPath(new URL("./keepalive.ts", import.meta.url));
@@ -212,19 +213,19 @@ export class Cardd {
   private async supervise(main: string): Promise<void> {
     const port = await freePort();
     const serve = [main, "serve", "--db", this.db, "--listen", `127.0.0.1:${String(port)}`];
-    const child = spawn("node", [KEEPALIVE, this.pidFile, "node", ...serve], {
+    const child = spawnGuarded("node", [KEEPALIVE, this.pidFile, "node", ...serve], {
       stdio: ["ignore", "pipe", "inherit"],
       env: this.env,
     });
     this.child = child;
     this.supervised = true;
     let out = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
     this.url = await until(() => /listening on (\S+)/.exec(out)?.[1], "cardd to listen");
   }
 
   private async boot(port = "0"): Promise<void> {
-    const child = spawn(
+    const child = spawnGuarded(
       "node",
       [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`, ...this.args],
       {
@@ -234,7 +235,7 @@ export class Cardd {
     );
     this.child = child;
     let out = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
     this.url = await until(() => /listening on (\S+)/.exec(out)?.[1], "cardd to listen");
   }
 }
