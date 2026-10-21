@@ -151,14 +151,14 @@ test(
     await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
     const session = await h.waitFor((event) => event["type"] === "session", "main's session");
 
-    await cleo.call("comment", { lane: "cleo", text: `The build is green: ${IDLE_WORD}.` });
+    await cleo.call("comment", { lane: "cleo", text: `Validation continues: ${IDLE_WORD}.` });
     const first = await h.waitFor(
       (event) => event["type"] === "tool_waiting" || event["type"] === "settled",
       "main's turn on the idle message",
     );
     assert.equal(first["type"], "tool_waiting", "main's turn on the idle message ended early");
 
-    await cleo.call("comment", { lane: "cleo", text: `Approve the merge: ${BUSY_WORD}.` });
+    await cleo.call("comment", { lane: "cleo", text: `Still validating: ${BUSY_WORD}.` });
     await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the mid-turn message");
     h.releaseTool();
     await h.waitFor((event) => event["type"] === "settled", "main's turn to end");

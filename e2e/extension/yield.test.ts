@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -91,7 +91,6 @@ async function screenWith(pane: string, text: string): Promise<string> {
 async function keep(name: string, pane: string): Promise<string> {
   const screen = await lab.screen(pane);
   if (EVIDENCE !== undefined) {
-    const { mkdirSync, writeFileSync } = await import("node:fs");
     mkdirSync(EVIDENCE, { recursive: true });
     writeFileSync(join(EVIDENCE, `${name}.txt`), screen);
   }
