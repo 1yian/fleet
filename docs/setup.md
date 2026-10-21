@@ -103,13 +103,13 @@ One command turns memory on in a home, for main and for each second mate alike:
 
 It does three things, all inside that lane's home, and skips each one that is done already:
 
-- prepares the pinned pi-optchat package in `config/optchat/package` with the loader's own helper, `~/.pi/agent/optchat/package.mjs`. It fetches the version that the helper pins with `npm pack`. `--source <folder>` prepares it from a published copy that is already on disk instead.
+- prepares the pinned pi-optchat package in `config/optchat/package` with the loader's own helper, `~/.pi/agent/optchat/package.mjs`. It fetches the version that the helper pins with `npm pack`. `--source <folder>` prepares it from a published copy that is already on disk instead. If the loader refuses the package that is there, such as after a dotfiles update changed a patch, it moves that copy to `config/optchat/package.stale-<time>` and prepares the package again. Run the command again in each home after such an update, before the mates restart.
 - makes the lane's profile in `data/optchat/profiles/<lane>`. With `--seed`, it copies only `AGENTS.md` and `config.json` from that folder, such as the lane's old Firstmate profile. Without it, the profile is new. Either way the memory starts empty.
-- writes `config/optchat.json`: the package, `data/optchat` as the memory home, and the lane as the profile. `--compactor` and `--thinking` pick the memory's compactor. Without `--compactor`, the memory uses the mate's own model.
+- writes `config/optchat.json`: the package, `data/optchat` as the memory home, and the lane as the profile. `--compactor` and `--thinking` pick the memory's compactor. Without `--compactor`, the memory uses the mate's own model. If the file is there with `"enabled": false`, it sets `"enabled": true` and keeps the rest.
 
 Each lane has its own profile in its own home. Never copy one home's `config/`, `data/`, or `state/` into another. The profile's lock socket must fit a socket path (103 bytes on macOS), so the command refuses a home whose path is too long.
 
-The mate gets memory at its next start. `/firstmate-memory` shows whether it is active, and `state/optchat-activation.json` in the home is the receipt. To turn it off, set `"enabled": false` in `config/optchat.json` and restart the mate.
+The mate gets memory at its next start. `/firstmate-memory` shows whether it is active, and `state/optchat-activation.json` in the home is the receipt. To turn it off, set `"enabled": false` in `config/optchat.json` and restart the mate. To turn it on again, run `fleet home memory <lane>` and restart the mate.
 
 The loader must treat a `[fleet]` message as a normal turn that enters memory. That needs the dotfiles at or after https://github.com/1yian/dotfiles/pull/34 on every host that runs a mate. `e2e/extension/memory.test.ts` checks it for main and for a second mate.
 

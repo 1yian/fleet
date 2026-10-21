@@ -6,11 +6,13 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { isRecord } from "./lane-config.ts";
 
 export interface MemoryOptions {
@@ -48,10 +50,24 @@ function fetchPublished(helperDir: string, into: string): string {
   return join(into, "package");
 }
 
+function loaderAccepts(helper: string, target: string): boolean {
+  const check = `const { verifyPackage } = await import(${JSON.stringify(pathToFileURL(helper).href)}); verifyPackage(${JSON.stringify(target)});`;
+  try {
+    run("node", ["--input-type=module", "-e", check]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function preparePackage(home: string, source: string | undefined): string {
   const target = join(home, PACKAGE);
-  if (existsSync(target)) return `package: ${PACKAGE} is there already`;
   const helper = realpathSync(join(agentDir(), "optchat", "package.mjs"));
+  const stale = `${PACKAGE}.stale-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  if (existsSync(target)) {
+    if (loaderAccepts(helper, target)) return `package: ${PACKAGE} is there already`;
+    renameSync(target, join(home, stale));
+  }
   const scratch = mkdtempSync(join(tmpdir(), "fleet-optchat-"));
   try {
     const published = source ?? fetchPublished(join(helper, ".."), scratch);
@@ -59,7 +75,9 @@ function preparePackage(home: string, source: string | undefined): string {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  return `package: prepared in ${PACKAGE}`;
+  return existsSync(join(home, stale))
+    ? `package: prepared again in ${PACKAGE}, because the loader refused the old one, now in ${stale}`
+    : `package: prepared in ${PACKAGE}`;
 }
 
 function makeProfile(home: string, lane: string, options: MemoryOptions): string {
@@ -94,7 +112,15 @@ function makeProfile(home: string, lane: string, options: MemoryOptions): string
 
 function writeSettings(home: string, lane: string, options: MemoryOptions): string {
   const file = join(home, "config", "optchat.json");
-  if (existsSync(file)) return "settings: config/optchat.json is there already";
+  if (existsSync(file)) {
+    const found: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!isRecord(found)) throw new Error(`${file} is not a JSON object`);
+    if (found["enabled"] !== false) return "settings: config/optchat.json is there already";
+    writeFileSync(file, `${JSON.stringify({ ...found, enabled: true }, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    return "settings: turned memory on in config/optchat.json";
+  }
   const [provider, model] = options.compactor?.split("/") ?? [];
   const settings = {
     enabled: true,
