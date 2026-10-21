@@ -49,7 +49,63 @@ elif git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
 fi
 echo "$ahead $dirty"`;
 
-async function unlanded(attempt: Attempt): Promise<string> {
+const LAND_LOCALLY_SCRIPT = `set -eu
+clone=$1 branch=$2 base=$3
+current=$(git -C "$clone" symbolic-ref -q --short HEAD) || current=""
+if [ "$current" != "$base" ]; then
+  echo "$clone is on \${current:-a detached HEAD}, not $base, so $branch cannot land there" >&2
+  exit 1
+fi
+if [ -n "$(git -C "$clone" status --porcelain | head -n 1)" ]; then
+  echo "$clone has uncommitted changes, so $branch cannot land there" >&2
+  exit 1
+fi
+if ! git -C "$clone" merge-base --is-ancestor "$base" "$branch"; then
+  echo "$branch is not a fast-forward of $base: have the worker rebase it onto $base" >&2
+  exit 1
+fi
+before=$(git -C "$clone" rev-parse --short HEAD)
+git -C "$clone" merge -q --ff-only "$branch"
+echo "$before..$(git -C "$clone" rev-parse --short HEAD)"`;
+
+async function landLocally(card: number, plan: ReturnType<typeof parsePlan>): Promise<string> {
+  const dirty: string[] = [];
+  for (const attempt of plan.attempts) {
+    try {
+      const { dirty: files } = await unlandedCounts(attempt);
+      if (files > 0)
+        dirty.push(
+          `${attempt.session} on ${attempt.host} has ${describe({ ahead: 0, dirty: files }, attempt.base)}`,
+        );
+    } catch (error) {
+      if (attempt.live || !(error instanceof HostUnreachable)) throw error;
+    }
+  }
+  if (dirty.length > 0)
+    throw new Error(
+      `c-${String(card)} cannot land: ${dirty.join("; ")}. Have the worker commit or remove them, then close it again.`,
+    );
+  const newest = plan.attempts.at(-1);
+  if (newest === undefined) throw new Error(`c-${String(card)} has no branch to land`);
+  const { host, clone, branch, base } = newest;
+  try {
+    const moved = await onHost(host, [
+      "sh",
+      "-c",
+      LAND_LOCALLY_SCRIPT,
+      "land",
+      clone,
+      branch,
+      base,
+    ]);
+    return `Landed ${branch} on local ${base} on ${host} (${moved.trim()}).`;
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    throw new Error(`c-${String(card)} did not land: ${why}`, { cause: error });
+  }
+}
+
+async function unlandedCounts(attempt: Attempt): Promise<{ ahead: number; dirty: number }> {
   const { host, clone, branch, base, session } = attempt;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
@@ -64,11 +120,19 @@ async function unlanded(attempt: Attempt): Promise<string> {
     base,
   ]);
   const [ahead = 0, dirty = 0] = out.trim().split(" ").map(Number);
+  return { ahead, dirty };
+}
+
+function describe({ ahead, dirty }: { ahead: number; dirty: number }, base: string): string {
   const parts = [
     ahead > 0 ? `${String(ahead)} commit${ahead === 1 ? "" : "s"} not on ${base}` : "",
     dirty > 0 ? `${String(dirty)} uncommitted file${dirty === 1 ? "" : "s"}` : "",
   ].filter((part) => part !== "");
   return parts.join(" and ");
+}
+
+async function unlanded(attempt: Attempt): Promise<string> {
+  return describe(await unlandedCounts(attempt), attempt.base);
 }
 
 async function requireLanded(card: number, plan: ReturnType<typeof parsePlan>): Promise<void> {
@@ -129,6 +193,7 @@ export async function close(
   const plan = parsePlan(
     await link.call("close.begin", { card: id, ...(landed === undefined ? {} : { landed }) }),
   );
+  const moved = plan.land ? await landLocally(id, plan) : "";
   if (plan.verify) await requireLanded(id, plan);
   const archives: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
@@ -147,7 +212,8 @@ export async function close(
   const found = await refreshClonesInTurn(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
-  return `c-${String(card.id)} is ${card.status}.${outcome(archives, left, found)}`;
+  const landing = moved === "" ? "" : ` ${moved}`;
+  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found)}`;
 }
 
 function outcome(

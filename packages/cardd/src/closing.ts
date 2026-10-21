@@ -9,6 +9,7 @@ import {
   getCard,
   listProjects,
   mainLane,
+  phaseOf,
   reachable,
   type Session,
 } from "./store.ts";
@@ -23,38 +24,44 @@ function notLanded(db: DatabaseSync, card: Card): string | undefined {
   const worked = db.prepare("SELECT 1 FROM attempts WHERE card = ?").get(card.id) !== undefined;
   if (worked && !workerDone) return "the worker has not reported done";
   if (card.kind !== "ship") return undefined;
+  if (!worked) return "no worker ran it";
+  if (card.delivery === "local-only")
+    return phaseOf(db, card.id) === "merging"
+      ? undefined
+      : "its branch has not landed on the local base branch. close lands it once the landing is authorized: yolo on, or the captain's word for it on the merge question";
   if (card.pr !== null)
     return `its PR ${card.pr} has not merged. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it, then close it`;
-  return worked ? undefined : "no worker ran it";
+  return undefined;
 }
 
 function outcome(
   db: DatabaseSync,
   card: Card,
   landed: boolean | undefined,
-): { mode: "done" | "dropped"; verify: boolean } {
+): { mode: "done" | "dropped"; verify: boolean; land: boolean } {
   const name = `c-${String(card.id)}`;
   const { merged } = finishFrom(cardEntries(db, card.id));
   if (landed === false) {
     if (merged)
       throw new Error(`${name}'s PR merged, so its work landed: close it without landed=false`);
-    return { mode: "dropped", verify: false };
+    return { mode: "dropped", verify: false, land: false };
   }
-  if (merged) return { mode: "done", verify: false };
+  if (merged) return { mode: "done", verify: false, land: false };
   const why = notLanded(db, card);
   if (why !== undefined) {
     throw new Error(
       `${name} did not land: ${why}. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
     );
   }
-  return { mode: "done", verify: card.kind === "ship" };
+  const ship = card.kind === "ship";
+  return { mode: "done", verify: ship, land: ship && card.delivery === "local-only" };
 }
 
 function closable(
   db: DatabaseSync,
   session: Session,
   args: { card: number; landed?: boolean | undefined },
-): { card: Card; mode: "done" | "dropped"; verify: boolean } {
+): { card: Card; mode: "done" | "dropped"; verify: boolean; land: boolean } {
   const { card } = reachable(db, session, args.card);
   const name = `c-${String(card.id)}`;
   requireOrdinary(db, card);
@@ -70,7 +77,7 @@ function closable(
 
 export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS["close.begin"].args, raw);
-  const { card, mode, verify } = closable(db, session, args);
+  const { card, mode, verify, land } = closable(db, session, args);
   const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
@@ -91,7 +98,7 @@ export function closeBegin(db: DatabaseSync, session: Session, raw: unknown): Do
       : [];
   });
   return {
-    value: { mode, verify, attempts, refresh: shipCardClonesToRefresh(db, card) },
+    value: { mode, verify, land, attempts, refresh: shipCardClonesToRefresh(db, card) },
     notify: [],
   };
 }
@@ -100,7 +107,7 @@ function shipCardClonesToRefresh(
   db: DatabaseSync,
   card: Card,
 ): { project: string; host: string; path: string; base: string }[] {
-  if (card.kind !== "ship") return [];
+  if (card.kind !== "ship" || card.delivery === "local-only") return [];
   const project = listProjects(db).find((each) => each.name === card.project);
   if (project === undefined) return [];
   return project.clones.map(({ host, path }) => ({

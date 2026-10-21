@@ -1,4 +1,4 @@
-import { check, OPS } from "@fleet/protocol";
+import { check, OPS, type Delivery } from "@fleet/protocol";
 import { SYNC_FUNCTIONS } from "./clones.ts";
 import { fleetArgs } from "./fleet-args.ts";
 import { field, herdr, onHost, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
@@ -15,13 +15,13 @@ const parsePlan = (value: unknown) => check(OPS["attempt.begin"].result, value);
 
 const ADD_WORKTREE = `${SYNC_FUNCTIONS}
 set -eu
-clone=$1 path=$2 branch=$3 base=$4
+clone=$1 path=$2 branch=$3 base=$4 from=$5
 if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
   git -C "$clone" worktree add -q "$path" "$branch"
   exit 0
 fi
 start=$base
-if git -C "$clone" remote get-url origin >/dev/null 2>&1; then
+if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1; then
   if ! fetch_origin "$clone"; then
     echo "could not fetch origin in $clone, so the worker would start from a stale base: $(printf '%s\\n' "$fetched" | head -n 1)" >&2
     exit 1
@@ -48,7 +48,9 @@ async function worktreePane(host: string, plan: Plan): Promise<string> {
   }
   const path = field(tree, "path") ?? `${plan.clone}.worktrees/${plan.session}`;
   if (tree === undefined) {
-    await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", plan.clone, path, plan.branch, plan.base]);
+    const from = plan.delivery === "local-only" ? "local" : "origin";
+    const args = [plan.clone, path, plan.branch, plan.base, from];
+    await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", ...args]);
   }
   return openWorkerWorkspace(host, path, plan);
 }
@@ -114,7 +116,13 @@ async function startAgent(host: string, pane: string, args: string[]): Promise<v
 export async function dispatch(
   link: Link,
   launch: Launch,
-  request: { card: number; host: string; task: string; replace: boolean },
+  request: {
+    card: number;
+    host: string;
+    task: string;
+    replace: boolean;
+    delivery?: Delivery | undefined;
+  },
 ): Promise<string> {
   const plan = parsePlan(await link.call("attempt.begin", request));
   const where = `${plan.session} on ${request.host}`;

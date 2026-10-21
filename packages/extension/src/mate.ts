@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardName, CardSchema, check, OPS, type Card } from "@fleet/protocol";
+import { CardName, CardSchema, check, DELIVERIES, OPS, type Card } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
@@ -18,8 +18,15 @@ const DispatchParams = Type.Object({
   }),
   task: Type.String({
     minLength: 1,
-    description: "The task message: the outcome, the spec, and the delivery mode",
+    description:
+      "The task message: the captain's intent and the spec. Dispatch adds the Delivery line from the card",
   }),
+  delivery: Type.Optional(
+    Type.Enum(DELIVERIES, {
+      description:
+        "Only when the captain asked for another mode for this work: records it on the ship card. Otherwise the card keeps its project's mode",
+    }),
+  ),
   replace: Type.Optional(Type.Boolean({ description: "Replace a live attempt on another host" })),
 });
 
@@ -150,7 +157,7 @@ export function registerMate(
     name: "close",
     label: "Close",
     description:
-      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. Then the card is Done. If the work did not land it refuses, and close(card, summary=<why>, landed=false) ends it as Dropped. It refuses while the card has a hold. Main relays the summary to the captain.",
+      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the work did not land it refuses, and close(card, summary=<why>, landed=false) ends it as Dropped. It refuses while the card has a hold. Main relays the summary to the captain.",
     parameters: CloseParams,
     execute: async (_id, params) =>
       reply(await close(link, { card: params.card, text: params.summary, landed: params.landed })),
@@ -159,7 +166,7 @@ export function registerMate(
     name: "dispatch",
     label: "Dispatch",
     description:
-      "Starts a worker for a card in its own worktree on a host, and sends it the task message.",
+      "Starts a worker for a card in its own worktree on a host, and sends it the task message with the card's delivery mode.",
     parameters: DispatchParams,
     execute: async (_id, params) =>
       reply(await dispatch(link, launch, { ...params, replace: params.replace ?? false })),

@@ -35,6 +35,7 @@ test("close refuses Done for work whose worker has not reported done, and landed
   assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, landed: false }), {
     mode: "dropped",
     verify: false,
+    land: false,
     attempts: [
       {
         session: `c-${String(card.id)}-a1`,
@@ -70,6 +71,7 @@ test("close.begin lists every attempt of the card, including a replaced one", as
   assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, landed: false }), {
     mode: "dropped",
     verify: false,
+    land: false,
     attempts: [
       {
         session: name(1),
@@ -173,6 +175,7 @@ test("a ship card that only did an operation closes as Done, as c-9 did", async 
   assert.deepEqual(plan, {
     mode: "done",
     verify: true,
+    land: false,
     attempts: [
       {
         session: `${name}-a1`,

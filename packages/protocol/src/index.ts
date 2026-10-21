@@ -31,6 +31,10 @@ export type Holder = Static<typeof Holder>;
 
 export const MERGE_OPTIONS = ["Approve & merge", "Request changes"] as const;
 
+export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only"] as const;
+const Delivery = Type.Enum(DELIVERIES);
+export type Delivery = Static<typeof Delivery>;
+
 const Status = Type.Enum(STATUSES);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const ReportStatus = Type.Enum(REPORT_STATUSES);
@@ -58,6 +62,7 @@ export const CardSchema = Type.Object({
   status: Status,
   revision: Type.Integer(),
   pr: Nullable(Type.String()),
+  delivery: Nullable(Delivery),
   intent: Type.String(),
   spec: Type.String(),
   createdAt: Type.Integer(),
@@ -198,6 +203,7 @@ export const OPS = {
     result: Type.Object({
       mode: Type.Enum(["done", "dropped"]),
       verify: Type.Boolean(),
+      land: Type.Boolean(),
       attempts: Type.Array(
         Type.Object({
           session: Type.String(),
@@ -238,6 +244,7 @@ export const OPS = {
       host: Type.String({ minLength: 1 }),
       replace: Type.Optional(Type.Boolean()),
       task: Type.String({ minLength: 1 }),
+      delivery: Type.Optional(Delivery),
     }),
     result: Type.Object({
       session: Type.String(),
@@ -250,6 +257,7 @@ export const OPS = {
       branch: Type.String(),
       name: Type.String(),
       lane: Type.String(),
+      delivery: Nullable(Delivery),
     }),
   },
   "job.start": {

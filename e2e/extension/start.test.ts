@@ -101,7 +101,10 @@ test("a worker whose token begins with a dash starts on its task", async () => {
   mate.prompt("ship the scrollbar fix");
 
   const first = await h.waitForCall(0, "worker", WORKER_WAIT_MS);
-  assert.equal(lastUser(first), "[fleet] main on c-1 one-scrollbar: fix it");
+  assert.equal(
+    lastUser(first),
+    "[fleet] main on c-1 one-scrollbar: fix it\n\nDelivery: no-mistakes",
+  );
   const woken = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(woken),

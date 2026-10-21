@@ -1,6 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
-import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
+import {
+  beginAttempt,
+  finishJob,
+  localLanding,
+  runningJobs,
+  startJob,
+  touchJob,
+} from "./attempts.ts";
 import { boardView, cardView } from "./board.ts";
 import { applyChange, requireOrdinary, type Draft } from "./change.ts";
 import { recordMerge } from "./check.ts";
@@ -29,6 +36,7 @@ interface Done {
 type PrFields =
   | { readonly pr: string; readonly prState: PullRequest["state"] }
   | { readonly prNote: string }
+  | { readonly landing: string }
   | Record<string, never>;
 type Handler = (
   db: DatabaseSync,
@@ -123,6 +131,7 @@ const HANDLERS: Record<OpName, Handler> = {
       host: args.host,
       replace: args.replace ?? false,
       task: args.task,
+      delivery: args.delivery,
     });
     if (!begun.resumed) applyChange(db, card, { kind: "dispatch" });
     return { value: begun, notify: [] };
@@ -196,8 +205,16 @@ const HANDLERS: Record<OpName, Handler> = {
 
 async function findReportedPr(db: DatabaseSync, session: Session, raw: unknown): Promise<PrFields> {
   const { status } = check(OPS.report.args, raw);
-  if (status !== "done" || session.card === null || getCard(db, session.card).kind !== "ship")
-    return {};
+  if (status !== "done" || session.card === null) return {};
+  const card = getCard(db, session.card);
+  if (card.kind !== "ship") return {};
+  if (card.delivery === "local-only") {
+    const local = localLanding(db, card.id);
+    if (local === undefined) return { landing: "local-only: the card has no branch" };
+    return {
+      landing: `local-only: branch ${local.branch} lands on local ${local.base} when the card closes`,
+    };
+  }
   const found = await lookUpPr(db, session.card);
   if (found.kind === "found") return { pr: found.pr.url, prState: found.pr.state };
   if (found.kind === "unknown") return { prNote: `PR unknown: ${found.reason}` };

@@ -43,7 +43,7 @@ const suffix = (entry: Entry, key: string, label: string): string => {
 function prSuffix(entry: Entry): string {
   const url = field(entry, "pr");
   const state = field(entry, "prState");
-  if (url === undefined) return suffix(entry, "prNote", "");
+  if (url === undefined) return suffix(entry, "prNote", "") + suffix(entry, "landing", "");
   return ` (PR ${url}${state === undefined || state === "OPEN" ? "" : `, ${state.toLowerCase()}`})`;
 }
 

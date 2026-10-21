@@ -70,12 +70,12 @@ test("board shows the open cards by what needs attention, and counts the closed 
       "  web,no-mistakes,maverick p620,off",
       'open: "5 (needs-you 1, with-mate 1, working 1, queued 1, waiting 1)"',
       'closed: "2 (done 1, dropped 1)"',
-      "cards[5]{card,status,waits,title}:",
-      "  2,needs-you,captain,Pick the API version",
-      "  7,with-mate,main,Pick an ad channel",
-      "  3,working,worker,Fix the scrollbar",
-      "  4,queued,main,Write the docs",
-      "  1,waiting,cleo,cleo",
+      "cards[5]{card,status,waits,delivery,title}:",
+      "  2,needs-you,captain,none,Pick the API version",
+      "  7,with-mate,main,report,Pick an ad channel",
+      "  3,working,worker,no-mistakes,Fix the scrollbar",
+      "  4,queued,main,no-mistakes,Write the docs",
+      "  1,waiting,cleo,none,cleo",
       "help[3]:",
       "  Call `board(card=<card>)` to read a card: its hold, PR, branch, and thread",
       '  Call `board(status="closed")` to list the newest closed cards',
@@ -96,7 +96,7 @@ test("board filters by status and lane, caps the closed cards, adds fields, and 
   ]);
   assert.match(
     dropped ?? "",
-    /^cards\[1\]\{card,status,waits,title\}:\n {2}6,dropped,nobody,Try the old banner$/m,
+    /^cards\[1\]\{card,status,waits,delivery,title\}:\n {2}6,dropped,nobody,report,Try the old banner$/m,
   );
   assert.equal(
     cleo,
@@ -106,23 +106,23 @@ test("board filters by status and lane, caps the closed cards, adds fields, and 
       "lane: cleo",
       'open: "2 (with-mate 1, waiting 1)"',
       "closed: 0",
-      "cards[2]{card,status,waits,title}:",
-      "  7,with-mate,main,Pick an ad channel",
-      "  1,waiting,cleo,cleo",
+      "cards[2]{card,status,waits,delivery,title}:",
+      "  7,with-mate,main,report,Pick an ad channel",
+      "  1,waiting,cleo,none,cleo",
       "help[2]:",
       "  Call `board(card=<card>)` to read a card: its hold, PR, branch, and thread",
       '  Call `board(fields="lane,pr")` for more columns: name, lane, kind, project, pr, summary, updated',
     ].join("\n"),
   );
   assert.match(capped ?? "", /^hidden: 1 older closed cards$/m);
-  assert.match(capped ?? "", /^cards\[1\]\{card,status,waits,title\}:$/m);
+  assert.match(capped ?? "", /^cards\[1\]\{card,status,waits,delivery,title\}:$/m);
   assert.match(
     capped ?? "",
     /^ {2}Call `board\(status="closed", limit=<n>\)` to list more closed cards$/m,
   );
   assert.match(
     fields ?? "",
-    /^cards\[1\]\{card,status,waits,title,lane,summary\}:\n {2}3,working,worker,Fix the scrollbar,main,"The scrollbar doubles because/m,
+    /^cards\[1\]\{card,status,waits,delivery,title,lane,summary\}:\n {2}3,working,worker,no-mistakes,Fix the scrollbar,main,"The scrollbar doubles because/m,
   );
   assert.equal(
     unknown,
@@ -156,14 +156,14 @@ test("board(card=N) shows one card's hold, attempt, report, and thread, cut unti
   const view = scroll ?? "";
   assert.match(
     view,
-    /^card:\n {2}id: 3\n {2}name: fix-the-scrollbar\n {2}title: Fix the scrollbar\n {2}kind: ship\n {2}project: web\n {2}lane: main\n {2}status: working\n {2}waits: worker\n {2}pr: none\n/,
+    /^card:\n {2}id: 3\n {2}name: fix-the-scrollbar\n {2}title: Fix the scrollbar\n {2}kind: ship\n {2}project: web\n {2}delivery: no-mistakes\n {2}lane: main\n {2}status: working\n {2}waits: worker\n {2}pr: none\n/,
   );
   assert.match(view, /^attempts\[1\]\{n,host,state,branch\}:\n {2}1,maverick,active,\S*c-3-a1$/m);
   assert.match(view, /^report: \/tmp\/scrollbar-report\.md$/m);
   assert.doesNotMatch(view, /^(hold|intent|spec):/m);
   assert.match(
     view,
-    /^entries\[2\]\{id,age,from,kind,body\}:\n {2}\d+,\d+s ago,"worker:c-3-a1",report\/working,"The scrollbar doubles[^"\n]*\.\.\. \(truncated, 437 chars total, full=true shows all\)"\n {2}\d+,\d+s ago,"mate:main",comment,Fix the double scrollbar$/m,
+    /^entries\[2\]\{id,age,from,kind,body\}:\n {2}\d+,\d+s ago,"worker:c-3-a1",report\/working,"The scrollbar doubles[^"\n]*\.\.\. \(truncated, 437 chars total, full=true shows all\)"\n {2}\d+,\d+s ago,"mate:main",comment,"Fix the double scrollbar\\n\\nDelivery: no-mistakes"$/m,
   );
   assert.match(view, /^ {2}Call `board\(card=3, full=true\)` to see every text whole$/m);
 

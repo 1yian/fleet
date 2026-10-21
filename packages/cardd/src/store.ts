@@ -3,8 +3,10 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   CardSchema,
   check,
+  DELIVERIES,
   EntrySchema,
   type Card,
+  type Delivery,
   type Entry,
   type Status,
 } from "@fleet/protocol";
@@ -27,7 +29,7 @@ const SessionSchema = Type.Object({
 });
 
 const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', project,
-  'kind', kind, 'status', status, 'revision', revision, 'pr', pr, 'intent', intent, 'spec', spec,
+  'kind', kind, 'status', status, 'revision', revision, 'pr', pr, 'delivery', delivery, 'intent', intent, 'spec', spec,
   'createdAt', created_at, 'updatedAt', updated_at)`;
 export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
   'body', e.body, 'fields', json(e.fields), 'createdAt', e.created_at)`;
@@ -179,6 +181,13 @@ function nameFrom(title: string): string {
   return words.slice(0, 4).join("-").slice(0, 40).replace(/-+$/, "");
 }
 
+export function registeredDelivery(db: DatabaseSync, project: string): Delivery {
+  const mode = db.prepare("SELECT delivery FROM projects WHERE name = ?").get(project)?.[
+    "delivery"
+  ];
+  return DELIVERIES.find((each) => each === mode) ?? "no-mistakes";
+}
+
 export function addCard(
   db: DatabaseSync,
   card: {
@@ -194,8 +203,8 @@ export function addCard(
   const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO cards (title, name, lane, project, kind, status, intent, spec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+      `INSERT INTO cards (title, name, lane, project, kind, status, delivery, intent, spec, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
     )
     .run(
       card.title,
@@ -203,6 +212,9 @@ export function addCard(
       card.lane,
       card.project ?? null,
       card.kind,
+      card.kind === "ship" && card.project !== undefined
+        ? registeredDelivery(db, card.project)
+        : null,
       card.intent ?? "",
       card.spec ?? "",
       now,
