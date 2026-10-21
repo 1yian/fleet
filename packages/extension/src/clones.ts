@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { check, OPS } from "@fleet/protocol";
 import { HostUnreachable, NoTransport, onHost } from "./host.ts";
 import type { Link } from "./link.ts";
 
@@ -50,7 +49,7 @@ export function refreshEveryCloneOnFirstConnect(pi: ExtensionAPI, link: Link): v
     if (started) return;
     started = true;
     void (async () => {
-      const projects = check(OPS.projects.result, await link.call("projects", {}));
+      const projects = await link.call("projects", {});
       const clones = projects
         .filter(({ delivery }) => delivery !== "local-only")
         .flatMap(({ name, base, clones: each }) =>

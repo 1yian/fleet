@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { check, OPS } from "@fleet/protocol";
 import Type from "typebox";
 import { herdr, quote, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
@@ -49,7 +48,7 @@ export class Jobs {
   }
 
   async sync(): Promise<void> {
-    const jobs = check(OPS.jobs.result, await this.link.call("jobs", {}));
+    const jobs = await this.link.call("jobs", {});
     this.running.clear();
     for (const { id, label } of jobs) this.running.set(id, label);
   }
@@ -62,14 +61,11 @@ export class Jobs {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
     const { review } = options;
-    const { job, heartbeatMs, key } = check(
-      OPS["job.start"].result,
-      await this.link.call("job.start", {
-        label,
-        command,
-        ...(review === undefined ? {} : { review }),
-      }),
-    );
+    const { job, heartbeatMs, key } = await this.link.call("job.start", {
+      label,
+      command,
+      ...(review === undefined ? {} : { review }),
+    });
     this.running.set(job, label);
     const file = join(tmpdir(), `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`);
     const tab = `job-${String(job)}-${label}`;

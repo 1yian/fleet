@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { branchNameProblem, check, OPS } from "@fleet/protocol";
+import { branchNameProblem } from "@fleet/protocol";
 import Type from "typebox";
 import type { Link } from "./link.ts";
 
@@ -55,7 +55,7 @@ async function nameBranch(link: Link, cwd: string, name: string): Promise<string
     if (!renamed.ok) throw new Error(`could not rename ${from} to ${name}: ${renamed.err}`);
   }
   try {
-    check(OPS["branch.name"].result, await link.call("branch.name", { name }));
+    await link.call("branch.name", { name });
   } catch (error) {
     if (from !== name) await git(cwd, ["branch", "-m", name, from]);
     throw error;

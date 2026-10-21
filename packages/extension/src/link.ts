@@ -1,5 +1,8 @@
 import {
+  check,
+  OPS,
   parseServerMessage,
+  type OpResult,
   type ClientMessage,
   type OpName,
   type ServerMessage,
@@ -11,6 +14,14 @@ type Result = Extract<ServerMessage, { t: "result" }>;
 const CLOSE_NOT_LIVE = 4001;
 const CLOSE_UNREADABLE = 4003;
 const MAX_BACKOFF_MS = 10_000;
+
+function checkResult<N extends OpName>(op: N, value: unknown): OpResult<N>;
+function checkResult(op: OpName, value: unknown): unknown {
+  return check(OPS[op].result, value);
+}
+
+const unreadableResult = (op: OpName, error: unknown): string =>
+  `cardd's answer to ${op} cannot be read by this session (${error instanceof Error ? error.message : String(error)}). This session runs other code than cardd, most likely loaded before an update: restart this session so it loads the current code (main: lane(<lane>, "restart")).`;
 
 export interface LinkOptions {
   readonly url: string;
@@ -70,14 +81,19 @@ export class Link {
     this.socket?.close(1000);
   }
 
-  call(op: OpName, args: unknown): Promise<unknown> {
+  call<N extends OpName>(op: N, args: unknown): Promise<OpResult<N>> {
     if (!this.connected)
       return Promise.reject(new Error("cardd is unreachable; try again shortly"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, (result) => {
-        if (result.ok) resolve(result.value);
-        else reject(new Error(result.error));
+        if (!result.ok) reject(new Error(result.error));
+        else
+          try {
+            resolve(checkResult(op, result.value));
+          } catch (error) {
+            reject(new Error(unreadableResult(op, error), { cause: error }));
+          }
       });
       this.send({ t: "call", id, op, args });
     });

@@ -386,6 +386,7 @@ export const OPS = {
 } as const;
 export type OpName = keyof typeof OPS;
 export type OpArgs<O extends OpName> = Static<(typeof OPS)[O]["args"]>;
+export type OpResult<O extends OpName> = Static<(typeof OPS)[O]["result"]>;
 
 const ClientMessage = Type.Union([
   Type.Object({

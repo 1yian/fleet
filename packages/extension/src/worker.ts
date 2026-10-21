@@ -1,5 +1,5 @@
+import { OPS } from "@fleet/protocol";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardSchema, check, OPS } from "@fleet/protocol";
 import Type from "typebox";
 import { parseUtc, textOf } from "./inbox.ts";
 import type { Jobs } from "./jobs.ts";
@@ -91,7 +91,7 @@ export class WorkerRun {
           until,
           replyTo: params.replyTo,
         };
-        const card = check(CardSchema, await this.link.call("report", args));
+        const card = await this.link.call("report", args);
         this.latest = { status: params.status, until };
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
