@@ -1,35 +1,53 @@
 import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
-import { findPullRequest, repoOfRemote, type PullRequest } from "./github.ts";
+import { findPullRequest, repoOfRemote, viewPullRequest, type PullRequest } from "./github.ts";
 
 export type PrLookup =
   | { readonly kind: "found"; readonly pr: PullRequest }
   | { readonly kind: "none"; readonly branches: readonly string[] }
   | { readonly kind: "unknown"; readonly reason: string };
 
-function placeOf(db: DatabaseSync, card: number): { repo: string | null; branches: string[] } {
-  const repo = db
+interface Place {
+  readonly repo: string | null;
+  readonly pr: string | null;
+  readonly branches: string[];
+}
+
+function placeOf(db: DatabaseSync, card: number): Place {
+  const row = db
     .prepare(
-      "SELECT p.repo AS repo FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ?",
+      "SELECT p.repo AS repo, c.pr AS pr FROM cards c LEFT JOIN projects p ON p.name = c.project WHERE c.id = ?",
     )
-    .get(card)?.["repo"];
+    .get(card);
   const branches = db
     .prepare("SELECT branch FROM attempts WHERE card = ? AND branch IS NOT NULL ORDER BY n DESC")
     .all(card)
-    .map((row) => String(row["branch"]));
-  return { repo: typeof repo === "string" ? repo : null, branches };
+    .map((each) => String(each["branch"]));
+  const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
+  return { repo: text(row?.["repo"]), pr: text(row?.["pr"]), branches };
+}
+
+async function findOrView({ repo, pr, branches }: Place): Promise<PrLookup> {
+  if (repo === null) {
+    if (pr === null)
+      return { kind: "unknown", reason: "its project has no GitHub repository on record" };
+    return { kind: "found", pr: await viewPullRequest(pr) };
+  }
+  if (branches.length === 0) return { kind: "none", branches };
+  const found = await findPullRequest(repo, branches);
+  return found === undefined ? { kind: "none", branches } : { kind: "found", pr: found };
 }
 
 export async function lookUpPr(db: DatabaseSync, card: number): Promise<PrLookup> {
-  const { repo, branches } = placeOf(db, card);
-  if (repo === null)
-    return { kind: "unknown", reason: "its project has no GitHub repository on record" };
-  if (branches.length === 0) return { kind: "none", branches };
   try {
-    const pr = await findPullRequest(repo, branches);
-    if (pr === undefined) return { kind: "none", branches };
-    db.prepare("UPDATE cards SET pr = ? WHERE id = ? AND pr IS NOT ?").run(pr.url, card, pr.url);
-    return { kind: "found", pr };
+    const found = await findOrView(placeOf(db, card));
+    if (found.kind === "found")
+      db.prepare("UPDATE cards SET pr = ? WHERE id = ? AND pr IS NOT ?").run(
+        found.pr.url,
+        card,
+        found.pr.url,
+      );
+    return found;
   } catch (error) {
     return { kind: "unknown", reason: error instanceof Error ? error.message : String(error) };
   }

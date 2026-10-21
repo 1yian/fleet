@@ -136,6 +136,12 @@ export class Cardd {
     }).trim();
   }
 
+  recordPrByHand(card: number, url: string): void {
+    const db = new DatabaseSync(this.db);
+    db.prepare("UPDATE cards SET pr = ? WHERE id = ?").run(url, card);
+    db.close();
+  }
+
   setRepo(project: string, repo: string): string {
     const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
     return execFileSync("node", args, {

@@ -115,3 +115,21 @@ test("project repo sets and corrects a project's GitHub repo, and close then fin
     stderr: /project nope is not in the registry/,
   });
 });
+
+test("a card whose PR is on record closes as Done once it merged, even with no repo on record", async () => {
+  const c = await Cardd.start();
+  cardd = c;
+  const main = await c.connect(c.addLane("main"));
+  c.addProject("Cleo", { p620: "/clones/Cleo" });
+  const pr = "https://github.com/Aiva-Labs-AI/Cleo/pull/2447";
+  c.gh.setPr(pr, "OPEN", { ci: "pass" });
+  const { card } = await shipDone(main, c, "Cleo", "p620", pr);
+  c.recordPrByHand(card.id, pr);
+
+  await assert.rejects(main.call("close.begin", { card: card.id }), {
+    message: `c-${String(card.id)} did not land: its PR ${pr} has not merged. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it, then close it. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
+  });
+  c.gh.setPr(pr, "MERGED");
+  const plan = await closePlan(main, card.id);
+  assert.deepEqual([plan.mode, plan.verify, plan.noRepoHint], ["done", false, undefined]);
+});
