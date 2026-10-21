@@ -120,9 +120,12 @@ cardd project yolo <name> on|off --db <file>
 - `jobs.ts`: `cardd` records a job first. The wrapper posts the result, which arrives as a fleet entry, also after a Pi restart. Nothing runs a job again. A running job is a tracked wait.
 - `job.ts` is the wrapper. It reads its job from a private file, so the token never appears in shell history. It keeps the last lines of output, whole across split reads and split characters. It sends heartbeats until the result is taken. A closed tab can take the wrapper down soon after its hangup, so it reports as soon as the command ends or a moment passes, and `cardd` keeps only the first result. A 401 means the attempt ended and nobody waits.
 
+### Prerequisites
+
+- Every prerequisite of a host is one table in `prerequisites.ts`: the tools with their floors and fixes, plus the conversation-memory package of each home. `fleet up`, `fleet restart`, `fleet update`, and `wait_review` use it, so there is one check and one set of messages. The memory package is checked with the loader's own `verifyPackage`, the same step `fleet home memory` uses to decide to prepare it again, so a stale package fails the check and not only a missing one.
+
 ### Review pages
 
-- Lavish is a prerequisite of the fleet. `lavish.ts` checks that `lavish-axi` is on the `PATH` at or above its floor, 0.1.80, the first release whose `reply` confirms that the page took the answer. `fleet up` and `fleet restart` refuse without it, so main tells the captain about the host.
 - `review.ts` is `wait_review`, which mirrors Firstmate's crew-hosted Lavish boards. The worker owns its page, but never polls it: a review job runs `lavish-axi poll` in its own tab through the `run_long` wrapper. A review job keeps the whole feedback, not the last lines, and waits up to a week.
 - `cardd` opens the round's decision, key `review-<job>`, in the same transaction that records the job, so feedback can never come before its decision. The job's result is a `review-feedback` entry that answers that key, which ends the hold and sends the card back to work, as a mate's answer does. It stays off the board's thread: the captain wrote it on the page.
 - Lavish's own next steps in the feedback say to poll the page again. The review job does that, so `inbox.ts` drops them and gives the fleet's next step.

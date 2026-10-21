@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -93,7 +94,7 @@ test("fleet up starts no mate on a host whose lavish-axi is too old, and says ho
       const stderr = error instanceof Error ? String(Reflect.get(error, "stderr")) : "";
       assert.equal(
         stderr,
-        "lavish-axi 0.1.10 is too old. The fleet needs lavish-axi 0.1.80 or later on every host. Install it with: npm install -g lavish-axi\n",
+        `lavish-axi 0.1.10 is too old on ${hostname()} (need 0.1.80 or later). Fix: npm install -g lavish-axi\n`,
       );
       return true;
     },

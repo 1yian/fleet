@@ -11,6 +11,33 @@ The captain's routine is one step: open a terminal in the fleet repository and r
 - **A lane home is a folder with `config/lane.json`.** Pi started anywhere else loads none of this. A worker in a worktree of this repository gets only the extension that dispatch passes with `-e`, and needs no installed packages.
 - **cardd is not part of main.** It runs under launchd on one host, from its own checkout. Only `/updatefleet` restarts it (section 7). Never start, stop, or restart it by hand.
 
+## Prerequisites
+
+Every host that runs a mate or a worker needs these tools on the `PATH` of the mates' and workers' shells and of a non-interactive SSH session. One check owns the list: `packages/extension/src/prerequisites.ts`.
+
+| Tool                | Minimum                        | Why                                                                                                                                                         | Install or fix                                                                                    |
+| ------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `node`              | 24                             | Runs the extension, `fleet`, and `cardd`.                                                                                                                   | `brew install node@24` (macOS) or see https://nodejs.org                                          |
+| `git`               | 2.31                           | Lane homes, worktrees, and dispatch.                                                                                                                        | `brew install git` (macOS) or `apt install git` (Debian)                                          |
+| `gh`                | any, and logged in             | Finds and merges pull requests.                                                                                                                             | `brew install gh` or `apt install gh`, then `gh auth login`. The check runs `gh auth status`.     |
+| `herdr`             | 0.9.5                          | Every mate, worker, and job runs in a herdr pane.                                                                                                           | https://github.com/herdrdev/herdr/releases                                                        |
+| `zstd`              | any                            | Archives a closed card's worktree.                                                                                                                          | `brew install zstd` or `apt install zstd`                                                         |
+| `lavish-axi`        | 0.1.80                         | Workers show review pages, and the fleet waits on the captain's feedback. 0.1.80 is the first release whose `reply` confirms that the page took the answer. | `npm install -g lavish-axi`                                                                       |
+| `no-mistakes`       | any                            | Validates the changes of projects that use it.                                                                                                              | `curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh \| sh` |
+| `direnv`            | any                            | Mates and clone commands run under `direnv exec`.                                                                                                           | `brew install direnv` or `apt install direnv`                                                     |
+| conversation memory | the loader accepts the package | A mate with `config/optchat.json` loads it at start.                                                                                                        | Install the loader from the dotfiles, then `<checkout>/bin/fleet home memory <lane>` (section 4)  |
+
+Conversation memory is checked for every home on the host whose `config/optchat.json` does not say `"enabled": false`. The loader (`~/.pi/agent/extensions/fm-optchat` and `~/.pi/agent/optchat/package.mjs`) must be there, the package that the file names (by default `config/optchat/package`) must exist, and the loader's own `verifyPackage` must accept it. A package that is there but stale, such as after a dotfiles update changed a patch, fails the check as a missing one does. A stale package once crash-looped four mates.
+
+The fleet checks all of this on each host before it starts a mate, and before `/updatefleet` changes anything:
+
+- `fleet up` and `fleet restart` print every problem of the host, one on each line, then exit without starting a mate. Each line names the tool, the host, and the fix. Main runs `fleet up` on every host when it starts and every minute after, so it tells the captain about such a host. A worker's `wait_review` refuses the same way when `lavish-axi` is missing or too old.
+- `fleet update --check` and `fleet update` report the same problems as a refusal. `update_fleet` and `/updatefleet` check every host in `config/lane.json` first, over its transport, and stop before they pull, build, or restart anything. The refusal lists the problems of every host at once.
+
+The check does not test that the cardd host is reachable over Tailscale. Mates reconnect to `cardd` by themselves while it restarts, so a mate must start when `cardd` is down, and a reachability test would be slow and flaky.
+
+Each host runs its own Lavish server, so the captain's browser must reach that host, as it does over Tailscale.
+
 ## 1. A checkout on each host
 
 ```sh
@@ -19,16 +46,7 @@ git clone https://github.com/1yian/fleet ~/.fleet/app         # on a host that o
 cd <checkout> && npm ci && npm run build
 ```
 
-Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Each host needs Node 24 or later, Pi, herdr, git, `gh` (logged in), `zstd`, `lavish-axi` 0.1.80 or later, and `no-mistakes` for projects that use it.
-
-`lavish-axi` is a prerequisite of the fleet. Workers show the captain HTML review pages with it, and the fleet waits on the captain's feedback with it. Install it on each host, so that it is on the `PATH` of the mates' and workers' shells and of a non-interactive SSH session:
-
-```sh
-npm install -g lavish-axi
-lavish-axi --version     # 0.1.80 or later
-```
-
-`fleet up` and `fleet restart` refuse to start a mate on a host whose `lavish-axi` is missing or too old, and say how to install it. Main runs `fleet up` on every host when it starts and every minute after, so it tells the captain about such a host. A worker's `wait_review` refuses the same way. Each host runs its own Lavish server, so the captain's browser must reach that host, as it does over Tailscale.
+Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Every host needs the tools in [Prerequisites](#prerequisites).
 
 To update later, type `/updatefleet` in main, or ask main to update the fleet. Section 7 says what it does.
 
@@ -72,7 +90,7 @@ $CARDD project repo web acme/web --db ~/.fleet/cards.db
 - `cardd` finds a ship card's PR on GitHub by the card's branch, so it needs the project's GitHub repository. It reads it from the `origin` remote of the project's clones, on any host: over `--hosts` for a listed host, and here for any other. It reads it when the project is added, when `cardd serve` starts, and every minute while it runs and the repository is still unknown. A host that does not answer only delays it. `project add` takes the same `--hosts`.
 - `project repo <name> <owner>/<name>` sets a project's GitHub repository, or corrects a wrong one. Use it for a project whose clones have no GitHub `origin`, or with `--repo` on `project add`. Until a project has one, `close` cannot see that a ship card's PR merged. It then checks the card's commits in the clones instead, and when they are not on the base branch, such as after a squash merge, it says that the project has no GitHub repository on record.
 - The fleet keeps clones current with their `origin`, as Firstmate did. Dispatch fetches first and branches from `origin/<base>`, and refuses when the fetch fails. When main starts, and after `close` ends a ship card, each clone is fetched, branches whose remote branch is gone are pruned, and a clean base branch is fast-forwarded. A clone with uncommitted changes, another branch checked out, or a diverged base is left alone and reported as `STUCK`. A clone that is a fleet home, such as main's checkout, is only fetched: update it with `/updatefleet` (section 7).
-- Every fetch the fleet runs in a clone, by dispatch or by the refresh, runs as `direnv exec <clone> git ...` when `direnv` is installed, on the clone's own host. A clone under a folder whose `.envrc` exports a work login, such as `~/cnp`, then reaches its private remote. A clone with no `.envrc` fetches as before, and so does a host without `direnv`. The `.envrc` must be allowed (`direnv allow <folder>`) on that host. When it is not, the fleet fetches without it, and if that fails too, the refresh line and the dispatch error say `direnv blocks the .envrc that applies to <clone>, run: direnv allow <clone>`. `direnv` must be on the `PATH` of a non-interactive SSH session on a remote host. A worker gets the same environment only from its own pane's shell (section 5), which is the worktree next to the clone, under the same folder.
+- Every fetch the fleet runs in a clone, by dispatch or by the refresh, runs as `direnv exec <clone> git ...` on the clone's own host. A clone under a folder whose `.envrc` exports a work login, such as `~/cnp`, then reaches its private remote. A clone with no `.envrc` fetches as before. The `.envrc` must be allowed (`direnv allow <folder>`) on that host. When it is not, the fleet fetches without it, and if that fails too, the refresh line and the dispatch error say `direnv blocks the .envrc that applies to <clone>, run: direnv allow <clone>`. `direnv` must be on the `PATH` of a non-interactive SSH session on a remote host. A worker gets the same environment only from its own pane's shell (section 5), which is the worktree next to the clone, under the same folder.
 
 ## 4. Main
 

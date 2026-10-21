@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
+import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
 

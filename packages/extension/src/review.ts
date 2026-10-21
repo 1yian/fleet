@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { quote } from "./host.ts";
 import { REVIEW_LABEL, type Jobs } from "./jobs.ts";
-import { lavishProblem } from "./lavish.ts";
+import { lavishProblem } from "./prerequisites.ts";
 
 const REVIEW_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
 const FEEDBACK = { tailLines: 5000, lineChars: 100_000 };
