@@ -259,3 +259,50 @@ test(
     assert.ok(!existsSync(join(scratch.root, "state", "optchat-activation.json")));
   },
 );
+
+test(
+  "`fleet home memory` turns a second mate's memory back on after it was set off",
+  { skip: existsSync(DOTFILES) ? false : `no dotfiles checkout at ${DOTFILES}` },
+  async () => {
+    installLoader();
+    const agent = { PI_CODING_AGENT_DIR: join(h.dir, "agent") };
+    const token = cardd.addLane("board", "main");
+    const home = scratch.addLane("board", {
+      url: cardd.url,
+      token,
+      args: [...mateArgs(h), "-e", PROBE],
+    });
+    scratch.fleet(
+      ["home", "memory", "board", "--source", PACKAGE, "--compactor", "fake/scripted"],
+      agent,
+    );
+    const settings = join(home, "config", "optchat.json");
+    const written = parseRecord(readFileSync(settings, "utf8"));
+    writeFileSync(settings, JSON.stringify({ ...written, enabled: false }));
+
+    const again = scratch.fleet(["home", "memory", "board", "--source", PACKAGE], agent);
+    assert.match(again, /board: settings: turned memory on in config\/optchat.json/);
+    assert.deepEqual(parseRecord(readFileSync(settings, "utf8")), written);
+    const third = scratch.fleet(["home", "memory", "board", "--source", PACKAGE], agent);
+    assert.equal(third.match(/is there already/g)?.length, 3, third);
+
+    h.onModel(() => ({ text: "noted" }), "mate");
+    scratch.fleet(["up", "board"], { ...agent, HERDR_SESSION: lab.name });
+    await h.waitFor((event) => event["type"] === "fleet_connected", "board to join the fleet");
+    const main = await cardd.connect(mainToken);
+    await main.call("comment", { lane: "board", text: `Ship the plugin: ${IDLE_WORD}.` });
+    await main.close();
+
+    const receipt = await until(() => {
+      const file = join(home, "state", "optchat-activation.json");
+      return existsSync(file) ? parseRecord(readFileSync(file, "utf8")) : undefined;
+    }, "board's memory to load");
+    assert.equal(receipt["profile"], "board");
+    assert.equal(receipt["memoryHome"], join(realpathSync(home), "data", "optchat"));
+    const item = await until(
+      () => withText(jsonl(join(home, "data", "optchat", "profiles", "board", "main")), IDLE_WORD),
+      "the message in board's memory journal",
+    );
+    assert.equal(item["kind"], "user");
+  },
+);

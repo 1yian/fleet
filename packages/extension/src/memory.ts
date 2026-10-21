@@ -94,7 +94,15 @@ function makeProfile(home: string, lane: string, options: MemoryOptions): string
 
 function writeSettings(home: string, lane: string, options: MemoryOptions): string {
   const file = join(home, "config", "optchat.json");
-  if (existsSync(file)) return "settings: config/optchat.json is there already";
+  if (existsSync(file)) {
+    const found: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!isRecord(found)) throw new Error(`${file} is not a JSON object`);
+    if (found["enabled"] !== false) return "settings: config/optchat.json is there already";
+    writeFileSync(file, `${JSON.stringify({ ...found, enabled: true }, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    return "settings: turned memory on in config/optchat.json";
+  }
   const [provider, model] = options.compactor?.split("/") ?? [];
   const settings = {
     enabled: true,
