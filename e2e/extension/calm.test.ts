@@ -91,6 +91,8 @@ const REPLY = "Cleo wants a decision on the scrollbar fix.";
 const CAPTAIN = "Any news for me?";
 const ANSWER = "Nothing else is waiting.";
 const BANNER_REPLY = "The banner can go.";
+const TRANSCRIPT_BOTTOM = "\u001b[1;5F";
+const TRANSCRIPT_TOP = "\u001b[1;5H";
 const showing =
   (shown: readonly string[], hidden: readonly string[] = []) =>
   (screen: string): boolean =>
@@ -159,13 +161,21 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   keep("5-after-restart", restarted);
 
   await lab.submit(pane, "/calm");
-  const off = await screenWhere(
+  await screenWhere(pane, "the expanded note and tool", showing([NOTE, TOOL_ROW]));
+  await lab.run(["pane", "send-text", pane, TRANSCRIPT_BOTTOM]);
+  const bottom = await screenWhere(pane, "the restored transcript end", showing([BANNER_REPLY]));
+  keep("6-calm-off-bottom", bottom);
+  assert.equal(bottom.includes(FLEET_ROW), false);
+  await lab.run(["pane", "send-text", pane, TRANSCRIPT_TOP]);
+  const off = await screenWhere(pane, "the rows to return", showing([FLEET_ROW, NOTE, TOOL_ROW]));
+  keep("7-calm-off-top", off);
+  await lab.run(["pane", "send-text", pane, TRANSCRIPT_BOTTOM]);
+  const latest = await screenWhere(
     pane,
-    "the rows to return",
-    showing([FLEET_ROW, NOTE, TOOL_ROW]),
-    true,
+    "the later conversation after restored rows",
+    showing([CAPTAIN, ANSWER, BANNER_REPLY]),
   );
-  keep("6-calm-off", off);
+  keep("8-calm-off-conversation", latest);
   assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "off\n");
 });
 
