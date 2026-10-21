@@ -3,39 +3,14 @@ import {
   CustomMessageComponent,
   ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
+import { methodOf, once, patchRender } from "../patch.ts";
 import { calmTextIsSubstantive } from "./preservation.ts";
 import { calmActive } from "./state.ts";
 
 type AssistantMessage = Parameters<AssistantMessageComponent["updateContent"]>[0];
 
-function once(name: string, install: () => void): void {
-  const key = Symbol.for(`fleet:calm-patch:${name}`);
-  if (Reflect.get(globalThis, key) === true) return;
-  Reflect.set(globalThis, key, true);
-  install();
-}
-
-function methodOf(proto: object, member: string): (self: object, ...args: unknown[]) => unknown {
-  const method: unknown = Reflect.get(proto, member);
-  if (typeof method !== "function") throw new Error(`Fleet Calm requires Pi ${member}()`);
-  return (self, ...args) => {
-    const result: unknown = Reflect.apply(method, self, args);
-    return result;
-  };
-}
-
-function lines(value: unknown): string[] {
-  if (Array.isArray(value) && value.every((line) => typeof line === "string")) return value;
-  throw new Error("Pi's render did not return lines");
-}
-
 function hideRender(proto: object, name: string, hides: (row: object) => boolean): void {
-  once(name, () => {
-    const original = methodOf(proto, "render");
-    Reflect.set(proto, "render", function (this: object, width: number): string[] {
-      return hides(this) ? [] : lines(original(this, width));
-    });
-  });
+  patchRender(proto, name, (row, _width, drawn) => (hides(row) ? [] : drawn()));
 }
 
 const hasImages = (row: object): boolean => {

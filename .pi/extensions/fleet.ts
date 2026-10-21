@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const SOURCES = ["index.ts", "calm/index.ts", "optchat.ts"];
+const SOURCES = ["index.ts", "calm/index.ts", "transcript/index.ts", "optchat.ts"];
 
 export default async function fleetHome(pi: unknown): Promise<void> {
   if (!existsSync(join(process.cwd(), "config", "lane.json"))) return;

@@ -68,8 +68,11 @@ function keep(name: string, screen: string, colored: string): void {
   writeFileSync(join(EVIDENCE, `${name}.ansi`), colored);
 }
 
-const RULE = /^── (.+) ─+$/;
-const RULE_COLOR = /^\x1b\[[0-9;]*m── .+ ─+\x1b\[[0-9;]*m$/;
+const RULE = /^── ([a-z0-9-]+) ─+$/;
+const ESC = String.fromCharCode(27);
+const SGR = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
+const mutedRule = (line: string): boolean =>
+  line.startsWith(`${ESC}[`) && RULE.test(line.replace(SGR, "").trimEnd());
 
 interface Transcript {
   readonly shown: string[];
@@ -83,15 +86,15 @@ function transcript(screen: string): Transcript {
   const editor = lines.findIndex((line) => /^─+$/.test(line));
   const width = lines[editor]?.length ?? 0;
   const start = lines.findIndex((line) => line.startsWith("[Extensions]"));
-  const body = lines.slice(start + 1, editor);
+  const body = lines.slice(start + 2, editor);
   const rules = body.filter((line) => RULE.test(line));
   return {
     width,
     rules,
     gaps: body.every((line, index) => !RULE.test(line) || body[index - 1] === ""),
     shown: body
-      .filter((line) => line.trim() !== "")
-      .map((line) => (RULE.test(line) ? `── ${RULE.exec(line)?.[1]} ──` : line.trim())),
+      .filter((line) => line.trim() !== "" && !line.includes("Working"))
+      .map((line) => (RULE.test(line) ? `── ${RULE.exec(line)?.[1] ?? ""} ──` : line.trim())),
   };
 }
 
@@ -137,18 +140,16 @@ test("each message gets one muted rule and a sender label, through streaming, a 
   keep("2-reply", replied, colored);
   const first = transcript(replied);
   assert.deepEqual(first.shown, answered.slice(0, 7));
-  assert.ok(first.rules.every((rule) => rule.length === first.width), "a rule fills the width");
-  assert.ok(first.gaps, "a blank line precedes every rule");
   assert.ok(
-    colored.split("\n").some((line) => RULE_COLOR.test(line.trimEnd())),
-    "a rule is drawn in one muted color",
+    first.rules.every((rule) => rule.length === first.width),
+    "a rule fills the width",
   );
+  assert.ok(first.gaps, "a blank line precedes every rule");
+  assert.ok(colored.split("\n").some(mutedRule), "a rule is drawn in one muted color");
 
   await lab.submit(pane, THANKS);
   await h.waitForCall(2, "mate", WAIT_MS);
-  const yielded = await screenWhere(pane, "the silent yield", (screen) =>
-    screen.includes(THANKS),
-  );
+  const yielded = await screenWhere(pane, "the silent yield", (screen) => screen.includes(THANKS));
   keep("3-silent-yield", yielded, await lab.coloredScreen(pane));
   assert.deepEqual(transcript(yielded).shown, answered);
 
@@ -161,22 +162,23 @@ test("each message gets one muted rule and a sender label, through streaming, a 
   const squeezed = transcript(narrow);
   assert.ok(squeezed.rules.every((rule) => rule.length === squeezed.width));
   assert.ok(squeezed.gaps);
-  assert.deepEqual(squeezed.rules.map((rule) => RULE.exec(rule)?.[1]), [
-    "captain",
-    "1stmate",
-    "captain",
-  ]);
+  assert.deepEqual(
+    squeezed.rules.map((rule) => RULE.exec(rule)?.[1]),
+    ["captain", "1stmate", "captain"],
+  );
 });
 
 test("a restarted mate and a fleet row keep the same rules and labels", async () => {
   h.onModel(() => ({ text: "Cleo is idle." }), "mate");
   h.onModel(() => ({ text: RULING }), "mate");
   const pane = await startMain(lab, scratch, h);
+  await screenWhere(pane, "the mate to start", (screen) => screen.includes("[Extensions]"));
   await lab.submit(pane, CAPTAIN);
   await screenWhere(pane, "the first reply", (screen) => screen.includes(SECOND));
   const card: unknown = await cleo.call("card.new", { title: "Fix the scrollbar", kind: "scout" });
+  const id: unknown = Reflect.get(Object(card), "id");
   await cleo.call("hold", {
-    card: Reflect.get(Object(card), "id"),
+    card: id,
     question: "Fix the scrollbar?",
     options: ["Yes"],
   });

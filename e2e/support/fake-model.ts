@@ -43,7 +43,9 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
   const blocks = Array.isArray(texts)
     ? texts.filter((each) => typeof each === "string").map(fauxText)
     : [fauxText(text ?? "")];
-  return fauxAssistantMessage(thinking === undefined ? blocks : [fauxThinking(thinking), ...blocks]);
+  return fauxAssistantMessage(
+    thinking === undefined ? blocks : [fauxThinking(thinking), ...blocks],
+  );
 }
 
 const respond: FauxResponseFactory = async (context, options, _state, model) => {

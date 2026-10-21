@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { installPresentation } from "../patch.ts";
 import { hideAssistantChrome, hideFleetMessages, hideToolRows } from "./layout.ts";
 import { loadPreference, preferenceFile, savePreference } from "./preference.ts";
 import { calmActive, setCalmActive } from "./state.ts";
@@ -11,12 +12,7 @@ import {
 const PRESENTATION_EVENT = "firstmate:calm-presentation";
 
 function install(name: string, patch: () => void): void {
-  try {
-    patch();
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    console.error(`Fleet Calm: the ${name} presentation is unavailable, skipping. ${reason}`);
-  }
+  installPresentation("Calm", name, patch);
 }
 
 export default function calm(pi: ExtensionAPI): void {
