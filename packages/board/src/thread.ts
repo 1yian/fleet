@@ -17,6 +17,7 @@ export interface Row {
   readonly flow: Flow | undefined;
   readonly quiet: boolean;
   readonly text: string;
+  readonly original: string;
   readonly replyTo: Entry | undefined;
   readonly asker: string | undefined;
 }
@@ -81,10 +82,8 @@ function flowOf(entry: Entry, where: Where): Flow | undefined {
   return to === undefined ? undefined : { from: party(entry.author), to };
 }
 
-const isAgent = (name: string): boolean => name !== YOU && name !== WORKER;
-
 const quietFlow = (entry: Entry, flow: Flow | undefined): boolean =>
-  flow !== undefined && entry.author.startsWith("mate:") && isAgent(flow.to);
+  entry.author !== "captain" && flow?.to !== YOU;
 
 const words = (entry: Entry): string => entry.body.trim();
 
@@ -141,6 +140,7 @@ export function threadRows(entries: readonly Entry[], where: Where): Row[] {
       flow,
       quiet: quietFlow(entry, flow),
       text: entry.author === "captain" ? bodyOf(entry) : withoutQuotes(bodyOf(entry), said),
+      original: bodyOf(entry),
       replyTo,
       asker: askerOf(entry, before),
     };

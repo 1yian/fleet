@@ -194,7 +194,7 @@ test("a long task message is one line that opens to the whole text", async () =>
 test("a long message collapses, and Show more opens it", async () => {
   const { card, worker } = await shipped("Users see one scrollbar");
   const lines = Array.from({ length: 30 }, (_, index) => `line ${String(index + 1)}`);
-  await worker.call("report", { status: "working", text: lines.join("\n") });
+  assert.equal(await cardd.act(card.id, { kind: "comment", text: lines.join("\n") }), 200);
   await page.goto(`${http()}#/c-${String(card.id)}`);
   const thread = page.getByRole("list", { name: "Thread" });
   const body = thread.locator(".body");
