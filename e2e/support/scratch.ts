@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { Harness } from "./harness.ts";
 import type { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
+import "./tool-stubs.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const git = (cwd: string, ...args: string[]): string =>

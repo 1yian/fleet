@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { laneHomes } from "./homes.ts";
+import { hostProblems } from "./prerequisites.ts";
 
 const BRANCH = "main";
 const UPSTREAM = `origin/${BRANCH}`;
@@ -115,7 +116,11 @@ const homeProblems = (root: string): string[] =>
       : [`lane ${lane}'s home ${home} has commits that are not on ${UPSTREAM}`];
   });
 
-const problemsOf = (root: string): string[] => [...checkoutProblems(root), ...homeProblems(root)];
+const problemsOf = (root: string): string[] => [
+  ...hostProblems(root),
+  ...checkoutProblems(root),
+  ...homeProblems(root),
+];
 
 export function checkHost(root: string): HostUpdate | undefined {
   const problems = problemsOf(root);

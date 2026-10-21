@@ -29,7 +29,7 @@ const SOCKET_PATH_LIMIT = process.platform === "darwin" ? 103 : 107;
 const run = (file: string, args: readonly string[], cwd?: string): string =>
   execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd }).trim();
 
-const agentDir = (): string =>
+export const agentDir = (): string =>
   process.env["PI_CODING_AGENT_DIR"] ?? join(homedir(), ".pi", "agent");
 
 function fetchPublished(helperDir: string, into: string): string {
@@ -50,13 +50,16 @@ function fetchPublished(helperDir: string, into: string): string {
   return join(into, "package");
 }
 
-function loaderAccepts(helper: string, target: string): boolean {
-  const check = `const { verifyPackage } = await import(${JSON.stringify(pathToFileURL(helper).href)}); verifyPackage(${JSON.stringify(target)});`;
+export function packageProblem(helper: string, target: string): string | undefined {
+  const check = `const { verifyPackage } = await import(${JSON.stringify(pathToFileURL(helper).href)}); try { verifyPackage(${JSON.stringify(target)}); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }`;
   try {
     run("node", ["--input-type=module", "-e", check]);
-    return true;
-  } catch {
-    return false;
+    return undefined;
+  } catch (error) {
+    const stderr: unknown = Reflect.get(Object(error), "stderr");
+    const lines =
+      typeof stderr === "string" ? stderr.split("\n").filter((line) => line.trim() !== "") : [];
+    return lines.at(-1) ?? "the loader refused it";
   }
 }
 
@@ -65,7 +68,7 @@ function preparePackage(home: string, source: string | undefined): string {
   const helper = realpathSync(join(agentDir(), "optchat", "package.mjs"));
   const stale = `${PACKAGE}.stale-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   if (existsSync(target)) {
-    if (loaderAccepts(helper, target)) return `package: ${PACKAGE} is there already`;
+    if (packageProblem(helper, target) === undefined) return `package: ${PACKAGE} is there already`;
     renameSync(target, join(home, stale));
   }
   const scratch = mkdtempSync(join(tmpdir(), "fleet-optchat-"));

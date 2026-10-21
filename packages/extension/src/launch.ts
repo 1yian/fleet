@@ -11,9 +11,9 @@ import {
   type Outcome,
 } from "./homes.ts";
 import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
-import { lavishProblem } from "./lavish.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
+import { hostProblems } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
@@ -96,9 +96,9 @@ function lane(): string {
 }
 
 if (command === "up" || command === "restart") {
-  const problem = lavishProblem();
-  if (problem !== undefined) {
-    console.error(problem);
+  const problems = hostProblems(root);
+  if (problems.length > 0) {
+    console.error(problems.join("\n"));
     process.exit(1);
   }
 }
