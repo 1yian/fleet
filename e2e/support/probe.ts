@@ -59,8 +59,13 @@ export default function probe(pi: ExtensionAPI): void {
   pi.events.on("fleet:connected", () => {
     report({ type: "fleet_connected" });
   });
-  pi.on("session_start", (_event, ctx) => {
-    report({ type: "session", file: ctx.sessionManager.getSessionFile() });
+  pi.on("session_start", (event, ctx) => {
+    report({
+      type: "session",
+      file: ctx.sessionManager.getSessionFile(),
+      reason: event.reason,
+      cwd: ctx.cwd,
+    });
   });
   pi.on("message_start", (event) => {
     const entryId = entryIdOf(event.message);

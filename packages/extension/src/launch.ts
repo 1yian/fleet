@@ -13,12 +13,13 @@ import {
 import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
+import { convergeSharedPreferences } from "./standing.ts";
 import { hostProblems } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -38,6 +39,7 @@ const VALUE_OPTIONS = new Set([
   "--db",
   "--running",
   "--restart",
+  "--content",
 ]);
 const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
   if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
@@ -70,6 +72,8 @@ const { values, positionals } = parseArgs({
     db: { type: "string" },
     running: { type: "string" },
     restart: { type: "string" },
+    content: { type: "string" },
+    absent: { type: "boolean" },
   },
 });
 const [command, ...rest] = positionals;
@@ -119,6 +123,16 @@ switch (command ?? "") {
   case "up":
     show(await up(root, rest[0]));
     break;
+  case "shared": {
+    if (values.absent !== true && values.content === undefined) throw new Error(USAGE);
+    const bytes =
+      values.absent === true
+        ? undefined
+        : Buffer.from(values.content ?? "", "base64").toString("utf8");
+    for (const { lane: name, result } of convergeSharedPreferences(root, bytes))
+      console.log(`${name}: shared preferences ${result}`);
+    break;
+  }
   case "arrange":
     await arrangeHere().catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));

@@ -8,3 +8,5 @@ export const ROLE_PROMPTS: Readonly<Record<"mate" | "worker", string>> = {
   mate: read("mate"),
   worker: read("worker"),
 };
+
+export const STOW_PROMPT = read("stow").trim();

@@ -14,6 +14,8 @@ import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
 import { registerQuestions } from "./questions.ts";
 import { registerReview } from "./review.ts";
+import { standingRules } from "./standing.ts";
+import { registerStow } from "./stow.ts";
 import { titleMate } from "./titles.ts";
 import { registerUpdate } from "./updating.ts";
 import { WorkerRun } from "./worker.ts";
@@ -59,6 +61,8 @@ function charter(): string {
     return "";
   }
 }
+
+const mateContract = (): string => charter() + standingRules(HOME());
 
 function piArgs(): string[] {
   const parsed: unknown = JSON.parse(process.env["FLEET_PI_ARGS"] ?? "[]");
@@ -123,15 +127,18 @@ function start(
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
-  if (role === "mate") registerQuestions(pi, link, () => sessionFile);
-  if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
+  if (role === "mate") {
+    registerQuestions(pi, link, () => sessionFile);
+    registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
+    registerStow(pi, HOME(), lane);
+  }
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
   }
 
   pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? charter() : ""}`,
+    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? mateContract() : ""}`,
   }));
   pi.on("session_shutdown", () => {
     link.stop();
