@@ -76,7 +76,13 @@ function formatReview(entry: Entry, card: string): string {
 
 const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
 
-export function format(entry: Entry, name: string): string {
+const AGAIN = " (sent again: the turn that got it ended before it was taken in)";
+
+export function format(entry: Entry, name: string, again = false): string {
+  return `${formatOnce(entry, name)}${again ? AGAIN : ""}`;
+}
+
+function formatOnce(entry: Entry, name: string): string {
   const card = name === "" ? `c-${String(entry.card)}` : `c-${String(entry.card)} ${name}`;
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);

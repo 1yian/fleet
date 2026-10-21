@@ -1,5 +1,7 @@
 CREATE INDEX cards_by_status ON cards (status);
 
+CREATE INDEX deliveries_not_taken ON deliveries (session) WHERE intake IN ('waiting', 'resent');
+
 CREATE INDEX entries_by_card ON entries (card, id);
 
 CREATE UNIQUE INDEX one_live_attempt ON attempts (card) WHERE state IN ('starting', 'active');
@@ -76,7 +78,8 @@ CREATE TABLE deliveries (
   session TEXT NOT NULL REFERENCES sessions (id),
   entry INTEGER NOT NULL REFERENCES entries (id),
   state TEXT NOT NULL CHECK (state IN ('pending', 'pushed', 'acknowledged', 'confirmed')),
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, intake TEXT NOT NULL DEFAULT 'waiting'
+  CHECK (intake IN ('waiting', 'resent', 'escalated', 'taken')),
   PRIMARY KEY (session, entry)
 ) STRICT, WITHOUT ROWID;
 

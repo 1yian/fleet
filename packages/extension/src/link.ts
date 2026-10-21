@@ -26,6 +26,7 @@ export class Link {
   private backoff = 250;
   private nextId = 1;
   private readonly pending = new Map<number, (result: Result) => void>();
+  private readonly untoldAcks = new Set<number>();
   private readonly options: LinkOptions;
 
   constructor(options: LinkOptions) {
@@ -74,6 +75,7 @@ export class Link {
 
   ack(entry: number): void {
     if (this.connected) this.send({ t: "ack", entry });
+    else this.untoldAcks.add(entry);
   }
 
   activity(state: "running" | "idle" | "waiting"): void {
@@ -88,6 +90,8 @@ export class Link {
     if (message.t === "welcome") {
       this.connected = true;
       this.backoff = 250;
+      for (const entry of this.untoldAcks) this.send({ t: "ack", entry });
+      this.untoldAcks.clear();
       this.options.onConnect();
     } else if (message.t === "entry") this.options.onPush(message);
     else {

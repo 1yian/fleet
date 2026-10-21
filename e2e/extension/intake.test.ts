@@ -47,7 +47,12 @@ async function asMain(op: string, args: unknown): Promise<unknown> {
 async function workerOn(): Promise<{ card: Card; worker: Session }> {
   const card = check(
     CardSchema,
-    await asMain("card.new", { title: "Lint gate", name: "lint-gate", kind: "ship", project: "web" }),
+    await asMain("card.new", {
+      title: "Lint gate",
+      name: "lint-gate",
+      kind: "ship",
+      project: "web",
+    }),
   );
   const begun = await asMain("attempt.begin", { card: card.id, host: "maverick", task: "fix it" });
   const worker = await cardd.connect(check(OPS["attempt.begin"].result, begun).token);

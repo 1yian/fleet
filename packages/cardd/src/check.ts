@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs } from "./attempts.ts";
 import { applyChange } from "./change.ts";
+import { chaseIntake } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
 import { lookUpPr } from "./pulls.ts";
@@ -402,7 +403,7 @@ export function runCheck(
     ...prMatches(db, prs),
   ];
   clearStopped(db, now, matches, prs);
-  const notify = new Set<string>(lostJobs(db, now, t));
+  const notify = new Set<string>([...lostJobs(db, now, t), ...chaseIntake(db, now, t)]);
   writeFindings(db, now, matches, notify);
   return [...notify];
 }
