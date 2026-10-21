@@ -96,8 +96,7 @@ test("a worker whose token begins with a dash starts on its task", async () => {
   h.onModel(() => ({ tool: "card_new", args: card }), "mate");
   h.onModel(() => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix it" } }), "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  const pr = "https://github.com/acme/web/pull/1";
-  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green", pr } }), "worker");
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green" } }), "worker");
   await mateConnected(h);
   mate.prompt("ship the scrollbar fix");
 
@@ -106,7 +105,7 @@ test("a worker whose token begins with a dash starts on its task", async () => {
   const woken = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(woken),
-    "[fleet] c-1 done: PR green (re your comment: fix it) (card now needs-you)",
+    "[fleet] c-1 done: PR green (no PR has branch c-1-a1 as its head) (re your comment: fix it) (card now with-mate)",
   );
   const launched = readFileSync(launchArgsOf(h), "utf8").split("\n");
   assert.match(launched.find((arg) => arg.startsWith("--fleet-token=")) ?? "", /^--fleet-token=-/);

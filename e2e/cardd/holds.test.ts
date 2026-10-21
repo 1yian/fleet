@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { MERGE_OPTIONS, type Board, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { begin, branchOf, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 const PR = "https://github.com/acme/web/pull/7";
 
@@ -15,6 +15,11 @@ beforeEach(async () => {
 afterEach(async () => {
   await fleet.cardd.stop();
 });
+
+function openPr(card: Card): void {
+  fleet.cardd.gh.setPr(PR, "OPEN", { ci: "pass" });
+  fleet.cardd.gh.setHead(PR, branchOf(card));
+}
 
 async function laneCard(title = "Ads stay under budget"): Promise<{ card: Card; worker: Session }> {
   const card = await newCard(cleo, title);
@@ -179,7 +184,8 @@ test("a worker's report cannot take a card out from under an open hold", async (
   assert.equal(await status(fleet.main, own), "needs-you");
 
   await worker.call("report", { status: "blocked", text: "waiting for the answer" });
-  await worker.call("report", { status: "done", text: "finished", pr: PR });
+  openPr(own);
+  await worker.call("report", { status: "done", text: "finished" });
   assert.equal(await status(fleet.main, own), "needs-you");
   assert.deepEqual(await needsYou(), [own.id]);
 });
@@ -301,7 +307,8 @@ test("main cannot release a hold that waits on a second mate", async () => {
 
 test("a merge question is part of the hold: it goes up through main, and is withdrawn while the PR is reworked", async () => {
   const { card, worker } = await laneCard("Ads exports");
-  await worker.call("report", { status: "done", text: "PR ready", pr: PR });
+  openPr(card);
+  await worker.call("report", { status: "done", text: "PR ready" });
 
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual(await needsYou(), []);
@@ -331,7 +338,7 @@ test("a merge question is part of the hold: it goes up through main, and is with
     409,
   );
 
-  await worker.call("report", { status: "done", text: "fixed", pr: PR });
+  await worker.call("report", { status: "done", text: "fixed" });
   await fleet.main.call("hold", { card: card.id, to: "captain", question: `Merge ${PR}? Fixed.` });
   const again = await theHold();
   assert.equal(

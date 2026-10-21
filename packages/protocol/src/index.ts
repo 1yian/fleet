@@ -274,7 +274,6 @@ export const OPS = {
       text: Type.String({ minLength: 1 }),
       key: Type.Optional(Key),
       until: Type.Optional(Type.Integer()),
-      pr: Type.Optional(Type.String({ pattern: "^https://" })),
     }),
     result: CardSchema,
   },

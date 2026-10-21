@@ -40,7 +40,7 @@ async function question(title: string, options: string[]): Promise<Card> {
 }
 
 async function shipped(title: string, task = "fix it") {
-  cardd.addProject("web", { local: "/clones/web" });
+  cardd.addProject("web", { local: "/clones/web" }, "acme/web");
   const mate = await cardd.connect(cardd.addLane("cleo", "main"));
   const args = { title, kind: "ship", project: "web" };
   const card = check(CardSchema, await mate.call("card.new", args));
@@ -185,11 +185,10 @@ test("the thread is the conversation between the owner and its mate, with each a
   const thread = page.getByRole("list", { name: "Thread" });
   await thread.getByText("waiting for your answer above").waitFor();
   await page.getByRole("button", { name: "yes" }).click();
-  await worker.call("report", {
-    status: "done",
-    text: "a final note",
-    pr: "https://github.com/acme/web/pull/3",
-  });
+  const pr = "https://github.com/acme/web/pull/3";
+  cardd.gh.setPr(pr, "OPEN", { ci: "pass" });
+  cardd.gh.setHead(pr, `c-${String(card.id)}-a1`);
+  await worker.call("report", { status: "done", text: "a final note" });
   await thread.getByText("a final note").waitFor();
 
   const items = await thread.getByRole("listitem").allInnerTexts();

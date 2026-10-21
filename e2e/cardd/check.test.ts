@@ -182,6 +182,6 @@ test("a ship card that only did an operation is reminded how to close it", async
   const reminder = await findingFor(card, "finished-1");
   assert.match(
     reminder.body,
-    /\(merging, \d+ min\)\. If it made no code change, close it with close\(card, summary\)\. Otherwise close\(card, summary=<why>, landed=false\)\.$/,
+    /\(merging, \d+ min\)\. No PR was found for its branch: comment the worker to open one from its task branch\. If it made no code change, close it with close\(card, summary\)\. Otherwise close\(card, summary=<why>, landed=false\)\.$/,
   );
 });

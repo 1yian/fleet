@@ -22,7 +22,7 @@ import {
 import type { Harness, Pi } from "../support/harness.ts";
 import type { HerdrLab } from "../support/herdr.ts";
 
-const PR = "https://github.com/acme/web/pull/1";
+const PR = "https://github.com/acme/site/pull/1";
 
 const FORMER_REFUSED_START_WAIT_MS = 10_000;
 
@@ -68,10 +68,9 @@ function scriptMate(...dispatches: { host: string }[]): void {
     );
   }
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(
-    () => ({ tool: "report", args: { status: "done", text: "PR green", pr: PR } }),
-    "worker",
-  );
+  parts.cardd.gh.setPr(PR, "OPEN", { ci: "pass" });
+  parts.cardd.gh.setHead(PR, "c-1-a1");
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green" } }), "worker");
 }
 
 test("dispatch starts a worker in its own worktree, and the worker's report reaches the mate", async () => {
@@ -97,7 +96,7 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
   assert.match(mateFirst.find((turn) => turn.role === "system")?.text ?? "", /^# Firstmate$/m);
   assert.equal(
     lastUser(woken),
-    "[fleet] c-1 done: PR green (re your comment: fix the scrollbar) (card now needs-you)",
+    `[fleet] c-1 done: PR green (PR ${PR}) (re your comment: fix the scrollbar) (card now needs-you)`,
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await workers(), ["c-1-a1"]);
@@ -127,7 +126,7 @@ test("a dispatch whose connection drops after the worker started finds it, and a
   );
   assert.equal(
     lastUser(woken),
-    "[fleet] c-1 done: PR green (re your comment: fix the scrollbar) (card now needs-you)",
+    `[fleet] c-1 done: PR green (PR ${PR}) (re your comment: fix the scrollbar) (card now needs-you)`,
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await workers(), ["c-1-a1"]);

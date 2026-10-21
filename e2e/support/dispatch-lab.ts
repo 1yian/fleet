@@ -42,7 +42,7 @@ export async function startDispatchLab({
   const mainToken = cardd.addLane("main", undefined, home);
   const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
   const git = "git -c user.name=t -c user.email=t@t";
-  const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
+  const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init && git -C site remote add origin https://github.com/acme/site.git`;
   execFileSync("sh", ["-c", init], { cwd: dirname(clone) });
   cardd.addProject("site", { local: clone, flaky: clone, far: clone });
   const h = await Harness.start();

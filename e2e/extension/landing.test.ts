@@ -15,7 +15,7 @@ import {
   worktreesOf,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
-import { FakeGitHub } from "../support/github.ts";
+import type { FakeGitHub } from "../support/github.ts";
 import type { Harness, Pi } from "../support/harness.ts";
 
 let parts: DispatchLab;
@@ -24,9 +24,9 @@ let clone: string;
 let mate: Pi;
 let gh: FakeGitHub;
 beforeEach(async () => {
-  gh = new FakeGitHub();
-  parts = await startDispatchLab({ cardd: gh.env });
+  parts = await startDispatchLab();
   ({ h, clone, mate } = parts);
+  gh = parts.cardd.gh;
 });
 afterEach(async () => {
   await stopDispatchLab(parts);
@@ -102,15 +102,13 @@ test("close refuses Done for work that did not land and leaves it in place; land
 test("with yolo on, the mate comments the worker to merge without asking; the worker merges, and close closes the card at once", async () => {
   const pr = "https://github.com/acme/site/pull/3";
   gh.setPr(pr, "OPEN", { ci: "pass" });
-  scriptOperation(() => ({
-    tool: "report",
-    args: { status: "done", text: `PR ${pr} opened`, pr },
-  }));
+  gh.setHead(pr, "c-1-a1");
+  scriptOperation(() => ({ tool: "report", args: { status: "done", text: "credit added" } }));
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /Merge your PR now/);
     execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
-    return { tool: "report", args: { status: "done", text: `merged ${pr}`, pr } };
+    return { tool: "report", args: { status: "done", text: "merged it" } };
   }, "worker");
   h.onModel(() => ({ tool: "comment", args: { card: 1, text: "Merge your PR now." } }), "mate");
   h.onModel(() => ({ text: "asked the worker to merge" }), "mate");
@@ -122,12 +120,46 @@ test("with yolo on, the mate comments the worker to merge without asking; the wo
   mate.prompt("add credit");
 
   const asked = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
-  assert.match(lastUser(asked) ?? "", /^\[fleet\] c-1 done: PR .* \(card now merging\)/);
+  assert.equal(
+    lastUser(asked),
+    `[fleet] c-1 done: credit added (PR ${pr}) (re your comment: add the credit) (card now merging)`,
+  );
   const merged = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
   assert.equal(gh.state(pr), "MERGED");
-  assert.match(lastUser(merged) ?? "", /^\[fleet\] c-1 done: merged .* \(card now merging\)/);
+  assert.match(lastUser(merged) ?? "", /^\[fleet\] c-1 done: merged it .*\(card now merging\)$/);
   const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "c-1 is done.");
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(await workersOf(parts.lab), []);
+});
+
+test("a ship card done with no PR on its branch reaches the mate, which asks the worker to open one", async () => {
+  const pr = "https://github.com/acme/site/pull/4";
+  scriptOperation(() => ({ tool: "report", args: { status: "done", text: "fixed" } }));
+  h.onModel(() => ({ text: "reported" }), "worker");
+  h.onModel((turns) => {
+    assert.match(lastUser(turns) ?? "", /Open your PR/);
+    gh.setPr(pr, "OPEN", { ci: "pass" });
+    gh.setHead(pr, "c-1-a1");
+    return { tool: "report", args: { status: "done", text: "PR opened" } };
+  }, "worker");
+  h.onModel(
+    () => ({ tool: "comment", args: { card: 1, text: "Open your PR from your task branch." } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "asked for the PR" }), "mate");
+  h.onModel(() => ({ text: "the PR is open" }), "mate");
+  await mateConnected();
+  mate.prompt("add credit");
+
+  const missing = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assert.equal(
+    lastUser(missing),
+    "[fleet] c-1 done: fixed (no PR has branch c-1-a1 as its head) (re your comment: add the credit) (card now merging)",
+  );
+  const found = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
+  assert.equal(
+    lastUser(found),
+    `[fleet] c-1 done: PR opened (PR ${pr}) (re your comment: Open your PR from your task branch.) (card now merging)`,
+  );
 });

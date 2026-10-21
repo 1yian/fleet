@@ -40,11 +40,21 @@ const suffix = (entry: Entry, key: string, label: string): string => {
   return value === undefined ? "" : ` (${label}${value})`;
 };
 
+function prSuffix(entry: Entry): string {
+  const url = field(entry, "pr");
+  const state = field(entry, "prState");
+  if (url === undefined) return suffix(entry, "prNote", "");
+  return ` (PR ${url}${state === undefined || state === "OPEN" ? "" : `, ${state.toLowerCase()}`})`;
+}
+
 function formatReport(entry: Entry, card: string): string {
   const key = field(entry, "key");
   const head = `[fleet] ${card} ${field(entry, "status") ?? "report"}${key === undefined ? "" : ` [${key}]`}: ${entry.body}`;
   return (
-    head + suffix(entry, "re", "re your comment: ") + suffix(entry, "statusAfter", "card now ")
+    head +
+    prSuffix(entry) +
+    suffix(entry, "re", "re your comment: ") +
+    suffix(entry, "statusAfter", "card now ")
   );
 }
 

@@ -3,8 +3,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, startFleet, type Fleet } from "../support/fleet.ts";
-import { FakeGitHub } from "../support/github.ts";
+import { begin, branchOf, startFleet, type Fleet } from "../support/fleet.ts";
+import type { FakeGitHub } from "../support/github.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
@@ -13,8 +13,8 @@ let fleet: Fleet;
 let gh: FakeGitHub;
 let h: Harness;
 beforeEach(async () => {
-  gh = new FakeGitHub();
-  fleet = await startFleet(gh.env);
+  fleet = await startFleet();
+  gh = fleet.cardd.gh;
   h = await Harness.start();
 });
 afterEach(async () => {
@@ -40,7 +40,8 @@ const cardIn = async (mate: Session, title: string, project: string): Promise<Ca
 
 async function doneWith(mate: Session, card: Card, pr: string): Promise<void> {
   const worker = await fleet.cardd.connect(await begin(mate, card));
-  await worker.call("report", { status: "done", text: "PR green and ready", pr });
+  gh.setHead(pr, branchOf(card));
+  await worker.call("report", { status: "done", text: "PR green and ready" });
 }
 
 test("hold sets a hold, and clear=true clears it only with words the captain said", async () => {
@@ -74,7 +75,7 @@ test("hold sets a hold, and clear=true clears it only with words the captain sai
 });
 
 test("yolo on puts a done PR in Merging with no question; yolo off holds it for the merge question, and close refuses both until the PR merges", async () => {
-  fleet.cardd.addProject("api", { maverick: "/clones/api" });
+  fleet.cardd.addProject("api", { maverick: "/clones/api" }, "acme/api");
   fleet.cardd.yolo("api");
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const yolo = await cardIn(cleo, "Speed up the API", "api");
