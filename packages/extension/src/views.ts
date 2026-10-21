@@ -7,6 +7,7 @@ const ORDER = [
   "merging",
   "in-review",
   "working",
+  "paused",
   "queued",
   "waiting",
   "done",
@@ -18,6 +19,7 @@ const MOVER: Record<Status, "lane" | "worker" | "merge" | "nobody"> = {
   merging: "merge",
   "in-review": "worker",
   working: "worker",
+  paused: "worker",
   queued: "lane",
   waiting: "lane",
   done: "nobody",
@@ -58,9 +60,15 @@ const deliveryOf = (card: BoardCard): string => {
   return card.kind === "scout" ? "report" : "none";
 };
 
+function statusOf(card: BoardCard): string {
+  if (card.attention !== null) return `${card.status} (${card.attention})`;
+  if (card.pausedUntil !== null) return `${card.status} (${ago(card.pausedUntil)})`;
+  return card.status;
+}
+
 const COLUMNS = {
   card: (card: BoardCard) => card.id,
-  status: (card: BoardCard) => card.status,
+  status: statusOf,
   waits,
   delivery: deliveryOf,
   title: (card: BoardCard) => card.title,

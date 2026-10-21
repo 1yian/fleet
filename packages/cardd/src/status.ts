@@ -1,23 +1,16 @@
 import {
+  ATTENTIONS,
   HOLDERS,
   MERGE_OPTIONS,
+  type Attention,
   type CardKind,
   type Entry,
   type Holder,
-  type ReportStatus,
   type Status,
 } from "@fleet/protocol";
 
-export const PHASES = [
-  "queued",
-  "working",
-  "in-review",
-  "with-mate",
-  "merging",
-  "done",
-  "dropped",
-] as const;
-export type Phase = (typeof PHASES)[number];
+export type Stage =
+  "queued" | "working" | "in-review" | "with-mate" | "merging" | "done" | "dropped";
 
 export interface Hold {
   readonly occurrence: number;
@@ -31,90 +24,13 @@ export interface Hold {
   readonly entry: number;
 }
 
-export interface CardFacts {
-  readonly phase: Phase;
+export interface Basis {
   readonly kind: CardKind;
-  readonly hold: Hold | undefined;
-  readonly inPipeline: boolean;
   readonly yolo: boolean;
+  readonly createdAt: number;
 }
 
-const FIXED = {
-  dispatch: "working",
-  finding: "with-mate",
-  merged: "merging",
-  cleanup: "done",
-  drop: "dropped",
-} as const satisfies Record<string, Phase>;
-interface FixedChange {
-  readonly kind: keyof typeof FIXED;
-}
-
-export type Change =
-  | FixedChange
-  | { readonly kind: "held" }
-  | { readonly kind: "released"; readonly outcome?: "approve" | "changes" | "withdrawn" }
-  | { readonly kind: "report"; readonly status: ReportStatus }
-  | { readonly kind: "comment" }
-  | { readonly kind: "answered" };
-
-const isFixed = (change: Change): change is FixedChange => Object.hasOwn(FIXED, change.kind);
-
-const CLOSED: ReadonlySet<Phase> = new Set(["done", "dropped"]);
-const HANDOFFS: ReadonlySet<ReportStatus> = new Set([
-  "blocked",
-  "needs-decision",
-  "failed",
-  "stopped",
-]);
-
-export function nextPhase(card: CardFacts, change: Change): Phase | Error {
-  return CLOSED.has(card.phase) ? new Error(`card is ${card.phase}`) : byKind(card, change);
-}
-
-function byKind(card: CardFacts, change: Change): Phase {
-  if (isFixed(change)) return FIXED[change.kind];
-  switch (change.kind) {
-    case "held":
-      return card.phase;
-    case "released":
-      return afterRelease(card, change.outcome);
-    case "report":
-      return afterReport(card, change.status);
-    case "comment":
-    case "answered":
-      return afterComment(card);
-  }
-}
-
-function afterRelease(
-  card: CardFacts,
-  outcome: "approve" | "changes" | "withdrawn" | undefined,
-): Phase {
-  if (outcome === "withdrawn") return card.phase;
-  if (outcome === "changes") return "working";
-  return outcome === "approve" || card.phase === "merging" ? "merging" : "with-mate";
-}
-
-function afterReport(card: CardFacts, status: ReportStatus): Phase {
-  if (status === "in-review") return "in-review";
-  if (status === "done")
-    return card.phase === "merging" || (card.kind === "ship" && card.yolo)
-      ? "merging"
-      : "with-mate";
-  return HANDOFFS.has(status) ? "with-mate" : card.phase;
-}
-
-function afterComment(card: CardFacts): Phase {
-  if (card.phase !== "with-mate" || (card.hold?.keys.length ?? 0) > 0) return card.phase;
-  return card.inPipeline ? "in-review" : "working";
-}
-
-export function statusOf(phase: Phase, hold: Hold | undefined, now: number): Status {
-  if (CLOSED.has(phase) || hold === undefined) return phase;
-  if (hold.until !== null && hold.until > now) return "waiting";
-  return hold.holder === "captain" ? "needs-you" : "with-mate";
-}
+const isClosed = (stage: Stage): boolean => stage === "done" || stage === "dropped";
 
 const text = (entry: Entry, key: string): string | undefined => {
   const value = entry.fields[key];
@@ -133,6 +49,9 @@ interface Tally {
   mergeApproved: boolean;
   awaitingMerge: boolean;
   inPipeline: boolean;
+  stage: Stage;
+  attention: Attention | undefined;
+  pausedUntil: number | null;
 }
 
 function holdFrom(tally: Tally, entry: Entry): void {
@@ -170,59 +89,135 @@ function decide(tally: Tally, entry: Entry, key: string): void {
   } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };
 }
 
-function answerKey(tally: Tally, key: string): void {
+function answerKey(tally: Tally, key: string): boolean {
   const open = tally.hold;
-  if (open === undefined) return;
+  if (!open?.keys.includes(key)) return false;
   const keys = open.keys.filter((each) => each !== key);
   tally.hold = open.fromWorker && keys.length === 0 ? undefined : { ...open, keys };
+  return true;
 }
 
-const REPORT_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry, key: string) => void>> = {
-  "needs-decision": (tally, entry, key) => {
+function moveTo(tally: Tally, stage: Stage): void {
+  tally.stage = stage;
+  tally.attention = undefined;
+  tally.pausedUntil = null;
+}
+
+function resume(tally: Tally): void {
+  tally.pausedUntil = null;
+  if (tally.stage !== "with-mate" || (tally.hold?.keys.length ?? 0) > 0) return;
+  moveTo(tally, tally.inPipeline ? "in-review" : "working");
+}
+
+function handBack(tally: Tally): void {
+  moveTo(tally, tally.stage === "merging" ? "merging" : "with-mate");
+}
+
+function done(basis: Basis, tally: Tally): void {
+  tally.inPipeline = false;
+  tally.awaitingMerge = true;
+  const lands = tally.stage === "merging" || (basis.kind === "ship" && basis.yolo);
+  moveTo(tally, lands ? "merging" : "with-mate");
+}
+
+function stopWith(tally: Tally, status: string): void {
+  moveTo(tally, "with-mate");
+  tally.attention = ATTENTIONS.find((each) => each === status);
+}
+
+type ReportEffect = (basis: Basis, tally: Tally, entry: Entry, key: string) => void;
+
+const REPORT_EFFECTS: Partial<Record<string, ReportEffect>> = {
+  working: (_basis, tally) => {
+    resume(tally);
+  },
+  paused: (_basis, tally, entry) => {
+    if (tally.stage !== "merging") moveTo(tally, tally.inPipeline ? "in-review" : "working");
+    const until = entry.fields["until"];
+    tally.pausedUntil = typeof until === "number" ? until : null;
+  },
+  blocked: (_basis, tally) => {
+    stopWith(tally, "blocked");
+  },
+  stopped: (_basis, tally) => {
+    stopWith(tally, "stopped");
+  },
+  failed: (_basis, tally) => {
+    tally.inPipeline = false;
     tally.awaitingMerge = false;
+    stopWith(tally, "failed");
+  },
+  "needs-decision": (_basis, tally, entry, key) => {
+    tally.awaitingMerge = false;
+    moveTo(tally, "with-mate");
     decide(tally, entry, key);
   },
-  resolved: (tally, _entry, key) => {
+  resolved: (_basis, tally, _entry, key) => {
     answerKey(tally, key);
+    resume(tally);
   },
-  "in-review": (tally) => {
+  "in-review": (_basis, tally) => {
     tally.inPipeline = true;
     tally.awaitingMerge = false;
+    moveTo(tally, "in-review");
   },
-  done: (tally) => {
-    tally.inPipeline = false;
-    tally.awaitingMerge = true;
-  },
-  failed: (tally) => {
-    tally.inPipeline = false;
-    tally.awaitingMerge = false;
-  },
+  done,
 };
 
-const ENTRY_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry) => void>> = {
-  hold: holdFrom,
-  release: (tally) => {
+const mergeChoice = (entry: Entry): boolean => text(entry, "choice") === MERGE_OPTIONS[0];
+
+function answered(tally: Tally, entry: Entry): void {
+  if (tally.hold?.merge === true) {
+    tally.mergeApproved = mergeChoice(entry);
+    tally.awaitingMerge = false;
+    moveTo(tally, tally.mergeApproved ? "merging" : "working");
+  } else handBack(tally);
+  tally.hold = undefined;
+}
+
+function released(tally: Tally, entry: Entry): void {
+  tally.hold = undefined;
+  if (entry.fields["withdrawn"] !== true) handBack(tally);
+}
+
+const toWorker = (entry: Entry): boolean =>
+  entry.fields["task"] !== undefined || entry.fields["for"] === "worker";
+
+function commented(tally: Tally, entry: Entry): void {
+  if (entry.author === "captain") {
+    if (tally.hold?.holder === "captain") tally.hold = { ...tally.hold, holder: "owner" };
+    return;
+  }
+  tally.awaitingMerge = false;
+  answerKey(tally, text(entry, "resolves") ?? "");
+  if (entry.fields["task"] !== undefined) {
+    tally.inPipeline = false;
+    moveTo(tally, "working");
+  } else if (toWorker(entry)) resume(tally);
+}
+
+const ENTRY_EFFECTS: Partial<Record<string, (basis: Basis, tally: Tally, entry: Entry) => void>> = {
+  hold: (_basis, tally, entry) => {
+    holdFrom(tally, entry);
+  },
+  release: (_basis, tally, entry) => {
+    released(tally, entry);
+  },
+  answer: (_basis, tally, entry) => {
+    answered(tally, entry);
+  },
+  comment: (_basis, tally, entry) => {
+    commented(tally, entry);
+  },
+  report: (basis, tally, entry) => {
+    REPORT_EFFECTS[text(entry, "status") ?? ""]?.(basis, tally, entry, text(entry, "key") ?? "");
+  },
+  "review-feedback": (_basis, tally, entry) => {
+    if (answerKey(tally, text(entry, "resolves") ?? "")) resume(tally);
+  },
+  cleanup: (_basis, tally, entry) => {
     tally.hold = undefined;
-  },
-  answer: (tally, entry) => {
-    if (tally.hold?.merge === true) {
-      tally.mergeApproved = text(entry, "choice") === MERGE_OPTIONS[0];
-      tally.awaitingMerge = false;
-    }
-    tally.hold = undefined;
-  },
-  comment: (tally, entry) => {
-    if (entry.author === "captain") {
-      if (tally.hold?.holder === "captain") tally.hold = { ...tally.hold, holder: "owner" };
-    } else {
-      tally.awaitingMerge = false;
-      answerKey(tally, text(entry, "resolves") ?? "");
-    }
-  },
-  report: (tally, entry) =>
-    REPORT_EFFECTS[text(entry, "status") ?? ""]?.(tally, entry, text(entry, "key") ?? ""),
-  "review-feedback": (tally, entry) => {
-    answerKey(tally, text(entry, "resolves") ?? "");
+    moveTo(tally, text(entry, "outcome") === "dropped" ? "dropped" : "done");
   },
 };
 
@@ -234,16 +229,82 @@ export interface Facts {
   readonly awaitingMerge: boolean;
 }
 
-export function factsFrom(entries: readonly Entry[]): Facts {
+export interface Standing {
+  readonly status: Status;
+  readonly stage: Stage;
+  readonly since: number;
+  readonly attention: Attention | null;
+  readonly pausedUntil: number | null;
+  readonly facts: Facts;
+}
+
+function holdStatus(hold: Hold, now: number): Status {
+  if (hold.until !== null && hold.until > now) return "waiting";
+  return hold.holder === "captain" ? "needs-you" : "with-mate";
+}
+
+function statusAt(basis: Basis, tally: Tally, now: number): Status {
+  if (isClosed(tally.stage)) return tally.stage;
+  if (tally.hold !== undefined) return holdStatus(tally.hold, now);
+  if (basis.kind === "standing") return "waiting";
+  const resting = tally.stage === "working" || tally.stage === "in-review";
+  return resting && (tally.pausedUntil ?? 0) > now ? "paused" : tally.stage;
+}
+
+function factsOf(tally: Tally): Facts {
+  return {
+    hold: tally.hold,
+    occurrences: tally.occurrences,
+    inPipeline: tally.inPipeline,
+    mergeApproved: tally.mergeApproved,
+    awaitingMerge: tally.awaitingMerge,
+  };
+}
+
+const NEUTRAL: Basis = { kind: "scout", yolo: false, createdAt: 0 };
+
+function replay(basis: Basis, entries: readonly Entry[], now: number) {
   const tally: Tally = {
     hold: undefined,
     occurrences: 0,
     mergeApproved: false,
     awaitingMerge: false,
     inPipeline: false,
+    stage: "queued",
+    attention: undefined,
+    pausedUntil: null,
   };
-  for (const entry of entries) ENTRY_EFFECTS[entry.kind]?.(tally, entry);
-  return { ...tally };
+  let status = statusAt(basis, tally, basis.createdAt);
+  let since = basis.createdAt;
+  for (const entry of entries) {
+    if (isClosed(tally.stage)) break;
+    ENTRY_EFFECTS[entry.kind]?.(basis, tally, entry);
+    const next = statusAt(basis, tally, entry.createdAt);
+    if (next !== status) since = entry.createdAt;
+    status = next;
+  }
+  const current = statusAt(basis, tally, now);
+  const lapsed = Math.max(tally.hold?.until ?? 0, tally.pausedUntil ?? 0);
+  return { tally, status: current, since: current === status ? since : Math.max(since, lapsed) };
+}
+
+export function factsFrom(entries: readonly Entry[]): Facts {
+  return factsOf(replay(NEUTRAL, entries, 0).tally);
+}
+
+export function standingFrom(basis: Basis, entries: readonly Entry[], now: number): Standing {
+  const { tally, status, since } = replay(basis, entries, now);
+  const needsAttention =
+    status === "with-mate" && tally.stage === "with-mate" && tally.hold === undefined;
+  const paused = status === "paused";
+  return {
+    status,
+    stage: tally.stage,
+    since,
+    attention: needsAttention ? (tally.attention ?? null) : null,
+    pausedUntil: paused ? tally.pausedUntil : null,
+    facts: factsOf(tally),
+  };
 }
 
 export interface Finish {
@@ -252,7 +313,14 @@ export interface Finish {
   readonly at: number;
 }
 
-const HANDOFF_REPORTS: ReadonlySet<string> = new Set([...HANDOFFS, "in-review", "done"]);
+const HANDOFF_REPORTS: ReadonlySet<string> = new Set([
+  "blocked",
+  "needs-decision",
+  "failed",
+  "stopped",
+  "in-review",
+  "done",
+]);
 
 const isMerge = (entry: Entry): boolean =>
   entry.kind === "finding" && text(entry, "condition") === "pr-merged";

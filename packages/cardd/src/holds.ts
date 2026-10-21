@@ -2,19 +2,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { check, MERGE_OPTIONS, OPS, type Card, type Holder } from "@fleet/protocol";
 import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
-import { applyChange, settle, type Draft } from "./change.ts";
+import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { askerOf, requireOwedBy } from "./replies.ts";
 import { factsFrom, type Facts, type Hold } from "./status.ts";
-import {
-  addEntry,
-  cardEntries,
-  getCard,
-  parentOf,
-  reachable,
-  touchCard,
-  type Session,
-} from "./store.ts";
+import { addEntry, cardEntries, getCard, parentOf, reachable, type Session } from "./store.ts";
 
 interface Done {
   readonly value: unknown;
@@ -155,19 +147,17 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     body: args.question,
     fields,
   };
-  applyChange(db, card, { kind: "held" }, [draft]);
+  requireOpen(db, card);
   const heard = hearers(db, card, session.lane, [target]);
   const to = withEcho(db, session, card, [...heard, ...asker]);
   addEntry(db, draft, to);
-  touchCard(db, card.id);
   return { value: getCard(db, card.id), notify: to };
 }
 
-function mergeOutcome(choice: string | undefined): "approve" | "changes" {
+function requireMergeChoice(choice: string | undefined): void {
   const [approve, changes] = MERGE_OPTIONS;
-  if (choice === approve) return "approve";
-  if (choice === changes) return "changes";
-  throw new Error(`a merge question needs the choice "${approve}" or "${changes}"`);
+  if (choice !== approve && choice !== changes)
+    throw new Error(`a merge question needs the choice "${approve}" or "${changes}"`);
 }
 
 export function answerHold(
@@ -182,7 +172,7 @@ export function answerHold(
     readonly written?: boolean;
   },
 ): Done {
-  const outcome = open.merge ? mergeOutcome(args.choice) : undefined;
+  if (open.merge) requireMergeChoice(args.choice);
   const fields = {
     hold: open.entry,
     occurrence: open.occurrence,
@@ -198,12 +188,9 @@ export function answerHold(
     body: args.words,
     fields,
   };
-  applyChange(db, card, { kind: "released", ...(outcome === undefined ? {} : { outcome }) }, [
-    draft,
-  ]);
+  requireOpen(db, card);
   const to = hearers(db, card, actor, ["main"]);
   addEntry(db, draft, to);
-  touchCard(db, card.id);
   return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
 
@@ -235,10 +222,9 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
     body,
     fields,
   };
-  applyChange(db, card, { kind: "released" }, [draft]);
+  requireOpen(db, card);
   const to = withEcho(db, session, card, hearers(db, card, session.lane, [open.holder]));
   addEntry(db, draft, to);
-  touchCard(db, card.id);
   return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
 
@@ -257,10 +243,9 @@ export function withdrawMerge(
   }[why];
   const fields = { hold: open.entry, occurrence: open.occurrence, withdrawn: true };
   const draft: Draft = { card: card.id, author: "fleet", kind: "release", body, fields };
-  applyChange(db, card, { kind: "released", outcome: "withdrawn" }, [draft]);
+  requireOpen(db, card);
   const to = hearers(db, card, null, [open.holder]);
   addEntry(db, draft, to);
-  touchCard(db, card.id);
   return to;
 }
 
@@ -309,7 +294,5 @@ export function writeMergeQuestion(db: DatabaseSync, card: Card, question: Draft
   const toMain = question.fields["holder"] === "main";
   const to = toMain ? hearers(db, card, null, ["main"]).filter((lane) => lane !== card.lane) : [];
   addEntry(db, question, to);
-  settle(db, card.id, Date.now());
-  touchCard(db, card.id);
   return to;
 }

@@ -1,18 +1,17 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs } from "./attempts.ts";
-import { applyChange } from "./change.ts";
 import { chaseIntake } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
 import { lookUpPr } from "./pulls.ts";
 import { replyNudges } from "./replies.ts";
-import { factsFrom, finishFrom, type Change } from "./status.ts";
+import { factsFrom, finishFrom, type Stage } from "./status.ts";
 import {
   addEntry,
   cardEntries,
   getCard,
+  loadCards,
   parentOf,
-  phaseOf,
   transaction,
   workerOf,
 } from "./store.ts";
@@ -23,18 +22,21 @@ interface Match {
   readonly lane: string;
   readonly condition: string;
   readonly text: string;
-  readonly change?: Change;
   readonly to?: string;
   readonly withdrawsMerge?: "closed" | "merged";
   readonly ready?: boolean;
   readonly quiet?: boolean;
 }
 
-const WORKER_CARDS = `SELECT c.id AS card, c.lane AS lane, a.state AS attempt, a.created_at AS started,
+const WORKING: ReadonlySet<Stage> = new Set(["working", "in-review"]);
+
+const workerCards = (
+  ids: readonly number[],
+): string => `SELECT c.id AS card, c.lane AS lane, a.state AS attempt, a.created_at AS started,
     s.state AS state, s.last_seen AS seen, coalesce(c.last_activity, s.last_seen, 0) AS active, s.id AS session
   FROM cards c JOIN attempts a ON a.card = c.id AND a.state IN ('starting', 'active')
   JOIN sessions s ON s.attempt = a.id
-  WHERE c.phase IN ('working', 'in-review')`;
+  WHERE c.id IN (${ids.map(Number).join(", ")})`;
 
 const LATEST_REPORT = `(SELECT fields FROM entries WHERE card = w.card AND kind = 'report' ORDER BY id DESC LIMIT 1)`;
 
@@ -82,10 +84,14 @@ function rows(
 }
 
 function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+  const ids = loadCards(db)
+    .filter(({ standing }) => WORKING.has(standing.stage))
+    .map(({ card }) => card.id);
+  if (ids.length === 0) return [];
   return WORKER_RULES.flatMap(({ condition, text, where, limit }) =>
     rows(
       db,
-      `SELECT w.card AS card, w.lane AS lane FROM (${WORKER_CARDS}) w WHERE ${where}`,
+      `SELECT w.card AS card, w.lane AS lane FROM (${workerCards(ids)}) w WHERE ${where}`,
       now,
       Number(t[limit]),
     ).map((row) => ({
@@ -93,7 +99,6 @@ function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
       lane: String(row["lane"]),
       condition,
       text,
-      change: FINDING,
     })),
   );
 }
@@ -177,41 +182,27 @@ function finishedMatches(
 }
 
 function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
-  const waiting = rows(
-    db,
-    "SELECT id, lane, kind, pr, delivery, status, updated_at FROM cards WHERE status IN ('with-mate', 'merging')",
-  );
-  return waiting.flatMap((row) => {
-    const card = Number(row["id"]);
-    const entries = cardEntries(db, card);
-    const { hold } = factsFrom(entries);
+  return loadCards(db).flatMap(({ card: own, entries, standing }) => {
+    if (own.status !== "with-mate" && own.status !== "merging") return [];
+    const card = own.id;
+    const { hold } = standing.facts;
     const finish = finishFrom(entries);
     if (hold === undefined && (finish.merged || finish.workerDone)) {
-      const own = {
-        id: card,
-        lane: String(row["lane"]),
-        kind: String(row["kind"]),
-        pr: row["pr"],
-        delivery: row["delivery"],
-        status: String(row["status"]),
-        since: Number(row["updated_at"]),
-      };
-      return finishedMatches(db, own, finish, now, t);
+      return finishedMatches(db, { ...own, since: standing.since }, finish, now, t);
     }
-    const lane = actingLane(db, card, String(row["lane"]));
+    const lane = actingLane(db, card, own.lane);
     const acted = db
       .prepare("SELECT max(created_at) AS at FROM entries WHERE card = ? AND author = ?")
       .get(card, `mate:${lane}`)?.["at"];
-    const since = Math.max(Number(row["updated_at"]), typeof acted === "number" ? acted : 0);
+    const since = Math.max(standing.since, typeof acted === "number" ? acted : 0);
     const tier = reminderTier(now - since, t.reminders);
     if (tier === 0) return [];
-    const text = `reminder: this card has waited for you (${String(row["status"])}, ${String(minutesSince(now, since))} min)`;
+    const text = `reminder: this card has waited for you (${own.status}, ${String(minutesSince(now, since))} min)`;
     const ready = stateOf(db, lane) === "idle";
     return [{ card, lane, condition: `reminder-${String(tier)}`, text, ready }];
   });
 }
 
-const FINDING: Change = { kind: "finding" };
 const MISSED_HEARTBEATS = 3;
 
 function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
@@ -239,27 +230,22 @@ function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
         [worker],
       );
     }
-    const phase = phaseOf(db, card.id);
-    if (phase === "working" || phase === "in-review") applyChange(db, card, FINDING);
     return worker === undefined ? [card.lane] : [card.lane, worker];
   });
 }
 
 function holdMatches(db: DatabaseSync, now: number): Match[] {
-  const held = rows(db, "SELECT id, lane FROM cards WHERE status = 'waiting'");
-  return held.flatMap((row) => {
-    const card = Number(row["id"]);
-    const { hold } = factsFrom(cardEntries(db, card));
+  return loadCards(db).flatMap(({ card, standing }) => {
+    const { hold } = standing.facts;
     const until = hold?.until ?? null;
-    if (hold === undefined || until === null || until > now) return [];
-    const change: Change = { kind: "held" };
+    if (hold === undefined || until === null || until > now || standing.status === "waiting")
+      return [];
     return [
       {
-        card,
-        lane: actingLane(db, card, String(row["lane"])),
+        card: card.id,
+        lane: actingLane(db, card.id, card.lane),
         condition: `hold-ended:${String(until)}`,
         text: `hold ended; it waits on ${hold.holder === "owner" ? "its mate" : hold.holder} again`,
-        change,
       },
     ];
   });
@@ -271,12 +257,16 @@ export async function readPullRequests(
   const cards = rows(
     db,
     `SELECT c.id AS id FROM cards c JOIN projects p ON p.name = c.project
-       WHERE c.kind = 'ship' AND c.delivery IS NOT 'local-only' AND c.status NOT IN ('done', 'dropped')
+       WHERE c.kind = 'ship' AND c.delivery IS NOT 'local-only'
          AND (p.repo IS NOT NULL OR c.pr IS NOT NULL)
          AND EXISTS (SELECT 1 FROM attempts a WHERE a.card = c.id)`,
   );
+  const open = cards.filter((row) => {
+    const { status } = getCard(db, Number(row["id"]));
+    return status !== "done" && status !== "dropped";
+  });
   const read = await Promise.all(
-    cards.map(async (row) => {
+    open.map(async (row) => {
       const card = Number(row["id"]);
       const found = await lookUpPr(db, card);
       if (found.kind === "unknown")
@@ -296,11 +286,8 @@ const PR_CONDITIONS: ReadonlySet<string> = new Set(["pr-merged", "pr-closed", "c
 function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | undefined>): Match[] {
   return [...prs].flatMap(([card, pr]): Match[] => {
     if (pr === undefined) return [];
-    const row = db.prepare("SELECT lane, phase FROM cards WHERE id = ?").get(card);
-    const lane = String(row?.["lane"]);
-    const status = String(row?.["phase"]);
+    const { lane, status } = getCard(db, card);
     if (pr.state === "MERGED") {
-      const change: Change | undefined = status === "merging" ? undefined : { kind: "merged" };
       return [
         {
           card,
@@ -308,7 +295,6 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
           condition: "pr-merged",
           text: "PR merged; close it with close(card, summary)",
           withdrawsMerge: "merged" as const,
-          ...(change === undefined ? {} : { change }),
         },
       ];
     }
@@ -319,7 +305,6 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
           lane,
           condition: "pr-closed",
           text: "PR closed without a merge",
-          change: FINDING,
           withdrawsMerge: "closed" as const,
         },
       ];
@@ -330,7 +315,6 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
         lane,
         condition: "checks-failed",
         text: `checks failed: ${pr.failed.join(", ")}`,
-        change: FINDING,
       },
     ];
   });
@@ -374,7 +358,6 @@ function writeFindings(
       for (const lane of withdrawMerge(db, getCard(db, match.card), match.withdrawsMerge))
         notify.add(lane);
     }
-    if (match.change !== undefined) applyChange(db, getCard(db, match.card), match.change);
     const fields = { condition: match.condition };
     const to = match.quiet === true ? [] : [match.to ?? match.lane];
     addEntry(

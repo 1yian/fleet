@@ -31,6 +31,7 @@ function writeOldDatabase(file: string): void {
 }
 
 const T = 1_760_000_000_000;
+const HELD_UNTIL = Date.now() + 86_400_000;
 
 function writeLiveShapedDatabase(file: string): void {
   const db = writeDatabaseAt(file, 4);
@@ -49,7 +50,7 @@ function writeLiveShapedDatabase(file: string): void {
     INSERT INTO cards (id, title, name, lane, project, kind, status, delivery, held_until,
         return_status, created_at, updated_at)
       VALUES (6, 'Renew the domain', 'c-6', 'cleo', 'web', 'ship', 'waiting', 'no-mistakes',
-        1760086400000, 'working', 1760000000000, 1760000000000);
+        ${String(HELD_UNTIL)}, 'working', 1760000000000, 1760000000000);
 
     INSERT INTO attempts (id, card, n, host, state, worktree, branch, created_at, updated_at)
       VALUES (1, 1, 1, 'maverick', 'ended', '/clones/web.worktrees/c-1-a1', 'fm/c-1', 1760000000000, 1760000000000);
@@ -75,7 +76,7 @@ function writeLiveShapedDatabase(file: string): void {
       (12, 5, 'mate:cleo', 'ask', 'Rotate now?', '{"options":["Now","Later"]}', 1760000000000 + 11),
       (13, 2, 'captain', 'grant', 'Merge on green.', '{"grant":1,"merge":true}', 1760000000000 + 12),
       (14, 2, 'mate:main', 'note', 'Forwarded from cleo.', '{"routed":"cleo"}', 1760000000000 + 13),
-      (15, 6, 'worker:c-6-a1', 'report', 'Back tomorrow.', '{"status":"waiting","until":1760086400000,"statusAfter":"waiting"}', 1760000000000 + 14);
+      (15, 6, 'worker:c-6-a1', 'report', 'Back tomorrow.', '{"status":"waiting","until":${String(HELD_UNTIL)},"statusAfter":"waiting"}', 1760000000000 + 14);
 
     INSERT INTO findings (id, card, condition, entry, opened_at, cleared_at)
       VALUES (1, 4, 'build-failed', 11, 1760000000000 + 10, 1760000000000 + 11);
@@ -179,7 +180,7 @@ test("the live fleet's database from before holds opens with every entry, delive
     const held = (await cardd.thread(6)).entries.map(({ kind, fields }) => ({ kind, fields }));
     assert.deepEqual(held.at(-1), {
       kind: "hold",
-      fields: { holder: "owner", until: T + 86_400_000 },
+      fields: { holder: "owner", until: HELD_UNTIL },
     });
 
     const db = new DatabaseSync(cardd.db, { readOnly: true });

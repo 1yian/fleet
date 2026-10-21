@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Card, Entry, Status } from "@fleet/protocol";
 import { yoloFor } from "./authority.ts";
-import { factsFrom, nextPhase, statusOf, type Change } from "./status.ts";
-import { cardEntries, isLaneCard, phaseOf, setPhase, setStatus } from "./store.ts";
+import { standingFrom } from "./status.ts";
+import { cardEntries, isLaneCard } from "./store.ts";
 
 export type Draft = Pick<Entry, "card" | "author" | "kind" | "body" | "fields">;
 
@@ -14,26 +14,15 @@ export function requireOrdinary(db: DatabaseSync, card: Card): void {
   }
 }
 
-export function settle(db: DatabaseSync, card: number, now: number): void {
-  const { hold } = factsFrom(cardEntries(db, card));
-  setStatus(db, card, statusOf(phaseOf(db, card), hold, now));
+export function requireOpen(db: DatabaseSync, card: Card): void {
+  requireOrdinary(db, card);
+  if (card.status === "done" || card.status === "dropped")
+    throw new Error(`card is ${card.status}`);
 }
 
-export function applyChange(
-  db: DatabaseSync,
-  card: Card,
-  change: Change,
-  pending: readonly Draft[] = [],
-): Status {
-  requireOrdinary(db, card);
+export function statusWith(db: DatabaseSync, card: Card, pending: readonly Draft[]): Status {
   const now = Date.now();
   const written = pending.map((draft) => ({ ...draft, id: 0, createdAt: now }));
-  const facts = factsFrom([...cardEntries(db, card.id), ...written]);
-  const yolo = yoloFor(db, card.id);
-  const phase = nextPhase({ ...facts, phase: phaseOf(db, card.id), kind: card.kind, yolo }, change);
-  if (phase instanceof Error) throw phase;
-  setPhase(db, card.id, phase);
-  const status = statusOf(phase, facts.hold, now);
-  setStatus(db, card.id, status);
-  return status;
+  const basis = { kind: card.kind, yolo: yoloFor(db, card.id), createdAt: card.createdAt };
+  return standingFrom(basis, [...cardEntries(db, card.id), ...written], now).status;
 }

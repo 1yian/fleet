@@ -11,11 +11,19 @@ import {
   type Thread,
 } from "@fleet/protocol";
 import { attemptsOf } from "./attempts.ts";
-import { applyChange, type Draft } from "./change.ts";
+import { requireOpen, type Draft } from "./change.ts";
 import { answerHold, hearers, holdOf, rewritten } from "./holds.ts";
 import { openReplies } from "./replies.ts";
 import { factsFrom, type Hold } from "./status.ts";
-import { addEntry, cardEntries, getCard, isLaneCard, listCards, touchCard } from "./store.ts";
+import {
+  addEntry,
+  cardEntries,
+  getCard,
+  isLaneCard,
+  loadCard,
+  loadCards,
+  type Loaded,
+} from "./store.ts";
 
 export class StaleCard extends Error {}
 
@@ -43,21 +51,28 @@ function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hol
   return firstLine(latest?.body ?? card.intent);
 }
 
-function boardCard(db: DatabaseSync, card: Card): { card: BoardCard; hold: Hold | undefined } {
-  const entries = cardEntries(db, card.id);
-  const { hold } = factsFrom(entries);
+function boardCard(db: DatabaseSync, { card, entries, standing }: Loaded): BoardCard {
+  const { hold } = standing.facts;
   const mate = isLaneCard(db, card);
-  const summary = summaryOf(card, entries, mate, hold);
   const closed = card.status === "done" || card.status === "dropped";
   const replies = closed ? [] : openReplies(entries);
-  return { card: { ...card, summary, mate, holder: hold?.holder ?? null, replies }, hold };
+  return {
+    ...card,
+    summary: summaryOf(card, entries, mate, hold),
+    mate,
+    holder: hold?.holder ?? null,
+    replies,
+    attention: standing.attention,
+    pausedUntil: standing.pausedUntil,
+  };
 }
 
 export function boardView(db: DatabaseSync): Board {
   const now = Date.now();
   const holds: Board["holds"] = [];
-  const cards = listCards(db).map((each) => {
-    const { card, hold } = boardCard(db, each);
+  const cards = loadCards(db).map((each) => {
+    const card = boardCard(db, each);
+    const { hold } = each.standing.facts;
     const open = card.status !== "done" && card.status !== "dropped";
     if (open && hold?.holder === "captain" && (hold.until === null || hold.until <= now)) {
       const { entry, question, options, merge } = hold;
@@ -69,9 +84,10 @@ export function boardView(db: DatabaseSync): Board {
 }
 
 export function cardView(db: DatabaseSync, id: number): CardView {
-  const { card, hold } = boardCard(db, getCard(db, id));
+  const each = loadCard(db, id);
+  const { hold } = each.standing.facts;
   return {
-    card,
+    card: boardCard(db, each),
     hold:
       hold === undefined
         ? null
@@ -82,7 +98,7 @@ export function cardView(db: DatabaseSync, id: number): CardView {
             until: hold.until,
           },
     attempts: attemptsOf(db, id),
-    entries: cardEntries(db, id),
+    entries: each.entries,
   };
 }
 
@@ -118,9 +134,8 @@ function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
     body: text,
     fields: {},
   };
-  if (taken) applyChange(db, card, { kind: "held" }, [draft]);
+  if (taken) requireOpen(db, card);
   addEntry(db, draft, to);
-  if (taken) touchCard(db, card.id);
   return to;
 }
 
@@ -130,10 +145,9 @@ function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: strin
   const fields = { ...rewritten(facts, facts.hold?.holder ?? "owner", until), reason };
   const body = facts.hold?.question ?? reason;
   const draft: Draft = { card: card.id, author: "captain", kind: "hold", body, fields };
-  applyChange(db, card, { kind: "held" }, [draft]);
+  requireOpen(db, card);
   const to = hearers(db, card, null, [fields.holder]);
   addEntry(db, draft, to);
-  touchCard(db, card.id);
   return to;
 }
 

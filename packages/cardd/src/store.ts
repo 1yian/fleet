@@ -8,10 +8,10 @@ import {
   type Card,
   type Delivery,
   type Entry,
-  type Status,
 } from "@fleet/protocol";
 import Type from "typebox";
-import { PHASES, type Phase } from "./status.ts";
+import { yoloFor } from "./authority.ts";
+import { standingFrom, type Standing } from "./status.ts";
 
 export interface Session {
   readonly id: string;
@@ -28,9 +28,19 @@ const SessionSchema = Type.Object({
   live: Type.Boolean(),
 });
 
+const CardRowSchema = Type.Omit(CardSchema, ["status", "updatedAt"]);
 const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', project,
-  'kind', kind, 'status', status, 'revision', revision, 'pr', pr, 'delivery', delivery, 'intent', intent, 'spec', spec,
-  'createdAt', created_at, 'updatedAt', updated_at)`;
+  'kind', kind, 'revision', revision, 'pr', pr, 'delivery', delivery, 'intent', intent, 'spec', spec,
+  'createdAt', created_at)`;
+const STREAM_KINDS: ReadonlySet<string> = new Set([
+  "comment",
+  "report",
+  "hold",
+  "release",
+  "answer",
+  "cleanup",
+  "review-feedback",
+]);
 export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
   'body', e.body, 'fields', json(e.fields), 'createdAt', e.created_at)`;
 const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'card', a.card,
@@ -95,7 +105,6 @@ export function addLane(
         name: lane.name,
         kind: "standing",
       });
-      setStatus(db, card.id, "waiting");
       db.prepare("UPDATE lanes SET card = ? WHERE name = ?").run(card.id, lane.name);
     }
     return token;
@@ -174,14 +183,36 @@ export function sessionByToken(db: DatabaseSync, token: string): Session | undef
   return row === undefined ? undefined : check(SessionSchema, row);
 }
 
-export function getCard(db: DatabaseSync, id: number): Card {
-  const [row] = json(db, `SELECT ${CARD_JSON} AS j FROM cards WHERE id = ?`, id);
-  if (row === undefined) throw new Error(`no card c-${String(id)}`);
-  return check(CardSchema, row);
+export interface Loaded {
+  readonly card: Card;
+  readonly entries: Entry[];
+  readonly standing: Standing;
 }
 
-export const listCards = (db: DatabaseSync): Card[] =>
-  json(db, `SELECT ${CARD_JSON} AS j FROM cards ORDER BY id`).map((row) => check(CardSchema, row));
+function loaded(db: DatabaseSync, row: unknown, now: number): Loaded {
+  const base = check(CardRowSchema, row);
+  const entries = cardEntries(db, base.id);
+  const yolo = yoloFor(db, base.id);
+  const basis = { kind: base.kind, yolo, createdAt: base.createdAt };
+  const standing = standingFrom(basis, entries, now);
+  const card = { ...base, status: standing.status, updatedAt: standing.since };
+  return { card, entries, standing };
+}
+
+export function loadCard(db: DatabaseSync, id: number): Loaded {
+  const [row] = json(db, `SELECT ${CARD_JSON} AS j FROM cards WHERE id = ?`, id);
+  if (row === undefined) throw new Error(`no card c-${String(id)}`);
+  return loaded(db, row, Date.now());
+}
+
+export function loadCards(db: DatabaseSync): Loaded[] {
+  const now = Date.now();
+  return json(db, `SELECT ${CARD_JSON} AS j FROM cards ORDER BY id`).map((row) =>
+    loaded(db, row, now),
+  );
+}
+
+export const getCard = (db: DatabaseSync, id: number): Card => loadCard(db, id).card;
 
 export const cardEntries = (db: DatabaseSync, card: number): Entry[] =>
   json(db, `SELECT ${ENTRY_JSON} AS j FROM entries e WHERE card = ? ORDER BY id`, card).map((row) =>
@@ -215,8 +246,8 @@ export function addCard(
   const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO cards (title, name, lane, project, kind, status, delivery, intent, spec, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+      `INSERT INTO cards (title, name, lane, project, kind, delivery, intent, spec, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       card.title,
@@ -230,33 +261,8 @@ export function addCard(
       card.intent ?? "",
       card.spec ?? "",
       now,
-      now,
     );
   return getCard(db, Number(lastInsertRowid));
-}
-
-export function setStatus(db: DatabaseSync, card: number, status: Status): void {
-  db.prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ? AND status <> ?").run(
-    status,
-    Date.now(),
-    card,
-    status,
-  );
-}
-
-export function phaseOf(db: DatabaseSync, card: number): Phase {
-  const phase = db.prepare("SELECT phase FROM cards WHERE id = ?").get(card)?.["phase"];
-  const found = PHASES.find((each) => each === phase);
-  if (found === undefined) throw new Error(`no card c-${String(card)}`);
-  return found;
-}
-
-export function setPhase(db: DatabaseSync, card: number, phase: Phase): void {
-  db.prepare("UPDATE cards SET phase = ? WHERE id = ? AND phase <> ?").run(phase, card, phase);
-}
-
-export function touchCard(db: DatabaseSync, card: number): void {
-  db.prepare("UPDATE cards SET revision = revision + 1 WHERE id = ?").run(card);
 }
 
 export function addEntry(
@@ -270,6 +276,8 @@ export function addEntry(
       "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .run(entry.card, entry.author, entry.kind, entry.body, JSON.stringify(entry.fields), now);
+  if (STREAM_KINDS.has(entry.kind))
+    db.prepare("UPDATE cards SET revision = revision + 1 WHERE id = ?").run(entry.card);
   const deliver = db.prepare(
     "INSERT INTO deliveries (session, entry, state, updated_at) VALUES (?, ?, 'pending', ?)",
   );

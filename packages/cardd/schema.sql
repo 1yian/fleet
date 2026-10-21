@@ -1,5 +1,3 @@
-CREATE INDEX cards_by_status ON cards (status);
-
 CREATE INDEX deliveries_not_taken ON deliveries (session) WHERE intake IN ('waiting', 'resent');
 
 CREATE INDEX entries_by_card ON entries (card, id);
@@ -40,12 +38,6 @@ CREATE TABLE cards (
   lane TEXT NOT NULL REFERENCES lanes (name),
   project TEXT REFERENCES projects (name),
   kind TEXT NOT NULL CHECK (kind IN ('ship', 'scout', 'captain', 'standing')),
-  status TEXT NOT NULL CHECK (
-    status IN (
-      'queued', 'working', 'in-review', 'with-mate', 'with-first-mate',
-      'needs-you', 'merging', 'waiting', 'done', 'dropped'
-    )
-  ),
   held_until INTEGER,
   return_status TEXT CHECK (
     return_status IN (
@@ -65,9 +57,7 @@ CREATE TABLE cards (
   revision INTEGER NOT NULL DEFAULT 1,
   last_activity INTEGER,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '', phase TEXT NOT NULL DEFAULT 'queued' CHECK (
-  phase IN ('queued', 'working', 'in-review', 'with-mate', 'merging', 'done', 'dropped')
-),
+  name TEXT NOT NULL DEFAULT '',
   CHECK (kind = 'standing' OR (schedule IS NULL AND runner IS NULL)),
   CHECK (kind = 'ship' OR delivery IS NULL),
   CHECK ((held_until IS NULL) = (return_status IS NULL)),
