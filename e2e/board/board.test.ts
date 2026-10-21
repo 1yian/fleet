@@ -60,29 +60,6 @@ test("Needs you shows a hold, and one click answers it", async () => {
   assert.deepEqual([answer.author, answer.body], ["captain", "v2"]);
 });
 
-test("number keys with a modifier do not answer", async () => {
-  await question("Ship on Friday", ["yes", "no"]);
-  await page.goto(http());
-  await page.getByText("Ship on Friday?").waitFor();
-  await page.keyboard.press("Control+1");
-  await page.keyboard.press("Alt+1");
-  await page.keyboard.press("Meta+1");
-  await page.keyboard.press("2");
-  const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
-  assert.equal(answer.body, "no");
-  assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 1);
-});
-
-test("a number key answers the first question", async () => {
-  await question("Ship on Friday", ["yes", "no"]);
-  await page.goto(http());
-  await page.getByText("Ship on Friday?").waitFor();
-  await page.keyboard.press("2");
-
-  const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
-  assert.equal(answer.body, "no");
-});
-
 test("a click on a card that changed since the captain looked is refused", async () => {
   await page.routeWebSocket(/\/live$/, () => undefined);
   const card = await question("Renew the certificate", ["now", "later"]);
@@ -95,27 +72,12 @@ test("a click on a card that changed since the captain looked is refused", async
   });
 
   await page.getByRole("button", { name: "now" }).click();
-  await page
-    .getByRole("alert")
-    .getByText(`c-${String(card.id)} changed since you looked`)
-    .waitFor();
+  const stale = page.getByRole("article", { name: "Renew the certificate" }).getByRole("alert");
+  await stale.getByText(`c-${String(card.id)} changed since you looked`).waitFor();
+  await stale.getByText("Nothing was sent").waitFor();
   assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 0);
-});
-
-test("the inbox groups the cards: Needs you, Running, and Done", async () => {
-  await question("Pick the API version", ["v1", "v2"]);
-  await main.call("card.new", { title: "Users see one scrollbar", kind: "scout" });
-  const done = check(CardSchema, await main.call("card.new", { title: "Ads", kind: "scout" }));
-  const text = "Search ads convert best.";
-  await main.call("close.finish", { card: done.id, mode: "done", text, archives: [], left: [] });
-  await page.goto(http());
-
-  const titles = (group: string) =>
-    page.getByRole("region", { name: group }).locator(".task-title").allTextContents();
-  await page.getByRole("region", { name: "Done" }).getByText(text).waitFor();
-  assert.deepEqual(await titles("Needs you"), ["Pick the API version"]);
-  assert.deepEqual(await titles("Running"), ["Users see one scrollbar"]);
-  assert.deepEqual(await titles("Done"), ["Ads"]);
+  await stale.getByRole("button", { name: "Dismiss" }).click();
+  await stale.waitFor({ state: "detached" });
 });
 
 test("a click on a card opens its detail: properties, the description, and the thread", async () => {
@@ -131,7 +93,7 @@ test("a click on a card opens its detail: properties, the description, and the t
   await main.call("comment", { card: card.id, text: "Spec: build the v2 endpoint" });
   await main.call("hold", { card: card.id, question: "Ship v2 now?", options: ["yes", "no"] });
   await page.goto(http());
-  await page.getByRole("article", { name: "Pick the API version" }).click();
+  await page.getByRole("article", { name: "Pick the API version" }).locator(".idrow").click();
 
   const detail = page.getByRole("article", { name: "Pick the API version" });
   await detail.getByRole("heading", { name: "Pick the API version", level: 1 }).waitFor();
@@ -296,7 +258,7 @@ test("a refused message comes back into the composer", async () => {
   assert.equal(await composer.inputValue(), "I prefer v2 because");
 });
 
-test("Write your own answers the question in the captain's words, for the card's mate", async () => {
+test("Your words answers the question in the captain's words, for the card's mate", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
   await cleo.call("hold", { card: card.id, question: "Which channel?", options: ["search"] });
@@ -309,8 +271,8 @@ test("Write your own answers the question in the captain's words, for the card's
   await page.goto(http());
   await page.getByText("Which channel?").waitFor();
 
-  await page.getByRole("button", { name: "Write your own" }).click();
-  const box = page.getByRole("textbox", { name: "Your answer" });
+  await page.getByRole("button", { name: "Your words" }).click();
+  const box = page.getByRole("textbox", { name: "Your words" });
   await box.fill("Neither: try podcasts");
   await box.press("Shift+Enter");
   await box.pressSequentially("and newsletters");
@@ -329,9 +291,9 @@ test("Write your own answers the question in the captain's words, for the card's
 test("Escape closes the answer box and not the card", async () => {
   const card = await question("Pick the API version", ["v1", "v2"]);
   await page.goto(`${http()}#/c-${String(card.id)}`);
-  await page.getByRole("button", { name: "Write your own" }).click();
-  await page.getByRole("textbox", { name: "Your answer" }).press("Escape");
-  await page.getByRole("button", { name: "Write your own" }).waitFor();
+  await page.getByRole("button", { name: "Your words" }).click();
+  await page.getByRole("textbox", { name: "Your words" }).press("Escape");
+  await page.getByRole("button", { name: "Your words" }).waitFor();
   assert.equal(new URL(page.url()).hash, `#/c-${String(card.id)}`);
   await page.keyboard.press("Escape");
   await page.getByRole("region", { name: "Needs you" }).waitFor();
@@ -440,8 +402,8 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
 
     await page.getByRole("link", { name: /Pick the API version/ }).click();
     await page.getByRole("region", { name: "Waiting for you" }).getByText(url).waitFor();
-    await page.getByRole("button", { name: "Write your own" }).first().click();
-    await page.getByRole("textbox", { name: "Your answer" }).fill(url);
+    await page.getByRole("button", { name: "Your words" }).first().click();
+    await page.getByRole("textbox", { name: "Your words" }).fill(url);
     await page.getByRole("textbox", { name: "Comment" }).fill(url);
     await page.getByRole("button", { name: "Send", exact: true }).click();
     await page.getByRole("list", { name: "Thread" }).getByText(url).last().waitFor();
@@ -451,7 +413,7 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
   }
 });
 
-test("long options show as a list of full-width choices, and one click answers", async () => {
+test("long options stay full-width choices, and one click answers", async () => {
   const long = "Same, but main's comment goes straight to the lane's worker";
   await question("Pick the messaging", [
     "Recommended: main's comment goes to the lane's mate",

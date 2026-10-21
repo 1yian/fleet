@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Board, BoardAction } from "@fleet/protocol";
 import { act, loadBoard, unreachable, useChanges } from "./api.ts";
-import { BoardIcon, ListIcon } from "./icons.tsx";
+import { Kanban } from "./Board.tsx";
 import { CardDetail, NoCard } from "./CardDetail.tsx";
+import { useFacts } from "./facts.ts";
 import { questionsByCard } from "./format.ts";
-import { Inbox, type View } from "./Inbox.tsx";
 import { useCardRoute } from "./route.ts";
-import { SegmentedControl } from "./vendor/segmented-control.tsx";
+import { TopBar } from "./TopBar.tsx";
 
 const TICK_MS = 30_000;
-
-const typesText = (element: EventTarget | null): boolean =>
-  element instanceof HTMLElement &&
-  (element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName));
 
 function useBoard(changes: number, setNotice: (notice: string | undefined) => void) {
   const [board, setBoard] = useState<Board | undefined>();
@@ -53,27 +49,76 @@ function useNow(): number {
   return now;
 }
 
-function useKeys(
+function useDecisions(
   board: Board | undefined,
-  open: number | undefined,
-  answer: (card: number, hold: number, choice: string, written: boolean) => Promise<boolean>,
-  close: () => void,
-): void {
-  const first = board?.holds.find((question) => open === undefined || question.card === open);
+  refresh: () => void,
+  setNotice: (notice: string | undefined) => void,
+) {
+  const [notices, setNotices] = useState<ReadonlyMap<number, string>>(new Map());
+  const noticeOn = useCallback((card: number, text: string | undefined) => {
+    setNotices((all) => {
+      const next = new Map(all);
+      if (text === undefined) next.delete(card);
+      else next.set(card, text);
+      return next;
+    });
+  }, []);
+  const send = useCallback(
+    async (card: number, action: BoardAction["action"]): Promise<string | undefined> => {
+      const revision = board?.cards.find((each) => each.id === card)?.revision ?? 0;
+      const error = await act({ card, revision, action });
+      refresh();
+      return error;
+    },
+    [board, refresh],
+  );
+  const decide = useCallback(
+    async (card: number, action: BoardAction["action"]): Promise<boolean> => {
+      noticeOn(card, undefined);
+      const error = await send(card, action);
+      noticeOn(card, error);
+      return error === undefined;
+    },
+    [send, noticeOn],
+  );
+  const answer = useCallback(
+    (card: number, hold: number, choice: string, written: boolean) =>
+      decide(card, { kind: "answer", hold, choice, ...(written ? { written } : {}) }),
+    [decide],
+  );
+  const later = useCallback(
+    (card: number, until: number, reason: string) => {
+      void decide(card, { kind: "hold", until, reason });
+    },
+    [decide],
+  );
+  const dismiss = useCallback(
+    (card: number) => {
+      noticeOn(card, undefined);
+    },
+    [noticeOn],
+  );
+  const reply = useCallback(
+    async (card: number, text: string): Promise<boolean> => {
+      const error = await send(card, { kind: "comment", text });
+      setNotice(error);
+      return error === undefined;
+    },
+    [send, setNotice],
+  );
+  return { notices, answer, later, dismiss, reply };
+}
+
+function useEscape(close: () => void): void {
   useEffect(() => {
     const key = (event: KeyboardEvent): void => {
       if (event.key === "Escape") close();
-      if (first === undefined || event.repeat || event.metaKey || event.ctrlKey || event.altKey)
-        return;
-      if (typesText(event.target)) return;
-      const choice = first.options[Number(event.key) - 1];
-      if (choice !== undefined) void answer(first.card, first.hold, choice, false);
     };
     window.addEventListener("keydown", key);
     return () => {
       window.removeEventListener("keydown", key);
     };
-  }, [first, answer, close]);
+  }, [close]);
 }
 
 export function App() {
@@ -81,28 +126,15 @@ export function App() {
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
   const { board, refresh } = useBoard(changes, setNotice);
-  const [view, setView] = useState<View>("board");
+  const [lane, setLane] = useState<string | undefined>();
   const { card: open, open: openCard, close } = useCardRoute();
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
+  const facts = useFacts(board?.cards, now);
 
-  const send = useCallback(
-    async (card: number, action: BoardAction["action"]): Promise<boolean> => {
-      const revision = board?.cards.find((each) => each.id === card)?.revision ?? 0;
-      const error = await act({ card, revision, action });
-      setNotice(error);
-      refresh();
-      return error === undefined;
-    },
-    [board, refresh],
-  );
-  const answer = useCallback(
-    (card: number, hold: number, choice: string, written: boolean) =>
-      send(card, { kind: "answer", hold, choice, ...(written ? { written } : {}) }),
-    [send],
-  );
-  useKeys(board, open, answer, close);
+  const { notices, answer, later, dismiss, reply } = useDecisions(board, refresh, setNotice);
+  useEscape(close);
 
-  const notices =
+  const banner =
     notice === undefined ? null : (
       <p className="notice" role="alert">
         {notice}
@@ -111,7 +143,7 @@ export function App() {
   if (board === undefined)
     return (
       <main className="board">
-        {notices}
+        {banner}
         <p className="empty">Loading…</p>
       </main>
     );
@@ -119,14 +151,14 @@ export function App() {
   if (open !== undefined)
     return (
       <main className="board detail-page">
-        {notices}
+        {banner}
         {shown === undefined ? (
           <NoCard id={open} onClose={close} />
         ) : (
           <CardDetail
             key={shown.id}
             card={shown}
-            questions={questionsByCard(board.holds).get(shown.id) ?? []}
+            question={questionsByCard(board.holds).get(shown.id)}
             now={now}
             changes={changes}
             draft={drafts.get(shown.id) ?? ""}
@@ -134,30 +166,36 @@ export function App() {
               setDrafts((all) => new Map(all).set(shown.id, text));
             }}
             onClose={close}
+            notice={notices.get(shown.id)}
+            onDismiss={() => {
+              dismiss(shown.id);
+            }}
             onAnswer={(hold, choice, written) => answer(shown.id, hold, choice, written)}
-            onReply={(text) => send(shown.id, { kind: "comment", text })}
+            onLater={(until, reason) => {
+              later(shown.id, until, reason);
+            }}
+            onReply={(text) => reply(shown.id, text)}
             onFail={setNotice}
           />
         )}
       </main>
     );
+  const selected = board.cards.some((card) => card.lane === lane) ? lane : undefined;
   return (
-    <main className="board">
-      <header className="top">
-        <h1>Fleet</h1>
-        <SegmentedControl<View>
-          aria-label="View"
-          className="view-switch"
-          value={view}
-          onChange={setView}
-          options={[
-            { value: "board", label: "Board", icon: <BoardIcon /> },
-            { value: "list", label: "List", icon: <ListIcon /> },
-          ]}
-        />
-      </header>
-      {notices}
-      <Inbox board={board} view={view} now={now} onOpen={openCard} onAnswer={answer} />
+    <main className="kanban">
+      <TopBar cards={board.cards} waiting={board.holds.length} lane={selected} onLane={setLane} />
+      {banner}
+      <Kanban
+        board={board}
+        lane={selected}
+        now={now}
+        facts={facts}
+        onOpen={openCard}
+        notices={notices}
+        onAnswer={answer}
+        onLater={later}
+        onDismiss={dismiss}
+      />
     </main>
   );
 }

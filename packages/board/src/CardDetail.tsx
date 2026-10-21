@@ -9,16 +9,17 @@ import {
 import type { BoardCard, Entry, Thread } from "@fleet/protocol";
 import { loadThread, unreachable } from "./api.ts";
 import { Ask } from "./Ask.tsx";
+import { Stale } from "./Stale.tsx";
 import {
   authorOf,
   bodyOf,
   firstLine,
-  isActive,
+  glyphOf,
   isMessage,
   keyOf,
   phraseOf,
+  prLabel,
   since,
-  toneOf,
   verb,
   type Author,
   type Question,
@@ -27,13 +28,16 @@ import { BackIcon, SendIcon, StatusIcon } from "./icons.tsx";
 
 interface Props {
   readonly card: BoardCard;
-  readonly questions: readonly Question[];
+  readonly question: Question | undefined;
   readonly now: number;
   readonly changes: number;
   readonly draft: string;
   readonly onDraft: (text: string) => void;
   readonly onClose: () => void;
   readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
+  readonly onLater: (until: number, reason: string) => void;
+  readonly notice: string | undefined;
+  readonly onDismiss: () => void;
   readonly onReply: (text: string) => Promise<boolean>;
   readonly onFail: (message: string) => void;
 }
@@ -43,7 +47,7 @@ const LONG_LINE = 90;
 const NEAR_BOTTOM = 240;
 
 export function CardDetail(props: Props) {
-  const { card, questions, now, changes, onFail } = props;
+  const { card, question, now, changes, onFail } = props;
   const [thread, setThread] = useState<Thread | undefined>();
   useEffect(() => {
     let current = true;
@@ -81,8 +85,8 @@ export function CardDetail(props: Props) {
       end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [last]);
 
-  const asked = questions.length > 0;
-  const open = new Set(questions.map((question) => question.hold));
+  const asked = question !== undefined;
+  const open = new Set(question === undefined ? [] : [question.hold]);
   return (
     <div className="detail">
       <nav className="crumbs" aria-label="Breadcrumb">
@@ -105,19 +109,12 @@ export function CardDetail(props: Props) {
         <Properties card={card} asked={asked} now={now} />
         <div className="detail-main">
           <Description card={card} />
-          {asked ? (
-            <section className="waiting" aria-label="Waiting for you">
-              <h2>Waiting for you</h2>
-              {questions.map((question, index) => (
-                <Ask
-                  key={question.hold}
-                  question={question}
-                  keys={index === 0}
-                  onAnswer={props.onAnswer}
-                />
-              ))}
-            </section>
-          ) : null}
+          {props.notice === undefined ? null : (
+            <Stale text={props.notice} onDismiss={props.onDismiss} />
+          )}
+          {question === undefined ? null : (
+            <Waiting question={question} onAnswer={props.onAnswer} onLater={props.onLater} />
+          )}
           <section className="activity" aria-label="Activity">
             <h2>Activity</h2>
             {thread === undefined ? (
@@ -140,6 +137,25 @@ export function CardDetail(props: Props) {
   );
 }
 
+function Waiting(props: {
+  readonly question: Question;
+  readonly onAnswer: Props["onAnswer"];
+  readonly onLater: Props["onLater"];
+}) {
+  return (
+    <section className="waiting" aria-label="Waiting for you">
+      <h2>Waiting for you</h2>
+      <Ask
+        question={props.question}
+        showQuestion
+        onRead={undefined}
+        onAnswer={props.onAnswer}
+        onLater={props.onLater}
+      />
+    </section>
+  );
+}
+
 export function NoCard({ id, onClose }: { readonly id: number; readonly onClose: () => void }) {
   return (
     <div className="detail">
@@ -154,18 +170,12 @@ export function NoCard({ id, onClose }: { readonly id: number; readonly onClose:
   );
 }
 
-const prLabel = (url: string): string => {
-  const match = /^https:\/\/[^/]+\/[^/]+\/([^/]+)\/pull\/(\d+)/.exec(url);
-  return match === null ? url.replace(/^https:\/\//, "") : `${match[1] ?? ""}#${match[2] ?? ""}`;
-};
-
 function Properties(props: {
   readonly card: BoardCard;
   readonly asked: boolean;
   readonly now: number;
 }) {
   const { card, asked, now } = props;
-  const tone = toneOf(card, asked);
   const row = (label: string, value: ReactNode) => (
     <div className="property">
       <dt>{label}</dt>
@@ -173,11 +183,11 @@ function Properties(props: {
     </div>
   );
   return (
-    <dl className={`properties ${tone}`} aria-label="Properties">
+    <dl className="properties" aria-label="Properties">
       {row(
         "Status",
         <>
-          <StatusIcon tone={tone} active={isActive(card)} />
+          <StatusIcon glyph={glyphOf(card, asked)} />
           {phraseOf(card, asked)}
         </>,
       )}
