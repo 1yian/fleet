@@ -27,8 +27,21 @@ export function confirm(db: DatabaseSync, session: string, inFile: readonly numb
   return low;
 }
 
+/**
+ * The entry as this session reads it. The echo (`re`, spec section 10.3) quotes a comment that
+ * a mate received, so only a mate reads it. A worker shares an entry with an echo when its
+ * second mate steers it right after main's comment: the worker gets the steer alone, never
+ * main's words to its mate.
+ */
+function asReadBy(entry: Entry, role: unknown): Entry {
+  if (role === "mate" || !("re" in entry.fields)) return entry;
+  const fields = Object.fromEntries(Object.entries(entry.fields).filter(([key]) => key !== "re"));
+  return { ...entry, fields };
+}
+
 /** The entries to push, in entry order: every unconfirmed one at a connect, otherwise the pending ones. */
 export function toPush(db: DatabaseSync, session: string, atConnect: boolean): Push[] {
+  const role = db.prepare("SELECT role FROM sessions WHERE id = ?").get(session)?.["role"];
   const states = atConnect ? "('pending', 'pushed', 'acknowledged')" : "('pending')";
   const rows = json(
     db,
@@ -37,7 +50,7 @@ export function toPush(db: DatabaseSync, session: string, atConnect: boolean): P
     session,
   );
   const pushes = rows.map((row) => {
-    const entry = check(EntrySchema, row);
+    const entry = asReadBy(check(EntrySchema, row), role);
     return { entry, mode: entry.fields["now"] === true ? "steer" : "followUp" } as const;
   });
   const mark = db.prepare(
