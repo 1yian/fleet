@@ -14,7 +14,8 @@ export interface Turn {
   readonly text: string;
 }
 type Move =
-  | { readonly text: string }
+  | { readonly text: string; readonly thinking?: string }
+  | { readonly texts: readonly string[]; readonly thinking?: string }
   | {
       readonly tool: string;
       readonly text?: string;

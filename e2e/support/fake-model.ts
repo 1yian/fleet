@@ -3,6 +3,7 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxText,
+  fauxThinking,
   fauxToolCall,
   type AssistantMessage,
   type FauxResponseFactory,
@@ -37,7 +38,12 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
       stopReason: "toolUse",
     });
   }
-  return fauxAssistantMessage([fauxText(text ?? "")]);
+  const thinking = optionalString(move, "thinking");
+  const texts = move["texts"];
+  const blocks = Array.isArray(texts)
+    ? texts.filter((each) => typeof each === "string").map(fauxText)
+    : [fauxText(text ?? "")];
+  return fauxAssistantMessage(thinking === undefined ? blocks : [fauxThinking(thinking), ...blocks]);
 }
 
 const respond: FauxResponseFactory = async (context, options, _state, model) => {
