@@ -148,7 +148,7 @@ test("each message gets one muted rule and a sender label, through streaming, a 
   assert.ok(colored.split("\n").some(mutedRule), "a rule is drawn in one muted color");
 
   await lab.submit(pane, THANKS);
-  await h.waitForCall(2, "mate", WAIT_MS);
+  await h.waitForCall(1, "mate", WAIT_MS);
   const yielded = await screenWhere(pane, "the silent yield", (screen) => screen.includes(THANKS));
   keep("3-silent-yield", yielded, await lab.coloredScreen(pane));
   assert.deepEqual(transcript(yielded).shown, answered);
