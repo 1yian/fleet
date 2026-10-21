@@ -31,6 +31,13 @@ function lavish(args: readonly string[]): Promise<string> {
   });
 }
 
+const withoutLavish = (problem: string): string =>
+  `Lavish is not usable on this host, so no review page was opened and no review wait was started: ${problem}\n` +
+  "Do not retry wait_review and do not run lavish-axi yourself. Write what the captain should review " +
+  "as a plain Markdown report file outside your copy, such as /tmp/fleet-c-<N>/review.md (c-<N> is your card). " +
+  "Then report needs-decision with a new key, or done if no answer is needed, naming the file's absolute path " +
+  "and saying that lavish-axi is unavailable on this host.";
+
 const field = (output: string, name: string): string | undefined =>
   new RegExp(`^\\s*${name}:\\s*"?([^"\\s]+)"?\\s*$`, "m").exec(output)?.[1];
 
@@ -59,7 +66,7 @@ async function answer(page: string, reply: string): Promise<void> {
 
 async function waitOnPage(jobs: Jobs, file: string, reply?: string): Promise<string> {
   const problem = lavishProblem();
-  if (problem !== undefined) throw new Error(problem);
+  if (problem !== undefined) throw new Error(withoutLavish(problem));
   if (jobs.reviewing) {
     throw new Error(
       "You already wait on the captain's review. His feedback arrives as a [fleet] message.",

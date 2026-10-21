@@ -187,7 +187,7 @@ jobs:
           chmod +x herdr && sudo mv herdr /usr/local/bin/herdr
       - name: Install direnv
         run: sudo apt-get update -q && sudo apt-get install -y -q direnv
-      - name: Install lavish-axi, a prerequisite of the fleet (docs/setup.md)
+      - name: Install lavish-axi, which the review end-to-end tests drive (optional on a host, docs/setup.md)
         run: npm install -g lavish-axi@0.1.90
       - run: npm run build
       - run: npx playwright install --with-deps chromium

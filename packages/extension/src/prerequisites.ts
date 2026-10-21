@@ -42,18 +42,19 @@ const TOOLS: readonly Tool[] = [
   },
   { name: "zstd", version: ["--version"], fix: BREW_OR_APT("zstd") },
   {
-    name: "lavish-axi",
-    version: ["--version"],
-    floor: "0.1.80",
-    fix: "npm install -g lavish-axi",
-  },
-  {
     name: "no-mistakes",
     version: ["--version"],
     fix: "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh",
   },
   { name: "direnv", version: ["version"], fix: BREW_OR_APT("direnv") },
 ];
+
+const LAVISH: Tool = {
+  name: "lavish-axi",
+  version: ["--version"],
+  floor: "0.1.80",
+  fix: "npm install -g lavish-axi",
+};
 
 const versionParts = (text: string): number[] | undefined =>
   /(\d+)\.(\d+)\.(\d+)/.exec(text)?.slice(1).map(Number);
@@ -173,16 +174,9 @@ function memoryProblems(root: string, host: string): string[] {
   });
 }
 
-function toolProblems(names: readonly string[]): string[] {
-  const host = hostname();
-  return TOOLS.filter((tool) => names.includes(tool.name)).flatMap((tool) => {
-    const problem = toolProblem(tool, host);
-    return problem === undefined ? [] : [problem];
-  });
-}
-
 export function hostProblems(root: string): string[] {
-  return [...toolProblems(TOOLS.map((tool) => tool.name)), ...memoryProblems(root, hostname())];
+  const host = hostname();
+  return [...TOOLS.flatMap((tool) => toolProblem(tool, host) ?? []), ...memoryProblems(root, host)];
 }
 
-export const lavishProblem = (): string | undefined => toolProblems(["lavish-axi"])[0];
+export const lavishProblem = (): string | undefined => toolProblem(LAVISH, hostname());
