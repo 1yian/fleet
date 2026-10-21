@@ -87,7 +87,10 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
     "Dispatched c-1-a1 on local, branch c-1-a1.",
   );
   const workerFirst = await h.waitForCall(0, "worker");
-  assert.equal(lastUser(workerFirst), "[fleet] main on c-1 one-scrollbar: fix the scrollbar");
+  assert.equal(
+    lastUser(workerFirst),
+    "[fleet] main on c-1 one-scrollbar: fix the scrollbar\n\nDelivery: no-mistakes",
+  );
   assert.match(
     workerFirst.find((turn) => turn.role === "system")?.text ?? "",
     /^# Worker role contract$/m,
@@ -133,7 +136,9 @@ test("a dispatch whose connection drops after the worker started finds it, and a
   const workerTurns = h.callsOf("worker").at(-1) ?? [];
   assert.equal(
     workerTurns.filter(
-      (turn) => turn.text === "[fleet] main on c-1 one-scrollbar: fix the scrollbar",
+      (turn) =>
+        turn.text ===
+        "[fleet] main on c-1 one-scrollbar: fix the scrollbar\n\nDelivery: no-mistakes",
     ).length,
     1,
   );
@@ -463,7 +468,11 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
     "[fleet] main on c-1 one-scrollbar: Your session was restarted. Continue your task from where you stopped.",
   );
   assert.ok(
-    resumed.some((turn) => turn.text === "[fleet] main on c-1 one-scrollbar: fix the scrollbar"),
+    resumed.some(
+      (turn) =>
+        turn.text ===
+        "[fleet] main on c-1 one-scrollbar: fix the scrollbar\n\nDelivery: no-mistakes",
+    ),
   );
   assert.deepEqual(await workers(), ["c-1-a1"]);
 });

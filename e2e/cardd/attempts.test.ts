@@ -45,7 +45,7 @@ test("a dispatch retry finds the attempt that already started, with one task mes
   await fleet.main.call("board", {});
   assert.deepEqual(
     worker.entries.map(({ entry }) => [entry.kind, entry.body, entry.fields["task"]]),
-    [["comment", "fix the scrollbar", true]],
+    [["comment", "fix the scrollbar\n\nDelivery: no-mistakes", true]],
   );
   await assert.rejects(begin("p620"), {
     message: `${c()} has an active attempt ${c("-a1")} on maverick`,
@@ -147,7 +147,7 @@ test("a job result reaches the waiting worker once, through POST /call", async (
   assert.deepEqual(
     worker.entries.map(({ entry }) => [entry.kind, entry.body, entry.fields["exitCode"]]),
     [
-      ["comment", "fix the scrollbar", undefined],
+      ["comment", "fix the scrollbar\n\nDelivery: no-mistakes", undefined],
       ["job-result", "1 failing", 1],
     ],
   );

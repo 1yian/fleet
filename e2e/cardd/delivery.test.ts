@@ -27,7 +27,7 @@ test("the task and each comment reach the worker, and now makes a comment a stee
   assert.deepEqual(
     worker.entries.map(({ entry, mode }) => [entry.author, entry.body, mode]),
     [
-      ["mate:main", "the task", "followUp"],
+      ["mate:main", "the task\n\nDelivery: no-mistakes", "followUp"],
       ["mate:main", "use the v2 endpoint", "followUp"],
       ["mate:main", "stop, the API is down", "steer"],
     ],
@@ -40,7 +40,7 @@ test("entries for an offline worker wait and arrive at connect, in order", async
 
   assert.deepEqual(
     (await worker.waitForEntries(2)).map((entry) => entry.body),
-    ["the task", "start with the tests"],
+    ["the task\n\nDelivery: no-mistakes", "start with the tests"],
   );
 });
 
@@ -77,7 +77,7 @@ test("an acknowledged entry is resent when the session file lacks it", async () 
   const again = await fleet.cardd.connect(token, []);
   assert.deepEqual(
     (await again.waitForEntries(1)).map((entry) => [entry.id, entry.body]),
-    [[task.id, "the task"]],
+    [[task.id, "the task\n\nDelivery: no-mistakes"]],
   );
 });
 

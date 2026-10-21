@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, MERGE_OPTIONS, OPS, type Card, type Holder } from "@fleet/protocol";
+import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { applyChange, settle, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
@@ -250,7 +251,8 @@ export function mergeQuestion(
 ): Draft | undefined {
   const written = pending.map((draft) => ({ ...draft, id: 0, createdAt: 0 }));
   const facts = factsFrom([...cardEntries(db, card.id), ...written]);
-  if (card.kind !== "ship" || card.pr === null || !facts.awaitingMerge) return undefined;
+  const what = mergeSubject(db, card);
+  if (card.kind !== "ship" || what === undefined || !facts.awaitingMerge) return undefined;
   if (facts.hold !== undefined || facts.mergeApproved) return undefined;
   if (yoloFor(db, card.id)) return undefined;
   const holder: Holder = levelsOf(db, card).includes("main") ? "main" : "captain";
@@ -260,10 +262,22 @@ export function mergeQuestion(
     merge: true,
     until: null,
     occurrence: facts.occurrences + 1,
-    pr: card.pr,
+    ...what.fields,
   };
-  const body = `Merge ${card.pr} for c-${String(card.id)}: ${card.title}?`;
+  const body = `${what.ask} for c-${String(card.id)}: ${card.title}?`;
   return { card: card.id, author: "fleet", kind: "hold", body, fields };
+}
+
+function mergeSubject(
+  db: DatabaseSync,
+  card: Card,
+): { ask: string; fields: Record<string, string> } | undefined {
+  if (card.delivery !== "local-only")
+    return card.pr === null ? undefined : { ask: `Merge ${card.pr}`, fields: { pr: card.pr } };
+  const local = localLanding(db, card.id);
+  if (local === undefined) return undefined;
+  const { branch, base } = local;
+  return { ask: `Land branch ${branch} on local ${base}`, fields: { branch, base } };
 }
 
 function askAgain(db: DatabaseSync, card: Card): string[] {

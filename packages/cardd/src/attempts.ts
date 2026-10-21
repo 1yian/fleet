@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, type Card, type CardView } from "@fleet/protocol";
+import { check, type Card, type CardView, type Delivery } from "@fleet/protocol";
 import Type from "typebox";
-import { addEntry, hash, json, tokenFor } from "./store.ts";
+import { addEntry, hash, json, registeredDelivery, tokenFor } from "./store.ts";
 
 interface LiveAttempt {
   readonly id: number;
@@ -55,6 +55,23 @@ export const attemptsOf = (db: DatabaseSync, card: number): CardView["attempts"]
     ),
   );
 
+export function localLanding(
+  db: DatabaseSync,
+  card: number,
+): { branch: string; base: string } | undefined {
+  const row = db
+    .prepare(
+      `SELECT a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base
+       FROM cards c JOIN projects p ON p.name = c.project JOIN attempts a ON a.card = c.id
+       WHERE c.id = ? AND c.delivery = 'local-only' AND a.branch IS NOT NULL
+       ORDER BY a.n DESC LIMIT 1`,
+    )
+    .get(card);
+  const branch = row?.["branch"];
+  const base = row?.["base"];
+  return typeof branch === "string" && typeof base === "string" ? { branch, base } : undefined;
+}
+
 export interface Begun {
   readonly session: string;
   readonly token: string;
@@ -66,6 +83,7 @@ export interface Begun {
   readonly branch: string;
   readonly name: string;
   readonly lane: string;
+  readonly delivery: Delivery | null;
 }
 
 function placeOf(
@@ -89,6 +107,35 @@ function placeOf(
   return { clone, base: String(row?.["base"]), branch, name: card.name, lane: card.lane };
 }
 
+function deliveryOf(db: DatabaseSync, card: Card, asked: Delivery | undefined): Delivery | null {
+  if (card.kind !== "ship") {
+    if (asked === undefined) return null;
+    throw new Error(
+      `c-${String(card.id)} is a ${card.kind} card: only a ship card has a delivery mode`,
+    );
+  }
+  const registered = card.project === null ? null : registeredDelivery(db, card.project);
+  const mode = asked ?? card.delivery ?? registered;
+  db.prepare("UPDATE cards SET delivery = ? WHERE id = ? AND delivery IS NOT ?").run(
+    mode,
+    card.id,
+    mode,
+  );
+  return mode;
+}
+
+const DELIVERY_LINE = /^Delivery:\s*(\S+)/m;
+
+function taskWithDelivery(card: Card, task: string, delivery: Delivery | null): string {
+  const mode = delivery ?? "report";
+  const named = DELIVERY_LINE.exec(task)?.[1];
+  if (named === undefined) return `${task.trimEnd()}\n\nDelivery: ${mode}`;
+  if (named === mode) return task;
+  throw new Error(
+    `the task says Delivery: ${named}, but c-${String(card.id)} delivers ${mode}. Leave the Delivery line out, since dispatch adds it from the card, or pass delivery="${named}" to dispatch when the captain asked for that mode`,
+  );
+}
+
 function connected(db: DatabaseSync, session: string): boolean {
   const state = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
   return state === "idle" || state === "running" || state === "waiting";
@@ -97,15 +144,21 @@ function connected(db: DatabaseSync, session: string): boolean {
 export function beginAttempt(
   db: DatabaseSync,
   card: Card,
-  request: { host: string; replace: boolean; task: string },
+  request: { host: string; replace: boolean; task: string; delivery?: Delivery | undefined },
 ): Begun {
   const live = liveAttempt(db, card.id);
+  const before = card.delivery;
+  const delivery = deliveryOf(db, card, request.delivery);
   if (live !== undefined && !request.replace) {
     const session = name(card.id, live.n);
     if (live.host !== request.host) {
       const which = live.state === "active" ? "an active" : "a starting";
       throw new Error(`c-${String(card.id)} has ${which} attempt ${session} on ${live.host}`);
     }
+    if (before !== null && before !== delivery)
+      throw new Error(
+        `c-${String(card.id)}'s worker ${session} already runs with Delivery: ${before}. Dispatch with replace=true to start it over with ${String(delivery)}, or comment the worker`,
+      );
     const place = placeOf(db, card, request.host, session);
     return {
       session,
@@ -114,6 +167,7 @@ export function beginAttempt(
       active: live.state === "active",
       connected: connected(db, session),
       ...place,
+      delivery,
     };
   }
   if (live !== undefined) endAttempt(db, live, "replaced");
@@ -123,6 +177,7 @@ export function beginAttempt(
   );
   const session = name(card.id, n);
   const place = placeOf(db, card, request.host, session);
+  const body = taskWithDelivery(card, request.task, delivery);
   const token = tokenFor(db, "worker", session);
   const { lastInsertRowid } = db
     .prepare(
@@ -138,11 +193,11 @@ export function beginAttempt(
     card: card.id,
     author: `mate:${card.lane}`,
     kind: "comment",
-    body: request.task,
+    body,
     fields: { task: true },
   };
   addEntry(db, task, [session]);
-  return { session, token, resumed: false, active: false, connected: false, ...place };
+  return { session, token, resumed: false, active: false, connected: false, ...place, delivery };
 }
 
 function attemptOf(db: DatabaseSync, session: string): number {

@@ -97,8 +97,8 @@ test("yolo on puts a done PR in Merging with no question; yolo off holds it for 
   mate.prompt("Land what is ready.");
 
   const [board, held, unmerged] = toolResults(await h.waitForCall(3));
-  assert.match(board ?? "", /^ {2}\d+,with-mate,main,Users see one scrollbar,web,/m);
-  assert.match(board ?? "", /^ {2}\d+,merging,merge,Speed up the API,api,/m);
+  assert.match(board ?? "", /^ {2}\d+,with-mate,main,no-mistakes,Users see one scrollbar,web,/m);
+  assert.match(board ?? "", /^ {2}\d+,merging,merge,no-mistakes,Speed up the API,api,/m);
   assert.equal(
     held,
     `c-${String(asks.id)} has an open hold; clear it first with hold(card, clear=true), with the captain's words when it waits on him`,

@@ -47,9 +47,11 @@ export function refreshEveryCloneOnFirstConnect(pi: ExtensionAPI, link: Link): v
     started = true;
     void (async () => {
       const projects = check(OPS.projects.result, await link.call("projects", {}));
-      const clones = projects.flatMap(({ name, base, clones: each }) =>
-        each.map(({ host, path }) => ({ project: name, host, path, base })),
-      );
+      const clones = projects
+        .filter(({ delivery }) => delivery !== "local-only")
+        .flatMap(({ name, base, clones: each }) =>
+          each.map(({ host, path }) => ({ project: name, host, path, base })),
+        );
       const lines = await refreshClonesInTurn(clones);
       if (lines.length === 0) return;
       const urgent = lines.some((line) => line.includes(NEEDS_THE_CAPTAIN));

@@ -32,6 +32,7 @@ export interface LabOptions {
   readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
   readonly remote?: boolean;
+  readonly delivery?: string;
 }
 
 export async function startDispatchLab({
@@ -39,6 +40,7 @@ export async function startDispatchLab({
   dashTokens = [],
   workerArgs = [],
   remote: withRemote = false,
+  delivery = "no-mistakes",
 }: LabOptions = {}): Promise<DispatchLab> {
   const cardd = await Cardd.start(carddEnv);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
@@ -53,6 +55,7 @@ export async function startDispatchLab({
     "site",
     remote === undefined ? { local: clone, flaky: clone, far: clone } : { local: clone },
     "acme/site",
+    delivery,
   );
   const h = await Harness.start();
   const lab = await HerdrLab.start({

@@ -56,7 +56,10 @@ test("the task message wakes a new worker, and its report reaches the mate", asy
   await worker("fix the scrollbar");
   await fleet.main.waitForEntries(1);
 
-  assert.equal(lastUser(await h.waitForCall(0)), fleetText("fix the scrollbar"));
+  assert.equal(
+    lastUser(await h.waitForCall(0)),
+    fleetText("fix the scrollbar\n\nDelivery: no-mistakes"),
+  );
   assert.deepEqual(reports(fleet.main), [["done", "PR green and ready"]]);
   assert.equal(await status(fleet.main, card), "needs-you");
 });
@@ -200,7 +203,10 @@ test("a message lost before the session file existed is delivered again after a 
     return { text: "never sent" };
   });
   const pi = await worker("the task message");
-  assert.equal(lastUser(await h.waitForCall(0)), fleetText("the task message"));
+  assert.equal(
+    lastUser(await h.waitForCall(0)),
+    fleetText("the task message\n\nDelivery: no-mistakes"),
+  );
   await h.waitFor(delivered(START), "the task message delivered");
   await pi.kill();
   held.open();
@@ -211,7 +217,7 @@ test("a message lost before the session file existed is delivered again after a 
   const after = await h.waitForCall(1);
   assert.deepEqual(
     after.filter((turn) => turn.role === "user").map((turn) => turn.text),
-    [fleetText("the task message")],
+    [fleetText("the task message\n\nDelivery: no-mistakes")],
   );
 });
 

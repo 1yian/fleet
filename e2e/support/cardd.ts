@@ -76,17 +76,24 @@ export class Cardd {
     }).trim();
   }
 
-  addProject(name: string, clones: Record<string, string> = {}, repo?: string): void {
+  addProject(
+    name: string,
+    clones: Record<string, string> = {},
+    repo?: string,
+    delivery = "no-mistakes",
+  ): void {
     const cloneArgs = Object.entries(clones).map(([host, path]) => `${host}=${path}`);
-    this.addProjectWithCloneArgs(name, cloneArgs, repo === undefined ? [] : ["--repo", repo]);
+    const more = repo === undefined ? [] : ["--repo", repo];
+    this.addProjectWithCloneArgs(name, cloneArgs, more, delivery);
   }
 
   addProjectWithCloneArgs(
     name: string,
     clones: readonly string[],
     more: readonly string[] = [],
+    delivery = "no-mistakes",
   ): void {
-    const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", "no-mistakes"];
+    const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", delivery];
     const cloneArgs = clones.flatMap((clone) => ["--clone", clone]);
     execFileSync("node", [...args, ...cloneArgs, ...more], {
       stdio: ["ignore", "pipe", "pipe"],

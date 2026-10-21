@@ -53,10 +53,16 @@ function cut(text: string, max: number, full: boolean): string {
   return `${text.slice(0, max).trimEnd()}... (truncated, ${String(text.length)} chars total, full=true shows all)`;
 }
 
+const deliveryOf = (card: BoardCard): string => {
+  if (card.delivery !== null) return card.delivery;
+  return card.kind === "scout" ? "report" : "none";
+};
+
 const COLUMNS = {
   card: (card: BoardCard) => card.id,
   status: (card: BoardCard) => card.status,
   waits,
+  delivery: deliveryOf,
   title: (card: BoardCard) => card.title,
   name: (card: BoardCard) => card.name,
   lane: (card: BoardCard) => card.lane,
@@ -67,7 +73,7 @@ const COLUMNS = {
   updated: (card: BoardCard) => ago(card.updatedAt),
 } as const;
 type Column = keyof typeof COLUMNS;
-const DEFAULT_COLUMNS = ["card", "status", "waits", "title"] as const;
+const DEFAULT_COLUMNS = ["card", "status", "waits", "delivery", "title"] as const;
 const isColumn = (name: string): name is Column => Object.hasOwn(COLUMNS, name);
 const isDefault = (name: string): boolean => DEFAULT_COLUMNS.some((each) => each === name);
 export const EXTRA_COLUMNS = Object.keys(COLUMNS).filter((each) => !isDefault(each));
@@ -202,6 +208,7 @@ function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
       title: card.title,
       kind: card.kind,
       project: card.project ?? "none",
+      delivery: deliveryOf(card),
       lane: card.lane,
       status: card.status,
       waits: waits(card),

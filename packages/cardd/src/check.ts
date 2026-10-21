@@ -108,8 +108,10 @@ function actingLane(db: DatabaseSync, card: number, lane: string): string {
   return hold?.holder === "main" ? (parentOf(db, lane) ?? lane) : lane;
 }
 
-function closeAdvice(kind: string, merged: boolean, hasPr: boolean): string {
+function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: unknown): string {
   if (merged) return "Close it now with close(card, summary).";
+  if (kind === "ship" && delivery === "local-only")
+    return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   if (kind !== "ship")
     return "Relay the findings, then close it with close(card, summary), or close(card, summary=<why>, landed=false) if it did not land.";
   if (hasPr)
@@ -125,14 +127,22 @@ const stateOf = (db: DatabaseSync, lane: string | null): unknown =>
 
 function finishedMatches(
   db: DatabaseSync,
-  card: { id: number; lane: string; kind: string; pr: unknown; status: string; since: number },
+  card: {
+    id: number;
+    lane: string;
+    kind: string;
+    pr: unknown;
+    delivery: unknown;
+    status: string;
+    since: number;
+  },
   finish: { merged: boolean; at: number },
   now: number,
   t: Timings,
 ): Match[] {
   const since = Math.max(card.since, finish.at);
   const name = `c-${String(card.id)}`;
-  const close = closeAdvice(card.kind, finish.merged, card.pr !== null);
+  const close = closeAdvice(card.kind, finish.merged, card.pr !== null, card.delivery);
   const waited = `${card.status}, ${String(minutesSince(now, since))} min`;
   const tier = reminderTier(now - since, t.finished);
   const reminders: Match[] =
@@ -167,7 +177,7 @@ function finishedMatches(
 function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const waiting = rows(
     db,
-    "SELECT id, lane, kind, pr, status, updated_at FROM cards WHERE status IN ('with-mate', 'merging')",
+    "SELECT id, lane, kind, pr, delivery, status, updated_at FROM cards WHERE status IN ('with-mate', 'merging')",
   );
   return waiting.flatMap((row) => {
     const card = Number(row["id"]);
@@ -180,6 +190,7 @@ function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
         lane: String(row["lane"]),
         kind: String(row["kind"]),
         pr: row["pr"],
+        delivery: row["delivery"],
         status: String(row["status"]),
         since: Number(row["updated_at"]),
       };
@@ -258,7 +269,8 @@ export async function readPullRequests(
   const cards = rows(
     db,
     `SELECT c.id AS id FROM cards c JOIN projects p ON p.name = c.project
-       WHERE c.kind = 'ship' AND c.status NOT IN ('done', 'dropped') AND p.repo IS NOT NULL
+       WHERE c.kind = 'ship' AND c.delivery IS NOT 'local-only' AND c.status NOT IN ('done', 'dropped')
+         AND p.repo IS NOT NULL
          AND EXISTS (SELECT 1 FROM attempts a WHERE a.card = c.id)`,
   );
   const read = await Promise.all(
@@ -396,7 +408,9 @@ export function runCheck(
 }
 
 export async function recordMerge(db: DatabaseSync, card: number): Promise<string[]> {
-  if (getCard(db, card).kind !== "ship" || finishFrom(cardEntries(db, card)).merged) return [];
+  const { kind, delivery } = getCard(db, card);
+  if (kind !== "ship" || delivery === "local-only" || finishFrom(cardEntries(db, card)).merged)
+    return [];
   const found = await lookUpPr(db, card);
   if (found.kind !== "found" || found.pr.state !== "MERGED") return [];
   const pr = found.pr;

@@ -6,7 +6,7 @@ Project instructions (such as the project's `AGENTS.md` and `CONTRIBUTING.md`) s
 
 ## Messages you receive
 
-Your task arrives as the first `[fleet]` message. It has three parts: "Captain's intent" (the captain's own words), "Spec" (your first mate's build instructions), and "Delivery" (how to hand the work back).
+Your task arrives as the first `[fleet]` message. It has three parts: "Captain's intent" (the captain's own words), "Spec" (your first mate's build instructions), and "Delivery" (how to hand the work back). The Delivery line is your card's delivery mode, and the fleet adds it.
 Every later message that starts with `[fleet]` comes from your first mate or from the fleet. Read it and act on it.
 A `[fleet]` message with `now` interrupts you: handle it before you continue.
 A message without `[fleet]` comes from the captain, typing directly into your pane. It is authoritative. Follow it.
@@ -54,6 +54,7 @@ You start in your own isolated copy of the project (a git worktree), on your own
    run `git fetch origin`, then `git rebase origin/<base>` on your task branch, keeping its name (the PR's base branch, such as `main`), resolve any conflicts, and rerun the project's checks.
    If the branch was already pushed, push it again with `git push --force-with-lease`, and wait for the PR's checks to pass before you report. Force-push only your own task branch, never a base branch.
    Under no-mistakes delivery, the pipeline rebases for you: run `no-mistakes axi run` again instead.
+   Under local-only delivery, your base is the clone's local base branch, not origin's: run `git rebase <base>` with no fetch, and never push.
 
 ## Project memory
 
@@ -92,11 +93,14 @@ Never pass `--yes` or `-y` to `no-mistakes axi run` or `no-mistakes axi respond`
 
 ### Delivery: local-only
 
-1. Implement the change and commit it on your task branch. Do not push.
-2. Keep your branch a clean fast-forward onto the base: if the base moved, rebase onto it (rule 11; with no origin, the clone's own base branch).
+Never push to any remote and never open a PR. Your first mate lands your branch on the clone's local base branch.
+
+1. Implement the change and commit it on your task branch.
+2. Keep your branch a clean fast-forward of the local base branch: if it moved, run `git rebase <base>` (rule 11).
 3. Run the project's own checks and fix what they find.
-4. Leave your copy clean.
+4. Leave your copy clean: no uncommitted or untracked files.
 5. Call `report(status="done", text="branch <name> ready")` and stop.
+6. If your first mate says the branch is not a fast-forward, rebase it onto the local base branch again and report `done` again.
 
 ### Delivery: report
 
