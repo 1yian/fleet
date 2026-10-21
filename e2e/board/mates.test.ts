@@ -110,3 +110,28 @@ test("the board refuses an answer to a hold that is still with main", async () =
   assert.equal(response.status, 400);
   assert.match(JSON.stringify(await response.json()), /with main/);
 });
+
+test("a reply that a second mate owes main shows on its lane card and in its detail, until it answers", async () => {
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  await main.call("comment", { lane: "cleo", text: "Is the ads report ready?", reply: true });
+  await page.goto(http());
+  const mates = page.getByRole("region", { name: "Mates" });
+  await mates.getByText("Reply owed").waitFor();
+  assert.equal(await mates.locator(".tag.owed").getAttribute("title"), "cleo owes main a reply");
+
+  await mates.getByRole("link", { name: /cleo/ }).click();
+  const replies = page.getByRole("list").filter({ hasText: "cleo owes main" });
+  assert.match((await replies.textContent()) ?? "", /^cleo owes mainr-\d+ · asked just now$/);
+
+  const asked = await cleo.waitForEntry((entry) => entry.fields["owes"] === "cleo", "the ask");
+  await cleo.call("comment", {
+    lane: "cleo",
+    text: "Yes: /tmp/ads.md",
+    replyTo: `r-${String(asked.id)}`,
+  });
+  await page.getByRole("list", { name: "Thread" }).getByText("Yes: /tmp/ads.md").waitFor();
+  await replies.waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "Fleet" }).click();
+  await mates.getByText("Yes: /tmp/ads.md").waitFor();
+  assert.equal(await mates.getByText("Reply owed").count(), 0);
+});
