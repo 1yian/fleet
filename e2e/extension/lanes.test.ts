@@ -87,7 +87,7 @@ const waitState = (host: Scratch, lane: string, state: string) =>
     `${lane} to be ${state}`,
     async () => {
       const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
-      const workspace = workspaces.find((each) => each["label"] === `fleet-${lane}`);
+      const workspace = workspaces.find((each) => each["label"] === `2ndmate-${lane}`);
       const listed = await lab.run([
         "pane",
         "list",
@@ -104,7 +104,7 @@ const waitState = (host: Scratch, lane: string, state: string) =>
 
 async function groupOf(lane: string): Promise<number> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
-  const workspace = workspaces.find((each) => each["label"] === `fleet-${lane}`);
+  const workspace = workspaces.find((each) => each["label"] === `2ndmate-${lane}`);
   const listed = await lab.run([
     "pane",
     "list",

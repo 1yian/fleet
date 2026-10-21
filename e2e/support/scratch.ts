@@ -125,7 +125,7 @@ export async function startMain(
   args: readonly string[] = mateArgs(h),
 ): Promise<string> {
   const listed = records((await lab.run(["workspace", "list"]))["workspaces"]);
-  const existing = listed.find((each) => each["label"] === "fleet-main");
+  const existing = listed.find((each) => each["label"] === "1stmate");
   let pane: string;
   if (existing === undefined) {
     const created = await lab.run([
@@ -134,7 +134,7 @@ export async function startMain(
       "--cwd",
       scratch.root,
       "--label",
-      "fleet-main",
+      "main",
       "--no-focus",
     ]);
     pane = String(records([created["root_pane"]])[0]?.["pane_id"]);

@@ -1,5 +1,6 @@
 import { createConnection } from "node:net";
 import { field, herdr, isLocal, onHost, records, rootPane } from "./host.ts";
+import { isMateWorkspace } from "./titles.ts";
 
 const MOVE_WAIT_MS = 5000;
 
@@ -46,7 +47,7 @@ export async function openWorkerWorkspace(
 ): Promise<string> {
   const listed = records((await herdr(host, ["workspace", "list"]))["workspaces"]);
   const parent = isLocal(host)
-    ? listed.findIndex((each) => field(each, "label") === `fleet-${card.lane}`)
+    ? listed.findIndex((each) => isMateWorkspace(field(each, "label"), card.lane))
     : -1;
   const label = parent === -1 ? card.name : `└ ${card.name}`;
   const created = await herdr(host, [

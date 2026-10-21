@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { field, herdr as herdrOn, piRunning, quote, records } from "./host.ts";
 import { isRecord, LANE_FILE, readLaneConfig, type LaneConfig } from "./lane-config.ts";
+import { isMateWorkspace, mateTitle } from "./titles.ts";
 
 interface LaneHome {
   readonly lane: string;
@@ -101,7 +102,7 @@ function heldReason(home: string): string | undefined {
 async function workspaceOf(lane: string): Promise<string | undefined> {
   const listed = records((await herdr(["workspace", "list"]))["workspaces"]);
   return field(
-    listed.find((each) => each["label"] === `fleet-${lane}`),
+    listed.find((each) => isMateWorkspace(each["label"], lane)),
     "workspace_id",
   );
 }
@@ -165,13 +166,13 @@ async function start(root: string, info: LaneHome): Promise<void> {
       "--cwd",
       info.home,
       "--label",
-      `fleet-${info.lane}`,
+      mateTitle(info.lane),
       "--no-focus",
     ];
     const created = await herdr(args);
     pane = field(isRecord(created["root_pane"]) ? created["root_pane"] : undefined, "pane_id");
   } else pane = await panesOf(workspace);
-  if (pane === undefined) throw new Error(`workspace fleet-${info.lane} has no pane`);
+  if (pane === undefined) throw new Error(`workspace ${mateTitle(info.lane)} has no pane`);
   const pi = ["pi", "--continue", ...info.config.args];
   const { direnv } = info.config;
   const command = direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi];
