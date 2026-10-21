@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
-import { fleetEntryId, format, idsInSessionFile } from "./inbox.ts";
+import { format, idsInSessionFile } from "./inbox.ts";
+import { registerIntake } from "./intake.ts";
 import { Jobs } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs } from "./lane-config.ts";
 import { Link } from "./link.ts";
@@ -63,6 +64,7 @@ function start(
   sessionFile: string | undefined,
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
+  const injectedAgain = new Set<number>();
   const link = new Link({
     url,
     token,
@@ -72,13 +74,14 @@ function start(
       worker?.flush();
       jobs?.sync().catch(() => undefined);
     },
-    onPush: ({ entry, name, mode }) => {
-      if (injected.has(entry.id)) return;
-      injected.add(entry.id);
+    onPush: ({ entry, name, mode, again = false }) => {
+      const seen = again ? injectedAgain : injected;
+      if (seen.has(entry.id)) return;
+      seen.add(entry.id);
       pi.sendMessage(
         {
           customType: "fleet",
-          content: format(entry, name),
+          content: format(entry, name, again),
           display: true,
           details: { entryId: entry.id },
         },
@@ -109,10 +112,7 @@ function start(
   pi.on("session_shutdown", () => {
     link.stop();
   });
-  pi.on("message_end", (event) => {
-    const id = fleetEntryId(event.message);
-    if (id !== undefined) link.ack(id);
-  });
+  registerIntake(pi, link);
   const active = (): void => {
     link.activity("running");
   };

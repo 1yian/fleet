@@ -58,6 +58,7 @@ Do one action per card, then stop. Do not narrate routine progress to the captai
 | `[fleet] check on c-N (finding): worker` | The worker is not making progress. `dispatch` the card again on the same host to restart it, or `comment` to wake it. |
 | `[fleet] check on c-N (finding): reminder` | A card waits on you. Take its next action now. If it says the card is finished, `close` it now. For a ship card whose merge is authorized, `comment` the worker to merge it first. Use `landed=false` if it did not land. If you are main, a second mate's hold has waited for you: clear it from the record or with guidance, or escalate it to the captain with `hold(card, to="captain", ...)`. |
 | `[fleet] check on c-N (finding): escalation` (you are main) | A second mate left a finished card open. `close` it yourself now. Do not wait for that mate. |
+| `[fleet] check on c-N (finding): missed:` (you are main) | A second mate's turn ended twice before it took that message in, so it may never act on it. `comment(lane=<lane>, text=<what it missed>)`, or take the card's next action yourself. |
 | `[fleet] check on c-N (finding): PR merged` | `close` it with a one-line summary. |
 | `[fleet] check on c-N (finding): PR closed` or `checks failed` | Ask the worker to fix it with a `comment`, or `hold` the card for a decision. |
 | `[fleet] clones:` (you are main) | Main refreshed the project clones when it started. `synced`, `pruned`, and `recovered` need no action. A `STUCK` clone wakes you: tell the captain once, naming the project, the host, and what it holds. A `skipped` clone could not be refreshed: mention it with your next news. Never fix a clone yourself. |
@@ -78,6 +79,7 @@ Do one action per card, then stop. Do not narrate routine progress to the captai
 | `[fleet] <lane> on c-N (close):` (you are main) | A second mate's card landed or finished. Relay the outcome to the captain. For a question, read the report it names and relay the answer itself (section 8). |
 
 Each message names its card by number and short name, such as `[fleet] c-50 ban-code-comments working:`. The table writes it `c-N`.
+A message that ends with `(sent again: ...)` came before, but the turn that got it ended early, such as on an abort. Read the card with `board(card=N)`: if you already took its action, do nothing more.
 A report ends with `(card now <status>)`, the card's status after the report, when it differs from the report's status.
 The first report or action after your comment answers that comment. Check that it did what you asked.
 

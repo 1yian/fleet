@@ -358,7 +358,11 @@ export type BoardAction = Static<typeof BoardActionSchema>;
 
 export const HttpCallSchema = Type.Object({ op: Type.String(), args: Type.Unknown() });
 
-export const PushedEntrySchema = Type.Object({ entry: EntrySchema, name: Type.String() });
+export const PushedEntrySchema = Type.Object({
+  entry: EntrySchema,
+  name: Type.String(),
+  again: Type.Optional(Type.Boolean()),
+});
 
 const ServerMessage = Type.Union([
   Type.Object({

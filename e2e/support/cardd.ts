@@ -137,8 +137,8 @@ export class Cardd {
     return response.status;
   }
 
-  async connect(token: string, inFile: readonly number[] = []): Promise<Session> {
-    const session = new Session(new WebSocket(this.url));
+  async connect(token: string, inFile: readonly number[] = [], takesIn = true): Promise<Session> {
+    const session = new Session(new WebSocket(this.url), takesIn);
     await session.opened;
     session.send({ t: "hello", token, inFile });
     await until(() => session.welcome ?? session.closeCode, "welcome or close");
@@ -188,9 +188,11 @@ export class Session {
   private readonly socket: WebSocket;
   private readonly results = new Map<number, Extract<ServerMessage, { t: "result" }>>();
   private nextId = 1;
+  private readonly takesIn: boolean;
 
-  constructor(socket: WebSocket) {
+  constructor(socket: WebSocket, takesIn: boolean) {
     this.socket = socket;
+    this.takesIn = takesIn;
     this.opened = new Promise((resolve) => {
       socket.addEventListener("open", () => {
         resolve();
@@ -238,7 +240,9 @@ export class Session {
 
   private receive(message: ServerMessage): void {
     if (message.t === "welcome") this.welcome = message;
-    else if (message.t === "entry") this.entries.push(message);
-    else this.results.set(message.id, message);
+    else if (message.t === "entry") {
+      this.entries.push(message);
+      if (this.takesIn && this.welcome?.role === "mate") this.ack(message.entry.id);
+    } else this.results.set(message.id, message);
   }
 }

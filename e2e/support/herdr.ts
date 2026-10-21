@@ -38,6 +38,10 @@ export class HerdrLab {
     await this.text(["pane", "send-keys", pane, "enter"]);
   }
 
+  async press(pane: string, key: string): Promise<void> {
+    await this.text(["pane", "send-keys", pane, key]);
+  }
+
   private async raw(args: readonly string[]): Promise<JsonRecord> {
     return parseRecord(await this.text(args));
   }
