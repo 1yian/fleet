@@ -5,7 +5,7 @@ import { check, OPS, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
 import { tagUntaggedWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
-import { readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
+import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
 import { fleet, hostsOf, restartAll, withLanes } from "./lanes.ts";
 import type { Link } from "./link.ts";
 
@@ -315,14 +315,15 @@ function restartMain(ctx: ExtensionContext): void {
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
 export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void {
-  const config = readLaneConfig(home);
-  if (config === undefined) return;
+  if (readLaneConfig(home) === undefined) return;
   let restartPending = false;
   let running = false;
   const run = async (): Promise<{ ok: boolean; text: string }> => {
     if (running) throw new Error("the fleet update is already running");
     running = true;
     try {
+      const config = readLaneConfig(home);
+      if (config === undefined) throw new Error(`${LANE_FILE} in ${home} cannot be read`);
       const result = await withLanes(() => updateFleet(config, link));
       return result.ok ? { ok: true, text: `${result.text}\n${mainLine()}` } : result;
     } finally {
