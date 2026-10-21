@@ -347,6 +347,11 @@ export const OPS = {
     args: Type.Object({ job: Type.Integer(), exitCode: Type.Integer(), outputTail: Type.String() }),
     result: Type.Object({ recorded: Type.Boolean() }),
   },
+  "job.stop": {
+    roles: ["worker"],
+    args: Type.Object({ job: Type.Integer() }),
+    result: Type.Object({ label: Type.String(), running: Type.Boolean() }),
+  },
   jobs: {
     roles: ["worker"],
     args: Type.Object({}),

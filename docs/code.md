@@ -138,6 +138,7 @@ cardd card delivery <number> <mode> --db <file>
 ### Jobs
 
 - `jobs.ts`: `cardd` records a job first. The wrapper posts the result, which arrives as a fleet entry, also after a Pi restart. Nothing runs a job again. A running job is a tracked wait.
+- `stop_job` stops one named job of the calling worker. `cardd` decides ownership: `job.stop` finds the job only among the caller's attempt's jobs, so a foreign or missing job is refused before anything is signalled, and a finished one answers "not running". A review wait is refused too, because it ends with its page. Only after that does the extension find the job's tab in the worker's own workspace and send ctrl+c to its pane. The wrapper stops its own process group and posts the usual `exited 130` result, so the result is reported the way an interrupt always was. The extension never signals by name or pattern, and `prompts/worker.md` forbids it for a worker.
 - `job.ts` is the wrapper. It reads its job from a private file, so the token never appears in shell history. It keeps the last lines of output, whole across split reads and split characters. It sends heartbeats until the result is taken. A closed tab can take the wrapper down soon after its hangup, so it reports as soon as the command ends or a moment passes, and `cardd` keeps only the first result. A 401 means the attempt ended and nobody waits.
 
 ### Prerequisites
