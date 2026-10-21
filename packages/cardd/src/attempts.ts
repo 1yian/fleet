@@ -381,6 +381,22 @@ export function touchJob(db: DatabaseSync, session: string, job: number): boolea
   return row !== undefined;
 }
 
+export function ownJob(
+  db: DatabaseSync,
+  session: string,
+  job: number,
+): { label: string; running: boolean; review: boolean } | undefined {
+  const row = db
+    .prepare("SELECT label, state, resolves FROM jobs WHERE id = ? AND attempt = ?")
+    .get(job, attemptOf(db, session));
+  if (row === undefined) return undefined;
+  return {
+    label: String(row["label"]),
+    running: row["state"] === "running",
+    review: typeof row["resolves"] === "string",
+  };
+}
+
 export function loseSilentJobs(
   db: DatabaseSync,
   before: number,

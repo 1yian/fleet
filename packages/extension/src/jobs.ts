@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
-import { herdr, quote, rootPane } from "./host.ts";
+import { field, herdr, quote, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
@@ -17,6 +17,12 @@ const RunLongParams = Type.Object({
   command: Type.String({ minLength: 1, description: "The shell command to run" }),
   timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 24 * 60 })),
 });
+
+const StopJobParams = Type.Object({
+  job: Type.Integer({ description: "The number of one of your own run_long jobs" }),
+});
+
+const tabName = (job: number, label: string): string => `job-${String(job)}-${label}`;
 
 interface JobOptions {
   readonly timeoutMs: number;
@@ -82,7 +88,7 @@ export class Jobs {
     });
     this.running.set(job, label);
     const file = join(tmpdir(), `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`);
-    const tab = `job-${String(job)}-${label}`;
+    const tab = tabName(job, label);
     try {
       const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
       const { timeoutMs, tailLines, lineChars } = options;
@@ -125,6 +131,31 @@ export class Jobs {
     return { job, key, tab };
   }
 
+  async stop(job: number): Promise<string> {
+    const workspace = process.env["HERDR_WORKSPACE_ID"];
+    if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
+    const { label, running } = await this.link.call("job.stop", { job });
+    const named = `job ${String(job)} (${label})`;
+    if (!running)
+      return `${named} is not running: nothing to stop. Its result is already recorded.`;
+    const tabs = records((await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"]);
+    const tab = field(
+      tabs.find((each) => each["label"] === tabName(job, label)),
+      "tab_id",
+    );
+    const panes = records(
+      (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
+    );
+    const pane = field(
+      panes.find((each) => tab !== undefined && each["tab_id"] === tab),
+      "pane_id",
+    );
+    if (pane === undefined)
+      return `${named} has no tab left in your workspace, so nothing was signalled. If it is still recorded as running, it is reported lost soon.`;
+    await herdr("local", ["pane", "send-keys", pane, "ctrl+c"]);
+    return `Sent a stop to ${named}. Its result arrives as a [fleet] message, exited 130 when the stop took.`;
+  }
+
   register(pi: ExtensionAPI): void {
     pi.registerTool({
       name: "run_long",
@@ -149,6 +180,17 @@ export class Jobs {
         const text = `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`;
         return { content: [{ type: "text", text }], details: {} };
       },
+    });
+    pi.registerTool({
+      name: "stop_job",
+      label: "Stop job",
+      description:
+        "Stops one of your own run_long jobs by its number. The job's wrapper ends only that job's processes, and its result arrives later as a [fleet] message. A job that is not yours is refused and nothing is signalled. Never stop anything with pkill, killall, or a pgrep list: other workers share the host.",
+      parameters: StopJobParams,
+      execute: async (_id, params) => ({
+        content: [{ type: "text", text: await this.stop(params.job) }],
+        details: {},
+      }),
     });
   }
 }

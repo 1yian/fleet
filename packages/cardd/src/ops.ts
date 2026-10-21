@@ -6,6 +6,7 @@ import {
   finishJob,
   localLanding,
   nameBranch,
+  ownJob,
   runningJobs,
   startJob,
   touchJob,
@@ -193,6 +194,19 @@ const HANDLERS: Record<OpName, Handler> = {
     };
     addEntry(db, entry, [session.id]);
     return { value: { recorded: true }, notify: [session.id] };
+  },
+  "job.stop": (db, session, raw) => {
+    const args = check(OPS["job.stop"].args, raw);
+    const own = ownJob(db, session.id, args.job);
+    if (own === undefined)
+      throw new Error(
+        `job ${String(args.job)} is not one of this worker's jobs: nothing was stopped`,
+      );
+    if (own.review)
+      throw new Error(
+        `job ${String(args.job)} is a review wait: end its page with lavish-axi end instead`,
+      );
+    return { value: { label: own.label, running: own.running }, notify: [] };
   },
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   report: (db, session, raw, _timing, pr) => {
