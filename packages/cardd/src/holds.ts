@@ -4,6 +4,7 @@ import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { applyChange, settle, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
+import { askerOf, requireOwedBy } from "./replies.ts";
 import { factsFrom, type Facts, type Hold } from "./status.ts";
 import {
   addEntry,
@@ -112,6 +113,17 @@ export function rewritten(
   };
 }
 
+function answeredBy(
+  db: DatabaseSync,
+  session: Session,
+  card: Card,
+  replyTo: string | undefined,
+): string[] {
+  if (replyTo === undefined) return [];
+  requireOwedBy(db, card, replyTo, `mate:${session.lane}`);
+  return [askerOf(db, card, replyTo)];
+}
+
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.hold.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -125,10 +137,17 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   requireClimb(db, session, card, current, target);
   const base = rewritten(facts, target, args.until);
   const options = args.options ?? base.options;
-  if (isSame(open, { holder: target, question: args.question, until: base.until, options }))
-    return { value: card, notify: [] };
+  const replyTo = args.replyTo;
+  const asker = answeredBy(db, session, card, replyTo);
+  const same = isSame(open, {
+    holder: target,
+    question: args.question,
+    until: base.until,
+    options,
+  });
+  if (same && asker.length === 0) return { value: card, notify: [] };
   const escalated = open !== undefined && target !== current;
-  const fields = { ...base, options, ...(escalated ? { escalated } : {}) };
+  const fields = { ...base, options, ...(escalated ? { escalated } : {}), replyTo };
   const draft: Draft = {
     card: card.id,
     author: `mate:${session.lane}`,
@@ -137,7 +156,8 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     fields,
   };
   applyChange(db, card, { kind: "held" }, [draft]);
-  const to = withEcho(db, session, card, hearers(db, card, session.lane, [target]));
+  const heard = hearers(db, card, session.lane, [target]);
+  const to = withEcho(db, session, card, [...heard, ...asker]);
   addEntry(db, draft, to);
   touchCard(db, card.id);
   return { value: getCard(db, card.id), notify: to };

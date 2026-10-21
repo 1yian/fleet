@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import type { Entry } from "@fleet/protocol";
+import { howToReply, type Entry } from "@fleet/protocol";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -47,13 +47,22 @@ function prSuffix(entry: Entry): string {
   return ` (PR ${url}${state === undefined || state === "OPEN" ? "" : `, ${state.toLowerCase()}`})`;
 }
 
+function replySuffix(entry: Entry): string {
+  const to = field(entry, "for");
+  if (field(entry, "owes") !== undefined && (to === "worker" || to === "mate")) {
+    const id = `r-${String(entry.id)}`;
+    return ` (reply owed, ${id}: ${howToReply(to, entry.card, id)})`;
+  }
+  return `${suffix(entry, "replyTo", "replies ")}${suffix(entry, "withdraws", "withdraws ")}`;
+}
+
 function formatReport(entry: Entry, card: string): string {
   const status = field(entry, "status") ?? "report";
   const key = field(entry, "key");
   const after = field(entry, "statusAfter");
   const head = `[fleet] ${card} ${status}${key === undefined ? "" : ` [${key}]`}: ${entry.body}`;
   const now = after === undefined || after === status ? "" : ` (card now ${after})`;
-  return `${head}${prSuffix(entry)}${now}`;
+  return `${head}${prSuffix(entry)}${now}${replySuffix(entry)}`;
 }
 
 function formatJob(entry: Entry, card: string): string {
@@ -89,7 +98,8 @@ function formatOnce(entry: Entry, name: string): string {
   if (entry.kind === "review-feedback") return formatReview(entry, card);
   const who = entry.author.replace(/^mate:/, "");
   const kind = entry.kind === "comment" ? "" : ` (${LABELS[entry.kind] ?? entry.kind})`;
-  return `[fleet] ${who} on ${card}${kind}: ${entry.body}${suffix(entry, "resolves", "answers ")}`;
+  const answers = suffix(entry, "resolves", "answers ");
+  return `[fleet] ${who} on ${card}${kind}: ${entry.body}${answers}${replySuffix(entry)}`;
 }
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;

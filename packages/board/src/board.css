@@ -225,6 +225,29 @@ textarea {
 .tag.link:hover {
   background: #e4e4e7;
 }
+.tag.owed {
+  background: #fdf3dc;
+  color: #8a5a00;
+}
+.owed-replies {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.owed-replies li {
+  display: flex;
+  flex-direction: column;
+}
+.owed-replies .muted {
+  font-size: 12px;
+}
+.property.replies {
+  align-items: start;
+  padding-top: 6px;
+}
 
 /* Status icons */
 .status-icon {
@@ -901,6 +924,10 @@ button.event-head:hover .line {
   }
   .property dt {
     font-size: 12px;
+  }
+  .property.replies {
+    grid-column: 1 / -1;
+    padding-top: 0;
   }
   .detail-main {
     gap: 24px;

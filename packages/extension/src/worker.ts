@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardSchema, check } from "@fleet/protocol";
+import { CardSchema, check, OPS } from "@fleet/protocol";
 import Type from "typebox";
 import { parseUtc, textOf } from "./inbox.ts";
 import type { Jobs } from "./jobs.ts";
@@ -36,6 +36,7 @@ const ReportParams = Type.Object({
   until: Type.Optional(
     Type.String({ description: "ISO 8601 UTC time like 2026-05-01T10:00:00Z, for paused" }),
   ),
+  replyTo: OPS.report.args.properties.replyTo,
 });
 
 function untilMs(status: string, until: string | undefined): number | undefined {
@@ -88,6 +89,7 @@ export class WorkerRun {
           text: params.text,
           key: params.key,
           until,
+          replyTo: params.replyTo,
         };
         const card = check(CardSchema, await this.link.call("report", args));
         this.latest = { status: params.status, until };

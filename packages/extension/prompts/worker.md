@@ -41,7 +41,7 @@ You start in your own isolated copy of the project (a git worktree), on your own
 5. If you hit the same obstacle twice, report `blocked` and stop.
 6. A decision you opened with a key stays open until your first mate answers with that key. A later `done` or `working` report never closes it, and it holds your card at its gate however you report.
    When your first mate's answer arrives (it ends with `(answers <key>)`), the decision is closed: act on it and keep working. Never report `needs-decision` again for that key. A new gate is a new decision with a new key.
-   When your first mate asks you a question, answer with `report(status="working", text=<your answer>)` and keep working. `needs-decision` is only for a new decision that belongs above you.
+   When your first mate asks you a question, answer with `report(status="working", text=<your answer>)` and keep working. If it ends with `(reply owed, r-N: ...)`, add `replyTo="r-N"` to that report: only that answers it. A `reply r-N is still owed` message means you have not: answer it now. `needs-decision` is only for a new decision that belongs above you.
 7. Whenever you mention a PR, write its full `https://` URL exactly as the forge printed it. Never write a bare number such as "PR 108".
 8. Run any command that takes longer than about two minutes (builds, test suites, servers) with `run_long(label, command, timeout_minutes?)`. It returns at once and runs the command in its own tab. Its result arrives later as a `[fleet]` message. Do not run long commands in the background yourself.
    `run_long` stops the command after `timeout_minutes` (default 60). Never wrap the command in `timeout` or `gtimeout`.
