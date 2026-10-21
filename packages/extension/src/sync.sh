@@ -10,19 +10,53 @@
 # drift is healed: a clean detached HEAD with no commits of its own is put back on
 # the base branch. Each line it prints starts with the label.
 
+# git_net <clone> <git args>: runs git in the clone's own direnv environment, so a
+# remote that needs the login or credential settings from an .envrc (found in the
+# clone or above it) is reachable. Without direnv it runs plain git, and direnv
+# execs plain when no .envrc applies. An .envrc that direnv has not allowed makes
+# direnv refuse: git then runs plain, and when that fails too the output ends with a
+# line that names the blocked .envrc and the command that allows it.
+git_net() {
+  dir=$1
+  shift
+  if ! command -v direnv >/dev/null 2>&1; then
+    git -C "$dir" "$@" 2>&1
+    return
+  fi
+  out=$(direnv exec "$dir" git -C "$dir" "$@" 2>&1) && return 0
+  case $out in
+    *"is blocked"*)
+      git -C "$dir" "$@" 2>&1 && return 0
+      printf '%s\n' "direnv blocks the .envrc that applies to $dir, run: direnv allow $dir"
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$out"
+  return 1
+}
+
+# fetch_reason: one line for why $fetched failed: git's first line (direnv's own log
+# lines are skipped), then the blocked .envrc when git_net named one.
+fetch_reason() {
+  reason=$(printf '%s\n' "$fetched" | grep -v '^direnv' | head -n 1)
+  [ -n "$reason" ] || reason=$(printf '%s\n' "$fetched" | head -n 1)
+  blocked=$(printf '%s\n' "$fetched" | grep '^direnv blocks' | head -n 1)
+  printf '%s\n' "${reason}${blocked:+; $blocked}"
+}
+
 # fetch_origin <clone>: git fetch origin --prune. Sets $fetched to git's output.
 # A fetch blocked by packed-refs.lock (left by a git that was killed mid-write) is
 # retried 3 times a second apart, since a live owner soon exits. Then the lock is
 # removed only when it is provably stale, and the fetch runs once more.
 fetch_origin() {
   recovery=""
-  fetched=$(git -C "$1" fetch origin --prune --quiet 2>&1) && return 0
+  fetched=$(git_net "$1" fetch origin --prune --quiet 2>&1) && return 0
   lock_error || return 1
   tries=0
   while [ "$tries" -lt 3 ]; do
     tries=$((tries + 1))
     sleep 1
-    if fetched=$(git -C "$1" fetch origin --prune --quiet 2>&1); then
+    if fetched=$(git_net "$1" fetch origin --prune --quiet 2>&1); then
       recovery="the packed-refs lock cleared on its own"
       return 0
     fi
@@ -32,7 +66,7 @@ fetch_origin() {
   case $lock in /*) ;; *) lock="$1/$lock" ;; esac
   lock_stale "$lock" "$1" || return 1
   rm -f "$lock" || return 1
-  fetched=$(git -C "$1" fetch origin --prune --quiet 2>&1) || return 1
+  fetched=$(git_net "$1" fetch origin --prune --quiet 2>&1) || return 1
   recovery="removed a stale packed-refs lock (no live holder)"
 }
 
@@ -87,7 +121,7 @@ refresh_clone() {
   [ "$top" -ef "$clone" ] || { echo "$label: skipped: not a clone root (git would act on $top)"; return 0; }
   git -C "$clone" remote get-url origin >/dev/null 2>&1 || { echo "$label: skipped: no origin remote"; return 0; }
   if ! fetch_origin "$clone"; then
-    echo "$label: skipped: fetch failed: $(printf '%s\n' "$fetched" | head -n 1)"
+    echo "$label: skipped: fetch failed: $(fetch_reason)"
     return 0
   fi
   [ -z "$recovery" ] || echo "$label: recovered: $recovery"
