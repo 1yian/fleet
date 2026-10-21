@@ -13,6 +13,7 @@ import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
 import { lavishProblem } from "./lavish.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
+import { mateTitle } from "./titles.ts";
 
 const USAGE =
   "usage: fleet status | up [lane] | stop <lane> | restart [lane] | home add <lane> --url U --token T | home memory <lane> | migrate [--undo]";
@@ -68,8 +69,8 @@ function show(outcomes: readonly Outcome[]): void {
   if (values.json === true) console.log(JSON.stringify(outcomes));
   for (const { lane, action, detail } of values.json === true ? [] : outcomes) {
     const text = {
-      started: `started in fleet-${lane}`,
-      running: `already running in fleet-${lane}`,
+      started: `started in ${mateTitle(lane)}`,
+      running: `already running in ${mateTitle(lane)}`,
       held: `held: ${detail ?? ""}`,
       stopped: `stopped: ${detail ?? ""}`,
     }[action];

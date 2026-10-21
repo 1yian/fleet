@@ -75,7 +75,7 @@ function scriptMate(...dispatches: { host: string }[]): void {
 
 test("dispatch starts a worker in its own worktree, and the worker's report reaches the mate", async () => {
   scriptMate({ host: "local" });
-  for (const label of ["fleet-main", "fleet-cleo"]) {
+  for (const label of ["1stmate", "2ndmate-cleo"]) {
     await lab.run(["workspace", "create", "--cwd", home, "--label", label, "--no-focus"]);
   }
   await mateConnected();
@@ -100,7 +100,7 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
   );
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await workers(), ["c-1-a1"]);
-  assert.deepEqual(await sidebar(), ["fleet-main", "└ one-scrollbar", "fleet-cleo"]);
+  assert.deepEqual(await sidebar(), ["1stmate", "└ one-scrollbar", "2ndmate-cleo"]);
 });
 
 test("a dispatch whose connection drops after the worker started finds it, and a retry starts no other", async () => {

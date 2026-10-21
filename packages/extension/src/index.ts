@@ -12,6 +12,7 @@ import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
 import { registerQuestions } from "./questions.ts";
 import { registerReview } from "./review.ts";
+import { titleMate } from "./titles.ts";
 import { WorkerRun } from "./worker.ts";
 
 interface Config {
@@ -130,5 +131,6 @@ export default function fleet(pi: ExtensionAPI): void {
     if (started || found === undefined) return;
     started = true;
     start(pi, found, ctx.sessionManager.getSessionFile());
+    if (found.lane !== undefined) titleMate(pi, found.lane).catch(() => undefined);
   });
 }

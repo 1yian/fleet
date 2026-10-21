@@ -33,8 +33,7 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-const fleet = (args: readonly string[]): string =>
-  scratch.fleet(args, { HERDR_SESSION: lab.name });
+const fleet = (args: readonly string[]): string => scratch.fleet(args, { HERDR_SESSION: lab.name });
 
 async function titles(): Promise<{ label: string; title: string }[]> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);

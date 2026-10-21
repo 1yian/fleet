@@ -147,7 +147,7 @@ Main starts, and within a minute it has brought up every lane on every host that
 - A lane that starts three times in ten minutes is held, and main tells the captain once.
 - A host that cannot be reached is reported once, and again when it answers.
 - `lane(name, "stop")` stops a lane and holds it, so main leaves it alone. `lane(name, "start")` starts it. `lane(name, "restart")` restarts one lane, and `lane("all", "restart")` every lane that is not held, on every host. Ask main in plain words: "restart the fleet".
-- Each mate runs in its own herdr workspace, `fleet-<lane>`, in that host's `default` session, and continues its conversation when it starts again. To see another host's workspaces in the herdr you already use, add the host once as a machine: `herdr machine add p620 --remote-session default`.
+- Each second mate runs in its own herdr workspace, `2ndmate-<lane>`, in that host's `default` session, and continues its conversation when it starts again. Each mate names itself when it starts: its Pi session and its herdr workspace read `1stmate` for main and `2ndmate-<lane>` for a second mate. A mate still in a workspace from before, `fleet-<lane>`, is found there until it restarts. To see another host's workspaces in the herdr you already use, add the host once as a machine: `herdr machine add p620 --remote-session default`.
 
 The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
@@ -168,7 +168,7 @@ When a lane starts, its home moves to the commit its checkout has, unless the ho
 Before this layout, main's home was `~/fleet-homes/main`, each mate's settings were in `~/.config/fleet/<lane>.json`, mates ran from `~/.fleet/app`, and `fleet up` started them. Migration only copies. It changes nothing in cardd, so every card, entry, and live worker stays. It never deletes an old home, an old conversation, or a record.
 
 1. Pull the new code in the captain's checkout and in each host's checkout, and run `npm ci && npm run build` in each.
-2. Stop main's old Pi and every mate that `fleet up` started (close their `fleet-<lane>` workspaces). A mate that stays up keeps running on the old code until its pane is closed.
+2. Stop main's old Pi and every mate that `fleet up` started (close their `2ndmate-<lane>` workspaces). A mate that stays up keeps running on the old code until its pane is closed.
 3. On each host, run `<checkout>/bin/fleet migrate`. It reads `~/.config/fleet/*.json` (or `--from <dir>`) and, for each file:
    - writes `config/lane.json` in the new home: the repository for `main`, and a new worktree `lane-<lane>` for any other lane;
    - copies the old home's `AGENTS.md` to `data/charter.md`, and its `config/` folder to `config/` (the `/calm` choice);

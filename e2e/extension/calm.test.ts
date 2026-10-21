@@ -36,7 +36,7 @@ afterEach(async (t) => {
 
 async function matePane(): Promise<{ pane: string; group: number; shell: number }> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
-  const workspace = workspaces.find((each) => each["label"] === "fleet-main");
+  const workspace = workspaces.find((each) => each["label"] === "1stmate");
   const listed = await lab.run([
     "pane",
     "list",

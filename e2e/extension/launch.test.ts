@@ -40,7 +40,7 @@ const up = (): string => scratch.fleet(["up"], { HERDR_SESSION: lab.name });
 
 async function matePane(): Promise<{ group: number; shell: number }> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
-  const mates = workspaces.filter((each) => each["label"] === "fleet-cleo");
+  const mates = workspaces.filter((each) => each["label"] === "2ndmate-cleo");
   assert.equal(mates.length, 1);
   const listed = await lab.run(["pane", "list", "--workspace", String(mates[0]?.["workspace_id"])]);
   const pane = String(records(listed["panes"])[0]?.["pane_id"]);
@@ -56,10 +56,10 @@ const mainSays = async (text: string): Promise<void> => {
 };
 
 test("fleet up starts a second mate in its own workspace once, and again on its own conversation", async () => {
-  assert.equal(up(), "cleo: started in fleet-cleo\n");
+  assert.equal(up(), "cleo: started in 2ndmate-cleo\n");
   await mainSays("Ship the scrollbar fix");
   await h.waitForCall(0, "mate", COLD_START_WAIT_MS);
-  assert.equal(up(), "cleo: already running in fleet-cleo\n");
+  assert.equal(up(), "cleo: already running in 2ndmate-cleo\n");
 
   const { group, shell } = await matePane();
   process.kill(-group, "SIGKILL");
@@ -69,7 +69,7 @@ test("fleet up starts a second mate in its own workspace once, and again on its 
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
-  assert.equal(up(), "cleo: started in fleet-cleo\n");
+  assert.equal(up(), "cleo: started in 2ndmate-cleo\n");
   await mainSays("Drop the old banner");
   const turns = await h.waitForCall(1, "mate", COLD_START_WAIT_MS);
   const asks = turns.filter((turn) => turn.role === "user").map((turn) => turn.text);
