@@ -1,8 +1,3 @@
-// cardd command line.
-//   cardd serve --db <file> [--listen <host:port>] [--board <built board folder>] [--hostname <name>]...   (CARDD_TIMING_SCALE=0.01 speeds up every timer, for tests)
-//   cardd lane add <name> --db <file> --home <path> [--parent <lane>]   (prints the mate token)
-//   cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo]
-//   cardd project yolo <name> on|off --db <file>   (the captain's standing merge authority for the project)
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";

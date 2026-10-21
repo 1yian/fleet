@@ -1,4 +1,3 @@
-// A small fleet on a real cardd: a main lane, a card, and a worker on it.
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import { Cardd, type Session } from "./cardd.ts";
 
@@ -8,7 +7,6 @@ export interface Fleet {
   readonly main: Session;
 }
 
-/** Starts cardd with the main lane and the project "web", cloned on maverick and p620. */
 export async function startFleet(env: Record<string, string> = {}): Promise<Fleet> {
   const cardd = await Cardd.start(env);
   const mainToken = cardd.addLane("main");
@@ -24,7 +22,6 @@ export async function newCard(
   return check(CardSchema, await mate.call("card.new", { title, kind, project: "web" }));
 }
 
-/** Starts an attempt on the card with this task message. Returns the worker's token. */
 export async function begin(mate: Session, card: Card, task = "the task"): Promise<string> {
   const value = await mate.call("attempt.begin", { card: card.id, host: "maverick", task });
   return check(OPS["attempt.begin"].result, value).token;

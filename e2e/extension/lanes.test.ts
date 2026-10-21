@@ -1,8 +1,3 @@
-// Main runs the rest of the fleet (docs/setup.md). Main is a plain Pi in a scratch copy of this
-// repository, with the scripted model. Two lane homes are worktrees of scratch copies: one on
-// "this host" and one on "p620", a second copy reached through a transport that runs commands
-// here, as ssh would there. Every mate is a real Pi in a herdr lab. Nothing here touches the live
-// main, its lanes, or its cardd.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,7 +32,6 @@ beforeEach(async () => {
     hosts: { p620: ["node", TRANSPORT, marker] },
     roots: { p620: p620.root },
   });
-  // The lanes, each configured on its own host. ghost is a lane with no mate: it wakes main.
   const settings = (lane: string) => ({
     url: cardd.url,
     token: cardd.addLane(lane, "main"),
@@ -70,7 +64,6 @@ async function until<T>(
   for (;;) {
     const value = await read();
     if (value !== undefined) return value;
-    // A wait that runs out says where the lane stood, so a CI failure explains itself.
     if (Date.now() > deadline) {
       assert.fail(`timed out waiting for ${what}\n${(await detail?.()) ?? ""}`);
     }
@@ -78,13 +71,11 @@ async function until<T>(
   }
 }
 
-/** The records that `fleet <args> --json` of one host's copy prints. */
 function rowsOf(host: Scratch, args: readonly string[]): JsonRecord[] {
   const parsed: unknown = JSON.parse(host.fleet([...args, "--json"], { HERDR_SESSION: lab.name }));
   return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
 }
 
-/** `fleet status` of one host's copy, by lane. */
 const states = (host: Scratch): Record<string, string> =>
   Object.fromEntries(
     rowsOf(host, ["status"]).map((row) => [String(row["lane"]), String(row["state"])]),
@@ -110,7 +101,6 @@ const waitState = (host: Scratch, lane: string, state: string) =>
     },
   );
 
-/** The foreground process group of a lane's pane. */
 async function groupOf(lane: string): Promise<number> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
   const workspace = workspaces.find((each) => each["label"] === `fleet-${lane}`);
@@ -125,13 +115,11 @@ async function groupOf(lane: string): Promise<number> {
   return Number(info[0]?.["foreground_process_group_id"]);
 }
 
-/** Everything in main's Pi session files. */
 const sessionText = (): string =>
   readdirSync(join(h.dir, "sessions"))
     .map((file) => readFileSync(join(h.dir, "sessions", file), "utf8"))
     .join("\n");
 
-/** A question from the lane `ghost` wakes main for one turn. */
 async function wakeMain(title: string): Promise<void> {
   const card: unknown = await ghost.call("card.new", { title, kind: "scout" });
   const id: unknown = Reflect.get(Object(card), "id");
@@ -154,7 +142,6 @@ test("main brings up every lane on both hosts, and starts a mate that dies", asy
   await waitState(here, "ops", "running");
   await waitState(p620, "far", "running");
 
-  // Main's thread says what it started, on which host, just after each lane starts.
   await until(async () => {
     const screen = await lab.screen(pane);
     return screen.includes("far started on p620") && screen.includes("ops started on local")
@@ -166,7 +153,6 @@ test("main brings up every lane on both hosts, and starts a mate that dies", asy
   assert.match(users(turns), /\[fleet\] lanes: ops started on local/);
   assert.match(users(turns), /\[fleet\] lanes: far started on p620/);
 
-  // A mate that dies is started again, on the host that runs it.
   const before = await groupOf("far");
   process.kill(-before, "SIGKILL");
   await until(
@@ -185,7 +171,6 @@ test("main tells the captain when a host cannot be reached, and when it is back"
   const turns = await h.waitForCall(0, "mate", WAIT_MS);
   assert.match(users(turns), /\[fleet\] lanes: p620 cannot be reached/);
 
-  // Once the host answers again, main says so with its next news.
   rmSync(marker);
   await until(
     () => (sessionText().includes("p620 can be reached again") ? true : undefined),
@@ -205,7 +190,6 @@ test("a mate that keeps dying is held, and only naming it starts it again", asyn
   });
   const actionOf = (lane: string): unknown =>
     rowsOf(here, ["up"]).find((row) => row["lane"] === lane)?.["action"];
-  // Each start dies at once. Three starts in ten minutes are allowed.
   for (let start = 1; start <= 3; start += 1) {
     assert.equal(actionOf("loopy"), "started");
     await waitState(here, "loopy", "down");
@@ -218,9 +202,7 @@ test("a mate that keeps dying is held, and only naming it starts it again", asyn
 
 test("main stops, restarts, and starts lanes with lane, its board shows them, and it never starts a lane held by hand", async () => {
   let kicked: number | undefined;
-  // 1. Stop ops.
   h.onModel(() => ({ tool: "lane", args: { name: "ops", action: "stop" } }), "mate");
-  // 2. Ops stays stopped while main keeps running the rest: kill far, and wait for main to start it.
   h.onModel(async (turns) => {
     assert.match(toolResults(turns).at(-1) ?? "", /^ops \(local\): stopped$/);
     kicked = await groupOf("far");
@@ -230,7 +212,6 @@ test("main stops, restarts, and starts lanes with lane, its board shows them, an
     assert.equal(states(here)["ops"], "stopped");
     return { tool: "board", args: {} };
   }, "mate");
-  // 3. The board's header shows the lanes of both hosts, and points at the full list.
   h.onModel((turns) => {
     const board = toolResults(turns).at(-1) ?? "";
     assert.match(board, /^lanes\[2\]\{name,state\}:\n {2}ops,stopped\n {2}far,running$/m);
@@ -241,7 +222,6 @@ test("main stops, restarts, and starts lanes with lane, its board shows them, an
     );
     return { tool: "board", args: { lanes: true } };
   }, "mate");
-  // 4. The full list names each lane's host and why it is in its state.
   h.onModel((turns) => {
     const board = toolResults(turns).at(-1) ?? "";
     assert.match(board, /^ {2}ops,local,stopped,stopped by hand$/m);
@@ -250,7 +230,6 @@ test("main stops, restarts, and starts lanes with lane, its board shows them, an
     assert.doesNotMatch(board, /board\(lanes=true\)/);
     return { tool: "lane", args: { name: "all", action: "stop" } };
   }, "mate");
-  // 5. "all" only restarts.
   h.onModel((turns) => {
     assert.equal(
       toolResults(turns).at(-1),
@@ -258,7 +237,6 @@ test("main stops, restarts, and starts lanes with lane, its board shows them, an
     );
     return { tool: "lane", args: { name: "all", action: "restart" } };
   }, "mate");
-  // 6. Restarting the fleet restarts far, and leaves the lane held by hand alone.
   h.onModel((turns) => {
     const restart = toolResults(turns).at(-1) ?? "";
     assert.match(restart, /far \(p620\): started/);

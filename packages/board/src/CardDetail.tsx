@@ -1,6 +1,3 @@
-// A card's detail, laid out like an issue page: the title and description, the
-// card's properties beside them, the questions that wait on the captain, the whole
-// thread in time order, and a box to write to the card's mate.
 import {
   useEffect,
   useLayoutEffect,
@@ -37,15 +34,12 @@ interface Props {
   readonly onDraft: (text: string) => void;
   readonly onClose: () => void;
   readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
-  /** Resolves true when cardd took the message. */
   readonly onReply: (text: string) => Promise<boolean>;
   readonly onFail: (message: string) => void;
 }
 
-/** A one-line event longer than this opens to its whole text. */
 const LONG_LINE = 90;
 
-/** How far from the bottom of the page the captain may be and still follow new entries. */
 const NEAR_BOTTOM = 240;
 
 export function CardDetail(props: Props) {
@@ -74,7 +68,6 @@ export function CardDetail(props: Props) {
     };
   }, [card.id, card.title]);
 
-  // A new entry scrolls into view when the captain is at the end of the thread or wrote it.
   const end = useRef<HTMLDivElement>(null);
   const seen = useRef<number | undefined>(undefined);
   const last = thread?.entries.at(-1);
@@ -147,7 +140,6 @@ export function CardDetail(props: Props) {
   );
 }
 
-/** A card that is not on the board: a bad address, or a card that was never made. */
 export function NoCard({ id, onClose }: { readonly id: number; readonly onClose: () => void }) {
   return (
     <div className="detail">
@@ -241,7 +233,6 @@ function Description({ card }: { readonly card: BoardCard }) {
   );
 }
 
-/** Text that stops after a few lines, with a way to read the rest. */
 function Collapsible({ text }: { readonly text: string }) {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -316,7 +307,6 @@ function Time({ entry, now }: { readonly entry: Entry; readonly now: number }) {
   );
 }
 
-/** Something said: a comment, a question, an answer, or a worker's report. */
 function Message({ entry, now }: { readonly entry: Entry; readonly now: number }) {
   const author = authorOf(entry.author);
   return (
@@ -334,13 +324,7 @@ function Message({ entry, now }: { readonly entry: Entry; readonly now: number }
   );
 }
 
-/** Something that happened, or a task message: one line, and the whole text on a click. */
-function Event(props: {
-  readonly entry: Entry;
-  readonly now: number;
-  /** The question is still open, and is answered above. */
-  readonly waiting: boolean;
-}) {
+function Event(props: { readonly entry: Entry; readonly now: number; readonly waiting: boolean }) {
   const { entry, now, waiting } = props;
   const [open, setOpen] = useState(false);
   const author = authorOf(entry.author);
@@ -381,10 +365,8 @@ function Event(props: {
   );
 }
 
-/** The captain's message to the card's mate. Enter sends and Shift+Enter starts a new line. */
 function Composer(props: {
   readonly lane: string;
-  /** A lane card: the captain talks to the second mate itself. */
   readonly mate: boolean;
   readonly draft: string;
   readonly onDraft: (text: string) => void;
@@ -394,7 +376,6 @@ function Composer(props: {
   const [sending, setSending] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   const empty = draft.trim() === "";
-  // The box grows with its text, up to a few lines.
   useLayoutEffect(() => {
     const element = box.current;
     if (element === null) return;

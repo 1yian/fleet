@@ -1,4 +1,3 @@
-// Small inline icons. Each is decorative: the text next to it carries the meaning.
 import type { Tone } from "./format.ts";
 
 export function Sparkle() {
@@ -10,7 +9,6 @@ export function Sparkle() {
   );
 }
 
-/** A warning for the captain, a spinner while work runs, a ring while it waits, and a dot when it ended. */
 export function StatusIcon({ tone, active }: { readonly tone: Tone; readonly active: boolean }) {
   if (tone === "needs")
     return (

@@ -1,5 +1,4 @@
 /// <reference lib="dom" />
-// The board in a real browser (spec section 21), served by a real cardd.
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
@@ -40,7 +39,6 @@ async function question(title: string, options: string[]): Promise<Card> {
   return card;
 }
 
-/** A ship card on the lane of a second mate, with its worker connected. */
 async function shipped(title: string, task = "fix it") {
   cardd.addProject("web", { local: "/clones/web" });
   const mate = await cardd.connect(cardd.addLane("cleo", "main"));
@@ -194,7 +192,6 @@ test("the thread is the conversation between the owner and its mate, with each a
   });
   await thread.getByText("a final note").waitFor();
 
-  // Each author, in the order they spoke: comments down, reports and questions up.
   const items = await thread.getByRole("listitem").allInnerTexts();
   const lines = items.map((item) => item.replace(/\s+/g, " "));
   assert.match(lines[0] ?? "", /cleo sent the task .*fix it/);
@@ -205,7 +202,6 @@ test("the thread is the conversation between the owner and its mate, with each a
   assert.match(lines[5] ?? "", /main First mate escalated it .*Keep the footer\? I say yes\./);
   assert.match(lines[6] ?? "", /You answered .*yes/);
   assert.match(lines[7] ?? "", /Worker is done .*a final note/);
-  // Done on a ship card makes the fleet hold the card for the merge, on main first.
   assert.match(lines[8] ?? "", /Fleet asked .*Merge https:\/\/github\.com\/acme\/web\/pull\/3/);
   assert.equal(lines.length, 9);
   await worker.close();
@@ -419,7 +415,6 @@ test("a board load that cannot reach cardd shows a notice that goes away when lo
   assert.equal(await page.getByRole("alert").count(), 0);
 });
 
-/** Elements wider than their box that the captain could scroll sideways. */
 const sideways = (target: Page): Promise<string[]> =>
   target.evaluate(() =>
     [document.documentElement, ...document.querySelectorAll("body *")]
@@ -435,7 +430,6 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
     { width: 1440, height: 900 },
     { width: 390, height: 800 },
   ]) {
-    // The captain's comment below takes the hold back from him, so the card holds again for each size.
     await main.call("hold", { card: card.id, question: `Evidence:\n${url}`, options: ["ok"] });
     await page.setViewportSize(viewport);
     await page.goto(http());
@@ -451,10 +445,8 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
     await page.getByRole("textbox", { name: "Your answer" }).fill(url);
     await page.getByRole("textbox", { name: "Comment" }).fill(url);
     await page.getByRole("button", { name: "Send", exact: true }).click();
-    // The captain's comment took the hold back from him, so its question reads in the thread too.
     await page.getByRole("list", { name: "Thread" }).getByText(url).last().waitFor();
     assert.deepEqual(await sideways(page), [], `the card at ${String(viewport.width)} px`);
-    // The box for writing stays in reach at the bottom of the screen.
     const box = await page.getByRole("textbox", { name: "Comment" }).boundingBox();
     assert.ok(box !== null && box.y + box.height <= viewport.height, "the composer is on screen");
   }
@@ -468,7 +460,6 @@ test("long options show as a list of full-width choices, and one click answers",
     "Hold off",
   ]);
   await page.goto(http());
-  // Once one option is long, every option is a full-width choice, even a short one.
   const short = page.getByRole("button", { name: "Hold off" });
   const box = await short.boundingBox();
   const row = await short.locator("..").boundingBox();

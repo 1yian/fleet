@@ -1,4 +1,3 @@
-// The timers of cardd (spec section 28). One scale speeds all of them up for tests.
 export const MINUTE = 60_000;
 
 export interface Timings {
@@ -7,17 +6,12 @@ export interface Timings {
   readonly notConnected: number;
   readonly stall: number;
   readonly idle: number;
-  /** How often a run_long wrapper tells cardd that it is alive. Three missed beats make the job lost. */
   readonly heartbeat: number;
-  /** When reminders fire, counted from the last action on the card. Later ones repeat at the last gap. */
   readonly reminders: readonly number[];
-  /** The same for a card whose work is finished and only needs closing. Sooner, because nothing is left to think about. */
   readonly finished: readonly number[];
-  /** When a lane mate that has not closed a finished card is reported to its parent, counted from the finish. */
   readonly escalations: readonly number[];
 }
 
-/** The defaults of spec section 28. A scale below 1 speeds every timer up, for tests. */
 export function timings(scale: number): Timings {
   const at = (minutes: number): number => Math.max(1, Math.round(minutes * MINUTE * scale));
   return {

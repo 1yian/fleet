@@ -1,6 +1,3 @@
-// Card status (spec sections 7 and 17). A card has a phase, where its work stands, and at
-// most one hold. Its status is derived: the phase seen through the hold. No operation sets
-// a status. Pure: the facts come from the card and its entries.
 import {
   HOLDERS,
   MERGE_OPTIONS,
@@ -11,7 +8,6 @@ import {
   type Status,
 } from "@fleet/protocol";
 
-/** Where a card's work stands, whatever holds it. */
 export const PHASES = [
   "queued",
   "working",
@@ -23,23 +19,15 @@ export const PHASES = [
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
-/**
- * A card's hold: the one gate that it waits at. It bundles every question that the gate
- * holds, and it names who it waits on now. Each time the card is held again after a release,
- * that is a new occurrence of the same hold.
- */
 export interface Hold {
   readonly occurrence: number;
   readonly holder: Holder;
   readonly question: string;
   readonly options: readonly string[];
   readonly merge: boolean;
-  /** The decision keys of the worker that it carries. */
   readonly keys: readonly string[];
-  /** Whether a worker's decision opened it. It ends when the worker's keys are all answered. */
   readonly fromWorker: boolean;
   readonly until: number | null;
-  /** The entry that wrote the hold as it stands. */
   readonly entry: number;
 }
 
@@ -48,11 +36,9 @@ export interface CardFacts {
   readonly kind: CardKind;
   readonly hold: Hold | undefined;
   readonly inPipeline: boolean;
-  /** Whether the card's project has the captain's yolo flag on: a done PR goes to Merging. */
   readonly yolo: boolean;
 }
 
-/** Changes whose new phase depends on nothing else. */
 const FIXED = {
   dispatch: "working",
   finding: "with-mate",
@@ -66,7 +52,6 @@ interface FixedChange {
 
 export type Change =
   | FixedChange
-  /** A hold began, changed, or ended its date: the phase stays, and the status follows the hold. */
   | { readonly kind: "held" }
   | { readonly kind: "released"; readonly outcome?: "approve" | "changes" | "withdrawn" }
   | { readonly kind: "report"; readonly status: ReportStatus }
@@ -82,7 +67,6 @@ const HANDOFFS: ReadonlySet<ReportStatus> = new Set([
   "stopped",
 ]);
 
-/** The phase after a change, or the reason that a guard rejects it. */
 export function nextPhase(card: CardFacts, change: Change): Phase | Error {
   return CLOSED.has(card.phase) ? new Error(`card is ${card.phase}`) : byKind(card, change);
 }
@@ -101,7 +85,6 @@ function byKind(card: CardFacts, change: Change): Phase {
   }
 }
 
-/** The captain's merge answer decides: approval goes to Merging, requested changes to Working. Anything else goes to the mate, who acts on it. A withdrawn question changes nothing. */
 function afterRelease(
   card: CardFacts,
   outcome: "approve" | "changes" | "withdrawn" | undefined,
@@ -111,7 +94,6 @@ function afterRelease(
   return outcome === "approve" || card.phase === "merging" ? "merging" : "with-mate";
 }
 
-/** Done goes to Merging when the project's yolo flag covers the merge, and stays there after an approved merge: the worker that merged it reports done again. */
 function afterReport(card: CardFacts, status: ReportStatus): Phase {
   if (status === "in-review") return "in-review";
   if (status === "done")
@@ -121,17 +103,11 @@ function afterReport(card: CardFacts, status: ReportStatus): Phase {
   return HANDOFFS.has(status) ? "with-mate" : card.phase;
 }
 
-/** A mate's comment sends the worker back to work, unless a decision key of the worker is still open. */
 function afterComment(card: CardFacts): Phase {
   if (card.phase !== "with-mate" || (card.hold?.keys.length ?? 0) > 0) return card.phase;
   return card.inPipeline ? "in-review" : "working";
 }
 
-/**
- * The status of a card: its phase seen through its hold. A hold that waits on the captain
- * makes the card Needs you. A hold that waits on a mate makes it With mate. A hold with a
- * date in the future is Waiting until then. A closed card has no hold.
- */
 export function statusOf(phase: Phase, hold: Hold | undefined, now: number): Status {
   if (CLOSED.has(phase) || hold === undefined) return phase;
   if (hold.until !== null && hold.until > now) return "waiting";
@@ -153,12 +129,10 @@ interface Tally {
   hold: Hold | undefined;
   occurrences: number;
   mergeApproved: boolean;
-  /** Whether the worker's latest word is done, and nothing has reopened the work since. */
   awaitingMerge: boolean;
   inPipeline: boolean;
 }
 
-/** Writes a hold, or writes it again: the occurrence, the keys, and the worker's origin stay. */
 function holdFrom(tally: Tally, entry: Entry): void {
   const merge = entry.fields["merge"] === true;
   const until = entry.fields["until"];
@@ -177,7 +151,6 @@ function holdFrom(tally: Tally, entry: Entry): void {
   } else tally.hold = { ...open, ...written };
 }
 
-/** A worker's decision opens the card's hold, or adds its key to the hold that is open. */
 function decide(tally: Tally, entry: Entry, key: string): void {
   const open = tally.hold;
   if (open === undefined) {
@@ -195,7 +168,6 @@ function decide(tally: Tally, entry: Entry, key: string): void {
   } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };
 }
 
-/** A worker's key is answered. A hold that a worker opened ends with its last key. */
 function answerKey(tally: Tally, key: string): void {
   const open = tally.hold;
   if (open === undefined) return;
@@ -239,7 +211,6 @@ const ENTRY_EFFECTS: Partial<Record<string, (tally: Tally, entry: Entry) => void
   },
   comment: (tally, entry) => {
     if (entry.author === "captain") {
-      // The captain's steer takes the hold back from him: its owner decides what it does.
       if (tally.hold?.holder === "captain") tally.hold = { ...tally.hold, holder: "owner" };
     } else {
       tally.awaitingMerge = false;
@@ -258,7 +229,6 @@ export interface Facts {
   readonly awaitingMerge: boolean;
 }
 
-/** The hold, the pipeline, and the merge approval of a card, from its entries in order. */
 export function factsFrom(entries: readonly Entry[]): Facts {
   const tally: Tally = {
     hold: undefined,
@@ -271,17 +241,12 @@ export function factsFrom(entries: readonly Entry[]): Facts {
   return { ...tally };
 }
 
-/** How a card's entries show that its work is finished (spec section 20.5). */
 export interface Finish {
-  /** A PR of the card merged on GitHub, as the check or close read it. */
   readonly merged: boolean;
-  /** The worker's latest handoff is `done`, and no comment steered it since. */
   readonly workerDone: boolean;
-  /** When the latest entry that showed the work finished was written. 0 if none did. */
   readonly at: number;
 }
 
-/** Statuses that hand the run back. Progress reports (`working`, `note`, `paused`, `resolved`) do not count. */
 const HANDOFF_REPORTS: ReadonlySet<string> = new Set([...HANDOFFS, "in-review", "done"]);
 
 const isMerge = (entry: Entry): boolean =>
@@ -295,7 +260,6 @@ export function finishFrom(entries: readonly Entry[]): Finish {
       finish.merged = true;
       finish.at = entry.createdAt;
     } else if (entry.kind === "comment") {
-      // A comment steers the worker again, so an earlier done no longer stands.
       finish.workerDone = false;
     } else if (entry.kind === "report" && status !== undefined && HANDOFF_REPORTS.has(status)) {
       finish.workerDone = status === "done";

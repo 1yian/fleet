@@ -1,10 +1,7 @@
-// gh, the GitHub command line (spec section 5). cardd reads PR state for the
-// timed check and for close. Workers merge their own PRs.
 import { execFile } from "node:child_process";
 
 export interface PullRequest {
   readonly state: "OPEN" | "MERGED" | "CLOSED";
-  /** Checks that failed, and checks that have not reported yet. */
   readonly failed: readonly string[];
   readonly pending: readonly string[];
 }
@@ -36,7 +33,6 @@ async function readState(url: string): Promise<PullRequest["state"]> {
   return state;
 }
 
-/** The checks as JSON. A failed read is an error, not an empty list; only gh's "no checks reported" is empty. */
 async function readChecks(url: string): Promise<Record<string, unknown>[]> {
   const checks = await gh(["pr", "checks", url, "--json", "name,bucket"]);
   if (checks.out.trim() === "") {
@@ -48,7 +44,6 @@ async function readChecks(url: string): Promise<Record<string, unknown>[]> {
   return Array.isArray(list) ? list.filter(isRecord) : [];
 }
 
-/** The PR's state and checks. gh exits non-zero while checks fail or pend, so the JSON decides. */
 export async function readPullRequest(url: string): Promise<PullRequest> {
   const state = await readState(url);
   const items = state === "OPEN" ? await readChecks(url) : [];

@@ -1,12 +1,9 @@
-// Fleet entries in the Pi session: how they read to the model, and which ones
-// the session file already holds (spec sections 9.4 and 9.5).
 import { existsSync, readFileSync } from "node:fs";
 import type { Entry } from "@fleet/protocol";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The entry ID of a fleet custom message or session entry. */
 export function fleetEntryId(message: unknown): number | undefined {
   if (!isRecord(message) || message["customType"] !== "fleet") return undefined;
   const details = message["details"];
@@ -14,7 +11,6 @@ export function fleetEntryId(message: unknown): number | undefined {
   return typeof id === "number" ? id : undefined;
 }
 
-/** Pi skips lines that do not parse, such as a line torn by a crash. So do we. */
 function parseLine(line: string): unknown {
   try {
     return JSON.parse(line);
@@ -23,7 +19,6 @@ function parseLine(line: string): unknown {
   }
 }
 
-/** The fleet entry IDs in the session file on disk. Pi creates the file late, so it may not exist. */
 export function idsInSessionFile(file: string | undefined): number[] {
   if (file === undefined || !existsSync(file)) return [];
   return readFileSync(file, "utf8")
@@ -40,7 +35,6 @@ const field = (entry: Entry, key: string): string | undefined => {
   return typeof value === "string" ? value : undefined;
 };
 
-/** An optional suffix: the text in parentheses when the field is set, otherwise nothing. */
 const suffix = (entry: Entry, key: string, label: string): string => {
   const value = field(entry, key);
   return value === undefined ? "" : ` (${label}${value})`;
@@ -60,10 +54,8 @@ function formatJob(entry: Entry, card: string): string {
   return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
 }
 
-/** Entry kinds that a mate reads by the name of the tool that wrote them. */
 const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
 
-/** The text the model reads. It starts with [fleet] so agents can tell it from the captain. */
 export function format(entry: Entry): string {
   const card = `c-${String(entry.card)}`;
   if (entry.kind === "report") return formatReport(entry, card);
@@ -76,7 +68,6 @@ export function format(entry: Entry): string {
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
-/** A time from the model: ISO 8601 with Z or an explicit offset, so no host's local zone can shift it. */
 export function parseUtc(text: string): number {
   const ms = ISO_UTC.test(text) ? Date.parse(text) : Number.NaN;
   if (Number.isNaN(ms)) {
@@ -89,7 +80,6 @@ export function parseUtc(text: string): number {
 
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** Whether a user-role message in the session file holds these words (spec section 9.6). */
 export function captainSaid(file: string | undefined, words: string): boolean {
   if (file === undefined || !existsSync(file) || squash(words) === "") return false;
   return readFileSync(file, "utf8")
@@ -111,7 +101,6 @@ export function captainSaid(file: string | undefined, words: string): boolean {
     });
 }
 
-/** The text of a Pi message: its string content, or its text blocks joined. */
 export function textOf(message: unknown): string {
   if (typeof message !== "object" || message === null || !("content" in message)) return "";
   const content: unknown = message.content;

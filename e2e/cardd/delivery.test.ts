@@ -1,5 +1,3 @@
-// Delivery records and recovery (spec section 9.4), against a real cardd. Every
-// worker first gets its task message, which dispatch writes with the attempt.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card } from "@fleet/protocol";

@@ -1,8 +1,3 @@
-// Pi extension: a scripted model. Each model call posts the transcript to the
-// test's control server and returns the move that the test chooses. Every
-// other mechanism in Pi stays real. Besides fake/scripted, it answers as the
-// captain's tiers (tier/orchestrator, tier/auto, tier/quick), so a test can see
-// which model a Pi chose from its settings.
 import { writeFileSync } from "node:fs";
 import {
   fauxAssistantMessage,
@@ -23,7 +18,6 @@ function controlUrl(): string {
   return url;
 }
 
-/** Tool arguments from the test: an object of strings, numbers, and booleans. */
 function scalarArgs(value: unknown): Record<string, string | number | boolean> {
   if (!isRecord(value)) return {};
   const args: Record<string, string | number | boolean> = {};
@@ -38,7 +32,6 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
   const tool = optionalString(move, "tool");
   const text = optionalString(move, "text");
   if (tool !== undefined) {
-    // A tool call may follow a short note, as a real model's does.
     const note = text === undefined ? [] : [fauxText(text)];
     return fauxAssistantMessage([...note, fauxToolCall(tool, scalarArgs(move["args"]))], {
       stopReason: "toolUse",

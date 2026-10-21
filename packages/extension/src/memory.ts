@@ -1,9 +1,3 @@
-// Turns on conversation memory (optchat) in a lane home, the same way for main and for each second
-// mate (docs/setup.md). The memory loader is the user's own fm-optchat extension, and optchat.ts
-// loads it when the home has config/optchat.json. This writes what the loader reads, all inside the
-// one home: the pinned pi-optchat package, prepared by the loader's own helper, in
-// config/optchat/package; the lane's profile in data/optchat/profiles/<lane>; and config/optchat.json.
-// Each step that is done already is left alone, so running it again changes nothing.
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
@@ -20,29 +14,22 @@ import { join } from "node:path";
 import { isRecord } from "./lane-config.ts";
 
 export interface MemoryOptions {
-  /** A profile folder to start from, such as the lane's old Firstmate profile. Only its AGENTS.md and config.json are copied. */
   readonly seed?: string;
-  /** A published pi-optchat folder to prepare the package from. Without it, npm fetches the pinned version. */
   readonly source?: string;
-  /** The memory's compactor model as provider/model. Without it, the memory uses the mate's own model. */
   readonly compactor?: string;
-  /** The compactor's thinking level. */
   readonly thinking?: string;
 }
 
 const PACKAGE = join("config", "optchat", "package");
 const MEMORY_HOME = join("data", "optchat");
-// The profile's lock socket must fit in a socket path: 104 bytes on macOS and 108 elsewhere, with the NUL.
 const SOCKET_PATH_LIMIT = process.platform === "darwin" ? 103 : 107;
 
 const run = (file: string, args: readonly string[], cwd?: string): string =>
   execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd }).trim();
 
-/** The Pi agent folder: where the loader and its package helper are installed. */
 const agentDir = (): string =>
   process.env["PI_CODING_AGENT_DIR"] ?? join(homedir(), ".pi", "agent");
 
-/** Fetches the published package that the helper's manifest pins, into a folder that the caller removes. */
 function fetchPublished(helperDir: string, into: string): string {
   const manifest: unknown = JSON.parse(readFileSync(join(helperDir, "manifest.json"), "utf8"));
   const name = isRecord(manifest) ? manifest["package"] : undefined;
@@ -61,11 +48,9 @@ function fetchPublished(helperDir: string, into: string): string {
   return join(into, "package");
 }
 
-/** Prepares the pinned package into the home with the loader's helper, which checks every file. */
 function preparePackage(home: string, source: string | undefined): string {
   const target = join(home, PACKAGE);
   if (existsSync(target)) return `package: ${PACKAGE} is there already`;
-  // The helper runs only when its path is its real path.
   const helper = realpathSync(join(agentDir(), "optchat", "package.mjs"));
   const scratch = mkdtempSync(join(tmpdir(), "fleet-optchat-"));
   try {
@@ -77,7 +62,6 @@ function preparePackage(home: string, source: string | undefined): string {
   return `package: prepared in ${PACKAGE}`;
 }
 
-/** The lane's profile: copied from a seed, or new. The loader sets its models again at every start. */
 function makeProfile(home: string, lane: string, options: MemoryOptions): string {
   const profile = join(home, MEMORY_HOME, "profiles", lane);
   const socket = join(realpathSync(home), MEMORY_HOME, "profiles", lane, "lock.sock");
@@ -125,7 +109,6 @@ function writeSettings(home: string, lane: string, options: MemoryOptions): stri
   return "settings: wrote config/optchat.json";
 }
 
-/** Sets up memory in the lane's home and says what it did. The mate gets it at its next start. */
 export function setUpMemory(home: string, lane: string, options: MemoryOptions): string[] {
   const loader = join(agentDir(), "extensions", "fm-optchat", "index.ts");
   if (!existsSync(loader)) throw new Error(`${loader} is missing: install the memory loader first`);

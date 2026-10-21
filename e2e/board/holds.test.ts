@@ -1,6 +1,3 @@
-/// <reference lib="dom" />
-// The board shows only the holds that main escalated to the captain (spec sections 17 and 21),
-// each one as one card with all its questions, in a real browser against a real cardd.
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";

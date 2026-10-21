@@ -1,5 +1,3 @@
-// The board's link to cardd: the view, a card's thread, the captain's actions,
-// and a live socket that says when cards.db changed.
 import { useEffect, useState } from "react";
 import {
   BoardSchema,
@@ -10,7 +8,6 @@ import {
   type Thread,
 } from "@fleet/protocol";
 
-/** The notice for a request that failed before cardd answered. */
 export const unreachable = (error: unknown): string =>
   `The board could not reach cardd: ${error instanceof Error ? error.message : String(error)}`;
 
@@ -22,7 +19,6 @@ export async function loadThread(card: number): Promise<Thread> {
   return check(ThreadSchema, await (await fetch(`/api/card/${String(card)}`)).json());
 }
 
-/** Sends one action. Resolves with an error message when cardd refused it or could not be reached. */
 export async function act(action: BoardAction): Promise<string | undefined> {
   try {
     const response = await fetch("/api/action", {
@@ -42,7 +38,6 @@ export async function act(action: BoardAction): Promise<string | undefined> {
   }
 }
 
-/** A counter that goes up each time cards.db changes. Reconnects when the socket drops. */
 export function useChanges(): number {
   const [changes, setChanges] = useState(0);
   useEffect(() => {

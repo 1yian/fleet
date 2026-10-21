@@ -1,8 +1,3 @@
-// The fleet Pi extension. Dispatch starts each worker with --fleet-url,
-// --fleet-token, and --fleet-role (fleet-args.ts writes them). FLEET_URL, FLEET_TOKEN, and FLEET_ROLE work
-// too. A Pi started in a lane home (the fleet repo for main, a worktree of it for a
-// second mate) needs none of them: the home's config/lane.json makes it that lane's
-// mate. Without either, the extension does nothing.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +16,6 @@ interface Config {
   readonly url: string;
   readonly token: string;
   readonly role: "worker" | "mate";
-  /** Set when the config came from the home's lane.json. */
   readonly lane?: string;
 }
 
@@ -40,13 +34,11 @@ function config(pi: ExtensionAPI): Config | undefined {
     return { url, token, role };
   const lane = readLaneConfig(HOME());
   if (lane === undefined) return undefined;
-  // What the lane's own commands and workers need, from the same file.
   process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
   process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...workerPiArgs(lane)]);
   return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane };
 }
 
-/** The lane's private charter, data/charter.md: its lane table, its projects, and where its records are. */
 function charter(): string {
   try {
     const text = readFileSync(join(HOME(), "data", "charter.md"), "utf8").trim();
@@ -88,7 +80,6 @@ function start(
         },
         { triggerTurn: true, deliverAs: mode },
       );
-      // Other extensions, such as the calm UI, can follow what the fleet queued for this session.
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
       worker?.reset();
@@ -98,7 +89,6 @@ function start(
   jobs?.register(pi, { url, token });
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
   worker?.register(pi);
-  // Main keeps the rest of the fleet running (docs/setup.md), and its board shows the lanes.
   const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
   if (role === "mate") registerQuestions(pi, link, () => sessionFile);
   if (role === "mate") registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
@@ -113,7 +103,6 @@ function start(
     const id = fleetEntryId(event.message);
     if (id !== undefined) link.ack(id);
   });
-  // Activity at each run and tool call keeps last_activity fresh for the stall check (spec section 12.2).
   const active = (): void => {
     link.activity("running");
   };

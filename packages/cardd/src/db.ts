@@ -10,7 +10,6 @@ export interface Migration {
   readonly sql: string;
 }
 
-/** Reads the migration files in order. Throws on a bad name or a gap in the numbers. */
 export function readMigrations(): Migration[] {
   const names = readdirSync(MIGRATIONS)
     .filter((name) => name.endsWith(".sql"))
@@ -25,7 +24,6 @@ export function readMigrations(): Migration[] {
   });
 }
 
-/** Opens cards.db, applies the new migrations, and turns foreign keys on. */
 export function openDatabase(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
@@ -34,12 +32,6 @@ export function openDatabase(path: string): DatabaseSync {
   return db;
 }
 
-/**
- * Applies every new migration in one transaction, so a failed migration leaves the database as
- * it was. Foreign keys are off while they run, as SQLite's procedure for rebuilding a table
- * requires: dropping a parent table counts each child row as a violation that its replacement
- * never clears. Instead every key is checked after each migration, and a violation names its rows.
- */
 function migrate(db: DatabaseSync): void {
   db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE");
   try {
@@ -67,10 +59,6 @@ function migrate(db: DatabaseSync): void {
   }
 }
 
-/**
- * Each row whose foreign key points at a missing row, such as
- * `entries.card -> cards.id: {"id":12,"card":999,...}`. Every key in the schema is one column.
- */
 function brokenKeys(db: DatabaseSync): string[] {
   const keys = db
     .prepare(

@@ -1,6 +1,3 @@
-// Worker sessions: the report tool and the run-end check (spec sections 11.1
-// and 12.3). A run may end only with a handoff, a tracked wait, or a queued
-// continuation. Otherwise the worker gets one nudge, and then files `stopped`.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardSchema, check } from "@fleet/protocol";
 import Type from "typebox";
@@ -62,14 +59,12 @@ export class WorkerRun {
     this.jobs = jobs;
   }
 
-  /** New captain input or a new fleet entry starts a new obligation. */
   reset(): void {
     this.latest = undefined;
     this.unsent = undefined;
     this.nudged = false;
   }
 
-  /** Files the stopped report that could not reach cardd. Called at each welcome. */
   flush(): void {
     const text = this.unsent;
     if (text === undefined) return;

@@ -1,4 +1,3 @@
-// A fake GitHub for cardd: a gh shim on PATH and a state file the test controls.
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +19,6 @@ export class FakeGitHub {
     chmodSync(shim, 0o755);
   }
 
-  /** The environment that puts this fake gh in front of the real one. */
   get env(): Record<string, string> {
     return { PATH: `${this.dir}:${process.env["PATH"] ?? ""}`, FAKE_GH_STATE: this.file };
   }
@@ -35,12 +33,10 @@ export class FakeGitHub {
     writeFileSync(this.file, JSON.stringify({ ...all, [url]: { state, checks: list } }));
   }
 
-  /** Makes `gh pr checks` fail with a network error from now on. */
   breakChecks(url: string): void {
     this.patch(url, { broken: true });
   }
 
-  /** Makes every gh call for this PR fail with a network error, or work again. */
   setDown(url: string, down: boolean): void {
     this.patch(url, { down });
   }

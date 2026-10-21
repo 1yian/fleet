@@ -1,5 +1,3 @@
-// Which card is open. Each card has its own address: the board's URL plus #/c-21.
-// Opening a card adds a history entry, so Back returns to the board where it was.
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 
 const ADDRESS = /^#\/c-(\d+)$/;
@@ -19,7 +17,6 @@ export function useCardRoute(): {
 } {
   const card = ADDRESS.exec(useSyncExternalStore(subscribe, hash))?.[1];
   const id = card === undefined ? undefined : Number(card);
-  // Where the board was scrolled to, and whether the board is the entry before this one.
   const scrolled = useRef(0);
   const fromBoard = useRef(false);
 
@@ -39,7 +36,6 @@ export function useCardRoute(): {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
 
-  // A card opens at its top. The board comes back where the captain left it.
   useEffect(() => {
     window.scrollTo(0, id === undefined ? scrolled.current : 0);
   }, [id]);

@@ -1,9 +1,3 @@
-// A host transport for a host that can go down: it runs the command here, like
-// ssh to a healthy host, until the marker file exists. Then it fails the way ssh
-// does when the host cannot be reached, with exit status 255. If the marker
-// starts with "hang", it instead hangs, like ssh to a host that drops packets.
-// If it starts with "flood", every herdr command still works and every other command prints more output than the caller accepts.
-// Usage, in FLEET_HOSTS: ["node", "<this file>", "<marker file>"]
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 

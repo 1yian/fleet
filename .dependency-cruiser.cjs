@@ -1,6 +1,3 @@
-// Module boundaries. cardd, the extension, and the board share only the wire
-// protocol. End-to-end tests drive real processes, so they may import only the
-// protocol.
 module.exports = {
   forbidden: [
     { name: "no-circular", severity: "error", from: {}, to: { circular: true } },

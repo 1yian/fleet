@@ -1,8 +1,3 @@
-// The board's view and the captain's board actions (spec section 21). The board
-// shows cards.db directly. Its actions carry the captain's authority, and each
-// reaches the lane mate as a fleet entry. Guard 5: an answer or a hold on a card
-// that changed since the captain's view is refused. A comment does not act on
-// the card's state, so it is accepted at any revision.
 import type { DatabaseSync } from "node:sqlite";
 import {
   check,
@@ -21,23 +16,10 @@ import { answerHold, hearers, holdOf, rewritten } from "./holds.ts";
 import { factsFrom, type Hold } from "./status.ts";
 import { addEntry, cardEntries, getCard, isLaneCard, listCards, touchCard } from "./store.ts";
 
-/** The card changed since the captain saw it. The board shows the current card. */
 export class StaleCard extends Error {}
 
-/**
- * What a card's thread shows the captain: the whole conversation between the card's owner
- * and its mate. That is the mate's comments down (the task message, steers, and decisions),
- * and the worker's reports and questions up, with the captain's words and the outcomes.
- * Job results are the worker's tool output and findings are the timed check's notices,
- * so they stay with the mates.
- */
 const inThread = (entry: Entry): boolean => entry.kind !== "job-result" && entry.kind !== "finding";
 
-/**
- * What a card's one-line state draws from: the thread without the mate's comments, which are
- * instructions to the worker (the task message and its steers), not news. On a lane card the
- * comments are the talk between main and the second mate, so they are news.
- */
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
   inThread(entry) && (laneCard || !(entry.kind === "comment" && entry.author.startsWith("mate:")));
 
@@ -47,11 +29,6 @@ const firstLine = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
-/**
- * The card's latest news in one line, or the captain's words when there is none yet.
- * A hold for the captain shows on its own, a hold that waits with main shows here as
- * "Asks main", and a routing note only repeats the title.
- */
 function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hold?: Hold): string {
   const withMain = hold?.holder === "main" ? hold.entry : undefined;
   const latest = entries.findLast(
@@ -64,7 +41,6 @@ function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hol
   return firstLine(latest?.body ?? card.intent);
 }
 
-/** A card as the board shows it, with its entries and its open hold. */
 function boardCard(db: DatabaseSync, card: Card): { card: BoardCard; hold: Hold | undefined } {
   const entries = cardEntries(db, card.id);
   const { hold } = factsFrom(entries);
@@ -73,7 +49,6 @@ function boardCard(db: DatabaseSync, card: Card): { card: BoardCard; hold: Hold 
   return { card: { ...card, summary, mate, holder: hold?.holder ?? null }, hold };
 }
 
-/** The board: every card, and the holds that wait on the captain. Nothing else is his to answer. */
 export function boardView(db: DatabaseSync): Board {
   const now = Date.now();
   const holds: Board["holds"] = [];
@@ -89,7 +64,6 @@ export function boardView(db: DatabaseSync): Board {
   return { cards, holds };
 }
 
-/** One card as a mate reads it: its hold, its attempts, and every entry, findings and job results too. */
 export function cardView(db: DatabaseSync, id: number): CardView {
   const { card, hold } = boardCard(db, getCard(db, id));
   return {
@@ -108,17 +82,11 @@ export function cardView(db: DatabaseSync, id: number): CardView {
   };
 }
 
-/** A card's thread: the conversation between its owner and its mate, as the captain reads it. */
 export const thread = (db: DatabaseSync, id: number): Thread => ({
   card: getCard(db, id),
   entries: cardEntries(db, id).filter(inThread),
 });
 
-/**
- * Answers the hold that the captain sees, with one of its options or with his own words. It
- * resolves the whole hold. Own words on a merge question are a request for changes: only the
- * Approve option approves.
- */
 function answerOnBoard(
   db: DatabaseSync,
   card: Card,
@@ -136,7 +104,6 @@ function answerOnBoard(
   return [...answerHold(db, null, card, open, args).notify];
 }
 
-/** The captain's comment is a steer. It takes the hold back from him, and the owner decides what it does. */
 function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
   const taken = holdOf(db, card)?.holder === "captain";
   const to = taken ? hearers(db, card, null, ["main"]) : [card.lane];
@@ -153,7 +120,6 @@ function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
   return to;
 }
 
-/** The captain's "later": the hold waits until the date, then it is his again. A card with no hold waits with its owner. */
 function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: string): string[] {
   if (until <= Date.now()) throw new Error("until must be in the future");
   const facts = factsFrom(cardEntries(db, card.id));
@@ -167,7 +133,6 @@ function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: strin
   return to;
 }
 
-/** Runs one board action. Returns the sessions to push to. */
 export function boardAction(db: DatabaseSync, raw: unknown): string[] {
   const { card: id, revision, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);

@@ -1,5 +1,3 @@
-// Test harness: a control server for the fake model and the probe, and Pi
-// processes in RPC mode with an isolated agent folder.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -54,7 +52,6 @@ function toTurns(body: JsonRecord): Turn[] {
   }));
 }
 
-/** One Pi process in RPC mode. */
 export class Pi {
   private readonly child: ChildProcess;
   private readonly exited: Promise<void>;
@@ -76,7 +73,6 @@ export class Pi {
     this.command({ type: "abort" });
   }
 
-  /** Simulates a crash. */
   async kill(): Promise<void> {
     this.child.kill("SIGKILL");
     await this.exited;
@@ -89,10 +85,8 @@ export class Pi {
 
 export class Harness {
   readonly dir = mkdtempSync(join(tmpdir(), "fleet-e2e-"));
-  /** Model calls of the default agent. Other agents are in `callsOf`. */
   readonly calls: Turn[][] = [];
   private readonly agentCalls = new Map<string, Turn[][]>();
-  /** The model that each call went to, such as "tier/auto", in the order of `callsOf`. */
   private readonly agentModels = new Map<string, string[]>();
   readonly events: JsonRecord[] = [];
   private readonly handlers = new Map<string, ModelHandler[]>();
@@ -124,7 +118,6 @@ export class Harness {
     return harness;
   }
 
-  /** Queues the answer to an agent's next model call. Unqueued calls answer "ok". */
   onModel(handler: ModelHandler, agent = "default"): void {
     this.handlers.set(agent, [...(this.handlers.get(agent) ?? []), handler]);
   }
@@ -133,12 +126,10 @@ export class Harness {
     return agent === "default" ? this.calls : (this.agentCalls.get(agent) ?? []);
   }
 
-  /** The models that an agent's calls went to, one for each call in `callsOf`. */
   modelsOf(agent: string): string[] {
     return this.agentModels.get(agent) ?? [];
   }
 
-  /** Pi arguments that isolate a Pi from the user's setup and give it the fake model. */
   piArgs(): string[] {
     return [
       ["--offline", "--no-approve", "--no-extensions", "--no-skills", "--no-prompt-templates"],
@@ -148,7 +139,6 @@ export class Harness {
     ].flat();
   }
 
-  /** The environment that any Pi using this harness's fake model needs. */
   piEnv(agent: string): Record<string, string> {
     return {
       PI_CODING_AGENT_DIR: join(this.dir, "agent"),
@@ -159,7 +149,6 @@ export class Harness {
     };
   }
 
-  /** Starts Pi with the fake model and the probe, plus any extra extensions. */
   startPi(
     sessionId: string,
     env: Record<string, string> = {},
@@ -191,7 +180,6 @@ export class Harness {
     return pi;
   }
 
-  /** Asks the probe to send a fleet message. */
   send(id: number, mode: "steer" | "followUp", text: string): void {
     this.probe?.send(JSON.stringify({ type: "send", id, mode, text }));
   }
@@ -204,7 +192,6 @@ export class Harness {
     return poll(() => this.events.find(match), what);
   }
 
-  /** Waits for the nth event (counting from 1) that matches. */
   async waitForNth(
     match: (event: JsonRecord) => boolean,
     n: number,
@@ -213,12 +200,10 @@ export class Harness {
     return poll(() => this.events.filter(match)[n - 1], what);
   }
 
-  /** Waits for an agent's model call. A worker that herdr starts cold can take longer, so the wait can be raised. */
   async waitForCall(index: number, agent = "default", waitMs = WAIT_MS): Promise<Turn[]> {
     try {
       return await poll(() => this.callsOf(agent)[index], `model call ${String(index)}`, waitMs);
     } catch (error) {
-      // Say how far the agent got, so a timeout shows where it stopped.
       const calls = this.callsOf(agent);
       const last = (calls.at(-1) ?? [])
         .slice(-2)
@@ -231,7 +216,6 @@ export class Harness {
     }
   }
 
-  /** The fleet entry IDs in a Pi session file, in file order. */
   static fleetEntriesInFile(file: string): number[] {
     if (!existsSync(file)) return [];
     return readFileSync(file, "utf8")
@@ -278,7 +262,6 @@ async function poll<T>(read: () => T | undefined, what: string, waitMs = WAIT_MS
   }
 }
 
-/** A promise that the test resolves by hand, to hold a model call open. */
 export function gate(): { readonly open: () => void; readonly wait: Promise<void> } {
   let open = (): void => undefined;
   const wait = new Promise<void>((resolve) => (open = resolve));

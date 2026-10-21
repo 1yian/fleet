@@ -1,5 +1,3 @@
-// The board (spec section 21): an inbox of every card, grouped by what it waits
-// on. It updates live and shows when cardd refuses an action.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Board, BoardAction } from "@fleet/protocol";
 import { act, loadBoard, unreachable, useChanges } from "./api.ts";
@@ -10,14 +8,12 @@ import { Inbox, type View } from "./Inbox.tsx";
 import { useCardRoute } from "./route.ts";
 import { SegmentedControl } from "./vendor/segmented-control.tsx";
 
-/** How often relative times such as "5m ago" refresh. */
 const TICK_MS = 30_000;
 
 const typesText = (element: EventTarget | null): boolean =>
   element instanceof HTMLElement &&
   (element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName));
 
-/** The live board: loaded again on every change, keeping only the newest load. */
 function useBoard(changes: number, setNotice: (notice: string | undefined) => void) {
   const [board, setBoard] = useState<Board | undefined>();
   const loads = useRef(0);
@@ -57,7 +53,6 @@ function useNow(): number {
   return now;
 }
 
-/** 1 to 9 answer the first question of the open card, or of the board. Escape closes the open card. */
 function useKeys(
   board: Board | undefined,
   open: number | undefined,
@@ -88,10 +83,8 @@ export function App() {
   const { board, refresh } = useBoard(changes, setNotice);
   const [view, setView] = useState<View>("board");
   const { card: open, open: openCard, close } = useCardRoute();
-  // What the captain started to write on each card, kept when he goes back to the board.
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
 
-  /** Sends one action. Resolves true when cardd took it. */
   const send = useCallback(
     async (card: number, action: BoardAction["action"]): Promise<boolean> => {
       const revision = board?.cards.find((each) => each.id === card)?.revision ?? 0;

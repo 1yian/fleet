@@ -1,8 +1,3 @@
-// Main's home is the repo (docs/setup.md). A Pi started in the repo loads the fleet extension
-// from the repo's own .pi/settings.json, gets main's private charter, and loads conversation
-// memory through the user's own loader. `fleet migrate` moves the earlier layout into the repo
-// without losing main's records or its conversations, and undoes itself. All of it runs in a
-// scratch copy of the repo, against a scratch cardd and the scripted model.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -36,8 +31,6 @@ let mainToken: string;
 let scratchDir: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
-  // 1 token in 64 begins with "-", and the worker's in the last test does. Pi must read each fleet
-  // flag's value as its value.
   cardd.dashTokens(["mate:wt"]);
   h = await Harness.start();
   scratch = new Scratch();
@@ -54,11 +47,9 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-/** Pi's folder for a working folder's conversations, as Pi names it. */
 const sessionFolder = (cwd: string): string =>
   join(h.dir, "agent", "sessions", `--${realpathSync(cwd).slice(1).replaceAll("/", "-")}--`);
 
-/** An earlier home: a plain folder with a charter, a calm choice, and one conversation. */
 function earlierHome(name: string, charter: string): string {
   const home = join(scratchDir, "homes", name);
   mkdirSync(join(home, "config"), { recursive: true });
@@ -83,7 +74,6 @@ const migrate = (...args: string[]): string =>
     PI_CODING_AGENT_DIR: join(h.dir, "agent"),
   });
 
-/** The earlier layout: a settings file for each mate, and the homes they name. */
 function earlierLayout(): { main: string; cleo: string } {
   const main = earlierHome("main", "# Main lane\n\nCharter text only main has.\n");
   const cleo = earlierHome("cleo", "# Cleo\n\nCleo owns the startup product.\n");
@@ -110,7 +100,6 @@ test("fleet migrate moves the earlier layout into the repo, keeps what it replac
   assert.match(lines, /main: home .* 1 conversations copied/);
   assert.match(lines, /cleo: home .* 1 conversations copied/);
 
-  // Main's home is the repo. Its charter and its calm choice are now private files in it.
   const laneFile = parseRecord(readFileSync(join(scratch.root, "config", "lane.json"), "utf8"));
   assert.equal(laneFile["lane"], "main");
   assert.equal(
@@ -118,7 +107,6 @@ test("fleet migrate moves the earlier layout into the repo, keeps what it replac
     "# Main lane\n\nCharter text only main has.\n",
   );
   assert.equal(readFileSync(join(scratch.root, "config", "calm"), "utf8"), "on\n");
-  // Cleo's home is a worktree of the repo.
   const home = `${scratch.root}.worktrees/lane-cleo`;
   assert.equal(
     parseRecord(readFileSync(join(home, "config", "lane.json"), "utf8"))["lane"],
@@ -130,13 +118,11 @@ test("fleet migrate moves the earlier layout into the repo, keeps what it replac
   );
   assert.ok(existsSync(join(home, ".pi", "settings.json")));
 
-  // Each conversation is copied to the new home's folder with its folder rewritten.
   const [file = ""] = readdirSync(sessionFolder(scratch.root));
   const copied = readFileSync(join(sessionFolder(scratch.root), file), "utf8").split("\n");
   assert.equal(parseRecord(copied[0] ?? "")["cwd"], realpathSync(scratch.root));
   assert.match(copied[1] ?? "", /hello main/);
 
-  // Nothing of the earlier layout is changed, except that the settings are renamed.
   assert.ok(existsSync(join(main, "AGENTS.md")) && existsSync(join(cleo, "AGENTS.md")));
   assert.ok(existsSync(join(sessionFolder(main), "main.jsonl")));
   assert.deepEqual(readdirSync(join(scratchDir, "config")).sort(), [
@@ -145,7 +131,6 @@ test("fleet migrate moves the earlier layout into the repo, keeps what it replac
   ]);
   assert.match(migrate(), /^nothing to migrate/);
 
-  // Undoing puts the settings back and sets the new files aside, so the new layout starts no lane.
   assert.match(migrate("--undo"), /main: settings restored/);
   assert.deepEqual(readdirSync(join(scratchDir, "config")).sort(), ["cleo.json", "main.json"]);
   assert.ok(existsSync(join(scratch.root, "config", "lane.json.undone")));
@@ -155,7 +140,6 @@ test("fleet migrate moves the earlier layout into the repo, keeps what it replac
 test("a plain pi in the repo is main: it loads the fleet extension from the repo, its charter, and memory", async () => {
   earlierLayout();
   migrate();
-  // The user's own memory loader, as Firstmate installs it. It stays idle unless FM_HOME is set.
   const loader = join(h.dir, "agent", "extensions", "fm-optchat");
   mkdirSync(loader, { recursive: true });
   writeFileSync(
@@ -171,7 +155,6 @@ export default function () {
 `,
   );
   writeFileSync(join(scratch.root, "config", "optchat.json"), JSON.stringify({ enabled: true }));
-  // The charter arrived with the migration. Ghost, a lane with no mate, wakes main.
   h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, scratch, h);
   const card: unknown = await ghost.call("card.new", { title: "Ship the fix", kind: "scout" });
@@ -194,7 +177,6 @@ test("a worker in a worktree of the repo starts with only the extension it was g
   const token = cardd.addLane("wt", "main");
   assert.match(token, /^-/);
   const extension = join(scratch.root, "packages", "extension", "src", "index.ts");
-  // A token can start with "-", so each fleet flag goes to Pi as --flag=value.
   const fleet = [`--fleet-url=${cardd.url}`, `--fleet-token=${token}`, "--fleet-role=mate"];
   const args = [...mateArgs(h), "-e", extension, ...fleet];
   const created = await lab.run([

@@ -1,6 +1,3 @@
-// Whether Calm is on. The presentation patches live on Pi's component prototypes for
-// the life of the process, and a Pi reload evaluates this module again, so the flag
-// sits in one process-wide object that every evaluation shares.
 const KEY = Symbol.for("fleet:calm-state");
 
 interface CalmState {

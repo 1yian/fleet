@@ -25,6 +25,7 @@ A mate is a Pi that runs in a lane home: a folder with a private `config/lane.js
 ### Rules
 
 - The gates in `eslint.config.js`, `tsconfig.json`, `knip.json`, and `.dependency-cruiser.cjs` are the rules. Inline disable comments do not work. Change a rule only in its config file, and say why in the pull request.
+- No comments in code. The `fleet/no-comments` lint rule fails on any comment. Say it with a name, a type, or a smaller function. A reason that no name can carry goes in [docs/code.md](docs/code.md).
 - Validate data that crosses a process boundary (websocket messages, database rows, environment variables, Pi events) with the schemas in `@fleet/protocol` or a narrowing helper. Trust typed data inside.
 - `cardd`, the extension, and the board share only `@fleet/protocol`. End-to-end tests import only `@fleet/protocol`.
 - Migrations in `packages/cardd/migrations` are append-only. Add a new numbered file, then run `npm run migrations:check -- --write` to update `schema.sql`.

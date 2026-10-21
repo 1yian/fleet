@@ -1,7 +1,3 @@
-// The timed check (spec section 13). One level-triggered pass over cards.db.
-// Each rule finds (card, condition) pairs. A finding is written once while its
-// condition stays true, and clears when the condition stops. The check wakes
-// nobody when everything is in order.
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs } from "./attempts.ts";
 import { applyChange } from "./change.ts";
@@ -24,19 +20,13 @@ interface Match {
   readonly lane: string;
   readonly condition: string;
   readonly text: string;
-  /** The status change, if the finding moves the card. Reminders do not. */
   readonly change?: Change;
-  /** Who hears of it, if not the card's lane mate. */
   readonly to?: string;
-  /** Why the finding ends the merge question: its PR is closed, or it merged by hand. */
   readonly withdrawsMerge?: "closed" | "merged";
-  /** Whether a new finding may be written now. A finding that is already open stays open either way. */
   readonly ready?: boolean;
-  /** Written for the record only, and told to nobody: the mate that would hear it is already acting on it. */
   readonly quiet?: boolean;
 }
 
-/** A card whose work is in Working or In review, with its live attempt and session. */
 const WORKER_CARDS = `SELECT c.id AS card, c.lane AS lane, a.state AS attempt, a.created_at AS started,
     s.state AS state, s.last_seen AS seen, coalesce(c.last_activity, s.last_seen, 0) AS active, s.id AS session
   FROM cards c JOIN attempts a ON a.card = c.id AND a.state IN ('starting', 'active')
@@ -45,7 +35,6 @@ const WORKER_CARDS = `SELECT c.id AS card, c.lane AS lane, a.state AS attempt, a
 
 const LATEST_REPORT = `(SELECT fields FROM entries WHERE card = w.card AND kind = 'report' ORDER BY id DESC LIMIT 1)`;
 
-/** Rules that hand a worker card back to its mate (spec section 13.1). */
 const WORKER_RULES: readonly {
   condition: string;
   text: string;
@@ -106,7 +95,6 @@ function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   );
 }
 
-/** How many reminder times have passed. Past the list, one more for each repeat of the last gap. */
 function reminderTier(waited: number, at: readonly number[]): number {
   const passed = at.filter((time) => waited >= time).length;
   const last = at.at(-1) ?? 0;
@@ -114,13 +102,11 @@ function reminderTier(waited: number, at: readonly number[]): number {
   return passed < at.length || gap <= 0 ? passed : passed + Math.floor((waited - last) / gap);
 }
 
-/** The lane that acts on a card that waits on its mate: its owner, or main when the hold waits on main. */
 function actingLane(db: DatabaseSync, card: number, lane: string): string {
   const { hold } = factsFrom(cardEntries(db, card));
   return hold?.holder === "main" ? (parentOf(db, lane) ?? lane) : lane;
 }
 
-/** What a mate does with a finished card, by kind and by how it landed. */
 function closeAdvice(kind: string, merged: boolean, hasPr: boolean): string {
   if (merged) return "Close it now with close(card, summary).";
   if (kind !== "ship")
@@ -136,12 +122,6 @@ const stateOf = (db: DatabaseSync, lane: string | null): unknown =>
     ? undefined
     : db.prepare("SELECT state FROM sessions WHERE id = ? AND role = 'mate'").get(lane)?.["state"];
 
-/**
- * A card whose work is finished and that only needs closing (spec section 13.1): the worker
- * reported done, or the PR merged, and no hold is open. Its mate is reminded sooner than for
- * other cards, and the lane's parent is told when a second mate leaves it open. Nothing closes
- * it but the mate, with close.
- */
 function finishedMatches(
   db: DatabaseSync,
   card: { id: number; lane: string; kind: string; pr: unknown; status: string; since: number },
@@ -183,7 +163,6 @@ function finishedMatches(
   ];
 }
 
-/** Cards that wait on a mate (spec section 13.1): a reminder for each tier, written while that mate is idle. A hold that waits on main reminds main. A finished card is reminded sooner. */
 function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const waiting = rows(
     db,
@@ -221,7 +200,6 @@ function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
 const FINDING: Change = { kind: "finding" };
 const MISSED_HEARTBEATS = 3;
 
-/** run_long jobs whose wrapper stopped sending heartbeats (spec section 13.1). They are not run again. */
 function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
   return loseSilentJobs(db, now - MISSED_HEARTBEATS * t.heartbeat).flatMap((job) => {
     const card = getCard(db, job.card);
@@ -253,7 +231,6 @@ function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
   });
 }
 
-/** A hold whose date passed: it waits on its holder again, and that holder hears of it (spec section 17). */
 function holdMatches(db: DatabaseSync, now: number): Match[] {
   const held = rows(db, "SELECT id, lane FROM cards WHERE status = 'waiting'");
   return held.flatMap((row) => {
@@ -274,7 +251,6 @@ function holdMatches(db: DatabaseSync, now: number): Match[] {
   });
 }
 
-/** The PRs of open cards, read with gh before the check's transaction. A PR that could not be read is undefined. */
 export async function readPullRequests(
   db: DatabaseSync,
 ): Promise<Map<number, PullRequest | undefined>> {
@@ -296,7 +272,6 @@ export async function readPullRequests(
 
 const PR_CONDITIONS: ReadonlySet<string> = new Set(["pr-merged", "pr-closed", "checks-failed"]);
 
-/** PR state (spec section 13.1): merged, closed without a merge, or red checks while Merging. */
 function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | undefined>): Match[] {
   return [...prs].flatMap(([card, pr]): Match[] => {
     if (pr === undefined) return [];
@@ -340,7 +315,6 @@ function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | unde
   });
 }
 
-/** Clears the open findings whose condition stopped. A PR that could not be read keeps its PR findings open. */
 function clearStopped(
   db: DatabaseSync,
   now: number,
@@ -364,7 +338,6 @@ function clearStopped(
   }
 }
 
-/** Writes each match that is not open yet as a finding, and adds the sessions to push to. */
 function writeFindings(
   db: DatabaseSync,
   now: number,
@@ -397,7 +370,6 @@ function writeFindings(
   }
 }
 
-/** Writes each new finding once, clears the ones whose condition stopped, and returns the sessions to push to. */
 export function runCheck(
   db: DatabaseSync,
   now: number,
@@ -416,11 +388,6 @@ export function runCheck(
   return [...notify];
 }
 
-/**
- * Before close, reads the PR of a card whose merge is not on record yet: a worker that just
- * merged it need not wait for the next check pass. A merged PR gets the check's own finding,
- * told to nobody, because the mate is closing the card. Returns the sessions to push to.
- */
 export async function recordMerge(db: DatabaseSync, card: number): Promise<string[]> {
   const url = getCard(db, card).pr;
   if (url === null || finishFrom(cardEntries(db, card)).merged) return [];

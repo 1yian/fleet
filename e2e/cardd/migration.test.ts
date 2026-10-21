@@ -1,6 +1,3 @@
-// Opening an older cards.db against a real cardd: one written before the worker cap was
-// removed (migration 006), and one shaped like the live fleet's history before holds
-// (migration 007), with entries that were delivered to sessions.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
@@ -15,7 +12,6 @@ import { Cardd } from "../support/cardd.ts";
 const MIGRATIONS = fileURLToPath(new URL("../../packages/cardd/migrations/", import.meta.url));
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 
-/** Writes a database as cardd left it at `version`, by applying the migrations up to it. */
 function writeDatabaseAt(file: string, version: number): DatabaseSync {
   const db = new DatabaseSync(file);
   const old = readdirSync(MIGRATIONS)
@@ -26,7 +22,6 @@ function writeDatabaseAt(file: string, version: number): DatabaseSync {
   return db;
 }
 
-/** Writes a database as cardd left it before migration 006, with a project that has a capacity. */
 function writeOldDatabase(file: string): void {
   const db = writeDatabaseAt(file, 5);
   db.exec(`INSERT INTO lanes (name, home) VALUES ('main', '/homes/main');
@@ -35,16 +30,8 @@ function writeOldDatabase(file: string): void {
   db.close();
 }
 
-/** When the seeded history happened, as the SQL below writes it. */
 const T = 1_760_000_000_000;
 
-/**
- * Writes a sanitized database shaped like the live fleet's before holds (version 4): a lane,
- * a project with a capacity, done, dropped, and captain cards, a card that waits on the captain,
- * a card that was With first mate, a card held until a date, asks answered by a forwarded answer,
- * job results of an ended attempt, and every entry delivered to a session, as the live
- * fleet's 356 delivery rows were. The text is made up; the shapes are the live ones.
- */
 function writeLiveShapedDatabase(file: string): void {
   const db = writeDatabaseAt(file, 4);
   db.exec(`
@@ -104,7 +91,6 @@ function writeLiveShapedDatabase(file: string): void {
   db.close();
 }
 
-/** Every table's rows, the schema, and the version: what a failed migration must leave alone. */
 function contents(file: string): string {
   const db = new DatabaseSync(file, { readOnly: true });
   const tables = db
@@ -205,7 +191,6 @@ test("the live fleet's database from before holds opens with every entry, delive
     );
     assert.equal(count("SELECT count(*) AS n FROM deliveries"), 22);
     assert.equal(count("SELECT entry AS n FROM findings WHERE id = 1"), 11);
-    // The card's grant ended with migration 008; its entry stays in the record.
     assert.equal(count("SELECT count(*) AS n FROM sqlite_schema WHERE name = 'grants'"), 0);
     assert.equal(count("SELECT group_concat(name || ' ' || yolo) AS n FROM projects"), "web 0");
     assert.equal(count("SELECT user_version AS n FROM pragma_user_version"), 8);
@@ -216,12 +201,6 @@ test("the live fleet's database from before holds opens with every entry, delive
   }
 });
 
-/**
- * Writes a database as cardd left it before the yolo flag (version 7), with grants shaped like the
- * live fleet's: merge grants on a lane scoped to one project each, a card's grant for one PR, and
- * the grants that do not carry over: an expired one, an ended one, one scoped to a branch, one
- * that does not cover merging, and one on a lane with no project.
- */
 function writeGrantsDatabase(file: string): void {
   const db = writeDatabaseAt(file, 7);
   db.exec(`

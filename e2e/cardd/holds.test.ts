@@ -1,6 +1,3 @@
-// Holds (spec sections 7 and 17), against a real cardd with a scratch database and
-// scratch lanes: one hold per card, who it waits on, how it is released and held again,
-// and what the captain's board shows of it.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { MERGE_OPTIONS, type Board, type Card, type Entry } from "@fleet/protocol";
@@ -19,7 +16,6 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-/** A card of the lane mate with a worker on it. */
 async function laneCard(title = "Ads stay under budget"): Promise<{ card: Card; worker: Session }> {
   const card = await newCard(cleo, title);
   const worker = await fleet.cardd.connect(await begin(cleo, card));
@@ -28,7 +24,6 @@ async function laneCard(title = "Ads stay under budget"): Promise<{ card: Card; 
 
 const entries = async (card: Card): Promise<Entry[]> => (await fleet.cardd.thread(card.id)).entries;
 const kinds = (session: Session): string[] => session.entries.map(({ entry }) => entry.kind);
-/** The one hold that waits on the captain. */
 async function theHold(): Promise<Board["holds"][number]> {
   const { holds } = await fleet.cardd.board();
   const [only, ...more] = holds;
@@ -57,7 +52,6 @@ test("a worker's decision is its mate's to resolve: it never reaches the captain
   assert.equal(await status(cleo, card), "working");
   assert.deepEqual(await needsYou(), []);
   assert.deepEqual(kinds(fleet.main), []);
-  // The mate's decision is on the thread that the captain reads.
   const decided = (await entries(card)).find((entry) => entry.fields["resolves"] === "api");
   assert.deepEqual([decided?.author, decided?.body], ["mate:cleo", "Use v2."]);
 });
@@ -72,7 +66,6 @@ test("a worker's decision that climbs to the captain is answered by him, and the
   await fleet.main.call("hold", ask(card, { to: "captain", options: ["v2", "v1"] }));
   assert.deepEqual(await needsYou(), [card.id]);
 
-  // The captain holds it: the mate cannot answer the worker around him.
   await assert.rejects(cleo.call("comment", { card: card.id, text: "Use v2.", resolves: "api" }), {
     message: /the captain holds c-\d+: clear the hold with his exact words/,
   });
@@ -85,7 +78,6 @@ test("a worker's decision that climbs to the captain is answered by him, and the
   await cleo.call("comment", { card: card.id, text: "The captain chose v2.", resolves: "api" });
   assert.equal(await status(cleo, card), "working");
 
-  // The worker's next gate is the same card's hold again, with its mate first.
   await worker.call("report", { status: "needs-decision", key: "db", text: "sqlite or postgres?" });
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual(await needsYou(), []);
@@ -113,7 +105,6 @@ test("a lane hold climbs one level at a time and shows once in Needs you, when m
     "main",
   );
 
-  // The same hold again is the same hold: nothing is written.
   const before = (await entries(card)).length;
   await cleo.call("hold", ask(card));
   assert.equal((await entries(card)).length, before);
@@ -152,7 +143,6 @@ test("the captain's answer releases the whole hold, and the card moves on", asyn
   const heard = await cleo.waitForEntry((entry) => entry.kind === "answer", "the answer");
   assert.equal(heard.body, "No");
   await fleet.main.waitForEntry((entry) => entry.kind === "answer", "the answer");
-  // A second click on the same hold is refused: it is already released.
   assert.equal(
     await fleet.cardd.act(card.id, { kind: "answer", hold: open.hold, choice: "Yes" }),
     409,
@@ -206,7 +196,6 @@ test("the c-6 case: four questions are one hold, and one answer settles all of t
     "hold",
     ask(card, { question: questions.join("\n"), options: ["Take all four"] }),
   );
-  // The mate holds it again with the evidence added. It is still one hold.
   await cleo.call(
     "hold",
     ask(card, {
@@ -259,7 +248,6 @@ test("a captain's steer takes the hold back from him, and the owner holds it aga
   await cleo.waitForEntry((entry) => entry.author === "captain", "the steer");
   await fleet.main.waitForEntry((entry) => entry.author === "captain", "the steer");
 
-  // It did not settle the question: the mate holds again, and main escalates the same hold again.
   await cleo.call("hold", ask(card, { question: "Last week was flat. Raise it?" }));
   await fleet.main.call(
     "hold",
@@ -275,7 +263,6 @@ test("a hold is released with the captain's words, or with a mate's own decision
   const { card } = await laneCard();
   await cleo.call("hold", ask(card));
 
-  // Main's own decision settles what waits on main. The mate hears it.
   await assert.rejects(cleo.call("release", { card: card.id }), {
     message: "clearing a hold needs the captain's exact words, or your own note, and not both",
   });
@@ -288,7 +275,6 @@ test("a hold is released with the captain's words, or with a mate's own decision
     message: `c-${String(card.id)} has no open hold`,
   });
 
-  // What waits on the captain needs his words, and they must be words he wrote.
   await cleo.call("hold", ask(card));
   await fleet.main.call("hold", ask(card, { to: "captain" }));
   await assert.rejects(cleo.call("release", { card: card.id, note: "I decide" }), {
@@ -317,7 +303,6 @@ test("a merge question is part of the hold: it goes up through main, and is with
   const { card, worker } = await laneCard("Ads exports");
   await worker.call("report", { status: "done", text: "PR ready", pr: PR });
 
-  // Nothing reaches the captain until main escalates it.
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual(await needsYou(), []);
   const line = await fleet.main.waitForEntry((entry) => entry.kind === "hold", "the merge hold");
@@ -332,7 +317,6 @@ test("a merge question is part of the hold: it goes up through main, and is with
   assert.deepEqual(merge.options, [...MERGE_OPTIONS]);
   assert.equal(merge.merge, true);
 
-  // The mates rework the PR: the question about the old head is withdrawn.
   await cleo.call("comment", { card: card.id, text: "Fix the failing check first." });
   assert.deepEqual(await needsYou(), []);
   assert.equal(await status(cleo, card), "working");
@@ -347,7 +331,6 @@ test("a merge question is part of the hold: it goes up through main, and is with
     409,
   );
 
-  // The next done holds the same card again, and the captain approves that one.
   await worker.call("report", { status: "done", text: "fixed", pr: PR });
   await fleet.main.call("hold", { card: card.id, to: "captain", question: `Merge ${PR}? Fixed.` });
   const again = await theHold();
@@ -385,7 +368,6 @@ test("an open hold stops close, and a hold held until a date leaves Needs you un
     message: /has an open hold; clear it first/,
   });
 
-  // The captain says later: the same hold, held until a date.
   const until = Date.now() + 400;
   await fleet.main.call("hold", {
     card: held.id,

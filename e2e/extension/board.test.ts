@@ -1,6 +1,3 @@
-// A mate reads the fleet with board, never with sqlite: a header with the projects and their yolo
-// flag, the live cards, and a count of the closed ones; board(card=N) shows one card's hold,
-// attempts, and thread. It prints TOON with counts, cut text, explicit empty states, and next steps (https://axi.md).
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -27,7 +24,6 @@ const toolResults = (turns: Turn[]): string[] =>
 
 type Args = Readonly<Record<string, string | number | boolean>>;
 
-/** Starts main's Pi, has it make each tool call in turn, and returns what each call printed. */
 async function mainCalls(calls: readonly (readonly [string, Args])[]): Promise<string[]> {
   for (const [tool, args] of calls) h.onModel(() => ({ tool, args }));
   h.onModel(() => ({ text: "read" }));
@@ -40,10 +36,6 @@ async function mainCalls(calls: readonly (readonly [string, Args])[]): Promise<s
 
 const LONG_NOTE = `${"The scrollbar doubles because the panel and the page both scroll. ".repeat(6)}Report written: /tmp/scrollbar-report.md.`;
 
-/**
- * c-1 is cleo's lane card. c-2 waits on the captain, c-3 has a worker on it, c-4 is queued,
- * c-5 is done, c-6 is dropped, and c-7 is cleo's card with a question for main.
- */
 async function seed(): Promise<{ cleo: Session; worker: Session }> {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const { main } = fleet;
@@ -169,14 +161,12 @@ test("board(card=N) shows one card's hold, attempt, report, and thread, cut unti
   assert.match(view, /^attempts\[1\]\{n,host,state,branch\}:\n {2}1,maverick,active,\S*c-3-a1$/m);
   assert.match(view, /^report: \/tmp\/scrollbar-report\.md$/m);
   assert.doesNotMatch(view, /^(hold|intent|spec):/m);
-  // Newest first: the worker's note, cut with its size, then the task message.
   assert.match(
     view,
     /^entries\[2\]\{id,age,from,kind,body\}:\n {2}\d+,\d+s ago,"worker:c-3-a1",report\/working,"The scrollbar doubles[^"\n]*\.\.\. \(truncated, 437 chars total, full=true shows all\)"\n {2}\d+,\d+s ago,"mate:main",comment,Fix the double scrollbar$/m,
   );
   assert.match(view, /^ {2}Call `board\(card=3, full=true\)` to see every text whole$/m);
 
-  // full shows the whole text, and entries=1 hides the older entry and says how to see it.
   assert.ok((whole ?? "").includes(LONG_NOTE));
   assert.match(whole ?? "", /^hidden: 1 older entries$/m);
   assert.match(whole ?? "", /^ {2}Call `board\(card=3, entries=2\)` to read the whole thread$/m);
@@ -186,7 +176,6 @@ test("board(card=N) shows one card's hold, attempt, report, and thread, cut unti
     /^hold:\n {2}waits: captain\n {2}question: v1 or v2\?\n {2}options\[2\]: v2,v1$/m,
   );
   assert.match(api ?? "", /^attempts: 0 \(never dispatched\)$/m);
-  // Nothing on it was cut, so it offers no full view.
   assert.doesNotMatch(api ?? "", /full=true/);
   assert.equal(missing, "error: no card c-99\nhelp[1]:\n  Call `board()` to list the open cards");
   await Promise.all([sessions.cleo.close(), sessions.worker.close()]);

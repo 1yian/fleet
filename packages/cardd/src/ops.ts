@@ -1,5 +1,3 @@
-// The operations that sessions call (spec section 11). Each runs inside one
-// transaction and returns the sessions that have new entries to push.
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
@@ -27,7 +25,6 @@ interface Done {
 }
 type Handler = (db: DatabaseSync, session: Session, args: unknown, timing: Timings) => Done;
 
-/** Reports that always reach the lane mate (spec section 10.1). */
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
   "in-review",
   "done",
@@ -44,17 +41,12 @@ function ownCard(db: DatabaseSync, session: Session, id: number): Card {
   return card;
 }
 
-/**
- * A report reaches the mate if its status hands off, or if it is the first report
- * after a comment (spec section 10.3). Then it carries the comment it follows.
- */
 function reportRoute(
   db: DatabaseSync,
   card: Card,
   status: ReportStatus,
 ): { to: string[]; re?: string } {
   const entries = cardEntries(db, card.id);
-  // Only a comment that reached the worker counts: the task message, or a mate's comment to it.
   const comment = entries.findLast(
     (entry) =>
       entry.kind === "comment" &&
@@ -66,7 +58,6 @@ function reportRoute(
   return { to: TO_MATE.has(status) ? [card.lane] : [] };
 }
 
-/** Reports that mean the work is open again, so a merge question about the old head no longer stands. */
 const REWORK: ReadonlySet<ReportStatus> = new Set([
   "in-review",
   "needs-decision",
@@ -174,7 +165,6 @@ const HANDLERS: Record<OpName, Handler> = {
   },
 };
 
-/** Runs an operation for a session. Throws if the session's role may not call it. Cleanup first reads the PR with gh. */
 export async function performOp(
   db: DatabaseSync,
   session: Session,

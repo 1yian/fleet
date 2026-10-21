@@ -1,8 +1,3 @@
-// A real-model trial (not a test). It starts cardd with the board, an isolated
-// herdr lab session, and a main mate Pi on a real model, with one project
-// whose clone is given. The captain (or an agent playing the captain) then talks
-// to main through the lab. Ctrl-C stops everything.
-//   node e2e/trial/trial.ts <project clone> [model]
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -43,7 +38,6 @@ const created = await lab.run([
 ]);
 const [pane] = records([created["root_pane"]]).map((each) => each["pane_id"]);
 if (typeof pane !== "string") throw new Error("the lab returned no pane");
-// Each value follows "=", since Pi reads a separate value that begins with "-" as an option.
 const fleet = [`--fleet-url=${cardd.url}`, `--fleet-token=${token}`, "--fleet-role=mate"];
 execFileSync(
   "herdr",

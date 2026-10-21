@@ -1,6 +1,3 @@
-// The session's one websocket to cardd (spec section 12.1). It sends hello with
-// the fleet entry IDs found in the session file, reconnects with backoff, and
-// correlates operation calls with their results.
 import {
   parseServerMessage,
   type ClientMessage,
@@ -17,10 +14,8 @@ const MAX_BACKOFF_MS = 10_000;
 export interface LinkOptions {
   readonly url: string;
   readonly token: string;
-  /** Reads the fleet entry IDs in the session file, at each connect. */
   readonly inFile: () => number[];
   readonly onPush: (push: Push) => void;
-  /** Called at each welcome, before cardd resends what the session file lacks. */
   readonly onConnect: () => void;
 }
 
@@ -64,7 +59,6 @@ export class Link {
     this.socket?.close(1000);
   }
 
-  /** Calls an operation. Rejects at once when cardd is unreachable. */
   call(op: OpName, args: unknown): Promise<unknown> {
     if (!this.connected)
       return Promise.reject(new Error("cardd is unreachable; try again shortly"));

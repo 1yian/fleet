@@ -1,6 +1,3 @@
-// Mate tools for holds (spec sections 11.2 and 17). Clearing a hold checks the captain's words
-// where the mate can see them: a user-role message in its own session file. Otherwise cardd looks
-// for them in the captain's board entries.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardSchema, check, OPS } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
@@ -59,7 +56,6 @@ export function registerQuestions(
   link: Link,
   sessionFile: () => string | undefined,
 ): void {
-  /** chat when the words are in this session's own user messages; otherwise cardd checks the record. */
   const sourceOf = (words: string): "chat" | "record" =>
     captainSaid(sessionFile(), words) ? "chat" : "record";
   const clearHold = async (params: HoldArgs): Promise<string> => {

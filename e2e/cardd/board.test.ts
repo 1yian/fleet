@@ -1,5 +1,3 @@
-// The board's door into cardd (spec section 21), against a real cardd: only its
-// own origin may use it, and an answer names the question it answers.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { request } from "node:http";
@@ -46,7 +44,6 @@ function send(
 const view = async (): Promise<Board> =>
   check(BoardSchema, JSON.parse((await send("/api/board", "GET", {})).body));
 
-/** A card with one hold that bundles two questions. */
 async function twoQuestions(): Promise<{ card: number; revision: number; hold: number }> {
   const card = check(CardSchema, await main.call("card.new", { title: "Two", kind: "captain" }));
   const question = "1. Which version?\n2. Ship it?";
@@ -264,9 +261,7 @@ test("a card's thread on the board is the whole conversation with its mate, with
 
   const shown: unknown = JSON.parse((await send(`/api/card/${String(card.id)}`, "GET", {})).body);
   const kinds = check(ThreadSchema, shown).entries.map((entry) => entry.kind);
-  // The task message, the worker's report, and the mate's steer. Job results stay out.
   assert.deepEqual(kinds, ["comment", "report", "comment"]);
-  // The card's summary on the board is the latest thing the captain reads, in one line.
   const summary = (await view()).cards.find((each) => each.id === card.id)?.summary;
   assert.equal(summary, "the tests run again");
   await worker.close();

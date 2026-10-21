@@ -1,5 +1,3 @@
-// Pi extension for the Pi contract tests. It sends fleet messages when the test
-// asks, and reports the Pi events that the fleet extension depends on.
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isRecord, optionalNumber, optionalString, parseRecord } from "./json.ts";

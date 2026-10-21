@@ -1,6 +1,3 @@
-// One card in the inbox: its title, its latest news, and its status. A question
-// for the captain shows with its answers, so one click answers it. A click on the
-// card opens its detail.
 import type { MouseEvent } from "react";
 import type { BoardCard } from "@fleet/protocol";
 import { Ask } from "./Ask.tsx";
@@ -10,14 +7,12 @@ import { Sparkle, StatusIcon } from "./icons.tsx";
 interface Props {
   readonly card: BoardCard;
   readonly questions: readonly Question[];
-  /** Whether number keys answer this card's first question. */
   readonly keys: boolean;
   readonly now: number;
   readonly onOpen: () => void;
   readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
 }
 
-/** A click on the card opens it, unless the click was meant for a control inside it. */
 const onControl = (event: MouseEvent): boolean =>
   event.target instanceof Element && event.target.closest("a, button, textarea, input") !== null;
 
@@ -37,7 +32,6 @@ export function TaskCard(props: Props) {
         className="task-head"
         href={`#/c-${String(card.id)}`}
         onClick={(event) => {
-          // A new tab or window keeps the link's own address.
           if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
           event.preventDefault();
           props.onOpen();
