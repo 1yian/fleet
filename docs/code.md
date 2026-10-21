@@ -21,10 +21,13 @@ Code in this repository has no comments. A lint rule fails on any comment. What 
 cardd serve --db <file> [--listen <host:port>] [--board <built board folder>] [--hostname <name>]...
 cardd lane add <name> --db <file> --home <path> [--parent <lane>]
 cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>]
+cardd project clone <name> <host>=<path> --db <file>
 cardd project yolo <name> on|off --db <file>
 ```
 
 `project add` without `--repo` reads the project's GitHub repository from the `origin` remote of a clone on the `cardd` host. `serve` fills in any that are missing at each start.
+
+`project clone` sets one host's clone of a registered project to a new path, so a clone can move. Attempts already begun keep their worktrees where they are: close finds them through the clone's worktree list, not through a stored path.
 
 `lane add` prints the mate's token. `CARDD_TIMING_SCALE=0.01` speeds up every timer, for tests. `project yolo` sets the captain's standing merge authority for a project. Only the captain sets it, through this command line.
 

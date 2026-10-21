@@ -125,6 +125,47 @@ test("a clone given without a host or a path is refused when the project is adde
     }, /must be <host>=<path>/);
 });
 
+test("moving a project's clone changes the path for new attempts on that host only", async () => {
+  const first = await begin("maverick");
+  assert.equal(first.clone, "/clones/web");
+
+  assert.equal(
+    fleet.cardd.moveClone("web", "p620", "/fleet-projects/web"),
+    "web: clone on p620 is /fleet-projects/web",
+  );
+  const listed = check(OPS.projects.result, await fleet.main.call("projects", {}));
+  assert.deepEqual(listed[0]?.clones, [
+    { host: "maverick", path: "/clones/web" },
+    { host: "p620", path: "/fleet-projects/web" },
+  ]);
+  const second = await newCard(fleet.main, "Users see one scrollbar again");
+  const moved = check(
+    OPS["attempt.begin"].result,
+    await fleet.main.call("attempt.begin", { card: second.id, host: "p620", task: "again" }),
+  );
+  assert.equal(moved.clone, "/fleet-projects/web");
+
+  fleet.cardd.moveClone("web", "maverick", "/new/web");
+  const again = await newCard(fleet.main, "Users see one scrollbar once more");
+  const here = check(
+    OPS["attempt.begin"].result,
+    await fleet.main.call("attempt.begin", { card: again.id, host: "maverick", task: "x" }),
+  );
+  assert.equal(here.clone, "/new/web");
+});
+
+test("moving the clone of a project that is not registered, or with a bad clone, is refused", () => {
+  assert.throws(
+    () => fleet.cardd.moveClone("nope", "p620", "/x"),
+    /project nope is not in the registry/,
+  );
+  for (const [host, path] of [
+    ["", "/x"],
+    ["p620", ""],
+  ] as const)
+    assert.throws(() => fleet.cardd.moveClone("web", host, path), /must be <host>=<path>/);
+});
+
 test("a job result reaches the waiting worker once, through POST /call", async () => {
   const { token } = await begin("maverick");
   const worker: Session = await fleet.cardd.connect(token);

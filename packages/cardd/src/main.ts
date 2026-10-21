@@ -3,7 +3,7 @@ import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
 import { fillRepos } from "./pulls.ts";
 import { serve } from "./server.ts";
-import { addLane, addProject, setYolo } from "./store.ts";
+import { addLane, addProject, setClone, setYolo } from "./store.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -23,6 +23,15 @@ const { values, positionals } = parseArgs({
 if (values.db === undefined) throw new Error("--db is required");
 const db = openDatabase(values.db);
 const [command, ...rest] = positionals;
+
+function parseClone(pair: string): [string, string] {
+  const split = pair.indexOf("=");
+  const host = pair.slice(0, split);
+  const path = pair.slice(split + 1);
+  if (split < 0 || host === "" || path === "")
+    throw new Error(`--clone ${pair} must be <host>=<path>, with both parts set`);
+  return [host, path];
+}
 
 if (command === "serve") {
   const split = values.listen.lastIndexOf(":");
@@ -52,11 +61,7 @@ if (command === "serve") {
 ) {
   const clones: Record<string, string> = {};
   for (const pair of values.clone) {
-    const split = pair.indexOf("=");
-    const host = pair.slice(0, split);
-    const path = pair.slice(split + 1);
-    if (split < 0 || host === "" || path === "")
-      throw new Error(`--clone ${pair} must be <host>=<path>, with both parts set`);
+    const [host, path] = parseClone(pair);
     clones[host] = path;
   }
   if (values.repo !== undefined && !/^[^/\s]+\/[^/\s]+$/.test(values.repo))
@@ -64,6 +69,15 @@ if (command === "serve") {
   const repo = values.repo ?? null;
   addProject(db, { name: rest[1], delivery: values.delivery, clones, yolo: values.yolo, repo });
   fillRepos(db);
+} else if (
+  command === "project" &&
+  rest[0] === "clone" &&
+  rest[1] !== undefined &&
+  rest[2] !== undefined
+) {
+  const [host, path] = parseClone(rest[2]);
+  setClone(db, rest[1], host, path);
+  console.log(`${rest[1]}: clone on ${host} is ${path}`);
 } else if (
   command === "project" &&
   rest[0] === "yolo" &&
@@ -74,6 +88,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] | cardd project yolo <name> on|off --db <file>",
+    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] | cardd project clone <name> <host>=<path> --db <file> | cardd project yolo <name> on|off --db <file>",
   );
 }
