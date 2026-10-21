@@ -114,6 +114,19 @@ export function mateArgs(h: Harness): string[] {
   return ["--approve", ...h.piArgs().filter((arg) => !drop.has(arg))];
 }
 
+/**
+ * Like `mateArgs`, without the fake model's --provider and --model, so the Pi picks its model from its
+ * settings the way the captain's does: the folder's .pi/settings.json, else the agent folder's.
+ */
+export function settingsArgs(h: Harness): string[] {
+  const args = mateArgs(h);
+  return args.filter(
+    (arg, index) =>
+      !["--provider", "--model"].includes(arg) &&
+      !["--provider", "--model"].includes(args[index - 1] ?? ""),
+  );
+}
+
 /** Writes main's settings into the copy, the file that `fleet migrate` writes: config/lane.json. */
 export function configureMain(
   scratch: Scratch,
@@ -128,13 +141,15 @@ export function configureMain(
 
 /**
  * Starts main the way the captain does: plain `pi` in the repo, in its own herdr workspace. The
- * fake model's arguments stand in for the captain's tier, and a restart adds --continue.
+ * fake model's arguments stand in for the captain's tier, unless `args` say otherwise, and a
+ * restart adds --continue.
  */
 export async function startMain(
   lab: HerdrLab,
   scratch: Scratch,
   h: Harness,
   restart = false,
+  args: readonly string[] = mateArgs(h),
 ): Promise<string> {
   const listed = records((await lab.run(["workspace", "list"]))["workspaces"]);
   const existing = listed.find((each) => each["label"] === "fleet-main");
@@ -156,9 +171,9 @@ export async function startMain(
   }
   // The probe reports fleet_connected, which says that this Pi has started and joined the fleet.
   const probe = ["-e", fileURLToPath(new URL("./probe.ts", import.meta.url))];
-  const args = [...(restart ? ["--continue"] : []), ...mateArgs(h), ...probe]
+  const command = [...(restart ? ["--continue"] : []), ...args, ...probe]
     .map((arg) => `'${arg}'`)
     .join(" ");
-  await lab.submit(pane, `cd '${scratch.root}' && pi ${args}`);
+  await lab.submit(pane, `cd '${scratch.root}' && pi ${command}`);
   return pane;
 }
