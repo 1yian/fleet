@@ -146,7 +146,6 @@ const REPORTS: Readonly<Record<string, string>> = {
 const VERBS: Readonly<Record<string, string>> = {
   release: "decided",
   answer: "answered",
-  merge: "merged",
   grant: "granted",
   finding: "noticed",
 };

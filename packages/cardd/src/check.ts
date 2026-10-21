@@ -8,7 +8,15 @@ import { applyChange } from "./change.ts";
 import { readPullRequest, type PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
 import { factsFrom, finishFrom, type Change } from "./status.ts";
-import { addEntry, cardEntries, getCard, parentOf, phaseOf, workerOf } from "./store.ts";
+import {
+  addEntry,
+  cardEntries,
+  getCard,
+  parentOf,
+  phaseOf,
+  transaction,
+  workerOf,
+} from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
 
 interface Match {
@@ -24,6 +32,8 @@ interface Match {
   readonly withdrawsMerge?: "closed" | "merged";
   /** Whether a new finding may be written now. A finding that is already open stays open either way. */
   readonly ready?: boolean;
+  /** Written for the record only, and told to nobody: the mate that would hear it is already acting on it. */
+  readonly quiet?: boolean;
 }
 
 /** A card whose work is in Working or In review, with its live attempt and session. */
@@ -116,7 +126,7 @@ function closeAdvice(kind: string, merged: boolean, hasPr: boolean): string {
   if (kind !== "ship")
     return "Relay the findings, then close it with cleanup(card, summary), or card_drop if it did not land.";
   if (hasPr)
-    return "Land it with merge(card), then cleanup(card, summary). Use card_drop if it will not land.";
+    return "Once the merge is authorized, comment the worker to merge its PR, then cleanup(card, summary). Use card_drop if it will not land.";
   return "If it made no code change, close it with cleanup(card, summary, without_pr). Otherwise use card_drop.";
 }
 
@@ -354,6 +364,39 @@ function clearStopped(
   }
 }
 
+/** Writes each match that is not open yet as a finding, and adds the sessions to push to. */
+function writeFindings(
+  db: DatabaseSync,
+  now: number,
+  matches: readonly Match[],
+  notify: Set<string>,
+): void {
+  for (const match of matches) {
+    const open = db
+      .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
+      .get(match.card, match.condition);
+    if (open !== undefined || match.ready === false) continue;
+    if (match.withdrawsMerge !== undefined) {
+      for (const lane of withdrawMerge(db, getCard(db, match.card), match.withdrawsMerge))
+        notify.add(lane);
+    }
+    if (match.change !== undefined) applyChange(db, getCard(db, match.card), match.change);
+    const fields = { condition: match.condition };
+    const to = match.quiet === true ? [] : [match.to ?? match.lane];
+    addEntry(
+      db,
+      { card: match.card, author: "check", kind: "finding", body: match.text, fields },
+      to,
+    );
+    db.prepare("INSERT INTO findings (card, condition, opened_at) VALUES (?, ?, ?)").run(
+      match.card,
+      match.condition,
+      now,
+    );
+    for (const each of to) notify.add(each);
+  }
+}
+
 /** Writes each new finding once, clears the ones whose condition stopped, and returns the sessions to push to. */
 export function runCheck(
   db: DatabaseSync,
@@ -369,27 +412,27 @@ export function runCheck(
   ];
   clearStopped(db, now, matches, prs);
   const notify = new Set<string>(lostJobs(db, now, t));
-  for (const match of matches) {
-    const open = db
-      .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
-      .get(match.card, match.condition);
-    if (open !== undefined || match.ready === false) continue;
-    if (match.withdrawsMerge !== undefined) {
-      for (const lane of withdrawMerge(db, getCard(db, match.card), match.withdrawsMerge))
-        notify.add(lane);
-    }
-    if (match.change !== undefined) applyChange(db, getCard(db, match.card), match.change);
-    const fields = { condition: match.condition };
-    const to = match.to ?? match.lane;
-    addEntry(db, { card: match.card, author: "check", kind: "finding", body: match.text, fields }, [
-      to,
-    ]);
-    db.prepare("INSERT INTO findings (card, condition, opened_at) VALUES (?, ?, ?)").run(
-      match.card,
-      match.condition,
-      now,
-    );
-    notify.add(to);
-  }
+  writeFindings(db, now, matches, notify);
   return [...notify];
+}
+
+/**
+ * Before cleanup, reads the PR of a card whose merge is not on record yet: a worker that just
+ * merged it need not wait for the next check pass. A merged PR gets the check's own finding,
+ * told to nobody, because the mate is closing the card. Returns the sessions to push to.
+ */
+export async function recordMerge(db: DatabaseSync, card: number): Promise<string[]> {
+  const url = getCard(db, card).pr;
+  if (url === null || finishFrom(cardEntries(db, card)).merged) return [];
+  const pr = await readPullRequest(url).catch(() => undefined);
+  if (pr?.state !== "MERGED") return [];
+  return transaction(db, () => {
+    const notify = new Set<string>();
+    const matches = prMatches(db, new Map([[card, pr]])).map((match) => ({
+      ...match,
+      quiet: true,
+    }));
+    writeFindings(db, Date.now(), matches, notify);
+    return [...notify];
+  });
 }

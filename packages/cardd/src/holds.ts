@@ -30,7 +30,7 @@ export function holdOf(db: DatabaseSync, card: Card): Hold | undefined {
 }
 
 /** The card's open merge hold, if the merge question is what it waits at. */
-export function openMergeHold(db: DatabaseSync, card: Card): Hold | undefined {
+function openMergeHold(db: DatabaseSync, card: Card): Hold | undefined {
   const hold = holdOf(db, card);
   return hold?.merge === true ? hold : undefined;
 }

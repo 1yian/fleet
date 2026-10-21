@@ -111,10 +111,13 @@ function afterRelease(
   return outcome === "approve" || card.phase === "merging" ? "merging" : "with-mate";
 }
 
+/** Done goes to Merging when a grant covers the merge, and stays there after an approved merge: the worker that merged it reports done again. */
 function afterReport(card: CardFacts, status: ReportStatus): Phase {
   if (status === "in-review") return "in-review";
   if (status === "done")
-    return card.kind !== "ship" || !card.mergeGranted ? "with-mate" : "merging";
+    return card.phase === "merging" || (card.kind === "ship" && card.mergeGranted)
+      ? "merging"
+      : "with-mate";
   return HANDOFFS.has(status) ? "with-mate" : card.phase;
 }
 
@@ -270,7 +273,7 @@ export function factsFrom(entries: readonly Entry[]): Facts {
 
 /** How a card's entries show that its work is finished (spec section 20.5). */
 export interface Finish {
-  /** A PR of the card merged, by the merge tool or by hand on GitHub. */
+  /** A PR of the card merged on GitHub, as the check or cleanup read it. */
   readonly merged: boolean;
   /** The worker's latest handoff is `done`, and no comment steered it since. */
   readonly workerDone: boolean;
@@ -282,7 +285,7 @@ export interface Finish {
 const HANDOFF_REPORTS: ReadonlySet<string> = new Set([...HANDOFFS, "in-review", "done"]);
 
 const isMerge = (entry: Entry): boolean =>
-  entry.kind === "merge" || (entry.kind === "finding" && text(entry, "condition") === "pr-merged");
+  entry.kind === "finding" && text(entry, "condition") === "pr-merged";
 
 export function finishFrom(entries: readonly Entry[]): Finish {
   const finish = { merged: false, workerDone: false, at: 0 };

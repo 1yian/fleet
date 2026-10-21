@@ -5,11 +5,11 @@ import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/pr
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
 import { boardView, cardView } from "./board.ts";
 import { applyChange, requireOrdinary, type Draft } from "./change.ts";
+import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { grant } from "./grants.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
-import { merge } from "./merge.ts";
 import type { Timings } from "./timing.ts";
 import {
   addCard,
@@ -76,7 +76,7 @@ const REWORK: ReadonlySet<ReportStatus> = new Set([
   "stopped",
 ]);
 
-const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
+const HANDLERS: Record<OpName, Handler> = {
   "close.begin": closeBegin,
   "close.finish": closeFinish,
   grant,
@@ -176,7 +176,7 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
   },
 };
 
-/** Runs an operation for a session. Throws if the session's role may not call it. merge waits for gh. */
+/** Runs an operation for a session. Throws if the session's role may not call it. Cleanup first reads the PR with gh. */
 export async function performOp(
   db: DatabaseSync,
   session: Session,
@@ -186,6 +186,7 @@ export async function performOp(
 ): Promise<Done> {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
-  if (op === "merge") return merge(db, session, args);
-  return transaction(db, () => HANDLERS[op](db, session, args, timing));
+  const merged = op === "close.begin" ? await recordMerge(db, check(OPS[op].args, args).card) : [];
+  const done = transaction(db, () => HANDLERS[op](db, session, args, timing));
+  return { ...done, notify: [...new Set([...merged, ...done.notify])] };
 }

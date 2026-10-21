@@ -32,7 +32,7 @@ function checkLanded(db: DatabaseSync, card: Card, withoutPr: boolean): boolean 
   }
   if (card.kind === "ship" && !withoutPr) {
     throw new Error(
-      `${name} is a ship card with no merged PR. If it made no code change, such as an operation, or its commits are already on the base branch, call cleanup with without_pr set and say so in the summary. Otherwise merge it, or use card_drop.`,
+      `${name} is a ship card with no merged PR. If it made no code change, such as an operation, or its commits are already on the base branch, call cleanup with without_pr set and say so in the summary. Otherwise comment the worker to merge its PR once the merge is authorized, or use card_drop.`,
     );
   }
   return card.kind === "ship";

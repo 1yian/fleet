@@ -1,5 +1,5 @@
 // gh, the GitHub command line (spec section 5). cardd reads PR state for the
-// timed check and runs the guarded merge.
+// timed check and for cleanup. Workers merge their own PRs.
 import { execFile } from "node:child_process";
 
 export interface PullRequest {
@@ -57,10 +57,4 @@ export async function readPullRequest(url: string): Promise<PullRequest> {
       .filter((item) => bucket.includes(String(item["bucket"])))
       .map((item) => String(item["name"]));
   return { state, failed: named(["fail", "cancel"]), pending: named(["pending"]) };
-}
-
-export async function mergePullRequest(url: string): Promise<void> {
-  const merged = await gh(["pr", "merge", url, "--squash"]);
-  if (merged.code !== 0)
-    throw new Error(`gh pr merge ${url} failed: ${merged.err.trim() || merged.out.trim()}`);
 }
