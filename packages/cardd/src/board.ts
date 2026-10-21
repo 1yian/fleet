@@ -9,10 +9,13 @@ import {
   BoardActionSchema,
   MERGE_OPTIONS,
   type Board,
+  type BoardCard,
   type Card,
+  type CardView,
   type Entry,
   type Thread,
 } from "@fleet/protocol";
+import { attemptsOf } from "./attempts.ts";
 import { applyChange, type Draft } from "./change.ts";
 import { answerHold, hearers, holdOf, rewritten } from "./holds.ts";
 import { factsFrom, type Hold } from "./status.ts";
@@ -61,23 +64,48 @@ function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hol
   return firstLine(latest?.body ?? card.intent);
 }
 
+/** A card as the board shows it, with its entries and its open hold. */
+function boardCard(db: DatabaseSync, card: Card): { card: BoardCard; hold: Hold | undefined } {
+  const entries = cardEntries(db, card.id);
+  const { hold } = factsFrom(entries);
+  const mate = isLaneCard(db, card);
+  const summary = summaryOf(card, entries, mate, hold);
+  return { card: { ...card, summary, mate, holder: hold?.holder ?? null }, hold };
+}
+
 /** The board: every card, and the holds that wait on the captain. Nothing else is his to answer. */
 export function boardView(db: DatabaseSync): Board {
   const now = Date.now();
   const holds: Board["holds"] = [];
-  const cards = listCards(db).map((card) => {
-    const entries = cardEntries(db, card.id);
-    const { hold } = factsFrom(entries);
+  const cards = listCards(db).map((each) => {
+    const { card, hold } = boardCard(db, each);
     const open = card.status !== "done" && card.status !== "dropped";
     if (open && hold?.holder === "captain" && (hold.until === null || hold.until <= now)) {
       const { entry, question, options, merge } = hold;
       holds.push({ card: card.id, hold: entry, question, options: [...options], merge });
     }
-    const mate = isLaneCard(db, card);
-    const summary = summaryOf(card, entries, mate, hold);
-    return { ...card, summary, mate, holder: hold?.holder ?? null };
+    return card;
   });
   return { cards, holds };
+}
+
+/** One card as a mate reads it: its hold, its attempts, and every entry, findings and job results too. */
+export function cardView(db: DatabaseSync, id: number): CardView {
+  const { card, hold } = boardCard(db, getCard(db, id));
+  return {
+    card,
+    hold:
+      hold === undefined
+        ? null
+        : {
+            holder: hold.holder,
+            question: hold.question,
+            options: [...hold.options],
+            until: hold.until,
+          },
+    attempts: attemptsOf(db, id),
+    entries: cardEntries(db, id),
+  };
 }
 
 /** A card's thread: the conversation between its owner and its mate, as the captain reads it. */

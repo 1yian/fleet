@@ -233,8 +233,13 @@ test("main stops, restarts, and starts lanes with its tools, and never starts a 
   // 3. The status shows both hosts.
   h.onModel((turns) => {
     const status = toolResults(turns).at(-1) ?? "";
-    assert.match(status, /ops \(local\): stopped - stopped by hand/);
-    assert.match(status, /far \(p620\): running/);
+    assert.match(status, /^lanes\[\d+\]\{lane,host,state,detail\}:$/m);
+    assert.match(status, /^ {2}ops,local,stopped,stopped by hand$/m);
+    assert.match(status, /^ {2}far,p620,running,""$/m);
+    assert.match(
+      status,
+      /^ {2}Call `lane_start\(lane=<lane>\)` to start a lane that is down or stopped$/m,
+    );
     return { tool: "lane_restart", args: { lane: "all" } };
   }, "mate");
   // 4. Restarting the fleet restarts far, and leaves the lane held by hand alone.

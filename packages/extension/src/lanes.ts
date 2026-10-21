@@ -7,6 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { HostUnreachable, onHost, records } from "./host.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
+import { lanesText, type LaneRow } from "./views.ts";
 
 const LAUNCH = fileURLToPath(new URL("./launch.ts", import.meta.url));
 const REMOTE_WAIT_MS = 90_000;
@@ -75,17 +76,22 @@ export function registerLanes(pi: ExtensionAPI, home: string): void {
       "Shows every second mate's lane on every host: running, down (should run, does not), or stopped (held on purpose).",
     parameters: Type.Object({}),
     execute: async () => {
-      const lines: string[] = [];
+      const lanes: LaneRow[] = [];
+      const unreachable: { host: string; error: string }[] = [];
       for (const host of hostsOf(config)) {
         try {
-          for (const row of await rows(config, host, ["status"])) lines.push(describe(host, row));
+          for (const row of await rows(config, host, ["status"])) {
+            const state = text(row, "state");
+            lanes.push({ lane: text(row, "lane"), host, state, detail: text(row, "reason") });
+          }
         } catch (error) {
-          lines.push(
-            `${host}: cannot be reached - ${error instanceof Error ? error.message : String(error)}`,
-          );
+          unreachable.push({
+            host,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
-      return reply(lines.length === 0 ? "No lanes are configured." : lines.join("\n"));
+      return reply(lanesText(lanes, unreachable));
     },
   });
   pi.registerTool({

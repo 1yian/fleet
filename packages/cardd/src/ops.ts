@@ -3,6 +3,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
 import { beginAttempt, finishJob, runningJobs, startJob, touchJob } from "./attempts.ts";
+import { boardView, cardView } from "./board.ts";
 import { applyChange, requireOrdinary, type Draft } from "./change.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
@@ -15,7 +16,6 @@ import {
   addEntry,
   cardEntries,
   getCard,
-  listCards,
   listProjects,
   parentOf,
   transaction,
@@ -93,7 +93,11 @@ const HANDLERS: Record<Exclude<OpName, "merge">, Handler> = {
     }
     return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
   },
-  board: (db) => ({ value: listCards(db), notify: [] }),
+  board: (db) => ({ value: boardView(db).cards, notify: [] }),
+  card: (db, _session, raw) => ({
+    value: cardView(db, check(OPS.card.args, raw).card),
+    notify: [],
+  }),
   projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment,
   "attempt.begin": (db, session, raw) => {
