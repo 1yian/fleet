@@ -16,6 +16,7 @@ import { comment } from "./comments.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { PullRequest } from "./github.ts";
 import { lookUpPr } from "./pulls.ts";
+import { requireOwedBy } from "./replies.ts";
 import { factsFrom } from "./status.ts";
 import type { Timings } from "./timing.ts";
 import {
@@ -178,9 +179,16 @@ const HANDLERS: Record<OpName, Handler> = {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     const card = getCard(db, session.card);
-    const to = reportRoute(db, card, args.status);
+    if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
+    const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
     const withdrawn = REWORK.has(args.status) ? withdrawMerge(db, card) : [];
-    const fields = { status: args.status, key: args.key, until: args.until, ...pr };
+    const fields = {
+      status: args.status,
+      key: args.key,
+      until: args.until,
+      replyTo: args.replyTo,
+      ...pr,
+    };
     const report: Draft = {
       card: card.id,
       author: `worker:${session.id}`,

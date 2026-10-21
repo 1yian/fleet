@@ -5,6 +5,7 @@ import { chaseIntake } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
 import { lookUpPr } from "./pulls.ts";
+import { replyNudges } from "./replies.ts";
 import { factsFrom, finishFrom, type Change } from "./status.ts";
 import {
   addEntry,
@@ -403,7 +404,11 @@ export function runCheck(
     ...prMatches(db, prs),
   ];
   clearStopped(db, now, matches, prs);
-  const notify = new Set<string>([...lostJobs(db, now, t), ...chaseIntake(db, now, t)]);
+  const notify = new Set<string>([
+    ...lostJobs(db, now, t),
+    ...chaseIntake(db, now, t),
+    ...replyNudges(db, now, t),
+  ]);
   writeFindings(db, now, matches, notify);
   return [...notify];
 }

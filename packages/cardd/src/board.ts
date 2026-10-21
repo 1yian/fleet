@@ -13,6 +13,7 @@ import {
 import { attemptsOf } from "./attempts.ts";
 import { applyChange, type Draft } from "./change.ts";
 import { answerHold, hearers, holdOf, rewritten } from "./holds.ts";
+import { openReplies } from "./replies.ts";
 import { factsFrom, type Hold } from "./status.ts";
 import { addEntry, cardEntries, getCard, isLaneCard, listCards, touchCard } from "./store.ts";
 
@@ -47,7 +48,9 @@ function boardCard(db: DatabaseSync, card: Card): { card: BoardCard; hold: Hold 
   const { hold } = factsFrom(entries);
   const mate = isLaneCard(db, card);
   const summary = summaryOf(card, entries, mate, hold);
-  return { card: { ...card, summary, mate, holder: hold?.holder ?? null }, hold };
+  const closed = card.status === "done" || card.status === "dropped";
+  const replies = closed ? [] : openReplies(entries);
+  return { card: { ...card, summary, mate, holder: hold?.holder ?? null, replies }, hold };
 }
 
 export function boardView(db: DatabaseSync): Board {

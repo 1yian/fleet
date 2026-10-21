@@ -50,6 +50,16 @@ export function TaskCard(props: Props) {
             PR
           </a>
         )}
+        {card.replies.length === 0 ? null : (
+          <span
+            className="tag owed"
+            title={card.replies.map((each) => `${each.owes} owes ${each.from} a reply`).join("\n")}
+          >
+            {card.replies.length === 1
+              ? "Reply owed"
+              : `${String(card.replies.length)} replies owed`}
+          </span>
+        )}
       </p>
       {questions.map((question, index) => (
         <Ask

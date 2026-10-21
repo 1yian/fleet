@@ -39,6 +39,13 @@ const Status = Type.Enum(STATUSES);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const ReportStatus = Type.Enum(REPORT_STATUSES);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
+const ReplyId = Type.String({ pattern: "^r-[0-9]+$" });
+const ReplyTo = Type.Optional(
+  Type.String({
+    pattern: "^r-[0-9]+$",
+    description: "The id of a reply you owe, such as r-12: this answers it",
+  }),
+);
 export const Words = Type.String({ pattern: "\\S" });
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 
@@ -81,11 +88,30 @@ export const EntrySchema = Type.Object({
 });
 export type Entry = Static<typeof EntrySchema>;
 
+export const OwedReplySchema = Type.Object({
+  id: ReplyId,
+  from: Type.String(),
+  owes: Type.String(),
+  text: Type.String(),
+  askedAt: Type.Integer(),
+  resentAt: Nullable(Type.Integer()),
+  escalatedAt: Nullable(Type.Integer()),
+});
+export type OwedReply = Static<typeof OwedReplySchema>;
+
+export function howToReply(to: "worker" | "mate", card: number, id: string): string {
+  const on = `card=${String(card)}`;
+  return to === "worker"
+    ? `answer with report(status, text, replyTo="${id}")`
+    : `answer with comment(${on}, text, replyTo="${id}") or hold(${on}, question, replyTo="${id}")`;
+}
+
 export const BoardCardSchema = Type.Object({
   ...CardSchema.properties,
   summary: Type.String(),
   mate: Type.Boolean(),
   holder: Nullable(Holder),
+  replies: Type.Array(OwedReplySchema),
 });
 export type BoardCard = Static<typeof BoardCardSchema>;
 
@@ -155,6 +181,19 @@ export const OPS = {
       text: Type.String({ minLength: 1 }),
       resolves: Type.Optional(Key),
       now: Type.Optional(Type.Boolean()),
+      reply: Type.Optional(
+        Type.Boolean({
+          description:
+            "Asks for a reply to this comment: the fleet tracks it, resends it once, and tells you if it goes unanswered",
+        }),
+      ),
+      replyTo: ReplyTo,
+      withdraws: Type.Optional(
+        Type.String({
+          pattern: "^r-[0-9]+$",
+          description: "The id of a reply you asked for and no longer need",
+        }),
+      ),
     }),
     result: CardSchema,
   },
@@ -180,6 +219,7 @@ export const OPS = {
         }),
       ),
       until: Type.Optional(Type.Integer()),
+      replyTo: ReplyTo,
     }),
     result: CardSchema,
   },
@@ -295,6 +335,7 @@ export const OPS = {
       text: Type.String({ minLength: 1 }),
       key: Type.Optional(Key),
       until: Type.Optional(Type.Integer()),
+      replyTo: ReplyTo,
     }),
     result: CardSchema,
   },

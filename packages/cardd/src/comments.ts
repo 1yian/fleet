@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card } from "@fleet/protocol";
+import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import { applyChange, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { holdOf, withdrawMerge } from "./holds.ts";
+import { askerOf, requireAskedBy, requireOwedBy } from "./replies.ts";
 import {
   addEntry,
   getCard,
@@ -45,22 +46,68 @@ function routeOf(db: DatabaseSync, session: Session, card: Card): Route {
   return { kind: "worker" };
 }
 
-export function comment(db: DatabaseSync, session: Session, raw: unknown): Done {
-  const args = check(OPS.comment.args, raw);
-  const card = target(db, session, args);
-  const route = routeOf(db, session, card);
+type CommentArgs = OpArgs<"comment">;
+
+function answerReply(db: DatabaseSync, session: Session, card: Card, args: CommentArgs): Done {
+  const id = args.replyTo ?? "";
+  if (args.reply === true || args.resolves !== undefined || args.withdraws !== undefined)
+    throw new Error("replyTo answers a reply you owe: give it with text alone");
+  requireOwedBy(db, card, id, `mate:${session.lane}`);
+  const to = withEcho(db, session, card, [askerOf(db, card, id)]);
+  const fields = { replyTo: id, now: args.now };
+  const draft = {
+    card: card.id,
+    author: `mate:${session.lane}`,
+    kind: "comment",
+    body: args.text,
+    fields,
+  };
+  addEntry(db, draft, to);
+  return { value: getCard(db, card.id), notify: to };
+}
+
+function requireOwnKeys(
+  db: DatabaseSync,
+  session: Session,
+  card: Card,
+  route: Route,
+  args: CommentArgs,
+): void {
   if (route.kind !== "worker" && args.resolves !== undefined) {
     throw new Error("resolves answers a worker's decision key; only the mate of a card has one");
   }
-  const worker = route.kind === "worker" ? workerOf(db, card.id) : undefined;
-  const recipient = route.kind === "worker" ? worker : route.to;
+  if (args.withdraws !== undefined) requireAskedBy(db, card, args.withdraws, session.lane);
+}
+
+function owesOf(route: Route, recipient: string | undefined, card: Card): { owes?: string } {
+  if (route.kind === "main")
+    throw new Error("reply asks your worker or a second mate for an answer, not main");
+  if (recipient === undefined)
+    throw new Error(`c-${String(card.id)} has no live worker to owe you a reply`);
+  return { owes: recipient };
+}
+
+export function comment(db: DatabaseSync, session: Session, raw: unknown): Done {
+  const args = check(OPS.comment.args, raw);
+  const card = target(db, session, args);
+  if (args.replyTo !== undefined) return answerReply(db, session, card, args);
+  const route = routeOf(db, session, card);
+  requireOwnKeys(db, session, card, route, args);
+  const recipient = route.kind === "worker" ? workerOf(db, card.id) : route.to;
+  const owes = args.reply === true ? owesOf(route, recipient, card) : {};
   let withdrawn: string[] = [];
   if (route.kind === "worker") {
     requireNotCaptains(db, card, args.resolves);
     withdrawn = withdrawMerge(db, card);
   }
   const delivered = recipient === undefined ? {} : { for: route.kind };
-  const own = { resolves: args.resolves, now: args.now, ...delivered };
+  const own = {
+    resolves: args.resolves,
+    now: args.now,
+    withdraws: args.withdraws,
+    ...delivered,
+    ...owes,
+  };
   const to = withEcho(db, session, card, recipient === undefined ? [] : [recipient]);
   const draft: Draft = {
     card: card.id,

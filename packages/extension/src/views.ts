@@ -200,6 +200,12 @@ function reportPath(entries: readonly Entry[]): string | undefined {
 
 type Cut = (text: string, max: number) => string;
 
+const firstLineOf = (text: string): string =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line !== "") ?? "";
+
 function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
   const record: Record<string, unknown> = {
     card: {
@@ -216,6 +222,16 @@ function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
       updated: ago(card.updatedAt),
     },
   };
+  if (card.replies.length > 0)
+    record["replies"] = card.replies.map((each) => ({
+      id: each.id,
+      from: each.from,
+      owes: each.owes,
+      asked: ago(each.askedAt),
+      resent: each.resentAt === null ? "no" : ago(each.resentAt),
+      escalated: each.escalatedAt === null ? "no" : ago(each.escalatedAt),
+      text: clip(firstLineOf(each.text), 160),
+    }));
   if (hold === null) return record;
   record["hold"] = {
     waits: hold.holder === "owner" ? card.lane : hold.holder,
@@ -264,6 +280,10 @@ function cardHelp(card: BoardCard, thread: number, clipped: boolean): string[] {
     help.push(`Call \`board(card=${id}, entries=${String(thread)})\` to read the whole thread`);
   if (clipped) help.push(`Call \`board(card=${id}, full=true)\` to see every text whole`);
   if (!isClosed(card)) help.push(`Call \`comment(card=${id}, text=<text>)\` to steer the card`);
+  if (card.replies.length > 0)
+    help.push(
+      `An owed reply clears when its owner answers with replyTo=<id>, or when its asker calls \`comment(card=${id}, text, withdraws=<id>)\``,
+    );
   return help;
 }
 

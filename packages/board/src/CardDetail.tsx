@@ -203,6 +203,28 @@ function Properties(props: {
           })}
         </time>,
       )}
+      {card.replies.length === 0 ? null : (
+        <div className="property replies">
+          <dt>Replies</dt>
+          <dd>
+            <ul className="owed-replies">
+              {card.replies.map((each) => (
+                <li key={each.id} title={each.text}>
+                  <span>
+                    {each.owes} owes {each.from}
+                  </span>
+                  <span className="muted">
+                    {each.id} ·{" "}
+                    {each.escalatedAt === null
+                      ? `asked ${since(each.askedAt, now)}`
+                      : `escalated ${since(each.escalatedAt, now)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </div>
+      )}
     </dl>
   );
 }
