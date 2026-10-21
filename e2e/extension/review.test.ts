@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
@@ -12,6 +11,7 @@ import { begin, newCard, status, type Fleet } from "../support/fleet.ts";
 import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, parseRecord, records } from "../support/json.ts";
+import { Lavish } from "../support/lavish.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
 
 const LAVISH_START_MS = 60_000;
@@ -23,6 +23,7 @@ let h: Harness;
 let lab: HerdrLab;
 let env: Record<string, string>;
 let lavish: Record<string, string>;
+let lavishServer: Lavish;
 let card: Card;
 let scratch: Scratch;
 let browser: Browser;
@@ -75,18 +76,9 @@ async function reviewPollStopped(): Promise<void> {
   }
 }
 
-async function freePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  if (address === null || typeof address === "string") throw new Error("no free port");
-  return address.port;
-}
-
 beforeEach(async () => {
   scratch = new Scratch();
-  const cardd = await Cardd.start({ CARDD_TIMING_SCALE: "0.04" }, ["--board", BOARD]);
+  const cardd = await Cardd.start({ CARDD_TIMING_SCALE: "0.1" }, ["--board", BOARD]);
   const mainToken = cardd.addLane("main", undefined, scratch.root);
   cardd.addProject("web", { maverick: scratch.root });
   fleet = { cardd, mainToken, main: await cardd.connect(mainToken) };
@@ -94,11 +86,8 @@ beforeEach(async () => {
   board = await browser.newPage();
   await board.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
   h = await Harness.start();
-  lavish = {
-    LAVISH_AXI_STATE_DIR: join(h.dir, "lavish"),
-    LAVISH_AXI_PORT: String(await freePort()),
-    LAVISH_AXI_NO_OPEN: "1",
-  };
+  lavishServer = await Lavish.start(h.dir);
+  lavish = lavishServer.env;
   lab = await HerdrLab.start(lavish);
   const created = await lab.run(["workspace", "create", "--no-focus"]);
   const [workspace] = records([created["workspace"]]).map((each) => each["workspace_id"]);
@@ -129,7 +118,7 @@ afterEach(async (t) => {
   await board.close();
   const stopped = await Promise.allSettled([lab.stop(), h.stop(), fleet.cardd.stop()]);
   scratch.dispose();
-  execFileSync("lavish-axi", ["stop"], { env: { ...process.env, ...lavish }, stdio: "ignore" });
+  await lavishServer.stop();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -163,7 +152,7 @@ async function escalateReview(): Promise<string> {
   const hold = (await view()).hold;
   assert.notEqual(hold, null);
   const question = hold?.question ?? "";
-  await fleet.main.call("hold", { card: card.id, question });
+  await fleet.main.call("hold", { card: card.id, question, to: "captain" });
   return /(https?:\/\/\S+\/session\/\w+)/.exec(question)?.[1] ?? "";
 }
 
