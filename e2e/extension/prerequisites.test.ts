@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,7 +65,37 @@ test("fleet up starts no mate on a host that lacks tools, and reports every miss
     ].join("\n"),
   );
   assert.equal(status(), "cleo: down\n");
-  assert.equal(refusal(["restart"], { PATH }).split("\n").length, 3);
+  assert.equal(
+    refusal(["restart"], { PATH }),
+    [
+      `zstd is missing on ${HOST}. Fix: brew install zstd (macOS) or apt install zstd (Debian)`,
+      `direnv is missing on ${HOST}. Fix: brew install direnv (macOS) or apt install direnv (Debian)`,
+      "",
+    ].join("\n"),
+  );
+  assert.equal(status(), "cleo: down\n");
+});
+
+test("fleet up refuses a missing gh executable and leaves the mate down", () => {
+  const PATH = pathWithout("gh");
+  assert.equal(
+    refusal(["up"], { PATH }),
+    `gh is missing on ${HOST}. Fix: brew install gh (macOS) or apt install gh (Debian)\n`,
+  );
+  assert.equal(status(), "cleo: down\n");
+});
+
+test("fleet up refuses a failed gh login probe and leaves the mate down", () => {
+  const bin = join(h.dir, "no-gh-login");
+  mkdirSync(bin);
+  const gh = join(bin, "gh");
+  writeFileSync(
+    gh,
+    "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'gh version 2.0.0'; exit 0; fi\necho 'not authenticated' >&2\nexit 1\n",
+  );
+  chmodSync(gh, 0o755);
+  const PATH = `${bin}:${process.env["PATH"] ?? ""}`;
+  assert.equal(refusal(["up"], { PATH }), `gh is not logged in on ${HOST}. Fix: gh auth login\n`);
   assert.equal(status(), "cleo: down\n");
 });
 

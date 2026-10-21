@@ -1,6 +1,6 @@
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { isRecord, parseRecord, records } from "./json.ts";
+import { isRecord, parseRecord, publishRecord, records } from "./json.ts";
 
 const file = process.env["FAKE_GH_STATE"] ?? "";
 const prs = parseRecord(readFileSync(file, "utf8"));
@@ -55,6 +55,6 @@ if (verb === "checks") {
 }
 if (verb === "merge") {
   if (pr["state"] !== "OPEN") process.exit(1);
-  writeFileSync(file, JSON.stringify({ ...prs, [url]: { ...pr, state: "MERGED" } }));
+  publishRecord(file, { ...prs, [url]: { ...pr, state: "MERGED" } });
   console.log(`merged ${url}`);
 }

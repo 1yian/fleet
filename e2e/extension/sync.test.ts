@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
@@ -18,8 +27,21 @@ let parts: DispatchLab;
 let h: Harness;
 let clone: string;
 let remote: string;
+let tools: string;
+
+function lsofReply(script: string): void {
+  const file = join(tools, "lsof");
+  writeFileSync(file, `#!/bin/sh\n${script}\n`);
+  chmodSync(file, 0o755);
+}
+
 beforeEach(async () => {
-  parts = await startDispatchLab({ remote: true });
+  tools = mkdtempSync(join(tmpdir(), "fleet-lsof-"));
+  lsofReply("exit 1");
+  parts = await startDispatchLab({
+    remote: true,
+    mate: { PATH: `${tools}:${process.env["PATH"] ?? ""}` },
+  });
   ({ h, clone } = parts);
   remote = parts.remote ?? "";
   writeFileSync(join(clone, "README"), "site\n");
@@ -29,7 +51,11 @@ beforeEach(async () => {
 });
 afterEach(async (t) => {
   await parts.lab.printIfFailed(t);
-  await stopDispatchLab(parts);
+  try {
+    await stopDispatchLab(parts);
+  } finally {
+    rmSync(tools, { recursive: true, force: true });
+  }
 });
 
 const short = (sha: string): string => sha.slice(0, 7);
@@ -135,3 +161,39 @@ test("dispatch waits out a stale packed-refs.lock left by a killed git, removes 
   assert.equal(tip(`${clone}.worktrees/c-1-a1`, "HEAD"), fresh);
   assert.equal(git(clone, "branch", "-r", "--list", "origin/old-fix"), "");
 });
+
+const UNSAFE_LOCKS = [
+  { name: "a held old lock", lsof: "echo 'node holds this file'; exit 0", old: true },
+  { name: "an lsof failure", lsof: "echo 'inspection failed' >&2; exit 2", old: true },
+  {
+    name: "an incomplete clone inspection",
+    lsof: "case \"$2\" in */packed-refs.lock) exit 1 ;; esac\necho 'lsof: WARNING: output may be incomplete' >&2\nexit 1",
+    old: true,
+  },
+  { name: "a recent unheld lock", lsof: "exit 1", old: false },
+] as const;
+
+for (const scenario of UNSAFE_LOCKS) {
+  test(`dispatch preserves packed-refs.lock and starts no worker with ${scenario.name}`, async () => {
+    lsofReply(scenario.lsof);
+    pushedBranch("old-fix");
+    deleteOnRemote("old-fix");
+    const lock = join(clone, ".git", "packed-refs.lock");
+    writeFileSync(lock, "keep this lock\n");
+    if (scenario.old) {
+      const hourAgo = new Date(Date.now() - 3_600_000);
+      utimesSync(lock, hourAgo, hourAgo);
+    }
+    const stale = tip(clone);
+    landOnRemote("merged-elsewhere");
+    scriptCard();
+    await mateConnected(h);
+    parts.mate.prompt("add credit");
+    const results = toolResults(await h.waitForCall(2, "mate", WORKER_WAIT_MS));
+
+    assert.match(results.at(-1) ?? "", /could not fetch origin.*packed-refs\.lock.*File exists/s);
+    assert.equal(readFileSync(lock, "utf8"), "keep this lock\n");
+    assert.equal(tip(clone), stale);
+    assert.equal(existsSync(`${clone}.worktrees/c-1-a1`), false);
+  });
+}

@@ -1,4 +1,13 @@
+import { randomUUID } from "node:crypto";
+import { renameSync, writeFileSync } from "node:fs";
+
 export type JsonRecord = Record<string, unknown>;
+
+export function publishRecord(file: string, value: JsonRecord): void {
+  const next = `${file}.${randomUUID()}.tmp`;
+  writeFileSync(next, JSON.stringify(value));
+  renameSync(next, file);
+}
 
 export function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);

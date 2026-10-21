@@ -1,0 +1,6 @@
+#!/bin/sh
+case "$*" in
+  --version) echo 'gh version 2.0.0 (e2e prerequisite stand-in)' ;;
+  'auth status') exit 0 ;;
+  *) echo 'e2e PR commands need FakeGitHub' >&2; exit 1 ;;
+esac
