@@ -69,6 +69,32 @@ test("the task message wakes a new worker, and its report reaches the mate", asy
   assert.equal(await status(fleet.main, card), "needs-you");
 });
 
+test("a second mate's steer reaches its worker without main's comment to that mate", async () => {
+  const leo = await fleet.cardd.connect(fleet.cardd.addLane("leo", "main"));
+  const leoCard = await newCard(leo, "Credit the test account");
+  const env = {
+    FLEET_URL: fleet.cardd.url,
+    FLEET_TOKEN: await begin(leo, leoCard, "credit the account"),
+    FLEET_ROLE: "worker",
+  };
+  h.onModel(() => ({ tool: "report", args: { status: "blocked", text: "no password" } }));
+  h.startPi(`c-${String(leoCard.id)}-a1`, env, [EXTENSION]);
+  await leo.waitForEntries(1);
+
+  await fleet.main.call("comment", {
+    card: leoCard.id,
+    text: "Captain: it can make an account with that password",
+  });
+  await leo.waitForEntries(2);
+  await leo.call("comment", { card: leoCard.id, text: "Use the password from the vault" });
+
+  const steer = `[fleet] leo on c-${String(leoCard.id)}: Use the password from the vault`;
+  assert.equal(lastUser(await h.waitForCall(2)), steer);
+  // Main still gets the echo: the steer is leo's first action after main's comment.
+  const echo = await fleet.main.waitForEntry((entry) => entry.author === "mate:leo", "the echo");
+  assert.equal(echo.fields["re"], "Captain: it can make an account with that password");
+});
+
 test("a run that ends without a handoff gets one nudge, then files stopped", async () => {
   h.onModel(() => ({ text: "I looked around" }));
   h.onModel(() => ({ text: "still looking" }));
