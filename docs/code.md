@@ -126,7 +126,7 @@ cardd project yolo <name> on|off --db <file>
 
 ### Prerequisites
 
-- Every prerequisite of a host is one table in `prerequisites.ts`: the tools with their floors and fixes, plus the conversation-memory package of each home. `fleet up`, `fleet restart`, `fleet update`, and `wait_review` use it, so there is one check and one set of messages. The memory package is checked with the loader's own `verifyPackage`, the same step `fleet home memory` uses to decide to prepare it again, so a stale package fails the check and not only a missing one.
+- Every prerequisite of a host is one table in `prerequisites.ts`: the tools with their floors and fixes, plus the conversation-memory package of each home. `fleet up`, `fleet restart`, `fleet update`, and `wait_review` use it, so there is one check and one set of messages. The memory package is checked with the loader's own `verifyPackage`, the same step `fleet home memory` uses to decide to prepare it again, so a stale package fails the check and not only a missing one. `gh-login.ts` decides the gh login line from `gh auth status`, which exits 1 for every failure. Only "not logged into any" text, an empty `--json hosts` result, a rejected refresh token, or a 401 from GitHub says `gh is not logged in`. A timeout, a network error, a signal, a spawn error, or any other exit says `could not check gh login on <host>: <reason>`, with token-shaped text hidden. `FLEET_PROBE_TIMEOUT_MS` sets the probe timeout.
 
 ### Review pages
 

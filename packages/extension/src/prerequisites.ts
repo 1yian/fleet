@@ -1,7 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
+import { ghLogin, type GhRun } from "./gh-login.ts";
 import { laneHomes } from "./homes.ts";
 import { isRecord, readLaneConfig } from "./lane-config.ts";
 import { agentDir, packageProblem } from "./memory.ts";
@@ -11,10 +12,10 @@ interface Tool {
   readonly version: readonly string[];
   readonly floor?: string;
   readonly fix: string;
-  readonly login?: { readonly command: readonly string[]; readonly fix: string };
+  readonly login?: { readonly fix: string };
 }
 
-const PROBE_TIMEOUT_MS = 30_000;
+const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 30_000;
 const PACKAGE = join("config", "optchat", "package");
 const BREW_OR_APT = (name: string): string =>
   `brew install ${name} (macOS) or apt install ${name} (Debian)`;
@@ -31,7 +32,7 @@ const TOOLS: readonly Tool[] = [
     name: "gh",
     version: ["--version"],
     fix: BREW_OR_APT("gh"),
-    login: { command: ["auth", "status"], fix: "gh auth login" },
+    login: { fix: "gh auth login" },
   },
   {
     name: "herdr",
@@ -90,14 +91,40 @@ function versionProblem(tool: Tool, output: string, host: string): string | unde
   return `${tool.name} ${found?.join(".") ?? "(no version)"} is too old on ${host} (need ${tool.floor ?? ""} or later). Fix: ${tool.fix}`;
 }
 
+const textOf = (value: unknown): string => (typeof value === "string" ? value : "");
+
+function spawnError(
+  file: string,
+  done: SpawnSyncReturns<string>,
+  timedOut: boolean,
+): string | undefined {
+  if (done.error !== undefined && !timedOut) return `${file} could not run (${done.error.message})`;
+  return done.signal === null || timedOut ? undefined : `${file} was stopped by ${done.signal}`;
+}
+
+function runCaptured(file: string, args: readonly string[]): GhRun {
+  const done = spawnSync(file, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: PROBE_TIMEOUT_MS,
+  });
+  const timedOut = Reflect.get(Object(done.error), "code") === "ETIMEDOUT";
+  return {
+    stdout: textOf(done.stdout),
+    stderr: textOf(done.stderr),
+    code: done.status ?? undefined,
+    timedOut,
+    spawnError: spawnError(file, done, timedOut),
+  };
+}
+
 function loginProblem(tool: Tool, host: string): string | undefined {
   if (tool.login === undefined) return undefined;
-  try {
-    run(tool.name, tool.login.command);
-    return undefined;
-  } catch {
-    return `${tool.name} is not logged in on ${host}. Fix: ${tool.login.fix}`;
-  }
+  const found = ghLogin((args) => runCaptured(tool.name, args), PROBE_TIMEOUT_MS / 1000);
+  if (found.state === "logged-in") return undefined;
+  if (found.state === "unknown")
+    return `could not check ${tool.name} login on ${host}: ${found.reason}`;
+  return `${tool.name} is not logged in on ${host}. Fix: ${tool.login.fix}`;
 }
 
 function toolProblem(tool: Tool, host: string): string | undefined {

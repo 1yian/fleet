@@ -85,18 +85,159 @@ test("fleet up refuses a missing gh executable and leaves the mate down", () => 
   assert.equal(status(), "cleo: down\n");
 });
 
-test("fleet up refuses a failed gh login probe and leaves the mate down", () => {
-  const bin = join(h.dir, "no-gh-login");
+interface GhStub {
+  readonly plain: { readonly code: number; readonly stderr: string } | "hang" | "killed";
+  readonly json?: string;
+}
+
+function ghPath(name: string, stub: GhStub): string {
+  const bin = join(h.dir, name);
   mkdirSync(bin);
   const gh = join(bin, "gh");
+  const plain =
+    stub.plain === "hang"
+      ? "exec sleep 600"
+      : stub.plain === "killed"
+        ? "kill -KILL $$"
+        : `printf '%s\\n' ${JSON.stringify(stub.plain.stderr)} >&2; exit ${String(stub.plain.code)}`;
+  const json =
+    stub.json === undefined
+      ? "echo 'unknown flag: --json' >&2; exit 1"
+      : `printf '%s\\n' ${JSON.stringify(stub.json)}; exit 0`;
   writeFileSync(
     gh,
-    "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'gh version 2.0.0'; exit 0; fi\necho 'not authenticated' >&2\nexit 1\n",
+    [
+      "#!/bin/sh",
+      "if [ \"$1\" = --version ]; then echo 'gh version 2.0.0'; exit 0; fi",
+      "if [ \"$*\" = 'auth status --json hosts' ]; then",
+      json,
+      "fi",
+      "if [ \"$*\" = 'auth status' ]; then",
+      plain,
+      "fi",
+      "exit 3",
+      "",
+    ].join("\n"),
   );
   chmodSync(gh, 0o755);
-  const PATH = `${bin}:${process.env["PATH"] ?? ""}`;
-  assert.equal(refusal(["up"], { PATH }), `gh is not logged in on ${HOST}. Fix: gh auth login\n`);
+  return `${bin}:${process.env["PATH"] ?? ""}`;
+}
+
+const entry = (state: string, error?: string): string =>
+  JSON.stringify({
+    hosts: {
+      "github.com": [
+        {
+          state,
+          ...(error === undefined ? {} : { error }),
+          active: true,
+          host: "github.com",
+          login: "1yian",
+          tokenSource: "/home/x/.config/gh/hosts.yml",
+          gitProtocol: "https",
+        },
+      ],
+    },
+  });
+
+const LOGGED_OUT = "You are not logged into any GitHub hosts. To log in, run: gh auth login";
+const INVALID =
+  "github.com\n  X Failed to log in to github.com account 1yian\n  - The token in hosts.yml is invalid.";
+const NOT_LOGGED_IN = `gh is not logged in on ${HOST}. Fix: gh auth login\n`;
+const cannotCheck = (reason: string): string => `could not check gh login on ${HOST}: ${reason}\n`;
+
+test("fleet up refuses a gh that reports no logged-in host and names the login fix", () => {
+  const PATH = ghPath("gh-logged-out", {
+    plain: { code: 1, stderr: LOGGED_OUT },
+    json: JSON.stringify({ hosts: {} }),
+  });
+  assert.equal(refusal(["up"], { PATH }), NOT_LOGGED_IN);
   assert.equal(status(), "cleo: down\n");
+});
+
+test("fleet up names the login fix when gh is too old for json and says it is logged out", () => {
+  const PATH = ghPath("gh-old-logged-out", { plain: { code: 1, stderr: LOGGED_OUT } });
+  assert.equal(refusal(["up"], { PATH }), NOT_LOGGED_IN);
+});
+
+test("fleet up names the login fix when GitHub rejects the stored token", () => {
+  const PATH = ghPath("gh-rejected", {
+    plain: { code: 1, stderr: INVALID },
+    json: entry("error", 'non-200 OK status code: 401 Unauthorized body: "Bad credentials"'),
+  });
+  assert.equal(refusal(["up"], { PATH }), NOT_LOGGED_IN);
+});
+
+test("fleet up starts the mate when gh is logged in", () => {
+  const PATH = ghPath("gh-authenticated", { plain: { code: 0, stderr: "" } });
+  assert.equal(
+    scratch.fleet(["up"], { HERDR_SESSION: lab.name, PATH }),
+    "cleo: started in 2ndmate-cleo\n",
+  );
+});
+
+test("fleet up says it could not check, not that gh is logged out, when GitHub is unreachable", () => {
+  const PATH = ghPath("gh-unreachable", {
+    plain: { code: 1, stderr: INVALID },
+    json: entry(
+      "error",
+      'Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused',
+    ),
+  });
+  assert.equal(
+    refusal(["up"], { PATH }),
+    cannotCheck(
+      'github.com: Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused',
+    ),
+  );
+  assert.equal(status(), "cleo: down\n");
+});
+
+test("fleet up never prints a token that gh echoes in its error", () => {
+  const PATH = ghPath("gh-echoes-token", {
+    plain: { code: 1, stderr: INVALID },
+    json: entry(
+      "error",
+      "dial tcp: lookup failed for token ghp_abcdef0123456789 and github_pat_XYZ_123",
+    ),
+  });
+  assert.equal(
+    refusal(["up"], { PATH }),
+    cannotCheck("github.com: dial tcp: lookup failed for token ghp_*** and github_pat_***"),
+  );
+});
+
+test("fleet up says it could not check when gh itself reports a timeout", () => {
+  const PATH = ghPath("gh-reports-timeout", {
+    plain: { code: 1, stderr: "github.com\n  X Timeout trying to log in to github.com" },
+    json: entry("timeout", "context deadline exceeded"),
+  });
+  assert.equal(refusal(["up"], { PATH }), cannotCheck("github.com: timed out"));
+});
+
+test("fleet up says it could not check when the gh probe hangs past its timeout", () => {
+  const PATH = ghPath("gh-hangs", { plain: "hang" });
+  assert.equal(
+    refusal(["up"], { PATH, FLEET_PROBE_TIMEOUT_MS: "1000" }),
+    cannotCheck("gh auth status did not finish within 1s"),
+  );
+  assert.equal(status(), "cleo: down\n");
+});
+
+test("fleet up says it could not check when the gh probe is killed", () => {
+  const PATH = ghPath("gh-killed", { plain: "killed" });
+  assert.equal(refusal(["up"], { PATH }), cannotCheck("gh was stopped by SIGKILL"));
+  assert.equal(status(), "cleo: down\n");
+});
+
+test("fleet up says it could not check when gh fails for a reason that is not about login", () => {
+  const PATH = ghPath("gh-broken", {
+    plain: { code: 2, stderr: "gh: failed to read configuration: permission denied" },
+  });
+  assert.equal(
+    refusal(["up"], { PATH }),
+    cannotCheck("gh auth status exited 2: gh: failed to read configuration: permission denied"),
+  );
 });
 
 test("fleet up starts no mate whose conversation-memory package is missing or stale, and starts it once the package is prepared", () => {
