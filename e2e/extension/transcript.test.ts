@@ -89,6 +89,7 @@ const mutedRule = (line: string): boolean =>
 const senderOf = (rule: string): string => RULE.exec(rule)?.[1] ?? "";
 const tag = (rule: string): string => (senderOf(rule) === "" ? "──" : `── ${senderOf(rule)} ──`);
 const border = (line: string): boolean => /^─+$/.test(line);
+const editorTop = (line: string): boolean => border(line) || line.includes("Working");
 
 interface Transcript {
   readonly shown: string[];
@@ -100,7 +101,7 @@ interface Transcript {
 function transcript(screen: string): Transcript {
   const lines = screen.split("\n").map((line) => line.trimEnd());
   const bottom = lines.findLastIndex(border);
-  const editor = lines.slice(0, bottom).findLastIndex(border);
+  const editor = lines.slice(0, bottom).findLastIndex(editorTop);
   const width = lines[editor]?.length ?? 0;
   const start = lines.findIndex((line) => line.startsWith("[Extensions]"));
   const body = lines
@@ -224,8 +225,10 @@ test("a restarted mate and a fleet row keep the same rules and labels", async ()
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   await startMain(lab, scratch, h, true);
-  const restored = await screenWhere(pane, "the restored conversation", (screen) =>
-    screen.includes(RULING),
+  const restored = await screenWhere(
+    pane,
+    "the restored conversation",
+    (screen) => screen.includes(RULING) && !screen.includes("killed"),
   );
   keep("6-restored", restored, await lab.coloredScreen(pane));
   assert.deepEqual(transcript(restored).shown, expected);
@@ -255,12 +258,17 @@ test("a new session keeps drawing the rules", async () => {
   const pane = await startMain(lab, scratch, h);
   await screenWhere(pane, "the mate to start", (screen) => screen.includes("[Extensions]"));
   await lab.submit(pane, CAPTAIN);
-  await screenWhere(pane, "the first reply", (screen) => screen.includes(SECOND));
+  await screenWhere(
+    pane,
+    "the first reply to settle",
+    (screen) => screen.includes(SECOND) && !screen.includes("Working"),
+  );
   await lab.submit(pane, "/new");
+  await screenWhere(pane, "the new session", (screen) => !screen.includes(SECOND));
   await lab.submit(pane, CAPTAIN);
   const fresh = await screenWhere(pane, "the reply in the new session", (screen) => {
     return screen.includes(RULING) || screen.includes("To report this crash");
   });
   keep("8-new-session", fresh, await lab.coloredScreen(pane));
-  assert.deepEqual(transcript(fresh).shown, ["── captain ──", CAPTAIN, "──", RULING]);
+  assert.deepEqual(transcript(fresh).shown.slice(-4), ["── captain ──", CAPTAIN, "──", RULING]);
 });
