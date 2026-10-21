@@ -162,6 +162,11 @@ export function setYolo(db: DatabaseSync, project: string, yolo: boolean): void 
   if (changes === 0) throw new Error(`project ${project} is not in the registry`);
 }
 
+export function setRepo(db: DatabaseSync, project: string, repo: string): void {
+  const { changes } = db.prepare("UPDATE projects SET repo = ? WHERE name = ?").run(repo, project);
+  if (changes === 0) throw new Error(`project ${project} is not in the registry`);
+}
+
 export function sessionByToken(db: DatabaseSync, token: string): Session | undefined {
   const sql = `SELECT ${SESSION_JSON} AS j FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt
     WHERE s.token_hash = ?`;

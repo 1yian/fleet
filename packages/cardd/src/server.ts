@@ -14,6 +14,7 @@ import { readPullRequests, runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { performOp } from "./ops.ts";
+import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
 import { Web } from "./web.ts";
 
@@ -54,12 +55,15 @@ class Hub {
   private readonly sockets = new Map<string, WebSocket>();
   private readonly db: DatabaseSync;
   private readonly timing: Timings;
+  private readonly hosts: Hosts;
   private checking = false;
+  private readonly reading = new Set<string>();
   readonly web: Web;
 
-  constructor(db: DatabaseSync, timing: Timings, files: string | undefined) {
+  constructor(db: DatabaseSync, timing: Timings, files: string | undefined, hosts: Hosts) {
     this.db = db;
     this.timing = timing;
+    this.hosts = hosts;
     this.web = new Web(
       db,
       (session) => {
@@ -69,7 +73,18 @@ class Hub {
     );
   }
 
+  fillRepos(): void {
+    for (const project of projectsWithoutRepo(this.db)) {
+      if (this.reading.has(project.name)) continue;
+      this.reading.add(project.name);
+      void fillRepo(this.db, this.hosts, project).finally(() => {
+        this.reading.delete(project.name);
+      });
+    }
+  }
+
   check(): void {
+    this.fillRepos();
     if (this.checking) return;
     this.checking = true;
     void readPullRequests(this.db)
@@ -191,13 +206,17 @@ export async function serve(
   host: string,
   port: number,
   timing: Timings,
-  files?: string,
-  hostnames: readonly string[] = [],
+  {
+    files,
+    hostnames,
+    hosts,
+  }: { files?: string | undefined; hostnames: readonly string[]; hosts: Hosts },
 ): Promise<string> {
   db.prepare(
     "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state IN ('idle', 'running', 'waiting')",
   ).run(Date.now());
-  const hub = new Hub(db, timing, files);
+  const hub = new Hub(db, timing, files, hosts);
+  hub.fillRepos();
   setInterval(() => {
     hub.check();
   }, timing.every).unref();

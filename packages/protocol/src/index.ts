@@ -244,6 +244,7 @@ export const OPS = {
       mode: Type.Enum(["done", "dropped"]),
       verify: Type.Boolean(),
       land: Type.Boolean(),
+      noRepoHint: Type.Optional(Type.String()),
       attempts: Type.Array(
         Type.Object({
           session: Type.String(),

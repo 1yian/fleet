@@ -41,8 +41,11 @@ CARDD="node $HOME/.fleet/app/packages/cardd/src/main.ts"
 mkdir -p ~/.fleet
 IP=$(tailscale ip -4)
 NAME=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
-$CARDD serve --db ~/.fleet/cards.db --listen "$IP:7420" --hostname "$NAME:7420" --board ~/.fleet/app/packages/board/dist
+$CARDD serve --db ~/.fleet/cards.db --listen "$IP:7420" --hostname "$NAME:7420" --board ~/.fleet/app/packages/board/dist \
+  --hosts '{"p620":["ssh","p620"]}'
 ```
+
+`--hosts` names the hosts that `cardd` reaches over SSH, in the same form as `hosts` in main's `config/lane.json` (section 4). A host that is not listed runs here. `cardd` uses them only to read each project's GitHub repository from a clone (section 3). The SSH session must run without a prompt, so use a key that `cardd`'s launchd job can use.
 
 On macOS, run it under launchd with `KeepAlive` so it restarts after a crash or a reboot, as the job `dev.fleet.cardd` in `~/Library/LaunchAgents/dev.fleet.cardd.plist`. The board is then at `http://<NAME>:7420/`.
 
@@ -59,13 +62,15 @@ $CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes \
   --clone maverick=/path/to/web --clone p620=/path/on/p620/web
 $CARDD project clone web p620=/new/path/on/p620/web --db ~/.fleet/cards.db
 $CARDD project yolo web on --db ~/.fleet/cards.db
+$CARDD project repo web acme/web --db ~/.fleet/cards.db
 ```
 
 - A project's clone is a normal clone of the repository on that host. Dispatch creates each worker's worktree next to it, in `<clone>.worktrees/`.
 - To move a clone, move it, run `git worktree repair` with the paths of its worktrees, then run `project clone` with its new path. Workers that already run keep their worktrees, and close still finds them.
 - Use the same host names in `--clone` that mates pass to `dispatch`.
 - A project's yolo flag is the captain's standing merge authority: with it on, a mate tells the worker to merge a PR of that project with green checks, without asking the captain. Only the captain sets it, with `project add --yolo` or `project yolo <name> on|off`. No mate tool changes it.
-- `cardd` finds a ship card's PR on GitHub by the card's branch, so it needs the project's GitHub repository. It reads it from the `origin` remote of a clone on the `cardd` host, when the project is added and each time `cardd serve` starts. A project with no clone on that host needs `--repo <owner>/<name>` on `project add`.
+- `cardd` finds a ship card's PR on GitHub by the card's branch, so it needs the project's GitHub repository. It reads it from the `origin` remote of the project's clones, on any host: over `--hosts` for a listed host, and here for any other. It reads it when the project is added, when `cardd serve` starts, and every minute while it runs and the repository is still unknown. A host that does not answer only delays it. `project add` takes the same `--hosts`.
+- `project repo <name> <owner>/<name>` sets a project's GitHub repository, or corrects a wrong one. Use it for a project whose clones have no GitHub `origin`, or with `--repo` on `project add`. Until a project has one, `close` cannot see that a ship card's PR merged. It then checks the card's commits in the clones instead, and when they are not on the base branch, such as after a squash merge, it says that the project has no GitHub repository on record.
 - The fleet keeps clones current with their `origin`, as Firstmate did. Dispatch fetches first and branches from `origin/<base>`, and refuses when the fetch fails. When main starts, and after `close` ends a ship card, each clone is fetched, branches whose remote branch is gone are pruned, and a clean base branch is fast-forwarded. A clone with uncommitted changes, another branch checked out, or a diverged base is left alone and reported as `STUCK`. A clone that is a fleet home, such as main's checkout, is only fetched: update it with `/updatefleet` (section 7).
 
 ## 4. Main

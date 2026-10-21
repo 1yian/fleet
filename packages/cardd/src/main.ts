@@ -1,9 +1,9 @@
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
-import { fillRepos } from "./pulls.ts";
+import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { serve } from "./server.ts";
-import { addLane, addProject, setClone, setYolo } from "./store.ts";
+import { addLane, addProject, setClone, setRepo, setYolo } from "./store.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -18,11 +18,35 @@ const { values, positionals } = parseArgs({
     clone: { type: "string", multiple: true, default: [] },
     yolo: { type: "boolean", default: false },
     repo: { type: "string" },
+    hosts: { type: "string", default: "{}" },
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
 const db = openDatabase(values.db);
 const [command, ...rest] = positionals;
+const hosts = parseHosts(values.hosts);
+
+function parseHosts(raw: string): Hosts {
+  const parsed: unknown = JSON.parse(raw);
+  const usage = `--hosts ${raw} must be a JSON object of host names to argv arrays, such as {"p620":["ssh","p620"]}`;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new Error(usage);
+  const entries = Object.entries(parsed).map(([host, argv]: [string, unknown]) => {
+    if (
+      !Array.isArray(argv) ||
+      argv.length === 0 ||
+      !argv.every((part) => typeof part === "string")
+    )
+      throw new Error(usage);
+    return [host, argv.map(String)] as const;
+  });
+  return Object.fromEntries(entries);
+}
+
+function ownerName(repo: string, flag: string): string {
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) throw new Error(`${flag} ${repo} must be <owner>/<name>`);
+  return repo;
+}
 
 function parseClone(pair: string): [string, string] {
   const split = pair.indexOf("=");
@@ -41,10 +65,12 @@ if (command === "serve") {
     throw new Error(`--listen ${values.listen} must be <host>:<port>, with both parts set`);
   const scale = Number(process.env["CARDD_TIMING_SCALE"] ?? "1");
   if (!(scale > 0)) throw new Error("CARDD_TIMING_SCALE must be a positive number");
-  fillRepos(db);
-  console.log(
-    `cardd listening on ${await serve(db, host, Number(port), timings(scale), values.board, values.hostname)}`,
-  );
+  const url = await serve(db, host, Number(port), timings(scale), {
+    files: values.board,
+    hostnames: values.hostname,
+    hosts,
+  });
+  console.log(`cardd listening on ${url}`);
 } else if (
   command === "lane" &&
   rest[0] === "add" &&
@@ -64,11 +90,17 @@ if (command === "serve") {
     const [host, path] = parseClone(pair);
     clones[host] = path;
   }
-  if (values.repo !== undefined && !/^[^/\s]+\/[^/\s]+$/.test(values.repo))
-    throw new Error(`--repo ${values.repo} must be <owner>/<name>`);
-  const repo = values.repo ?? null;
+  const repo = values.repo === undefined ? null : ownerName(values.repo, "--repo");
   addProject(db, { name: rest[1], delivery: values.delivery, clones, yolo: values.yolo, repo });
-  fillRepos(db);
+  await Promise.all(projectsWithoutRepo(db).map((project) => fillRepo(db, hosts, project)));
+} else if (
+  command === "project" &&
+  rest[0] === "repo" &&
+  rest[1] !== undefined &&
+  rest[2] !== undefined
+) {
+  setRepo(db, rest[1], ownerName(rest[2], "project repo"));
+  console.log(`${rest[1]}: repo ${rest[2]}`);
 } else if (
   command === "project" &&
   rest[0] === "clone" &&
@@ -88,6 +120,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] | cardd project clone <name> <host>=<path> --db <file> | cardd project yolo <name> on|off --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] | cardd lane add <name> --db <file> --home <path> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file>",
   );
 }
