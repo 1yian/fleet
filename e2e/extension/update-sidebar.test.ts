@@ -113,6 +113,21 @@ async function scrambledSidebarWithNoMateRunning(): Promise<void> {
   assert.notDeepEqual(await sidebar(), ORDERED);
 }
 
+function lanesOn(scratch: Scratch): { lane: string; state: string; reason?: string }[] {
+  const out = scratch.fleet(["status", "--json"], { HERDR_SESSION: lab.name });
+  return records(JSON.parse(out.trim().split("\n").at(-1) ?? "[]")).map((row) => ({
+    lane: String(row["lane"]),
+    state: String(row["state"]),
+    ...(typeof row["reason"] === "string" ? { reason: row["reason"] } : {}),
+  }));
+}
+
+function assertNoMateStarted(): void {
+  const stopped = (lane: string) => [{ lane, state: "stopped", reason: "stopped by hand" }];
+  assert.deepEqual(lanesOn(here), stopped("ops"));
+  assert.deepEqual(lanesOn(p620), stopped("far"));
+}
+
 async function updateReport(): Promise<string> {
   await lab.submit(pane, "/updatefleet");
   const sessions = join(h.dir, "sessions");
@@ -135,6 +150,7 @@ test("/updatefleet orders every host's sidebar when no mate starts anywhere, and
   await scrambledSidebarWithNoMateRunning();
   const report = await updateReport();
   await untilSidebar(ORDERED);
+  assertNoMateStarted();
   assert.match(report, /direnv is missing/);
   assert.match(report, /Sidebars:\n- local: ordered\n- p620: ordered/);
 });
@@ -144,6 +160,7 @@ test("/updatefleet names each host whose sidebar it could not order, and still o
   await scrambledSidebarWithNoMateRunning();
   const report = await updateReport();
   await untilSidebar(ORDERED);
+  assertNoMateStarted();
   assert.match(
     report,
     /Sidebars:\n- local: ordered\n- p620: not ordered - sh on p620 failed: herdr workspace on local failed: .*server_not_running/,
