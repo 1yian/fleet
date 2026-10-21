@@ -116,7 +116,7 @@ test("a worker answers the captain's feedback on its review page, and is done on
 
   await captainSends(pageUrl, { prompts: [{ tag: "message", prompt: "Make the title red" }] });
   const feedback = lastUser(await h.waitForCall(2));
-  assert.match(feedback, /^\[fleet\] captain on c-1 \(review page\):/);
+  assert.match(feedback, /^\[fleet\] captain on c-1 plan-the-onboarding-redesign \(review page\):/);
   assert.match(feedback, /Make the title red/);
   assert.doesNotMatch(feedback, /lavish-axi poll/);
 
