@@ -173,6 +173,13 @@ export function setYolo(db: DatabaseSync, project: string, yolo: boolean): void 
   if (changes === 0) throw new Error(`project ${project} is not in the registry`);
 }
 
+export function setProjectDelivery(db: DatabaseSync, project: string, delivery: Delivery): void {
+  const { changes } = db
+    .prepare("UPDATE projects SET delivery = ? WHERE name = ?")
+    .run(delivery, project);
+  if (changes === 0) throw new Error(`project ${project} is not in the registry`);
+}
+
 export function setRepo(db: DatabaseSync, project: string, repo: string): void {
   const { changes } = db.prepare("UPDATE projects SET repo = ? WHERE name = ?").run(repo, project);
   if (changes === 0) throw new Error(`project ${project} is not in the registry`);

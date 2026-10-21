@@ -23,11 +23,15 @@ cardd lane add <name> --db <file> --home <path> [--parent <lane>]
 cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>]
 cardd project clone <name> <host>=<path> --db <file>
 cardd project yolo <name> on|off --db <file>
+cardd project delivery <name> <mode> --db <file>
+cardd card delivery <number> <mode> --db <file>
 ```
 
 `project add` without `--repo` reads the project's GitHub repository from the `origin` remote of a clone on the `cardd` host. `serve` fills in any that are missing at each start.
 
 `project clone` sets one host's clone of a registered project to a new path, so a clone can move. Attempts already begun keep their worktrees where they are: close finds them through the clone's worktree list, not through a stored path.
+
+`project delivery` sets the delivery mode that new ship cards of a project take: `no-mistakes`, `direct-PR`, or `local-only`. It changes no card: a card records its mode when it is created, and that record is what dispatch tells the worker. `card delivery` changes the recorded mode of one open ship card. It refuses a card that is closed, is not a ship card, or has a live worker, because that worker was told its mode in its task and a changed record would let it go on with a stale one. To change the mode of a card with a live worker, a mate dispatches again with `delivery=<mode>` and `replace=true`, which starts the worker over with the new mode. Setting the mode a card already has changes nothing. Each change is a note on the card.
 
 `lane add` prints the mate's token. `CARDD_TIMING_SCALE=0.01` speeds up every timer, for tests. `project yolo` sets the captain's standing merge authority for a project. Only the captain sets it, through this command line.
 
@@ -63,7 +67,7 @@ cardd project yolo <name> on|off --db <file>
 
 ### Attempts, delivery, and the server
 
-- Delivery modes: a ship card records its mode in `cards.delivery`. `card.new` takes the project's registered mode, and maps `no-mistakes-prod-only` to `no-mistakes`, its most rigorous leg, as Firstmate's `fm-project-mode.sh` does for mechanical callers. `attempt.begin` records an override that the mate passes, and writes the card's mode into the task message as its `Delivery:` line, so the worker reads the mode from the card. A task that names another mode is refused. A worker that already runs keeps its mode: a new mode needs a new attempt.
+- Delivery modes: a ship card records its mode in `cards.delivery`. `card.new` takes the project's registered mode, and maps `no-mistakes-prod-only` to `no-mistakes`, its most rigorous leg, as Firstmate's `fm-project-mode.sh` does for mechanical callers. `attempt.begin` records an override that the mate passes, and writes the card's mode into the task message as its `Delivery:` line, so the worker reads the mode from the card. A task that names another mode is refused. A worker that already runs keeps its mode: a new mode needs a new attempt. `cardd project delivery` changes the default for later cards only, and `cardd card delivery` changes one card that has no live worker (see Command line).
 - A local-only card has no PR. Its worker starts from the clone's local base branch, without a fetch, because local-only work lands there and never on origin. Its `done` carries where its branch lands instead of a PR lookup, and raises the same merge question about the branch. The timed check and close never look up a PR for it.
 - `attempts.ts`: an attempt is one run of a card by one worker. Its ID is the retry key for dispatch. A dispatch retry on the same host finds the same attempt, with the same token and no second task message. A new attempt gets its task message in the same transaction, so a retry can neither lose it nor repeat it.
 - A worker names its own branch, as Firstmate's workers do (`fm-task-branch.sh`). A new attempt's worktree starts on a placeholder branch named for the attempt, such as `c-83-a1`, with `attempts.branch_named` at 0. The worker's first action is the `branch(name)` tool: the name is `<type>/<slug>` (`branchNameProblem` in `@fleet/protocol` owns the rule), the extension refuses a name taken in the clone or on origin and renames the branch it is on, and the `branch.name` op records it in `attempts.branch`, refusing a name that is another live attempt's in the same project. If the record is refused, the rename is undone. A branch is named once: naming the same name again confirms it, and another name is refused. Every consumer that needs a card's branch (the PR lookup, close's landed check, the archive, the local-only fast-forward, a resumed dispatch, and `board(card=N)`) reads `attempts.branch`, so none of them guesses a name. Attempts made before this, including those on `fm/c-N` branches, have `branch_named` at 1 and keep the branch they have. A scout makes no branch, so it never names one.

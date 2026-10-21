@@ -1,7 +1,16 @@
 import type { DatabaseSync } from "node:sqlite";
 import { branchNameProblem, check, type Card, type CardView, type Delivery } from "@fleet/protocol";
 import Type from "typebox";
-import { addEntry, hash, json, registeredDelivery, tokenFor } from "./store.ts";
+import { requireOpen } from "./change.ts";
+import {
+  addEntry,
+  getCard,
+  hash,
+  json,
+  registeredDelivery,
+  tokenFor,
+  transaction,
+} from "./store.ts";
 
 interface LiveAttempt {
   readonly id: number;
@@ -209,6 +218,27 @@ function deliveryOf(db: DatabaseSync, card: Card, asked: Delivery | undefined): 
     mode,
   );
   return mode;
+}
+
+export function setCardDelivery(db: DatabaseSync, id: number, mode: Delivery): string {
+  return transaction(db, () => {
+    const card = getCard(db, id);
+    requireOpen(db, card);
+    if (card.kind !== "ship")
+      throw new Error(
+        `c-${String(id)} is a ${card.kind} card: only a ship card has a delivery mode`,
+      );
+    const live = liveAttempt(db, id);
+    if (live !== undefined && card.delivery !== mode)
+      throw new Error(
+        `c-${String(id)} has a live worker ${name(id, live.n)} running with Delivery: ${String(card.delivery)}. To change it, dispatch with delivery="${mode}" and replace=true: that starts the worker over with the new mode`,
+      );
+    if (card.delivery === mode) return `c-${String(id)}: delivery is already ${mode}`;
+    db.prepare("UPDATE cards SET delivery = ? WHERE id = ?").run(mode, id);
+    const body = `delivery changed from ${String(card.delivery)} to ${mode}`;
+    addEntry(db, { card: id, author: "cardd", kind: "note", body, fields: {} }, []);
+    return `c-${String(id)}: delivery ${String(card.delivery)} -> ${mode}`;
+  });
 }
 
 const DELIVERY_LINE = /^Delivery:\s*(\S+)/m;

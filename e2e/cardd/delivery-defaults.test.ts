@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
+import type { Session } from "../support/cardd.ts";
 import { newCard, startFleet, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
@@ -16,10 +17,10 @@ const registered = async (): Promise<string | undefined> =>
     (each) => each.name === "web",
   )?.delivery;
 
-const dispatched = async (card: Card, replace = false) => {
+const dispatched = async (card: Card, replace = false, mate: Session = fleet.main) => {
   const begun = check(
     OPS["attempt.begin"].result,
-    await fleet.main.call("attempt.begin", {
+    await mate.call("attempt.begin", {
       card: card.id,
       host: "maverick",
       task: "go",
@@ -50,7 +51,7 @@ test("a project's default delivery changes, survives a cardd restart, and new ca
     await main.call("card.new", { title: "Users see one scrollbar", kind: "ship", project: "web" }),
   );
   assert.equal(card.delivery, "direct-PR");
-  assert.deepEqual(await dispatched(card), {
+  assert.deepEqual(await dispatched(card, false, main), {
     delivery: "direct-PR",
     task: "go\n\nDelivery: direct-PR",
   });
