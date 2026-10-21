@@ -80,10 +80,10 @@ test("a second mate's steer reaches its worker without main's comment to that ma
   await leo.waitForEntries(2);
   await leo.call("comment", { card: leoCard.id, text: "Use the password from the vault" });
 
-  const steer = `[fleet] leo on c-${String(leoCard.id)}: Use the password from the vault`;
+  const steer = `[fleet] leo on c-${String(leoCard.id)} credit-the-test-account: Use the password from the vault`;
   assert.equal(lastUser(await h.waitForCall(2)), steer);
   const echo = await fleet.main.waitForEntry((entry) => entry.author === "mate:leo", "the echo");
-  assert.equal(echo.fields["re"], "Captain: it can make an account with that password");
+  assert.equal(echo.body, "Use the password from the vault");
 });
 
 test("a run that ends without a handoff gets one nudge, then files stopped", async () => {
