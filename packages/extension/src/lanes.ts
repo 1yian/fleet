@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
+import { readShared } from "./standing.ts";
 import type { LaneRow } from "./views.ts";
 
 const LAUNCH = fileURLToPath(new URL("./launch.ts", import.meta.url));
@@ -54,6 +55,29 @@ async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
   const found = (await everyLane(config)).find((each) => text(each.row, "lane") === lane);
   if (found === undefined) throw new Error(`no lane ${lane} is configured on any host`);
   return found.host;
+}
+
+function sharedArgs(home: string): string[] {
+  const bytes = readShared(home);
+  if (bytes === undefined) return ["shared", "--absent"];
+  return ["shared", "--content", Buffer.from(bytes, "utf8").toString("base64")];
+}
+
+const messageOf = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+export async function publishShared(home: string): Promise<string | undefined> {
+  const config = readLaneConfig(home);
+  if (config === undefined) return undefined;
+  const failures: string[] = [];
+  for (const host of hostsOf(config)) {
+    await fleet(config, host, sharedArgs(home)).catch((error: unknown) => {
+      failures.push(`${host}: ${messageOf(error)}`);
+    });
+  }
+  return failures.length === 0
+    ? undefined
+    : `Shared preferences did not reach ${failures.join("; ")}`;
 }
 
 export type LaneStates = () => Promise<{
@@ -132,7 +156,7 @@ export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | unde
       return reply((await withLanes(() => restartAll(config))).join("\n"));
     },
   });
-  keepRunning(pi, config);
+  keepRunning(pi, config, home);
   return async () => {
     const lanes: LaneRow[] = [];
     const unreachable: { host: string; error: string }[] = [];
@@ -152,8 +176,9 @@ export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | unde
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
-function keepRunning(pi: ExtensionAPI, config: LaneConfig): void {
+function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   const unreachable = new Set<string>();
+  const unshared = new Set<string>();
   let ticking = false;
   const tell = (lines: readonly string[], urgent: boolean): void => {
     if (lines.length === 0) return;
@@ -163,8 +188,20 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig): void {
       urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
     );
   };
+  const share = async (host: string): Promise<void> => {
+    try {
+      await fleet(config, host, sharedArgs(home));
+      if (unshared.delete(host)) tell([`shared preferences reach ${host} again`], false);
+    } catch (error) {
+      if (error instanceof HostUnreachable) throw error;
+      if (unshared.has(host)) return;
+      unshared.add(host);
+      tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
+    }
+  };
   const checkHost = async (host: string): Promise<void> => {
     try {
+      await share(host);
       const out = await rows(config, host, ["up"]);
       if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
       const of = (action: string) => out.filter((row) => text(row, "action") === action);
@@ -179,7 +216,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig): void {
       if (unreachable.has(host)) return;
       unreachable.add(host);
       const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-      tell([`${host} ${why}: ${error instanceof Error ? error.message : String(error)}`], true);
+      tell([`${host} ${why}: ${messageOf(error)}`], true);
     }
   };
   const tick = async (): Promise<void> => {

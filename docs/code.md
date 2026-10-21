@@ -171,6 +171,14 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `optchat.ts`: the memory loader, `~/.pi/agent/extensions/fm-optchat`, stays idle unless `FM_HOME` names Pi's own folder. A fleet home has no launcher to set it, so this extension loads the loader again with `FM_HOME` set, when the home has `config/optchat.json`. Pi evaluates a module each time it loads, so the second load sees the variable.
 - `memory.ts` writes what the loader reads, all inside one home. Each step that is done already is left alone. The loader's helper runs only when its path is its real path. A profile's lock socket must fit a socket path: 104 bytes on macOS and 108 elsewhere, with the NUL.
 
+### Standing rules and stow
+
+- `standing.ts` reads the three files in `data/` on every turn, in `before_agent_start`, so a mate's own edit takes effect on its next turn with no reload. Only `AGENTS.md` and the other context files need Pi's reload, because Pi reads them once.
+- Main's `captain-shared.md` reaches second mates by copy, not by reading main's home, because a lane's home can be on another host. Main pushes the bytes as base64 on the command line of `fleet shared`, through the host's transport, so no host needs a shared file system. The push runs each minute before main starts lanes, so a lane that starts already holds the file. It also runs at the end of `/stow`. A failed push to a host that answers is told once, and never stops the lanes from being kept running. A copy is read-only and replaced by rename, so a mate never reads half a file. Firstmate quarantines a copy that someone edited. Here the file mode is the guard and main's bytes always win, because a quarantine copy would be a second shared file.
+- The stale flags in the stow report are computed, not judged, because the model gets date arithmetic wrong. The entry format is one bullet line with an optional trailing marker. Anything else in a file is prose that the report skips.
+- `stow.ts` ends the command by waiting for `agent_settled`, then reloading. Pi allows `reload` only in a command handler. `sendMessage` returns before the turn starts, so `waitForIdle` right after it could return at once, which is why the command waits for the settle event it sets up first. A reload runs the extension factory again, so the link to cardd reconnects, and main checks the clones again on its first connection.
+- `e2e/extension/standing.test.ts` gives its mates Pi's context files and built-in tools, which the other tests turn off, because `AGENTS.md` and the model's `write` are what it checks. Its stow tests set `FLEET_SUPERVISE_MS` to ten minutes, so only the stow can have published the shared file. It does not wait a fixed time: it waits for the probe's `session_start` event with reason `reload`.
+
 ### Calm
 
 [calm.md](calm.md) owns what the captain sees. Inside:

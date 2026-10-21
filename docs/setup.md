@@ -127,8 +127,26 @@ pi
 - `cardd` tells `/updatefleet` how to update `cardd` (section 7). `host` is the host that runs it, `local` by default or a name from `hosts`. `root` is the checkout it runs from, and `db` its database, both on that host, where `~` is that host's home. `restart` is the command that restarts its service on that host: for launchd, `launchctl kickstart -k gui/<uid>/<label>`, with the uid from `id -u`. Without `cardd`, the update leaves `cardd` alone and says when its code changed.
 - `workerArgs` are extra Pi arguments for main's workers. A `--model` in them picks the workers' model. Without one, workers start on Pi's global default model, `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json` of the host where the mate runs. A worker never takes its model from its folder, so a worker in a worktree of this repository does not run on the mates' tier.
 - For main's own Pi, use Pi's settings: `.pi/settings.json` sets `tier/orchestrator`. `args` is only used when `fleet up` starts a second mate.
-- `data/charter.md` is added to main's role contract at every start. Keep the lane table there: each lane's name, host, and scope. Keep the captain's preferences and records here too, under `data/`.
+- `data/charter.md` is added to main's role contract at every start. Keep the lane table there: each lane's name, host, and scope. The captain's preferences are not charter text: they are standing rules (below).
 - `pi -c` continues the last conversation in this folder. Plain `pi` starts a new one, and conversation memory carries what matters.
+
+### Standing rules and `/stow`
+
+Every mate loads three files from its home's `data/` into its role contract on every turn, after its charter. A file that is missing or empty adds nothing. All three are private, like the rest of `data/`.
+
+- `data/captain.md` holds the captain's preferences for this lane's domain and his working style.
+- `data/captain-shared.md` holds preferences that hold across every lane. Main writes it. Main copies it, read-only, into `data/` of every second mate's home on every host: each minute when it checks the lanes (before it starts any), and at the end of `/stow`. A copy that differs from main's file is replaced, and the copy of a file that main no longer has is removed. A second mate never writes it, and nothing copies it back. Where it conflicts with a lane's own preferences, it wins.
+- `data/learnings.md` holds the operating facts of one home. It is never shared.
+
+The mate edits these files itself: it reads a file in full, then writes a considered replacement. Edits take effect on the mate's next turn. Nothing here is stored in cardd or in the conversation memory.
+
+`/stow` is a command of every mate, main and second mates alike. The captain types it in the mate's pane:
+
+1. The mate gets the stow instructions and a report of its memory files: each entry with its tier and age, and the stale ones flagged. An aging entry is stale after 30 days, and a perishable one after 7. Entries in `captain.md` and `captain-shared.md` do not age unless they carry a marker.
+2. The mate curates the files, routes what only this conversation knows to its owner, and files the open work it holds as cards on the board (`card_new`, `comment`, `hold`). It never writes open work into a memory file. A stale entry moves to `data/memory-archive.md`, which nothing loads. A second mate sends a shared preference to main with `comment`, and main files it.
+3. When that turn ends, main copies `data/captain-shared.md` to every host. Then the mate reloads in the same conversation: Pi reads `AGENTS.md` and the other context files again and rebuilds the role contract, so a pulled change to `AGENTS.md` takes effect without a restart. The conversation continues, and the mate reconnects to cardd.
+
+A stow in main does not stow the second mates: each one runs its own `/stow`.
 
 ### Conversation memory (optchat)
 
@@ -191,18 +209,19 @@ Main starts, and within a minute it has brought up every lane on every host that
 
 The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
-| Command                                 | Does                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------- |
-| `fleet status [--json]`                 | Shows each lane on this host: running, down, or stopped.                              |
-| `fleet up [lane]`                       | Starts each lane that does not run. A stopped lane stays stopped unless it is named.  |
-| `fleet stop <lane>`                     | Closes the lane's workspace and holds the lane.                                       |
-| `fleet restart [lane]`                  | Starts the mate again on its conversation. No lane means every lane that is not held. |
-| `fleet arrange`                         | Puts this host's herdr sidebar in order (below).                                      |
-| `fleet update [--check]`                | Updates this host's checkout and lane homes for `/updatefleet` (section 7).           |
-| `fleet cardd --root R --db D [--check]` | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).               |
-| `fleet home add <lane> ...`             | Makes a lane's home.                                                                  |
-| `fleet home memory <lane>`              | Turns on the lane's conversation memory (section 4).                                  |
-| `fleet migrate [--undo]`                | Moves the earlier layout into homes (below).                                          |
+| Command                                  | Does                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `fleet status [--json]`                  | Shows each lane on this host: running, down, or stopped.                                    |
+| `fleet up [lane]`                        | Starts each lane that does not run. A stopped lane stays stopped unless it is named.        |
+| `fleet stop <lane>`                      | Closes the lane's workspace and holds the lane.                                             |
+| `fleet restart [lane]`                   | Starts the mate again on its conversation. No lane means every lane that is not held.       |
+| `fleet arrange`                          | Puts this host's herdr sidebar in order (below).                                            |
+| `fleet update [--check]`                 | Updates this host's checkout and lane homes for `/updatefleet` (section 7).                 |
+| `fleet cardd --root R --db D [--check]`  | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).                     |
+| `fleet home add <lane> ...`              | Makes a lane's home.                                                                        |
+| `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
+| `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
+| `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 
