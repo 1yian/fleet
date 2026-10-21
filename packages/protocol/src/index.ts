@@ -136,8 +136,14 @@ export function howToReply(to: "worker" | "mate", card: number, id: string, from
   return from === CAPTAIN ? `answer the captain on the board with ${how}` : `answer with ${how}`;
 }
 
+export const LIVE_STATES = ["starting", "idle", "running", "waiting", "exited", "lost"] as const;
+
+export const ActivitySchema = Type.Object({ state: Type.Enum(LIVE_STATES), at: Type.Integer() });
+export type Activity = Static<typeof ActivitySchema>;
+
 export const BoardCardSchema = Type.Object({
   ...CardSchema.properties,
+  activity: Nullable(ActivitySchema),
   summary: Type.String(),
   mate: Type.Boolean(),
   holder: Nullable(Holder),

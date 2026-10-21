@@ -89,3 +89,42 @@ test("main reads a worker's report after its comment as one line: card name, sta
   );
   await worker.close();
 });
+
+test("a captain's board comment on a card in a second mate's lane reaches main alone, with the lane named", async () => {
+  h.onModel(() => ({ text: "noted" }), "mate");
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const theirs = check(
+    CardSchema,
+    await cleo.call("card.new", { title: "Ads", name: "ads", kind: "scout" }),
+  );
+  const mine = check(
+    CardSchema,
+    await asMain("card.new", { title: "Plan", name: "plan", kind: "scout" }),
+  );
+
+  assert.equal(await cardd.act(theirs.id, { kind: "comment", text: "Is the budget safe?" }), 200);
+  assert.equal(
+    lastUser(await h.waitForCall(0, "mate", WAIT_MS)),
+    `[fleet] captain on c-${String(theirs.id)} ads (in cleo's lane): Is the budget safe?${await captainSuffix(theirs.id)}`,
+  );
+  assert.equal(await cardd.act(mine.id, { kind: "comment", text: "Start with the plan" }), 200);
+  assert.equal(
+    lastUser(await h.waitForCall(1, "mate", WAIT_MS)),
+    `[fleet] captain on c-${String(mine.id)} plan: Start with the plan${await captainSuffix(mine.id)}`,
+  );
+
+  await asMain("comment", { lane: "cleo", text: "The captain asks if the budget is safe" });
+  await cleo.waitForEntry((entry) => entry.author === "mate:main", "main's relay");
+  assert.equal(cleo.entries.filter(({ entry }) => entry.author === "captain").length, 0);
+});
+
+async function captainSuffix(card: number): Promise<string> {
+  const entry = (await cardd.thread(card)).entries.findLast((each) => each.author === "captain");
+  assert.ok(entry);
+  const id = `r-${String(entry.id)}`;
+  const on = `card=${String(card)}`;
+  return ` (reply owed by main, ${id}: answer the captain on the board with comment(${on}, text, replyTo="${id}") or hold(${on}, question, replyTo="${id}"))`;
+}

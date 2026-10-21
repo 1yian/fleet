@@ -86,6 +86,11 @@ function formatReview(entry: Entry, card: string): string {
 
 const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
 
+const laneNote = (entry: Entry): string => {
+  const lane = entry.author === "captain" ? field(entry, "lane") : undefined;
+  return lane === undefined ? "" : ` (in ${lane}'s lane)`;
+};
+
 const AGAIN = " (sent again: the turn that got it ended before it was taken in)";
 
 export function format(entry: Entry, name: string, again = false): string {
@@ -98,7 +103,8 @@ function formatOnce(entry: Entry, name: string): string {
   if (entry.kind === "job-result") return formatJob(entry, card);
   if (entry.kind === "review-feedback") return formatReview(entry, card);
   const who = entry.author.replace(/^mate:/, "");
-  const kind = entry.kind === "comment" ? "" : ` (${LABELS[entry.kind] ?? entry.kind})`;
+  const kind =
+    entry.kind === "comment" ? laneNote(entry) : ` (${LABELS[entry.kind] ?? entry.kind})`;
   const answers = suffix(entry, "resolves", "answers ");
   return `[fleet] ${who} on ${card}${kind}: ${entry.body}${answers}${replySuffix(entry)}`;
 }

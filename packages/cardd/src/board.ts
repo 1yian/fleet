@@ -1,6 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
-  CAPTAIN,
   check,
   BoardActionSchema,
   MERGE_OPTIONS,
@@ -17,6 +16,7 @@ import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
 import { openReplies } from "./replies.ts";
 import { factsFrom, type Hold } from "./status.ts";
 import {
+  activityOf,
   addEntry,
   cardEntries,
   getCard,
@@ -31,12 +31,10 @@ export class StaleCard extends Error {}
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
 const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
 
-const answersCaptain = (entry: Entry): boolean => entry.fields["for"] === CAPTAIN;
-
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
   inThread(entry) &&
   (laneCard ||
-    answersCaptain(entry) ||
+    entry.fields["for"] === "captain" ||
     !(entry.kind === "comment" && entry.author.startsWith("mate:")));
 
 const firstLine = (text: string): string =>
@@ -64,6 +62,7 @@ function boardCard(db: DatabaseSync, { card, entries, standing }: Loaded): Board
   const replies = closed ? [] : openReplies(entries);
   return {
     ...card,
+    activity: activityOf(db, card, mate),
     summary: summaryOf(card, entries, mate, hold),
     mate,
     holder: hold?.holder ?? null,
@@ -122,7 +121,7 @@ function answerOnBoard(
 ): string[] {
   const open = holdOf(db, card);
   if (open?.entry !== hold)
-    throw new StaleCard(`that hold on c-${String(card.id)} is no longer open`);
+    throw new StaleCard(`that hold on #${String(card.id)} is no longer open`);
   if (open.holder !== "captain")
     throw new Error("that hold is with main or its mate. It reaches you when main escalates it");
   const picked = written && open.merge ? MERGE_OPTIONS[1] : choice;
@@ -133,13 +132,13 @@ function answerOnBoard(
 function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
   const taken = holdOf(db, card)?.holder === "captain";
   const main = laneOf(db, card, "main") ?? card.lane;
-  const to = hearers(db, card, null, ["main"]);
+  const to = [main];
   const draft: Draft = {
     card: card.id,
-    author: CAPTAIN,
+    author: "captain",
     kind: "comment",
     body: text,
-    fields: { owes: main, for: "mate" },
+    fields: { owes: main, for: "mate", ...(card.lane === main ? {} : { lane: card.lane }) },
   };
   if (taken) requireOpen(db, card);
   addEntry(db, draft, to);
@@ -162,7 +161,7 @@ export function boardAction(db: DatabaseSync, raw: unknown): string[] {
   const { card: id, revision, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);
   if (action.kind !== "comment" && card.revision !== revision)
-    throw new StaleCard(`c-${String(id)} changed since you looked; here is the current card`);
+    throw new StaleCard(`#${String(id)} changed since you looked; here is the current card`);
   if (action.kind === "answer")
     return answerOnBoard(db, card, action.hold, action.choice, action.written === true);
   if (action.kind === "comment") return commentOnBoard(db, card, action.text);

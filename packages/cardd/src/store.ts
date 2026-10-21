@@ -1,10 +1,12 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
+  ActivitySchema,
   CardSchema,
   check,
   DELIVERIES,
   EntrySchema,
+  type Activity,
   type Card,
   type Delivery,
   type Entry,
@@ -295,10 +297,30 @@ export function workerOf(db: DatabaseSync, card: number): string | undefined {
   return typeof id === "string" ? id : undefined;
 }
 
+export function activityOf(db: DatabaseSync, card: Card, lane: boolean): Activity | null {
+  if (card.status === "done" || card.status === "dropped") return null;
+  const row = lane
+    ? db
+        .prepare(
+          `SELECT state, coalesce(last_seen, 0) AS at FROM sessions
+           WHERE role = 'mate' AND lane = ? AND state <> 'closed'`,
+        )
+        .get(card.lane)
+    : db
+        .prepare(
+          `SELECT s.state AS state, coalesce(s.last_seen, a.created_at) AS at
+           FROM sessions s JOIN attempts a ON a.id = s.attempt
+           WHERE a.card = ? AND a.state IN ('starting', 'active') AND s.state <> 'closed'`,
+        )
+        .get(card.id);
+  return row === undefined ? null : check(ActivitySchema, row);
+}
+
 export type SessionState = "idle" | "running" | "waiting" | "exited" | "lost";
 
-export function setSessionState(db: DatabaseSync, session: string, state: SessionState): void {
+export function setSessionState(db: DatabaseSync, session: string, state: SessionState): boolean {
   const now = Date.now();
+  const before = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
   db.prepare("UPDATE sessions SET state = ?, last_seen = ? WHERE id = ? AND state <> 'closed'").run(
     state,
     now,
@@ -314,6 +336,7 @@ export function setSessionState(db: DatabaseSync, session: string, state: Sessio
        WHERE id = (SELECT a.card FROM sessions s JOIN attempts a ON a.id = s.attempt WHERE s.id = ?)`,
     ).run(now, session);
   }
+  return before !== state;
 }
 
 export function mainLane(db: DatabaseSync): string {

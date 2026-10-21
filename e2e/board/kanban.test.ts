@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
-import { BoardActionSchema, check, MERGE_OPTIONS, type Entry } from "@fleet/protocol";
+import { BoardActionSchema, check, MERGE_OPTIONS, OPS, type Entry } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
+import { freezeBoardUntilAction } from "../support/board.ts";
 import { seedKanban, type Kanban } from "../support/kanban.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
@@ -38,6 +39,11 @@ afterEach(async () => {
 
 const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
 const region = (name: string): Locator => page.getByRole("region", { name, exact: true });
+const lane = (project: string): Locator => region(project);
+const cellOf = (project: string, column: string): Locator =>
+  lane(project).getByRole("region", { name: column, exact: true });
+const titlesIn = (project: string, column: string): Promise<string[]> =>
+  cellOf(project, column).locator(".title").allTextContents();
 const titles = (name: string): Promise<string[]> =>
   region(name).locator(".title").allTextContents();
 const card = (title: string): Locator => page.getByRole("article", { name: title });
@@ -71,39 +77,169 @@ const sideways = (): Promise<string[]> =>
       .map((element) => element.className || element.tagName),
   );
 
-test("desktop: five columns, each card in the column of its status", async () => {
+test("desktop: one swimlane for each project, and each card in the cell of its project and status", async () => {
   await open();
   await region("Merging").getByRole("article").nth(1).waitFor();
   await region("Done today").getByRole("article").nth(2).waitFor();
 
-  assert.deepEqual(await titles("Up next"), [
-    "Board: kanban columns from card status",
-    "Leo: rotate the Twilio webhook secret",
-    "Renew the leo-calls TLS certificate",
+  assert.deepEqual(await page.locator(".swimlane .lane-head h2").allTextContents(), [
+    "fleet",
+    "No project",
+    "calls",
   ]);
-  assert.deepEqual((await titles("In progress")).toSorted(), [
+  assert.deepEqual(await page.locator(".col-head .name").allTextContents(), [
+    "Up next",
+    "In progress",
+    "Needs you",
+    "Merging",
+    "Done today",
+  ]);
+  assert.deepEqual(await titlesIn("fleet", "Up next"), ["Board: kanban columns from card status"]);
+  assert.deepEqual((await titlesIn("fleet", "In progress")).toSorted(), [
     "Ban comments in code: a lint rule fails on any comment",
-    "Cleo: merge duplicate leads from the nightly import",
     "Short fleet messages: one line, details on the card",
   ]);
-  assert.deepEqual(await titles("Needs you"), [
+  assert.deepEqual(await titlesIn("fleet", "Needs you"), [
     "Board: thread as a story, steers fold away",
+  ]);
+  assert.deepEqual(await titlesIn("fleet", "Merging"), [
+    "Memory e2e expects fleet messages labelled once",
+  ]);
+  assert.deepEqual(await titlesIn("fleet", "Done today"), ["Workers start on Pi's default model"]);
+
+  assert.deepEqual(await titlesIn("calls", "Up next"), ["Leo: rotate the Twilio webhook secret"]);
+  assert.deepEqual(await titlesIn("calls", "In progress"), [
+    "Cleo: merge duplicate leads from the nightly import",
+  ]);
+  assert.deepEqual(await titlesIn("calls", "Merging"), [
+    "Leo: let date of birth be used on a call",
+  ]);
+  assert.deepEqual(await titlesIn("calls", "Done today"), ["Leo: ship the call recording banner"]);
+  assert.equal(await cellOf("calls", "Needs you").getByRole("article").count(), 0);
+
+  assert.deepEqual(await titlesIn("No project", "Up next"), [
+    "Renew the leo-calls TLS certificate",
+  ]);
+  assert.deepEqual(await titlesIn("No project", "Needs you"), [
     "Vehicle acquisition: a passed lead stops Cleo's emails",
     "Pick the API version",
   ]);
-  assert.deepEqual((await titles("Merging")).toSorted(), [
-    "Leo: let date of birth be used on a call",
-    "Memory e2e expects fleet messages labelled once",
-  ]);
-  assert.equal(await region("Up next").getByText("Queued", { exact: true }).count(), 1);
-  assert.equal(await region("Up next").getByText("Later", { exact: true }).count(), 1);
+  assert.deepEqual(await titlesIn("No project", "Done today"), ["Scope a Linear-style board"]);
+  await card("Renew the leo-calls TLS certificate")
+    .locator(".chip", { hasText: /\d{2}:\d{2}/ })
+    .waitFor();
+  assert.equal(
+    await cellOf("No project", "Up next").getByText("Later", { exact: true }).count(),
+    1,
+  );
 
-  const progress = region("In progress");
+  const progress = cellOf("fleet", "In progress");
   await progress.locator(".chip", { hasText: "validating" }).waitFor();
-  assert.equal(await progress.locator(".chip", { hasText: "with cleo" }).count(), 1);
+  assert.equal(
+    await cellOf("calls", "In progress").locator(".chip", { hasText: "with cleo" }).count(),
+    1,
+  );
   assert.equal(await page.getByText("3 for you").count(), 1);
   assert.deepEqual(await sideways(), []);
   await shoot("desktop-1440");
+});
+
+function measureLanes(lanes: readonly Element[]) {
+  return lanes.map((element) => {
+    const box = element.getBoundingClientRect();
+    const cards = [...element.querySelectorAll("article")].map((each) =>
+      each.getBoundingClientRect(),
+    );
+    return {
+      name: element.getAttribute("aria-label"),
+      top: box.top,
+      bottom: box.bottom,
+      border: getComputedStyle(element).borderTopWidth,
+      outside: cards.filter((at) => at.top < box.top || at.bottom > box.bottom).length,
+    };
+  });
+}
+
+test("desktop: lanes are physically separate, each with its name, and cards stay inside their own lane", async () => {
+  await open();
+  await region("Merging").getByRole("article").nth(1).waitFor();
+  const boxes = await page.locator(".swimlane").evaluateAll(measureLanes);
+  assert.deepEqual(
+    boxes.map((box) => box.name),
+    ["fleet", "No project", "calls"],
+  );
+  for (const [i, box] of boxes.entries()) {
+    assert.equal(box.outside, 0, `${box.name ?? ""} holds its cards`);
+    assert.equal(box.border, "1px");
+    const next = boxes[i + 1];
+    if (next !== undefined) assert.ok(next.top - box.bottom >= 8, "a gap between lanes");
+  }
+  await lane("No project").getByRole("article", { name: "Pick the API version" }).waitFor();
+  assert.equal(
+    await lane("fleet").getByRole("article", { name: "Pick the API version" }).count(),
+    0,
+  );
+  await shoot("swimlanes-1440");
+});
+
+test("filtering to one mate hides the projects that mate has no cards in", async () => {
+  await open();
+  assert.equal(await lane("calls").count(), 1);
+  await page
+    .getByRole("navigation", { name: "Lanes" })
+    .getByRole("button", { name: "main" })
+    .click();
+  assert.equal(await lane("calls").count(), 0);
+  assert.equal(await lane("fleet").count(), 1);
+});
+
+test("a card has no avatar, and its id row says its kind and its lane", async () => {
+  await open();
+  await region("Merging").getByRole("article").nth(1).waitFor();
+  assert.equal(await page.locator("article.card .av").count(), 0);
+  assert.equal(
+    await card("Cleo: merge duplicate leads from the nightly import")
+      .locator(".idrow .what")
+      .innerText(),
+    "ship · cleo",
+  );
+});
+
+test("activity: a card shows what its agent is doing now, live, and its Activity heading says the same", async () => {
+  const queued = fleet.cards["queued"];
+  assert.ok(queued);
+  const begun = await main.call("attempt.begin", { card: queued.id, host: "maverick", task: "go" });
+  const worker = await cardd.connect(check(OPS["attempt.begin"].result, begun).token);
+  await open();
+  const title = "Board: kanban columns from card status";
+  const chip = card(title).locator(".chip.live");
+  await chip.getByText("idle", { exact: true }).waitFor();
+
+  worker.send({ t: "activity", state: "running" });
+  await chip.getByText("running", { exact: true }).waitFor();
+  assert.equal(await chip.evaluate((el) => el.classList.contains("running")), true);
+  await shoot("activity-running-1440");
+
+  worker.send({ t: "activity", state: "waiting" });
+  await chip.getByText("waiting on a job").waitFor();
+
+  await card(title).getByRole("link", { name: title }).click();
+  const head = page.locator(".activity-head");
+  await head.getByText("waiting on a job").waitFor();
+  worker.send({ t: "activity", state: "running" });
+  await head.getByText("running", { exact: true }).waitFor();
+  await shoot("activity-detail-1440");
+
+  await worker.close();
+  await head.getByText("disconnected").waitFor();
+});
+
+test("activity: a second mate's row in the rail shows whether it is running", async () => {
+  await open();
+  const row = region("Mates").getByRole("article", { name: "cleo" });
+  await row.getByText("idle", { exact: true }).waitFor();
+  fleet.cleo.send({ t: "activity", state: "running" });
+  await row.getByText("running", { exact: true }).waitFor();
 });
 
 test("desktop: a card shows one SVG status icon, and no sparkles remain", async () => {
@@ -178,7 +314,6 @@ test("the rail holds Dropped, older Done, and the Mates, and lane chips filter t
     "Renew the leo-calls TLS certificate",
   ]);
   assert.equal(await region("Needs you").getByRole("article").count(), 0);
-  await region("Needs you").getByText("Nothing waits on you.").waitFor();
   assert.equal(await mates.getByRole("article").count(), 2);
   await lanes.getByRole("button", { name: "All lanes" }).click();
   await region("Needs you").getByRole("article").first().waitFor();
@@ -289,16 +424,14 @@ test("Needs you: Later uses the hold action and the card moves to Later in Up ne
 });
 
 test("Needs you: a click on a card that changed shows a notice in that card and sends nothing", async () => {
-  await page.routeWebSocket(/\/live$/, () => undefined);
   const snapshot = await cardd.board();
-  await page.route("**/api/board", (route) => route.fulfill({ json: snapshot }));
+  await freezeBoardUntilAction(page, snapshot);
   await open();
   const title = "Pick the API version";
   const id = fleet.cards["simple"]?.id ?? 0;
   const shown = snapshot.cards.find((each) => each.id === id);
-  const hold = snapshot.holds.find((each) => each.card === id);
-  assert.ok(shown);
-  assert.ok(hold);
+  const held = snapshot.holds.find((each) => each.card === id);
+  assert.ok(shown && held);
   await main.call("hold", {
     card: id,
     question: "Which API version ships now?",
@@ -312,11 +445,11 @@ test("Needs you: a click on a card that changed shows a notice in that card and 
   assert.deepEqual(check(BoardActionSchema, sent), {
     card: id,
     revision: shown.revision,
-    action: { kind: "answer", hold: hold.hold, choice: "v2" },
+    action: { kind: "answer", hold: held.hold, choice: "v2" },
   });
   assert.equal(response.status(), 409);
   const stale = card(title).getByRole("alert");
-  await stale.getByText(`c-${String(id)} changed since you looked`).waitFor();
+  await stale.getByText(`#${String(id)} changed since you looked`).waitFor();
   await stale.getByText("Nothing was sent").waitFor();
   assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 0);
   assert.equal(await page.getByRole("alert").count(), 1);
@@ -328,15 +461,17 @@ test("phone: a list with Needs you first, in the same vocabulary, and nothing sc
   await open();
   await region("Done today").getByRole("article").nth(2).waitFor();
 
-  const order = await page.locator("section.col").evaluateAll((sections) =>
-    sections
-      .map((section) => ({
-        name: section.getAttribute("aria-label"),
-        top: section.getBoundingClientRect().top,
-      }))
-      .toSorted((a, b) => a.top - b.top)
-      .map((section) => section.name),
-  );
+  const order = await lane("fleet")
+    .locator("section.cell")
+    .evaluateAll((sections) =>
+      sections
+        .map((section) => ({
+          name: section.getAttribute("aria-label"),
+          top: section.getBoundingClientRect().top,
+        }))
+        .toSorted((a, b) => a.top - b.top)
+        .map((section) => section.name),
+    );
   assert.deepEqual(order, ["Needs you", "In progress", "Merging", "Up next", "Done today"]);
   const needs = card("Pick the API version");
   await needs.getByRole("button", { name: "v1" }).waitFor();

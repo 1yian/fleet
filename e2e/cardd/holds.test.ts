@@ -251,8 +251,10 @@ test("a captain's steer takes the hold back from him, and the owner holds it aga
   );
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual(await needsYou(), []);
-  await cleo.waitForEntry((entry) => entry.author === "captain", "the steer");
   await fleet.main.waitForEntry((entry) => entry.author === "captain", "the steer");
+  await fleet.main.call("comment", { card: card.id, text: "The captain wants last week first" });
+  await cleo.waitForEntry((entry) => entry.author === "mate:main", "main's relay");
+  assert.equal(cleo.entries.filter(({ entry }) => entry.author === "captain").length, 0);
 
   await cleo.call("hold", ask(card, { question: "Last week was flat. Raise it?" }));
   await fleet.main.call(
