@@ -29,7 +29,10 @@ type Move =
       readonly text?: string;
       readonly args?: Readonly<Record<string, string | number | boolean>>;
     };
-type ModelHandler = (turns: Turn[]) => Move | Promise<Move>;
+export interface Failure {
+  readonly fail: string;
+}
+type ModelHandler = (turns: Turn[]) => Move | Failure | Promise<Move | Failure>;
 
 const PI_BIN = fileURLToPath(new URL("../../node_modules/.bin/pi", import.meta.url));
 const SUPPORT = fileURLToPath(new URL(".", import.meta.url));
@@ -268,6 +271,10 @@ export class Harness {
       typeof model === "string" ? model : "unknown",
       turns,
     );
+    if ("fail" in move) {
+      response.writeHead(500, { "content-type": "text/plain" }).end(move.fail);
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(move));
   }
 
@@ -281,10 +288,14 @@ export class Harness {
     const move = call.warm
       ? { text: "warm" }
       : await this.scripted(agent, optionalString(body, "model") ?? "unknown", [...call.turns]);
+    if ("fail" in move) {
+      response.writeHead(500, { "content-type": "text/plain" }).end(move.fail);
+      return;
+    }
     response.writeHead(200, { "content-type": "text/event-stream" }).end(stream(move));
   }
 
-  private async scripted(agent: string, model: string, turns: Turn[]): Promise<Move> {
+  private async scripted(agent: string, model: string, turns: Turn[]): Promise<Move | Failure> {
     this.agentModels.set(agent, [...this.modelsOf(agent), model]);
     if (agent === "default") this.calls.push(turns);
     else this.agentCalls.set(agent, [...this.callsOf(agent), turns]);
