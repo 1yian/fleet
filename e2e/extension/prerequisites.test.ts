@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { toolResults } from "../support/dispatch-lab.ts";
-import { installFakeLoader, preparePackage } from "../support/fake-optchat.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { addRemote, git, landOnRemote, tip } from "../support/remote.ts";
@@ -240,49 +239,36 @@ test("fleet up says it could not check when gh fails for a reason that is not ab
   );
 });
 
-test("fleet up starts no mate whose conversation-memory package is missing or stale, and starts it once the package is prepared", () => {
-  const agent = join(h.dir, "agent");
-  installFakeLoader(agent);
+const MODEL = { provider: "fake", model: "scripted", thinking: "off" };
+
+test("fleet up starts no mate whose conversation memory has no profile, and starts it once the profile exists", () => {
   const home = join(`${scratch.root}.worktrees`, "lane-cleo");
-  const files = join(home, "config", "optchat");
-  const packagePath = join(realpathSync(home), "config", "optchat", "package");
   writeFileSync(
     join(home, "config", "optchat.json"),
-    JSON.stringify({ enabled: true, package: "config/optchat/package", profile: "cleo" }),
+    JSON.stringify({ enabled: true, memoryHome: "data/optchat", profile: "cleo" }),
   );
-  const env = { PI_CODING_AGENT_DIR: agent };
+  const profile = join(realpathSync(home), "data", "optchat", "profiles", "cleo");
   const fix = `Fix: ${scratch.root}/bin/fleet home memory cleo`;
 
   assert.equal(
-    refusal(["up"], env),
-    `optchat of lane cleo is missing its package ${packagePath} on ${HOST}. ${fix}\n`,
-  );
-
-  preparePackage(join(files, "package"), false);
-  assert.equal(
-    refusal(["up"], env),
-    `optchat of lane cleo has a stale or broken package ${packagePath} on ${HOST}: OptChat patched fingerprint differs: src/index.ts. ${fix}\n`,
+    refusal(["up"], {}),
+    `optchat of lane cleo has no profile ${profile} on ${HOST}. ${fix}\n`,
   );
   assert.equal(status(), "cleo: down\n");
 
-  preparePackage(join(files, "package"), true);
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "AGENTS.md"), "# cleo\n");
   assert.equal(
-    scratch.fleet(["up"], { HERDR_SESSION: lab.name, ...env }),
-    "cleo: started in 2ndmate-cleo\n",
+    refusal(["up"], {}),
+    `optchat of lane cleo has no profile ${profile} on ${HOST}. ${fix}\n`,
   );
-});
-
-test("fleet up names a loader that is not installed when memory is on", () => {
-  const agent = join(h.dir, "agent");
-  mkdirSync(agent, { recursive: true });
-  const home = join(`${scratch.root}.worktrees`, "lane-cleo");
   writeFileSync(
-    join(home, "config", "optchat.json"),
-    JSON.stringify({ enabled: true, package: "config/optchat/package", profile: "cleo" }),
+    join(profile, "config.json"),
+    JSON.stringify({ compactor: MODEL, subagent: MODEL }),
   );
-  assert.match(
-    refusal(["up"], { PI_CODING_AGENT_DIR: agent }),
-    new RegExp(`^optchat of lane cleo has no loader in ${agent} on ${HOST}\\. Fix: `),
+  assert.equal(
+    scratch.fleet(["up"], { HERDR_SESSION: lab.name }),
+    "cleo: started in 2ndmate-cleo\n",
   );
 });
 
