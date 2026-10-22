@@ -237,7 +237,7 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 
 ## End-to-end tests
 
-- `e2e/support/scratch.ts` makes a scratch copy of the repository with its own lane homes. A home with a memory profile needs a short base folder, because the socket path must fit 103 bytes on macOS.
+- `e2e/support/scratch.ts` makes a scratch copy of the repository with its own lane homes. A second mate's memory profile in a scratch home has a lock socket path longer than macOS's 103-byte limit, whatever `TMPDIR` is. So the tests that make one skip on macOS, and CI on Linux runs them.
 - `e2e/support/fake-model.ts` is a Pi extension that posts each model call to the test's control server and returns the move the test chooses. Everything else in Pi stays real.
 - `e2e/support/fake-anthropic.ts` registers a `tier` provider on Pi's real Anthropic Messages client, pointed at the control server, so the harness reads the actual request: its `cache_control` retention and whether it is a one-token warm. The harness answers with a server-sent-event stream. `harness.wire` lists the requests, with the role taken from the system prompt.
 - `e2e/support/herdr.ts` runs an isolated herdr session whose name starts with `fleet-lab-`, so a test never touches the captain's session.
@@ -256,5 +256,5 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `e2e/extension/dispatch.test.ts` bounds a restart below `FORMER_REFUSED_START_WAIT_MS`, the 10 s that a refused start once waited for a Pi that herdr never typed.
 - `e2e/extension/start.test.ts` holds the worker's first model call open, so the worker stays busy while herdr's start command still waits for it to idle. The mate must hear back before that command ends. A clock on the whole dispatch would also count the shell's start and herdr's refusals, which load stretches.
 - When a job's tab closes, either the wrapper posts what the command printed as it died, or the tab's processes go first and the heartbeat check reports the job lost. Which one wins depends on the platform and timing. `e2e/extension/jobs.test.ts` accepts either, once.
-- `e2e/extension/memory.test.ts` runs the vendored memory. The model's turn may start with the memory's own context block, so the test finds the fleet message after it. On macOS its second-mate tests need a short temporary folder, such as `TMPDIR=~/t`, because the profile's socket path must fit 103 bytes.
+- `e2e/extension/memory.test.ts` runs the vendored memory. The model's turn may start with the memory's own context block, so the test finds the fleet message after it. Its second-mate tests skip on macOS, because the profile's socket path cannot fit 103 bytes there. CI on Linux runs them.
 - `e2e/extension/worker-model.test.ts` starts main as a plain Pi in a scratch copy that picks its model from its settings, as the captain's does. Pi picks a model from its settings only when it knows a key for that model's provider at session start, so the test gives the scripted tiers a key. Main and its worker share the lab's model agent, so the system prompt tells their calls apart.

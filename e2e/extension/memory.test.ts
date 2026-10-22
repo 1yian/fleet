@@ -15,7 +15,13 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, optionalString, parseRecord, type JsonRecord } from "../support/json.ts";
-import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
+import {
+  configureMain,
+  mateArgs,
+  Scratch,
+  secondMateProfileSkip,
+  startMain,
+} from "../support/scratch.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const WAIT_MS = 60_000;
@@ -196,7 +202,8 @@ test("with memory on, main yields silently and keeps idle and mid-turn fleet mes
   }
 });
 
-test("a second mate whose home got memory from `fleet home memory` keeps a [fleet] message in its own memory", async () => {
+test("a second mate whose home got memory from `fleet home memory` keeps a [fleet] message in its own memory", async (t) => {
+  if (secondMateProfileSkip) return t.skip(secondMateProfileSkip);
   const agent = { PI_CODING_AGENT_DIR: join(h.dir, "agent") };
   const token = cardd.addLane("leo", "main");
   const home = scratch.addLane("leo", {
@@ -237,7 +244,8 @@ test("a second mate whose home got memory from `fleet home memory` keeps a [flee
   assert.ok(!existsSync(join(scratch.root, "state", "optchat-activation.json")));
 });
 
-test("`fleet home memory` turns a second mate's memory back on after it was set off", async () => {
+test("`fleet home memory` turns a second mate's memory back on after it was set off", async (t) => {
+  if (secondMateProfileSkip) return t.skip(secondMateProfileSkip);
   const agent = { PI_CODING_AGENT_DIR: join(h.dir, "agent") };
   const token = cardd.addLane("board", "main");
   const home = scratch.addLane("board", {

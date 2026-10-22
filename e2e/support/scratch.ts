@@ -88,6 +88,11 @@ export class Scratch {
   }
 }
 
+export const secondMateProfileSkip =
+  process.platform === "darwin"
+    ? "a second mate's OptChat profile lock socket path in a scratch home exceeds macOS's 103-byte limit; CI on Linux runs this test"
+    : "";
+
 export function mateArgs(h: Harness): string[] {
   const drop = new Set(["--no-extensions", "--no-approve"]);
   return ["--approve", ...h.piArgs().filter((arg) => !drop.has(arg))];

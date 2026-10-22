@@ -9,7 +9,13 @@ import { toolResults } from "../support/dispatch-lab.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { addRemote, git, landOnRemote, tip } from "../support/remote.ts";
-import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
+import {
+  configureMain,
+  mateArgs,
+  Scratch,
+  secondMateProfileSkip,
+  startMain,
+} from "../support/scratch.ts";
 import { pathWithout } from "../support/tool-stubs.ts";
 
 const WAIT_MS = 120_000;
@@ -241,14 +247,15 @@ test("fleet up says it could not check when gh fails for a reason that is not ab
 
 const MODEL = { provider: "fake", model: "scripted", thinking: "off" };
 
-test("fleet up starts no mate whose conversation memory has no profile, and starts it once the profile exists", () => {
+test("fleet up starts no mate whose conversation memory has no profile, and starts it once the profile exists", (t) => {
+  if (secondMateProfileSkip) return t.skip(secondMateProfileSkip);
   const home = join(`${scratch.root}.worktrees`, "lane-cleo");
   writeFileSync(
     join(home, "config", "optchat.json"),
     JSON.stringify({ enabled: true, memoryHome: "data/optchat", profile: "cleo" }),
   );
   const profile = join(realpathSync(home), "data", "optchat", "profiles", "cleo");
-  const fix = `Fix: ${scratch.root}/bin/fleet home memory cleo`;
+  const fix = `Fix: ${realpathSync(scratch.root)}/bin/fleet home memory cleo`;
 
   assert.equal(
     refusal(["up"], {}),
