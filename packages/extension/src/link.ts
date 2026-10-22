@@ -104,6 +104,10 @@ export class Link {
     else this.untoldAcks.add(entry);
   }
 
+  defer(entry: number): void {
+    if (this.connected) this.send({ t: "defer", entry });
+  }
+
   activity(state: "running" | "idle" | "waiting"): void {
     if (this.connected) this.send({ t: "activity", state });
   }

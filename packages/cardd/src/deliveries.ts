@@ -63,6 +63,13 @@ export function acknowledge(db: DatabaseSync, session: string, entry: number): v
   ).run(Date.now(), session, entry);
 }
 
+export function defer(db: DatabaseSync, session: string, entry: number, until: number): void {
+  db.prepare(
+    `UPDATE deliveries SET intake = 'waiting', updated_at = ?
+     WHERE session = ? AND entry = ? AND intake IN ('waiting', 'resent')`,
+  ).run(until, session, entry);
+}
+
 const NOT_TAKEN = `SELECT d.session AS session, d.intake AS intake, s.role AS role, ${ENTRY_JSON} AS j
   FROM deliveries d JOIN sessions s ON s.id = d.session JOIN entries e ON e.id = d.entry
   WHERE d.intake IN ('waiting', 'resent') AND d.state <> 'pending'

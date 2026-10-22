@@ -13,7 +13,7 @@ import {
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { readPullRequests, runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
-import { acknowledge, confirm, toPush } from "./deliveries.ts";
+import { acknowledge, confirm, defer, toPush } from "./deliveries.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
@@ -122,6 +122,8 @@ class Hub {
         session = this.hello(socket, message);
         token = session === undefined ? undefined : message.token;
       } else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
+      else if (message.t === "defer")
+        defer(this.db, live().id, message.entry, Date.now() + this.timing.defer);
       else if (message.t === "activity") {
         if (setSessionState(this.db, live().id, message.state)) this.web.changed();
       } else {

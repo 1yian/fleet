@@ -64,6 +64,42 @@ test("a report a second mate never takes in is sent once more, then goes to main
   await worker.close();
 });
 
+async function nthReport(session: Session, n: number): Promise<number> {
+  await until(() => (sent(session, "report").length >= n ? true : undefined), `send ${String(n)}`);
+  const pushes = session.entries.filter(({ entry }) => entry.kind === "report");
+  const push = pushes[n - 1];
+  assert.ok(push !== undefined);
+  return push.entry.id;
+}
+
+async function until<T>(read: () => T | undefined, what: string): Promise<T> {
+  const deadline = Date.now() + WAIT_MS * 3;
+  for (;;) {
+    const value = read();
+    if (value !== undefined) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+test("a report a second mate defers because no model could answer is sent again after the wait, and never reported missed", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], false);
+  const main = await fleet.cardd.connect(fleet.mainToken, [], false);
+  const { worker } = await blockedInCleo(cleo);
+
+  cleo.defer(await nthReport(cleo, 1));
+  cleo.defer(await nthReport(cleo, 2));
+  await nthReport(cleo, 3);
+
+  assert.deepEqual(sent(cleo, "report"), [
+    ["The API is down\nlogs in /tmp/x", false],
+    ["The API is down\nlogs in /tmp/x", true],
+    ["The API is down\nlogs in /tmp/x", true],
+  ]);
+  assert.deepEqual(sent(main, "finding"), []);
+  await worker.close();
+});
+
 test("a report main takes in is never sent again", async () => {
   const card = await newCard(fleet.main, "Main's own card");
   const mainWorker = await fleet.cardd.connect(await begin(fleet.main, card));

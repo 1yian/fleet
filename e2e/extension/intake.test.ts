@@ -123,6 +123,47 @@ test("a report main never takes in is sent once more, then shown on the board", 
   await worker.close();
 });
 
+test("a report whose turns end because no model could answer keeps reaching main after a wait, and is never shown as missed", async () => {
+  let failures = 0;
+  for (let call = 0; call < 10; call += 1)
+    h.onModel((turns) => {
+      const last = lastUser(turns);
+      if ((last === REPORT || last === AGAIN) && failures < 2) {
+        failures += 1;
+        return {
+          fail: "pi-tiers: no usable model for tier 'orchestrator' (fake/scripted: cooling)",
+        };
+      }
+      return { text: "The lint gate is red; I will look at it" };
+    }, "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  const { card, worker } = await workerOn();
+
+  await worker.call("report", { status: "blocked", text: "The lint gate is red on main" });
+  await h.waitForNth(
+    (event) => event["type"] === "settled" && event["aborted"] === false,
+    3,
+    "main to take the report in on the third turn",
+  );
+  const last = h.callsOf("mate").at(-1) ?? [];
+  assert.equal(
+    last.filter((turn) => turn.role !== "system" && turn.text.includes(AGAIN)).length,
+    2,
+    "the report did not reach main again after each failed turn",
+  );
+
+  const { entries } = await cardd.thread(card.id);
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.author === "check" && entry.body.startsWith("missed"))
+      .map((entry) => entry.body),
+    [],
+  );
+  assert.equal(failures, 2);
+  await worker.close();
+});
+
 async function until<T>(read: () => Promise<T | undefined>): Promise<T> {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {

@@ -249,6 +249,7 @@ export class Cardd {
 type Outgoing =
   | { t: "hello"; token: string; inFile: readonly number[] }
   | { t: "ack"; entry: number }
+  | { t: "defer"; entry: number }
   | { t: "activity"; state: "running" | "idle" | "waiting" }
   | { t: "call"; id: number; op: string; args: unknown };
 
@@ -287,6 +288,10 @@ export class Session {
     if (typeof result === "number") throw new Error(`the connection closed with ${String(result)}`);
     if (!result.ok) throw new Error(result.error);
     return result.value;
+  }
+
+  defer(entry: number): void {
+    this.send({ t: "defer", entry });
   }
 
   ack(entry: number): void {

@@ -174,7 +174,10 @@ function start(
   pi.on("session_shutdown", () => {
     link.stop();
   });
-  registerIntake(pi, link);
+  registerIntake(pi, link, (id) => {
+    injected.delete(id);
+    injectedAgain.delete(id);
+  });
   digest.register();
   const active = (): void => {
     link.activity("running");

@@ -390,6 +390,7 @@ const ClientMessage = Type.Union([
     inFile: Type.Array(Type.Integer()),
   }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
+  Type.Object({ t: Type.Literal("defer"), entry: Type.Integer() }),
   Type.Object({ t: Type.Literal("activity"), state: Type.Enum(["running", "idle", "waiting"]) }),
   Type.Object({
     t: Type.Literal("call"),
