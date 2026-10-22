@@ -1,15 +1,15 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRecord, publishRecord } from "./json.ts";
+import { tempDir } from "./run-root.ts";
 
 const FAKE = fileURLToPath(new URL("./fake-gh.ts", import.meta.url));
 
 type Bucket = "pass" | "fail" | "pending";
 
 export class FakeGitHub {
-  private readonly dir = mkdtempSync(join(tmpdir(), "fleet-gh-"));
+  private readonly dir = tempDir("fleet-gh-");
   private readonly file = join(this.dir, "prs.json");
 
   constructor() {

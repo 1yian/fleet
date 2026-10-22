@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "./cardd.ts";
@@ -8,6 +7,7 @@ import { Harness, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 import { addRemote, git as gitIn } from "./remote.ts";
+import { tempDir } from "./run-root.ts";
 
 export const WORKER_WAIT_MS = 60_000;
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
@@ -59,7 +59,7 @@ function addSite(
   cardd: Cardd,
   { remote: withRemote = false, delivery = "no-mistakes", repo = true, gate }: LabOptions,
 ): { clone: string; remote: string | undefined; env: Record<string, string> } {
-  const clone = join(mkdtempSync(join(tmpdir(), "fleet-clone-")), "site");
+  const clone = join(tempDir("fleet-clone-"), "site");
   const git = "git -c user.name=t -c user.email=t@t";
   const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
   execFileSync("sh", ["-c", init], { cwd: dirname(clone) });
@@ -83,7 +83,7 @@ export async function startDispatchLab({
 }: LabOptions = {}): Promise<DispatchLab> {
   const cardd = await Cardd.start(carddEnv);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
-  const home = mkdtempSync(join(tmpdir(), "fleet-home-"));
+  const home = tempDir("fleet-home-");
   const mainToken = cardd.addLane("main", undefined, home);
   const { clone, remote, env } = addSite(cardd, site);
   const h = await Harness.start();

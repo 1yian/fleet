@@ -1,3 +1,5 @@
+import "./run-root.ts";
+
 const LIVE_FLEET = [
   "FLEET_HOSTS",
   "FLEET_HOST",

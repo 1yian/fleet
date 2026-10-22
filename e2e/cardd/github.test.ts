@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { linkSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { linkSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { FakeGitHub } from "../support/github.ts";
 import { parseRecord } from "../support/json.ts";
+import { tempDir } from "../support/run-root.ts";
 import "../support/tool-stubs.ts";
 
 const PR = "https://github.com/example/app/pull/1";
@@ -17,7 +17,7 @@ test("GitHub readers keep a complete snapshot across fixture updates and gh merg
     for (const dir of snapshots) rmSync(dir, { recursive: true, force: true });
   });
   const snapshot = (): string => {
-    const dir = mkdtempSync(join(tmpdir(), "fleet-gh-snapshot-"));
+    const dir = tempDir("fleet-gh-snapshot-");
     const file = join(dir, "prs.json");
     snapshots.push(dir);
     linkSync(github.env["FAKE_GH_STATE"] ?? "", file);

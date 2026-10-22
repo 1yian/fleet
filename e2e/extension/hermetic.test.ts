@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { spawnGuarded } from "../support/guarded.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const SIDEBAR = fileURLToPath(new URL("./update-sidebar.test.ts", import.meta.url));
 const ONE_TEST = "/updatefleet orders every host's sidebar when no mate starts anywhere";
@@ -13,7 +13,7 @@ const RUN_MS = 240_000;
 let live: string;
 let tripwire: string;
 beforeEach(() => {
-  live = mkdtempSync(join(tmpdir(), "fleet-live-"));
+  live = tempDir("fleet-live-");
   tripwire = join(live, "reached-live-p620");
   mkdirSync(join(live, "fleet"));
 });

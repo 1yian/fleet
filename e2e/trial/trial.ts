@@ -1,18 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "../support/cardd.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 const [clone = "", model = "tier/quick"] = process.argv.slice(2);
 if (clone === "") throw new Error("usage: node e2e/trial/trial.ts <project clone> [model]");
 
-const dir = mkdtempSync(join(tmpdir(), "fleet-trial-"));
+const dir = tempDir("fleet-trial-");
 const home = join(dir, "homes", "main");
 mkdirSync(home, { recursive: true });
 writeFileSync(

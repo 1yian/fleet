@@ -1,14 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  chmodSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
@@ -22,6 +13,7 @@ import {
 } from "../support/dispatch-lab.ts";
 import type { Harness } from "../support/harness.ts";
 import { git, landOnRemote as landOn, tip } from "../support/remote.ts";
+import { tempDir } from "../support/run-root.ts";
 
 let parts: DispatchLab;
 let h: Harness;
@@ -36,7 +28,7 @@ function lsofReply(script: string): void {
 }
 
 beforeEach(async () => {
-  tools = mkdtempSync(join(tmpdir(), "fleet-lsof-"));
+  tools = tempDir("fleet-lsof-");
   lsofReply("exit 1");
   parts = await startDispatchLab({
     remote: true,
