@@ -40,6 +40,15 @@ export const promptFor = (prompt: string, { previousExchange, memorySearch }: Pr
   toggle(toggle(prompt, CONTINUITY, previousExchange, VIEW_DOC), SEARCH_DOC, memorySearch, previousExchange ? VIEW_DOC + CONTINUITY : VIEW_DOC);
 interface Active { name: string; dir: string; config: ProfileConfig; memory: Memory; inbox: Inbox; children: Children; usage: UsageLedger; unlock: () => Promise<void> }
 
+const KEPT_RUNS_BYTES = 120_000;
+/** The prompt cache's lifetime for this model at the process's retention, with a margin; Pi's defaults when the model declares none. */
+function cacheLifetimeMs(model: { promptCache?: { short?: number; long?: number } } | undefined) {
+  const long = process.env.PI_CACHE_RETENTION === 'long';
+  const declared = long ? model?.promptCache?.long : model?.promptCache?.short;
+  return (typeof declared === 'number' ? declared : long ? 3600 : 300) * 900;
+}
+const bytesOf = (messages: readonly AgentMessage[]) => messages.reduce((sum, message) => sum + JSON.stringify((message as { content?: unknown }).content ?? '').length, 0);
+
 export interface OptChatCapabilities { connectedWindows?: boolean; transientCustomTypes?: readonly string[] }
 
 export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilities = {}) {
@@ -52,6 +61,9 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
   let previous: AgentMessage[] = [];
   let logged = 0;
   let view: string | undefined;
+  // Fleet: earlier runs sent raw after the view they were built on, while that view's prompt cache is warm.
+  let carried: AgentMessage[] = [];
+  let lastRequestAt = 0;
   let prompt = '';
   let runStarted = false;
   let fault: string | undefined;
@@ -133,7 +145,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       await checkpoint(old.dir);
     } finally {
       await old.memory.close(); await old.unlock(); active = undefined;
-      run = []; previous = []; logged = 0; view = undefined; runStarted = false; receipts.clear(); prompt = '';
+      run = []; previous = []; carried = []; logged = 0; view = undefined; runStarted = false; receipts.clear(); prompt = '';
       untitle?.(); untitle = undefined; title.clear(); working = false;
     }
   };
@@ -251,10 +263,18 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     }
     return { action: 'continue' };
   });
+  // Fleet: a new view rewrites the whole prompt cache after the system prompt, because the view's oldest lines
+  // merge as it grows. A run that starts while the last request's cache is still warm keeps that view and sends
+  // the earlier runs raw after it, so the request only appends to the cached prefix. A cold cache, or raw runs
+  // over KEPT_RUNS_BYTES, builds a fresh view.
   const startRun = (ctx: ExtensionContext) => {
-    flush(); run = []; logged = 0; view = undefined; runStarted = true;
+    flush();
+    const keep = view !== undefined && Date.now() - lastRequestAt < cacheLifetimeMs(ctx.model) && bytesOf([...carried, ...run]) <= KEPT_RUNS_BYTES;
+    if (keep) carried = [...carried, ...run];
+    else { carried = []; view = undefined; }
+    run = []; logged = 0; runStarted = true;
     const config = active?.config;
-    previous = config?.previousExchange ? previousExchange(ctx.sessionManager.getBranch(), config.previousExchangeKB * 1000) : [];
+    if (!keep) previous = config?.previousExchange ? previousExchange(ctx.sessionManager.getBranch(), config.previousExchangeKB * 1000) : [];
     pi.appendEntry(RUN_BOUNDARY, { state: 'start' });
   };
   // A report sent while Pi is idle starts its run without before_agent_start; it reuses the last built prompt.
@@ -310,7 +330,8 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
         view = a.memory.render(); // Capture old history before logging the new input.
         flush();
       }
-      return { messages: buildContext(event.messages, run, view, promptFor(prompt, a.config), previous) };
+      lastRequestAt = Date.now();
+      return { messages: buildContext(event.messages, [...carried, ...run], view, promptFor(prompt, a.config), previous) };
     } catch (error) {
       // Pi catches extension errors. Explicitly abort so it cannot fall back to old context.
       ctx.abort();

@@ -11,3 +11,4 @@ Conversation memory for fleet mates. `packages/extension/src/optchat.ts` loads `
 
 - The loader imports the source from this folder instead of a prepared package in each home, and no longer checks a package fingerprint. `config/optchat.json` needs no `package`.
 - Without `compactorProvider` and `compactorModel`, summaries go to `tier/compact` when that model exists, not to the mate's own model.
+- A run that starts while the last request's prompt cache is still warm keeps the view it was built on and sends the earlier runs raw after it, so the request only appends to the cached prefix. A cold cache (past the model's declared lifetime for the process's retention, or Pi's defaults), or more than 120 KB of raw runs, builds a fresh view. Upstream builds a fresh view every run, and its oldest lines merge as it grows, so each turn rewrote the whole cache after the system prompt: on 2026-10-21 that was most of main's $391.
