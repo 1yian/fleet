@@ -76,3 +76,31 @@ test("a report main takes in is never sent again", async () => {
   assert.deepEqual(sent(fleet.main, "report"), [["Blocked on main's card", false]]);
   await Promise.all([worker.close(), mainWorker.close()]);
 });
+
+test("a comment a waiting worker with no running job never takes in is sent once more, then goes to its second mate", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
+  const main = await fleet.cardd.connect(fleet.mainToken, [], false);
+  const card = await newCard(cleo, "Users see one scrollbar");
+  const worker = await fleet.cardd.connect(await begin(cleo, card), [], false);
+  worker.send({ t: "activity", state: "waiting" });
+  const [task] = await worker.waitForEntries(1);
+  worker.ack(task?.id ?? 0);
+  await cleo.call("comment", { card: card.id, text: "use the v2 endpoint" });
+
+  const missed = await cleo.waitForEntry(
+    (entry) => entry.fields["condition"] === "missed",
+    "cleo to hear that the worker missed the comment",
+  );
+  assert.equal(missed.kind, "finding");
+  assert.equal(
+    missed.body,
+    `missed: the worker on c-${String(card.id)} did not take in this comment from cleo, sent twice: use the v2 endpoint`,
+  );
+  assert.deepEqual(sent(worker, "comment"), [
+    ["the task\n\nDelivery: no-mistakes", false],
+    ["use the v2 endpoint", false],
+    ["use the v2 endpoint", true],
+  ]);
+  assert.deepEqual(sent(main, "finding"), []);
+  await worker.close();
+});

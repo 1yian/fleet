@@ -315,7 +315,7 @@ export class Session {
     if (message.t === "welcome") this.welcome = message;
     else if (message.t === "entry") {
       this.entries.push(message);
-      if (this.takesIn && this.welcome?.role === "mate") this.ack(message.entry.id);
+      if (this.takesIn) this.ack(message.entry.id);
     } else this.results.set(message.id, message);
   }
 }

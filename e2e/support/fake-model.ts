@@ -65,7 +65,9 @@ const respond: FauxResponseFactory = async (context, options, _state, model) => 
   };
   if (options?.signal !== undefined) init.signal = options.signal;
   const response = await fetch(`${controlUrl()}/model`, init);
-  return toMessage(parseRecord(await response.text()));
+  const body = await response.text();
+  if (!response.ok) throw new Error(body);
+  return toMessage(parseRecord(body));
 };
 
 export default function fakeModel(pi: ExtensionAPI): void {

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, EntrySchema, PushedEntrySchema, type Entry } from "@fleet/protocol";
-import { addEntry, ENTRY_JSON, json, parentOf } from "./store.ts";
+import { quietSql } from "./attempts.ts";
+import { addEntry, ENTRY_JSON, getCard, json, parentOf } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
 export interface Push {
@@ -62,27 +63,36 @@ export function acknowledge(db: DatabaseSync, session: string, entry: number): v
   ).run(Date.now(), session, entry);
 }
 
-const NOT_TAKEN = `SELECT d.session AS session, d.intake AS intake, ${ENTRY_JSON} AS j
+const NOT_TAKEN = `SELECT d.session AS session, d.intake AS intake, s.role AS role, ${ENTRY_JSON} AS j
   FROM deliveries d JOIN sessions s ON s.id = d.session JOIN entries e ON e.id = d.entry
   WHERE d.intake IN ('waiting', 'resent') AND d.state <> 'pending'
-    AND s.role = 'mate' AND s.state = 'idle'
+    AND ((s.role = 'mate' AND s.state = 'idle')
+      OR (s.role = 'worker' AND ${quietSql("s.state", "s.attempt")}))
     AND ?1 - max(d.updated_at, coalesce(s.last_seen, 0)) > ?2
   ORDER BY d.entry`;
 
 function sender(author: string): string {
   if (author.startsWith("worker:")) return "the worker";
   if (author === "check" || author === "captain") return `the ${author}`;
+  if (author.startsWith("job:")) return "the job";
   return author.replace(/^mate:/, "");
 }
 
-function escalate(db: DatabaseSync, mate: string, entry: Entry): string[] {
-  const parent = parentOf(db, mate);
+function escalate(db: DatabaseSync, session: string, role: string, entry: Entry): string[] {
   const what = `this ${entry.kind} from ${sender(entry.author)}`;
-  const line = entry.body.split("\n").find((each) => each.trim() !== "") ?? "";
-  const body = `missed: ${mate} did not take in ${what}, sent twice: ${line.trim()}`;
-  const fields = { condition: "missed", entry: entry.id, mate };
-  const to = parent === null ? [] : [parent];
-  const kind = parent === null ? "note" : "finding";
+  const line = (entry.body.split("\n").find((each) => each.trim() !== "") ?? "").trim();
+  const name = `c-${String(entry.card)}`;
+  const worker = role === "worker";
+  const who = worker ? `the worker on ${name}` : session;
+  const body = `missed: ${who} did not take in ${what}, sent twice: ${line}`;
+  const fields = {
+    condition: "missed",
+    entry: entry.id,
+    ...(worker ? { worker: session } : { mate: session }),
+  };
+  const owner = worker ? getCard(db, entry.card).lane : parentOf(db, session);
+  const to = owner === null ? [] : [owner];
+  const kind = owner === null ? "note" : "finding";
   addEntry(db, { card: entry.card, author: "check", kind, body, fields }, to);
   return to;
 }
@@ -105,6 +115,6 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
         return [session];
       }
       escalated.run(session, entry.id);
-      return escalate(db, session, entry);
+      return escalate(db, session, String(row["role"]), entry);
     });
 }
