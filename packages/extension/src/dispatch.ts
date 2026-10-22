@@ -8,6 +8,7 @@ import type { Link } from "./link.ts";
 export interface Launch {
   readonly url: string;
   readonly piArgs: readonly string[];
+  readonly noMistakes?: string | undefined;
 }
 
 type Plan = OpResult<"attempt.begin">;
@@ -32,6 +33,30 @@ if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1
   fi
 fi
 git -C "$clone" worktree add -q --no-track -b "$branch" "$path" "$start"`;
+
+const NO_MISTAKES_LINE = /^No-mistakes command:/m;
+
+function taskWithCommand(task: string, command: string | undefined): string {
+  if (command === undefined || NO_MISTAKES_LINE.test(task)) return task;
+  return `${task.trimEnd()}\n\nNo-mistakes command: ${command}`;
+}
+
+async function registerClone(
+  command: string,
+  host: string,
+  clone: string,
+  card: number,
+): Promise<void> {
+  try {
+    await onHost(host, [command, "register", clone, `c-${String(card)}`]);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `c-${String(card)} was not started: ${clone} could not be registered with ${command}: ${why}`,
+      { cause: error },
+    );
+  }
+}
 
 async function worktreePane(host: string, plan: Plan, card: number): Promise<string> {
   const tree = worktreeOf(
@@ -123,8 +148,11 @@ export async function dispatch(
     delivery?: Delivery | undefined;
   },
 ): Promise<string> {
-  const plan = await link.call("attempt.begin", request);
+  const task = taskWithCommand(request.task, launch.noMistakes);
+  const plan = await link.call("attempt.begin", { ...request, task });
   const where = `${plan.session} on ${request.host}`;
+  if (launch.noMistakes !== undefined && plan.delivery === "no-mistakes")
+    await registerClone(launch.noMistakes, request.host, plan.clone, request.card);
   const pane = await worktreePane(request.host, plan, request.card);
   if (await piRunning(request.host, pane)) {
     return plan.connected

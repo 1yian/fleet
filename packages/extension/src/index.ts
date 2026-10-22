@@ -36,6 +36,7 @@ function exportHosts(lane: LaneConfig): void {
   process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
   process.env["FLEET_HOST"] ??= lane.host ?? "";
   process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
+  process.env["FLEET_NO_MISTAKES"] ??= lane.noMistakes ?? "";
 }
 
 function config(pi: ExtensionAPI): Config | undefined {
@@ -69,6 +70,11 @@ const mateContract = (): string => charter() + standingRules(HOME());
 function piArgs(): string[] {
   const parsed: unknown = JSON.parse(process.env["FLEET_PI_ARGS"] ?? "[]");
   return Array.isArray(parsed) ? parsed.filter((arg) => typeof arg === "string") : [];
+}
+
+function noMistakes(): string | undefined {
+  const command = process.env["FLEET_NO_MISTAKES"];
+  return command === undefined || command === "" ? undefined : command;
 }
 
 function start(
@@ -131,7 +137,7 @@ function start(
   const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
-    registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
+    registerMate(pi, link, { url, piArgs: piArgs(), noMistakes: noMistakes() }, lanes);
     registerStow(pi, HOME(), lane);
     registerPlan(pi, link);
   }

@@ -1,0 +1,178 @@
+#!/bin/sh
+# Runs the installed no-mistakes against the CNP root: no-mistakes-cnp <no-mistakes arguments>
+# Also: no-mistakes-cnp register <clone> <owner>, no-mistakes-cnp release <clone> <owner>.
+set -eu
+
+folder=${NM_CNP_FOLDER:-$HOME/cnp}
+root=$folder/.no-mistakes
+runs=$folder/.nm-runs
+
+die() {
+  echo "no-mistakes-cnp: $*" >&2
+  exit 2
+}
+
+if [ -z "${NM_CNP_INNER:-}" ]; then
+  [ -d "$folder" ] || die "$folder does not exist"
+  command -v direnv >/dev/null 2>&1 || die "direnv is not installed"
+  case "${NM_HOME:-$root}" in
+    "$root") ;;
+    *) die "NM_HOME is set to another root; unset it to use the CNP root" ;;
+  esac
+  self=$(realpath "$0")
+  NM_CNP_INNER=1 exec direnv exec "$folder" "$self" "$@"
+fi
+
+case "${GH_CONFIG_DIR:-}" in
+  "$folder"/*) ;;
+  *) die "the CNP environment of $folder did not load (GH_CONFIG_DIR is not under it)" ;;
+esac
+
+export NM_HOME=$root
+export NM_TEST_START_DAEMON=1
+
+config=$root/config.yaml
+
+owned_block() {
+  awk '/^# fleet-owned worktree_roots begin$/ {inside = 1} inside {print} /^# fleet-owned worktree_roots end$/ {inside = 0}' "$config"
+}
+
+registered() {
+  owned_block | sed -n 's/^  \(\/.*\): .*$/\1/p'
+}
+
+rewrite_block() {
+  entries=$1
+  tmp=$config.tmp.$$
+  awk '
+    /^# fleet-owned worktree_roots begin$/ {skip = 1}
+    !skip {print}
+    /^# fleet-owned worktree_roots end$/ {skip = 0}
+  ' "$config" > "$tmp"
+  if [ -n "$entries" ]; then
+    {
+      echo "# fleet-owned worktree_roots begin"
+      echo "worktree_roots:"
+      printf '%s\n' "$entries"
+      echo "# fleet-owned worktree_roots end"
+    } >> "$tmp"
+  fi
+  mv "$tmp" "$config"
+}
+
+reap_dead_lock() {
+  mkdir "$lock.reap" 2>/dev/null || return 0
+  if [ -f "$lock/pid" ] && ! kill -0 "$(cat "$lock/pid")" 2>/dev/null; then
+    rm -rf "$lock"
+  fi
+  rmdir "$lock.reap"
+}
+
+with_lock() {
+  mkdir -p "$runs/.owners"
+  lock=$runs/.lock
+  tries=0
+  until mkdir "$lock" 2>/dev/null; do
+    reap_dead_lock
+    tries=$((tries + 1))
+    [ "$tries" -lt 200 ] || die "another registration holds $lock"
+    sleep 0.1
+  done
+  echo $$ > "$lock/pid"
+  trap 'rm -rf "$lock"' EXIT INT TERM
+  "$@"
+}
+
+canon() {
+  (cd "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"
+}
+
+slug_of() {
+  sum=$(printf '%s' "$1" | cksum | cut -d ' ' -f 1)
+  echo "$(basename "$1")-$sum"
+}
+
+reconcile() {
+  entries=""
+  for dir in "$runs"/.owners/*/; do
+    [ -d "$dir" ] || continue
+    slug=$(basename "$dir")
+    clone=$(cat "$dir/clone" 2>/dev/null) || continue
+    set -- "$dir"owner-*
+    [ -e "$1" ] || { rm -rf "$dir"; rmdir "$runs/$slug" 2>/dev/null || true; continue; }
+    entries="$entries${entries:+
+}  $clone: $runs/$slug"
+  done
+  rewrite_block "$entries"
+}
+
+need_config() {
+  [ -f "$config" ] || die "$config does not exist: create the CNP root first"
+}
+
+register() {
+  need_config
+  clone=$(canon "$1")
+  owner=$2
+  slug=$(slug_of "$clone")
+  case "$clone/" in
+    "$root"/*|"$runs"/*) die "$clone is inside the CNP root or run folder" ;;
+  esac
+  mkdir -p "$runs/.owners/$slug" "$runs/$slug"
+  echo "$clone" > "$runs/.owners/$slug/clone"
+  : > "$runs/.owners/$slug/owner-$owner"
+  reconcile
+}
+
+release() {
+  need_config
+  clone=$(canon "$1")
+  owner=$2
+  slug=$(slug_of "$clone")
+  rm -f "$runs/.owners/$slug/owner-$owner"
+  reconcile
+}
+
+case "${1:-}" in
+  register)
+    [ $# -eq 3 ] || die "usage: no-mistakes-cnp register <clone> <owner>"
+    with_lock register "$2" "$3"
+    exit 0
+    ;;
+  release)
+    [ $# -eq 3 ] || die "usage: no-mistakes-cnp release <clone> <owner>"
+    with_lock release "$2" "$3"
+    exit 0
+    ;;
+esac
+
+daemon_environment() {
+  pid=$(sed -n 's/.*"pid" *: *\([0-9][0-9]*\).*/\1/p' "$root/daemon.pid" 2>/dev/null | head -n 1)
+  [ -n "$pid" ] || return 1
+  if [ -r "/proc/$pid/environ" ]; then
+    tr '\0' '\n' < "/proc/$pid/environ"
+  else
+    ps eww -o command= -p "$pid" | tr ' ' '\n'
+  fi
+}
+
+verify_daemon() {
+  env=$(daemon_environment) || return 0
+  printf '%s\n' "$env" | grep -qx "GH_CONFIG_DIR=$GH_CONFIG_DIR" ||
+    die "the daemon of $root does not run in the CNP environment; stop it with: no-mistakes-cnp daemon stop"
+}
+
+case "${1:-}-${2:-}" in
+  daemon-stop|daemon-status) ;;
+  *)
+    if [ -d "$root" ]; then verify_daemon; fi
+    ;;
+esac
+
+status=0
+no-mistakes "$@" || status=$?
+case "${1:-}-${2:-}" in
+  daemon-stop|daemon-status) ;;
+  *) [ "$status" -ne 0 ] || verify_daemon ;;
+esac
+exit "$status"

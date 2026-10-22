@@ -70,6 +70,8 @@ Find your task's Delivery line and follow that section only.
 
 ### Delivery: no-mistakes
 
+If your task has a `No-mistakes command:` line, run that command in place of `no-mistakes` in every step below. It is the same tool with the credentials of this work.
+
 1. Implement the change and commit it on your task branch.
 2. Run `no-mistakes doctor`. If it says the repository is not initialized, run `no-mistakes init`.
 3. Call `report(status="in-review", text="validation started")`.

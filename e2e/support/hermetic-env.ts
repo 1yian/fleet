@@ -7,6 +7,7 @@ const LIVE_FLEET = [
   "FLEET_TOKEN",
   "FLEET_ROLE",
   "FLEET_PI_ARGS",
+  "FLEET_NO_MISTAKES",
   "FLEET_CONFIG_DIR",
 ];
 

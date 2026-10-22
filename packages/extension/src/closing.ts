@@ -188,11 +188,36 @@ async function retire(attempt: Attempt): Promise<string | null> {
   return archive === "" ? null : archive;
 }
 
+async function releaseClones(
+  command: string | undefined,
+  card: number,
+  attempts: readonly Attempt[],
+): Promise<string> {
+  if (command === undefined) return "";
+  const failed: string[] = [];
+  for (const { host, clone } of attempts) {
+    try {
+      await onHost(host, [command, "release", clone, `c-${String(card)}`]);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      failed.push(`${clone} on ${host} (${why})`);
+    }
+  }
+  return failed.length === 0
+    ? ""
+    : ` Still registered with ${command} for c-${String(card)}: ${failed.join("; ")}.`;
+}
+
 export async function close(
   link: Link,
-  request: { card: number; text: string; landed?: boolean | undefined },
+  request: {
+    card: number;
+    text: string;
+    landed?: boolean | undefined;
+    noMistakes?: string | undefined;
+  },
 ): Promise<string> {
-  const { card: id, text, landed } = request;
+  const { card: id, text, landed, noMistakes } = request;
   const plan = await link.call("close.begin", {
     card: id,
     ...(landed === undefined ? {} : { landed }),
@@ -216,8 +241,9 @@ export async function close(
   const found = await refreshClonesInTurn(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
+  const registered = await releaseClones(noMistakes, id, plan.attempts);
   const landing = moved === "" ? "" : ` ${moved}`;
-  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found)}`;
+  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found)}${registered}`;
 }
 
 function outcome(

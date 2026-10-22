@@ -167,7 +167,14 @@ export function registerMate(
       "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the work did not land it refuses, and close(card, summary=<why>, landed=false) ends it as Dropped. It refuses while the card has a hold. Main relays the summary to the captain.",
     parameters: CloseParams,
     execute: async (_id, params) =>
-      reply(await close(link, { card: params.card, text: params.summary, landed: params.landed })),
+      reply(
+        await close(link, {
+          card: params.card,
+          text: params.summary,
+          landed: params.landed,
+          noMistakes: launch.noMistakes,
+        }),
+      ),
   });
   pi.registerTool({
     name: "dispatch",

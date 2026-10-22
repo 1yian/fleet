@@ -19,6 +19,7 @@ export interface LaneConfig {
   readonly args: readonly string[];
   readonly workerArgs: readonly string[];
   readonly direnv?: string;
+  readonly noMistakes?: string;
   readonly cardd?: CarddConfig;
 }
 
@@ -37,6 +38,13 @@ function direnvFolder(file: string, value: unknown): string | undefined {
     throw new Error(`${file}: "direnv" must be an absolute folder or start with ~`);
   }
   return folder;
+}
+
+function noMistakesCommand(file: string, value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value === "" || /\s/.test(value))
+    throw new Error(`${file}: "noMistakes" must be a command name or an absolute path`);
+  return value;
 }
 
 function stringRecord(value: unknown): Record<string, string> {
@@ -82,8 +90,6 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
   if (typeof lane !== "string" || typeof url !== "string" || typeof token !== "string") {
     throw new Error(`${file} needs "lane", "url", and "token"`);
   }
-  const folder = direnvFolder(file, config["direnv"]);
-  const cardd = carddConfig(file, config["cardd"]);
   const own = ownHost(file, config["host"]);
   return {
     lane,
@@ -94,7 +100,20 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
     roots: stringRecord(config["roots"]),
     args: strings(config["args"]),
     workerArgs: strings(config["workerArgs"]),
+    ...optionalSettings(file, config),
+  };
+}
+
+function optionalSettings(
+  file: string,
+  config: Json,
+): Pick<LaneConfig, "direnv" | "noMistakes" | "cardd"> {
+  const folder = direnvFolder(file, config["direnv"]);
+  const noMistakes = noMistakesCommand(file, config["noMistakes"]);
+  const cardd = carddConfig(file, config["cardd"]);
+  return {
     ...(folder === undefined ? {} : { direnv: folder }),
+    ...(noMistakes === undefined ? {} : { noMistakes }),
     ...(cardd === undefined ? {} : { cardd }),
   };
 }

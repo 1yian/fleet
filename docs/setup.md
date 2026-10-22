@@ -189,9 +189,36 @@ This makes the home as a worktree of the checkout, with `config/lane.json`, and 
 - `args` are extra Pi arguments for the mate. `workerArgs` are for its workers, and pick their model as they do for main.
 - `host`, `hosts`, and `roots` work as for main. Give a mate the transport of every other host that has a clone of a project it works on: when it closes a ship card, it refreshes the project's clone on each host, and a host with no transport is skipped with `no transport for <host>`. Main refreshes it when it next starts, and `/updatefleet` still moves a fleet home.
 - `direnv` names a folder whose direnv environment the mate runs in, such as `"~/cnp"` (`--direnv` on `home add`). The mate starts as `direnv exec <folder> pi`, so it gets what that folder's `.envrc` exports, and its home stays where it is. Every start, restart, and restart of a dead mate does this. The folder's `.envrc` must be allowed (`direnv allow <folder>`). The setting does not reach the mate's workers: a worker gets that environment only from its own pane's shell, such as a shell with the direnv hook in a worktree under that folder.
+- `noMistakes` names the command that runs no-mistakes with this lane's credentials, an absolute path such as `"~/fleet/bin/no-mistakes-cnp"` on the host that has the clones. It is empty by default, and nothing changes for a lane without it. See "A separate no-mistakes for a work lane" below.
 - `data/charter.md` is the lane's charter, added to its role contract.
 
 On a remote host, `fleet` must work over a non-interactive SSH session, so Node must be on that session's `PATH`. Check it from main's host: `ssh p620 '~/.fleet/app/bin/fleet status'`.
+
+### A separate no-mistakes for a work lane
+
+A no-mistakes daemon runs `gh`, `git push`, and every pipeline step with the environment it started in. It never reads direnv. A daemon started for your personal repositories therefore pushes and opens pull requests as your personal account, and a `worktree_roots` entry under a work folder does not change that. A work lane that needs the pipeline's push, PR, and CI steps runs its own daemon, started under the work folder's direnv.
+
+`bin/no-mistakes-cnp` is that launcher. It runs the installed `no-mistakes`, unchanged, with `NM_HOME` set to `<folder>/.no-mistakes` and under `direnv exec <folder>`. The folder is `~/cnp`, or `NM_CNP_FOLDER`. It sets `NM_TEST_START_DAEMON=1`, which is no-mistakes' own switch for starting its daemon as a detached process that inherits the CLI's environment, so a daemon that a command starts again after a crash still has the work credentials. No launchd or systemd service is installed for this root. The personal daemon, its root, and its config are never touched.
+
+It refuses to run, with one line and exit status 2, when `NM_HOME` is set to another root, when the folder's environment did not load (`GH_CONFIG_DIR` is not under the folder), and when the daemon of the work root runs without that `GH_CONFIG_DIR`. `daemon stop` and `daemon status` always go through, so a daemon started the wrong way can be stopped.
+
+One-time setup on the host, by the person who owns the work credentials:
+
+1. Allow the folder: `direnv allow ~/cnp`.
+2. Create `~/cnp/.no-mistakes/config.yaml`. Copy the settings of the personal `config.yaml` that the work needs, without `worktree_roots`, and add the work GitHub profile, which makes no-mistakes itself refuse any run that does not use that account:
+
+   ```yaml
+   forge_profiles:
+     github.com:
+       gh_config_dir: /Users/you/cnp/.config/gh
+       expected_login: your-work-login
+   ```
+
+3. In each work clone, run `no-mistakes-cnp init`. Use it for every no-mistakes command of that clone from then on.
+
+`no-mistakes-cnp register <clone> <owner>` and `release <clone> <owner>` keep a block of the root's `config.yaml`, between the lines `# fleet-owned worktree_roots begin` and `end`, that places the run worktrees of each registered clone under `<folder>/.nm-runs`. Every other line of the config stays as it is. A clone stays in the block while any owner is registered. Both commands take a lock, and replace the file whole.
+
+To route a lane's workers to it, set `noMistakes` in the lane's `config/lane.json`. Then dispatch of a no-mistakes card registers the card's clone as owner `c-<N>` before the worker starts, and refuses to start the worker if that fails. The worker's task gets a `No-mistakes command:` line, and the worker runs that command in place of `no-mistakes`. Closing the card releases the clone, and the close says what is still registered when that fails. Delivery modes are not changed.
 
 You do not start second mates by hand. Main starts them.
 
