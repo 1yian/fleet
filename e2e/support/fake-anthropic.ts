@@ -11,14 +11,17 @@ function controlUrl(): string {
 }
 
 export default function fakeAnthropic(pi: ExtensionAPI): void {
-  const model = (id: string): Parameters<ExtensionAPI["registerProvider"]>[1]["models"] => [
+  const model = (
+    id: string,
+    contextWindow = 1_000_000,
+  ): Parameters<ExtensionAPI["registerProvider"]>[1]["models"] => [
     {
       id,
       name: id,
       reasoning: false,
       input: ["text"],
       cost: PROMPT_TOKENS_COST,
-      contextWindow: 100_000_000,
+      contextWindow,
       maxTokens: 4096,
       promptCache: { short: SHORT_LIFETIME_SECONDS, long: LONG_LIFETIME_SECONDS },
     },
@@ -28,6 +31,34 @@ export default function fakeAnthropic(pi: ExtensionAPI): void {
     apiKey: "scripted",
     api: "anthropic-messages",
     headers: { "x-fake-agent": process.env["FLEET_FAKE_AGENT"] ?? "default" },
-    models: ["orchestrator", "auto", "quick"].flatMap((id) => model(id) ?? []),
+    models: [
+      ...["orchestrator", "auto", "quick"].flatMap((id) => model(id) ?? []),
+      ...(model("small", 200_000) ?? []),
+    ],
+  });
+  let routes = 0;
+  pi.registerVirtualModel({
+    provider: "tier",
+    id: "routed",
+    name: "routed",
+    thinkingLevels: ["off"],
+    route: (_request, ctx) => {
+      const physical = ctx.modelRegistry.find("tier", "auto");
+      if (physical === undefined) throw new Error("tier/auto is not registered");
+      return { model: physical, thinkingLevel: "off" };
+    },
+  });
+  pi.registerVirtualModel({
+    provider: "tier",
+    id: "swing",
+    name: "swing",
+    thinkingLevels: ["off"],
+    route: (_request, ctx) => {
+      routes += 1;
+      const id = routes === 1 ? "auto" : "small";
+      const physical = ctx.modelRegistry.find("tier", id);
+      if (physical === undefined) throw new Error(`tier/${id} is not registered`);
+      return { model: physical, thinkingLevel: "off" };
+    },
   });
 }

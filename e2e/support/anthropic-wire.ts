@@ -7,10 +7,11 @@ export interface WireCall {
   readonly turns: readonly { readonly role: string; readonly text: string }[];
 }
 
-export type WireMove =
+export type WireMove = { readonly promptTokens?: number } & (
   | { readonly text: string; readonly thinking?: string }
   | { readonly texts: readonly string[]; readonly thinking?: string }
-  | { readonly tool: string; readonly args?: Readonly<Record<string, string | number | boolean>> };
+  | { readonly tool: string; readonly args?: Readonly<Record<string, string | number | boolean>> }
+);
 
 const PROMPT_TOKENS = 100_000;
 
@@ -70,7 +71,7 @@ function spokenBy(move: WireMove): string {
 }
 
 export function stream(move: WireMove): string {
-  const usage = { input_tokens: PROMPT_TOKENS, output_tokens: 1 };
+  const usage = { input_tokens: move.promptTokens ?? PROMPT_TOKENS, output_tokens: 1 };
   const block =
     "tool" in move
       ? { type: "tool_use", id: "toolu_1", name: move.tool, input: {} }

@@ -21,14 +21,15 @@ export interface Turn {
   readonly role: string;
   readonly text: string;
 }
-type Move =
+type Move = { readonly promptTokens?: number } & (
   | { readonly text: string; readonly thinking?: string }
   | { readonly texts: readonly string[]; readonly thinking?: string }
   | {
       readonly tool: string;
       readonly text?: string;
       readonly args?: Readonly<Record<string, string | number | boolean>>;
-    };
+    }
+);
 export interface Failure {
   readonly fail: string;
 }
