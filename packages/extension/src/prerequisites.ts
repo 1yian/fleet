@@ -166,9 +166,12 @@ function memoryProblems(root: string, host: string): string[] {
     const settings = settingsOf(home);
     if (settings === undefined || settings["enabled"] === false) return [];
     const profile = profileOf(home, settings);
-    if (PROFILE_FILES.every((file) => existsSync(join(profile, file)))) return [];
+    const missing = PROFILE_FILES.filter((file) => !existsSync(join(profile, file)));
+    if (missing.length === 0) return [];
     const fix = `Fix: ${join(root, "bin", "fleet")} home memory ${lane ?? ""}`;
-    return [`optchat of lane ${lane ?? ""} has no profile ${profile} on ${host}. ${fix}`];
+    return [
+      `optchat of lane ${lane ?? ""} has no ${missing.join(" and ")} in profile ${profile} on ${host}. ${fix}`,
+    ];
   });
 }
 

@@ -16,6 +16,8 @@ export interface MemoryOptions {
 }
 
 const MEMORY_HOME = join("data", "optchat");
+const PROFILE_FILES = ["AGENTS.md", "config.json"] as const;
+type ProfileFile = (typeof PROFILE_FILES)[number];
 const SOCKET_PATH_LIMIT = process.platform === "darwin" ? 103 : 107;
 
 function makeProfile(home: string, lane: string, options: MemoryOptions): string {
@@ -26,26 +28,31 @@ function makeProfile(home: string, lane: string, options: MemoryOptions): string
       `the profile's socket path is longer than ${String(SOCKET_PATH_LIMIT)} bytes: ${socket}`,
     );
   }
-  if (existsSync(join(profile, "AGENTS.md"))) return `profile: ${lane} is there already`;
+  const missing = PROFILE_FILES.filter((file) => !existsSync(join(profile, file)));
+  if (missing.length === 0) return `profile: ${lane} is there already`;
   mkdirSync(profile, { recursive: true, mode: 0o700 });
-  if (options.seed !== undefined) {
-    for (const file of ["AGENTS.md", "config.json"]) {
+  const defaults = defaultProfile(lane, options);
+  for (const file of missing) {
+    if (options.seed === undefined) {
+      writeFileSync(join(profile, file), defaults[file], { mode: 0o600 });
+    } else {
       copyFileSync(join(options.seed, file), join(profile, file));
     }
-    return `profile: ${lane}, from ${options.seed}`;
   }
+  const source = options.seed === undefined ? "" : ` from ${options.seed}`;
+  if (missing.length < PROFILE_FILES.length)
+    return `profile: ${lane}, added ${missing.join(" and ")}${source}`;
+  return `profile: ${lane}, ${options.seed === undefined ? "new" : `from ${options.seed}`}`;
+}
+
+function defaultProfile(lane: string, options: MemoryOptions): Record<ProfileFile, string> {
   const [provider = "tier", model = "compact"] = options.compactor?.split("/") ?? [];
   const choice = { provider, model, thinking: options.thinking ?? "low" };
   const settings = { compactor: choice, subagent: { ...choice, thinking: "off" } };
-  writeFileSync(join(profile, "config.json"), `${JSON.stringify(settings, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  writeFileSync(
-    join(profile, "AGENTS.md"),
-    `# ${lane}\n\nThe ${lane} mate's conversation recall. The fleet's role contract, the lane's charter, and the cards remain authoritative.\n`,
-    { mode: 0o600 },
-  );
-  return `profile: ${lane}, new`;
+  return {
+    "config.json": `${JSON.stringify(settings, null, 2)}\n`,
+    "AGENTS.md": `# ${lane}\n\nThe ${lane} mate's conversation recall. The fleet's role contract, the lane's charter, and the cards remain authoritative.\n`,
+  };
 }
 
 function writeSettings(home: string, lane: string, options: MemoryOptions): string {

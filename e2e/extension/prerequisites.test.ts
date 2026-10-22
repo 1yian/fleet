@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -252,7 +252,7 @@ test("fleet up starts no mate whose conversation memory has no profile, and star
 
   assert.equal(
     refusal(["up"], {}),
-    `optchat of lane cleo has no profile ${profile} on ${HOST}. ${fix}\n`,
+    `optchat of lane cleo has no AGENTS.md and config.json in profile ${profile} on ${HOST}. ${fix}\n`,
   );
   assert.equal(status(), "cleo: down\n");
 
@@ -260,12 +260,23 @@ test("fleet up starts no mate whose conversation memory has no profile, and star
   writeFileSync(join(profile, "AGENTS.md"), "# cleo\n");
   assert.equal(
     refusal(["up"], {}),
-    `optchat of lane cleo has no profile ${profile} on ${HOST}. ${fix}\n`,
+    `optchat of lane cleo has no config.json in profile ${profile} on ${HOST}. ${fix}\n`,
   );
-  writeFileSync(
-    join(profile, "config.json"),
-    JSON.stringify({ compactor: MODEL, subagent: MODEL }),
-  );
+  const made = scratch.fleet([
+    "home",
+    "memory",
+    "cleo",
+    "--compactor",
+    "fake/scripted",
+    "--thinking",
+    "off",
+  ]);
+  assert.match(made, /cleo: profile: cleo, added config\.json\n/);
+  assert.equal(readFileSync(join(profile, "AGENTS.md"), "utf8"), "# cleo\n");
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, "config.json"), "utf8")), {
+    compactor: MODEL,
+    subagent: MODEL,
+  });
   assert.equal(
     scratch.fleet(["up"], { HERDR_SESSION: lab.name }),
     "cleo: started in 2ndmate-cleo\n",

@@ -163,7 +163,7 @@ One command turns memory on in a home, for main and for each second mate alike:
 
 It does two things, all inside that lane's home, and skips each one that is done already:
 
-- makes the lane's profile in `data/optchat/profiles/<lane>`. With `--seed`, it copies only `AGENTS.md` and `config.json` from that folder, such as the lane's old Firstmate profile. Without it, the profile is new. Either way the memory starts empty.
+- makes the lane's profile in `data/optchat/profiles/<lane>`. With `--seed`, it copies only `AGENTS.md` and `config.json` from that folder, such as the lane's old Firstmate profile. Without it, the profile is new. Either way the memory starts empty. A profile that has only one of the two files gets the missing one, and the file that is there is kept.
 - writes `config/optchat.json`: `data/optchat` as the memory home, and the lane as the profile. `--compactor` and `--thinking` pick the model that writes the memory's summaries. Without `--compactor`, summaries go to `tier/compact`, and to the mate's own model only on a host that has no such tier. Summaries are thousands of small calls a day, so they never default to the mate's expensive model. If the file is there with `"enabled": false`, it sets `"enabled": true` and keeps the rest.
 
 Each lane has its own profile in its own home. Never copy one home's `config/`, `data/`, or `state/` into another. The profile's lock socket must fit a socket path (103 bytes on macOS), so the command refuses a home whose path is too long.
