@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import { mateArgs, Scratch } from "../support/scratch.ts";
+import { settingsArgs, Scratch } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const PROBE = fileURLToPath(new URL("../support/probe.ts", import.meta.url));
@@ -48,19 +48,19 @@ const startsOn = async (): Promise<string[]> => {
   return h.modelsOf("mate");
 };
 
-test("a second mate whose lane asks for another model starts on the orchestrator tier, and again after a restart", async () => {
+async function verifyMate(args: string[], selected: string): Promise<void> {
   const token = cardd.addLane("cnp", "main");
   scratch.addLane("cnp", {
     url: cardd.url,
     token,
-    args: [...mateArgs(h), "-e", PROBE, "--provider", "tier", "--model", "auto"],
+    args: [...settingsArgs(h), "-e", PROBE, ...args],
   });
   const fleet = (...args: string[]): string =>
     scratch.fleet(args, { ...h.piEnv("mate"), HERDR_SESSION: lab.name });
 
   assert.match(fleet("up", "cnp"), /cnp: started/);
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to join the fleet");
-  assert.deepEqual(await startsOn(), ["tier/orchestrator"]);
+  assert.deepEqual(await startsOn(), [selected]);
 
   assert.match(fleet("restart", "cnp"), /cnp: started/);
   await h.waitForNth(
@@ -68,5 +68,20 @@ test("a second mate whose lane asks for another model starts on the orchestrator
     2,
     "the mate to join again after the restart",
   );
-  assert.deepEqual(await startsOn(), ["tier/orchestrator", "tier/orchestrator"]);
+  assert.deepEqual(await startsOn(), [selected, selected]);
+}
+
+test("a second mate defaults to orchestrator, including after restart", async () => {
+  await verifyMate([], "tier/orchestrator");
+});
+
+test("a second mate preserves explicit Vertex routing, including after restart", async () => {
+  await verifyMate(
+    ["--provider", "google-vertex", "--model", "gemini-2.5-pro"],
+    "google-vertex/gemini-2.5-pro",
+  );
+});
+
+test("a second mate preserves a provider-qualified explicit model", async () => {
+  await verifyMate(["--model", "google-vertex/gemini-2.5-pro"], "google-vertex/gemini-2.5-pro");
 });

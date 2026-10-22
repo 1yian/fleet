@@ -75,6 +75,7 @@ export default function fakeModel(pi: ExtensionAPI): void {
   if (argvFile !== undefined) writeFileSync(argvFile, `${process.argv.join("\n")}\n`);
   const providers = [
     fauxProvider({ provider: "fake", models: [{ id: "scripted" }] }),
+    fauxProvider({ provider: "google-vertex", models: [{ id: "gemini-2.5-pro" }] }),
     fauxProvider({
       provider: "tier",
       models: [{ id: "orchestrator" }, { id: "auto" }, { id: "quick" }],
