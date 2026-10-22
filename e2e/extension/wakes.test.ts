@@ -247,6 +247,29 @@ test("an unanswered wake is resent once, then main hears, and later wakes are sk
   );
 });
 
+test("while the fleet is paused a due wake is skipped with a note, and after fleet resume the next one comes", async () => {
+  setPlan(PLAN);
+  startMate("up");
+  await mateLoaded();
+
+  await main.call("fleet.pause", { reason: "Claude is out" });
+  setClock("2026-05-04T09:00:00Z");
+  const skipNote = "scheduled wake 2026-05-04T09:00 UTC skipped: the fleet is paused";
+  await until(
+    async () => ((await laneThread()).some((entry) => entry.body === skipNote) ? true : undefined),
+    "the skip note",
+  );
+  assert.deepEqual(heard(WAKE), []);
+
+  await main.call("fleet.resume", {});
+  setClock("2026-05-04T17:00:00Z");
+  const [woken] = await hears(WAKE);
+  assert.match(
+    woken ?? "",
+    /^\[fleet\] scheduled wake 2026-05-04T17:00 UTC: Evening look \(reply owed, r-\d+:/,
+  );
+});
+
 test("a changed plan applies after the mate restarts, and a cardd restart repeats no wake", async () => {
   setPlan({
     ...PLAN,

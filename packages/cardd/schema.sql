@@ -120,6 +120,13 @@ CREATE TABLE lanes (
   parent TEXT REFERENCES lanes (name)
 , card INTEGER REFERENCES cards (id)) STRICT;
 
+CREATE TABLE pause (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  since INTEGER NOT NULL,
+  by TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT ''
+) STRICT;
+
 CREATE TABLE projects (
   name TEXT PRIMARY KEY,
   clones TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(clones)),

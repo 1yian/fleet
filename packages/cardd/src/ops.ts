@@ -23,6 +23,7 @@ import { lookUpPr } from "./pulls.ts";
 import { requireOwedBy } from "./replies.ts";
 import { factsFrom } from "./status.ts";
 import type { Timings } from "./timing.ts";
+import { pause, refuseWhilePaused, resume } from "./pause.ts";
 import { scriptWake } from "./wakes.ts";
 import {
   addCard,
@@ -134,13 +135,20 @@ const HANDLERS: Record<OpName, Handler> = {
     notify: [],
   }),
   wake: (db, session, raw) => {
+    refuseWhilePaused(db, "wake");
     const entry = scriptWake(db, session.lane, check(OPS.wake.args, raw));
     return { value: { entry }, notify: [session.lane] };
   },
+  "fleet.pause": (db, session, raw) => {
+    const { reason = "" } = check(OPS["fleet.pause"].args, raw);
+    return { value: pause(db, session.lane, reason, Date.now()), notify: [] };
+  },
+  "fleet.resume": (db) => ({ value: { resumed: resume(db) }, notify: [] }),
   "attempt.begin": (db, session, raw) => {
     const args = check(OPS["attempt.begin"].args, raw);
     const card = ownCard(db, session, args.card);
     requireOpen(db, card);
+    refuseWhilePaused(db, "new worker");
     if (card.kind === "captain") {
       throw new Error(
         `c-${String(card.id)} is a captain card: it is for the captain alone, so no worker runs it`,

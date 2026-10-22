@@ -10,17 +10,23 @@ import {
   up,
   type Outcome,
 } from "./homes.ts";
-import { DEFAULT_COSTS, isRecord, strings, type LaneConfig } from "./lane-config.ts";
+import {
+  DEFAULT_COSTS,
+  isRecord,
+  readLaneConfig,
+  strings,
+  type LaneConfig,
+} from "./lane-config.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences } from "./standing.ts";
 import { hostProblems } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
-import { wakeMate } from "./wake.ts";
+import { pauseFleet, resumeFleet, wakeMate } from "./wake.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | pause [reason] | resume | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -208,6 +214,21 @@ switch (command ?? "") {
     await wakeMate(existingHome(root, name), args).then(
       () => {
         console.log(`${name}: woken`);
+      },
+      (error: unknown) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      },
+    );
+    break;
+  }
+  case "pause":
+  case "resume": {
+    const home = readLaneConfig(process.cwd()) === undefined ? root : process.cwd();
+    const done = command === "pause" ? pauseFleet(home, rest[0]) : resumeFleet(home);
+    await done.then(
+      (line) => {
+        console.log(line);
       },
       (error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));

@@ -1,5 +1,6 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
+import { PAUSE_OPS } from "./pause.ts";
 import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
 
 export * from "./branch.ts";
@@ -367,6 +368,7 @@ export const OPS = {
     args: WakeArgsSchema,
     result: Type.Object({ entry: Type.Integer() }),
   },
+  ...PAUSE_OPS,
   report: {
     roles: ["worker"],
     args: Type.Object({

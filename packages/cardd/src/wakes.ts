@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
+import { pauseOf } from "./pause.ts";
 import { activePlans } from "./plans.ts";
 import { unansweredWake } from "./replies.ts";
 import { dueSlots, type Slot } from "./schedule.ts";
@@ -20,7 +21,17 @@ function issued(db: DatabaseSync, card: number, key: string): boolean {
   return found !== undefined;
 }
 
+function skip(db: DatabaseSync, card: number, body: string, slots: string[]): [] {
+  addEntry(
+    db,
+    { card, author: SCHEDULE, kind: "note", body, fields: { condition: "wake-skipped", slots } },
+    [],
+  );
+  return [];
+}
+
 export function scheduledWakes(db: DatabaseSync, now: number): string[] {
+  const paused = pauseOf(db) !== undefined;
   return activePlans(db).flatMap(({ lane, card, plan }) => {
     const due = dueSlots(plan, plan.since, now).filter((slot) => !issued(db, card, slotKey(slot)));
     const parent = parentOf(db, lane);
@@ -32,22 +43,15 @@ export function scheduledWakes(db: DatabaseSync, now: number): string[] {
         .at(-1) ?? "";
     const at = `${minute} ${plan.timezone}`;
     const slots = due.map(slotKey);
+    if (paused) return skip(db, card, `scheduled wake ${at} skipped: the fleet is paused`, slots);
     const waiting = unansweredWake(cardEntries(db, card));
-    if (waiting !== undefined) {
-      const body = `scheduled wake ${at} skipped: ${waiting.id} is still unanswered`;
-      addEntry(
+    if (waiting !== undefined)
+      return skip(
         db,
-        {
-          card,
-          author: SCHEDULE,
-          kind: "note",
-          body,
-          fields: { condition: "wake-skipped", slots },
-        },
-        [],
+        card,
+        `scheduled wake ${at} skipped: ${waiting.id} is still unanswered`,
+        slots,
       );
-      return [];
-    }
     const late = (slot: Slot): string =>
       slot.minute === minute ? slot.purpose : `${slot.purpose} [due ${slot.minute}]`;
     const body = `scheduled wake ${at}: ${due.map(late).join("; ")}`;

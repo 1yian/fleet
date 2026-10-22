@@ -263,7 +263,11 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
 | `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
 | `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                 |
+| `fleet pause [reason]`                   | Pauses the fleet: no new worker starts and no wake is sent (below).                         |
+| `fleet resume`                           | Ends the pause.                                                                             |
 | `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                |
+
+`fleet pause` is the captain's switch for spending. While the fleet is paused, `dispatch` refuses to start a worker, a script wake is refused, and a due scheduled wake is skipped with a note on the lane card (it does not come late after the pause). Running workers and mates go on, so the captain can still talk to them; `fleet stop <lane>` stops a lane. It uses the lane token of the home it runs in, or main's from the checkout.
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 
