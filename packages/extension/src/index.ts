@@ -6,6 +6,7 @@ import { registerBranch } from "./branch.ts";
 import { applyCachePolicy, applyTierPolicy } from "./cache-policy.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
+import { Digest } from "./digest.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs } from "./jobs.ts";
@@ -97,6 +98,7 @@ function start(
   { url, token, role, lane, costs }: Config,
   sessionFile: string | undefined,
 ): void {
+  const digest = new Digest(pi, costs);
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
   let unreadable: string | undefined;
@@ -126,6 +128,7 @@ function start(
       const seen = again ? injectedAgain : injected;
       if (seen.has(entry.id)) return;
       seen.add(entry.id);
+      const routine = digest.holds(entry, mode);
       pi.sendMessage(
         {
           customType: "fleet",
@@ -133,8 +136,9 @@ function start(
           display: true,
           details: { entryId: entry.id },
         },
-        { triggerTurn: true, deliverAs: mode },
+        routine ? { deliverAs: "nextTurn" } : { triggerTurn: true, deliverAs: mode },
       );
+      if (routine) link.ack(entry.id);
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.kind === "job-result" || entry.kind === "review-feedback")
         jobs?.finished(entry.fields["job"]);
@@ -171,6 +175,7 @@ function start(
     link.stop();
   });
   registerIntake(pi, link);
+  digest.register();
   const active = (): void => {
     link.activity("running");
   };

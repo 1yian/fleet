@@ -1,10 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Harness } from "./harness.ts";
 import type { HerdrLab } from "./herdr.ts";
-import { records } from "./json.ts";
+import { isRecord, records } from "./json.ts";
 import { tempDir } from "./run-root.ts";
 import "./hermetic-env.ts";
 import "./tool-stubs.ts";
@@ -68,6 +76,7 @@ export class Scratch {
       hosts?: unknown;
       roots?: unknown;
       direnv?: string;
+      costs?: Record<string, unknown>;
     },
   ): string {
     const args = ["home", "add", lane, "--url", settings.url, "--token", settings.token];
@@ -80,7 +89,12 @@ export class Scratch {
     );
     if (settings.direnv !== undefined) args.push("--direnv", settings.direnv);
     if (settings.host !== undefined) args.push("--host", settings.host);
-    return this.fleet(args).trim();
+    const home = this.fleet(args).trim();
+    const file = join(home, "config", "lane.json");
+    const written: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const costs = { ...IMMEDIATE, ...settings.costs };
+    writeFileSync(file, JSON.stringify({ ...Object(written), costs }));
+    return home;
   }
 
   dispose(): void {
@@ -102,6 +116,8 @@ export function settingsArgs(h: Harness): string[] {
   );
 }
 
+const IMMEDIATE = { digestMinutes: 0 };
+
 export function configureMain(
   scratch: Scratch,
   url: string,
@@ -109,7 +125,8 @@ export function configureMain(
   more: Record<string, unknown> = {},
 ): void {
   mkdirSync(join(scratch.root, "config"), { recursive: true });
-  const lane = { lane: "main", url, token, ...more };
+  const costs = { ...IMMEDIATE, ...(isRecord(more["costs"]) ? more["costs"] : {}) };
+  const lane = { lane: "main", url, token, ...more, costs };
   writeFileSync(join(scratch.root, "config", "lane.json"), JSON.stringify(lane));
 }
 

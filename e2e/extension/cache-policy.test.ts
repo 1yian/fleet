@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -124,17 +124,12 @@ test("a worker keeps the five-minute retention, whatever main inherited, and run
 
 test("a second mate whose lane sets costs.mateCacheRetention to long asks for one-hour retention, and again after a restart", async () => {
   const herdr = await startLab("short");
-  const home = scratch.addLane("cnp", {
+  scratch.addLane("cnp", {
     url: cardd.url,
     token: cardd.addLane("cnp", "main"),
     args: [...wireArgs(), "-e", PROBE],
+    costs: { mateCacheRetention: "long" },
   });
-  const laneFile = join(home, "config", "lane.json");
-  const lane: unknown = JSON.parse(readFileSync(laneFile, "utf8"));
-  writeFileSync(
-    laneFile,
-    JSON.stringify({ ...Object(lane), costs: { mateCacheRetention: "long" } }),
-  );
   const fleet = (...args: string[]): string =>
     scratch.fleet(args, {
       ...h.piEnv("mate"),

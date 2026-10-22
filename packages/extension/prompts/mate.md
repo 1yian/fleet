@@ -45,6 +45,7 @@ Do one action per card, then stop. Do not narrate routine progress to the captai
 
 | The `[fleet]` message starts with | Do this |
 |---|---|
+| `[fleet] digest:` | Routine updates (reports, comments, closes, findings) are held up to a few minutes and come together, with this line. Handle each one as its own row below says, in one turn. Updates that wait on you (questions, holds, owed replies, the captain's words) never wait for a digest. |
 | `[fleet] c-N in-review:` | Nothing. The worker runs its validation. |
 | `[fleet] c-N working:` | This is the first report after your comment. Check that the worker followed it. If not, `comment` again. |
 | `[fleet] c-N done:` and the card is now `with-mate` (a scout) | Read the report. Relay the findings to the captain (section 8). Bundle the open decisions into one `hold` that points at the report (section 7). Once it is cleared, `close`. |

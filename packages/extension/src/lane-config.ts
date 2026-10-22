@@ -81,10 +81,10 @@ function carddConfig(file: string, value: unknown): CarddConfig | undefined {
   return { host, root, db, restart: command };
 }
 
-function count(file: string, key: string, value: unknown, fallback: number): number {
+function amount(file: string, key: string, value: unknown, fallback: number): number {
   if (value === undefined) return fallback;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
-    throw new Error(`${file}: "costs.${key}" must be a whole number of at least 0`);
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+    throw new Error(`${file}: "costs.${key}" must be a number of at least 0`);
   return value;
 }
 
@@ -96,17 +96,14 @@ function costsConfig(file: string, value: unknown): Costs {
     throw new Error(`${file}: "costs.mateCacheRetention" must be "short" or "long"`);
   return {
     mateCacheRetention,
-    digestMinutes: count(
+    digestMinutes: amount(
       file,
       "digestMinutes",
       value["digestMinutes"],
       DEFAULT_COSTS.digestMinutes,
     ),
-    workerContextCap: count(
-      file,
-      "workerContextCap",
-      value["workerContextCap"],
-      DEFAULT_COSTS.workerContextCap,
+    workerContextCap: Math.round(
+      amount(file, "workerContextCap", value["workerContextCap"], DEFAULT_COSTS.workerContextCap),
     ),
   };
 }
