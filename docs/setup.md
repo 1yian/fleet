@@ -130,6 +130,7 @@ pi
 - For main's own Pi, use Pi's settings: `.pi/settings.json` sets `tier/orchestrator`. `args` is only used when `fleet up` starts a second mate.
 - `data/charter.md` is added to main's role contract at every start. Keep the lane table there: each lane's name, host, and scope. The captain's preferences are not charter text: they are standing rules (below).
 - The fleet sets Pi's prompt cache retention by role: every mate asks for one-hour retention and every worker keeps the five-minute default. It overrides an inherited `PI_CACHE_RETENTION` and changes no settings file. Cache warming is not set per role: it follows Pi's global `cacheWarming` setting until Pi can set it per process. The reasons and the limits are in [code.md](code.md#prompt-cache-policy).
+- The fleet also limits a worker's context by role: an effective limit of the model's own window capped at 500K, compacting at 80% of it: 400K on a 1M model, 160K on a 200K model. A mate keeps Pi's own limits. It changes no settings file. The reasons and the limits are in [code.md](code.md#worker-context-policy).
 - `pi -c` continues the last conversation in this folder. Plain `pi` starts a new one, and conversation memory carries what matters.
 
 ### Standing rules and `/stow`
@@ -178,7 +179,7 @@ On the host where a mate runs, from that host's checkout:
 
 ```sh
 <checkout>/bin/fleet home add cleo --url ws://<cardd>:7420/session --token <the token from lane add cleo> \
-  --args '["--model","tier/default"]' --worker-args '["--model","tier/quick"]' \
+  --worker-args '["--model","tier/quick"]' \
   --host p620 --hosts '{"maverick":["ssh","maverick"]}'
 <checkout>/bin/fleet home memory cleo --compactor tier/compact --thinking low
 $EDITOR <checkout>.worktrees/lane-cleo/data/charter.md     # cleo's charter
@@ -186,7 +187,7 @@ $EDITOR <checkout>.worktrees/lane-cleo/data/charter.md     # cleo's charter
 
 This makes the home as a worktree of the checkout, with `config/lane.json`, and turns on its conversation memory (section 4). The mate's own settings:
 
-- `args` are extra Pi arguments for the mate. `workerArgs` are for its workers, and pick their model as they do for main.
+- `args` are extra Pi arguments for the mate. `fleet up` and `fleet restart` always start a mate on `tier/orchestrator`: they drop any `--model` and `--provider` in `args`, including one that an older home still has, and pass `--model tier/orchestrator`. `workerArgs` are for its workers, and pick their model as they do for main.
 - `host`, `hosts`, and `roots` work as for main. Give a mate the transport of every other host that has a clone of a project it works on: when it closes a ship card, it refreshes the project's clone on each host, and a host with no transport is skipped with `no transport for <host>`. Main refreshes it when it next starts, and `/updatefleet` still moves a fleet home.
 - `direnv` names a folder whose direnv environment the mate runs in, such as `"~/cnp"` (`--direnv` on `home add`). The mate starts as `direnv exec <folder> pi`, so it gets what that folder's `.envrc` exports, and its home stays where it is. Every start, restart, and restart of a dead mate does this. The folder's `.envrc` must be allowed (`direnv allow <folder>`). The setting does not reach the mate's workers: a worker gets that environment only from its own pane's shell, such as a shell with the direnv hook in a worktree under that folder.
 - `data/charter.md` is the lane's charter, added to its role contract.

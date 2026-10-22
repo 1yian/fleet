@@ -99,6 +99,19 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
   };
 }
 
+const MATE_MODEL = "tier/orchestrator";
+const MODEL_FLAGS = ["--model", "--provider"];
+
+export function mateStartArgs(args: readonly string[]): string[] {
+  const kept = args.filter(
+    (arg, index) =>
+      !MODEL_FLAGS.includes(arg) &&
+      !MODEL_FLAGS.includes(args[index - 1] ?? "") &&
+      !MODEL_FLAGS.some((flag) => arg.startsWith(`${flag}=`)),
+  );
+  return ["--model", MATE_MODEL, ...kept];
+}
+
 export function workerPiArgs(lane: LaneConfig): string[] {
   const own = lane.workerArgs;
   if (own.some((arg) => arg === "--model" || arg.startsWith("--model="))) return [...own];

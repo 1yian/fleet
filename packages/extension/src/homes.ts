@@ -13,7 +13,13 @@ import { fileURLToPath } from "node:url";
 import { arrangeHere, claimFollowers } from "./arrange.ts";
 import { field, herdr as herdrOn, piRunning, quote, records } from "./host.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
-import { isRecord, LANE_FILE, readLaneConfig, type LaneConfig } from "./lane-config.ts";
+import {
+  isRecord,
+  LANE_FILE,
+  mateStartArgs,
+  readLaneConfig,
+  type LaneConfig,
+} from "./lane-config.ts";
 import { isMateWorkspace, mateTitle } from "./titles.ts";
 
 interface LaneHome {
@@ -175,7 +181,7 @@ async function start(root: string, info: LaneHome): Promise<void> {
     pane = field(isRecord(created["root_pane"]) ? created["root_pane"] : undefined, "pane_id");
   } else pane = await panesOf(workspace);
   if (pane === undefined) throw new Error(`workspace ${mateTitle(info.lane)} has no pane`);
-  const pi = ["pi", "--continue", ...info.config.args];
+  const pi = ["pi", "--continue", ...mateStartArgs(info.config.args)];
   const { direnv } = info.config;
   const command = direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi];
   await herdr(["pane", "run", pane, `cd ${quote(info.home)} && ${command.map(quote).join(" ")}`]);
