@@ -16,8 +16,10 @@ const FAKE_MODEL = fileURLToPath(new URL("fake-model.ts", SUPPORT));
 const FAKE_ANTHROPIC = fileURLToPath(new URL("fake-anthropic.ts", SUPPORT));
 const PROBE = fileURLToPath(new URL("probe.ts", SUPPORT));
 
-const BELOW_COMPACTION = 390_000;
-const ABOVE_COMPACTION = 410_000;
+const BELOW_COMPACTION = 190_000;
+const ABOVE_COMPACTION = 210_000;
+const BELOW_WIDER_COMPACTION = 390_000;
+const ABOVE_WIDER_COMPACTION = 410_000;
 const BELOW_SMALL_COMPACTION = 150_000;
 const ABOVE_SMALL_COMPACTION = 170_000;
 const MATE_OVER_WORKER_LIMIT = 450_000;
@@ -65,7 +67,12 @@ const askedByWorker = (call: WireCall): boolean => call.role === "worker" && !ca
 const askedByMate = (call: WireCall): boolean =>
   call.role === "mate" && !call.warm && !isCompaction(call);
 
-async function runWorker(model: string, first: number, second: number): Promise<WireCall> {
+async function runWorker(
+  model: string,
+  first: number,
+  second: number,
+  lane: Record<string, unknown> = {},
+): Promise<WireCall> {
   h.onModel(
     () => ({
       tool: "card_new",
@@ -90,6 +97,7 @@ async function runWorker(model: string, first: number, second: number): Promise<
   h.onModel(() => ({ text: "done", promptTokens: second }), "worker");
   configureMain(scratch, cardd.url, mainToken, {
     workerArgs: [...wireArgs(), "--model", `tier/${model}`, "-e", PROBE],
+    ...lane,
   });
   await startMain(lab, scratch, h, false, wireArgs());
   const asked: unknown = await cleo.call("card.new", { title: "Ship the fix", kind: "scout" });
@@ -108,13 +116,21 @@ async function runWorker(model: string, first: number, second: number): Promise<
 const workerCallsBefore = (compaction: WireCall): number =>
   h.wire.slice(0, h.wire.indexOf(compaction)).filter(askedByWorker).length;
 
-test("a worker on a routed 1M model compacts at 400K of its 500K limit", async () => {
+test("a worker on a routed 1M model compacts at 200K of its 250K limit", async () => {
   const compaction = await runWorker("routed", BELOW_COMPACTION, ABOVE_COMPACTION);
 
   assert.equal(workerCallsBefore(compaction), 2);
 });
 
-test("a worker on a 200K model compacts at 160K, before its own limit, and is never told it has 500K", async () => {
+test("a lane's costs.workerContextCap sets its workers' limit: 500K compacts at 400K", async () => {
+  const compaction = await runWorker("routed", BELOW_WIDER_COMPACTION, ABOVE_WIDER_COMPACTION, {
+    costs: { workerContextCap: 500_000 },
+  });
+
+  assert.equal(workerCallsBefore(compaction), 2);
+});
+
+test("a worker on a 200K model compacts at 160K, before its own limit, and is never told it has 250K", async () => {
   const compaction = await runWorker("small", BELOW_SMALL_COMPACTION, ABOVE_SMALL_COMPACTION);
 
   assert.equal(workerCallsBefore(compaction), 2);

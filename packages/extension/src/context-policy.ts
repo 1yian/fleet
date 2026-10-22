@@ -2,10 +2,10 @@ import { AgentSession, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./lane-config.ts";
 import { methodOf, once } from "./patch.ts";
 
-const WORKER_CONTEXT_CAP = 500_000;
 const COMPACTION_SHARE = 0.8;
 
 let windowInForce: number | undefined;
+let cap = 0;
 
 function windowOf(model: unknown): number {
   const window = isRecord(model) ? model["contextWindow"] : undefined;
@@ -13,14 +13,12 @@ function windowOf(model: unknown): number {
 }
 
 function effectiveWindow(window: number): number {
-  return Math.min(window, WORKER_CONTEXT_CAP);
+  return Math.min(window, cap);
 }
 
 function capped(model: unknown): unknown {
   const window = windowOf(model);
-  return isRecord(model) && window > WORKER_CONTEXT_CAP
-    ? { ...model, contextWindow: WORKER_CONTEXT_CAP }
-    : model;
+  return isRecord(model) && window > cap ? { ...model, contextWindow: cap } : model;
 }
 
 function whileWindowIs<T>(model: unknown, run: () => T): T {
@@ -65,8 +63,9 @@ function installWorkerLimit(): void {
   });
 }
 
-export function applyContextPolicy(role: "mate" | "worker"): void {
-  if (role !== "worker") return;
+export function applyContextPolicy(role: "mate" | "worker", workerCap: number): void {
+  if (role !== "worker" || workerCap <= 0) return;
+  cap = workerCap;
   once("worker-context-limit", () => {
     try {
       installWorkerLimit();

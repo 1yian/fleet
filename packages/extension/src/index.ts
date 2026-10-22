@@ -3,13 +3,19 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerBranch } from "./branch.ts";
-import { applyCachePolicy } from "./cache-policy.ts";
+import { applyCachePolicy, applyTierPolicy } from "./cache-policy.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs } from "./jobs.ts";
-import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
+import {
+  DEFAULT_COSTS,
+  readLaneConfig,
+  workerPiArgs,
+  type Costs,
+  type LaneConfig,
+} from "./lane-config.ts";
 import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
@@ -28,7 +34,10 @@ interface Config {
   readonly token: string;
   readonly role: "worker" | "mate";
   readonly lane?: string;
+  readonly costs?: Costs;
 }
+
+const CONTEXT_CAP_FLAG = "fleet-context-cap";
 
 const EXTENSION = fileURLToPath(import.meta.url);
 const HOME = (): string => process.cwd();
@@ -52,8 +61,13 @@ function config(pi: ExtensionAPI): Config | undefined {
   const lane = readLaneConfig(HOME());
   if (lane === undefined) return undefined;
   exportHosts(lane);
-  process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...workerPiArgs(lane)]);
-  return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane };
+  process.env["FLEET_PI_ARGS"] ??= JSON.stringify([
+    "-e",
+    EXTENSION,
+    `--${CONTEXT_CAP_FLAG}=${String(lane.costs.workerContextCap)}`,
+    ...workerPiArgs(lane),
+  ]);
+  return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane, costs: lane.costs };
 }
 
 function charter(): string {
@@ -72,9 +86,15 @@ function piArgs(): string[] {
   return Array.isArray(parsed) ? parsed.filter((arg) => typeof arg === "string") : [];
 }
 
+function contextCap(pi: ExtensionAPI): number {
+  const flag = pi.getFlag(CONTEXT_CAP_FLAG);
+  const value = typeof flag === "string" ? Number(flag) : Number.NaN;
+  return Number.isInteger(value) && value >= 0 ? value : DEFAULT_COSTS.workerContextCap;
+}
+
 function start(
   pi: ExtensionAPI,
-  { url, token, role, lane }: Config,
+  { url, token, role, lane, costs }: Config,
   sessionFile: string | undefined,
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
@@ -141,8 +161,9 @@ function start(
     registerUpdate(pi, HOME(), link);
   }
 
-  applyCachePolicy(role);
-  applyContextPolicy(role);
+  applyCachePolicy(role, costs);
+  applyTierPolicy(role);
+  applyContextPolicy(role, contextCap(pi));
   pi.on("before_agent_start", (event) => ({
     systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? mateContract() : ""}`,
   }));
@@ -166,6 +187,10 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
+  pi.registerFlag(CONTEXT_CAP_FLAG, {
+    type: "string",
+    description: "A worker's context window cap in tokens; 0 keeps the model's own",
+  });
   let started = false;
   pi.on("session_start", (_event, ctx) => {
     const found = config(pi);

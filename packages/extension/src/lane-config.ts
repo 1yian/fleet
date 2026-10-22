@@ -9,6 +9,18 @@ export interface CarddConfig {
   readonly restart: readonly string[];
 }
 
+export interface Costs {
+  readonly mateCacheRetention: "short" | "long";
+  readonly digestMinutes: number;
+  readonly workerContextCap: number;
+}
+
+export const DEFAULT_COSTS: Costs = {
+  mateCacheRetention: "short",
+  digestMinutes: 5,
+  workerContextCap: 250_000,
+};
+
 export interface LaneConfig {
   readonly lane: string;
   readonly url: string;
@@ -20,6 +32,7 @@ export interface LaneConfig {
   readonly workerArgs: readonly string[];
   readonly direnv?: string;
   readonly cardd?: CarddConfig;
+  readonly costs: Costs;
 }
 
 export const LANE_FILE = join("config", "lane.json");
@@ -68,6 +81,36 @@ function carddConfig(file: string, value: unknown): CarddConfig | undefined {
   return { host, root, db, restart: command };
 }
 
+function count(file: string, key: string, value: unknown, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+    throw new Error(`${file}: "costs.${key}" must be a whole number of at least 0`);
+  return value;
+}
+
+function costsConfig(file: string, value: unknown): Costs {
+  if (value === undefined) return DEFAULT_COSTS;
+  if (!isRecord(value)) throw new Error(`${file}: "costs" must be an object`);
+  const { mateCacheRetention = DEFAULT_COSTS.mateCacheRetention } = value;
+  if (mateCacheRetention !== "short" && mateCacheRetention !== "long")
+    throw new Error(`${file}: "costs.mateCacheRetention" must be "short" or "long"`);
+  return {
+    mateCacheRetention,
+    digestMinutes: count(
+      file,
+      "digestMinutes",
+      value["digestMinutes"],
+      DEFAULT_COSTS.digestMinutes,
+    ),
+    workerContextCap: count(
+      file,
+      "workerContextCap",
+      value["workerContextCap"],
+      DEFAULT_COSTS.workerContextCap,
+    ),
+  };
+}
+
 export function readLaneConfig(home: string): LaneConfig | undefined {
   const file = join(home, LANE_FILE);
   let text: string;
@@ -96,6 +139,7 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
     workerArgs: strings(config["workerArgs"]),
     ...(folder === undefined ? {} : { direnv: folder }),
     ...(cardd === undefined ? {} : { cardd }),
+    costs: costsConfig(file, config["costs"]),
   };
 }
 

@@ -10,7 +10,7 @@ import {
   up,
   type Outcome,
 } from "./homes.ts";
-import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
+import { DEFAULT_COSTS, isRecord, strings, type LaneConfig } from "./lane-config.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences } from "./standing.ts";
@@ -180,6 +180,7 @@ switch (command ?? "") {
       args: strings(json(values.args)),
       workerArgs: strings(json(values["worker-args"])),
       ...(values.direnv === undefined ? {} : { direnv: values.direnv }),
+      costs: DEFAULT_COSTS,
     };
     console.log(provision(root, config));
     break;

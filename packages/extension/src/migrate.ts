@@ -11,7 +11,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { homeOf, provision, writeLaneConfig } from "./homes.ts";
-import { isRecord, LANE_FILE, strings, type LaneConfig } from "./lane-config.ts";
+import { DEFAULT_COSTS, isRecord, LANE_FILE, strings, type LaneConfig } from "./lane-config.ts";
 
 const defaultFrom = (): string =>
   process.env["FLEET_CONFIG_DIR"] ?? join(homedir(), ".config", "fleet");
@@ -70,6 +70,7 @@ function readLegacy(file: string, lane: string): { config: LaneConfig; home: str
     roots: {},
     args: strings(value["args"]),
     workerArgs: strings(value["workerArgs"]),
+    costs: DEFAULT_COSTS,
   };
   return { config, home };
 }

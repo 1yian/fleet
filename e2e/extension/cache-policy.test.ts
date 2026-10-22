@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -60,23 +60,27 @@ function wireArgs(): string[] {
 const requests = (role: "mate" | "worker") =>
   h.wire.filter((call) => call.role === role && !call.warm);
 
-test("main asks for one-hour prompt retention, whatever it inherits", async () => {
-  const herdr = await startLab("short");
+test("main asks for five-minute prompt retention, whatever it inherits", async () => {
+  const herdr = await startLab("long");
   h.onModel(() => ({ tool: "slow_tool" }), "mate");
   configureMain(scratch, cardd.url, mainToken);
   await startMain(herdr, scratch, h, false, wireArgs());
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to join the fleet");
   h.send(1, "followUp", "Are you there?");
-  await h.waitFor((event) => event["type"] === "tool_waiting", "the mate to wait in its tool");
+  const waiting = await h.waitFor(
+    (event) => event["type"] === "tool_waiting",
+    "the mate to wait in its tool",
+  );
   h.releaseTool();
   await h.waitForCall(1, "mate", WAIT_MS);
 
+  assert.equal(waiting["background"], "", "a mate is not background work");
   assert.ok(requests("mate").length >= 2);
   for (const call of requests("mate"))
-    assert.deepEqual([...new Set(call.ttls)], ["1h"], "every cache breakpoint asks for one hour");
+    assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
 });
 
-test("a worker keeps the five-minute retention, whatever main inherited", async () => {
+test("a worker keeps the five-minute retention, whatever main inherited, and runs as pi-tiers background work", async () => {
   const herdr = await startLab("long");
   h.onModel(
     () => ({
@@ -105,22 +109,32 @@ test("a worker keeps the five-minute retention, whatever main inherited", async 
     options: ["Yes"],
   });
 
-  await h.waitFor((event) => event["type"] === "tool_waiting", "the worker to wait in its tool");
+  const waiting = await h.waitFor(
+    (event) => event["type"] === "tool_waiting",
+    "the worker to wait in its tool",
+  );
   h.releaseTool();
   await h.waitForCall(1, "worker", WAIT_MS);
 
+  assert.equal(waiting["background"], "1");
   assert.ok(requests("worker").length >= 2);
   for (const call of requests("worker"))
     assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
 });
 
-test("a second mate started by fleet up asks for one-hour retention, and again after a restart", async () => {
+test("a second mate whose lane sets costs.mateCacheRetention to long asks for one-hour retention, and again after a restart", async () => {
   const herdr = await startLab("short");
-  scratch.addLane("cnp", {
+  const home = scratch.addLane("cnp", {
     url: cardd.url,
     token: cardd.addLane("cnp", "main"),
     args: [...wireArgs(), "-e", PROBE],
   });
+  const laneFile = join(home, "config", "lane.json");
+  const lane: unknown = JSON.parse(readFileSync(laneFile, "utf8"));
+  writeFileSync(
+    laneFile,
+    JSON.stringify({ ...Object(lane), costs: { mateCacheRetention: "long" } }),
+  );
   const fleet = (...args: string[]): string =>
     scratch.fleet(args, {
       ...h.piEnv("mate"),

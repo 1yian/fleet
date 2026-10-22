@@ -10,10 +10,12 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { arrangeHere, claimFollowers } from "./arrange.ts";
 import { field, herdr as herdrOn, piRunning, quote, records } from "./host.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
+  DEFAULT_COSTS,
   isRecord,
   LANE_FILE,
   mateStartArgs,
@@ -91,7 +93,9 @@ export function provision(root: string, config: LaneConfig): string {
 
 export function writeLaneConfig(home: string, config: LaneConfig): void {
   mkdirSync(join(home, "config"), { recursive: true });
-  writeFileSync(join(home, LANE_FILE), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  const { costs, ...rest } = config;
+  const written = isDeepStrictEqual(costs, DEFAULT_COSTS) ? rest : config;
+  writeFileSync(join(home, LANE_FILE), `${JSON.stringify(written, null, 2)}\n`, { mode: 0o600 });
 }
 
 const herdr = (args: readonly string[]): Promise<Record<string, unknown>> => herdrOn("local", args);

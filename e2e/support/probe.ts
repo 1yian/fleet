@@ -46,7 +46,7 @@ export default function probe(pi: ExtensionAPI): void {
     execute: async () => {
       await new Promise<void>((resolve) => {
         release = resolve;
-        report({ type: "tool_waiting" });
+        report({ type: "tool_waiting", background: process.env["PI_TIERS_BACKGROUND"] ?? "" });
       });
       return { content: [{ type: "text", text: "slow tool done" }], details: {} };
     },
