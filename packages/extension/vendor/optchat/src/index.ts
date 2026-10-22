@@ -41,6 +41,19 @@ export const promptFor = (prompt: string, { previousExchange, memorySearch }: Pr
 interface Active { name: string; dir: string; config: ProfileConfig; memory: Memory; inbox: Inbox; children: Children; usage: UsageLedger; unlock: () => Promise<void> }
 
 const KEPT_RUNS_BYTES = 120_000;
+const SETTLE_MS = 30_000;
+/** Fleet: waits for pending summaries at most SETTLE_MS. A compactor that keeps failing leaves those lines unsummarized (zoomable) instead of stopping the turn. */
+async function settleFor(memory: Memory, signal: AbortSignal | undefined, ctx: ExtensionContext) {
+  const limit = new AbortController();
+  const timer = setTimeout(() => limit.abort(), SETTLE_MS);
+  const forward = () => limit.abort();
+  signal?.addEventListener('abort', forward, { once: true });
+  try { await memory.settle(limit.signal); }
+  catch (error) {
+    if (signal?.aborted || !limit.signal.aborted) throw error;
+    ctx.ui.notify(`OptChat: summaries still pending after ${SETTLE_MS / 1000}s${memory.lastError ? ` (${memory.lastError})` : ''}; continuing with them unsummarized.`, 'warning');
+  } finally { clearTimeout(timer); signal?.removeEventListener('abort', forward); }
+}
 /** The prompt cache's lifetime for this model at the process's retention, with a margin; Pi's defaults when the model declares none. */
 function cacheLifetimeMs(model: { promptCache?: { short?: number; long?: number } } | undefined) {
   const long = process.env.PI_CACHE_RETENTION === 'long';
@@ -326,7 +339,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       if (fault) throw new Error(fault);
       if (view === undefined) {
         ctx.ui.setWorkingMessage('Waiting for OptChat summaries…');
-        try { await a.memory.settle(ctx.signal); } finally { ctx.ui.setWorkingMessage(); }
+        try { await settleFor(a.memory, ctx.signal, ctx); } finally { ctx.ui.setWorkingMessage(); }
         view = a.memory.render(); // Capture old history before logging the new input.
         flush();
       }

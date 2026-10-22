@@ -14,6 +14,7 @@ export interface Compression { kind?: string; context: string; source: string; m
 export type Compressor = (input: Compression, signal: AbortSignal) => Promise<string>;
 const key = ({ l, i }: Part) => l * 2 ** 40 + i;
 const UNBUILT = '(not summarized yet: zoom it)';
+const MAX_BACKOFF_MS = 10 * 60_000;
 export const start = ({ l, i }: Part) => i * 2 ** l;
 export const end = (part: Part) => start(part) + 2 ** part.l;
 export const bytes = (s: string) => Buffer.byteLength(s, 'utf8');
@@ -97,6 +98,9 @@ export class Memory {
   private peak = 0;
   private scheduled = false;
   private stopped = false;
+  // Fleet: failures in a row, and until when the compactor waits before it tries again.
+  private failures = 0;
+  private pausedUntil = 0;
   lastError?: string;
 
   constructor(readonly directory: string, private readonly compress: Compressor,
@@ -185,6 +189,11 @@ export class Memory {
     if (this.stopped) return;
     // One clock reading: skipping a part and arming its retry timer must agree on what is due.
     const now = Date.now();
+    // Fleet: after a failure the whole compactor backs off (10s, 20s, 40s, ... up to 10 minutes) and then
+    // tries one summary at a time until one works. Retrying each failed part on its own let a dead model
+    // take every pending part, eight at a time, every ten seconds.
+    if (now < this.pausedUntil) { this.armRetry(this.pausedUntil - now); return; }
+    const jobs = this.failures ? 1 : this.jobs;
     const total = this.root.length;
     const first = this.view.find(p => !this.node(p));
     const boundary = first ? start(first) : total;
@@ -193,7 +202,7 @@ export class Memory {
       while (this.node({ l, i: low })) low++;
       this.low[l] = low;
       for (let i = low; (i + 1) * 2 ** l <= total; i++) {
-        if (this.busy.size >= this.jobs) return;
+        if (this.busy.size >= jobs) return;
         const part = { l, i }, id = key(part);
         if ((l === 0 ? i : end(part)) > boundary) break;
         if (this.node(part) || this.busy.has(id) || (this.retryAt.get(id) ?? 0) > now) continue;
@@ -202,8 +211,13 @@ export class Memory {
           if (this.stopped) return;
           this.lastError = error instanceof Error ? error.message : String(error);
           if (!this.reported.has(id)) { this.reported.add(id); this.warn(`Compactor ${start(part)}+${2 ** l}: ${this.lastError}`); }
-          this.retryAt.set(id, Date.now() + this.retryMs);
-          if (!this.retryTimer) this.retryTimer = setTimeout(() => { this.retryTimer = undefined; this.schedule(); }, this.retryMs);
+          // Summaries that were already running when the first one failed do not lengthen the pause.
+          if (Date.now() >= this.pausedUntil) {
+            this.failures++;
+            this.pausedUntil = Date.now() + Math.min(this.retryMs * 2 ** (this.failures - 1), MAX_BACKOFF_MS);
+          }
+          this.retryAt.set(id, this.pausedUntil);
+          this.armRetry(this.pausedUntil - Date.now());
         }).finally(() => { this.busy.delete(id); this.events.emit('change'); this.schedule(); });
         this.busy.set(id, promise);
       }
@@ -211,6 +225,10 @@ export class Memory {
     // A later failure can have a later deadline than the timer installed by the first.
     const deadlines = [...this.retryAt.values()].filter(t => t > now);
     if (deadlines.length && !this.retryTimer) this.retryTimer = setTimeout(() => { this.retryTimer = undefined; this.schedule(); }, Math.max(1, Math.min(...deadlines) - now));
+  }
+  private armRetry(ms: number) {
+    if (this.retryTimer) return;
+    this.retryTimer = setTimeout(() => { this.retryTimer = undefined; this.schedule(); }, Math.max(1, ms));
   }
   private async build(part: Part) {
     const source = part.l === 0 ? `${label(this.root[part.i])}: ${this.root[part.i].text}`
@@ -225,6 +243,7 @@ export class Memory {
     const node = { ...part, text, size: lineBytes(text) };
     appendJson(join(this.directory, 'tree', `${localDay()}.jsonl`), node);
     this.tree.set(key(part), node); this.retryAt.delete(key(part));
+    this.failures = 0; this.pausedUntil = 0;
     // A leaf is usually still in the view when built, but after a damaged tree file a saved parent can already hide it.
     if (part.l === 0) { this.leaves++; if (this.visible(part)) this.viewBytes += node.size - UNBUILT_BYTES; }
     if (!this.retryAt.size) this.lastError = undefined;

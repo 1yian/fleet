@@ -303,3 +303,38 @@ test("a mate whose memory names no summary model summarizes on tier/compact, nev
   assert.deepEqual([...new Set(summaries)], ["tier/compact"]);
   assert.deepEqual([...new Set(turns)], ["fake/scripted"]);
 });
+
+test("when summaries keep failing, the compactor backs off instead of retrying every pending one, and the mate still answers", async () => {
+  installMemory();
+  const journal = join(memoryHome, "profiles", "main", "main");
+  mkdirSync(journal, { recursive: true });
+  const pending = Array.from({ length: 20 }, (_, i) => {
+    const text = `Earlier report ${String(i)}: ${"the parser keeps every field. ".repeat(40)}`;
+    const date = new Date(Date.UTC(2026, 9, 20, 12, i)).toISOString();
+    return JSON.stringify({ i, kind: "user", text, date, size: text.length + 6 });
+  });
+  writeFileSync(join(journal, "2026-10-20.jsonl"), `${pending.join("\n")}\n`);
+  for (let call = 0; call < 200; call += 1)
+    h.onModel(
+      (turns) => (isSummary(turns) ? { fail: "429 rate_limit_error" } : { text: "noted" }),
+      "mate",
+    );
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+
+  await cleo.call("comment", { lane: "cleo", text: `Validation continues: ${IDLE_WORD}.` });
+  const settled = await until(
+    () => h.events.find((event) => event["type"] === "settled"),
+    "main's turn to end while summaries fail",
+  );
+  assert.equal(settled["aborted"], false);
+  assert.ok(
+    h.callsOf("mate").some((turns) => isMains(turns) && mentions(turns, IDLE_WORD)),
+    "main never answered the message",
+  );
+  const summaries = h.callsOf("mate").filter(isSummary).length;
+  assert.ok(
+    summaries <= 10,
+    `the compactor asked ${String(summaries)} times for 20 pending summaries`,
+  );
+});
