@@ -28,7 +28,8 @@
         "src/calm/index.ts",
         "src/transcript/index.ts",
         "src/optchat.ts"
-      ]
+      ],
+      "ignore": ["vendor/**"]
     },
     "packages/board": {
       "ignore": ["src/vendor/**"]

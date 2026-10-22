@@ -1,11 +1,10 @@
 import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { ghLogin, type GhRun } from "./gh-login.ts";
 import { laneHomes } from "./homes.ts";
 import { isRecord, readLaneConfig } from "./lane-config.ts";
-import { agentDir, packageProblem } from "./memory.ts";
 
 interface Tool {
   readonly name: string;
@@ -16,7 +15,6 @@ interface Tool {
 }
 
 const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 30_000;
-const PACKAGE = join("config", "optchat", "package");
 const BREW_OR_APT = (name: string): string =>
   `brew install ${name} (macOS) or apt install ${name} (Debian)`;
 
@@ -145,10 +143,19 @@ function settingsOf(home: string): Record<string, unknown> | undefined {
   }
 }
 
+const PROFILE_FILES = ["AGENTS.md", "config.json"];
+
+function profileOf(home: string, settings: Record<string, unknown>): string {
+  const memoryHome = settings["memoryHome"];
+  const profile = settings["profile"];
+  return join(
+    resolve(home, typeof memoryHome === "string" ? memoryHome : join("data", "optchat")),
+    "profiles",
+    typeof profile === "string" ? profile : "",
+  );
+}
+
 function memoryProblems(root: string, host: string): string[] {
-  const agent = agentDir();
-  const loader = join(agent, "extensions", "fm-optchat", "index.ts");
-  const helper = join(agent, "optchat", "package.mjs");
   const homes = [
     ...(readLaneConfig(root) === undefined
       ? []
@@ -158,19 +165,10 @@ function memoryProblems(root: string, host: string): string[] {
   return homes.flatMap(({ lane, home }) => {
     const settings = settingsOf(home);
     if (settings === undefined || settings["enabled"] === false) return [];
-    const of = `optchat of lane ${lane ?? ""}`;
+    const profile = profileOf(home, settings);
+    if (PROFILE_FILES.every((file) => existsSync(join(profile, file)))) return [];
     const fix = `Fix: ${join(root, "bin", "fleet")} home memory ${lane ?? ""}`;
-    if (!existsSync(loader) || !existsSync(helper))
-      return [
-        `${of} has no loader in ${agent} on ${host}. Fix: install extensions/fm-optchat and optchat from the dotfiles repository (home/.pi/agent) into ${agent}`,
-      ];
-    const configured = settings["package"];
-    const target = resolve(home, typeof configured === "string" ? configured : PACKAGE);
-    if (!existsSync(target)) return [`${of} is missing its package ${target} on ${host}. ${fix}`];
-    const problem = packageProblem(realpathSync(helper), target);
-    return problem === undefined
-      ? []
-      : [`${of} has a stale or broken package ${target} on ${host}: ${problem}. ${fix}`];
+    return [`optchat of lane ${lane ?? ""} has no profile ${profile} on ${host}. ${fix}`];
   });
 }
 

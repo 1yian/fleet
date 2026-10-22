@@ -154,7 +154,7 @@ cardd card delivery <number> <mode> --db <file>
 
 ### Prerequisites
 
-- Every prerequisite of a host is one table in `prerequisites.ts`: the tools with their floors and fixes, plus the conversation-memory package of each home. `fleet up`, `fleet restart`, `fleet update`, and `wait_review` use it, so there is one check and one set of messages. The memory package is checked with the loader's own `verifyPackage`, the same step `fleet home memory` uses to decide to prepare it again, so a stale package fails the check and not only a missing one. `gh-login.ts` decides the gh login line from `gh auth status`, which exits 1 for every failure. Only "not logged into any" text, an empty `--json hosts` result, a rejected refresh token, or a 401 from GitHub says `gh is not logged in`. A timeout, a network error, a signal, a spawn error, or any other exit says `could not check gh login on <host>: <reason>`, with token-shaped text hidden. `FLEET_PROBE_TIMEOUT_MS` sets the probe timeout.
+- Every prerequisite of a host is one table in `prerequisites.ts`: the tools with their floors and fixes, plus the conversation-memory profile of each home. `fleet up`, `fleet restart`, `fleet update`, and `wait_review` use it, so there is one check and one set of messages. The profile check looks for both files the memory reads at start, `AGENTS.md` and `config.json`, because a missing one stops the memory and crash-loops the mate. `gh-login.ts` decides the gh login line from `gh auth status`, which exits 1 for every failure. Only "not logged into any" text, an empty `--json hosts` result, a rejected refresh token, or a 401 from GitHub says `gh is not logged in`. A timeout, a network error, a signal, a spawn error, or any other exit says `could not check gh login on <host>: <reason>`, with token-shaped text hidden. `FLEET_PROBE_TIMEOUT_MS` sets the probe timeout.
 
 ### Review pages
 
@@ -192,8 +192,8 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 
 ### Memory
 
-- `optchat.ts`: the memory loader, `~/.pi/agent/extensions/fm-optchat`, stays idle unless `FM_HOME` names Pi's own folder. A fleet home has no launcher to set it, so this extension loads the loader again with `FM_HOME` set, when the home has `config/optchat.json`. Pi evaluates a module each time it loads, so the second load sees the variable.
-- `memory.ts` writes what the loader reads, all inside one home. Each step that is done already is left alone. The loader's helper runs only when its path is its real path. A profile's lock socket must fit a socket path: 104 bytes on macOS and 108 elsewhere, with the NUL.
+- `optchat.ts` loads OptChat from `packages/extension/vendor/optchat` with `FM_HOME` set to the home, when the home has `config/optchat.json`. The loader reads `FM_HOME` when its module is evaluated, so the variable is set around the import. The vendored folder is third-party code with its own style: lint, format, typecheck, and knip skip it (their config files list it), and `optchat.ts` imports it by URL so the typecheck does not follow it. Fleet's own changes to it are listed in its `README.md`.
+- `memory.ts` writes what the loader reads, all inside one home. Each step that is done already is left alone. A profile's lock socket must fit a socket path: 104 bytes on macOS and 108 elsewhere, with the NUL.
 
 ### Standing rules and stow
 
@@ -249,7 +249,6 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `e2e/extension/sync.test.ts` scripts lsof's ownership answer. A real host's unrelated inaccessible mounts can make lsof's negative result incomplete. The product keeps the lock in that case. The test covers a clean negative result, a holder, an inspection failure, an incomplete clone scan, and a recent lock without weakening the product's checks.
 - The model harness accepts only `POST /model`. Closing its websocket server removes the upgrade listener, so a late probe handshake can arrive as an ordinary HTTP GET. It receives 404 rather than entering the JSON model parser.
 - `e2e/support/flaky-transport.ts` behaves like ssh whose connection drops right after the worker started: the first `herdr agent start` that succeeds loses its output and exits 255. `switch-transport.ts` fails like an unreachable host once its marker file exists. A marker that starts with `hang` hangs instead, and one that starts with `flood` floods every command but herdr's.
-- `e2e/extension/memory.test.ts` reads the private memory loader from a dotfiles checkout, `FLEET_DOTFILES` at `FLEET_DOTFILES_REF`. Without one, as in CI, it is skipped.
 - `e2e/trial/trial.ts` is a real-model trial, not a test: `node e2e/trial/trial.ts <project clone> [model]`.
 - `e2e/pi/contract.test.ts` pins the Pi behavior the extension depends on. A Pi upgrade that changes it fails there first.
 - Tests that start processes stop every part even when one part fails, so no process outlives a test.
@@ -257,5 +256,5 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `e2e/extension/dispatch.test.ts` bounds a restart below `FORMER_REFUSED_START_WAIT_MS`, the 10 s that a refused start once waited for a Pi that herdr never typed.
 - `e2e/extension/start.test.ts` holds the worker's first model call open, so the worker stays busy while herdr's start command still waits for it to idle. The mate must hear back before that command ends. A clock on the whole dispatch would also count the shell's start and herdr's refusals, which load stretches.
 - When a job's tab closes, either the wrapper posts what the command printed as it died, or the tab's processes go first and the heartbeat check reports the job lost. Which one wins depends on the platform and timing. `e2e/extension/jobs.test.ts` accepts either, once.
-- `PINNED_LOADER_REF` in `e2e/extension/memory.test.ts` is the dotfiles commit whose loader labels a fleet message with just `[fleet]`, once (https://github.com/1yian/dotfiles/pull/35). Bump it when the loader changes. The model's turn may start with the memory's own context block, so the test finds the fleet message after it.
+- `e2e/extension/memory.test.ts` runs the vendored memory. The model's turn may start with the memory's own context block, so the test finds the fleet message after it. On macOS its second-mate tests need a short temporary folder, such as `TMPDIR=~/t`, because the profile's socket path must fit 103 bytes.
 - `e2e/extension/worker-model.test.ts` starts main as a plain Pi in a scratch copy that picks its model from its settings, as the captain's does. Pi picks a model from its settings only when it knows a key for that model's provider at session start, so the test gives the scripted tiers a key. Main and its worker share the lab's model agent, so the system prompt tells their calls apart.
