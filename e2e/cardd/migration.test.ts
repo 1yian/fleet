@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { CardSchema, check, OPS } from "@fleet/protocol";
 import { Cardd } from "../support/cardd.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const MIGRATIONS = fileURLToPath(new URL("../../packages/cardd/migrations/", import.meta.url));
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
@@ -252,7 +252,7 @@ test("the live fleet's merge grants become each project's yolo flag, and no othe
 });
 
 test("a migration that meets a broken foreign key names the row and leaves the database as it was", () => {
-  const file = join(mkdtempSync(join(tmpdir(), "fleet-cardd-")), "cards.db");
+  const file = join(tempDir("fleet-cardd-"), "cards.db");
   writeLiveShapedDatabase(file);
   const db = new DatabaseSync(file);
   db.exec(`PRAGMA foreign_keys = OFF;

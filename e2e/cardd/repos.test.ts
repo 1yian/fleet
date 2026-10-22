@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, test } from "node:test";
 import { CardSchema, check, OPS } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { branchOf } from "../support/fleet.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const FAR_HOST = fileURLToPath(new URL("../support/far-host.ts", import.meta.url));
 const SWITCH = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
@@ -46,7 +46,7 @@ async function planOnceChecked(main: Session, card: number) {
 }
 
 test("a project whose only clone is on another host gets its repo from there, so close sees its merged PR", async () => {
-  const disk = mkdtempSync(join(tmpdir(), "fleet-far-"));
+  const disk = tempDir("fleet-far-");
   const clone = `${MOUNT}cleo`;
   mkdirSync(join(disk, clone), { recursive: true });
   execFileSync("git", ["init", "-q", "-b", "main", join(disk, clone)]);

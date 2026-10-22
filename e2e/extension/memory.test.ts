@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -19,6 +18,7 @@ import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, optionalString, parseRecord, type JsonRecord } from "../support/json.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -42,11 +42,11 @@ let mainToken: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
-  scratch = new Scratch("fleet", "/tmp");
+  scratch = new Scratch("fleet");
   mainToken = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, mainToken);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-  memoryHome = mkdtempSync("/tmp/fleet-memory-");
+  memoryHome = tempDir("fleet-memory-");
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
 });
 afterEach(async (t) => {

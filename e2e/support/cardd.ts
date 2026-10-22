@@ -1,8 +1,6 @@
 import { execFileSync, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -19,6 +17,7 @@ import {
 } from "@fleet/protocol";
 import { FakeGitHub } from "./github.ts";
 import { spawnGuarded } from "./guarded.ts";
+import { tempDir } from "./run-root.ts";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 const KEEPALIVE = fileURLToPath(new URL("./keepalive.ts", import.meta.url));
@@ -49,13 +48,13 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
 }
 
 export class Cardd {
-  readonly db = join(mkdtempSync(join(tmpdir(), "fleet-cardd-")), "cards.db");
+  readonly db = join(tempDir("fleet-cardd-"), "cards.db");
   readonly gh = new FakeGitHub();
   url = "";
   private child: ChildProcess | undefined;
   private supervised = false;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly pidFile = join(mkdtempSync(join(tmpdir(), "fleet-keepalive-")), "cardd.pid");
+  private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");
 
   private readonly args: readonly string[];
 

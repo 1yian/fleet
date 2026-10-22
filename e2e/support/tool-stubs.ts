@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, symlinkSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tempDir } from "./run-root.ts";
 
 const STUBS = fileURLToPath(new URL("./stubs", import.meta.url));
 const PROBES = join(STUBS, "probes");
@@ -19,10 +19,7 @@ function found(tool: string): string {
 }
 
 export function pathWithout(...missing: readonly string[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "fleet-tools-"));
-  process.on("exit", () => {
-    rmSync(dir, { recursive: true, force: true });
-  });
+  const dir = tempDir("fleet-tools-");
   for (const tool of [...PREREQUISITES.filter((each) => !missing.includes(each)), ...SHELL])
     symlinkSync(found(tool), join(dir, tool));
   return dir;

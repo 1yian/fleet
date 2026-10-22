@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
@@ -10,6 +8,7 @@ import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { cloneWithRemote, landOnRemote, tip } from "../support/remote.ts";
 import { mateArgs, Scratch } from "../support/scratch.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -25,7 +24,7 @@ beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
   scratch = new Scratch();
-  dir = mkdtempSync(join(tmpdir(), "fleet-hosts-"));
+  dir = tempDir("fleet-hosts-");
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,

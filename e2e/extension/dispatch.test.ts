@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
@@ -21,6 +20,7 @@ import {
 } from "../support/dispatch-lab.ts";
 import type { Harness, Pi } from "../support/harness.ts";
 import type { HerdrLab } from "../support/herdr.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const PR = "https://github.com/acme/site/pull/1";
 
@@ -190,7 +190,7 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
   assert.deepEqual(branches(), ["main"]);
   assert.deepEqual(await workers(), []);
 
-  const out = mkdtempSync(join(tmpdir(), "fleet-unpack-"));
+  const out = tempDir("fleet-unpack-");
   execFileSync("sh", ["-c", `zstd -dc '${archive}' | tar -xf - -C '${out}'`]);
   const unpacked = join(out, "c-1-a1");
   assert.deepEqual(

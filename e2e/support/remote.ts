@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tempDir } from "./run-root.ts";
 
 export const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
@@ -32,7 +33,7 @@ export function landOnRemote(
   file = `${message}.txt`,
   content = `${message}\n`,
 ): string {
-  const other = join(mkdtempSync(join(dirname(remote), "other-")), "repo");
+  const other = join(tempDir("fleet-other-"), "repo");
   execFileSync("git", ["clone", "-q", remote, other]);
   writeFileSync(join(other, file), content);
   git(other, "add", "-A");

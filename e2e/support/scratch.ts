@@ -1,19 +1,11 @@
 import { execFileSync } from "node:child_process";
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Harness } from "./harness.ts";
 import type { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
+import { tempDir } from "./run-root.ts";
 import "./hermetic-env.ts";
 import "./tool-stubs.ts";
 
@@ -25,8 +17,8 @@ export class Scratch {
   readonly root: string;
   private readonly dir: string;
 
-  constructor(name = "fleet", base = tmpdir()) {
-    this.dir = mkdtempSync(join(base, "fleet-scratch-"));
+  constructor(name = "fleet") {
+    this.dir = tempDir("scratch-");
     this.root = join(this.dir, name);
     mkdirSync(this.root, { recursive: true });
     const files = git(REPO, "ls-files", "--cached", "--others", "--exclude-standard", "-z")

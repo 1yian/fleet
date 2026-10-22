@@ -1,8 +1,7 @@
 import { type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
@@ -16,6 +15,7 @@ import {
   parseRecord,
   type JsonRecord,
 } from "./json.ts";
+import { tempDir } from "./run-root.ts";
 
 export interface Turn {
   readonly role: string;
@@ -97,7 +97,7 @@ export class Pi {
 }
 
 export class Harness {
-  readonly dir = mkdtempSync(join(tmpdir(), "fleet-e2e-"));
+  readonly dir = tempDir("fleet-e2e-");
   readonly calls: Turn[][] = [];
   readonly wire: WireCall[] = [];
   private readonly agentCalls = new Map<string, Turn[][]>();
