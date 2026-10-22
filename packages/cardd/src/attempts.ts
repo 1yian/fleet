@@ -253,6 +253,10 @@ function taskWithDelivery(card: Card, task: string, delivery: Delivery | null): 
   );
 }
 
+export const quietSql = (state: string, attempt: string): string =>
+  `(${state} = 'idle' OR (${state} = 'waiting'
+    AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.attempt = ${attempt} AND j.state = 'running')))`;
+
 function connected(db: DatabaseSync, session: string): boolean {
   const state = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
   return state === "idle" || state === "running" || state === "waiting";

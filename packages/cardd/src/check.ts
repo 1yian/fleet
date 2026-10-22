@@ -1,5 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { endReviewWait, loseSilentJobs } from "./attempts.ts";
+import { endReviewWait, loseSilentJobs, quietSql } from "./attempts.ts";
 import { chaseIntake } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
@@ -33,7 +33,7 @@ const WORKING: ReadonlySet<Stage> = new Set(["working", "in-review"]);
 
 const workerCards = (
   ids: readonly number[],
-): string => `SELECT c.id AS card, c.lane AS lane, a.state AS attempt, a.created_at AS started,
+): string => `SELECT c.id AS card, c.lane AS lane, a.id AS attemptId, a.state AS attempt, a.created_at AS started,
     s.state AS state, s.last_seen AS seen, coalesce(c.last_activity, s.last_seen, 0) AS active, s.id AS session
   FROM cards c JOIN attempts a ON a.card = c.id AND a.state IN ('starting', 'active')
   JOIN sessions s ON s.attempt = a.id
@@ -68,7 +68,7 @@ const WORKER_RULES: readonly {
   {
     condition: "worker-idle",
     text: "worker idle without a handoff",
-    where: `w.state = 'idle' AND ?1 - w.seen > ?2
+    where: `${quietSql("w.state", "w.attemptId")} AND ?1 - w.seen > ?2
       AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN ('pending', 'pushed'))
       AND NOT (json_extract(${LATEST_REPORT}, '$.status') = 'paused'
         AND coalesce(json_extract(${LATEST_REPORT}, '$.until'), 0) > ?1)`,
