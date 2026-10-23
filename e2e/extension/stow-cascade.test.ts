@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Move } from "../support/harness.ts";
+import type { Move, Turn } from "../support/harness.ts";
 import { LiveFleet, lastUser, systemOf, until } from "../support/live-fleet.ts";
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -74,6 +74,13 @@ const maintenanceRows = (): string[][] => {
     db.close();
   }
 };
+
+function heardAll(lines: readonly string[]): Turn[] | undefined {
+  const answered = fleet.h
+    .callsOf("mate")
+    .filter((turns) => lastUser(turns).includes("WHO-STOWED"));
+  return answered.find((turns) => lines.every((line) => turns.some((turn) => turn.text === line)));
+}
 
 test("/stow in main stows every second mate in its own conversation and memory, skips workers, reloads each with its AGENTS.md, and main hears who finished and who could not", async () => {
   script();
@@ -150,19 +157,8 @@ test("/stow in main stows every second mate in its own conversation and memory, 
     () => (existsSync(learnings(fleet.here.root)) ? true : undefined),
     "main's own stow to finish",
   );
-  await fleet.matePid("main");
   await fleet.lab.submit(fleet.mainPane, "WHO-STOWED");
-  const heard = await until(
-    () =>
-      fleet.h
-        .callsOf("mate")
-        .find(
-          (turns) =>
-            lastUser(turns).includes("WHO-STOWED") &&
-            finished.every((line) => turns.some((turn) => turn.text === line)),
-        ),
-    "main to hear both stows finish",
-  );
+  const heard = await until(() => heardAll(finished), "main to hear both stows finish");
   const told = heard.map((turn) => turn.text);
   assert.ok(told.includes(`[fleet] maintenance: ops (mate): stow completed - ${NOW_LINE}`));
   assert.ok(told.includes(`[fleet] maintenance: far (mate): stow completed - ${NOW_LINE}`));
