@@ -94,7 +94,11 @@ test("OptChat's cache marks land on the request when the mate's model is a route
   const requests = h.wire.filter((call) => call.role === "mate" && !call.warm);
   const last = requests.at(-1);
   assert.ok(last !== undefined && requests.length >= 4, "the mate sent fewer than four requests");
-  assert.equal(last.systemMarked, false, "Pi's own mark is still on the system prompt");
+  assert.deepEqual(
+    last.systemTtls,
+    ["1h"],
+    "the system prompt carries only the mate's one-hour mark",
+  );
   assert.ok(last.markedBlocks.length >= 2, "the view and the request end carry no marks");
   const view = last.markedBlocks.filter((text) => VIEW_LINE.test(text));
   assert.ok(

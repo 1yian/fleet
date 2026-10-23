@@ -4,7 +4,7 @@ export interface WireCall {
   readonly role: "mate" | "worker";
   readonly warm: boolean;
   readonly ttls: readonly string[];
-  readonly systemMarked: boolean;
+  readonly systemTtls: string[];
   readonly markedBlocks: readonly string[];
   readonly turns: readonly { readonly role: string; readonly text: string }[];
 }
@@ -69,7 +69,7 @@ export function wireCall(body: JsonRecord): WireCall {
     role: turns[0]?.text.includes(WORKER_CONTRACT) === true ? "worker" : "mate",
     warm: body["max_tokens"] === 1,
     ttls: ttlsIn(body),
-    systemMarked: ttlsIn(body["system"]).length > 0,
+    systemTtls: ttlsIn(body["system"]),
     markedBlocks: markedTexts(body),
     turns,
   };
