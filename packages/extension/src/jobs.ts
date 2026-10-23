@@ -21,6 +21,28 @@ const StopJobParams = Type.Object({
   job: Type.Integer({ description: "The number of one of your own run_long jobs" }),
 });
 
+const DropJobParams = Type.Object({
+  job: Type.Integer({ description: "The number of a lost job" }),
+});
+
+export function registerDropJob(pi: ExtensionAPI, link: Link): void {
+  pi.registerTool({
+    name: "drop_job",
+    label: "Drop job",
+    description:
+      "Drops one lost job by its number, so its reminders stop. A worker drops its own lost job. A mate drops a lost job of a card in its lane. The job stays recorded as lost. A job that is running is refused: use stop_job. Dropping twice is safe.",
+    parameters: DropJobParams,
+    execute: async (_id, params) => {
+      const { label, state, dropped } = await link.call("job.drop", { job: params.job });
+      const named = `job ${String(params.job)} (${label})`;
+      const text = dropped
+        ? `${named} is dropped. It stays recorded as lost, and its reminders stop.`
+        : `${named} is ${state}, not lost: nothing to drop.`;
+      return { content: [{ type: "text", text }], details: {} };
+    },
+  });
+}
+
 const tabName = (job: number, label: string): string => `job-${String(job)}-${label}`;
 
 interface JobOptions {

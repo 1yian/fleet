@@ -137,7 +137,7 @@ CREATE TABLE jobs (
   exit_code INTEGER,
   output_tail TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, dropped_at INTEGER,
   CHECK ((state = 'finished') = (exit_code IS NOT NULL))
 ) STRICT;
 

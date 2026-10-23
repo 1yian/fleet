@@ -12,6 +12,7 @@ import {
   finishJob,
   localLanding,
   nameBranch,
+  dropLostJob,
   ownJob,
   runningJobs,
   resumeAttempt,
@@ -222,6 +223,14 @@ const HANDLERS: Record<OpName, Handler> = {
         `job ${String(args.job)} is not one of this worker's jobs: nothing was stopped`,
       );
     return { value: { label: own.label, running: own.running }, notify: [] };
+  },
+  "job.drop": (db, session, raw) => {
+    const args = check(OPS["job.drop"].args, raw);
+    const owner = session.role === "mate" ? { lane: session.lane } : { session: session.id };
+    const dropped = dropLostJob(db, args.job, owner);
+    if (dropped === undefined)
+      throw new Error(`job ${String(args.job)} is not one of yours: nothing was dropped`);
+    return { value: dropped, notify: [] };
   },
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   "incident.report": (db, session, raw, timing) =>

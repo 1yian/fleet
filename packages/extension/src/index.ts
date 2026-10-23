@@ -15,7 +15,7 @@ import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
-import { Jobs } from "./jobs.ts";
+import { Jobs, registerDropJob } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
 import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
@@ -167,6 +167,7 @@ function start(
     else worker?.reset();
   };
   const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
+  registerDropJob(pi, link);
   registerGuard(pi);
   const failures = new Failures(link);
   failures.register(pi);
