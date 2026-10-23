@@ -5,6 +5,7 @@ import { check, OPS } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { Harness, type Turn } from "../support/harness.ts";
+import { Scratch } from "../support/scratch.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 
@@ -59,6 +60,117 @@ async function seed(): Promise<{ cleo: Session; worker: Session }> {
   await cleo.call("hold", { card: ads.id, question: "Search or social?" });
   return { cleo, worker };
 }
+
+interface BoardActor {
+  lane: string;
+  token: string;
+  mate: Session;
+}
+
+type LaneActor = BoardActor & { card: { id: number; title: string } };
+
+async function checkLaneBoard(
+  scratch: Scratch,
+  actor: BoardActor,
+  lanes: LaneActor[],
+): Promise<void> {
+  const harness = await Harness.start();
+  try {
+    for (const args of [
+      {},
+      { lanes: true, projects: true },
+      ...lanes.map(({ card }) => ({ card: card.id })),
+    ])
+      harness.onModel(() => ({ tool: "board", args }));
+    harness.onModel(() => ({ text: "read" }));
+    const pi = harness.startPi(
+      actor.lane,
+      {
+        FLEET_URL: fleet.cardd.url,
+        FLEET_TOKEN: actor.token,
+        FLEET_ROLE: "mate",
+      },
+      [`${scratch.root}/packages/extension/src/index.ts`],
+    );
+    await harness.waitFor((event) => event["type"] === "fleet_connected", "mate connected");
+    pi.prompt("Read my board and both cards");
+    const results = toolResults(await harness.waitForCall(4));
+    const mate = await fleet.cardd.connect(actor.token);
+    try {
+      await checkLaneResults({ ...actor, mate }, lanes, results);
+    } finally {
+      await mate.close();
+    }
+  } finally {
+    await harness.stop();
+  }
+}
+
+async function checkLaneResults(
+  actor: BoardActor,
+  lanes: LaneActor[],
+  results: string[],
+): Promise<void> {
+  const [board = "", header = "", ...details] = results;
+  assert.match(header, /web,no-mistakes,main,maverick p620,off/);
+  assert.match(board, actor.lane === "main" ? /^open: "4 /m : /^open: "2 /m);
+  assert.match(
+    board,
+    actor.lane === "main" ? /^closed: 2 \(done 2\)$/m : /^closed: 1 \(done 1\)$/m,
+  );
+  if (actor.lane !== "main") assert.doesNotMatch(header, /^lanes\[/m);
+  const visible = check(OPS.board.result, await actor.mate.call("board", {}));
+  for (const [index, other] of lanes.entries()) {
+    if (actor.lane === "main" || actor.lane === other.lane) {
+      assert.ok(board.includes(other.card.title));
+      assert.match(String(details[index]), new RegExp(`title: ${other.card.title}`));
+      assert.ok(visible.some((card) => card.id === other.card.id));
+    } else {
+      assert.ok(!board.includes(other.card.title));
+      assert.ok(visible.every((card) => card.lane === actor.lane));
+      assert.match(String(details[index]), /is in another lane; ask main/);
+      await assert.rejects(
+        actor.mate.call("card", { card: other.card.id }),
+        /is in another lane; ask main/,
+      );
+    }
+  }
+}
+
+test("second mates see only their own lane through board and cardd, including the fleet mate", async () => {
+  const scratch = new Scratch();
+  try {
+    const lanes = [];
+    for (const lane of ["leo", "fleet"]) {
+      const token = fleet.cardd.addLane(lane, "main");
+      const mate = await fleet.cardd.connect(token);
+      const card = await newCard(mate, `${lane} private work`, "scout");
+      const closed = await newCard(mate, `${lane} finished work`, "scout");
+      await mate.call("close.finish", {
+        card: closed.id,
+        mode: "done",
+        text: "Finished",
+        archives: [],
+        left: [],
+      });
+      lanes.push({ lane, token, mate, card });
+    }
+    for (const actor of [
+      ...lanes,
+      {
+        lane: "main",
+        token: fleet.mainToken,
+        mate: fleet.main,
+      },
+    ]) {
+      await checkLaneBoard(scratch, actor, lanes);
+    }
+    for (const { mate } of lanes) await mate.close();
+    assert.equal((await fleet.cardd.board()).cards.length, 6);
+  } finally {
+    scratch.dispose();
+  }
+});
 
 test("board shows the open cards by what needs attention, and counts the closed ones", async () => {
   const sessions = await seed();

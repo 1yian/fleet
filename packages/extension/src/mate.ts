@@ -113,7 +113,7 @@ function registerBoard(pi: ExtensionAPI, link: Link, lanes: LaneStates | undefin
     name: "board",
     label: "Board",
     description:
-      "Shows the fleet. Its header lists the projects (delivery mode, hosts, yolo) and, as main, the lanes (running, down, or stopped). Then the open cards, the ones that need attention first, and a count of the closed ones. board(card=N) shows one card: its hold, PR, attempts and branches, report path, and thread.",
+      "Shows your own lane as a second mate, or every lane as main. Its header lists the projects (delivery mode, hosts, yolo) and, as main, the lanes (running, down, or stopped). Then the open cards, the ones that need attention first, and a count of the closed ones. board(card=N) shows one card: its hold, PR, attempts and branches, report path, and thread.",
     parameters: BoardParams,
     execute: async (_id, params) => {
       const { card } = params;

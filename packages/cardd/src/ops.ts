@@ -33,6 +33,7 @@ import {
   cardEntries,
   getCard,
   listProjects,
+  mainLane,
   parentOf,
   transaction,
   type Session,
@@ -125,11 +126,19 @@ const HANDLERS: Record<OpName, Handler> = {
     }
     return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
   },
-  board: (db) => ({ value: boardView(db).cards, notify: [] }),
-  card: (db, _session, raw) => ({
-    value: cardView(db, check(OPS.card.args, raw).card),
-    notify: [],
-  }),
+  board: (db, session) => {
+    const main = session.lane === mainLane(db);
+    return {
+      value: boardView(db).cards.filter((card) => main || card.lane === session.lane),
+      notify: [],
+    };
+  },
+  card: (db, session, raw) => {
+    const { card } = check(OPS.card.args, raw);
+    if (session.lane !== mainLane(db) && getCard(db, card).lane !== session.lane)
+      throw new Error(`c-${String(card)} is in another lane; ask main`);
+    return { value: cardView(db, card), notify: [] };
+  },
   projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment,
   "lane.plan": (db, session, _raw, timing) => ({
