@@ -248,7 +248,10 @@ test("fleet up says it could not check when gh fails for a reason that is not ab
 const MODEL = { provider: "fake", model: "scripted", thinking: "off" };
 
 test("fleet up starts no mate whose conversation memory has no profile, and starts it once the profile exists", (t) => {
-  if (secondMateProfileSkip) return t.skip(secondMateProfileSkip);
+  if (secondMateProfileSkip) {
+    t.skip(secondMateProfileSkip);
+    return;
+  }
   const home = join(`${scratch.root}.worktrees`, "lane-cleo");
   writeFileSync(
     join(home, "config", "optchat.json"),

@@ -203,7 +203,10 @@ test("with memory on, main yields silently and keeps idle and mid-turn fleet mes
 });
 
 test("a second mate whose home got memory from `fleet home memory` keeps a [fleet] message in its own memory", async (t) => {
-  if (secondMateProfileSkip) return t.skip(secondMateProfileSkip);
+  if (secondMateProfileSkip) {
+    t.skip(secondMateProfileSkip);
+    return;
+  }
   const agent = { PI_CODING_AGENT_DIR: join(h.dir, "agent") };
   const token = cardd.addLane("leo", "main");
   const home = scratch.addLane("leo", {
@@ -245,7 +248,10 @@ test("a second mate whose home got memory from `fleet home memory` keeps a [flee
 });
 
 test("`fleet home memory` turns a second mate's memory back on after it was set off", async (t) => {
-  if (secondMateProfileSkip) return t.skip(secondMateProfileSkip);
+  if (secondMateProfileSkip) {
+    t.skip(secondMateProfileSkip);
+    return;
+  }
   const agent = { PI_CODING_AGENT_DIR: join(h.dir, "agent") };
   const token = cardd.addLane("board", "main");
   const home = scratch.addLane("board", {
