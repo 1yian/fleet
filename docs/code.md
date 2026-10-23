@@ -10,6 +10,12 @@ Code in this repository has no comments. A lint rule fails on any comment. What 
 - `ci.yml` puts each pull request's runs in one concurrency group, so a new push cancels the run it supersedes. Each push to `main` gets a group of its own, keyed by its run id. With one group for `main`, a merge cancelled the run of the merge before it, both in progress and while it waited, so that commit never got a full result.
 - `packages/cardd/scripts/check-migrations.ts` applies every migration to an empty database, checks the result, and compares it with the committed `schema.sql`. With `MIGRATIONS_BASE` set to a git ref, it also fails when a migration that exists at that ref was changed, renamed, or removed. `--write` updates `schema.sql`.
 
+## End-to-end deadlines
+
+`npm run test:e2e` runs tests through `e2e/run.ts`. Each test has five minutes. The whole runner has sixty minutes, including teardown. A full unsharded run took almost thirty minutes on a loaded host, so thirty minutes left no useful margin. Node's test timeout does not stop a file that finished its tests but still has open handles. The outer deadline kills only the process group it started and returns failure. SIGINT, SIGTERM, and SIGHUP are forwarded to that group, and the runner exits with failure. CI also bounds each end-to-end job to thirty minutes, including installation and build.
+
+Every board test file calls `boundBoardFile` from `e2e/support/board.ts`, which ends the file after ten minutes even if its tests finished with open handles. Board fixtures register cleanup through `startBoardServer` and `openBoardPage` as each resource is acquired. A seed failure before the page exists must still stop its server. The kanban and links fixtures use normal timers: they do not assert timed-check behavior, and an accelerated timed check competes with fixture database writes.
+
 ## Protocol
 
 `packages/protocol` is the wire protocol between `cardd`, the extension, and the board. Each schema is the one source of its type and its validator. `parse` throws one readable error that names the first problem.
