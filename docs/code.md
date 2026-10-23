@@ -192,7 +192,7 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 
 ### Memory
 
-- `optchat.ts` loads OptChat from `packages/extension/vendor/optchat` with `FM_HOME` set to the home, when the home has `config/optchat.json`. The loader reads `FM_HOME` when its module is evaluated, so the variable is set around the import. The vendored folder is third-party code with its own style: lint, format, typecheck, and knip skip it (their config files list it), and `optchat.ts` imports it by URL so the typecheck does not follow it. Fleet's own changes to it are listed in its `README.md`.
+- `optchat.ts` loads OptChat from `packages/extension/vendor/optchat` with `FM_HOME` set to the home, when the home has `config/optchat.json`. The loader reads `FM_HOME` when its module is evaluated, so the variable is set around the import. The vendored folder is third-party code with its own style: lint, format, and knip skip it because their config files list it, and the typecheck skips it because `optchat.ts` imports it by URL, which `tsc` does not follow. Fleet's own changes to it are listed in its `README.md`.
 - `memory.ts` writes what the loader reads, all inside one home. Each step that is done already is left alone. A profile's lock socket must fit a socket path: 104 bytes on macOS and 108 elsewhere, with the NUL.
 
 ### Standing rules and stow
