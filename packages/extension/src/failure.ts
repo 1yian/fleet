@@ -29,8 +29,9 @@ export class Failures {
 
   obligation(label: string | undefined): void {
     this.owed = label;
-    if (label === undefined) this.blockage?.release();
-    else if (this.blockage !== undefined) this.blockage.raise(label, this.blockage.now);
+    if (label === undefined) {
+      if (this.failed === undefined) this.blockage?.release();
+    } else if (this.blockage !== undefined) this.blockage.raise(label, this.blockage.now);
   }
 
   expectCompaction(): void {

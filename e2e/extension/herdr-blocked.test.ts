@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardSchema, check, OPS } from "@fleet/protocol";
+import { CardSchema, CardViewSchema, check, OPS } from "@fleet/protocol";
 import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
@@ -141,4 +141,55 @@ test("a mate whose turn failed reads blocked in herdr with the cause, and the ne
 
   await wake("second");
   await until(pane, "idle after a good turn", (s) => s.status === "idle");
+});
+
+test("a worker whose owed reply was answered elsewhere stops reading blocked on its next turn", async () => {
+  cardd.addProject("web", { maverick: here.root });
+  const mate = await cardd.connect(ghostToken);
+  const card = check(
+    CardSchema,
+    await mate.call("card.new", { title: "stale reply", kind: "scout", project: "web" }),
+  );
+  const { token } = check(
+    OPS["attempt.begin"].result,
+    await mate.call("attempt.begin", { card: card.id, host: "maverick", task: "investigate" }),
+  );
+  const pause = {
+    tool: "report",
+    args: {
+      status: "paused",
+      text: "waiting",
+      until: new Date(Date.now() + 3_600_000).toISOString(),
+    },
+  };
+  for (const text of ["waiting", "noted the question", "noted the update"]) {
+    h.onModel(() => pause, "mate");
+    h.onModel(() => ({ text }), "mate");
+  }
+  const pane = await startMain(lab, here, h, false, [
+    ...mateArgs(h),
+    "--fleet-url",
+    cardd.url,
+    "--fleet-token",
+    token,
+    "--fleet-role",
+    "worker",
+  ]);
+  await until(pane, "the worker to settle idle", (s) => s.status === "idle");
+  await mate.call("comment", { card: card.id, text: "Which port?", reply: true });
+  await until(pane, "the owed reply to block the worker", (s) => s.status === "blocked");
+  const asked = check(CardViewSchema, await mate.call("card", { card: card.id })).card.replies[0];
+  assert.ok(asked, "the ask is open on the card");
+  const worker = await cardd.connect(token);
+  await worker.call("report", {
+    status: "working",
+    text: "port 8080",
+    replyTo: asked.id,
+  });
+  await worker.close();
+  await mate.call("comment", { card: card.id, text: "thanks, carry on" });
+  assert.equal(
+    (await until(pane, "the answered reply to stop blocking", (s) => s.status === "idle")).status,
+    "idle",
+  );
 });

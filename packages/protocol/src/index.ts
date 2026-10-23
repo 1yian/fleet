@@ -327,6 +327,11 @@ export const OPS = {
     args: Type.Object({}),
     result: PlanSchema,
   },
+  "replies.owed": {
+    roles: ["worker"],
+    args: Type.Object({}),
+    result: Type.Array(ReplyId),
+  },
   wake: {
     roles: ["mate"],
     args: WakeArgsSchema,
