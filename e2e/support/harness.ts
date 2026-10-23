@@ -27,7 +27,7 @@ export type Move = { readonly promptTokens?: number } & (
   | {
       readonly tool: string;
       readonly text?: string;
-      readonly args?: Readonly<Record<string, string | number | boolean>>;
+      readonly args?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
     }
 );
 export interface Failure {

@@ -86,11 +86,11 @@ export function eligibleAt(
   return at > 0 ? at : null;
 }
 
-function modesFor(phase: Phase, kind: Kind, eligible: number | null): Mode[] {
+function modesFor(phase: Phase, kind: Kind): Mode[] {
   if (phase === "startup" || phase === "lost") return ["replace"];
   if (kind === "stale-module") return ["replace"];
   if (kind === "router-cooldown" || kind === "transient") return ["retry"];
-  if (kind === "vendor-quota") return eligible === null ? [] : ["retry"];
+  if (kind === "vendor-quota") return ["replace"];
   if (kind === "auth") return [];
   return ["retry", "replace"];
 }
@@ -102,7 +102,7 @@ export function remaining(inc: {
   readonly retries: number;
   readonly replacements: number;
 }): Mode[] {
-  return modesFor(inc.phase, inc.classification, inc.eligibleAt).filter((mode) =>
+  return modesFor(inc.phase, inc.classification).filter((mode) =>
     mode === "retry" ? inc.retries < MAX_RETRIES : inc.replacements < MAX_REPLACEMENTS,
   );
 }

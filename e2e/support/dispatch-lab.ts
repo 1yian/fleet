@@ -27,6 +27,7 @@ export interface DispatchLab {
 }
 
 export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
+export const avoidSeenOf = (h: Harness): string => join(h.dir, "worker-avoid");
 
 export interface LabOptions {
   readonly cardd?: Record<string, string>;
@@ -94,6 +95,7 @@ export async function startDispatchLab({
     ...h.piEnv("worker"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_ARGV_FILE: launchArgsOf(h),
+    FLEET_AVOID_FILE: avoidSeenOf(h),
   });
   const mate = h.startPi(
     "main",

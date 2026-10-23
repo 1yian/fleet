@@ -42,7 +42,7 @@ test("real router exhaustion and payment texts from a failing model turn are cla
     [
       "API error (status 402 Payment Required): Grok credits exhausted",
       "vendor-quota",
-      /Restarting is not a repair for vendor-quota/,
+      /mode=replace\)\.$/,
     ],
   ];
   const names = texts.map((_, index) => ["cleo", "dara"][index] ?? "eli");

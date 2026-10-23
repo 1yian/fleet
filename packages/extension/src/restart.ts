@@ -12,6 +12,7 @@ const RestartParams = Type.Object({
   generation: OPS["card.restart"].args.properties.generation,
   mode: Type.Optional(OPS["card.restart"].args.properties.mode),
   key: Type.Optional(OPS["card.restart"].args.properties.key),
+  avoid: OPS["card.restart"].args.properties.avoid,
 });
 
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
@@ -26,13 +27,13 @@ export function registerRestart(
     name: "restart_card",
     label: "Restart card",
     description:
-      "Restarts your worker on the SAME card, conversation, branch, and work, with or without a runtime incident. Only its direct parent may restart it; main may restart a second mate by its lane card, never main or cardd. Default mode=replace. With incident, name its generation too: stale generations are refused; mode=retry sends a health check instead. Never resumes paused or completed work. Ordinary restarts are capped at 3 per hour per card. Repeat the same key for an idempotent retry.",
+      "Restarts your worker on the SAME card, conversation, branch, and work, with or without a runtime incident. Only its direct parent may restart it; main may restart a second mate by its lane card, never main or cardd. Default mode=replace. With incident, name its generation too: stale generations are refused; mode=retry sends a health check instead. Never resumes paused or completed work. Ordinary restarts are capped at 3 per hour per card. Repeat the same key for an idempotent retry. avoid lists exact provider names the new process must not use, for this restart only (replace of a worker only); a later restart without avoid clears it.",
     parameters: RestartParams,
     execute: async (_id, params) => {
       const key = params.key ?? randomUUID();
       const request = { ...params, mode: params.mode ?? "replace", key };
       const plan = await link.call("card.restart", request);
-      return reply(await carryOut(link, launch, home, plan));
+      return reply(await carryOut(link, launch, home, plan, params.avoid));
     },
   });
 }
@@ -49,6 +50,7 @@ async function carryOut(
   launch: Launch,
   home: string | undefined,
   plan: Plan,
+  avoid: readonly string[] | undefined,
 ): Promise<string> {
   const who = plan.role === "worker" ? `the worker on c-${String(plan.card)}` : plan.actor;
   const incident = plan.incident === null ? "" : ` (incident ${String(plan.incident)})`;
@@ -60,7 +62,7 @@ async function carryOut(
       ? `A restart of ${plan.lane} was already requested, so this repeat did nothing.`
       : await restartLane(home, plan.lane);
   }
-  const started = await replaceWorker(link, launch, plan);
+  const started = await replaceWorker(link, launch, plan, avoid);
   if (plan.incident !== null)
     return `${started} The recovery check reaches it when it connects${incident}. ${CHECK_NOTE}`;
   if (!plan.repeat) await link.call("comment", { card: plan.card, text: RESTARTED_NOTE });

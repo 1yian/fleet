@@ -12,7 +12,10 @@ export interface WireCall {
 export type WireMove = { readonly promptTokens?: number } & (
   | { readonly text: string; readonly thinking?: string }
   | { readonly texts: readonly string[]; readonly thinking?: string }
-  | { readonly tool: string; readonly args?: Readonly<Record<string, string | number | boolean>> }
+  | {
+      readonly tool: string;
+      readonly args?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+    }
 );
 
 const PROMPT_TOKENS = 100_000;

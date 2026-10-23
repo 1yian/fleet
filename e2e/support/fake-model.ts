@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -19,11 +19,13 @@ function controlUrl(): string {
   return url;
 }
 
-function scalarArgs(value: unknown): Record<string, string | number | boolean> {
+function scalarArgs(value: unknown): Record<string, string | number | boolean | readonly string[]> {
   if (!isRecord(value)) return {};
-  const args: Record<string, string | number | boolean> = {};
+  const args: Record<string, string | number | boolean | readonly string[]> = {};
   for (const [key, item] of Object.entries(value)) {
     if (typeof item === "string" || typeof item === "number" || typeof item === "boolean")
+      args[key] = item;
+    else if (Array.isArray(item) && item.every((each) => typeof each === "string"))
       args[key] = item;
   }
   return args;
@@ -76,6 +78,11 @@ export default function fakeModel(pi: ExtensionAPI): void {
   const missing = new Set((process.env["FLEET_FAKE_MISSING"] ?? "").split(",").filter(Boolean));
   const present = (provider: string, models: { id: string }[]): { id: string }[] =>
     models.filter((model) => !missing.has(`${provider}/${model.id}`));
+  const avoidFile = process.env["FLEET_AVOID_FILE"];
+  if (avoidFile !== undefined)
+    pi.on("session_start", () => {
+      appendFileSync(avoidFile, `${process.env["PI_TIERS_AVOID"] ?? "(unset)"}\n`);
+    });
   const providers = [
     fauxProvider({ provider: "fake", models: [{ id: "scripted" }] }),
     fauxProvider({

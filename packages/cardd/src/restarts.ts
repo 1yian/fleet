@@ -94,6 +94,10 @@ export function restartCard(
   const card = getCard(db, args.card);
   const mate = laneCardOf(db, card.lane) === card.id;
   const { incident, generation } = args;
+  if (args.avoid !== undefined && (args.mode === "retry" || mate))
+    throw new Error(
+      "avoid applies only when a worker's process is replaced: retry and a second mate's restart start no new worker process",
+    );
   if (incident === undefined) {
     if (args.mode === "retry")
       throw new Error("retry needs an incident: name the incident and its generation");
