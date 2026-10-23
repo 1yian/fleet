@@ -21,7 +21,7 @@ import { clearFailure, noteControl, recover, reportFailure } from "./incidents.t
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { PullRequest } from "./github.ts";
 import { loadPlan } from "./plans.ts";
-import { lookUpPr } from "./pulls.ts";
+import { lookUpPr, recordReportedPr } from "./pulls.ts";
 import { requireOwedBy } from "./replies.ts";
 import { factsFrom } from "./status.ts";
 import type { Timings } from "./timing.ts";
@@ -261,7 +261,7 @@ const HANDLERS: Record<OpName, Handler> = {
 };
 
 async function findReportedPr(db: DatabaseSync, session: Session, raw: unknown): Promise<PrFields> {
-  const { status } = check(OPS.report.args, raw);
+  const { status, pr } = check(OPS.report.args, raw);
   if (status !== "done" || session.card === null) return {};
   const card = getCard(db, session.card);
   if (card.kind !== "ship") return {};
@@ -272,6 +272,7 @@ async function findReportedPr(db: DatabaseSync, session: Session, raw: unknown):
       landing: `local-only: branch ${local.branch} lands on local ${local.base} when the card closes`,
     };
   }
+  recordReportedPr(db, card.id, pr);
   const found = await lookUpPr(db, session.card);
   if (found.kind === "found") return { pr: found.pr.url, prState: found.pr.state };
   if (found.kind === "unknown") return { prNote: `PR unknown: ${found.reason}` };

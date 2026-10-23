@@ -38,6 +38,12 @@ const ReportParams = Type.Object({
     Type.String({ description: "ISO 8601 UTC time like 2026-05-01T10:00:00Z, for paused" }),
   ),
   replyTo: OPS.report.args.properties.replyTo,
+  pr: Type.Optional(
+    Type.String({
+      description:
+        "With done: the full URL of your PR when its head branch is not your recorded task branch",
+    }),
+  ),
 });
 
 function untilMs(status: string, until: string | undefined): number | undefined {
@@ -99,6 +105,7 @@ export class WorkerRun {
           key: params.key,
           until,
           replyTo: params.replyTo,
+          pr: params.pr,
         };
         const card = await this.link.call("report", args);
         this.latest = { status: params.status, until };

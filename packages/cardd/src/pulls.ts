@@ -33,9 +33,10 @@ async function findOrView({ repo, pr, branches }: Place): Promise<PrLookup> {
       return { kind: "unknown", reason: "its project has no GitHub repository on record" };
     return { kind: "found", pr: await viewPullRequest(pr) };
   }
-  if (branches.length === 0) return { kind: "none", branches };
-  const found = await findPullRequest(repo, branches);
-  return found === undefined ? { kind: "none", branches } : { kind: "found", pr: found };
+  const found = branches.length === 0 ? undefined : await findPullRequest(repo, branches);
+  if (found !== undefined) return { kind: "found", pr: found };
+  if (pr !== null) return { kind: "found", pr: await viewPullRequest(pr) };
+  return { kind: "none", branches };
 }
 
 interface Slot {
@@ -77,6 +78,17 @@ async function readPr(db: DatabaseSync, card: number): Promise<PrLookup> {
   } catch (error) {
     return { kind: "unknown", reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export function recordReportedPr(db: DatabaseSync, card: number, url: string | undefined): void {
+  if (url === undefined) return;
+  const { repo } = placeOf(db, card);
+  if (
+    repo !== null &&
+    !url.toLowerCase().startsWith(`https://github.com/${repo}/pull/`.toLowerCase())
+  )
+    throw new Error(`${url} is not a PR of this project's repository ${repo}`);
+  db.prepare("UPDATE cards SET pr = ? WHERE id = ?").run(url, card);
 }
 
 export type Hosts = Readonly<Record<string, readonly string[]>>;
