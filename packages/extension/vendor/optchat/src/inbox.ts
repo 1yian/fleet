@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { record } from './cache.ts';
-import { atomicWrite } from './profiles.ts';
+import { atomicWrite } from './store.ts';
 import type { Memory } from './memory.ts';
 
 interface Arrival { id: string; text: string; date: string }
@@ -11,6 +11,8 @@ export class Inbox {
   private readonly file: string;
   private items: Arrival[];
   private readonly claimed = new Set<string>();
+  /** Typed while a run was going: Pi holds these until a turn boundary, and Esc or dequeue hands them back to the editor without telling extensions. */
+  private readonly queued = new Set<string>();
   constructor(directory: string) {
     this.file = join(directory, 'pending-inputs.json');
     const saved: unknown = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : [];
@@ -19,9 +21,18 @@ export class Inbox {
     this.items = saved;
   }
   private save() { atomicWrite(this.file, JSON.stringify(this.items)); }
-  record(text: string) {
+  record(text: string, queued = false) {
     const item = { id: randomUUID(), text, date: new Date().toISOString() };
-    this.items.push(item); this.save(); return item.id;
+    this.items.push(item); this.save();
+    if (queued) this.queued.add(item.id);
+    return item.id;
+  }
+  /** Call once a run settles: Pi has delivered everything it still held, so a queued input nobody claimed went back to the editor. */
+  dropReturned() {
+    const returned = new Set([...this.queued].filter(id => !this.claimed.has(id)));
+    this.queued.clear();
+    if (!returned.size) return;
+    this.items = this.items.filter(i => !returned.has(i.id)); this.save();
   }
   claim(text: string) { return this.claimWhere(i => i.text === text); }
   /** Pi expands `/skill:name args` after the input is journaled; match the expansion back to that input. */
@@ -43,6 +54,6 @@ export class Inbox {
     for (const item of this.items) {
       if (!receipts.has(item.id)) { memory.append('user', item.text, item.date, item.id); count++; }
     }
-    this.items = []; this.claimed.clear(); this.save(); return count;
+    this.items = []; this.claimed.clear(); this.queued.clear(); this.save(); return count;
   }
 }

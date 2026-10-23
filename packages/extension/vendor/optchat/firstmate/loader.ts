@@ -17,7 +17,6 @@ import * as profiles from "../src/profiles.ts";
 import * as prompts from "../src/prompts.ts";
 import * as memory from "../src/memory.ts";
 import * as transcript from "../src/transcript.ts";
-import * as guidance from "../src/import/guidance.ts";
 
 interface Config {
   enabled: true;
@@ -28,7 +27,7 @@ interface Config {
   thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 }
 type ProfileSettings = ReturnType<typeof profiles.loadConfig>;
-const VENDORED = "pi-optchat@0.7.2+fleet";
+const VENDORED = "pi-optchat@0.9.0+fleet";
 const DEFAULT_COMPACTOR = { provider: "tier", model: "compact" };
 // Explicit Firstmate identity is required at user scope. Unlike the old project
 // loader, the extension's own source directory is not a Firstmate home.
@@ -99,7 +98,7 @@ export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> 
   };
   const integration = withFirstmateOptChat(pi, {
     profile: config.profile,
-    instructionSection: () => `${profiles.instructions(profileDir)}\n\n${guidance.IMPORT_GUIDANCE}`,
+    instructionSection: () => `${profiles.instructions(profileDir)}\n\n${prompts.IMPORT_GUIDANCE}`,
     textContent: transcript.textContent,
     memoryPrompt: () => promptFor(`${prompts.MASTER}\n\n${prompts.VIEW_DOC}`, profiles.loadConfig(profileDir)),
     memorySearch: () => profiles.loadConfig(profileDir).memorySearch === true,
