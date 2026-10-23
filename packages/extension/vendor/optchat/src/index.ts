@@ -209,11 +209,6 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
         status(ctx);
       }, () => config.summaryAcceptBytes, undefined, () => config.compactorFallbacks ?? DEFAULT_COMPACTOR_FALLBACKS), warning => ctx.ui.notify(warning, 'error'), undefined, config.jobs);
       openingMemory = memory;
-      let healthy: boolean | undefined;
-      memory.onChange(() => {
-        const now = memory.lastError === undefined;
-        if (now !== healthy) { healthy = now; pi.events.emit('fleet:compactor', { healthy: now }); }
-      });
       const inbox = new Inbox(dir);
       const recovered = pendingImport(dir) ? 0 : inbox.recover(memory);
       if (recovered) ctx.ui.notify(`Recovered ${recovered} unanswered inputs into ${name}'s memory. Ask to continue them when ready.`, 'info');

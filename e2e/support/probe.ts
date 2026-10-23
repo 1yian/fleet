@@ -56,10 +56,6 @@ export default function probe(pi: ExtensionAPI): void {
     if (isRecord(data))
       report({ type: "fleet_delivered", entryId: optionalNumber(data, "entryId") });
   });
-  pi.events.on("herdr:blocked", (data) => {
-    if (isRecord(data))
-      report({ type: "blocked", active: data["active"] === true, label: data["label"] });
-  });
   pi.events.on("fleet:connected", () => {
     report({ type: "fleet_connected" });
   });
