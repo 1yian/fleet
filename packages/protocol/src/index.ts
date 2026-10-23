@@ -1,6 +1,7 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 import { INCIDENT_OPS } from "./incidents.ts";
+import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { ActivityMessage, LandingFields } from "./progress.ts";
 import { ReportStatus } from "./report.ts";
@@ -321,37 +322,6 @@ export const OPS = {
     args: Type.Object({ name: Type.String({ minLength: 1 }) }),
     result: Type.Object({ branch: Type.String(), previous: Type.String() }),
   },
-  "job.start": {
-    roles: ["worker"],
-    args: Type.Object({
-      label: Type.String({ minLength: 1 }),
-      command: Type.String({ minLength: 1 }),
-    }),
-    result: Type.Object({
-      job: Type.Integer(),
-      heartbeatMs: Type.Integer({ minimum: 1 }),
-    }),
-  },
-  "job.alive": {
-    roles: ["worker"],
-    args: Type.Object({ job: Type.Integer() }),
-    result: Type.Object({ running: Type.Boolean() }),
-  },
-  "job.finish": {
-    roles: ["worker"],
-    args: Type.Object({ job: Type.Integer(), exitCode: Type.Integer(), outputTail: Type.String() }),
-    result: Type.Object({ recorded: Type.Boolean() }),
-  },
-  "job.stop": {
-    roles: ["worker"],
-    args: Type.Object({ job: Type.Integer() }),
-    result: Type.Object({ label: Type.String(), running: Type.Boolean() }),
-  },
-  jobs: {
-    roles: ["worker"],
-    args: Type.Object({}),
-    result: Type.Array(Type.Object({ id: Type.Integer(), label: Type.String() })),
-  },
   "lane.plan": {
     roles: ["mate"],
     args: Type.Object({}),
@@ -363,6 +333,7 @@ export const OPS = {
     result: Type.Object({ entry: Type.Integer() }),
   },
   ...INCIDENT_OPS,
+  ...JOB_OPS,
   ...MAINTENANCE_OPS,
   report: {
     roles: ["worker"],

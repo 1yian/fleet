@@ -349,6 +349,31 @@ export function ownJob(
   };
 }
 
+export function dropLostJob(
+  db: DatabaseSync,
+  job: number,
+  owner: { session: string } | { lane: string },
+): { label: string; dropped: boolean; state: string } | undefined {
+  const row = db
+    .prepare(
+      `SELECT j.label AS label, j.state AS state, j.dropped_at AS dropped_at, j.attempt AS attempt, c.lane AS lane
+       FROM jobs j JOIN attempts a ON a.id = j.attempt JOIN cards c ON c.id = a.card WHERE j.id = ?`,
+    )
+    .get(job);
+  if (row === undefined) return undefined;
+  const owned =
+    "session" in owner
+      ? row["attempt"] === attemptOf(db, owner.session)
+      : row["lane"] === owner.lane;
+  if (!owned) return undefined;
+  const label = String(row["label"]);
+  const state = String(row["state"]);
+  if (state !== "lost") return { label, state, dropped: false };
+  if (row["dropped_at"] === null)
+    db.prepare("UPDATE jobs SET dropped_at = ? WHERE id = ?").run(Date.now(), job);
+  return { label, state, dropped: true };
+}
+
 export function loseSilentJobs(
   db: DatabaseSync,
   before: number,

@@ -307,7 +307,7 @@ function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     db,
     `SELECT j.id AS id, j.label AS label, j.updated_at AS since, a.card AS card, c.lane AS lane
      FROM jobs j JOIN attempts a ON a.id = j.attempt JOIN cards c ON c.id = a.card
-     WHERE j.state = 'lost' AND a.state IN ('starting', 'active')
+     WHERE j.state = 'lost' AND j.dropped_at IS NULL AND a.state IN ('starting', 'active')
        AND NOT EXISTS (SELECT 1 FROM jobs later
          WHERE later.attempt = j.attempt AND later.label = j.label AND later.id > j.id)
      ORDER BY j.id`,
@@ -315,7 +315,7 @@ function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     const tier = repeatTier(now - Number(row["since"]), t.repeat, t.repeat);
     if (tier === 0) return [];
     const id = String(row["id"]);
-    const text = `reminder: job ${id} (${String(row["label"])}) is still lost. It is not run again: ask the worker to run it again, or to drop it.`;
+    const text = `reminder: job ${id} (${String(row["label"])}) is still lost. It is not run again: ask the worker to run it again, or to drop it with drop_job(job).`;
     return [
       {
         card: Number(row["card"]),
