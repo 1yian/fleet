@@ -282,7 +282,9 @@ interface RecoveryRequest {
 }
 
 const repeats = (inc: Incident, args: RecoveryRequest): boolean =>
-  inc.state === "recovering" && inc.recoveryKey === args.key && inc.recoveryMode === args.mode;
+  (inc.state === "recovering" || inc.state === "verified") &&
+  inc.recoveryKey === args.key &&
+  inc.recoveryMode === args.mode;
 
 function requireRecoverable(
   db: DatabaseSync,
