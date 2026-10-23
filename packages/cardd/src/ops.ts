@@ -16,6 +16,7 @@ import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
+import { acknowledgeMaintenance, maintenanceStatus, requestMaintenance } from "./maintenance.ts";
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
 import { restartCard } from "./restarts.ts";
@@ -105,6 +106,14 @@ function rework(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
 }
 
 const HANDLERS: Record<OpName, Handler> = {
+  "maintenance.request": (db, session, raw, timing) =>
+    requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
+  "maintenance.status": (db, _session, raw) => ({
+    value: maintenanceStatus(db, check(OPS["maintenance.status"].args, raw).batch),
+    notify: [],
+  }),
+  "maintenance.ack": (db, session, raw) =>
+    acknowledgeMaintenance(db, session, check(OPS["maintenance.ack"].args, raw)),
   "close.begin": closeBegin,
   "close.finish": closeFinish,
   hold,

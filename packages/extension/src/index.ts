@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
@@ -19,6 +19,7 @@ import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
+import { MaintenanceQueue } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
 import { registerRestart } from "./restart.ts";
 import { registerQuestions } from "./questions.ts";
@@ -100,10 +101,12 @@ function start(
   { url, token, role, lane }: Config,
   sessionFile: string | undefined,
   compact: () => void,
+  ctx: ExtensionContext,
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
   let unreadable: string | undefined;
+  const maintenance: { queue?: MaintenanceQueue } = {};
   const link = new Link({
     url,
     token,
@@ -114,6 +117,7 @@ function start(
       unreadable = error;
       tellUnreadable(pi, error);
     },
+    onMaintenance: (request) => maintenance.queue?.receive(request),
     onConnect: () => {
       unreadable = undefined;
       pi.events.emit("fleet:connected", {});
@@ -154,11 +158,12 @@ function start(
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link) : undefined;
+  let stow: (() => Promise<string | undefined>) | undefined;
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
     registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
     registerRestart(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
-    registerStow(pi, HOME(), lane);
+    stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
   }
   if (lane === "main") {
@@ -166,6 +171,7 @@ function start(
     registerUpdate(pi, HOME(), link);
   }
 
+  maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);
   applyCachePolicy(role);
   applyContextPolicy(role);
   applyCompactionBackoff();
@@ -198,9 +204,15 @@ export default function fleet(pi: ExtensionAPI): void {
     const found = config(pi);
     if (started || found === undefined) return;
     started = true;
-    start(pi, found, ctx.sessionManager.getSessionFile(), () => {
-      ctx.compact();
-    });
+    start(
+      pi,
+      found,
+      ctx.sessionManager.getSessionFile(),
+      () => {
+        ctx.compact();
+      },
+      ctx,
+    );
     if (found.lane !== undefined) titleMate(pi, found.lane).catch(() => undefined);
   });
 }

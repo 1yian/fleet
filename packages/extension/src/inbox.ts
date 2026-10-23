@@ -88,6 +88,8 @@ const laneNote = (entry: Entry): string => {
 const AGAIN = " (sent again: the turn that got it ended before it was taken in)";
 
 export function format(entry: Entry, name: string, again = false): string {
+  if (entry.kind === "note" && entry.fields["maintenance"] !== undefined)
+    return `[fleet] maintenance: ${entry.body}`;
   return `${formatOnce(entry, name)}${again ? AGAIN : ""}`;
 }
 

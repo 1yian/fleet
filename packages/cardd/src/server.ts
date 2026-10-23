@@ -14,6 +14,7 @@ import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { readPullRequests, runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
+import { adoptMaintenance, pendingFor } from "./maintenance.ts";
 import { adoptProcess } from "./incidents.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
@@ -185,20 +186,28 @@ class Hub {
     }
     this.sockets.get(session.id)?.close(CLOSE_SUPERSEDED, "a newer connection took over");
     this.sockets.set(session.id, socket);
-    const lowWater = transaction(this.db, () => {
+    const { lowWater, reporters } = transaction(this.db, () => {
       setSessionState(this.db, session.id, "idle");
       adoptProcess(this.db, session.id, message.process);
-      return confirm(this.db, session.id, message.inFile);
+      const told = adoptMaintenance(
+        this.db,
+        session.id,
+        message.process,
+        message.maintenance === true,
+      );
+      return { lowWater: confirm(this.db, session.id, message.inFile), reporters: told };
     });
     this.web.changed();
     send(socket, { t: "welcome", session: session.id, role: session.role, lowWater });
     this.flush(session.id, true);
+    for (const reporter of new Set(reporters)) this.flush(reporter, false);
     return session;
   }
 
   flush(session: string, atConnect: boolean): void {
     const socket = this.sockets.get(session);
     if (socket === undefined) return;
+    for (const request of pendingFor(this.db, session)) send(socket, { t: "maintenance", request });
     for (const push of transaction(this.db, () => toPush(this.db, session, atConnect))) {
       send(socket, { t: "entry", ...push });
     }

@@ -127,7 +127,7 @@ export async function restartLane(home: string, lane: string): Promise<string> {
   return withLanes(() => act(config, lane, "restart"));
 }
 
-export async function restartAll(config: LaneConfig): Promise<string[]> {
+async function restartAll(config: LaneConfig): Promise<string[]> {
   const lines: string[] = [];
   for (const host of hostsOf(config)) {
     try {
@@ -199,8 +199,9 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   const unreachable = new Set<string>();
   const unshared = new Set<string>();
   let ticking = false;
+  let shutDown = false;
   const tell = (lines: readonly string[], urgent: boolean): void => {
-    if (lines.length === 0) return;
+    if (lines.length === 0 || shutDown) return;
     const content = `[fleet] lanes: ${lines.join("; ")}`;
     pi.sendMessage(
       { customType: "fleet-lanes", content, display: true },
@@ -253,6 +254,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   timer.unref();
   void tick();
   pi.on("session_shutdown", () => {
+    shutDown = true;
     clearInterval(timer);
   });
 }

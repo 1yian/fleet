@@ -21,7 +21,7 @@ export interface Turn {
   readonly role: string;
   readonly text: string;
 }
-type Move = { readonly promptTokens?: number } & (
+export type Move = { readonly promptTokens?: number } & (
   | { readonly text: string; readonly thinking?: string }
   | { readonly texts: readonly string[]; readonly thinking?: string }
   | {

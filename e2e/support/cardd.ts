@@ -247,13 +247,14 @@ export class Cardd {
 }
 
 type Outgoing =
-  | { t: "hello"; token: string; inFile: readonly number[] }
+  | { t: "hello"; token: string; inFile: readonly number[]; maintenance?: boolean }
   | { t: "ack"; entry: number }
   | { t: "activity"; state: "running" | "idle" | "waiting" }
   | { t: "call"; id: number; op: string; args: unknown };
 
 export class Session {
   readonly entries: Extract<ServerMessage, { t: "entry" }>[] = [];
+  readonly maintenance: Extract<ServerMessage, { t: "maintenance" }>[] = [];
   readonly opened: Promise<void>;
   welcome: Extract<ServerMessage, { t: "welcome" }> | undefined;
   closeCode: number | undefined;
@@ -315,6 +316,7 @@ export class Session {
     else if (message.t === "entry") {
       this.entries.push(message);
       if (this.takesIn) this.ack(message.entry.id);
-    } else this.results.set(message.id, message);
+    } else if (message.t === "maintenance") this.maintenance.push(message);
+    else this.results.set(message.id, message);
   }
 }

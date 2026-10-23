@@ -269,17 +269,21 @@ test("every mate loads its own captain preferences and learnings plus main's sha
 test("/stow in main files what the model curates, publishes main's shared preferences at once, then reloads AGENTS.md and the role contract in the same conversation", async () => {
   await startLab(600_000);
   seedMemory();
-  stowScript(() => [
-    write(
-      "data/memory-archive.md",
-      `## ${TODAY} stow\n- (from learnings.md) ${MAIN_OLD}\n- ${MAIN_GONE}\n`,
-    ),
-    write(
-      "data/learnings.md",
-      `- ${MAIN_FRESH} <!--a:${TODAY}-->\n- ${MAIN_NEW} <!--a:${TODAY}-->\n`,
-    ),
-    write("data/captain-shared.md", `- ${SHARED_TWO}\n`),
-  ]);
+  stowScript((system) =>
+    system.includes(MAIN_FRESH)
+      ? [
+          write(
+            "data/memory-archive.md",
+            `## ${TODAY} stow\n- (from learnings.md) ${MAIN_OLD}\n- ${MAIN_GONE}\n`,
+          ),
+          write(
+            "data/learnings.md",
+            `- ${MAIN_FRESH} <!--a:${TODAY}-->\n- ${MAIN_NEW} <!--a:${TODAY}-->\n`,
+          ),
+          write("data/captain-shared.md", `- ${SHARED_TWO}\n`),
+        ]
+      : [],
+  );
   const mainPane = await startMain(lab, here, h, false, piArgs);
   await connected(2);
   await until(
@@ -289,7 +293,13 @@ test("/stow in main files what the model curates, publishes main's shared prefer
   appendFileSync(join(here.root, "AGENTS.md"), `\n${AGENTS_RULE}\n`);
 
   await lab.submit(mainPane, "/stow");
-  const stowing = await asked("[stow]");
+  const stowing = await until(
+    () =>
+      h
+        .callsOf("mate")
+        .find((turns) => lastUser(turns).includes("[stow]") && systemOf(turns).includes(MAIN_OLD)),
+    "main's own stow call",
+  );
   const message = lastUser(stowing);
   assert.match(systemOf(stowing), RegExp(MAIN_OLD));
   assert.doesNotMatch(systemOf(stowing), RegExp(AGENTS_RULE));

@@ -146,13 +146,12 @@ async function updateReport(): Promise<string> {
   return report;
 }
 
-test("/updatefleet orders every host's sidebar when no mate starts anywhere, and reports the host whose mates it refused", async () => {
+test("/updatefleet orders every host's sidebar when no mate starts anywhere, and leaves stopped lanes stopped", async () => {
   writeFileSync(faults, "restart-lacks-direnv\n");
   await scrambledSidebarWithNoMateRunning();
   const report = await updateReport();
   await untilSidebar(ORDERED);
   assertNoMateStarted();
-  assert.match(report, /direnv is missing/);
   assert.match(report, /Sidebars:\n- local: ordered\n- p620: ordered/);
 });
 
