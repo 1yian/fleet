@@ -9,6 +9,8 @@ export interface Timings {
   readonly heartbeat: number;
   readonly intake: number;
   readonly reply: number;
+  readonly verify: number;
+  readonly retryDelays: readonly number[];
   readonly reminders: readonly number[];
   readonly finished: readonly number[];
   readonly escalations: readonly number[];
@@ -26,6 +28,8 @@ export function timings(scale: number, wall: () => number = Date.now): Timings {
     heartbeat: at(0.5),
     intake: at(2),
     reply: at(5),
+    verify: at(10),
+    retryDelays: [at(0.5), at(2)],
     reminders: [at(30), at(60), at(120), at(360)],
     finished: [at(5), at(15), at(30), at(60), at(120), at(360)],
     escalations: [at(30), at(120), at(360)],

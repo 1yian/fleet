@@ -49,22 +49,50 @@ afterEach(async (t) => {
 const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
 
-test("a job result the worker's next turn never takes in is sent again, then raised to its mate", async () => {
+test("a job result whose turn the provider fails is not lost: its mate hears one incident, and the result is sent again once the worker recovers", async () => {
   h.onModel(() => ({ tool: "run_long", args: { label: "tests", command: "echo green" } }));
   h.onModel(() => ({ text: "waiting for the tests" }));
-  for (let call = 0; call < 6; call++) h.onModel(() => ({ fail: ROUTING }));
+  h.onModel(() => ({ fail: ROUTING }));
+  h.onModel(() => ({ tool: "report", args: { status: "note", text: "alive" } }));
+  h.onModel(() => ({ text: "recovered" }));
+  h.onModel(() => ({ text: "took the job result" }));
   h.startPi("c-1-a1", env, [EXTENSION]);
 
   assert.equal(lastUser(await h.waitForCall(2)), RESULT);
-  assert.match(lastUser(await h.waitForCall(3)) ?? "", /^\[fleet\] Your run is ending/);
-  assert.equal(lastUser(await h.waitForCall(4)), AGAIN);
-  const missed = await fleet.main.waitForEntry(
-    (entry) => entry.fields["condition"] === "missed",
-    "the mate to hear its worker missed the job result",
+  const heard = await fleet.main.waitForEntry(
+    (entry) => entry.fields["condition"] === "runtime-failure",
+    "the mate to hear why the worker could not take the job result",
   );
-  assert.equal(missed.kind, "finding");
+  assert.match(
+    heard.body,
+    new RegExp(`its model turn failed: ${ROUTING}\\. Classified router-cooldown\\.`),
+  );
+  const due = await fleet.main.waitForEntry(
+    (entry) => entry.body.includes("is eligible for recovery now"),
+    "the one wake at the eligible time",
+  );
+  const [, incident, generation] =
+    /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
+  await fleet.main.call("incident.recover", {
+    incident: Number(incident),
+    generation: Number(generation),
+    mode: "retry",
+    key: "mate-retry",
+  });
+  await fleet.main.waitForEntry(
+    (entry) => entry.body.includes("recovered (retry)"),
+    "verification",
+  );
+
+  assert.equal(lastUser(await h.waitForCall(5)), AGAIN);
+  assert.ok(due.id > heard.id);
+  const entries = fleet.main.entries.map((push) => push.entry);
+  assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
   assert.equal(
-    missed.body,
-    "missed: the worker on c-1 did not take in this job-result from the job, sent twice: green",
+    h.calls
+      .slice(0, 5)
+      .flat()
+      .filter((turn) => turn.text.startsWith("[fleet] Your run is ending")).length,
+    0,
   );
 });

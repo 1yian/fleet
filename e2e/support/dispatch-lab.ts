@@ -23,6 +23,7 @@ export interface DispatchLab {
   readonly remote: string | undefined;
   readonly mate: Pi;
   readonly home: string;
+  readonly mainToken: string;
 }
 
 export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
@@ -110,7 +111,7 @@ export async function startDispatchLab({
     },
     [EXTENSION],
   );
-  return { cardd, h, lab, clone, remote, mate, home };
+  return { cardd, h, lab, clone, remote, mate, home, mainToken };
 }
 
 export async function stopDispatchLab({ lab, h, cardd }: DispatchLab): Promise<void> {

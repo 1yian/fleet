@@ -41,6 +41,7 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
    - `done`: the work is complete, as the Delivery section defines it.
    - `failed`: the work cannot be done. Say why.
 4. Every run must end with a handoff (`done`, `failed`, `blocked`, or `needs-decision`) or a tracked wait (`paused` with `until`, a running `run_long` job, or a `wait_review`). If you end a run without one, you are nudged once and then reported as stopped.
+   A `recovery check` from your mate is not new work. It means your process or a failed turn was recovered. Do what it says, call `report(status="note", ...)` once, answer in one sentence, and do not resume, continue, or change any task work. Your mate's later messages tell you what to do next.
 5. If you hit the same obstacle twice, report `blocked` and stop.
 6. A decision you opened with a key stays open until your first mate answers with that key. A later `done` or `working` report never closes it, and it holds your card at its gate however you report.
    When your first mate's answer arrives (it ends with `(answers <key>)`), the decision is closed: act on it and keep working. Never report `needs-decision` again for that key. A new gate is a new decision with a new key.

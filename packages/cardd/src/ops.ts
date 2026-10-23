@@ -16,6 +16,7 @@ import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
+import { clearFailure, noteControl, recover, reportFailure } from "./incidents.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { PullRequest } from "./github.ts";
 import { loadPlan } from "./plans.ts";
@@ -209,6 +210,11 @@ const HANDLERS: Record<OpName, Handler> = {
     return { value: { label: own.label, running: own.running }, notify: [] };
   },
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
+  "incident.report": (db, session, raw, timing) =>
+    reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
+  "incident.clear": (db, session) => clearFailure(db, session),
+  "incident.recover": (db, session, raw, timing) =>
+    recover(db, session, check(OPS["incident.recover"].args, raw), timing),
   report: (db, session, raw, _timing, pr) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
@@ -271,6 +277,10 @@ export async function performOp(
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
   const merged = op === "close.begin" ? await recordMerge(db, check(OPS[op].args, args).card) : [];
   const pr = op === "report" ? await findReportedPr(db, session, args) : {};
-  const done = transaction(db, () => HANDLERS[op](db, session, args, timing, pr));
+  const done = transaction(db, () => {
+    const result = HANDLERS[op](db, session, args, timing, pr);
+    noteControl(db, session.id, op);
+    return result;
+  });
   return { ...done, notify: [...new Set([...merged, ...done.notify])] };
 }

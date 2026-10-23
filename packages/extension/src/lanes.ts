@@ -120,6 +120,12 @@ export function withLanes<T>(work: () => Promise<T>): Promise<T> {
   return run;
 }
 
+export async function restartLane(home: string, lane: string): Promise<string> {
+  const config = readLaneConfig(home);
+  if (config === undefined) throw new Error("only a mate with lanes can restart one");
+  return withLanes(() => act(config, lane, "restart"));
+}
+
 export async function restartAll(config: LaneConfig): Promise<string[]> {
   const lines: string[] = [];
   for (const host of hostsOf(config)) {

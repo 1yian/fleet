@@ -1,5 +1,6 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
+import { INCIDENT_OPS } from "./incidents.ts";
 import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
 
 export * from "./branch.ts";
@@ -367,6 +368,7 @@ export const OPS = {
     args: WakeArgsSchema,
     result: Type.Object({ entry: Type.Integer() }),
   },
+  ...INCIDENT_OPS,
   report: {
     roles: ["worker"],
     args: Type.Object({
@@ -388,6 +390,7 @@ const ClientMessage = Type.Union([
     t: Type.Literal("hello"),
     token: Type.String(),
     inFile: Type.Array(Type.Integer()),
+    process: Type.Optional(Type.String()),
   }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
   Type.Object({ t: Type.Literal("activity"), state: Type.Enum(["running", "idle", "waiting"]) }),

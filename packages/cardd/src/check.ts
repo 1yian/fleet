@@ -3,6 +3,8 @@ import { endReviewWait, loseSilentJobs, quietSql } from "./attempts.ts";
 import { chaseIntake } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
+import { LIVE_INCIDENT } from "./incident-store.ts";
+import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
 import { lookUpPr } from "./pulls.ts";
 import { replyNudges } from "./replies.ts";
 import { factsFrom, finishFrom, type Stage } from "./status.ts";
@@ -69,6 +71,7 @@ const WORKER_RULES: readonly {
     condition: "worker-idle",
     text: "worker idle without a handoff",
     where: `${quietSql("w.state", "w.attemptId")} AND ?1 - w.seen > ?2
+      AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
       AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN ('pending', 'pushed'))
       AND NOT (json_extract(${LATEST_REPORT}, '$.status') = 'paused'
         AND coalesce(json_extract(${LATEST_REPORT}, '$.until'), 0) > ?1)`,
@@ -102,6 +105,25 @@ function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
       text,
     })),
   );
+}
+
+const PROCESS_PHASES: Readonly<Record<string, "startup" | "lost">> = {
+  "worker-never-connected": "startup",
+  "worker-not-connected": "lost",
+};
+
+function withIncidents(
+  db: DatabaseSync,
+  matches: readonly Match[],
+  now: number,
+  t: Timings,
+): Match[] {
+  return matches.map((match) => {
+    const phase = PROCESS_PHASES[match.condition];
+    if (phase === undefined) return match;
+    const found = watchdogIncident(db, match.card, phase, now, t);
+    return found === undefined ? match : { ...match, text: `${match.text}. ${found}` };
+  });
 }
 
 function reminderTier(waited: number, at: readonly number[]): number {
@@ -395,7 +417,7 @@ export function runCheck(
   prs: ReadonlyMap<number, PullRequest | undefined> = new Map(),
 ): string[] {
   const matches = [
-    ...workerMatches(db, now, t),
+    ...withIncidents(db, workerMatches(db, now, t), now, t),
     ...reminderMatches(db, now, t),
     ...holdMatches(db, now),
     ...prMatches(db, prs),
@@ -405,6 +427,7 @@ export function runCheck(
     ...lostJobs(db, now, t),
     ...chaseIntake(db, now, t),
     ...scheduledWakes(db, t.wall()),
+    ...reconcileIncidents(db, now, t),
     ...replyNudges(db, now, t),
   ]);
   writeFindings(db, now, matches, notify);

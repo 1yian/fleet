@@ -14,6 +14,7 @@ import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { readPullRequests, runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
+import { adoptProcess } from "./incidents.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
@@ -186,6 +187,7 @@ class Hub {
     this.sockets.set(session.id, socket);
     const lowWater = transaction(this.db, () => {
       setSessionState(this.db, session.id, "idle");
+      adoptProcess(this.db, session.id, message.process);
       return confirm(this.db, session.id, message.inFile);
     });
     this.web.changed();
