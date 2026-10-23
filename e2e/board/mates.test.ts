@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { after, afterEach, before, beforeEach, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import { CardSchema, check, OPS } from "@fleet/protocol";
-import { Cardd, type Session } from "../support/cardd.ts";
+import type { Cardd } from "../support/cardd.ts";
+import { type Session } from "../support/cardd.ts";
+import { boundBoardFile, openBoardPage, startBoardServer } from "../support/board.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
+
+boundBoardFile();
 
 let browser: Browser;
 let cardd: Cardd;
@@ -17,14 +21,10 @@ before(async () => {
 after(async () => {
   await browser.close();
 });
-beforeEach(async () => {
-  cardd = await Cardd.start({}, ["--board", BOARD]);
+beforeEach(async (context) => {
+  cardd = await startBoardServer(context, BOARD);
   main = await cardd.connect(cardd.addLane("main"));
-  page = await browser.newPage();
-});
-afterEach(async () => {
-  await page.close();
-  await cardd.stop();
+  page = await openBoardPage(context, browser);
 });
 
 const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");

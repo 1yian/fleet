@@ -5,10 +5,19 @@ const child = spawn(
   ["--test", "--test-concurrency=1", "--test-timeout=300000", "e2e/**/*.test.ts"],
   { stdio: "inherit", detached: true },
 );
+const killGroup = (signal: NodeJS.Signals): void => {
+  if (child.pid !== undefined) process.kill(-child.pid, signal);
+};
 const deadline = setTimeout(() => {
   console.error("End-to-end suite exceeded 30 minutes, including teardown");
-  if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+  killGroup("SIGKILL");
 }, 30 * 60_000);
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(signal, () => {
+    process.exitCode = 1;
+    killGroup(signal);
+  });
+}
 child.on("error", (error) => {
   console.error(error);
   clearTimeout(deadline);

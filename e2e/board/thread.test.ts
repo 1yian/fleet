@@ -3,13 +3,17 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { after, afterEach, before, beforeEach, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
-import { Cardd, type Session } from "../support/cardd.ts";
+import type { Cardd } from "../support/cardd.ts";
+import { type Session } from "../support/cardd.ts";
+import { boundBoardFile, openBoardPage, startBoardServer } from "../support/board.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 const SHOTS = process.env["FLEET_E2E_SHOTS"];
+
+boundBoardFile();
 
 let browser: Browser;
 let cardd: Cardd;
@@ -22,15 +26,11 @@ before(async () => {
 after(async () => {
   await browser.close();
 });
-beforeEach(async () => {
-  cardd = await Cardd.start({}, ["--board", BOARD]);
+beforeEach(async (context) => {
+  cardd = await startBoardServer(context, BOARD);
   main = await cardd.connect(cardd.addLane("main"));
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-  page = await browser.newPage({ viewport: { width: 900, height: 900 } });
-});
-afterEach(async () => {
-  await page.close();
-  await cardd.stop();
+  page = await openBoardPage(context, browser, { width: 900, height: 900 });
 });
 
 const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");

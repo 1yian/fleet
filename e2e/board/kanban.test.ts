@@ -6,14 +6,22 @@ import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
 import { BoardActionSchema, check, MERGE_OPTIONS, OPS, type Entry } from "@fleet/protocol";
-import { Cardd, type Session } from "../support/cardd.ts";
-import { freezeBoardUntilAction } from "../support/board.ts";
+import type { Cardd } from "../support/cardd.ts";
+import { type Session } from "../support/cardd.ts";
+import {
+  boundBoardFile,
+  freezeBoardUntilAction,
+  openBoardPage,
+  startBoardServer,
+} from "../support/board.ts";
 import { seedKanban, type Kanban } from "../support/kanban.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 const SHOTS = process.env["FLEET_E2E_SHOTS"];
 const DESKTOP = { width: 1440, height: 900 };
 const PHONE = { width: 390, height: 844 };
+
+boundBoardFile();
 
 let browser: Browser;
 let cardd: Cardd;
@@ -27,15 +35,10 @@ after(async () => {
   await browser.close();
 });
 beforeEach(async (context) => {
-  assert.ok("after" in context);
-  const server = await Cardd.start({}, ["--board", BOARD]);
-  context.after(() => server.stop());
-  cardd = server;
+  cardd = await startBoardServer(context, BOARD);
   main = await cardd.connect(cardd.addLane("main"));
   fleet = await seedKanban(cardd, main);
-  const tab = await browser.newPage({ viewport: DESKTOP });
-  context.after(() => tab.close());
-  page = tab;
+  page = await openBoardPage(context, browser, DESKTOP);
 });
 
 const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");

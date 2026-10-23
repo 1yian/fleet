@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   changes:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -82,6 +83,7 @@ jobs:
               - "package-lock.json"
 
   static:
+    timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -100,6 +102,7 @@ jobs:
       - run: npm run deps
 
   migrations:
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.cardd == 'true'
     runs-on: ubuntu-latest
@@ -115,6 +118,7 @@ jobs:
           MIGRATIONS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
 
   secrets:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     env:
       GITLEAKS_VERSION: 8.30.1
@@ -213,6 +217,7 @@ jobs:
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
 
   tests-required:
+    timeout-minutes: 10
     needs: changes
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -230,6 +235,7 @@ jobs:
           fi
 
   ci-ok:
+    timeout-minutes: 10
     needs:
       [
         changes,
