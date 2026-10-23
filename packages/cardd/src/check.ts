@@ -231,7 +231,7 @@ function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     const { hold } = standing.facts;
     const finish = finishFrom(entries);
     if (hold === undefined && (finish.merged || finish.workerDone)) {
-      return finishedMatches({ ...own, since: standing.since }, finish, now, t);
+      return finishedMatches({ ...own, since: standing.since }, finish, t.wall(), t);
     }
     const lane = actingLane(db, card, own.lane);
     const tier = repeatTier(now - standing.since, t.waiting, t.waiting);
