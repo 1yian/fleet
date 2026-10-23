@@ -84,7 +84,13 @@ const CloseParams = Type.Object({
   landed: Type.Optional(
     Type.Boolean({
       description:
-        "Leave it out: close checks for itself whether the work landed, and refuses Done when it did not. Set false only to end work that did not land as Dropped",
+        "Leave it out: close checks for itself whether the work landed, and warns before ending Done when it finds unlanded work. Set false only to end work that did not land as Dropped",
+    }),
+  ),
+  confirm: Type.Optional(
+    Type.Boolean({
+      description:
+        "Set true to answer close's warning about commits or files not on the base branch: the card ends Done and that work is archived first",
     }),
   ),
 });
@@ -171,10 +177,17 @@ export function registerMate(
     name: "close",
     label: "Close",
     description:
-      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the work did not land it refuses, and close(card, summary=<why>, landed=false) ends it as Dropped. It refuses while the card has a hold. Main relays the summary to the captain.",
+      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the attempt has commits not on the base branch or uncommitted files, close does not close the card: it lists them and warns, and close(card, summary, confirm=true) then ends it as Done and archives that work first (use it when the work landed elsewhere). close(card, summary=<why>, landed=false) ends work that did not land as Dropped. It refuses while the card has a hold. Main relays the summary to the captain.",
     parameters: CloseParams,
     execute: async (_id, params) =>
-      reply(await close(link, { card: params.card, text: params.summary, landed: params.landed })),
+      reply(
+        await close(link, {
+          card: params.card,
+          text: params.summary,
+          landed: params.landed,
+          confirm: params.confirm,
+        }),
+      ),
   });
   pi.registerTool({
     name: "dispatch",
