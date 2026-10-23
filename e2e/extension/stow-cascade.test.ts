@@ -157,6 +157,10 @@ test("/stow in main stows every second mate in its own conversation and memory, 
     () => (existsSync(learnings(fleet.here.root)) ? true : undefined),
     "main's own stow to finish",
   );
+  await until(() => {
+    const said = fleet.userTexts("mate");
+    return finished.every((line) => said.includes(line)) ? true : undefined;
+  }, "main to be told both stows finished");
   await fleet.lab.submit(fleet.mainPane, "WHO-STOWED");
   const heard = await until(() => heardAll(finished), "main to hear both stows finish");
   const told = heard.map((turn) => turn.text);
