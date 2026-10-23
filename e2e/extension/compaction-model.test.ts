@@ -24,7 +24,12 @@ afterEach(async () => {
 const isSummary = (turns: readonly { text: string }[]): boolean =>
   turns.some((turn) => turn.text.includes(SUMMARY_MARKER));
 
-async function startAs(role: "mate" | "worker", agent: string, model: string[]): Promise<Pi> {
+async function startAs(
+  role: "mate" | "worker",
+  agent: string,
+  model: string[],
+  extra: Record<string, string>,
+): Promise<Pi> {
   const token =
     role === "worker"
       ? await begin(fleet.main, await newCard(fleet.main, "the task"), "the task")
@@ -34,6 +39,7 @@ async function startAs(role: "mate" | "worker", agent: string, model: string[]):
     FLEET_TOKEN: token,
     FLEET_ROLE: role,
     FLEET_FAKE_AGENT: agent,
+    ...extra,
   };
   return h.startPi(`${agent}-session`, env, [EXTENSION], model);
 }
@@ -42,6 +48,7 @@ async function summaryModel(
   role: "mate" | "worker",
   model: string[],
   trigger: "manual" | "automatic",
+  extra: Record<string, string> = {},
 ): Promise<string> {
   const agent = `${role}-${trigger}`;
   for (let call = 0; call < 40; call += 1)
@@ -50,7 +57,7 @@ async function summaryModel(
       return { text: "ok" };
     }, agent);
   const earlier = h.events.filter((event) => event["type"] === "settled").length;
-  const pi = await startAs(role, agent, model);
+  const pi = await startAs(role, agent, model, extra);
   for (let turn = 1; turn <= TURNS; turn += 1) {
     pi.prompt(`${BIG}${String(turn)}`);
     await h.waitForNth(
@@ -100,4 +107,16 @@ test("a CNP-style mate on Vertex compacts on Vertex and never on tier/compact", 
 test("a CNP-style worker on Vertex compacts on Vertex and never on tier/compact", async () => {
   assert.equal(await summaryModel("worker", VERTEX, "manual"), "google-vertex/gemini-2.5-flash");
   assert.ok(!h.modelsOf("worker-manual").includes("tier/compact"));
+});
+
+test("a CNP-rule session on a tier model compacts on Vertex, never on tier/compact", async () => {
+  const cnp = { PI_TIERS_RULE: "cnp" };
+  const tier = ["--provider", "tier", "--model", "orchestrator"];
+  assert.equal(await summaryModel("mate", tier, "manual", cnp), "google-vertex/gemini-2.5-flash");
+  assert.equal(
+    await summaryModel("worker", tier, "automatic", cnp),
+    "google-vertex/gemini-2.5-flash",
+  );
+  assert.ok(!h.modelsOf("mate-manual").includes("tier/compact"));
+  assert.ok(!h.modelsOf("worker-automatic").includes("tier/compact"));
 });

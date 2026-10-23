@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, realpat
 import { resolve, dirname } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { withFirstmateOptChat, operationalTypes } from "./compat.ts";
-import { compactionModelFor } from "../../../src/compaction-model.ts";
+import { compactorFor } from "../../../src/compaction-model.ts";
 import optchat, { promptFor } from "../src/index.ts";
 import * as profiles from "../src/profiles.ts";
 import * as prompts from "../src/prompts.ts";
@@ -85,9 +85,11 @@ export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> 
     if (!ctx.model) throw new Error("Select the supervisor model before initializing conversation memory");
     if (ctx.model.provider === "codex-native") throw new Error("Native Codex thread reuse is not supported for conversation compression; use an ordinary Pi provider before enabling memory");
     // Summaries are many small calls: they go to the fleet's compactor, never to the mate's own model.
-    const wanted = compactionModelFor(ctx.model);
+    const wanted = compactorFor(ctx.model, process.cwd(), process.env);
     const own = { provider: ctx.model.provider, model: ctx.model.id };
-    const fixed = ctx.modelRegistry.find(wanted.provider, wanted.id) ? { provider: wanted.provider, model: wanted.id } : own;
+    const found = ctx.modelRegistry.find(wanted.model.provider, wanted.model.id);
+    if (!found && wanted.vertexOnly && ctx.model.provider !== wanted.model.provider) throw new Error(`Conversation-memory model ${wanted.model.provider}/${wanted.model.id} is not available, and this session must summarize on Vertex`);
+    const fixed = found ? { provider: wanted.model.provider, model: wanted.model.id } : own;
     compactor = { ...fixed, thinking: config.thinking || "low" };
     if (!ctx.modelRegistry.find(compactor.provider, compactor.model)) throw new Error(`Conversation-memory model ${compactor.provider}/${compactor.model} is not supported by this supervisor`);
     const previous = profiles.loadConfig(profileDir);
