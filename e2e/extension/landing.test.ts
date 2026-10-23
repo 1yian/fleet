@@ -112,6 +112,41 @@ test("close warns about unlanded work and leaves the card open; confirm=true end
   assert.deepEqual(await workersOf(parts.lab), []);
 });
 
+test("a merged report for a PR from another branch closes the card Done on its own and archives the leftover commits", async () => {
+  const pr = "https://github.com/acme/site/pull/381";
+  gh.setPr(pr, "MERGED");
+  gh.setHead(pr, "cleo-other-card");
+  scriptOperation(() => {
+    const tree = `${clone}.worktrees/c-1-a1`;
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+    writeFileSync(join(tree, "fix.txt"), "one\n");
+    git("add", "fix.txt");
+    git("commit", "-q", "-m", "the fix");
+    writeFileSync(join(tree, "scratch.txt"), "two\n");
+    return { tool: "report", args: { status: "merged", text: "landed in another card", pr } };
+  });
+  h.onModel(() => ({ text: "reported" }), "worker");
+  h.onModel((turns) => {
+    const message = lastUser(turns) ?? "";
+    const archive = `${clone}.archive/c-1-a1.tar.zst`;
+    assert.match(message, /^\[fleet\] c-1 .*merged: landed in another card/);
+    assert.ok(
+      message.includes(
+        `Closed automatically: c-1 is done. Unlanded work is archived in local:${archive}.`,
+      ),
+    );
+    return { text: "relayed" };
+  }, "mate");
+  await mateConnected();
+  mate.prompt("add credit");
+
+  await h.waitForCall(4, "mate", WORKER_WAIT_MS);
+  assert.equal(existsSync(`${clone}.archive/c-1-a1.tar.zst`), true);
+  assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
+  assert.deepEqual(await workersOf(parts.lab), []);
+});
+
 test("close warns about work that did not land and leaves it in place; landed=false drops it and archives it", async () => {
   scriptOperation(() => {
     const tree = `${clone}.worktrees/c-1-a1`;
