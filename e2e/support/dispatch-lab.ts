@@ -37,6 +37,7 @@ export interface LabOptions {
   readonly delivery?: string;
   readonly repo?: boolean;
   readonly gate?: "allowed" | "blocked";
+  readonly extension?: string;
 }
 
 function gateRemote(
@@ -80,6 +81,7 @@ export async function startDispatchLab({
   mate: mateEnv,
   dashTokens = [],
   workerArgs = [],
+  extension = EXTENSION,
   ...site
 }: LabOptions = {}): Promise<DispatchLab> {
   const cardd = await Cardd.start(carddEnv);
@@ -103,13 +105,13 @@ export async function startDispatchLab({
       HERDR_SESSION: lab.name,
       ...env,
       ...mateEnv,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", EXTENSION, ...workerArgs]),
+      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", extension, ...workerArgs]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],
         far: ["node", SWITCH, join(h.dir, "far-down")],
       }),
     },
-    [EXTENSION],
+    [extension],
   );
   return { cardd, h, lab, clone, remote, mate, home, mainToken };
 }
