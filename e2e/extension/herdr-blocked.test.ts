@@ -19,8 +19,13 @@ let h: Harness;
 let lab: HerdrLab;
 let here: Scratch;
 let ghostToken: string;
+const workerFleetArgs = (token: string): string[] => {
+  assert.match(token, /^-/);
+  return [`--fleet-url=${cardd.url}`, `--fleet-token=${token}`, "--fleet-role=worker"];
+};
 beforeEach(async () => {
   cardd = await Cardd.start();
+  cardd.dashTokens(["worker:c-2-a1"]);
   h = await Harness.start();
   mkdirSync(join(h.dir, "agent", "extensions"), { recursive: true });
   execFileSync("herdr", ["integration", "install", "pi"], {
@@ -100,15 +105,7 @@ test("a worker with an owed handoff shows blocked until it reports completion", 
     "mate",
   );
   h.onModel(() => ({ text: "finished" }), "mate");
-  const pane = await startMain(lab, here, h, false, [
-    ...mateArgs(h),
-    "--fleet-url",
-    cardd.url,
-    "--fleet-token",
-    token,
-    "--fleet-role",
-    "worker",
-  ]);
+  const pane = await startMain(lab, here, h, false, [...mateArgs(h), ...workerFleetArgs(token)]);
   await until(pane, "an owed handoff to block the worker", (s) => s.status === "blocked");
   const blocked = await mate.waitForEntry((entry) => entry.kind === "report", "the blocked report");
   assert.equal(blocked.body, "missing access");
@@ -166,15 +163,7 @@ test("a worker whose owed reply was answered elsewhere stops reading blocked on 
     h.onModel(() => pause, "mate");
     h.onModel(() => ({ text }), "mate");
   }
-  const pane = await startMain(lab, here, h, false, [
-    ...mateArgs(h),
-    "--fleet-url",
-    cardd.url,
-    "--fleet-token",
-    token,
-    "--fleet-role",
-    "worker",
-  ]);
+  const pane = await startMain(lab, here, h, false, [...mateArgs(h), ...workerFleetArgs(token)]);
   await until(pane, "the worker to settle idle", (s) => s.status === "idle");
   await mate.call("comment", { card: card.id, text: "Which port?", reply: true });
   await until(pane, "the owed reply to block the worker", (s) => s.status === "blocked");
@@ -241,15 +230,7 @@ for (const { name, clear } of CLEARS) {
       "mate",
     );
     h.onModel(() => ({ text: "noted the answer" }), "mate");
-    const pane = await startMain(lab, here, h, false, [
-      ...mateArgs(h),
-      "--fleet-url",
-      cardd.url,
-      "--fleet-token",
-      token,
-      "--fleet-role",
-      "worker",
-    ]);
+    const pane = await startMain(lab, here, h, false, [...mateArgs(h), ...workerFleetArgs(token)]);
     await until(pane, "the pending decision to block the worker", (s) => s.status === "blocked");
     await mate.waitForEntry((entry) => entry.fields["status"] === "needs-decision", "the report");
     await clear(mate, card.id);
