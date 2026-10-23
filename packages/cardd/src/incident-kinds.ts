@@ -70,12 +70,19 @@ export function eligibleAt(
   retries: number,
   now: number,
   t: Timings,
+  routerResumeAt?: number,
 ): number | null {
   const after = retryAfterMs(error);
-  const base = DELAYED.has(kind)
-    ? (t.retryDelays[Math.min(retries, t.retryDelays.length - 1)] ?? 0)
-    : 0;
-  const at = Math.max(base > 0 ? now + base : 0, after === undefined ? 0 : now + after);
+  const known = kind === "router-cooldown" && routerResumeAt !== undefined;
+  const base =
+    DELAYED.has(kind) && !known
+      ? (t.retryDelays[Math.min(retries, t.retryDelays.length - 1)] ?? 0)
+      : 0;
+  const at = Math.max(
+    base > 0 ? now + base : 0,
+    after === undefined ? 0 : now + after,
+    known ? routerResumeAt : 0,
+  );
   return at > 0 ? at : null;
 }
 

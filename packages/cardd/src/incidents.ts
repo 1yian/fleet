@@ -63,14 +63,14 @@ function cardOfActor(db: DatabaseSync, session: Session, error: string): number 
 export function openIncident(
   db: DatabaseSync,
   actor: { id: string; role: "mate" | "worker"; lane: string; card: number },
-  seen: { phase: Phase; error: string; source: string },
+  seen: { phase: Phase; error: string; source: string; resumeAt?: number },
   now: number,
   t: Timings,
   silent = false,
 ): { inc: Incident; notify: string[] } {
   const kind =
     seen.phase === "turn" || seen.phase === "compaction" ? classify(seen.error) : "unknown";
-  const eligible = eligibleAt(kind, seen.error, 0, now, t);
+  const eligible = eligibleAt(kind, seen.error, 0, now, t, seen.resumeAt);
   const parent = actor.role === "worker" ? actor.lane : parentOf(db, actor.lane);
   const intent = intentOf(db, actor.card, actor.role);
   const generation = generationOf(db, actor.id);
@@ -114,10 +114,11 @@ function failRecovery(
   role: "mate" | "worker",
   error: string,
   t: Timings,
+  resumeAt?: number,
 ): string[] {
   const kind =
     inc.phase === "turn" || inc.phase === "compaction" ? classify(error) : inc.classification;
-  const eligible = eligibleAt(kind, error, inc.retries, t.wall(), t);
+  const eligible = eligibleAt(kind, error, inc.retries, t.wall(), t, resumeAt);
   const next = { ...inc, classification: kind, eligibleAt: eligible };
   const state = remaining(next).length === 0 ? "blocked" : "open";
   db.prepare(
@@ -142,7 +143,7 @@ export function reportFailure(
   if (live?.state === "recovering") {
     return {
       value: { incident: live.id, opened: false, classification: live.classification },
-      notify: failRecovery(db, live, session.role, error, t),
+      notify: failRecovery(db, live, session.role, error, t, args.resumeAt),
     };
   }
   if (live !== undefined) {
@@ -167,6 +168,7 @@ export function reportFailure(
         args.phase === "compaction"
           ? "the session's compaction error"
           : "the session's own turn error",
+      ...(args.resumeAt === undefined ? {} : { resumeAt: args.resumeAt }),
     },
     now,
     t,

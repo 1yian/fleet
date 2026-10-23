@@ -8,6 +8,13 @@ export const INCIDENT_OPS = {
     args: Type.Object({
       error: Type.String({ minLength: 1, maxLength: 20_000 }),
       phase: Type.Optional(Type.Enum(["turn", "compaction"])),
+      resumeAt: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          description:
+            "Epoch milliseconds when the earliest cooling model of an exhausted router tier cools down",
+        }),
+      ),
     }),
     result: Type.Object({
       incident: Type.Integer(),
