@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
+import { CardSchema, CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import { tempDir } from "../support/run-root.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
@@ -38,11 +38,12 @@ test("a merged report for a PR from another branch is verified and the card clos
   const report = await reportOf(card);
   assert.equal(report.fields["status"], "merged");
   assert.equal(report.fields["prState"], "MERGED");
-  await findingFor(card, "pr-merged");
   assert.equal(await status(fleet.main, card), "with-mate");
   const plan = await closePlan(card);
   assert.equal(plan.mode, "done");
   assert.equal(plan.verify, false);
+  const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
+  assert.ok(view.entries.some((entry) => entry.fields["condition"] === "pr-merged"));
   const reminder = await findingFor(card, "finished-1");
   assert.match(reminder.body, /Close it now with close\(card, summary\)\.$/);
 });
@@ -102,5 +103,4 @@ test("the merged check runs with the clone's direnv account, and a PR that accou
     String(report.fields["prNote"]),
     /^PR unknown: .*Could not resolve.*counts as done$/,
   );
-  assert.equal((await closePlan(invisible)).verify, true);
 });

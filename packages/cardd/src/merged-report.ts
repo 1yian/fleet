@@ -42,9 +42,7 @@ export function shownFields(pr: object): Record<string, unknown> {
 }
 
 export function mergedPullRequest(pr: object): PullRequest | undefined {
-  const url = "pr" in pr && typeof pr.pr === "string" ? pr.pr : undefined;
-  const state = "prState" in pr ? pr.prState : undefined;
-  return url !== undefined && state === "MERGED"
-    ? { url, state, failed: [], pending: [] }
+  return "merged" in pr && "pr" in pr && typeof pr.pr === "string"
+    ? { url: pr.pr, state: "MERGED", failed: [], pending: [] }
     : undefined;
 }

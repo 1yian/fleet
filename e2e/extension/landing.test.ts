@@ -141,7 +141,7 @@ test("a merged report for a PR from another branch closes the card Done on its o
   await mateConnected();
   mate.prompt("add credit");
 
-  await h.waitForCall(4, "mate", WORKER_WAIT_MS);
+  await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(existsSync(`${clone}.archive/c-1-a1.tar.zst`), true);
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(await workersOf(parts.lab), []);
@@ -196,7 +196,7 @@ test("close of a project with no GitHub repo on record says so, and names the co
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.match(
     results.at(-1) ?? "",
-    /^c-1's project site has no GitHub repo on record, so close cannot see whether its PR merged\. Set it on the cardd host with `cardd project repo site <owner>\/<name> --db <cards\.db>`, then close again\. In its clones, c-1-a1 on local has 1 commit not on main:\n {2}commit c-1-a1: [0-9a-f]+ the fix\nIf this work landed elsewhere/,
+    /^c-1 was not closed\. c-1's project site has no GitHub repo on record, so close cannot see whether its PR merged\. Set it on the cardd host with `cardd project repo site <owner>\/<name> --db <cards\.db>`, then close again\. In its clones, c-1-a1 on local has 1 commit not on main:\n {2}commit c-1-a1: [0-9a-f]+ the fix\nIf this work landed elsewhere/,
   );
   assert.equal(worktreesOf(clone).length, 2);
 });
