@@ -193,3 +193,71 @@ test("a worker whose owed reply was answered elsewhere stops reading blocked on 
     "idle",
   );
 });
+
+const CLEARS: readonly {
+  readonly name: string;
+  readonly clear: (mate: Awaited<ReturnType<Cardd["connect"]>>, card: number) => Promise<unknown>;
+}[] = [
+  {
+    name: "the mate resolving the key",
+    clear: (mate, card) =>
+      mate.call("comment", { card, text: "Haiku is enabled", resolves: "enable" }),
+  },
+  {
+    name: "the mate clearing the hold with a note",
+    clear: (mate, card) => mate.call("release", { card, note: "settled elsewhere" }),
+  },
+];
+
+for (const { name, clear } of CLEARS) {
+  test(`a worker waiting on a decision stops reading blocked once ${name}`, async () => {
+    cardd.addProject("web", { maverick: here.root });
+    const mate = await cardd.connect(ghostToken);
+    const card = check(
+      CardSchema,
+      await mate.call("card.new", { title: "decision", kind: "scout", project: "web" }),
+    );
+    const { token } = check(
+      OPS["attempt.begin"].result,
+      await mate.call("attempt.begin", { card: card.id, host: "maverick", task: "investigate" }),
+    );
+    h.onModel(
+      () => ({
+        tool: "report",
+        args: { status: "needs-decision", key: "enable", text: "enable Haiku?" },
+      }),
+      "mate",
+    );
+    h.onModel(() => ({ text: "waiting for the decision" }), "mate");
+    h.onModel(
+      () => ({
+        tool: "report",
+        args: {
+          status: "paused",
+          text: "carrying on",
+          until: new Date(Date.now() + 3_600_000).toISOString(),
+        },
+      }),
+      "mate",
+    );
+    h.onModel(() => ({ text: "noted the answer" }), "mate");
+    const pane = await startMain(lab, here, h, false, [
+      ...mateArgs(h),
+      "--fleet-url",
+      cardd.url,
+      "--fleet-token",
+      token,
+      "--fleet-role",
+      "worker",
+    ]);
+    await until(pane, "the pending decision to block the worker", (s) => s.status === "blocked");
+    await mate.waitForEntry((entry) => entry.fields["status"] === "needs-decision", "the report");
+    await clear(mate, card.id);
+    assert.equal(
+      (await until(pane, "the cleared hold to stop blocking", (s) => s.status === "idle")).status,
+      "idle",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert.equal((await agentOf(pane)).status, "idle");
+  });
+}

@@ -114,6 +114,17 @@ export class WorkerRun {
         this.owe(this.owed);
       })
       .catch(() => undefined);
+    this.releaseDecision();
+  }
+
+  private releaseDecision(): void {
+    this.link
+      .call("hold.open", {})
+      .then((open) => {
+        if (open || this.owed !== "owed: needs-decision") return;
+        this.owe(undefined);
+      })
+      .catch(() => undefined);
   }
 
   private owe(label: string | undefined): void {

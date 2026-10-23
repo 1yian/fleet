@@ -332,6 +332,11 @@ export const OPS = {
     args: Type.Object({}),
     result: Type.Array(ReplyId),
   },
+  "hold.open": {
+    roles: ["worker"],
+    args: Type.Object({}),
+    result: Type.Boolean(),
+  },
   wake: {
     roles: ["mate"],
     args: WakeArgsSchema,

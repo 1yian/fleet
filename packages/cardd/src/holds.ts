@@ -6,7 +6,15 @@ import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { askersOf, requireOwedBy } from "./replies.ts";
 import { factsFrom, type Facts, type Hold } from "./status.ts";
-import { addEntry, cardEntries, getCard, parentOf, reachable, type Session } from "./store.ts";
+import {
+  addEntry,
+  cardEntries,
+  getCard,
+  parentOf,
+  reachable,
+  workerOf,
+  type Session,
+} from "./store.ts";
 
 interface Done {
   readonly value: unknown;
@@ -194,6 +202,11 @@ export function answerHold(
   return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
 
+function toWorkerOf(db: DatabaseSync, card: Card, open: Hold): string[] {
+  const worker = open.fromWorker ? workerOf(db, card.id) : undefined;
+  return worker === undefined ? [] : [worker];
+}
+
 export function release(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.release.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -223,7 +236,8 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
     fields,
   };
   requireOpen(db, card);
-  const to = withEcho(db, session, card, hearers(db, card, session.lane, [open.holder]));
+  const heard = [...hearers(db, card, session.lane, [open.holder]), ...toWorkerOf(db, card, open)];
+  const to = withEcho(db, session, card, heard);
   addEntry(db, draft, to);
   return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
