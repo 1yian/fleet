@@ -149,7 +149,7 @@ function start(
   failures.register(pi);
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
   worker?.register(pi);
-  const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
+  const lanes = lane === "main" ? registerLanes(pi, HOME(), link) : undefined;
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
     registerMate(pi, link, { url, piArgs: piArgs() }, lanes);

@@ -175,7 +175,7 @@ CREATE TABLE sessions (
     state IN ('starting', 'idle', 'running', 'waiting', 'exited', 'lost', 'closed')
   ),
   low_water INTEGER NOT NULL DEFAULT 0,
-  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0,
+  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)),
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
 ) STRICT;
 

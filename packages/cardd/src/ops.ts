@@ -16,6 +16,7 @@ import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
+import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, recover, reportFailure } from "./incidents.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { PullRequest } from "./github.ts";
@@ -214,6 +215,10 @@ const HANDLERS: Record<OpName, Handler> = {
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
   "incident.clear": (db, session, raw) =>
     clearFailure(db, session, check(OPS["incident.clear"].args, raw)),
+  "lane.stopping": (db, session, raw) => ({
+    value: markStopping(db, session, check(OPS["lane.stopping"].args, raw)),
+    notify: [],
+  }),
   "incident.recover": (db, session, raw, timing) =>
     recover(db, session, check(OPS["incident.recover"].args, raw), timing),
   report: (db, session, raw, _timing, pr) => {

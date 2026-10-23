@@ -4,6 +4,7 @@ import { chaseIntake } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
+import { lostMates } from "./incident-lanes.ts";
 import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
 import { lookUpPr } from "./pulls.ts";
 import { replyNudges } from "./replies.ts";
@@ -428,6 +429,7 @@ export function runCheck(
     ...chaseIntake(db, now, t),
     ...scheduledWakes(db, t.wall()),
     ...reconcileIncidents(db, now, t),
+    ...lostMates(db, now, t),
     ...replyNudges(db, now, t),
   ]);
   writeFindings(db, now, matches, notify);

@@ -4,6 +4,7 @@
 -- episode add to it and a parent hears about the episode once.
 ALTER TABLE sessions ADD COLUMN process TEXT;
 ALTER TABLE sessions ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1));
 CREATE TABLE incidents (
   id INTEGER PRIMARY KEY,
   actor TEXT NOT NULL REFERENCES sessions (id),

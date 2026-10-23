@@ -16,6 +16,11 @@ export const INCIDENT_OPS = {
     args: Type.Object({ compacted: Type.Optional(Type.Boolean()) }),
     result: Type.Object({ cleared: Type.Boolean() }),
   },
+  "lane.stopping": {
+    roles: ["mate"],
+    args: Type.Object({ lane: Type.String({ minLength: 1 }) }),
+    result: Type.Object({ stopping: Type.Boolean() }),
+  },
   "incident.recover": {
     roles: ["mate"],
     args: Type.Object({
@@ -36,6 +41,7 @@ export const INCIDENT_OPS = {
       card: Type.Integer(),
       generation: Type.Integer(),
       replaced: Type.Boolean(),
+      repeat: Type.Boolean(),
     }),
   },
 } as const;

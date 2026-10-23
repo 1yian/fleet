@@ -30,6 +30,7 @@ interface Recovery {
   readonly card: number;
   readonly generation: number;
   readonly replaced: boolean;
+  readonly repeat: boolean;
 }
 
 interface Done {
@@ -59,7 +60,7 @@ function cardOfActor(db: DatabaseSync, session: Session, error: string): number 
   }).id;
 }
 
-function insert(
+export function openIncident(
   db: DatabaseSync,
   actor: { id: string; role: "mate" | "worker"; lane: string; card: number },
   seen: { phase: Phase; error: string; source: string },
@@ -153,7 +154,7 @@ export function reportFailure(
   }
   const card = cardOfActor(db, session, error);
   const actor = { id: session.id, role: session.role, lane: session.lane, card };
-  const made = insert(
+  const made = openIncident(
     db,
     actor,
     {
@@ -225,7 +226,12 @@ function probeText(
   return `recovery check ${String(id)} from ${parent}: this is a health check, not new work. ${action}, then answer in one sentence. Do not resume, continue, or change any task work.`;
 }
 
-function recoveryPlan(db: DatabaseSync, inc: Incident, mode: Mode, replaced: boolean): Recovery {
+function recoveryPlan(
+  db: DatabaseSync,
+  inc: Incident,
+  mode: Mode,
+  state: { replaced: boolean; repeat: boolean },
+): Recovery {
   const row = db.prepare("SELECT role, lane, host FROM sessions WHERE id = ?").get(inc.actor);
   const role = row?.["role"] === "mate" ? "mate" : "worker";
   return {
@@ -237,7 +243,7 @@ function recoveryPlan(db: DatabaseSync, inc: Incident, mode: Mode, replaced: boo
     host: String(row?.["host"] ?? ""),
     card: inc.card,
     generation: inc.generation,
-    replaced,
+    ...state,
   };
 }
 
@@ -301,12 +307,15 @@ export function recover(
   if (inc.parent !== session.lane) reject(inc, session.lane);
   if (repeats(inc, args))
     return {
-      value: recoveryPlan(db, inc, args.mode, generationOf(db, inc.actor) > inc.generation),
+      value: recoveryPlan(db, inc, args.mode, {
+        replaced: generationOf(db, inc.actor) > inc.generation,
+        repeat: true,
+      }),
       notify: [],
     };
   if (inc.state !== "open") reject(inc, session.lane);
   requireRecoverable(db, inc, args, t);
-  const plan = recoveryPlan(db, inc, args.mode, false);
+  const plan = recoveryPlan(db, inc, args.mode, { replaced: false, repeat: false });
   const live = args.mode === "retry";
   const compaction = inc.phase === "compaction";
   const body = probeText(session.lane, plan.role, inc.id, compaction);
@@ -322,10 +331,23 @@ export function recover(
   return { value: plan, notify: live ? [inc.actor] : [] };
 }
 
+function reconnected(db: DatabaseSync, session: string): void {
+  const live = liveIncident(db, session);
+  if (live === undefined || (live.phase !== "lost" && live.phase !== "startup")) return;
+  db.prepare("UPDATE incidents SET state = 'cleared', closed_at = ? WHERE id = ?").run(
+    Date.now(),
+    live.id,
+  );
+}
+
 export function adoptProcess(db: DatabaseSync, session: string, process: string | undefined): void {
+  db.prepare("UPDATE sessions SET stopping = 0 WHERE id = ?").run(session);
   if (process === undefined) return;
   const known = db.prepare("SELECT process FROM sessions WHERE id = ?").get(session)?.["process"];
-  if (known === process) return;
+  if (known === process) {
+    reconnected(db, session);
+    return;
+  }
   db.prepare("UPDATE sessions SET process = ?, generation = generation + 1 WHERE id = ?").run(
     process,
     session,
@@ -433,7 +455,7 @@ export function watchdogIncident(
   if (intent !== "working") return undefined;
   const detail =
     phase === "startup" ? "no connection after launch" : "connection lost with no final event";
-  const made = insert(
+  const made = openIncident(
     db,
     { id: actor, role: "worker", lane: String(row["lane"]), card },
     { phase, error: detail, source: "the timed check" },

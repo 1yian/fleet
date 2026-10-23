@@ -42,7 +42,7 @@ export function registerRecover(
           ? await replaceWorker(link, launch, plan)
           : home === undefined
             ? undefined
-            : await restartLane(home, plan.lane);
+            : await restartOnce(home, plan);
       if (started === undefined)
         throw new Error(`only main can replace the process of ${plan.actor}`);
       return reply(
@@ -50,4 +50,10 @@ export function registerRecover(
       );
     },
   });
+}
+
+async function restartOnce(home: string, plan: { lane: string; repeat: boolean }): Promise<string> {
+  if (plan.repeat)
+    return `A restart of ${plan.lane} was already requested, so this repeat did nothing.`;
+  return restartLane(home, plan.lane);
 }

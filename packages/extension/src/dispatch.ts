@@ -174,7 +174,7 @@ async function stopPi(host: string, pane: string, session: string): Promise<void
 export async function replaceWorker(
   link: Link,
   launch: Launch,
-  recovery: { card: number; host: string },
+  recovery: { card: number; host: string; repeat: boolean },
 ): Promise<string> {
   const task = "recovery: the session is being replaced";
   const plan = await link.call("attempt.begin", {
@@ -185,7 +185,11 @@ export async function replaceWorker(
   });
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
   const pane = await worktreePane(recovery.host, plan, recovery.card);
-  if (await piRunning(recovery.host, pane)) await stopPi(recovery.host, pane, plan.session);
+  if (await piRunning(recovery.host, pane)) {
+    if (recovery.repeat)
+      return `A process of ${plan.session} already runs on ${recovery.host}, so this repeated request left it alone.`;
+    await stopPi(recovery.host, pane, plan.session);
+  }
   await startAgent(
     recovery.host,
     pane,

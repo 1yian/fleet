@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
+import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { readShared } from "./standing.ts";
 import type { LaneRow } from "./views.ts";
@@ -154,7 +155,7 @@ async function act(
   return out.map((row) => describe(host, row)).join("\n");
 }
 
-export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | undefined {
+export function registerLanes(pi: ExtensionAPI, home: string, link: Link): LaneStates | undefined {
   const config = readLaneConfig(home);
   if (config === undefined) return undefined;
   pi.registerTool({
@@ -164,7 +165,11 @@ export function registerLanes(pi: ExtensionAPI, home: string): LaneStates | unde
       "Starts, stops, or restarts a second mate's lane on its host. start also starts a lane that was stopped by hand or held for crashing; a mate that runs is left alone. stop holds the lane, so nothing restarts it until start; its conversation stays. restart starts the mate again on its own conversation. name \"all\" with restart restarts every lane that is not held, on every host: that restarts the fleet. Never touches cardd. board shows each lane's state.",
     parameters: LaneParams,
     execute: async (_id, { name, action }) => {
-      if (name !== "all") return reply(await withLanes(() => act(config, name, action)));
+      if (name !== "all") {
+        if (action === "stop")
+          await link.call("lane.stopping", { lane: name }).catch(() => undefined);
+        return reply(await withLanes(() => act(config, name, action)));
+      }
       if (action !== "restart")
         throw new Error('lane "all" only restarts: name each lane to start or stop it');
       return reply((await withLanes(() => restartAll(config))).join("\n"));

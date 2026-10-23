@@ -69,12 +69,25 @@ test("a worker with a stale module is replaced on its own conversation and work,
   let before: number | undefined;
   let beside: number | undefined;
   let failed = false;
+  let incident = { incident: 0, generation: 0 };
+  let started: number | undefined;
+  let repeated = false;
+  const replace = (): { tool: string; args: Record<string, string | number> } => ({
+    tool: "recover",
+    args: { ...incident, mode: "replace", key: "same" },
+  });
   scriptMate(2, async (turns) => {
+    if (turns.at(-1)?.role === "toolResult" && !repeated) {
+      repeated = true;
+      started = await workerGroupOf(lab, "c-1-a1");
+      return replace();
+    }
     if (turns.at(-1)?.role !== "user" || !(lastUser(turns) ?? "").includes("runtime failure"))
       return { text: "noted" };
+    incident = incidentIn(turns);
     before = await workerGroupOf(lab, "c-1-a1");
     beside = await workerGroupOf(lab, "c-2-a1");
-    return { tool: "recover", args: { ...incidentIn(turns), mode: "replace" } };
+    return replace();
   });
   for (let call = 0; call < 12; call += 1)
     h.onModel((turns) => {
@@ -110,17 +123,19 @@ test("a worker with a stale module is replaced on its own conversation and work,
     entries.find((entry) => entry.body.includes("model turn failed"))?.body ?? "",
     /Classified stale-module\./,
   );
-  const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
+  const results = toolResults(await h.waitForCall(7, "mate", WORKER_WAIT_MS));
   assert.match(
-    results.at(-1) ?? "",
+    results.at(-2) ?? "",
     /^Started c-1-a1 again on local, on its own session and branch c-1-a1\. The recovery check reaches it/,
   );
+  assert.match(results.at(-1) ?? "", /already runs a new process|left it alone|already runs on/);
 
   const after = await workerGroupOf(lab, "c-1-a1");
   assert.ok(
     before !== undefined && after !== undefined && after !== before,
     `process ${String(before)} -> ${String(after)}`,
   );
+  assert.equal(after, started);
   assert.equal(await workerGroupOf(lab, "c-2-a1"), beside);
   assert.deepEqual(await workersOf(lab), ["c-1-a1", "c-2-a1"]);
   assert.deepEqual(await named(), [
