@@ -29,8 +29,7 @@
         "src/calm/index.ts",
         "src/transcript/index.ts",
         "src/optchat.ts",
-        "src/cache-ttl.ts",
-        "src/context-guard.ts"
+        "src/cache-ttl.ts"
       ],
       "ignore": ["vendor/**"]
     },

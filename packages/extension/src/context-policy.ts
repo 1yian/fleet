@@ -2,11 +2,9 @@ import { AgentSession, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./lane-config.ts";
 import { methodOf, once } from "./patch.ts";
 
-const CONTEXT_CAPS = { mate: 400_000, worker: 500_000 } as const;
-export const MATE_CONTEXT_CAP = CONTEXT_CAPS.mate;
+const WORKER_CONTEXT_CAP = 500_000;
 const COMPACTION_SHARE = 0.8;
 
-let cap: number = CONTEXT_CAPS.worker;
 let windowInForce: number | undefined;
 
 function windowOf(model: unknown): number {
@@ -15,12 +13,14 @@ function windowOf(model: unknown): number {
 }
 
 function effectiveWindow(window: number): number {
-  return Math.min(window, cap);
+  return Math.min(window, WORKER_CONTEXT_CAP);
 }
 
 function capped(model: unknown): unknown {
   const window = windowOf(model);
-  return isRecord(model) && window > cap ? { ...model, contextWindow: cap } : model;
+  return isRecord(model) && window > WORKER_CONTEXT_CAP
+    ? { ...model, contextWindow: WORKER_CONTEXT_CAP }
+    : model;
 }
 
 function whileWindowIs<T>(model: unknown, run: () => T): T {
@@ -33,7 +33,7 @@ function whileWindowIs<T>(model: unknown, run: () => T): T {
   }
 }
 
-function installLimit(): void {
+function installWorkerLimit(): void {
   const settings = SettingsManager.prototype;
   const session = AgentSession.prototype;
   const compaction = methodOf(settings, "getCompactionSettings");
@@ -66,15 +66,13 @@ function installLimit(): void {
 }
 
 export function applyContextPolicy(role: "mate" | "worker"): void {
-  once("context-limit", () => {
+  if (role !== "worker") return;
+  once("worker-context-limit", () => {
     try {
-      cap = CONTEXT_CAPS[role];
-      installLimit();
+      installWorkerLimit();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      console.error(
-        `Fleet context limit: unavailable, the session keeps Pi's own limit. ${reason}`,
-      );
+      console.error(`Fleet context limit: unavailable, the worker keeps Pi's own limit. ${reason}`);
     }
   });
 }
