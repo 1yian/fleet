@@ -23,7 +23,7 @@ after(async () => {
   await browser.close();
 });
 beforeEach(async () => {
-  cardd = await Cardd.start({ CARDD_TIMING_SCALE: "0.001" }, ["--board", BOARD]);
+  cardd = await Cardd.start({}, ["--board", BOARD]);
   main = await cardd.connect(cardd.addLane("main"));
   fleet = await seedKanban(cardd, main);
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
