@@ -140,6 +140,7 @@ function start(
       unreadable = undefined;
       pi.events.emit("fleet:connected", {});
       worker?.flush();
+      worker?.reconcile();
       failures.flush();
       jobs?.sync().catch(() => undefined);
     },

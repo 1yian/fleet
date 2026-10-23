@@ -67,6 +67,11 @@ function owedFrom(entries: readonly Entry[]): Owed[] {
   return open;
 }
 
+export const workerOwedIds = (entries: readonly Entry[]): string[] =>
+  owedFrom(entries)
+    .filter((owed) => owed.to === "worker")
+    .map((owed) => owed.id);
+
 export const openReplies = (entries: readonly Entry[]): OwedReply[] =>
   owedFrom(entries).map(({ id, from, owes, text, askedAt, resentAt }) => ({
     id,

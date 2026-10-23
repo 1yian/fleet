@@ -31,7 +31,7 @@ import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from 
 import { loadPlan } from "./plans.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
-import { requireOwedBy } from "./replies.ts";
+import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { scriptWake } from "./wakes.ts";
 import {
@@ -235,6 +235,13 @@ const HANDLERS: Record<OpName, Handler> = {
       throw new Error(`job ${String(args.job)} is not one of yours: nothing was dropped`);
     return { value: dropped, notify: [] };
   },
+  "replies.owed": (db, session) => ({
+    value:
+      session.card === null || ["done", "dropped"].includes(getCard(db, session.card).status)
+        ? []
+        : workerOwedIds(cardEntries(db, session.card)),
+    notify: [],
+  }),
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),

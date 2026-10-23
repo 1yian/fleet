@@ -73,6 +73,7 @@ export class WorkerRun {
   private lastText = "";
   private readonly replies = new Set<string>();
   private owed: string | undefined;
+  private asks = 0;
   private readonly link: Link;
   private readonly jobs: Jobs;
   private readonly failures: Failures;
@@ -98,6 +99,21 @@ export class WorkerRun {
       this.replies.add(fields["reply"]);
     if (typeof fields["withdraws"] === "string") this.replies.delete(fields["withdraws"]);
     this.owe(this.owed);
+    this.reconcile();
+  }
+
+  reconcile(): void {
+    const ask = ++this.asks;
+    this.link
+      .call("replies.owed", {})
+      .then((ids) => {
+        if (ask !== this.asks) return;
+        if (ids.length === this.replies.size && ids.every((id) => this.replies.has(id))) return;
+        this.replies.clear();
+        for (const id of ids) this.replies.add(id);
+        this.owe(this.owed);
+      })
+      .catch(() => undefined);
   }
 
   private owe(label: string | undefined): void {
@@ -150,9 +166,13 @@ export class WorkerRun {
         )
           this.owe(undefined);
         else this.owe(this.owed);
+        this.reconcile();
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
       },
+    });
+    pi.on("agent_start", () => {
+      this.reconcile();
     });
     pi.on("input", () => {
       this.reset();
@@ -179,6 +199,7 @@ export class WorkerRun {
       return { continue: true, entries: [nudge] };
     });
     pi.on("agent_settled", async (event) => {
+      this.reconcile();
       if (!event.aborted && (this.failures.lastFailed || this.mayEnd())) return;
       const text = event.aborted
         ? "stopped from the pane"
