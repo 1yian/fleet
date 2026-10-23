@@ -60,7 +60,20 @@ function wireArgs(): string[] {
 const requests = (role: "mate" | "worker") =>
   h.wire.filter((call) => call.role === role && !call.warm);
 
-test("main asks for five-minute prompt retention, whatever it inherits", async () => {
+function assertMateBreakpoints(ttls: readonly string[]): void {
+  assert.deepEqual(
+    ttls.filter((ttl) => ttl === "1h"),
+    ["1h"],
+    "only the stable prefix asks for one hour",
+  );
+  assert.ok(ttls.length >= 2, "the view keeps a breakpoint");
+  assert.ok(
+    ttls.filter((ttl) => ttl !== "1h").every((ttl) => ttl === "default"),
+    "the rest ask for five minutes",
+  );
+}
+
+test("main caches system and tools for one hour and the view for five minutes, whatever it inherits", async () => {
   const herdr = await startLab("long");
   h.onModel(() => ({ tool: "slow_tool" }), "mate");
   configureMain(scratch, cardd.url, mainToken);
@@ -72,8 +85,7 @@ test("main asks for five-minute prompt retention, whatever it inherits", async (
   await h.waitForCall(1, "mate", WAIT_MS);
 
   assert.ok(requests("mate").length >= 2);
-  for (const call of requests("mate"))
-    assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
+  for (const call of requests("mate")) assertMateBreakpoints(call.ttls);
 });
 
 test("a worker keeps the five-minute retention, whatever main inherited", async () => {
@@ -112,7 +124,7 @@ test("a worker keeps the five-minute retention, whatever main inherited", async 
     assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
 });
 
-test("a second mate started by fleet up asks for five-minute retention, and again after a restart", async () => {
+test("a second mate started by fleet up splits its cache lifetimes, and again after a restart", async () => {
   const herdr = await startLab("long");
   scratch.addLane("cnp", {
     url: cardd.url,
@@ -142,6 +154,5 @@ test("a second mate started by fleet up asks for five-minute retention, and agai
 
   await main.close();
   assert.ok(requests("mate").length >= 2);
-  for (const call of requests("mate"))
-    assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
+  for (const call of requests("mate")) assertMateBreakpoints(call.ttls);
 });
