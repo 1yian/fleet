@@ -57,7 +57,7 @@ function settle(
   if (row === undefined || card === undefined) return [];
   const requester = String(owner?.["requester"]);
   const body = maintenanceLine({ ...row, state, detail });
-  const quiet = row.kind === "reload" && state === "completed";
+  const quiet = state === "completed";
   const fields = { maintenance: id, batch: row.batch, kind: row.kind, state, quiet };
   addEntry(db, { card, author: "maintenance", kind: "note", body, fields }, [requester]);
   return [requester];

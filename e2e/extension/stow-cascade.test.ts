@@ -146,11 +146,21 @@ test("/stow in main stows every second mate in its own conversation and memory, 
   const finished = ["ops", "far"].map(
     (lane) => `[fleet] maintenance: ${lane} (mate): stow completed - ${NOW_LINE}`,
   );
+  await until(
+    () => (existsSync(learnings(fleet.here.root)) ? true : undefined),
+    "main's own stow to finish",
+  );
+  await fleet.matePid("main");
+  await fleet.lab.submit(fleet.mainPane, "WHO-STOWED");
   const heard = await until(
     () =>
       fleet.h
         .callsOf("mate")
-        .find((turns) => finished.every((line) => turns.some((turn) => turn.text === line))),
+        .find(
+          (turns) =>
+            lastUser(turns).includes("WHO-STOWED") &&
+            finished.every((line) => turns.some((turn) => turn.text === line)),
+        ),
     "main to hear both stows finish",
   );
   const told = heard.map((turn) => turn.text);

@@ -123,6 +123,7 @@ export class Link {
   }
 
   private receive(message: ServerMessage): void {
+    if (this.stopped && (message.t === "entry" || message.t === "maintenance")) return;
     if (message.t === "welcome") {
       this.connected = true;
       this.backoff = 250;
