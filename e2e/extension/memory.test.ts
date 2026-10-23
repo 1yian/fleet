@@ -304,6 +304,13 @@ test("a mate summarizes its memory on tier/compact, never on its own model or th
     () => (h.callsOf("mate").some(isSummary) ? true : undefined),
     "a summary of the long message",
   );
+  await until(
+    () =>
+      h.callsOf("mate").some((turns) => isMains(turns) && mentions(turns, IDLE_WORD))
+        ? true
+        : undefined,
+    "main's turn on the long message",
+  );
   const models = h.modelsOf("mate");
   const summaries = h
     .callsOf("mate")
