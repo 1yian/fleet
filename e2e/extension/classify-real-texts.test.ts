@@ -145,7 +145,8 @@ test("a router exhaustion wakes its parent once at the earliest real cooldown ex
 
   const [, incident, generation] =
     /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
-  await fleet.main.call("incident.recover", {
+  await fleet.main.call("card.restart", {
+    card: heard.card,
     incident: Number(incident),
     generation: Number(generation),
     mode: "retry",
