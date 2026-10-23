@@ -33,7 +33,6 @@ const VALUE_OPTIONS = new Set([
   "--roots",
   "--direnv",
   "--seed",
-  "--compactor",
   "--thinking",
   "--root",
   "--db",
@@ -66,7 +65,6 @@ const { values, positionals } = parseArgs({
     roots: { type: "string" },
     direnv: { type: "string" },
     seed: { type: "string" },
-    compactor: { type: "string" },
     thinking: { type: "string" },
     root: { type: "string" },
     db: { type: "string" },
@@ -149,10 +147,9 @@ switch (command ?? "") {
     break;
   case "home": {
     if (rest[0] === "memory" && rest[1] !== undefined) {
-      const { seed, compactor, thinking } = values;
+      const { seed, thinking } = values;
       const options = {
         ...(seed === undefined ? {} : { seed }),
-        ...(compactor === undefined ? {} : { compactor }),
         ...(thinking === undefined ? {} : { thinking }),
       };
       for (const line of setUpMemory(existingHome(root, rest[1]), rest[1], options))
