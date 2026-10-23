@@ -1,10 +1,12 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 import { RUNTIME_OPS } from "./runtime-ops.ts";
+import { ReportPr, ReportStatus } from "./report.ts";
 import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
 
 export * from "./branch.ts";
 export * from "./wakes.ts";
+export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
 
 export const STATUSES = [
   "queued",
@@ -17,18 +19,6 @@ export const STATUSES = [
   "waiting",
   "done",
   "dropped",
-] as const;
-export const REPORT_STATUSES = [
-  "working",
-  "note",
-  "paused",
-  "blocked",
-  "needs-decision",
-  "resolved",
-  "in-review",
-  "done",
-  "failed",
-  "stopped",
 ] as const;
 
 export const ATTENTIONS = ["blocked", "failed", "stopped"] as const;
@@ -46,7 +36,6 @@ export type Delivery = Static<typeof Delivery>;
 const Status = Type.Enum(STATUSES);
 const Attention = Type.Enum(ATTENTIONS);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
-const ReportStatus = Type.Enum(REPORT_STATUSES);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
 export const CAPTAIN = "captain";
 const ReplyId = Type.String({ pattern: "^r-[0-9]+$" });
@@ -62,7 +51,6 @@ const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null
 export type Status = Static<typeof Status>;
 export type Attention = Static<typeof Attention>;
 export type CardKind = Static<typeof CardKind>;
-export type ReportStatus = Static<typeof ReportStatus>;
 
 export const CardName = Type.String({
   pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -377,6 +365,7 @@ export const OPS = {
       key: Type.Optional(Key),
       until: Type.Optional(Type.Integer()),
       replyTo: ReplyTo,
+      pr: ReportPr,
     }),
     result: CardSchema,
   },
