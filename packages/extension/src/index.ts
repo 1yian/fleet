@@ -18,9 +18,8 @@ import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
-import { registerRecover } from "./recover.ts";
+import { registerRestart } from "./restart.ts";
 import { registerQuestions } from "./questions.ts";
-import { registerReview } from "./review.ts";
 import { standingRules } from "./standing.ts";
 import { registerStow } from "./stow.ts";
 import { titleMate } from "./titles.ts";
@@ -115,7 +114,6 @@ function workerTools(
   jobs.register(pi);
   const validator = new Validator(link, jobs, cardd);
   validator.register(pi);
-  registerReview(pi, jobs);
   registerBranch(pi, link);
   return { jobs, validator };
 }
@@ -166,8 +164,7 @@ function start(
         compact();
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-      if (entry.kind === "job-result" || entry.kind === "review-feedback")
-        jobs?.finished(entry.fields["job"]);
+      if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
       noteWorkerInput(control.health);
     },
   });
@@ -186,7 +183,7 @@ function start(
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
     registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
-    registerRecover(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
+    registerRestart(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
     registerStow(pi, HOME(), lane);
     registerPlan(pi, link);
   }

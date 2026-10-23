@@ -11,7 +11,11 @@ const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${ca
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
 const DispatchParams = Type.Object({
-  card: Type.Integer(),
+  title: Type.String({ minLength: 1 }),
+  name: CardName,
+  kind: Type.Enum(["ship", "scout"]),
+  project: Type.String({ minLength: 1 }),
+  intent: Type.String({ minLength: 1 }),
   host: Type.String({
     minLength: 1,
     description: "The host to run the worker on, such as maverick or p620",
@@ -27,7 +31,6 @@ const DispatchParams = Type.Object({
         "Only when the captain asked for another mode for this work: records it on the ship card. Otherwise the card keeps its project's mode",
     }),
   ),
-  replace: Type.Optional(Type.Boolean({ description: "Replace a live attempt on another host" })),
 });
 
 const BoardParams = Type.Object({
@@ -147,8 +150,12 @@ export function registerMate(
     name: "card_new",
     label: "New card",
     description:
-      "Creates a card in your own lane. A card must exist before any work starts. As main, never use lane: to hand work to a second mate, comment on its lane card.",
-    parameters: Type.Object({ ...OPS["card.new"].args.properties, name: CardName }),
+      "Creates a captain-only card in your own lane, for a decision or action only the captain can take. For worker work use dispatch, which creates its own card. To hand work to a second mate, comment on its lane card.",
+    parameters: Type.Object({
+      ...OPS["card.new"].args.properties,
+      name: CardName,
+      kind: Type.Literal("captain"),
+    }),
     execute: async (_id, params) => reply(`Created ${line(await link.call("card.new", params))}.`),
   });
   pi.registerTool({
@@ -173,9 +180,22 @@ export function registerMate(
     name: "dispatch",
     label: "Dispatch",
     description:
-      "Starts a worker for a card in its own worktree on a host, and sends it the task message with the card's delivery mode.",
+      "Creates a new work card and starts its worker in its own worktree on a host. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment.",
     parameters: DispatchParams,
-    execute: async (_id, params) =>
-      reply(await dispatch(link, launch, { ...params, replace: params.replace ?? false })),
+    execute: async (_id, params) => {
+      const { title, name, kind, project, intent, host, task, delivery } = params;
+      const board = await link.call("board", {});
+      const same = board.find(
+        (each) =>
+          each.name === name &&
+          each.title === title &&
+          each.project === project &&
+          each.kind === kind &&
+          each.status !== "done" &&
+          each.status !== "dropped",
+      );
+      const card = same ?? (await link.call("card.new", { title, name, kind, project, intent }));
+      return reply(await dispatch(link, launch, { card: card.id, host, task, delivery }));
+    },
   });
 }

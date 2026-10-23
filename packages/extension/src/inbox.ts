@@ -72,18 +72,6 @@ function formatJob(entry: Entry, card: string): string {
   return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
 }
 
-function formatReview(entry: Entry, card: string): string {
-  if (entry.fields["exitCode"] !== 0) return formatJob(entry, card);
-  const feedback = entry.body
-    .split("\n")
-    .filter((line) => !/^(\[lavish-axi\]|next_step:)/.test(line))
-    .join("\n")
-    .trim();
-  const next =
-    "Answer it, then call wait_review with reply for the next round. If the review ended, finish your work and report.";
-  return `[fleet] captain on ${card} (review page): ${feedback}\n${next}`;
-}
-
 function formatWake(entry: Entry): string {
   if (field(entry, "wake") === "script") return `[fleet] ${entry.body}`;
   const id = `r-${String(entry.id)}`;
@@ -107,7 +95,6 @@ function formatOnce(entry: Entry, name: string): string {
   const card = name === "" ? `c-${String(entry.card)}` : `c-${String(entry.card)} ${name}`;
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);
-  if (entry.kind === "review-feedback") return formatReview(entry, card);
   if (entry.kind === "comment" && field(entry, "wake") !== undefined) return formatWake(entry);
   const who = entry.author.replace(/^mate:/, "");
   const kind =

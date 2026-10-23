@@ -38,7 +38,7 @@ interface Done {
   readonly notify: readonly string[];
 }
 
-function intentOf(db: DatabaseSync, card: number, role: "mate" | "worker"): string {
+export function intentOf(db: DatabaseSync, card: number, role: "mate" | "worker"): string {
   if (role === "mate") return "working";
   const { card: own, entries } = loadCard(db, card);
   if (own.status === "done" || own.status === "dropped") return "closed";
@@ -272,13 +272,20 @@ function reject(inc: Incident, parent: string): never {
   throw new Error(`incident ${String(inc.id)} is ${inc.state}: there is nothing to recover`);
 }
 
-const repeats = (inc: Incident, args: OpArgs<"incident.recover">): boolean =>
+interface RecoveryRequest {
+  readonly incident: number;
+  readonly generation: number;
+  readonly mode: Mode;
+  readonly key: string;
+}
+
+const repeats = (inc: Incident, args: RecoveryRequest): boolean =>
   inc.state === "recovering" && inc.recoveryKey === args.key && inc.recoveryMode === args.mode;
 
 function requireRecoverable(
   db: DatabaseSync,
   inc: Incident,
-  args: OpArgs<"incident.recover">,
+  args: RecoveryRequest,
   t: Timings,
 ): void {
   const current = generationOf(db, inc.actor);
@@ -308,7 +315,7 @@ function requireRecoverable(
 export function recover(
   db: DatabaseSync,
   session: Session,
-  args: OpArgs<"incident.recover">,
+  args: RecoveryRequest,
   t: Timings,
 ): Done {
   const inc = incidentById(db, args.incident);
@@ -437,7 +444,7 @@ export function reconcileIncidents(db: DatabaseSync, now: number, t: Timings): s
     db.prepare("UPDATE incidents SET due_told = 1 WHERE id = ?").run(inc.id);
     const modes = remaining(inc);
     if (modes.length === 0 || inc.intent !== "working") continue;
-    const body = `incident ${String(inc.id)} is eligible for recovery now: recover(incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")}).`;
+    const body = `incident ${String(inc.id)} is eligible for recovery now: restart_card(card=${String(inc.card)}, incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")}).`;
     notify.push(...tell(db, inc, roleOf(db, inc.actor), body));
   }
   return notify;

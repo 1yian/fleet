@@ -32,8 +32,14 @@ test("dispatch returns while the worker is still busy with its first turn", asyn
     kind: "ship",
     project: "site",
   };
-  h.onModel(() => ({ tool: "card_new", args: card }), "mate");
-  h.onModel(() => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix it" } }), "mate");
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(
+    () => ({
+      tool: "dispatch",
+      args: { ...card, intent: "Fix the scrollbar", host: "local", task: "fix it" },
+    }),
+    "mate",
+  );
   let herdrWaiting: boolean | undefined;
   h.onModel(() => {
     herdrWaiting = herdrStartRunning(lab, "c-1-a1");
@@ -70,8 +76,14 @@ test("a worker that starts but never connects goes back to its mate, and dispatc
     kind: "ship",
     project: "site",
   };
-  h.onModel(() => ({ tool: "card_new", args: card }), "mate");
-  h.onModel(() => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix it" } }), "mate");
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(
+    () => ({
+      tool: "dispatch",
+      args: { ...card, intent: "Fix the scrollbar", host: "local", task: "fix it" },
+    }),
+    "mate",
+  );
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(() => ({ text: "noted" }), "mate");
   await mateConnected(h);
@@ -93,8 +105,14 @@ test("a worker whose token begins with a dash starts on its task", async () => {
     kind: "ship",
     project: "site",
   };
-  h.onModel(() => ({ tool: "card_new", args: card }), "mate");
-  h.onModel(() => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix it" } }), "mate");
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(
+    () => ({
+      tool: "dispatch",
+      args: { ...card, intent: "Fix the scrollbar", host: "local", task: "fix it" },
+    }),
+    "mate",
+  );
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green" } }), "worker");
   await mateConnected(h);

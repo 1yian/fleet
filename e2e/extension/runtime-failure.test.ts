@@ -81,7 +81,13 @@ const recover = (
   key = `k-${mode}`,
   generation = incidentOf(heard).generation,
 ): Promise<unknown> =>
-  mate.call("incident.recover", { incident: incidentOf(heard).incident, generation, mode, key });
+  mate.call("card.restart", {
+    card: heard.card,
+    incident: incidentOf(heard).incident,
+    generation,
+    mode,
+    key,
+  });
 
 test("a failed worker turn reaches its mate once with the sanitized cause, and no stop, nudge, or reminder follows", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
@@ -99,7 +105,7 @@ test("a failed worker turn reaches its mate once with the sanitized cause, and n
   assert.ok(!heard.body.includes("sk-secret"), heard.body);
   assert.match(
     heard.body,
-    /Classified unknown\. Incident 1, process generation 1\. Recover with recover\(/,
+    /Classified unknown\. Incident 1, process generation 1\. Recover with restart_card\(/,
   );
 
   await laterCheck();
@@ -119,7 +125,7 @@ test("a failed worker turn reaches its mate once with the sanitized cause, and n
 
 test("a failure while paused is reported with the card's intent and cannot be recovered into work", async () => {
   const card = await newCard(fleet.main, "Waiting for the vendor");
-  const until = "2099-01-01T00:00:00Z";
+  const until = new Date(Date.now() + 3_600_000).toISOString();
   h.onModel(() => ({ tool: "report", args: { status: "paused", text: "waiting", until } }));
   h.onModel(() => ({ fail: "provider exploded: code 7" }));
   await worker(card);
@@ -248,7 +254,10 @@ test("a recovery check that fails again is reported once per attempt, and the bu
     "the second retry to fail",
   );
 
-  assert.match(spent.body, /Recover with recover\(incident=1, generation=1, mode=replace\)/);
+  assert.match(
+    spent.body,
+    /Recover with restart_card\(card=\d+, incident=1, generation=1, mode=replace\)/,
+  );
   await assert.rejects(
     recover(fleet.main, heard, "retry", "c"),
     /retry is not available .* Available: replace/,

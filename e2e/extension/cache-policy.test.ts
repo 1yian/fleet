@@ -78,22 +78,20 @@ test("main asks for five-minute prompt retention, whatever it inherits", async (
 
 test("a worker keeps the five-minute retention, whatever main inherited", async () => {
   const herdr = await startLab("long");
-  h.onModel(
-    () => ({
-      tool: "card_new",
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => {
+    return {
+      tool: "dispatch",
       args: {
         title: "Users see one scrollbar",
         name: "one-scrollbar",
         kind: "ship",
         project: "fleet",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "fix the scrollbar",
       },
-    }),
-    "mate",
-  );
-  h.onModel((turns) => {
-    const created = turns.findLast((turn) => turn.role === "toolResult")?.text ?? "";
-    const card = Number(/c-(\d+)/.exec(created)?.[1]);
-    return { tool: "dispatch", args: { card, host: "local", task: "fix the scrollbar" } };
+    };
   }, "mate");
   h.onModel(() => ({ tool: "slow_tool" }), "worker");
   configureMain(scratch, cardd.url, mainToken, { workerArgs: [...wireArgs(), "-e", PROBE] });

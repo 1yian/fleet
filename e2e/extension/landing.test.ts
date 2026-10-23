@@ -36,15 +36,20 @@ const mateConnected = () => connected(h);
 
 function scriptOperation(work: Parameters<Harness["onModel"]>[0]): void {
   parts.cardd.yolo("site");
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
-      args: { title: "Add credit", name: "add-credit", kind: "ship", project: "site" },
+      tool: "dispatch",
+      args: {
+        title: "Add credit",
+        name: "add-credit",
+        kind: "ship",
+        project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "add the credit",
+      },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "add the credit" } }),
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");

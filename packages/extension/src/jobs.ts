@@ -10,12 +10,11 @@ import type { Link } from "./link.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
-export const REVIEW_LABEL = "review";
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
   command: Type.String({ minLength: 1, description: "The shell command to run" }),
-  timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 24 * 60 })),
+  timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 120 })),
 });
 
 const StopJobParams = Type.Object({
@@ -31,21 +30,10 @@ interface JobOptions {
   readonly timeoutMs: number;
   readonly tailLines?: number;
   readonly lineChars?: number;
-  readonly review?: string;
   readonly env?: Readonly<Record<string, string>>;
 }
 
-const POLL = /\blavish-axi['"]?\s+poll\b/;
-const POLL_OF_PAGE =
-  /^\s*lavish-axi\s+poll\s+('[^']*'|"[^"`$\\]*"|[^\s'"`$;&|<>()\\]+)(?:\s+--owner\s+(?:'[^']*'|"[^"`$\\]*"|[^\s'"`$;&|<>()\\]+))?\s*$/;
-
-function polledPage(command: string): string | undefined {
-  const quoted = POLL_OF_PAGE.exec(command)?.[1];
-  return quoted?.replace(/^(['"])(.*)\1$/, "$2");
-}
-
 export class Jobs {
-  private waitOnPage: ((page: string) => Promise<string>) | undefined;
   private readonly running = new Map<number, string>();
   private readonly link: Link;
   private readonly cardd: { url: string; token: string };
@@ -63,14 +51,6 @@ export class Jobs {
     return [...this.running.values()].includes(label);
   }
 
-  get reviewing(): boolean {
-    return [...this.running.values()].includes(REVIEW_LABEL);
-  }
-
-  waitOnPolledPages(wait: (page: string) => Promise<string>): void {
-    this.waitOnPage = wait;
-  }
-
   finished(job: unknown): void {
     if (typeof job === "number") this.running.delete(job);
   }
@@ -85,14 +65,12 @@ export class Jobs {
     label: string,
     command: string,
     options: JobOptions,
-  ): Promise<{ job: number; key: string | null; tab: string }> {
+  ): Promise<{ job: number; tab: string }> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
-    const { review } = options;
-    const { job, heartbeatMs, key } = await this.link.call("job.start", {
+    const { job, heartbeatMs } = await this.link.call("job.start", {
       label,
       command,
-      ...(review === undefined ? {} : { review }),
     });
     this.running.set(job, label);
     const file = join(tmpdir(), `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`);
@@ -107,7 +85,6 @@ export class Jobs {
         command,
         timeoutMs,
         heartbeatMs,
-        review: review !== undefined,
         tailLines,
         lineChars,
         env,
@@ -137,7 +114,7 @@ export class Jobs {
       await this.link.call("job.finish", { job, exitCode: 127, outputTail }).catch(() => 0);
       throw error;
     }
-    return { job, key, tab };
+    return { job, tab };
   }
 
   async stop(job: number): Promise<string> {
@@ -170,20 +147,10 @@ export class Jobs {
       name: "run_long",
       label: "Run long",
       description:
-        "Runs a long command in its own herdr tab and returns at once. The result arrives later as a [fleet] message. You may end your run while it runs. It stops the command after timeout_minutes (default 60), so never wrap the command in timeout or gtimeout.",
+        "Runs a long command in its own herdr tab and returns at once. The result arrives later as a [fleet] message. You may end your run while it runs. It stops the command after timeout_minutes (default 60 minutes, maximum 120 minutes / 2 hours), so never wrap the command in timeout or gtimeout.",
       parameters: RunLongParams,
       execute: async (_id, params) => {
         const { label, command } = params;
-        if (label === REVIEW_LABEL) throw new Error("wait on a review page with wait_review");
-        if (POLL.test(command)) {
-          const page = polledPage(command);
-          if (page === undefined || this.waitOnPage === undefined)
-            throw new Error("wait on a review page with wait_review, not a lavish-axi poll job");
-          return {
-            content: [{ type: "text", text: await this.waitOnPage(page) }],
-            details: {},
-          };
-        }
         const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
         const { job, tab } = await this.launch(label, command, { timeoutMs });
         const text = `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`;

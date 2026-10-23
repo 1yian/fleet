@@ -14,14 +14,13 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-const begin = async (host: string, replace?: boolean) =>
+const begin = async (host: string) =>
   check(
     OPS["attempt.begin"].result,
     await fleet.main.call("attempt.begin", {
       card: card.id,
       host,
       task: "fix the scrollbar",
-      ...(replace === undefined ? {} : { replace }),
     }),
   );
 const c = (suffix = ""): string => `c-${String(card.id)}${suffix}`;
@@ -48,26 +47,17 @@ test("a dispatch retry finds the attempt that already started, with one task mes
     [["comment", "fix the scrollbar\n\nDelivery: no-mistakes", true]],
   );
   await assert.rejects(begin("p620"), {
-    message: `${c()} has an active attempt ${c("-a1")} on maverick`,
+    message: `${c()} already has work on maverick: use restart_card`,
   });
 });
 
-test("replacing an attempt cuts off the old worker, even when it comes back", async () => {
+test("dispatch only starts new work: another host is refused while the worker lives, and its token keeps working", async () => {
   const first = await begin("p620");
-  const old = await fleet.cardd.connect(first.token);
+  const worker = await fleet.cardd.connect(first.token);
   await assert.rejects(begin("maverick"), {
-    message: `${c()} has an active attempt ${c("-a1")} on p620`,
+    message: `${c()} already has work on p620: use restart_card`,
   });
   assert.equal((await begin("p620")).resumed, true);
-
-  const second = await begin("maverick", true);
-  assert.equal(second.session, c("-a2"));
-  await assert.rejects(old.call("report", { status: "done", text: "late" }), {
-    message: "the connection closed with 4001",
-  });
-  const back = await fleet.cardd.connect(first.token);
-  assert.equal(back.closeCode, 4001);
-  const worker = await fleet.cardd.connect(second.token);
   await worker.call("report", { status: "blocked", text: "the API is down" });
   assert.equal(await status(fleet.main, card), "with-mate");
 });
@@ -112,9 +102,15 @@ test("a clone registered for a host with a dot is found for that exact host", as
     await fleet.main.call("attempt.begin", { card: api.id, host: "p620.tailnet", task: "one" }),
   );
   assert.equal(begun.clone, "/clones/api");
+  const other = check(
+    CardSchema,
+    await fleet.main.call("card.new", { title: "two", kind: "ship", project: "api" }),
+  );
   await assert.rejects(
-    fleet.main.call("attempt.begin", { card: api.id, host: "p620", task: "one", replace: true }),
-    { message: "project api has no clone on p620" },
+    fleet.main.call("attempt.begin", { card: other.id, host: "p620", task: "two" }),
+    {
+      message: "project api has no clone on p620",
+    },
   );
 });
 

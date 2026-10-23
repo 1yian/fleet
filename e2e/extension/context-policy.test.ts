@@ -66,22 +66,20 @@ const askedByMate = (call: WireCall): boolean =>
   call.role === "mate" && !call.warm && !isCompaction(call);
 
 async function runWorker(model: string, first: number, second: number): Promise<WireCall> {
-  h.onModel(
-    () => ({
-      tool: "card_new",
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => {
+    return {
+      tool: "dispatch",
       args: {
         title: "Users see one scrollbar",
         name: "one-scrollbar",
         kind: "ship",
         project: "fleet",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "fix the scrollbar",
       },
-    }),
-    "mate",
-  );
-  h.onModel((turns) => {
-    const created = turns.findLast((turn) => turn.role === "toolResult")?.text ?? "";
-    const card = Number(/c-(\d+)/.exec(created)?.[1]);
-    return { tool: "dispatch", args: { card, host: "local", task: "fix the scrollbar" } };
+    };
   }, "mate");
   h.onModel(
     () => ({ tool: "slow_tool", args: { notes: LONG_CONVERSATION }, promptTokens: first }),

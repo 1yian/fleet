@@ -20,7 +20,6 @@ interface Job {
   readonly command: string;
   readonly timeoutMs: number;
   readonly heartbeatMs: number;
-  readonly review: boolean;
   readonly keep: Keep;
   readonly env: Readonly<Record<string, string>>;
 }
@@ -58,7 +57,6 @@ function readJob(file: string): Job {
     command,
     timeoutMs,
     heartbeatMs,
-    review: field("review") === true,
     keep,
     env: stringsOf(field("env")),
   };
@@ -136,10 +134,7 @@ function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
   };
 }
 
-async function run(
-  job: Job,
-  canceled: AbortSignal,
-): Promise<{ exitCode: number; outputTail: string }> {
+async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> {
   const tail = new Tail(job.keep);
   const child = spawn("sh", ["-c", job.command], {
     detached: true,
@@ -193,14 +188,12 @@ async function run(
     });
   };
   for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
-  canceled.addEventListener("abort", onSignal, { once: true });
   const timer = setTimeout(() => {
     stop("timeout");
   }, job.timeoutMs);
   const code = await exited;
   clearTimeout(timer);
   for (const signal of STOP_SIGNALS) process.off(signal, onSignal);
-  canceled.removeEventListener("abort", onSignal);
   while (reason !== undefined && signalGroup(0)) await sleep(GROUP_POLL_MS);
   clearTimeout(killTimer);
   await Promise.race([closed, sleep(DRAIN_MS)]);
@@ -232,33 +225,11 @@ async function post(job: Job, result: { exitCode: number; outputTail: string }):
   }
 }
 
-function noLongerRunning(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || !("value" in value)) return false;
-  const result = value.value;
-  return (
-    typeof result === "object" && result !== null && "running" in result && result.running === false
-  );
-}
-
-async function alive(job: Job): Promise<boolean> {
-  const response = await call(job, "job.alive", { job: job.job });
-  if (!job.review) return true;
-  if (response?.status === 401) return false;
-  if (response?.status !== 200) return true;
-  const value: unknown = await response.json();
-  return !noLongerRunning(value);
-}
-
 const job = readJob(process.argv[2] ?? "");
-const canceled = new AbortController();
 const heartbeat = setInterval(() => {
-  void alive(job)
-    .then((wanted) => {
-      if (!wanted) canceled.abort();
-    })
-    .catch(() => undefined);
+  void call(job, "job.alive", { job: job.job });
 }, job.heartbeatMs);
-const result = await run(job, canceled.signal);
+const result = await run(job);
 console.log(`\n[run_long] job ${String(job.job)} exited ${String(result.exitCode)}`);
 await post(job, result);
 clearInterval(heartbeat);

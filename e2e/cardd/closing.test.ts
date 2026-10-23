@@ -58,15 +58,9 @@ test("close refuses Done for work whose worker has not reported done, and landed
   assert.equal(await status(fleet.main, card), "dropped");
 });
 
-test("close.begin lists every attempt of the card, including a replaced one", async () => {
+test("close.begin lists the attempt of the card", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   await begin(fleet.main, card);
-  await fleet.main.call("attempt.begin", {
-    card: card.id,
-    host: "p620",
-    task: "again",
-    replace: true,
-  });
   const name = (n: number): string => `c-${String(card.id)}-a${String(n)}`;
   assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, landed: false }), {
     mode: "dropped",
@@ -79,12 +73,34 @@ test("close.begin lists every attempt of the card, including a replaced one", as
         branch: name(1),
         base: "main",
         clone: "/clones/web",
-        live: false,
+        live: true,
       },
+    ],
+    refresh: WEB_CLONES_REFRESHED_AFTER_A_SHIP_CLOSE,
+  });
+  await fleet.main.call("close.finish", {
+    card: card.id,
+    mode: "dropped",
+    text: "the design changed",
+    archives: [],
+    left: [],
+  });
+  assert.equal(await status(fleet.main, card), "dropped");
+});
+
+test("close.begin lists the attempt of the card", async () => {
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await begin(fleet.main, card);
+  const name = (n: number): string => `c-${String(card.id)}-a${String(n)}`;
+  assert.deepEqual(await fleet.main.call("close.begin", { card: card.id, landed: false }), {
+    mode: "dropped",
+    verify: false,
+    land: false,
+    attempts: [
       {
-        session: name(2),
-        host: "p620",
-        branch: name(2),
+        session: name(1),
+        host: "maverick",
+        branch: name(1),
         base: "main",
         clone: "/clones/web",
         live: true,
@@ -301,7 +317,7 @@ test("a delivered scout keeps its completion across coordination comments, repli
   assert.equal(await status(resumed, card), "done");
 });
 
-test("new worker input, a replacement attempt, and incomplete handoffs still prevent normal close", async () => {
+test("new worker input and incomplete handoffs still prevent normal close", async () => {
   const card = await newCard(fleet.main, "Assess the lifecycle", "scout");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   const done = { card: card.id };
@@ -310,17 +326,7 @@ test("new worker input, a replacement attempt, and incomplete handoffs still pre
   await fleet.main.call("comment", { card: card.id, text: "Check the missing evidence." });
   await assert.rejects(fleet.main.call("close.begin", done), unfinished);
   await worker.call("report", { status: "done", text: "evidence checked" });
-  const replacement = check(
-    OPS["attempt.begin"].result,
-    await fleet.main.call("attempt.begin", {
-      card: card.id,
-      host: "maverick",
-      task: "Reassess the lifecycle",
-      replace: true,
-    }),
-  );
-  await assert.rejects(fleet.main.call("close.begin", done), unfinished);
-  const current = await fleet.cardd.connect(replacement.token);
+  const current = worker;
   for (const state of ["in-review", "blocked", "failed", "stopped"] as const) {
     await current.call("report", { status: "done", text: "assessment delivered" });
     await current.call("report", { status: state, text: "not complete" });

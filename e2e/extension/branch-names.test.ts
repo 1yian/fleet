@@ -47,12 +47,21 @@ function mateMoves(h: Harness, moves: readonly (readonly [string, Args] | string
     );
 }
 
-const CARD_NEW = [
-  "card_new",
-  { title: "Add credit", name: "add-credit", kind: "ship", project: "site" },
-] as const;
+const CARD_NEW = ["board", {}] as const;
 const dispatch = (more: Args = {}) =>
-  ["dispatch", { card: 1, host: "local", task: "add the credit", ...more }] as const;
+  [
+    "dispatch",
+    {
+      title: "Add credit",
+      name: "add-credit",
+      kind: "ship",
+      project: "site",
+      intent: "Add the credit",
+      host: "local",
+      task: "add the credit",
+      ...more,
+    },
+  ] as const;
 const resultOf = async (h: Harness, call: number): Promise<string> =>
   toolResults(await h.waitForCall(call, "mate", WORKER_WAIT_MS)).at(-1) ?? "";
 

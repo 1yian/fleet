@@ -35,39 +35,6 @@ function liveAttempt(db: DatabaseSync, card: number): LiveAttempt | undefined {
   return { id, n, state, host };
 }
 
-export function cancelReviewWaits(db: DatabaseSync, card: number): void {
-  const waits = db
-    .prepare(
-      `UPDATE jobs SET state = 'finished', exit_code = 130, updated_at = ?
-       WHERE resolves IS NOT NULL AND state IN ('running', 'lost') AND attempt IN
-         (SELECT id FROM attempts WHERE card = ? AND state IN ('starting', 'active'))
-       RETURNING id, label, resolves`,
-    )
-    .all(Date.now(), card);
-  for (const row of waits) {
-    endReviewWait(db, card, {
-      id: Number(row["id"]),
-      label: String(row["label"]),
-      resolves: String(row["resolves"]),
-    });
-  }
-}
-
-function endAttempt(
-  db: DatabaseSync,
-  card: number,
-  attempt: LiveAttempt,
-  state: "ended" | "replaced",
-): void {
-  cancelReviewWaits(db, card);
-  db.prepare("UPDATE attempts SET state = ?, updated_at = ? WHERE id = ?").run(
-    state,
-    Date.now(),
-    attempt.id,
-  );
-  db.prepare("UPDATE sessions SET state = 'closed' WHERE attempt = ?").run(attempt.id);
-}
-
 const AttemptsSchema = Type.Array(
   Type.Object({
     n: Type.Integer(),
@@ -231,7 +198,7 @@ export function setCardDelivery(db: DatabaseSync, id: number, mode: Delivery): s
     const live = liveAttempt(db, id);
     if (live !== undefined && card.delivery !== mode)
       throw new Error(
-        `c-${String(id)} has a live worker ${name(id, live.n)} running with Delivery: ${String(card.delivery)}. To change it, dispatch with delivery="${mode}" and replace=true: that starts the worker over with the new mode`,
+        `c-${String(id)} has a live worker ${name(id, live.n)} running with Delivery: ${String(card.delivery)}. A running card keeps its delivery mode; create new work with dispatch for a different mode`,
       );
     if (card.delivery === mode) return `c-${String(id)}: delivery is already ${mode}`;
     db.prepare("UPDATE cards SET delivery = ? WHERE id = ?").run(mode, id);
@@ -265,35 +232,17 @@ function connected(db: DatabaseSync, session: string): boolean {
 export function beginAttempt(
   db: DatabaseSync,
   card: Card,
-  request: { host: string; replace: boolean; task: string; delivery?: Delivery | undefined },
+  request: { host: string; task: string; delivery?: Delivery | undefined },
 ): Begun {
   const live = liveAttempt(db, card.id);
-  const before = card.delivery;
-  const delivery = deliveryOf(db, card, request.delivery);
-  if (live !== undefined && !request.replace) {
-    const session = name(card.id, live.n);
-    if (live.host !== request.host) {
-      const which = live.state === "active" ? "an active" : "a starting";
-      throw new Error(`c-${String(card.id)} has ${which} attempt ${session} on ${live.host}`);
-    }
-    if (before !== null && before !== delivery)
-      throw new Error(
-        `c-${String(card.id)}'s worker ${session} already runs with Delivery: ${before}. Dispatch with replace=true to start it over with ${String(delivery)}, or comment the worker`,
-      );
-    const place = placeOf(db, card, request.host, session);
-    const branch = recordedBranch(db, card.id, live.n) ?? place.branch;
-    return {
-      session,
-      token: tokenFor(db, "worker", session),
-      resumed: true,
-      active: live.state === "active",
-      connected: connected(db, session),
-      ...place,
-      branch,
-      delivery,
-    };
+  if (live !== undefined) {
+    if (live.host !== request.host)
+      throw new Error(`c-${String(card.id)} already has work on ${live.host}: use restart_card`);
+    if (request.delivery !== undefined && request.delivery !== card.delivery)
+      throw new Error("a running card keeps its delivery mode");
+    return resumeAttempt(db, card);
   }
-  if (live !== undefined) endAttempt(db, card.id, live, "replaced");
+  const delivery = deliveryOf(db, card, request.delivery);
   const now = Date.now();
   const n = Number(
     db.prepare("SELECT count(*) + 1 AS n FROM attempts WHERE card = ?").get(card.id)?.["n"],
@@ -323,16 +272,21 @@ export function beginAttempt(
   return { session, token, resumed: false, active: false, connected: false, ...place, delivery };
 }
 
-export function endReviewWait(
-  db: DatabaseSync,
-  card: number,
-  wait: { id: number; label: string; resolves: string },
-  recipients: readonly string[] = [],
-): void {
-  const fields = { job: wait.id, label: wait.label, lost: true, resolves: wait.resolves };
-  const body = "the review wait ended without feedback. It is not run again.";
-  const entry = { card, author: `job:${String(wait.id)}`, kind: "review-feedback", body, fields };
-  addEntry(db, entry, recipients);
+export function resumeAttempt(db: DatabaseSync, card: Card): Begun {
+  const live = liveAttempt(db, card.id);
+  if (live === undefined) throw new Error(`c-${String(card.id)} has no live attempt to restart`);
+  const session = name(card.id, live.n);
+  const place = placeOf(db, card, live.host, session);
+  return {
+    session,
+    token: tokenFor(db, "worker", session),
+    resumed: true,
+    active: live.state === "active",
+    connected: connected(db, session),
+    ...place,
+    branch: recordedBranch(db, card.id, live.n) ?? place.branch,
+    delivery: card.delivery,
+  };
 }
 
 function attemptOf(db: DatabaseSync, session: string): number {
@@ -344,36 +298,31 @@ function attemptOf(db: DatabaseSync, session: string): number {
 export function startJob(
   db: DatabaseSync,
   session: string,
-  job: { label: string; command: string; review: boolean },
-): { id: number; key: string | null } {
+  job: { label: string; command: string },
+): number {
   const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
       "INSERT INTO jobs (attempt, label, command, state, created_at, updated_at) VALUES (?, ?, ?, 'running', ?, ?)",
     )
     .run(attemptOf(db, session), job.label, job.command, now, now);
-  const id = Number(lastInsertRowid);
-  if (!job.review) return { id, key: null };
-  const key = `review-${String(id)}`;
-  db.prepare("UPDATE jobs SET resolves = ? WHERE id = ?").run(key, id);
-  return { id, key };
+  return Number(lastInsertRowid);
 }
 
 export function finishJob(
   db: DatabaseSync,
   session: string,
   job: { id: number; exitCode: number; outputTail: string },
-): { label: string; resolves: string | null } | undefined {
+): { label: string } | undefined {
   const row = db
     .prepare(
       `UPDATE jobs SET state = 'finished', exit_code = ?, output_tail = ?, updated_at = ?
-       WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING label, resolves`,
+       WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING label`,
     )
     .get(job.exitCode, job.outputTail, Date.now(), job.id, attemptOf(db, session));
   const label = row?.["label"];
-  const resolves = row?.["resolves"];
   if (typeof label !== "string") return undefined;
-  return { label, resolves: typeof resolves === "string" ? resolves : null };
+  return { label };
 }
 
 export function touchJob(db: DatabaseSync, session: string, job: number): boolean {
@@ -389,25 +338,24 @@ export function ownJob(
   db: DatabaseSync,
   session: string,
   job: number,
-): { label: string; running: boolean; review: boolean } | undefined {
+): { label: string; running: boolean } | undefined {
   const row = db
-    .prepare("SELECT label, state, resolves FROM jobs WHERE id = ? AND attempt = ?")
+    .prepare("SELECT label, state FROM jobs WHERE id = ? AND attempt = ?")
     .get(job, attemptOf(db, session));
   if (row === undefined) return undefined;
   return {
     label: String(row["label"]),
     running: row["state"] === "running",
-    review: typeof row["resolves"] === "string",
   };
 }
 
 export function loseSilentJobs(
   db: DatabaseSync,
   before: number,
-): { id: number; label: string; card: number; resolves: string | null }[] {
+): { id: number; label: string; card: number }[] {
   const silent = db
     .prepare(
-      `SELECT j.id AS id, j.label AS label, j.resolves AS resolves, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
+      `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
        WHERE j.state = 'running' AND j.updated_at < ? AND a.state IN ('starting', 'active')
        ORDER BY j.id`,
     )
@@ -416,7 +364,6 @@ export function loseSilentJobs(
       id: Number(row["id"]),
       label: String(row["label"]),
       card: Number(row["card"]),
-      resolves: typeof row["resolves"] === "string" ? row["resolves"] : null,
     }));
   const lose = db.prepare("UPDATE jobs SET state = 'lost', updated_at = ? WHERE id = ?");
   for (const job of silent) lose.run(Date.now(), job.id);
