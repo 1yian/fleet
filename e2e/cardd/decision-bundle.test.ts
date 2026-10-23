@@ -42,9 +42,10 @@ test("several actionable cards reach their mate as one bundle, repeated flat, an
   const first = await bundle(cleo, 1);
   assert.match(
     first.body,
-    /^reminder: 3 cards need a decision or action from you\. Act on each now\./,
+    /^reminder: 3 cards need a decision or action from you\. Give a hold an until=<date> only when/,
   );
-  assert.match(first.body, /hold it with until=<date>/);
+  assert.doesNotMatch(first.body, /Waiting on the captain/);
+  assert.doesNotMatch(first.body, /so reminders stop/);
   assert.deepEqual(names(first).sort(), [one, two, three].map(name).sort());
   const second = await bundle(cleo, 2);
   assert.deepEqual(names(second).sort(), names(first).sort());
@@ -89,6 +90,20 @@ test("main's bundle holds its own cards, an escalated hold, and every captain de
   );
   assert.doesNotMatch(lines.find((l) => l.includes(name(own))) ?? "", /waiting on the captain/);
   assert.deepEqual(bundles(cleo), []);
+
+  const [mateGroup = "", captainGroup = "", extra] = entry.body
+    .split("\n")
+    .slice(1)
+    .join("\n")
+    .split(/\n(?=Waiting on the captain)/);
+  assert.equal(extra, undefined);
+  assert.match(mateGroup, /^You can settle or close these yourself\./);
+  assert.match(mateGroup, new RegExp(name(escalated)));
+  assert.match(mateGroup, new RegExp(name(own)));
+  assert.doesNotMatch(mateGroup, new RegExp(name(decision)));
+  assert.match(captainGroup, /^Waiting on the captain\..*one short list with your recommendation/);
+  assert.match(captainGroup, new RegExp(name(decision)));
+  assert.doesNotMatch(captainGroup, new RegExp(name(own)));
 });
 
 test("a card held until a date drops out of the bundle, and comes back when the date passes", async () => {

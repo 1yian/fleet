@@ -170,7 +170,7 @@ test("a card that waits on its mate is reminded in a flat bundle, one reminder e
   assert.deepEqual(sent, inOrder(sent));
   assert.match(
     cleo.entries.at(-1)?.entry.body ?? "",
-    /^reminder: 1 card needs a decision or action from you\. Act on each now\. If nothing can be done yet, hold it with until=<date> so reminders stop until then\.\n- c-\d+ blocked \(with-mate, \d+ min\)$/,
+    /^reminder: 1 card needs a decision or action from you\. Give a hold an until=<date> only when the card waits on an outside event \(a quota reset, a third party, a CI run\) or the captain said later or named a date\.\nYou can settle or close these yourself\. Act on each now:\n- c-\d+ blocked \(with-mate, \d+ min\)$/,
   );
 
   await cleo.call("hold", { card: card.id, question: "later?", until: Date.now() + 3_600_000 });
