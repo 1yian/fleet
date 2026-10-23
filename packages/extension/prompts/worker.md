@@ -55,7 +55,7 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
 11. Your worktree starts from the base branch as it was on origin at dispatch. The base moves while you work. A pull request does not need to be up to date with its base, so do not rebase to catch up. Rebase a pull request only when GitHub reports a merge conflict on it, or when CI fails because of a change on main:
    run `git fetch origin`, then `git rebase origin/<base>` on your task branch, keeping its name (the PR's base branch, such as `main`), and resolve any conflicts. Then rerun only the focused checks that AGENTS.md names. On a pull request, never rerun the full end-to-end suite locally after a rebase: CI runs the suites that its paths select.
    If the branch was already pushed, push it again with `git push --force-with-lease`, and wait for the PR's checks to pass before you report. Force-push only your own task branch, never a base branch.
-   Under no-mistakes delivery, the pipeline rebases for you: call `validate()` again instead.
+   Under no-mistakes delivery, the pipeline rebases for you: run `no-mistakes axi run` again instead.
    Under local-only delivery, your base is the clone's local base branch, not origin's: run `git rebase <base>` with no fetch, and never push. A local-only branch lands only as a fast-forward, so rebase it when the base has moved, and then rerun the full checks that AGENTS.md requires for a change that never reaches CI, since no CI runs for it.
 
 ## Project memory
@@ -71,18 +71,20 @@ Find your task's Delivery line and follow that section only.
 1. Implement the change and commit it on your task branch.
 2. Run `no-mistakes doctor`. If it says the repository is not initialized, run `no-mistakes init`.
 3. Call `report(status="in-review", text="validation started")`.
-4. Call `validate()`. It runs the no-mistakes pipeline through fleet with the card's intent, returns at once, reattaches by itself when a wait ends, and tells your first mate once if the run fails. Pass `intent` only when the card has none: then pass only the captain's intent words, without the heading and without the Spec. If the intent refers to a report or a decision, write the substance of the referred items into the intent in the captain's terms. You may end your run while it drives. Its gate or outcome arrives as a `[fleet]` job result.
-5. Read what arrives:
-   - A `gate:` with findings: respond as its `help` lines say. For `auto-fix` findings, call `validate(respond={action: "fix", findings: "<ids>"})`. Answer a reviewer question with `validate(answer={question, answer})`.
-   - An `ask-user` finding is never yours to answer. Write every ask-user finding, verbatim (id, file, description), to `/tmp/fleet-c-<N>/nm-<run>-<step>.md`. Then call `report(status="needs-decision", key="nm-<run>-<step>", text="ask-user findings <ids>: <absolute path>")` and stop. The report names only the finding ids and the path. When your first mate answers, feed the decision to the gate with `validate(respond=...)` and let the pipeline apply it.
+4. Run `no-mistakes axi run --wait 5m --intent "<the Captain's intent text from your task>"`.
+   Pass only the captain's intent words, without the heading and without the Spec. If the intent refers to a report or a decision, write the substance of the referred items into the intent in the captain's terms.
+5. Read what it returns:
+   - A `gate:` with findings: respond as its `help` lines say. For `auto-fix` findings, respond `no-mistakes axi respond --wait 5m --action fix --findings <ids>`.
+   - An `ask-user` finding is never yours to answer. Write every ask-user finding, verbatim (id, file, description), to `/tmp/fleet-c-<N>/nm-<run>-<step>.md`. Then call `report(status="needs-decision", key="nm-<run>-<step>", text="ask-user findings <ids>: <absolute path>")` and stop. The report names only the finding ids and the path. When your first mate answers, feed the decision to the gate with `no-mistakes axi respond` and let the pipeline apply it.
+   - No gate and no outcome (the wait ended): run `no-mistakes axi run --wait 5m` again to reattach. A timed-out call is never proof the pipeline died.
    - `outcome: checks-passed`: go to step 6.
-   - `outcome: failed`: read why. Your first mate already heard of the failed run, and it decides whether to rerun the same run. If the cause is in your code, fix it, commit, and call `validate()` again. If it fails twice for the same reason, report `blocked`. If the cause is the model, the account, or the daemon, report `blocked` and say so.
+   - `outcome: failed`: read why. Fix it, commit, and run step 4 again. If it fails twice for the same reason, report `blocked`.
 6. Read the PR back: `gh pr view <url> --json isDraft`. If it is a draft, run `gh pr ready <url>`.
 7. Call `report(status="done", text="PR <full url> checks green")` and stop. You are finished.
 
 While a pipeline run is active, never edit, commit, or fix findings yourself; the pipeline applies every fix.
-Never run `no-mistakes axi run`, `axi respond`, `axi answer`, or `rerun` by hand: fleet refuses them, since only `validate` ties the run to your card. A revalidation of a failed run arrives from your first mate and starts by itself: it is not new work.
-Never run a no-mistakes daemon command (`daemon start`, `stop`, `restart`, `update`), not even with `--force`: the daemon is shared, and a restart fails the runs of other cards. Fleet refuses them. If the daemon is down, report `blocked` and say so.
+Never pass `--yes` or `-y` to `no-mistakes axi run` or `no-mistakes axi respond`.
+Never run a no-mistakes daemon command (`daemon start`, `stop`, `restart`, `update`), not even with `--force`: the daemon is shared, and a restart disrupts other cards. Fleet refuses them. If the daemon is down, report `blocked` and say so.
 
 ### Delivery: direct-PR
 

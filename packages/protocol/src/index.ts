@@ -1,6 +1,6 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
-import { RUNTIME_OPS } from "./runtime-ops.ts";
+import { INCIDENT_OPS } from "./incidents.ts";
 import { ReportPr, ReportStatus } from "./report.ts";
 import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
 
@@ -361,7 +361,7 @@ export const OPS = {
     args: WakeArgsSchema,
     result: Type.Object({ entry: Type.Integer() }),
   },
-  ...RUNTIME_OPS,
+  ...INCIDENT_OPS,
   report: {
     roles: ["worker"],
     args: Type.Object({

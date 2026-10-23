@@ -24,7 +24,6 @@ import { standingRules } from "./standing.ts";
 import { registerStow } from "./stow.ts";
 import { titleMate } from "./titles.ts";
 import { registerUpdate } from "./updating.ts";
-import { Validator } from "./validate.ts";
 import { WorkerRun } from "./worker.ts";
 
 interface Config {
@@ -87,35 +86,15 @@ function tellUnreadable(pi: ExtensionAPI, error: string): void {
   );
 }
 
-interface Control {
-  readonly compaction: boolean;
-  readonly revalidate: number | undefined;
-  readonly silent: boolean;
-  readonly health: boolean;
-}
-
-function controlOf(fields: Readonly<Record<string, unknown>>): Control {
-  const revalidate = typeof fields["revalidate"] === "number" ? fields["revalidate"] : undefined;
-  const compaction = fields["compaction"] === true;
-  return {
-    compaction,
-    revalidate,
-    silent: compaction || revalidate !== undefined,
-    health: fields["recovery"] !== undefined || revalidate !== undefined,
-  };
-}
-
 function workerTools(
   pi: ExtensionAPI,
   link: Link,
   cardd: { url: string; token: string },
-): { jobs: Jobs; validator: Validator } {
+): Jobs {
   const jobs = new Jobs(link, cardd);
   jobs.register(pi);
-  const validator = new Validator(link, jobs, cardd);
-  validator.register(pi);
   registerBranch(pi, link);
-  return { jobs, validator };
+  return jobs;
 }
 
 function start(
@@ -148,7 +127,6 @@ function start(
       const seen = again ? injectedAgain : injected;
       if (seen.has(entry.id)) return;
       seen.add(entry.id);
-      const control = controlOf(entry.fields);
       pi.sendMessage(
         {
           customType: "fleet",
@@ -156,25 +134,23 @@ function start(
           display: true,
           details: { entryId: entry.id },
         },
-        { triggerTurn: !control.silent, deliverAs: mode },
+        { triggerTurn: entry.fields["compaction"] !== true, deliverAs: mode },
       );
-      if (control.revalidate !== undefined) validator?.rerun(control.revalidate).catch(() => 0);
-      if (control.compaction) {
+      if (entry.fields["compaction"] === true) {
         failures.expectCompaction();
         compact();
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
-      noteWorkerInput(control.health);
+      noteWorkerInput(entry.fields["recovery"] !== undefined);
     },
   });
   const noteWorkerInput = (recovery: boolean): void => {
     if (recovery) worker?.checkingHealth();
     else worker?.reset();
   };
-  const tools = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
-  const { jobs, validator } = tools ?? {};
-  registerGuard(pi, role);
+  const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
+  registerGuard(pi);
   const failures = new Failures(link);
   failures.register(pi);
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);

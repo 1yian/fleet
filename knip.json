@@ -24,7 +24,6 @@
       "entry": [
         "src/index.ts",
         "src/job.ts",
-        "src/validate-run.ts",
         "src/launch.ts",
         "src/relaunch.ts",
         "src/calm/index.ts",
@@ -37,5 +36,5 @@
       "ignore": ["src/vendor/**"]
     }
   },
-  "ignoreBinaries": ["herdr", "lavish-axi", "pgrep", "no-mistakes"]
+  "ignoreBinaries": ["herdr", "lavish-axi", "pgrep"]
 }
