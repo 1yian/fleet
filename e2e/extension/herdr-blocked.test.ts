@@ -164,8 +164,18 @@ test("a worker whose owed reply was answered elsewhere stops reading blocked on 
     h.onModel(() => ({ text }), "mate");
   }
   const pane = await startMain(lab, here, h, false, [...mateArgs(h), ...workerFleetArgs(token)]);
+  await h.waitForNth(
+    (event) => event["type"] === "settled" && event["aborted"] === false,
+    1,
+    "the first turn to settle",
+  );
   await until(pane, "the worker to settle idle", (s) => s.status === "idle");
   await mate.call("comment", { card: card.id, text: "Which port?", reply: true });
+  await h.waitForNth(
+    (event) => event["type"] === "settled" && event["aborted"] === false,
+    2,
+    "the owed-reply turn to settle",
+  );
   await until(pane, "the owed reply to block the worker", (s) => s.status === "blocked");
   const asked = check(CardViewSchema, await mate.call("card", { card: card.id })).card.replies[0];
   assert.ok(asked, "the ask is open on the card");

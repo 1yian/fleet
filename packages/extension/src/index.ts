@@ -17,7 +17,7 @@ import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs, registerDropJob } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
-import { Link } from "./link.ts";
+import { Link, type Push } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { reportActivity } from "./progress.ts";
@@ -117,6 +117,7 @@ function start(
   sessionFile: string | undefined,
   compact: () => void,
   ctx: ExtensionContext,
+  extensionsReady: Promise<void>,
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
@@ -144,24 +145,29 @@ function start(
       failures.flush();
       jobs?.sync().catch(() => undefined);
     },
-    onPush: ({ entry, name, mode, again = false }) => {
-      const seen = again ? injectedAgain : injected;
-      if (seen.has(entry.id)) return;
-      seen.add(entry.id);
-      const deliver = (extra: string): void => {
-        sendEntry(pi, entry, mode, format(entry, name, again) + extra);
-        if (entry.fields["compaction"] === true) {
-          failures.expectCompaction();
-          compact();
-        }
-        pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-        if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
-        noteWorkerInput(entry, entry.fields["recovery"] !== undefined);
-      };
-      if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
-      else deliver("");
+    onPush: (push) => {
+      void extensionsReady.then(() => {
+        deliverPush(push);
+      });
     },
   });
+  const deliverPush = ({ entry, name, mode, again = false }: Push): void => {
+    const seen = again ? injectedAgain : injected;
+    if (seen.has(entry.id)) return;
+    seen.add(entry.id);
+    const deliver = (extra: string): void => {
+      sendEntry(pi, entry, mode, format(entry, name, again) + extra);
+      if (entry.fields["compaction"] === true) {
+        failures.expectCompaction();
+        compact();
+      }
+      pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
+      if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
+      noteWorkerInput(entry, entry.fields["recovery"] !== undefined);
+    };
+    if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
+    else deliver("");
+  };
   const noteWorkerInput = (entry: Entry, recovery: boolean): void => {
     worker?.receive(entry);
     if (recovery) worker?.checkingHealth();
@@ -221,6 +227,13 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
   let started = false;
+  let extensionsLoaded: () => void = () => undefined;
+  const extensionsReady = new Promise<void>((resolve) => {
+    extensionsLoaded = resolve;
+  });
+  pi.on("resources_discover", () => {
+    extensionsLoaded();
+  });
   pi.on("session_start", (_event, ctx) => {
     const found = config(pi);
     if (started || found === undefined) return;
@@ -233,6 +246,7 @@ export default function fleet(pi: ExtensionAPI): void {
         ctx.compact();
       },
       ctx,
+      extensionsReady,
     );
     if (found.lane !== undefined) titleMate(pi, found.lane).catch(() => undefined);
   });
