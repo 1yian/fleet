@@ -33,7 +33,7 @@ afterEach(async () => {
 test("a mate is refused a daemon admin command", async () => {
   h.onModel(() => ({ tool: "bash", args: { command: "no-mistakes daemon restart --force" } }));
   h.onModel(() => ({ text: "refused" }));
-  h.startPi(
+  const mate = h.startPi(
     "main-mate",
     {
       FLEET_URL: fleet.cardd.url,
@@ -43,6 +43,8 @@ test("a mate is refused a daemon admin command", async () => {
     },
     [EXTENSION, SHELL],
   );
+  await h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
+  mate.prompt("restart the daemon");
   await h.waitForCall(1);
 
   assert.match(JSON.stringify(h.calls[1]), /refused: the no-mistakes daemon is shared/);
