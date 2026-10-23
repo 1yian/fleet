@@ -7,12 +7,15 @@ export interface ModelRef {
 }
 
 export interface Compactor {
-  readonly model: ModelRef;
+  readonly chain: readonly ModelRef[];
   readonly vertexOnly: boolean;
 }
 
 const VERTEX_PROVIDER = "google-vertex";
-const VERTEX_COMPACTOR: ModelRef = { provider: VERTEX_PROVIDER, id: "gemini-2.5-flash" };
+const CNP_CHAIN: readonly ModelRef[] = [
+  { provider: "vertex-claude", id: "claude-haiku-5-5" },
+  { provider: VERTEX_PROVIDER, id: "gemini-3.8-flash" },
+];
 const TIER_COMPACTOR: ModelRef = { provider: "tier", id: "compact" };
 const CNP_RULE = "cnp";
 
@@ -31,6 +34,21 @@ function isCnp(session: ModelRef, cwd: string, env: NodeJS.ProcessEnv): boolean 
 
 export function compactorFor(session: ModelRef, cwd: string, env: NodeJS.ProcessEnv): Compactor {
   return isCnp(session, cwd, env)
-    ? { model: VERTEX_COMPACTOR, vertexOnly: true }
-    : { model: TIER_COMPACTOR, vertexOnly: false };
+    ? { chain: CNP_CHAIN, vertexOnly: true }
+    : { chain: [TIER_COMPACTOR], vertexOnly: false };
+}
+
+export function firstAvailable<T>(
+  compactor: Compactor,
+  find: (model: ModelRef) => T | undefined,
+): { readonly model: ModelRef; readonly found: T } | undefined {
+  for (const model of compactor.chain) {
+    const found = find(model);
+    if (found !== undefined) return { model, found };
+  }
+  return undefined;
+}
+
+export function chainLabel(compactor: Compactor): string {
+  return compactor.chain.map((model) => `${model.provider}/${model.id}`).join(" then ");
 }
