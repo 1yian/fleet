@@ -1,5 +1,5 @@
-import { getMarkdownTheme, UserMessageComponent, type ExtensionAPI, type ExtensionContext, type Theme } from '@earendil-works/pi-coding-agent';
-import { Container, Loader, Markdown, type Component, type TUI } from '@earendil-works/pi-tui';
+import { getMarkdownTheme, keyText, UserMessageComponent, type ExtensionAPI, type ExtensionContext, type Theme } from '@earendil-works/pi-coding-agent';
+import { Container, Editor, getKeybindings, Loader, Markdown, Spacer, TruncatedText, TuiAltScreen, TuiMainScreen, type Component, type TUI } from '@earendil-works/pi-tui';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { connectWindow, type LiveState, type WindowEvent } from './window-bridge.ts';
 import { profilePath } from './profiles.ts';
@@ -43,14 +43,15 @@ export function registerConnectedRenderer(pi: ExtensionAPI) {
 
 const toolCalls = (message: AgentMessage) => message.role === 'assistant' ? message.content.flatMap(part => part.type === 'toolCall' ? [part.id] : []) : [];
 
-/** What normally sits at the bottom of Pi's chat while it works: the streaming reply, running tools and the working spinner. */
+/** What normally sits at the bottom of Pi's chat while it works: the streaming reply, running tools, the working spinner and your queued messages. */
 class LiveTurn implements Component {
   private readonly loader: Loader;
   private readonly body = new Container();
+  private readonly queued = new Container();
   private spinning = false;
   turn: AgentMessage[] = [];
   live?: LiveState;
-  constructor(private readonly tui: TUI, theme: Theme) {
+  constructor(readonly tui: TUI, private readonly theme: Theme) {
     this.loader = new Loader(tui, text => theme.fg('accent', text), text => theme.fg('muted', text), 'Working');
     // Running tools show their elapsed time, which only moves when they are redrawn.
     this.timer = setInterval(() => { if (this.live?.tools.length) this.update(); }, 1000); this.timer.unref();
@@ -65,17 +66,25 @@ class LiveTurn implements Component {
     // Waiting with no agents of its own means it is waiting for you, so nothing spins, like an idle Pi.
     const agents = this.live?.agents ?? 0;
     const spin = !!state && statusState(state, agents) === 'working';
-    this.loader.setMessage(state === 'waiting' ? `Waiting for ${agents === 1 ? '1 agent' : `${agents} agents`}` : state === 'stopping' ? 'Stopping' : 'Working');
+    // Owners that send `queued` also take Esc; older ones would drop the connection on it.
+    const interrupt = this.live?.queued ? ` (${keyText('app.interrupt')} to interrupt)` : '';
+    this.loader.setMessage(state === 'waiting' ? `Waiting for ${agents === 1 ? '1 agent' : `${agents} agents`}${interrupt}` : state === 'stopping' ? 'Stopping' : `Working${interrupt}`);
     if (spin && !this.spinning) this.loader.start(); else if (!spin && this.spinning) this.loader.stop();
     this.spinning = spin;
+    // Like Pi's own queue: what you sent shows at once, and leaves this list when the agent reads it into the chat.
+    this.queued.clear();
+    const queued = this.live?.queued ?? [];
+    if (queued.length) this.queued.addChild(new Spacer(1));
+    for (const text of queued) this.queued.addChild(new TruncatedText(this.theme.fg('dim', `Steering: ${text.replace(/\s+/g, ' ')}`), 1, 0));
+    if (queued.length) this.queued.addChild(new TruncatedText(this.theme.fg('dim', `↳ ${keyText('app.message.dequeue')} to edit the last one`), 1, 0));
     this.tui.requestRender();
   }
-  render(width: number) { return [...this.body.render(width), ...(this.spinning ? this.loader.render(width) : [])]; }
-  invalidate() { this.body.invalidate(); this.loader.invalidate(); }
+  render(width: number) { return [...this.body.render(width), ...(this.spinning ? this.loader.render(width) : []), ...this.queued.render(width)]; }
+  invalidate() { this.body.invalidate(); this.loader.invalidate(); this.queued.invalidate(); }
   dispose() { clearInterval(this.timer); this.loader.stop(); }
 }
 
-export async function openConnectedWindow(pi: ExtensionAPI, ctx: ExtensionContext, profile: string, setTitle: (title: string) => void = title => ctx.ui.setTitle(title)) {
+export async function openConnectedWindow(pi: ExtensionAPI, ctx: ExtensionContext, profile: string, setTitle: (title: string) => void = title => ctx.ui.setTitle(title), agentId?: string, activeOnly = false) {
   // Each window draws with its own transcript, so nothing from an earlier window carries over.
   transcript = undefined;
   let started = false, ended = false, liveTurn: LiveTurn | undefined, live: LiveState | undefined, turn: AgentMessage[] = [];
@@ -95,7 +104,7 @@ export async function openConnectedWindow(pi: ExtensionAPI, ctx: ExtensionContex
   const connection = await connectWindow(profilePath(profile), event => {
     if (event.name === 'started') {
       started = true; showLive(); title('working');
-      ctx.ui.setStatus('optchat', `OptChat: ${profile} · connected agent ${event.text} · /complete`);
+      ctx.ui.setStatus('optchat', `OptChat: ${profile} · ${agentId ? 'attached' : 'connected'} agent ${event.text} · /complete`);
     } else if (event.name === 'status') {
       live = event.live; refresh();
       // The tab says working exactly when the spinner spins.
@@ -119,23 +128,54 @@ export async function openConnectedWindow(pi: ExtensionAPI, ctx: ExtensionContex
     if (ended) return;
     ended = true; commit(); hideLive();
     ctx.ui.setStatus('optchat', `OptChat: ${profile} · disconnected`); title('disconnected');
-    ctx.ui.notify('Connection closed. The owner saves the interrupted conversation and handoff; no local agent will run here.', 'info');
+    ctx.ui.notify(agentId ? 'Detached from the background agent. Closing this window does not stop it; no local agent will run here.'
+      : 'Connection closed. If you sent a task here, the main agent gets its handoff when the profile next opens. Use /new to start over: after the profile picker if Pi started without --optchat-profile, a profile still open elsewhere offers Connect again, and a free one opens here.', 'info');
   });
-  ctx.ui.setStatus('optchat', `OptChat: ${profile} · connected window · send a task to start`); title('waiting');
-  display(`Connected to ${profile}'s original window. Messages here go to one subagent using the profile's subagent model. /tell-main sends a message to the main agent; /complete ends this conversation and sends a handoff. Closing this window interrupts it.`);
+  if (agentId) {
+    display(`Opening existing agent ${agentId}. Messages go to that same agent; /tell-main contacts the main agent. /complete or closing this window only detaches. The original Pi window must remain open.`);
+    try { await connection.request('attach', agentId, undefined, { activeOnly }); }
+    catch (error) {
+      ended = true; connection.close(); hideLive();
+      if (!started && error instanceof Error && error.message === 'Connection to the original Pi window was lost')
+        throw new Error('The original Pi window closed the connection before attachment. It may run an OptChat version that cannot open existing agents. Update OptChat and restart that window.');
+      throw error;
+    }
+  } else {
+    ctx.ui.setStatus('optchat', `OptChat: ${profile} · connected window · send a task to start`); title('waiting');
+    display(`Connected to ${profile}'s original window. Messages here go to one subagent using the profile's subagent model. /tell-main sends a message to the main agent; /complete ends this conversation and sends a handoff. Closing this window interrupts it.`);
+  }
+  const failed = (what: string) => (error: unknown) => ctx.ui.notify(`Could not ${what}: ${error instanceof Error ? error.message : String(error)}`, 'error');
+  /** The agent runs in the original window, so Esc and Alt+Up go there; only at the chat's editor, so dialogs and autocomplete keep them. */
+  const unlisten = ctx.ui.onTerminalInput(data => {
+    const tui = liveTurn?.tui, focused = tui instanceof TuiMainScreen || tui instanceof TuiAltScreen ? tui.getFocusedComponent() : undefined;
+    if (ended || !live?.queued || !(focused instanceof Editor) || focused.isShowingAutocomplete() || tui?.hasOverlay()) return;
+    const keys = getKeybindings();
+    if (keys.matches(data, 'app.interrupt') && live.state !== 'stopping' && statusState(live.state, live.agents) === 'working') {
+      connection.request('interrupt').catch(failed('interrupt'));
+      return { consume: true };
+    }
+    if (keys.matches(data, 'app.message.dequeue') && live.queued.length) {
+      connection.request('withdraw').then(text => {
+        if (text !== undefined) ctx.ui.setEditorText([text, ctx.ui.getEditorText()].filter(part => part.trim()).join('\n\n'));
+      }, failed('take the message back'));
+      return { consume: true };
+    }
+  });
   return {
+    /** Ended by /complete, by the owner, or by losing the owner: nothing left here to protect from a session switch. */
+    get ended() { return ended; },
     async submit(text: string) {
-      if (ended) throw new Error('Conversation ended. Open a new Pi window to start another.');
+      if (ended) throw new Error('Conversation ended. Use /new to start another.');
       await connection.request(started ? 'say' : 'start', text, ctx.cwd);
     },
     async tell(text: string) { await connection.request('tell-main', text); },
     async complete() {
-      ctx.ui.setWorkingMessage('Ending conversation and preparing handoff…');
+      ctx.ui.setWorkingMessage(agentId ? 'Detaching from background agent…' : 'Ending conversation and preparing handoff…');
       try {
         if (started && !ended) await connection.request('complete');
         ended = true; connection.close(); ctx.shutdown();
       } finally { ctx.ui.setWorkingMessage(); }
     },
-    close() { ended = true; connection.close(); },
+    close() { ended = true; unlisten(); connection.close(); },
   };
 }

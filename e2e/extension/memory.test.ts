@@ -79,7 +79,7 @@ const mentions = (turns: readonly Turn[], word: string): boolean =>
 const labels = (text: string): number => text.split(NOTICE).length - 1;
 
 function assertLabelled(text: string, what: string): void {
-  const message = text.replace(/^<chat>[\s\S]*<\/chat>/, "");
+  const message = text.replace(/^<chat>[\s\S]*<\/chat>\s*/, "");
   assert.ok(message.startsWith(`${NOTICE} `), `${what} does not start with ${NOTICE}: ${text}`);
   assert.equal(labels(text), 1, `${what} has ${NOTICE} more than once: ${text}`);
   assert.ok(!text.includes("Operational notification"), `${what} has the old notice: ${text}`);
@@ -291,9 +291,7 @@ test("`fleet home memory` turns a second mate's memory back on after it was set 
 });
 
 const isSummary = (turns: readonly Turn[]): boolean =>
-  turns.some(
-    (turn) => turn.role === "system" && turn.text.includes("You write the memory of OptChat"),
-  );
+  turns.some((turn) => turn.role === "system" && turn.text.includes("You write OptChat's memory"));
 
 test("a mate whose memory names no summary model summarizes on tier/compact, never on its own model", async () => {
   installMemory();

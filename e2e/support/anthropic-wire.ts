@@ -4,6 +4,8 @@ export interface WireCall {
   readonly role: "mate" | "worker";
   readonly warm: boolean;
   readonly ttls: readonly string[];
+  readonly systemMarked: boolean;
+  readonly markedBlocks: readonly string[];
   readonly turns: readonly { readonly role: string; readonly text: string }[];
 }
 
@@ -35,6 +37,16 @@ function ttlsIn(value: unknown): string[] {
   return [...own, ...Object.values(value).flatMap(ttlsIn)];
 }
 
+function markedTexts(body: JsonRecord): string[] {
+  const messages = Array.isArray(body["messages"]) ? body["messages"].filter(isRecord) : [];
+  return messages
+    .map((message) => message["content"])
+    .filter(Array.isArray)
+    .flatMap((content) => content.filter(isRecord))
+    .filter((block) => isRecord(block["cache_control"]))
+    .map((block) => optionalString(block, "text") ?? "");
+}
+
 function turnsOf(body: JsonRecord): WireCall["turns"] {
   const system = textOf(body["system"]);
   const messages = Array.isArray(body["messages"]) ? body["messages"].filter(isRecord) : [];
@@ -57,6 +69,8 @@ export function wireCall(body: JsonRecord): WireCall {
     role: turns[0]?.text.includes(WORKER_CONTRACT) === true ? "worker" : "mate",
     warm: body["max_tokens"] === 1,
     ttls: ttlsIn(body),
+    systemMarked: ttlsIn(body["system"]).length > 0,
+    markedBlocks: markedTexts(body),
     turns,
   };
 }

@@ -1,6 +1,11 @@
 module.exports = {
   forbidden: [
-    { name: "no-circular", severity: "error", from: {}, to: { circular: true } },
+    {
+      name: "no-circular",
+      severity: "error",
+      from: { pathNot: "^packages/extension/vendor/" },
+      to: { circular: true },
+    },
     { name: "no-unresolvable", severity: "error", from: {}, to: { couldNotResolve: true } },
     {
       name: "protocol-is-a-leaf",

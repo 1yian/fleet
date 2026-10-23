@@ -2,7 +2,7 @@ import { matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithA
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { Children } from './agents.ts';
 import type { Memory } from './memory.ts';
-import { isActiveRun, isRunning } from './runs.ts';
+import { isActiveRun, isHandingOff, isRunning } from './runs.ts';
 import type { Usage } from '@earendil-works/pi-ai';
 import { ranges, summarizeUsage, type UsageLedger, type UsageRange, type UsageRole } from './usage.ts';
 
@@ -60,6 +60,8 @@ export class Inspector implements Component, Focusable {
   private lineCount = 0;
   private hintLines = 1;
   private range: UsageRange = 'This session';
+  private confirmDelete?: string;
+  private notice = '';
   private ended = false;
   private readonly unsubscribe: (() => void)[];
   private readonly timer: ReturnType<typeof setInterval>;
@@ -87,6 +89,7 @@ export class Inspector implements Component, Focusable {
   handleInput(data: string) {
     if (this.ended) return;
     if (matchesKey(data, 'escape') || matchesKey(data, 'ctrl+c')) return this.finish();
+    const deleting = this.confirmDelete; this.confirmDelete = undefined; this.notice = '';
     if (matchesKey(data, 'tab')) {
       this.page = nextPage(this.page); this.scroll = 0;
     } else if (this.page === 'activity') this.scrollInput(data);
@@ -103,9 +106,21 @@ export class Inspector implements Component, Focusable {
       else if (matchesKey(data, 'home')) this.select(-Infinity);
       else if (matchesKey(data, 'end')) this.select(Infinity);
       else if (data === 'm') return this.finish('model');
+      else if ((data === 'd' || matchesKey(data, 'delete')) && this.selected) {
+        if (deleting === this.selected) this.remove(this.selected);
+        else this.confirmDelete = this.selected;
+      }
       else if (matchesKey(data, 'return') && this.selected) return this.finish({ open: this.selected });
     }
     this.options.redraw();
+  }
+  /** Once the run is gone, the cursor moves to the next row that is not, else the one above. */
+  private remove(id: string) {
+    const { children } = this.options, list = children.history.list(), doomed = new Set([id, ...children.history.descendants(id).map(r => r.id)]);
+    const index = list.findIndex(r => r.id === id), next = list.slice(index).find(r => !doomed.has(r.id)) ?? list.slice(0, index).findLast(r => !doomed.has(r.id));
+    children.remove(id).then(() => { if (!children.history.records.has(this.selected ?? '')) this.selected = next?.id; },
+      (error: unknown) => { this.notice = `Not deleted: ${error instanceof Error ? error.message : String(error)}`; })
+      .finally(() => { if (!this.ended) this.options.redraw(); });
   }
   private scrollInput(data: string) {
     const delta = matchesKey(data, 'up') ? -1 : matchesKey(data, 'down') ? 1 : matchesKey(data, 'pageUp') ? -this.height : matchesKey(data, 'pageDown') ? this.height : 0;
@@ -147,12 +162,12 @@ export class Inspector implements Component, Focusable {
   private activityLines(width: number) {
     const { memory, children, color } = this.options;
     const { done, total, retryIn } = memory.progress();
-    const list = children.history.list(), agents = list.filter(isRunning).length, paused = list.filter(r => r.state === 'paused').length;
+    const list = children.history.list(), agents = list.filter(isRunning).length, paused = list.filter(r => r.state === 'paused').length, handingOff = list.filter(isHandingOff).length;
     const filled = total ? Math.floor(10 * done / total) : 0;
     const lines = [`${color('muted', 'Memory')} · ${count(memory.root.length)} messages · view ${Math.round(memory.size / 1000)} KB / ${Math.round(memory.budget / 1000)} KB`,
       total ? `Catching up · ${count(done)} of ${count(total)} summaries  ${color('accent', '█'.repeat(filled))}${color('dim', '░'.repeat(10 - filled))}` : color('dim', 'Settled')];
     if (memory.lastError) lines.push(color('dim', `${oneLine(memory.lastError)}${retryIn === undefined ? '' : ` · retry in ${elapsed(retryIn)}`}`));
-    lines.push('', `${color('muted', 'Agents')} · ${agents} running${paused ? ` · ${paused} interrupted` : ''}`);
+    lines.push('', `${color('muted', 'Agents')} · ${agents} running${paused ? ` · ${paused} interrupted` : ''}${handingOff ? ` · ${handingOff} handing off` : ''}`);
     return lines.flatMap(l => l ? wrapTextWithAnsi(l, width) : ['']);
   }
   render(width: number): string[] {
@@ -175,7 +190,7 @@ export class Inspector implements Component, Focusable {
       if (cursor >= this.top + this.height) this.top = cursor - this.height + 1;
       const rows = list.slice(this.top, this.top + this.height).map(run => {
         const live = children.live(run.id), tools = live ? [...live.tools.values()].map(t => t.name).join(', ') : '';
-        const status = live ? `${run.state === 'stopping' ? 'stopping' : run.state === 'waiting' ? 'waiting for children' : run.state === 'paused' ? 'interrupted · waiting for you' : tools || (live.streaming ? 'responding' : 'working')} · ${elapsed(Date.now() - live.updated)} ago` : run.state;
+        const status = live ? `${run.state === 'stopping' ? 'stopping' : run.state === 'waiting' ? 'waiting for children' : run.state === 'paused' ? 'interrupted · waiting for you' : tools || (live.streaming ? 'responding' : 'working')} · ${elapsed(Date.now() - live.updated)} ago` : isHandingOff(run) ? 'handing off' : run.state;
         return { run, task: `${'  '.repeat(run.depth - 1)}${run.parentId ? '↳ ' : ''}${oneLine(run.task)}`, status, time: elapsed((run.ended ?? Date.now()) - run.started) };
       });
       // Columns: task (flexible) · status · duration (right-aligned); status yields first on narrow screens.
@@ -191,10 +206,12 @@ export class Inspector implements Component, Focusable {
       });
       if (!body.length) body.push(color('muted', 'No agents yet. Ask the main agent to delegate a task.'));
       info = `${list.filter(isActiveRun).length} active · ${list.length} saved${list.length ? ` · ${cursor + 1}/${list.length}` : ''}`;
-      hint = '↑↓ select · Enter open · m model · Tab usage · Esc close';
+      hint = this.confirmDelete ? `Press d again to ${children.live(this.confirmDelete) ? 'stop and delete' : 'delete'} this agent and the agents it started`
+        : this.notice || '↑↓ select · Enter open · m model · d delete · Tab usage · Esc close';
     }
     title = fit(title, Math.max(1, inner - visibleWidth(info) - 2));
-    const footer = wrapTextWithAnsi(hint, inner).map(line => color('dim', line));
+    const tone = this.page !== 'agents' ? 'dim' : this.confirmDelete ? 'warning' : this.notice ? 'error' : 'dim';
+    const footer = wrapTextWithAnsi(hint, inner).map(line => color(tone, line));
     this.hintLines = footer.length;
     const rule = color('border', '─'.repeat(Math.max(1, width)));
     // Same layout as Pi's own selectors: rules above and below, content indented by one column.
