@@ -10,7 +10,11 @@ CREATE UNIQUE INDEX one_mate_per_lane ON sessions (lane) WHERE role = 'mate';
 
 CREATE UNIQUE INDEX one_open_finding ON findings (card, condition) WHERE cleared_at IS NULL;
 
+CREATE UNIQUE INDEX one_revalidation ON validations (previous) WHERE previous IS NOT NULL;
+
 CREATE UNIQUE INDEX one_run_per_tick ON cards (parent, tick) WHERE tick IS NOT NULL;
+
+CREATE INDEX validations_card ON validations (card);
 
 CREATE TABLE attempts (
   id INTEGER PRIMARY KEY,
@@ -177,6 +181,26 @@ CREATE TABLE sessions (
   low_water INTEGER NOT NULL DEFAULT 0,
   last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)),
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
+) STRICT;
+
+CREATE TABLE validations (
+  id INTEGER PRIMARY KEY,
+  card INTEGER NOT NULL REFERENCES cards (id),
+  attempt INTEGER NOT NULL REFERENCES attempts (id),
+  actor TEXT NOT NULL REFERENCES sessions (id),
+  parent TEXT,
+  launch TEXT NOT NULL,
+  run TEXT,
+  state TEXT NOT NULL CHECK (state IN ('launching', 'running', 'gated', 'passed', 'cancelled', 'failed', 'unavailable')),
+  outcome TEXT,
+  classification TEXT,
+  error TEXT,
+  previous INTEGER REFERENCES validations (id),
+  recovery_key TEXT,
+  generation INTEGER NOT NULL,
+  told_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 ) STRICT;
 
 CREATE TRIGGER card_revision AFTER UPDATE ON cards

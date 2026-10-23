@@ -22,6 +22,7 @@ interface Job {
   readonly heartbeatMs: number;
   readonly review: boolean;
   readonly keep: Keep;
+  readonly env: Readonly<Record<string, string>>;
 }
 
 interface Keep {
@@ -59,7 +60,17 @@ function readJob(file: string): Job {
     heartbeatMs,
     review: field("review") === true,
     keep,
+    env: stringsOf(field("env")),
   };
+}
+
+function stringsOf(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
 const count = (value: unknown, otherwise: number): number =>
@@ -132,6 +143,7 @@ async function run(
   const tail = new Tail(job.keep);
   const child = spawn("sh", ["-c", job.command], {
     detached: true,
+    env: { ...process.env, ...job.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const pid = child.pid;
