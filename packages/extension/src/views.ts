@@ -237,7 +237,6 @@ function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
       owes: each.owes,
       asked: ago(each.askedAt),
       resent: each.resentAt === null ? "no" : ago(each.resentAt),
-      escalated: each.escalatedAt === null ? "no" : ago(each.escalatedAt),
       text: clip(firstLineOf(each.text), 160),
     }));
   if (hold === null) return record;

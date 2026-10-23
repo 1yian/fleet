@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, branchOf, startFleet, type Fleet } from "../support/fleet.ts";
+import { begin, startFleet, type Fleet } from "../support/fleet.ts";
 import type { FakeGitHub } from "../support/github.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 
@@ -40,8 +40,7 @@ const cardIn = async (mate: Session, title: string, project: string): Promise<Ca
 
 async function doneWith(mate: Session, card: Card, pr: string): Promise<void> {
   const worker = await fleet.cardd.connect(await begin(mate, card));
-  gh.setHead(pr, branchOf(card));
-  await worker.call("report", { status: "done", text: "PR green and ready" });
+  await worker.call("report", { status: "done", text: "PR green and ready", pr });
 }
 
 test("hold sets a hold, and clear=true clears it only with words the captain said", async () => {
@@ -84,8 +83,8 @@ test("yolo on puts a done PR in Merging with no question; yolo off holds it for 
     "https://github.com/acme/api/pull/3",
     "https://github.com/acme/web/pull/7",
   ];
-  gh.setPr(apiPr, "OPEN", { ci: "pass" });
-  gh.setPr(webPr, "OPEN", { ci: "pass" });
+  gh.setPr(apiPr, "OPEN");
+  gh.setPr(webPr, "OPEN");
   await doneWith(cleo, yolo, apiPr);
   await doneWith(cleo, asks, webPr);
 
@@ -105,7 +104,7 @@ test("yolo on puts a done PR in Merging with no question; yolo off holds it for 
   );
   assert.equal(
     unmerged,
-    `c-${String(yolo.id)} did not land: its PR ${apiPr} has not merged. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it, then close it. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
+    `c-${String(yolo.id)} did not land: its PR ${apiPr} has not merged. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it and report it merged, then close it. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
   );
   assert.deepEqual([gh.state(apiPr), gh.state(webPr)], ["OPEN", "OPEN"]);
 });

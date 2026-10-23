@@ -114,8 +114,8 @@ export class Link {
     else this.untoldAcks.add(entry);
   }
 
-  activity(state: "running" | "idle" | "waiting"): void {
-    if (this.connected) this.send({ t: "activity", state });
+  activity(state: "running" | "idle" | "waiting", progress = false): void {
+    if (this.connected) this.send({ t: "activity", state, ...(progress ? { progress } : {}) });
   }
 
   private send(message: ClientMessage): void {

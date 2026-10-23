@@ -104,42 +104,18 @@ test("close refuses Done for work that did not land and leaves it in place; land
   assert.deepEqual(await workersOf(parts.lab), []);
 });
 
-test("close of a project with no GitHub repo on record says so, and names the command that sets it", async () => {
-  await stopDispatchLab(parts);
-  parts = await startDispatchLab({ repo: false });
-  ({ h, clone, mate } = parts);
-  scriptOperation(() => {
-    const tree = `${clone}.worktrees/c-1-a1`;
-    const git = (...args: string[]) =>
-      execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
-    writeFileSync(join(tree, "fix.txt"), "one\n");
-    git("add", "fix.txt");
-    git("commit", "-q", "-m", "the fix");
-    return { tool: "report", args: { status: "done", text: "merged it" } };
-  });
-  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Merged." } }), "mate");
-  h.onModel(() => ({ text: "refused" }), "mate");
-  await mateConnected();
-  mate.prompt("add credit");
-
-  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.equal(
-    results.at(-1),
-    "c-1's project site has no GitHub repo on record, so close cannot see whether its PR merged. Set it on the cardd host with `cardd project repo site <owner>/<name> --db <cards.db>`, then close again. In its clones, c-1-a1 on local has 1 commit not on main. If that work did not merge, land it, or end it with close(card, summary=<why it is dropped>, landed=false), which archives it.",
-  );
-  assert.equal(worktreesOf(clone).length, 2);
-});
-
 test("with yolo on, the mate comments the worker to merge without asking; the worker merges, and close closes the card at once", async () => {
   const pr = "https://github.com/acme/site/pull/3";
-  gh.setPr(pr, "OPEN", { ci: "pass" });
-  gh.setHead(pr, "c-1-a1");
-  scriptOperation(() => ({ tool: "report", args: { status: "done", text: "credit added" } }));
+  gh.setPr(pr, "OPEN");
+  scriptOperation(() => ({
+    tool: "report",
+    args: { status: "done", text: "credit added", pr },
+  }));
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /Merge your PR now/);
     execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
-    return { tool: "report", args: { status: "done", text: "merged it" } };
+    return { tool: "report", args: { status: "done", text: "merged it", pr, merged: true } };
   }, "worker");
   h.onModel(() => ({ tool: "comment", args: { card: 1, text: "Merge your PR now." } }), "mate");
   h.onModel(() => ({ text: "asked the worker to merge" }), "mate");
@@ -173,9 +149,7 @@ test("a ship card done with no PR on its branch reaches the mate, which asks the
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /Open your PR/);
-    gh.setPr(pr, "OPEN", { ci: "pass" });
-    gh.setHead(pr, "c-1-a1");
-    return { tool: "report", args: { status: "done", text: "PR opened" } };
+    return { tool: "report", args: { status: "done", text: "PR opened", pr } };
   }, "worker");
   h.onModel(
     () => ({ tool: "comment", args: { card: 1, text: "Open your PR from your task branch." } }),
@@ -189,7 +163,7 @@ test("a ship card done with no PR on its branch reaches the mate, which asks the
   const missing = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(missing),
-    "[fleet] c-1 add-credit done: fixed (no PR has branch c-1-a1 as its head) (card now merging)",
+    "[fleet] c-1 add-credit done: fixed (no PR URL reported: the worker reports it with report(pr=<full url>)) (card now merging)",
   );
   const found = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
   assert.equal(

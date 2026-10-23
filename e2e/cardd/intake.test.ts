@@ -4,9 +4,8 @@ import type { Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 
-const WAIT_MS = 10_000;
 const MISSED =
-  "missed: cleo did not take in this report from the worker, sent twice: The API is down";
+  "missed: cleo did not take in this report from the worker, re-sent 3 times: The API is down";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -28,39 +27,32 @@ const sent = (session: Session, kind: Entry["kind"]): [string, boolean][] =>
     .filter(({ entry }) => entry.kind === kind)
     .map(({ entry, again }) => [entry.body, again ?? false]);
 
-async function boardNote(card: number): Promise<Entry> {
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    const { entries } = await fleet.cardd.thread(card);
-    const note = entries.find((entry) => entry.kind === "note" && entry.author === "check");
-    if (note !== undefined) return note;
-    if (Date.now() > deadline) throw new Error("timed out waiting for the board note");
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
-
-test("a report a second mate never takes in is sent once more, then goes to main, then to the board", async () => {
+test("a report a second mate never takes in is sent again every two minutes, and main hears after the third resend", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], false);
   const main = await fleet.cardd.connect(fleet.mainToken, [], false);
-  const { card, worker } = await blockedInCleo(cleo);
+  const { worker } = await blockedInCleo(cleo);
 
   const missed = await main.waitForEntry(
     (entry) => entry.fields["condition"] === "missed",
     "main to hear that cleo missed the report",
   );
   assert.equal(missed.body, MISSED);
-  assert.equal(
-    (await boardNote(card)).body,
-    `missed: main did not take in this finding from the check, sent twice: ${MISSED}`,
+  const resent = sent(cleo, "report");
+  assert.deepEqual(resent[0], ["The API is down\nlogs in /tmp/x", false]);
+  assert.ok(resent.length >= 4, `cleo was sent the report ${String(resent.length)} times`);
+  assert.ok(resent.slice(1).every(([body, again]) => body.startsWith("The API is down") && again));
+  const repeated = await main.waitForEntry(
+    (entry) =>
+      entry.id > missed.id &&
+      entry.fields["condition"] === "missed" &&
+      entry.fields["entry"] === missed.fields["entry"],
+    "main to hear the same unread obligation again after fifteen minutes",
   );
-  assert.deepEqual(sent(cleo, "report"), [
-    ["The API is down\nlogs in /tmp/x", false],
-    ["The API is down\nlogs in /tmp/x", true],
-  ]);
-  assert.deepEqual(sent(main, "finding"), [
-    [MISSED, false],
-    [MISSED, true],
-  ]);
+  const elapsed = repeated.createdAt - missed.createdAt;
+  assert.ok(
+    elapsed >= 9000 && elapsed < 9600,
+    `fifteen minutes scaled to nine seconds: ${String(elapsed)} ms`,
+  );
   await worker.close();
 });
 
@@ -77,9 +69,9 @@ test("a report main takes in is never sent again", async () => {
   await Promise.all([worker.close(), mainWorker.close()]);
 });
 
-test("a comment a waiting worker with no running job never takes in is sent once more, then goes to its second mate", async () => {
+test("a comment a waiting worker never takes in is resent three times, then main hears", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
-  const main = await fleet.cardd.connect(fleet.mainToken, [], false);
+  const main = fleet.main;
   const card = await newCard(cleo, "Users see one scrollbar");
   const worker = await fleet.cardd.connect(await begin(cleo, card), [], false);
   worker.send({ t: "activity", state: "waiting" });
@@ -87,20 +79,22 @@ test("a comment a waiting worker with no running job never takes in is sent once
   worker.ack(task?.id ?? 0);
   await cleo.call("comment", { card: card.id, text: "use the v2 endpoint" });
 
-  const missed = await cleo.waitForEntry(
+  const missed = await main.waitForEntry(
     (entry) => entry.fields["condition"] === "missed",
-    "cleo to hear that the worker missed the comment",
+    "main to hear that the worker missed the comment",
   );
   assert.equal(missed.kind, "finding");
   assert.equal(
     missed.body,
-    `missed: the worker on c-${String(card.id)} did not take in this comment from cleo, sent twice: use the v2 endpoint`,
+    `missed: the worker on c-${String(card.id)} did not take in this comment from cleo, re-sent 3 times: use the v2 endpoint`,
   );
-  assert.deepEqual(sent(worker, "comment"), [
+  const sends = sent(worker, "comment");
+  assert.deepEqual(sends.slice(0, 3), [
     ["the task\n\nDelivery: no-mistakes", false],
     ["use the v2 endpoint", false],
     ["use the v2 endpoint", true],
   ]);
-  assert.deepEqual(sent(main, "finding"), []);
+  assert.ok(sends.length >= 5, `the worker was sent the comment ${String(sends.length - 1)} times`);
+  assert.deepEqual(sent(cleo, "finding"), []);
   await worker.close();
 });

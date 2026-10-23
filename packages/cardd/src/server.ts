@@ -11,7 +11,7 @@ import {
   type ServerMessage,
 } from "@fleet/protocol";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
-import { readPullRequests, runCheck } from "./check.ts";
+import { runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
@@ -57,7 +57,6 @@ class Hub {
   private readonly db: DatabaseSync;
   private readonly timing: Timings;
   private readonly hosts: Hosts;
-  private checking = false;
   private readonly reading = new Set<string>();
   readonly web: Web;
 
@@ -86,23 +85,15 @@ class Hub {
 
   check(): void {
     this.fillRepos();
-    if (this.checking) return;
-    this.checking = true;
-    void readPullRequests(this.db)
-      .then((prs) => {
-        const notify = transaction(this.db, () => runCheck(this.db, Date.now(), this.timing, prs));
-        for (const recipient of notify) this.flush(recipient, false);
-        if (notify.length > 0) this.web.changed();
-      })
-      .finally(() => {
-        this.checking = false;
-      });
+    const notify = transaction(this.db, () => runCheck(this.db, Date.now(), this.timing));
+    for (const recipient of notify) this.flush(recipient, false);
+    if (notify.length > 0) this.web.changed();
   }
 
-  async perform(session: Session, op: string, args: unknown): Promise<HttpOutcome> {
+  perform(session: Session, op: string, args: unknown): HttpOutcome {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
-      const done = await performOp(this.db, session, op, args, this.timing);
+      const done = performOp(this.db, session, op, args, this.timing);
       for (const recipient of done.notify) this.flush(recipient, false);
       this.web.changed();
       return { ok: true, value: done.value };
@@ -125,12 +116,11 @@ class Hub {
         token = session === undefined ? undefined : message.token;
       } else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
       else if (message.t === "activity") {
-        if (setSessionState(this.db, live().id, message.state)) this.web.changed();
+        if (setSessionState(this.db, live().id, message.state, message.progress === true))
+          this.web.changed();
       } else {
         const id = message.id;
-        void this.perform(live(), message.op, message.args).then((outcome) => {
-          send(socket, { t: "result", id, ...outcome });
-        });
+        send(socket, { t: "result", id, ...this.perform(live(), message.op, message.args) });
       }
     };
     socket.on("message", (data) => {
@@ -168,7 +158,7 @@ class Hub {
     }
     try {
       const body = check(HttpCallSchema, JSON.parse(await readBody(request)));
-      const outcome = await this.perform(session, body.op, body.args);
+      const outcome = this.perform(session, body.op, body.args);
       reply(outcome.ok ? 200 : 400, outcome);
     } catch (error) {
       reply(400, { ok: false, error: reason(error) });

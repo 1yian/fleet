@@ -6,8 +6,6 @@ import { tempDir } from "./run-root.ts";
 
 const FAKE = fileURLToPath(new URL("./fake-gh.ts", import.meta.url));
 
-type Bucket = "pass" | "fail" | "pending";
-
 export class FakeGitHub {
   private readonly dir = tempDir("fleet-gh-");
   private readonly file = join(this.dir, "prs.json");
@@ -23,60 +21,17 @@ export class FakeGitHub {
     return { PATH: `${this.dir}:${process.env["PATH"] ?? ""}`, FAKE_GH_STATE: this.file };
   }
 
-  setPr(
-    url: string,
-    state: "OPEN" | "MERGED" | "CLOSED",
-    checks: Record<string, Bucket> = {},
-  ): void {
-    const all = parseRecord(readFileSync(this.file, "utf8"));
-    const list = Object.entries(checks).map(([name, bucket]) => ({ name, bucket }));
-    const kept = all[url];
-    const head: unknown =
-      typeof kept === "object" && kept !== null ? Reflect.get(kept, "head") : undefined;
-    const pr = { state, checks: list, ...(head === undefined ? {} : { head }) };
-    publishRecord(this.file, { ...all, [url]: pr });
+  setPr(url: string, state: "OPEN" | "MERGED" | "CLOSED"): void {
+    publishRecord(this.file, { ...parseRecord(readFileSync(this.file, "utf8")), [url]: { state } });
   }
 
-  slow(ms: number): void {
-    const all = parseRecord(readFileSync(this.file, "utf8"));
-    publishRecord(this.file, { ...all, $delay: ms });
-  }
-
-  callsInFlight(): { started: number; now: number; most: number; pids: number[] } {
+  calls(): string[] {
     const log = `${this.file}.log`;
-    const marks = existsSync(log) ? readFileSync(log, "utf8").split("\n") : [];
-    let now = 0;
-    let most = 0;
-    const pids: number[] = [];
-    for (const line of marks) {
-      const [mark, pid] = line.split(" ");
-      now += mark === "+" ? 1 : mark === "-" ? -1 : 0;
-      if (mark === "+") pids.push(Number(pid));
-      most = Math.max(most, now);
-    }
-    return { started: pids.length, now, most, pids };
-  }
-
-  setHead(url: string, head: string): void {
-    const all = parseRecord(readFileSync(this.file, "utf8"));
-    const pr = all[url];
-    if (typeof pr !== "object" || pr === null) throw new Error(`no PR ${url}: set it first`);
-    publishRecord(this.file, { ...all, [url]: { ...pr, head } });
-  }
-
-  breakChecks(url: string): void {
-    this.patch(url, { broken: true });
-  }
-
-  setDown(url: string, down: boolean): void {
-    this.patch(url, { down });
-  }
-
-  private patch(url: string, change: Record<string, boolean>): void {
-    const all = parseRecord(readFileSync(this.file, "utf8"));
-    const pr = all[url];
-    const kept = typeof pr === "object" && pr !== null ? pr : {};
-    publishRecord(this.file, { ...all, [url]: { ...kept, ...change } });
+    return existsSync(log)
+      ? readFileSync(log, "utf8")
+          .split("\n")
+          .filter((line) => line !== "")
+      : [];
   }
 
   state(url: string): unknown {

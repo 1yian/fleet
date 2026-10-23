@@ -7,7 +7,8 @@ import {
   type Entry,
   type OwedReply,
 } from "@fleet/protocol";
-import { addEntry, cardEntries, loadCards, workerOf } from "./store.ts";
+import { cardEntries, loadCards, workerOf } from "./store.ts";
+import { remind } from "./deliveries.ts";
 import type { Timings } from "./timing.ts";
 
 type Recipient = "worker" | "mate";
@@ -19,7 +20,6 @@ interface Owed extends OwedReply {
 }
 
 const RESENT = "reply-resent";
-const MISSED = "reply-missed";
 
 const replyId = (entry: number): string => `r-${String(entry)}`;
 
@@ -43,7 +43,6 @@ function askedIn(entry: Entry): Owed | undefined {
     text: entry.body,
     askedAt: entry.createdAt,
     resentAt: null,
-    escalatedAt: null,
   };
 }
 
@@ -55,8 +54,7 @@ function step(owed: Owed, entry: Entry): Owed | undefined {
   if (fields["replyTo"] === owed.id && byOwner(owed, entry.author)) return undefined;
   if (fields["withdraws"] === owed.id && entry.author === `mate:${owed.from}`) return undefined;
   if (fields["reply"] !== owed.id || entry.author !== "check") return owed;
-  if (fields["condition"] === RESENT) return { ...owed, resentAt: entry.createdAt };
-  return fields["condition"] === MISSED ? { ...owed, escalatedAt: entry.createdAt } : owed;
+  return fields["condition"] === RESENT ? { ...owed, resentAt: entry.createdAt } : owed;
 }
 
 function owedFrom(entries: readonly Entry[]): Owed[] {
@@ -69,18 +67,14 @@ function owedFrom(entries: readonly Entry[]): Owed[] {
   return open;
 }
 
-export const unansweredWake = (entries: readonly Entry[]): OwedReply | undefined =>
-  owedFrom(entries).find((owed) => owed.scheduled);
-
 export const openReplies = (entries: readonly Entry[]): OwedReply[] =>
-  owedFrom(entries).map(({ id, from, owes, text, askedAt, resentAt, escalatedAt }) => ({
+  owedFrom(entries).map(({ id, from, owes, text, askedAt, resentAt }) => ({
     id,
     from,
     owes,
     text,
     askedAt,
     resentAt,
-    escalatedAt,
   }));
 
 function askOn(db: DatabaseSync, card: Card, id: string): Owed {
@@ -122,54 +116,29 @@ const firstLine = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
-function settled(db: DatabaseSync, session: string, now: number, grace: number): boolean {
-  const row = db.prepare("SELECT state, last_seen FROM sessions WHERE id = ?").get(session);
-  const state = row?.["state"];
-  const seen = row?.["last_seen"];
-  const quiet = state === "idle" || state === "exited" || state === "lost";
-  return quiet && typeof seen === "number" && now - seen >= grace;
-}
-
-function missed(
-  owed: Owed,
-  recipient: string,
-  asked: string,
-  how: string,
-): [string, string, string] {
-  if (owed.from === CAPTAIN)
-    return [
-      MISSED,
-      `reply ${owed.id} unanswered: the captain asked on the board, and you got it and one resend, and have not replied: ${asked}. Do it now: ${how}.`,
-      recipient,
-    ];
-  const withdraw = `comment(card=${String(owed.card)}, text, withdraws="${owed.id}")`;
-  const got = owed.scheduled ? "the scheduled wake" : "your comment";
-  return [
-    MISSED,
-    `reply ${owed.id} unanswered: ${owed.owes} got ${got} and one resend, and has not replied: ${asked}. Ask again, or withdraw it with ${withdraw}.`,
-    owed.from,
-  ];
-}
+const up = (db: DatabaseSync, session: string): boolean =>
+  db
+    .prepare("SELECT 1 FROM sessions WHERE id = ? AND state IN ('idle', 'running', 'waiting')")
+    .get(session) !== undefined;
 
 function nudge(db: DatabaseSync, owed: Owed, now: number, t: Timings, since: number): string[] {
   const recipient = owed.to === "worker" ? workerOf(db, owed.card) : owed.owes;
-  if (now - since < t.reply || recipient === undefined) return [];
-  if (!settled(db, recipient, now, t.reply)) return [];
+  const wait = owed.resentAt === null ? t.reply : t.repeat;
+  if (now - since < wait || recipient === undefined) return [];
+  if (!up(db, recipient)) return [];
   const asked = `"${firstLine(owed.text)}"`;
   const how = owed.scheduled
     ? howToAnswerWake(owed.card, owed.id)
     : howToReply(owed.to, owed.card, owed.id, owed.from);
-  const [condition, body, to] =
-    owed.resentAt === null
-      ? [
-          RESENT,
-          `reply ${owed.id} is still owed to ${owed.from}: ${asked}. Please ${how}.`,
-          recipient,
-        ]
-      : missed(owed, recipient, asked, how);
-  const fields = { condition, reply: owed.id };
-  addEntry(db, { card: owed.card, author: "check", kind: "finding", body, fields }, [to]);
-  return [to];
+  const body = `reply ${owed.id} is still owed to ${owed.from}: ${asked}. Please ${how}.`;
+  const fields = { condition: RESENT, reply: owed.id };
+  remind(
+    db,
+    { card: owed.card, author: "check", kind: "finding", body, fields },
+    [recipient],
+    owed.id,
+  );
+  return [recipient];
 }
 
 export function replyNudges(db: DatabaseSync, now: number, t: Timings): string[] {
@@ -186,14 +155,11 @@ export function replyNudges(db: DatabaseSync, now: number, t: Timings): string[]
   );
   return cards.flatMap(({ entries, standing }) => {
     const { hold } = standing.facts;
-    const waiting = (owed: Owed): boolean =>
-      hold !== undefined && (owed.from !== CAPTAIN || hold.holder === "captain");
+    if (hold?.until !== null && hold?.until !== undefined && hold.until > now) return [];
     const freed = entries.findLast((entry) => entry.kind === "release" || entry.kind === "answer");
-    return owedFrom(entries)
-      .filter((owed) => owed.escalatedAt === null && !waiting(owed))
-      .flatMap((owed) => {
-        const since = Math.max(owed.resentAt ?? owed.askedAt, freed?.createdAt ?? 0);
-        return nudge(db, owed, now, t, since);
-      });
+    return owedFrom(entries).flatMap((owed) => {
+      const since = Math.max(owed.resentAt ?? owed.askedAt, freed?.createdAt ?? 0);
+      return nudge(db, owed, now, t, since);
+    });
   });
 }

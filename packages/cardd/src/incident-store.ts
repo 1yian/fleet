@@ -18,6 +18,7 @@ export interface Incident {
   readonly recoveryKey: string | null;
   readonly recoveryMode: Mode | null;
   readonly recoveryEntry: number | null;
+  readonly firstAt: number;
 }
 
 const PHASES: readonly Phase[] = ["turn", "compaction", "startup", "lost"];
@@ -57,6 +58,7 @@ export function incidentFrom(row: Record<string, unknown>): Incident {
     recoveryKey: stringOf(row["recovery_key"]),
     recoveryMode: mode === "retry" || mode === "replace" ? mode : null,
     recoveryEntry: numberOf(row["recovery_entry"]),
+    firstAt: Number(row["first_at"]),
   };
 }
 

@@ -1,4 +1,4 @@
-import { OPS } from "@fleet/protocol";
+import { OPS, type Entry } from "@fleet/protocol";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { parseUtc, textOf } from "./inbox.ts";
@@ -35,9 +35,13 @@ const ReportParams = Type.Object({
   replyTo: OPS.report.args.properties.replyTo,
   pr: Type.Optional(
     Type.String({
+      pattern: "^https://github\\.com/[^/\\s]+/[^/\\s]+/pull/[0-9]+$",
       description:
-        "With done: the full URL of your PR when its head branch is not your recorded task branch",
+        "The full https URL of your PR. Pass it on your done report and on the merged report.",
     }),
+  ),
+  merged: Type.Optional(
+    Type.Boolean({ description: "true on the done report you send after you merged your PR" }),
   ),
 });
 
@@ -57,6 +61,8 @@ export class WorkerRun {
   private nudged = false;
   private recoveryCheck = false;
   private lastText = "";
+  private readonly replies = new Set<string>();
+  private owed: string | undefined;
   private readonly link: Link;
   private readonly jobs: Jobs;
   private readonly failures: Failures;
@@ -72,6 +78,21 @@ export class WorkerRun {
     this.unsent = undefined;
     this.nudged = false;
     this.recoveryCheck = false;
+  }
+
+  receive(entry: Entry): void {
+    const { fields } = entry;
+    if (fields["for"] === "worker" && typeof fields["owes"] === "string")
+      this.replies.add(`r-${String(entry.id)}`);
+    if (fields["condition"] === "reply-resent" && typeof fields["reply"] === "string")
+      this.replies.add(fields["reply"]);
+    if (typeof fields["withdraws"] === "string") this.replies.delete(fields["withdraws"]);
+    this.owe(this.owed);
+  }
+
+  private owe(label: string | undefined): void {
+    this.owed = label;
+    this.failures.obligation(this.replies.size > 0 ? "owed: reply" : label);
   }
 
   checkingHealth(): void {
@@ -101,9 +122,24 @@ export class WorkerRun {
           until,
           replyTo: params.replyTo,
           pr: params.pr,
+          merged: params.merged,
         };
         const card = await this.link.call("report", args);
         this.latest = { status: params.status, until };
+        if (params.replyTo !== undefined) this.replies.delete(params.replyTo);
+        if (
+          params.status === "blocked" ||
+          params.status === "failed" ||
+          params.status === "needs-decision"
+        )
+          this.owe(`owed: ${params.status}`);
+        else if (
+          params.status === "done" ||
+          params.status === "paused" ||
+          params.status === "resolved"
+        )
+          this.owe(undefined);
+        else this.owe(this.owed);
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
       },
@@ -123,6 +159,7 @@ export class WorkerRun {
       )
         return undefined;
       this.nudged = true;
+      this.owe("owed: handoff");
       const nudge = {
         type: "custom_message",
         customType: "fleet-nudge",
@@ -142,6 +179,7 @@ export class WorkerRun {
   }
 
   private async fileStopped(text: string): Promise<void> {
+    this.owe("owed: handoff");
     await this.link
       .call("report", { status: "stopped", text })
       .then(() => this.jobs.sync())

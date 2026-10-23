@@ -217,9 +217,9 @@ function Properties(props: {
                   </span>
                   <span className="muted">
                     {each.id} ·{" "}
-                    {each.escalatedAt === null
+                    {each.resentAt === null
                       ? `asked ${since(each.askedAt, now)}`
-                      : `escalated ${since(each.escalatedAt, now)}`}
+                      : `resent ${since(each.resentAt, now)}`}
                   </span>
                 </li>
               ))}

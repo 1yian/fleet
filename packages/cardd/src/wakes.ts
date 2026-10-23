@@ -1,9 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
 import { activePlans } from "./plans.ts";
-import { unansweredWake } from "./replies.ts";
 import { dueSlots, type Slot } from "./schedule.ts";
-import { addEntry, cardEntries, laneCardOf, parentOf } from "./store.ts";
+import { addEntry, laneCardOf, parentOf } from "./store.ts";
 
 const SCHEDULE = "schedule";
 const SCRIPT = "script";
@@ -32,22 +31,6 @@ export function scheduledWakes(db: DatabaseSync, now: number): string[] {
         .at(-1) ?? "";
     const at = `${minute} ${plan.timezone}`;
     const slots = due.map(slotKey);
-    const waiting = unansweredWake(cardEntries(db, card));
-    if (waiting !== undefined) {
-      const body = `scheduled wake ${at} skipped: ${waiting.id} is still unanswered`;
-      addEntry(
-        db,
-        {
-          card,
-          author: SCHEDULE,
-          kind: "note",
-          body,
-          fields: { condition: "wake-skipped", slots },
-        },
-        [],
-      );
-      return [];
-    }
     const late = (slot: Slot): string =>
       slot.minute === minute ? slot.purpose : `${slot.purpose} [due ${slot.minute}]`;
     const body = `scheduled wake ${at}: ${due.map(late).join("; ")}`;

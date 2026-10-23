@@ -26,8 +26,8 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
 ## Rules
 
 1. Never push to the default branch. Never merge a PR on your own initiative.
-   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>")`. If a check is red or pending, report `blocked` with the reason. If the merge fails because of a merge conflict, rebase onto the base (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
-   Open your PR from your task branch, under the name you recorded. The fleet finds your PR on GitHub by that branch. If the work already has a PR under another head branch, pass its full URL as `pr` on your done report. The fleet records that PR and checks its state on GitHub before treating it as landed.
+   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>", pr="<full url>", merged=true)`. If a check is red or pending, report `blocked` with the reason. If the merge fails because of a merge conflict, rebase onto the base (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
+   Open your PR from your task branch, under the name you recorded. Include `pr="<full https URL>"` in your done report. Fleet never queries GitHub to discover your PR or confirm its merge: report the merge with the same `pr` and `merged=true` only after it succeeds.
 2. Keep project edits inside your copy. Keep proof and scratch output outside it, in a temporary folder. Leave your copy clean before you report `done`.
 3. Report with the `report` tool, in one short line. Each report reaches your first mate, so report sparingly.
    Anything longer, such as findings, evidence, or logs, goes in a file outside your copy, such as `/tmp/fleet-c-<N>/<topic>.md` (`c-<N>` is your card). The report names the file's absolute path and never restates or summarizes its content. Your first mate reads it on your host.
@@ -80,7 +80,7 @@ Find your task's Delivery line and follow that section only.
    - `outcome: checks-passed`: go to step 6.
    - `outcome: failed`: read why. Fix it, commit, and run step 4 again. If it fails twice for the same reason, report `blocked`.
 6. Read the PR back: `gh pr view <url> --json isDraft`. If it is a draft, run `gh pr ready <url>`.
-7. Call `report(status="done", text="PR <full url> checks green")` and stop. You are finished.
+7. Call `report(status="done", text="PR <full url> checks green", pr="<full url>")` and stop. You are finished.
 
 While a pipeline run is active, never edit, commit, or fix findings yourself; the pipeline applies every fix.
 Never pass `--yes` or `-y` to `no-mistakes axi run` or `no-mistakes axi respond`.
@@ -91,7 +91,7 @@ Never run a no-mistakes daemon command (`daemon start`, `stop`, `restart`, `upda
 1. Implement the change and commit it on your task branch.
 2. Run the project's focused checks, as AGENTS.md says: the static gates, and only the end-to-end files your change touches or adds. Do not run the full suite locally: CI runs the end-to-end suites that the pull request's paths select. Fix what the checks find.
 3. Push your task branch and open a PR from it with `gh pr create`.
-4. Call `report(status="done", text="PR <full url> opened")` and stop.
+4. Call `report(status="done", text="PR <full url> opened", pr="<full url>")` and stop.
 
 ### Delivery: local-only
 

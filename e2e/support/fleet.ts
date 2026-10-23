@@ -27,9 +27,6 @@ export async function begin(mate: Session, card: Card, task = "the task"): Promi
   return check(OPS["attempt.begin"].result, value).token;
 }
 
-export const branchOf = (card: Card, attempt = 1): string =>
-  `c-${String(card.id)}-a${String(attempt)}`;
-
 export async function status(mate: Session, card: Card): Promise<Card["status"]> {
   const cards = check(OPS.board.result, await mate.call("board", {}));
   const found = cards.find((each) => each.id === card.id);

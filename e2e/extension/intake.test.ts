@@ -94,12 +94,13 @@ test("a report whose turn the captain aborts reaches main again, and main handle
   await worker.close();
 });
 
-test("a report main never takes in is sent once more, then shown on the board", async () => {
+test("a report main has not taken in is resent again after each aborted turn", async () => {
   h.onModel(hangs, "mate");
   h.onModel(hangs, "mate");
+  h.onModel(() => ({ text: "I have read it now" }), "mate");
   const pane = await startMain(lab, scratch, h);
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
-  const { card, worker } = await workerOn();
+  const { worker } = await workerOn();
 
   await worker.call("report", { status: "blocked", text: "The lint gate is red on main" });
   assert.equal(lastUser(await h.waitForCall(0, "mate", WAIT_MS)), REPORT);
@@ -107,28 +108,11 @@ test("a report main never takes in is sent once more, then shown on the board", 
   assert.equal(lastUser(await h.waitForCall(1, "mate", WAIT_MS)), AGAIN);
   await abortTurn(pane, 1);
 
-  const missed = await until(async () => {
-    const { entries } = await cardd.thread(card.id);
-    return entries.find((entry) => entry.author === "check" && entry.kind === "note");
-  });
-  assert.equal(
-    missed.body,
-    "missed: main did not take in this report from the worker, sent twice: The lint gate is red on main",
+  assert.equal(lastUser(await h.waitForCall(2, "mate", WAIT_MS)), AGAIN);
+  await h.waitFor(
+    (event) => event["type"] === "settled" && event["aborted"] === false,
+    "main to take in the third delivery",
   );
-  assert.equal(
-    (await cardd.board()).cards.find((each) => each.id === card.id)?.summary,
-    missed.body,
-  );
-  assert.equal(h.callsOf("mate").length, 2);
+  assert.equal(h.callsOf("mate").length, 3);
   await worker.close();
 });
-
-async function until<T>(read: () => Promise<T | undefined>): Promise<T> {
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    const value = await read();
-    if (value !== undefined) return value;
-    if (Date.now() > deadline) throw new Error("timed out waiting for the board");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}

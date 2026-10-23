@@ -312,9 +312,7 @@ test("an attempt made before workers named their branches keeps its branch, thro
     });
 
     const pr = "https://github.com/acme/web/pull/5";
-    cardd.gh.setPr(pr, "MERGED");
-    cardd.gh.setHead(pr, "fm/c-1");
-    await worker.call("report", { status: "done", text: "merged" });
+    await worker.call("report", { status: "done", text: "merged", pr, merged: true });
     const report = await main.waitForEntry((entry) => entry.kind === "report", "the report");
     assert.equal(report.fields["pr"], pr);
     const plan = check(OPS["close.begin"].result, await main.call("close.begin", { card: 1 }));

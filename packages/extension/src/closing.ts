@@ -148,11 +148,7 @@ async function requireLanded(card: number, plan: OpResult<"close.begin">): Promi
   const unlandedWork = left.join("; ");
   const end =
     "end it with close(card, summary=<why it is dropped>, landed=false), which archives it";
-  throw new Error(
-    plan.noRepoHint === undefined
-      ? `c-${String(card)} did not land: ${unlandedWork}. Land it, or ${end}.`
-      : `${plan.noRepoHint}. In its clones, ${unlandedWork}. If that work did not merge, land it, or ${end}.`,
-  );
+  throw new Error(`c-${String(card)} did not land: ${unlandedWork}. Land it, or ${end}.`);
 }
 
 async function retire(attempt: Attempt): Promise<string | null> {

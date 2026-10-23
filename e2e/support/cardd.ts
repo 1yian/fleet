@@ -249,7 +249,7 @@ export class Cardd {
 type Outgoing =
   | { t: "hello"; token: string; inFile: readonly number[]; maintenance?: boolean }
   | { t: "ack"; entry: number }
-  | { t: "activity"; state: "running" | "idle" | "waiting" }
+  | { t: "activity"; state: "running" | "idle" | "waiting"; progress?: boolean }
   | { t: "call"; id: number; op: string; args: unknown };
 
 export class Session {

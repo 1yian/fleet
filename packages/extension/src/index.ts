@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Entry } from "@fleet/protocol";
 import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
@@ -18,6 +19,7 @@ import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts"
 import { Link } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
+import { reportActivity } from "./progress.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { MaintenanceQueue } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
@@ -105,6 +107,9 @@ function start(
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
+  pi.on("agent_settled", () => {
+    injectedAgain.clear();
+  });
   let unreadable: string | undefined;
   const maintenance: { queue?: MaintenanceQueue } = {};
   const link = new Link({
@@ -144,10 +149,11 @@ function start(
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
-      noteWorkerInput(entry.fields["recovery"] !== undefined);
+      noteWorkerInput(entry, entry.fields["recovery"] !== undefined);
     },
   });
-  const noteWorkerInput = (recovery: boolean): void => {
+  const noteWorkerInput = (entry: Entry, recovery: boolean): void => {
+    worker?.receive(entry);
     if (recovery) worker?.checkingHealth();
     else worker?.reset();
   };
@@ -183,15 +189,7 @@ function start(
     link.stop();
   });
   registerIntake(pi, link);
-  const active = (): void => {
-    link.activity("running");
-  };
-  pi.on("agent_start", active);
-  pi.on("tool_execution_start", active);
-  pi.on("tool_execution_end", active);
-  pi.on("agent_settled", () => {
-    link.activity(jobs?.waiting === true ? "waiting" : "idle");
-  });
+  reportActivity(pi, link, () => (jobs?.waiting === true ? "waiting" : "idle"));
   link.start();
 }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { BoardSchema, check, type Card, type BoardCard } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, branchOf, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 
 const PR = "https://github.com/acme/web/pull/21";
 
@@ -109,17 +109,10 @@ test("an open hold wins over the last report, and the card goes to its mate when
   assert.equal((await onBoard(card)).status, "working");
 });
 
-test("a GitHub finding and a timed-check finding leave the status as the reports say", async () => {
-  const gh = fleet.cardd.gh;
+test("a timed-check finding leaves the status as the reports say", async () => {
   const { card, worker } = await working("PR work");
-  gh.setPr(PR, "OPEN", { ci: "pass" });
-  gh.setHead(PR, branchOf(card));
   fleet.cardd.yolo("web");
-  await worker.call("report", { status: "done", text: "PR green and ready" });
-  assert.equal((await onBoard(card)).status, "merging");
-
-  gh.setPr(PR, "CLOSED");
-  await fleet.main.waitForEntry((entry) => entry.fields["condition"] === "pr-closed", "closed PR");
+  await worker.call("report", { status: "done", text: "PR green and ready", pr: PR });
   assert.equal((await onBoard(card)).status, "merging");
 
   const silent = await newCard(fleet.main, "never connects");

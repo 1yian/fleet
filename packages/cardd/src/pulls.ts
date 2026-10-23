@@ -1,90 +1,19 @@
 import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
-import { findPullRequest, repoOfRemote, viewPullRequest, type PullRequest } from "./github.ts";
 
-export type PrLookup =
-  | { readonly kind: "found"; readonly pr: PullRequest }
-  | { readonly kind: "none"; readonly branches: readonly string[] }
-  | { readonly kind: "unknown"; readonly reason: string };
+const GITHUB_REMOTE = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/;
 
-interface Place {
-  readonly repo: string | null;
-  readonly pr: string | null;
-  readonly branches: string[];
-}
-
-function placeOf(db: DatabaseSync, card: number): Place {
-  const row = db
-    .prepare(
-      "SELECT p.repo AS repo, c.pr AS pr FROM cards c LEFT JOIN projects p ON p.name = c.project WHERE c.id = ?",
-    )
-    .get(card);
-  const branches = db
-    .prepare("SELECT branch FROM attempts WHERE card = ? AND branch IS NOT NULL ORDER BY n DESC")
-    .all(card)
-    .map((each) => String(each["branch"]));
-  const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
-  return { repo: text(row?.["repo"]), pr: text(row?.["pr"]), branches };
-}
-
-async function findOrView({ repo, pr, branches }: Place): Promise<PrLookup> {
-  if (repo === null) {
-    if (pr === null)
-      return { kind: "unknown", reason: "its project has no GitHub repository on record" };
-    return { kind: "found", pr: await viewPullRequest(pr) };
-  }
-  const found = branches.length === 0 ? undefined : await findPullRequest(repo, branches);
-  if (found !== undefined) return { kind: "found", pr: found };
-  if (pr !== null) return { kind: "found", pr: await viewPullRequest(pr) };
-  return { kind: "none", branches };
-}
-
-interface Slot {
-  running: Promise<PrLookup> | undefined;
-  queued: Promise<PrLookup> | undefined;
-}
-
-const slots = new Map<number, Slot>();
-
-export function lookUpPr(db: DatabaseSync, card: number): Promise<PrLookup> {
-  const slot: Slot = slots.get(card) ?? { running: undefined, queued: undefined };
-  slots.set(card, slot);
-  if (slot.queued !== undefined) return slot.queued;
-  const start = (): Promise<PrLookup> => {
-    slot.queued = undefined;
-    const run = readPr(db, card);
-    slot.running = run;
-    void run.finally(() => {
-      slot.running = undefined;
-      if (slot.queued === undefined) slots.delete(card);
-    });
-    return run;
-  };
-  if (slot.running === undefined) return start();
-  slot.queued = slot.running.then(start);
-  return slot.queued;
-}
-
-async function readPr(db: DatabaseSync, card: number): Promise<PrLookup> {
-  try {
-    const found = await findOrView(placeOf(db, card));
-    if (found.kind === "found")
-      db.prepare("UPDATE cards SET pr = ? WHERE id = ? AND pr IS NOT ?").run(
-        found.pr.url,
-        card,
-        found.pr.url,
-      );
-    return found;
-  } catch (error) {
-    return { kind: "unknown", reason: error instanceof Error ? error.message : String(error) };
-  }
-}
+const repoOfRemote = (url: string): string | undefined => GITHUB_REMOTE.exec(url.trim())?.[1];
 
 export function recordReportedPr(db: DatabaseSync, card: number, url: string | undefined): void {
   if (url === undefined) return;
-  const { repo } = placeOf(db, card);
+  const repo = db
+    .prepare(
+      "SELECT p.repo AS repo FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ?",
+    )
+    .get(card)?.["repo"];
   if (
-    repo !== null &&
+    typeof repo === "string" &&
     !url.toLowerCase().startsWith(`https://github.com/${repo}/pull/`.toLowerCase())
   )
     throw new Error(`${url} is not a PR of this project's repository ${repo}`);

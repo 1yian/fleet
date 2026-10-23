@@ -87,7 +87,7 @@ function workerMerges(h: Harness, p: DispatchLab, pr: string): void {
     assert.match(lastUser(turns) ?? "", /Merge your PR now/);
     const env = { ...process.env, ...p.cardd.gh.env };
     execFileSync("gh", ["pr", "merge", pr, "--squash"], { env });
-    return { tool: "report", args: { status: "done", text: `merged ${pr}` } };
+    return { tool: "report", args: { status: "done", text: `merged ${pr}`, pr, merged: true } };
   }, "worker");
   h.onModel(() => ({ text: "merged" }), "worker");
 }
@@ -103,9 +103,8 @@ test("no-mistakes: the worker gets its mode from the card, the pipeline's done r
     return { tool: "report", args: { status: "in-review", text: "validation started" } };
   }, "worker");
   h.onModel(() => {
-    gh.setPr(pr, "OPEN", { ci: "pass" });
-    gh.setHead(pr, "c-1-a1");
-    return { tool: "report", args: { status: "done", text: `PR ${pr} checks green` } };
+    gh.setPr(pr, "OPEN");
+    return { tool: "report", args: { status: "done", text: `PR ${pr} checks green`, pr } };
   }, "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   workerMerges(h, p, pr);
@@ -158,9 +157,8 @@ test("direct-PR: the card takes its project's mode, a task that names another mo
   h.onModel(async (turns) => {
     assert.equal(lastUser(turns), taskFor("direct-PR"));
     await after(h, 3);
-    gh.setPr(pr, "OPEN", { ci: "pass" });
-    gh.setHead(pr, "c-1-a1");
-    return { tool: "report", args: { status: "done", text: `PR ${pr} opened` } };
+    gh.setPr(pr, "OPEN");
+    return { tool: "report", args: { status: "done", text: `PR ${pr} opened`, pr } };
   }, "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   workerMerges(h, p, pr);

@@ -31,6 +31,8 @@ function setClock(ms: number): void {
   renameSync(next, clockFile);
 }
 const isFailure = (e: Entry): boolean => e.fields["condition"] === "runtime-failure";
+const laterFinding = (after: Entry) => (e: Entry) =>
+  e.id > after.id && e.kind === "finding" && !isFailure(e);
 const heardFailures = (mate: Session): Entry[] =>
   mate.entries.map((push) => push.entry).filter(isFailure);
 const incidentOf = (entry: Entry): { incident: number; generation: number } => {
@@ -84,7 +86,7 @@ const recover = (
 ): Promise<unknown> =>
   mate.call("card.restart", { card: heard.card, ...incidentOf(heard), generation, mode, key });
 
-test("a failed worker turn reaches its mate once with the sanitized cause, and no stop, nudge, or reminder follows", async () => {
+test("a failed worker turn reaches its mate once with the sanitized cause, and no stop or nudge follows, only the repeating mate reminder", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   h.onModel(() => ({
     fail: "provider exploded: code 42 Authorization: Bearer sk-secret1234567890abcdef",
@@ -109,10 +111,7 @@ test("a failed worker turn reaches its mate once with the sanitized cause, and n
   await laterCheck(again);
   const thread1 = await thread(card, again);
   assert.equal(thread1.filter(isFailure).length, 1);
-  assert.deepEqual(
-    thread1.filter((entry) => entry.id > heard.id && entry.kind === "finding" && !isFailure(entry)),
-    [],
-  );
+  assert.deepEqual(thread1.filter(laterFinding(heard)), []);
   assert.equal(thread1.filter((entry) => entry.kind === "report").length, 0);
   assert.equal(await status(again, card), "working");
   assert.equal(h.calls.length, 1);

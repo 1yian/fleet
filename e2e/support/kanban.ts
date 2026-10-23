@@ -37,19 +37,14 @@ function merge(cardd: Cardd, url: string): void {
   });
 }
 
-async function ready(cardd: Cardd, card: Card, worker: Session, url: string): Promise<void> {
-  cardd.gh.setPr(url, "OPEN", { ci: "pass" });
-  cardd.gh.setHead(url, `c-${String(card.id)}-a1`);
-  await worker.call("report", { status: "done", text: "PR green and ready" });
+async function ready(cardd: Cardd, worker: Session, url: string): Promise<void> {
+  cardd.gh.setPr(url, "OPEN");
+  await worker.call("report", { status: "done", text: "PR green and ready", pr: url });
 }
 
 async function landed(cardd: Cardd, mate: Session, card: Card, worker: Session, url: string) {
   merge(cardd, url);
-  await worker.call("report", { status: "done", text: `merged ${url}` });
-  await mate.waitForEntry(
-    (entry) => entry.card === card.id && entry.fields["condition"] === "pr-merged",
-    "the merged notice",
-  );
+  await worker.call("report", { status: "done", text: `merged ${url}`, pr: url, merged: true });
   await mate.call("close.finish", {
     card: card.id,
     mode: "done",
@@ -123,7 +118,7 @@ async function seedOpen(
   cards["withMate"] = blocked.card;
 
   const mergeAsk = await ship(cardd, main, "Board: thread as a story, steers fold away", "fleet");
-  await ready(cardd, mergeAsk.card, mergeAsk.worker, pr("fleet", 39));
+  await ready(cardd, mergeAsk.worker, pr("fleet", 39));
   cards["merge"] = mergeAsk.card;
   cards["question"] = check(
     CardSchema,
@@ -154,7 +149,7 @@ async function seedOpen(
     "Memory e2e expects fleet messages labelled once",
     "fleet",
   );
-  await ready(cardd, approved.card, approved.worker, pr("fleet", 36));
+  await ready(cardd, approved.worker, pr("fleet", 36));
   await main.call("release", {
     card: approved.card.id,
     words: "yes, merge it",
@@ -163,13 +158,13 @@ async function seedOpen(
   });
   cards["approved"] = approved.card;
   const auto = await ship(cardd, leo, "Leo: let date of birth be used on a call", "calls");
-  await ready(cardd, auto.card, auto.worker, pr("calls", 12));
+  await ready(cardd, auto.worker, pr("calls", 12));
   cards["auto"] = auto.card;
 }
 
 async function seedClosed(cardd: Cardd, main: Session, leo: Session, cards: Cards): Promise<void> {
   const merged = await ship(cardd, main, "Workers start on Pi's default model", "fleet");
-  await ready(cardd, merged.card, merged.worker, pr("fleet", 34));
+  await ready(cardd, merged.worker, pr("fleet", 34));
   await main.call("release", {
     card: merged.card.id,
     words: "yes, merge it",
@@ -179,7 +174,7 @@ async function seedClosed(cardd: Cardd, main: Session, leo: Session, cards: Card
   await landed(cardd, main, merged.card, merged.worker, pr("fleet", 34));
   cards["merged"] = merged.card;
   const automatic = await ship(cardd, leo, "Leo: ship the call recording banner", "calls");
-  await ready(cardd, automatic.card, automatic.worker, pr("calls", 11));
+  await ready(cardd, automatic.worker, pr("calls", 11));
   await landed(cardd, leo, automatic.card, automatic.worker, pr("calls", 11));
   cards["automatic"] = automatic.card;
   cards["scout"] = check(

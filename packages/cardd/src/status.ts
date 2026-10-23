@@ -323,7 +323,7 @@ const HANDOFF_REPORTS: ReadonlySet<string> = new Set([
 ]);
 
 const isMerge = (entry: Entry): boolean =>
-  entry.kind === "finding" && text(entry, "condition") === "pr-merged";
+  entry.kind === "report" && entry.author.startsWith("worker:") && entry.fields["merged"] === true;
 
 export function finishFrom(entries: readonly Entry[]): Finish {
   const finish = { merged: false, workerDone: false, at: 0 };

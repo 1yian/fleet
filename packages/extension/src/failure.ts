@@ -17,6 +17,7 @@ export class Failures {
   private compactionLabel = failureLabel(undefined, true);
   private readonly link: Link;
   private blockage: Blockage | undefined;
+  private owed: string | undefined;
 
   constructor(link: Link) {
     this.link = link;
@@ -24,6 +25,12 @@ export class Failures {
 
   get lastFailed(): boolean {
     return this.failed !== undefined;
+  }
+
+  obligation(label: string | undefined): void {
+    this.owed = label;
+    if (label === undefined) this.blockage?.release();
+    else if (this.blockage !== undefined) this.blockage.raise(label, this.blockage.now);
   }
 
   expectCompaction(): void {
@@ -43,7 +50,7 @@ export class Failures {
     const blockage = new Blockage(pi);
     this.blockage = blockage;
     pi.on("agent_start", () => {
-      blockage.release();
+      if (this.owed === undefined) blockage.release();
     });
     pi.on("message_end", (event) => {
       const { message } = event;
@@ -61,12 +68,13 @@ export class Failures {
     pi.on("session_compact", () => {
       compactionSucceeded();
       this.compactionPending = undefined;
-      blockage.release();
+      if (this.owed === undefined) blockage.release();
       if (!this.compactionReported) return;
       this.compactionReported = false;
       this.link.call("incident.clear", { compacted: true }).catch(() => undefined);
     });
     pi.on("agent_settled", (event) => {
+      if (this.owed !== undefined) blockage.raise(this.owed, blockage.now);
       if (event.aborted) return;
       const pending = this.compactionPending;
       this.compactionPending = undefined;
