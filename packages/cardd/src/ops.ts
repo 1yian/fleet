@@ -27,7 +27,14 @@ import { acknowledgeMaintenance, maintenanceStatus, requestMaintenance } from ".
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
 import { restartCard } from "./restarts.ts";
-import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
+import {
+  hold,
+  holdOf,
+  mergeQuestion,
+  release,
+  withdrawMerge,
+  writeMergeQuestion,
+} from "./holds.ts";
 import { loadPlan } from "./plans.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
@@ -240,6 +247,10 @@ const HANDLERS: Record<OpName, Handler> = {
       session.card === null || ["done", "dropped"].includes(getCard(db, session.card).status)
         ? []
         : workerOwedIds(cardEntries(db, session.card)),
+    notify: [],
+  }),
+  "hold.open": (db, session) => ({
+    value: session.card !== null && holdOf(db, getCard(db, session.card)) !== undefined,
     notify: [],
   }),
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
