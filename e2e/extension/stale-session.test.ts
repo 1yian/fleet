@@ -45,9 +45,9 @@ async function boardCalls(
   return toolResults(await h.waitForCall(calls.length));
 }
 
-test("a lane's mate lists another lane's paused card, with the time it waits until", async () => {
+test("main lists another lane's paused card, with the time it waits until", async () => {
   fleet = await startFleet();
-  const cnpToken = fleet.cardd.addLane("cnp", "main");
+  fleet.cardd.addLane("cnp", "main");
   const leo = await fleet.cardd.connect(fleet.cardd.addLane("leo", "main"));
   const card = await newCard(leo, "Wait for CI");
   const worker = await fleet.cardd.connect(await begin(leo, card));
@@ -56,12 +56,12 @@ test("a lane's mate lists another lane's paused card, with the time it waits unt
     text: "CI runs",
     until: Date.now() + PAUSE_MS,
   });
-  const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: cnpToken };
+  const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: fleet.mainToken };
 
   const [whole, laneOnly, pausedOnly] = await boardCalls(
     env,
     [{}, { lane: "leo" }, { status: "paused" }],
-    "cnp",
+    "main",
   );
 
   assert.match(whole ?? "", /^open: "3 \(paused 1, waiting 2\)"$/m);
