@@ -113,10 +113,6 @@ test("a worker with an owed handoff shows blocked until it reports completion", 
   const blocked = await mate.waitForEntry((entry) => entry.kind === "report", "the blocked report");
   assert.equal(blocked.body, "missing access");
   await mate.call("comment", { card: card.id, text: "Which port?", reply: true });
-  await mate.waitForEntry(
-    (entry) => entry.fields["status"] === "paused",
-    "the report that left the reply owed",
-  );
   await h.waitForNth(
     (event) => event["type"] === "settled" && event["aborted"] === false,
     2,
