@@ -56,15 +56,18 @@ async function landed(cardd: Cardd, mate: Session, card: Card, worker: Session, 
 
 function closeLongAgo(cardd: Cardd, card: Card, ms: number, text: string): void {
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });
-  db.prepare(
-    "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, 'mate:main', 'cleanup', ?, ?, ?)",
-  ).run(
-    card.id,
-    text,
-    JSON.stringify({ outcome: "done", archives: [], left: [] }),
-    Date.now() - ms,
-  );
-  db.close();
+  try {
+    db.prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, 'mate:main', 'cleanup', ?, ?, ?)",
+    ).run(
+      card.id,
+      text,
+      JSON.stringify({ outcome: "done", archives: [], left: [] }),
+      Date.now() - ms,
+    );
+  } finally {
+    db.close();
+  }
 }
 
 type Cards = Record<string, Card>;

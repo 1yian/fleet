@@ -9,7 +9,7 @@ import {
   type Maintenance,
 } from "@fleet/protocol";
 
-type Push = Extract<ServerMessage, { t: "entry" }>;
+export type Push = Extract<ServerMessage, { t: "entry" }>;
 type Result = Extract<ServerMessage, { t: "result" }>;
 
 const CLOSE_NOT_LIVE = 4001;

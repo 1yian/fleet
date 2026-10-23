@@ -17,7 +17,7 @@
     "knip": "knip --treat-config-hints-as-errors",
     "deps": "depcruise .",
     "migrations:check": "node packages/cardd/scripts/check-migrations.ts",
-    "test:e2e": "npm run build && node --test --test-concurrency=1 \"e2e/**/*.test.ts\"",
+    "test:e2e": "npm run build && node e2e/run.ts",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run knip && npm run deps && npm run migrations:check",
     "build": "npm run -w @fleet/board build"
   },
