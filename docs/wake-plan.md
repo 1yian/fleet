@@ -9,7 +9,7 @@
 | One running turn has no report, commit, or file change | Mate after 1 hour                                      | Every 5 minutes                                              |
 | Worker idle without a handoff                          | Worker after 2 minutes; mate 5 minutes after the nudge | Mate every 5 minutes                                         |
 | Runtime failure or failed compaction                   | Existing incident notice                               | Mate every 5 minutes until recovery                          |
-| Finished open card                                     | Mate after 5 minutes                                   | Every 5 minutes                                              |
+| Finished open card                                     | Owning mate after 2 hours                              | Every 2 hours                                                |
 | Card waiting on its mate, including an expired hold    | After 15 minutes                                       | Every 15 minutes                                             |
 | Unread message                                         | Resend after 2 minutes while the receiver is up        | Every 2 minutes; main after 3 resends, then every 15 minutes |
 | Reply owed                                             | Resend after 2 minutes                                 | Every 5 minutes until answered or withdrawn                  |

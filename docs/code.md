@@ -86,7 +86,7 @@ cardd card delivery <number> <mode> --db <file>
 
 - `check.ts` polls `cards.db` every 15 seconds. Finding identity includes the obligation, its occurrence when needed, and the current due tier. It emits the current tier once, never a backlog of missed tiers. Reminders pause while the receiving mate is down. See [Persistent wakes](wake-plan.md) for all cadences.
 - Workers report `pr` explicitly when done and `merged=true` after merging. `cardd` never queries GitHub for discovery, checks, or merge confirmation. A done report without a PR reaches its mate without a merge question. Close trusts the worker's merge report. Authority still comes from the captain or yolo, not the report.
-- Finished open cards repeat to their own mate every five minutes. Escalating unresolved work is the second mate's decision.
+- Finished open cards repeat to their own mate every two hours. Escalating unresolved work is the second mate's decision.
 - `timing.ts` owns the thresholds and test scale. Three missed job heartbeats make a job lost. Its mate is reminded until the job is rerun or dropped.
 
 ### Runtime incidents

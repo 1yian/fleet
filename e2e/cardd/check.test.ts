@@ -243,10 +243,16 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
   const name = `c-${String(card.id)}`;
 
   const reminder = await reach(cleo, card, "finished", 1);
+  const report = check(CardViewSchema, await cleo.call("card", { card: card.id })).entries.find(
+    (entry) => entry.kind === "report" && entry.fields["status"] === "done",
+  );
+  assert.ok(report !== undefined);
+  assert.ok(reminder.createdAt - report.createdAt >= 7_200);
   assert.match(
     reminder.body,
     new RegExp(`^reminder: ${name} is finished and still open \\(with-mate, \\d+ min\\)\\. Relay`),
   );
+  await reach(cleo, card, "finished", 2);
   await reach(cleo, card, "finished", 3);
   const sent = await tiersOf(card, "finished");
   assert.deepEqual(sent, inOrder(sent));
@@ -273,7 +279,7 @@ test("main's own finished card is reminded each tier", async () => {
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   await worker.call("report", { status: "done", text: "report written" });
 
-  await reach(fleet.main, card, "finished", 4);
+  for (const tier of [1, 2, 3, 4]) await reach(fleet.main, card, "finished", tier);
   const sent = await tiersOf(card, "finished");
   assert.deepEqual(sent, inOrder(sent));
 });
