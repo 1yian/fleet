@@ -83,6 +83,10 @@ export class Pi {
     this.command({ type: "prompt", message });
   }
 
+  compact(): void {
+    this.command({ type: "compact" });
+  }
+
   abort(): void {
     this.command({ type: "abort" });
   }

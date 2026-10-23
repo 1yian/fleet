@@ -5,12 +5,15 @@ const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
 export const INCIDENT_OPS = {
   "incident.report": {
     roles: ["mate", "worker"],
-    args: Type.Object({ error: Type.String({ minLength: 1, maxLength: 20_000 }) }),
+    args: Type.Object({
+      error: Type.String({ minLength: 1, maxLength: 20_000 }),
+      phase: Type.Optional(Type.Enum(["turn", "compaction"])),
+    }),
     result: Type.Object({ incident: Type.Integer(), opened: Type.Boolean() }),
   },
   "incident.clear": {
     roles: ["mate", "worker"],
-    args: Type.Object({}),
+    args: Type.Object({ compacted: Type.Optional(Type.Boolean()) }),
     result: Type.Object({ cleared: Type.Boolean() }),
   },
   "incident.recover": {

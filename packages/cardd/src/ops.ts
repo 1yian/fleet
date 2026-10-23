@@ -212,7 +212,8 @@ const HANDLERS: Record<OpName, Handler> = {
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
-  "incident.clear": (db, session) => clearFailure(db, session),
+  "incident.clear": (db, session, raw) =>
+    clearFailure(db, session, check(OPS["incident.clear"].args, raw)),
   "incident.recover": (db, session, raw, timing) =>
     recover(db, session, check(OPS["incident.recover"].args, raw), timing),
   report: (db, session, raw, _timing, pr) => {

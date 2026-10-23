@@ -18,10 +18,11 @@ export function nextStep(inc: Incident): string {
 export function describe(inc: Incident, label: string): string {
   const what = {
     turn: "its model turn failed",
+    compaction: "its conversation compaction failed",
     startup: "it never connected after starting",
     lost: "its process stopped without a final event",
   }[inc.phase];
-  const cause = inc.phase === "turn" ? `: ${inc.error}` : "";
+  const cause = inc.phase === "turn" || inc.phase === "compaction" ? `: ${inc.error}` : "";
   const ids = `Incident ${String(inc.id)}, process generation ${String(inc.generation)}.`;
   return `runtime failure: ${label} ${what}${cause}. Classified ${inc.classification}. ${ids} ${nextStep(inc)}`;
 }

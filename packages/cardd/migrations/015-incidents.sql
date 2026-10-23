@@ -10,7 +10,7 @@ CREATE TABLE incidents (
   card INTEGER NOT NULL REFERENCES cards (id),
   parent TEXT,
   generation INTEGER NOT NULL,
-  phase TEXT NOT NULL CHECK (phase IN ('turn', 'startup', 'lost')),
+  phase TEXT NOT NULL CHECK (phase IN ('turn', 'compaction', 'startup', 'lost')),
   classification TEXT NOT NULL,
   error TEXT NOT NULL,
   source TEXT NOT NULL,

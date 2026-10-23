@@ -20,6 +20,7 @@ export interface Incident {
   readonly recoveryEntry: number | null;
 }
 
+const PHASES: readonly Phase[] = ["turn", "compaction", "startup", "lost"];
 const KIND_NAMES: readonly Kind[] = [
   "stale-module",
   "router-cooldown",
@@ -45,7 +46,7 @@ export function incidentFrom(row: Record<string, unknown>): Incident {
     card: Number(row["card"]),
     parent: stringOf(row["parent"]),
     generation: Number(row["generation"]),
-    phase: phase === "startup" || phase === "lost" ? phase : "turn",
+    phase: PHASES.find((each) => each === phase) ?? "turn",
     classification: kindOf(row["classification"]),
     error: String(row["error"]),
     intent: String(row["intent"]),

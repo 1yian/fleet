@@ -48,6 +48,10 @@ async function thread(card: Card, mate = fleet.main): Promise<Entry[]> {
   return check(CardViewSchema, await mate.call("card", { card: card.id })).entries;
 }
 
+async function cardsOnBoard(): Promise<[number, string, string][]> {
+  return (await fleet.cardd.board()).cards.map((each) => [each.id, each.name, each.title]);
+}
+
 async function laterCheck(mate = fleet.main): Promise<void> {
   const witness = await newCard(mate, "a later card");
   await begin(mate, witness);
@@ -185,6 +189,7 @@ test("a recovery check on the live process is verified by a real answer and an a
   await worker(card, "fix the scrollbar");
   const heard = await fleet.main.waitForEntry(isFailure, "the failed turn");
 
+  const cardsBefore = await cardsOnBoard();
   const [first, second] = await Promise.allSettled([
     recover(fleet.main, heard, "retry", "one"),
     recover(fleet.main, heard, "retry", "two"),
@@ -214,6 +219,8 @@ test("a recovery check on the live process is verified by a real answer and an a
     notes.map((entry) => entry.body),
     ["alive and idle"],
   );
+  assert.deepEqual(await cardsOnBoard(), cardsBefore);
+  assert.ok((await thread(card)).filter(isFailure).length >= 2);
   await laterCheck();
   assert.equal(recoveries(fleet.main, card).length, 1);
   await assert.rejects(
@@ -304,7 +311,7 @@ test("a local router cooldown, vendor quota, stale module, and bad credentials a
     [
       "Cannot find module '/old/bundle/index.js' imported from /app/pi.js",
       "stale-module",
-      /mode=replace or retry\)\.$/,
+      /mode=replace\)\.$/,
     ],
     ["401 invalid api key", "auth", /Restarting is not a repair for auth/],
   ];
@@ -380,3 +387,90 @@ async function untilBoard(known: number): Promise<{ id: number; status: string }
     `no failure card after ${String(known)} cards: ${JSON.stringify((await fleet.cardd.board()).cards.map((c) => c.name))}`,
   );
 }
+
+const COMPACTOR_DOWN = "no model is available for tier default: every model is cooling";
+const BIG = "lorem ipsum dolor ".repeat(8000);
+
+async function compactingCleo(compactorUp: () => boolean): Promise<void> {
+  const token = fleet.cardd.addLane("cleo", "main");
+  for (let call = 0; call < 30; call += 1)
+    h.onModel((turns) => {
+      if (!turns.some((turn) => turn.text.includes("ONLY output the structured summary")))
+        return { text: "ok" };
+      return compactorUp() ? { text: "a summary" } : { fail: COMPACTOR_DOWN };
+    }, "cleo");
+  const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "mate" };
+  const cleo = h.startPi("cleo", { ...env, FLEET_FAKE_AGENT: "cleo" }, [EXTENSION]);
+  for (let turn = 1; turn <= 3; turn += 1) {
+    cleo.prompt(`${BIG}${String(turn)}`);
+    await h.waitForNth((event) => event["type"] === "settled", turn, "the turn to settle");
+  }
+}
+
+test("a failed compaction is its own incident with the original error, and recovery on the same card is verified only by a successful compaction", async () => {
+  let compactorUp = false;
+  await compactingCleo(() => compactorUp);
+  const heard = await fleet.main.waitForEntry(isFailure, "the compaction failure");
+  assert.match(
+    heard.body,
+    new RegExp(
+      `^runtime failure: cleo its conversation compaction failed: Auto-compaction failed: Summarization failed: ${COMPACTOR_DOWN}\\.`,
+    ),
+  );
+  assert.match(heard.body, /Classified router-cooldown\./);
+  setClock(T0 + 10_000);
+  await fleet.main.waitForEntry(
+    (entry) => entry.body.includes("is eligible for recovery now"),
+    "the eligible time",
+  );
+  const cardsBefore = await cardsOnBoard();
+  const turnsBefore = h.callsOf("cleo").length;
+  compactorUp = true;
+  await recover(fleet.main, heard, "retry");
+  const done = await fleet.main.waitForEntry(
+    (entry) => entry.body.includes("recovered (retry)"),
+    "a successful compaction",
+  );
+
+  assert.match(
+    done.body,
+    /compacted its conversation successfully\. Its conversation, branch, and work are as they were\./,
+  );
+  assert.deepEqual(await cardsOnBoard(), cardsBefore);
+  assert.equal(done.card, heard.card);
+  assert.equal(
+    h
+      .callsOf("cleo")
+      .slice(turnsBefore)
+      .filter((turns) => !turns.some((turn) => turn.text.includes("ONLY output"))).length,
+    0,
+  );
+  assert.equal(
+    heardFailures(fleet.main).filter((entry) => entry.body.includes("compaction failed")).length,
+    1,
+  );
+});
+
+test("a compaction that keeps failing after a recovery spends the attempt and is told once", async () => {
+  await compactingCleo(() => false);
+  const heard = await fleet.main.waitForEntry(isFailure, "the compaction failure");
+  setClock(T0 + 10_000);
+  await fleet.main.waitForEntry(
+    (entry) => entry.body.includes("is eligible for recovery now"),
+    "the eligible time",
+  );
+  await recover(fleet.main, heard, "retry");
+  const failed = await fleet.main.waitForEntry(
+    (entry) => entry.body.includes("did not verify"),
+    "the failed compaction",
+  );
+
+  assert.match(
+    failed.body,
+    new RegExp(`did not verify: Compaction failed: Summarization failed: ${COMPACTOR_DOWN}`),
+  );
+  assert.equal(
+    fleet.main.entries.filter((push) => push.entry.body.includes("did not verify")).length,
+    1,
+  );
+});

@@ -16,6 +16,7 @@ import {
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
 import type { Harness, Turn } from "../support/harness.ts";
+import { records } from "../support/json.ts";
 
 type Handler = Parameters<Harness["onModel"]>[0];
 
@@ -94,6 +95,7 @@ test("a worker with a stale module is replaced on its own conversation and work,
     }, "worker");
   await mateConnected(h);
   mate.prompt("ship both");
+  const named = async (): Promise<[number, string][]> => boardNames();
 
   const recovered = await waitFor(
     () => entriesOf(1),
@@ -121,6 +123,10 @@ test("a worker with a stale module is replaced on its own conversation and work,
   );
   assert.equal(await workerGroupOf(lab, "c-2-a1"), beside);
   assert.deepEqual(await workersOf(lab), ["c-1-a1", "c-2-a1"]);
+  assert.deepEqual(await named(), [
+    [1, "task-1"],
+    [2, "task-2"],
+  ]);
   assert.equal(readFileSync(join(tree, "dirty.txt"), "utf8"), "uncommitted work\n");
   assert.equal(
     execFileSync("git", ["-C", tree, "rev-parse", "--abbrev-ref", "HEAD"], {
@@ -194,4 +200,91 @@ async function waitFor<T>(
     if (Date.now() > deadline) throw new Error("timed out waiting for the record");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+}
+
+test("a stale compactor import is replaced on the same card and conversation, and only a successful compaction verifies it", async () => {
+  parts = await startDispatchLab({ cardd: { CARDD_TIMING_SCALE: "0.02" } });
+  const { h, lab, clone, mate } = parts;
+  const tree = `${clone}.worktrees/c-1-a1`;
+  let compactorUp = false;
+  let before: number | undefined;
+  h.onModel(
+    () => ({
+      tool: "card_new",
+      args: { title: "Task 1", name: "task-1", kind: "ship", project: "site" },
+    }),
+    "mate",
+  );
+  h.onModel(
+    () => ({
+      tool: "dispatch",
+      args: {
+        card: 1,
+        host: "local",
+        task: `fix the scrollbar ${"lorem ipsum dolor ".repeat(9000)}`,
+      },
+    }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  for (let call = 0; call < 6; call += 1)
+    h.onModel(async (turns) => {
+      if (turns.at(-1)?.role !== "user" || !(lastUser(turns) ?? "").includes("runtime failure"))
+        return { text: "noted" };
+      before = await workerGroupOf(lab, "c-1-a1");
+      compactorUp = true;
+      return { tool: "recover", args: { ...incidentIn(turns), mode: "replace" } };
+    }, "mate");
+  scriptCompactingWorker(tree, () => compactorUp);
+  await mateConnected(h);
+  mate.prompt("ship it");
+  await h.waitForCall(1, "worker", WORKER_WAIT_MS);
+  const pane = await paneOf(lab, "c-1-a1");
+  const cardsBefore = await boardNames();
+  await lab.run(["pane", "send-text", pane, "/compact"]);
+  await lab.run(["pane", "send-keys", pane, "enter"]);
+
+  const entries = await waitFor(
+    () => entriesOf(1),
+    (view) => view.some((entry) => entry.body.includes("recovered (replace)")),
+  );
+  const failure = entries.find((entry) => entry.body.includes("compaction failed"));
+  assert.match(failure?.body ?? "", /Classified stale-module\./);
+  assert.match(failure?.body ?? "", /mode=replace\)\.$/);
+  assert.match(
+    entries.find((entry) => entry.body.includes("recovered (replace)"))?.body ?? "",
+    /compacted its conversation successfully/,
+  );
+  const after = await workerGroupOf(lab, "c-1-a1");
+  assert.ok(before !== undefined && after !== undefined && after !== before);
+  assert.deepEqual(await boardNames(), cardsBefore);
+  assert.deepEqual(await workersOf(lab), ["c-1-a1"]);
+  assert.equal(readFileSync(join(tree, "dirty.txt"), "utf8"), "uncommitted work\n");
+  assert.equal(
+    entries.filter((entry) => entry.fields["condition"] === "runtime-failure").length,
+    2,
+  );
+});
+
+function scriptCompactingWorker(tree: string, compactorUp: () => boolean): void {
+  const { h } = parts;
+  for (let call = 0; call < 12; call += 1)
+    h.onModel((turns) => {
+      if (turns.some((turn) => turn.text.includes("ONLY output the structured summary")))
+        return compactorUp() ? { text: "a summary" } : { fail: STALE };
+      if (turns.at(-1)?.role === "toolResult")
+        return { text: `waiting on the job ${"lorem ipsum dolor ".repeat(9000)}` };
+      writeFileSync(join(tree, "dirty.txt"), "uncommitted work\n");
+      return { tool: "run_long", args: { label: "wait", command: "sleep 600" } };
+    }, "worker");
+}
+
+async function paneOf(lab: DispatchLab["lab"], attempt: string): Promise<string> {
+  const panes = records((await lab.run(["pane", "list"]))["panes"]);
+  const found = panes.find((pane) => String(pane["cwd"]).endsWith(`.worktrees/${attempt}`));
+  return String(found?.["pane_id"]);
+}
+
+async function boardNames(): Promise<[number, string][]> {
+  return (await parts.cardd.board()).cards.map((each) => [each.id, each.name]);
 }

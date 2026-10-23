@@ -3,7 +3,7 @@ import type { Timings } from "./timing.ts";
 const MAX_RETRIES = 2;
 const MAX_REPLACEMENTS = 1;
 
-export type Phase = "turn" | "startup" | "lost";
+export type Phase = "turn" | "compaction" | "startup" | "lost";
 export type Mode = "retry" | "replace";
 export type Kind =
   "stale-module" | "router-cooldown" | "vendor-quota" | "auth" | "transient" | "unknown";
@@ -80,8 +80,8 @@ export function eligibleAt(
 }
 
 function modesFor(phase: Phase, kind: Kind, eligible: number | null): Mode[] {
-  if (phase !== "turn") return ["replace"];
-  if (kind === "stale-module") return ["replace", "retry"];
+  if (phase === "startup" || phase === "lost") return ["replace"];
+  if (kind === "stale-module") return ["replace"];
   if (kind === "router-cooldown" || kind === "transient") return ["retry"];
   if (kind === "vendor-quota") return eligible === null ? [] : ["retry"];
   if (kind === "auth") return [];

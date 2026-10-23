@@ -75,10 +75,22 @@ function piArgs(): string[] {
   return Array.isArray(parsed) ? parsed.filter((arg) => typeof arg === "string") : [];
 }
 
+function tellUnreadable(pi: ExtensionAPI, error: string): void {
+  pi.sendMessage(
+    {
+      customType: "fleet-link",
+      content: `[fleet] link: cardd sent a message this session cannot read (${error}). It may run other code than this extension. The session keeps reconnecting.`,
+      display: true,
+    },
+    { triggerTurn: false },
+  );
+}
+
 function start(
   pi: ExtensionAPI,
   { url, token, role, lane }: Config,
   sessionFile: string | undefined,
+  compact: () => void,
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
@@ -91,14 +103,7 @@ function start(
     onUnreadable: (error) => {
       if (unreadable === error) return;
       unreadable = error;
-      pi.sendMessage(
-        {
-          customType: "fleet-link",
-          content: `[fleet] link: cardd sent a message this session cannot read (${error}). It may run other code than this extension. The session keeps reconnecting.`,
-          display: true,
-        },
-        { triggerTurn: false },
-      );
+      tellUnreadable(pi, error);
     },
     onConnect: () => {
       unreadable = undefined;
@@ -118,15 +123,22 @@ function start(
           display: true,
           details: { entryId: entry.id },
         },
-        { triggerTurn: true, deliverAs: mode },
+        { triggerTurn: entry.fields["compaction"] !== true, deliverAs: mode },
       );
+      if (entry.fields["compaction"] === true) {
+        failures.expectCompaction();
+        compact();
+      }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.kind === "job-result" || entry.kind === "review-feedback")
         jobs?.finished(entry.fields["job"]);
-      if (entry.fields["recovery"] === undefined) worker?.reset();
-      else worker?.checkingHealth();
+      noteWorkerInput(entry.fields["recovery"] !== undefined);
     },
   });
+  const noteWorkerInput = (recovery: boolean): void => {
+    if (recovery) worker?.checkingHealth();
+    else worker?.reset();
+  };
   const jobs = role === "worker" ? new Jobs(link, { url, token }) : undefined;
   jobs?.register(pi);
   if (jobs !== undefined) {
@@ -180,7 +192,9 @@ export default function fleet(pi: ExtensionAPI): void {
     const found = config(pi);
     if (started || found === undefined) return;
     started = true;
-    start(pi, found, ctx.sessionManager.getSessionFile());
+    start(pi, found, ctx.sessionManager.getSessionFile(), () => {
+      ctx.compact();
+    });
     if (found.lane !== undefined) titleMate(pi, found.lane).catch(() => undefined);
   });
 }

@@ -67,7 +67,8 @@ function insert(
   t: Timings,
   silent = false,
 ): { inc: Incident; notify: string[] } {
-  const kind = seen.phase === "turn" ? classify(seen.error) : "unknown";
+  const kind =
+    seen.phase === "turn" || seen.phase === "compaction" ? classify(seen.error) : "unknown";
   const eligible = eligibleAt(kind, seen.error, 0, now, t);
   const parent = actor.role === "worker" ? actor.lane : parentOf(db, actor.lane);
   const intent = intentOf(db, actor.card, actor.role);
@@ -113,7 +114,8 @@ function failRecovery(
   error: string,
   t: Timings,
 ): string[] {
-  const kind = inc.phase === "turn" ? classify(error) : inc.classification;
+  const kind =
+    inc.phase === "turn" || inc.phase === "compaction" ? classify(error) : inc.classification;
   const eligible = eligibleAt(kind, error, inc.retries, t.wall(), t);
   const next = { ...inc, classification: kind, eligibleAt: eligible };
   const state = remaining(next).length === 0 ? "blocked" : "open";
@@ -154,17 +156,42 @@ export function reportFailure(
   const made = insert(
     db,
     actor,
-    { phase: "turn", error, source: "the session's own turn error" },
+    {
+      phase: args.phase ?? "turn",
+      error,
+      source:
+        args.phase === "compaction"
+          ? "the session's compaction error"
+          : "the session's own turn error",
+    },
     now,
     t,
   );
   return { value: { incident: made.inc.id, opened: true }, notify: made.notify };
 }
 
-export function clearFailure(db: DatabaseSync, session: Session): Done {
+function verifyCompaction(db: DatabaseSync, live: Incident, role: "mate" | "worker"): Done {
+  const reached = db
+    .prepare("SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND state <> 'pending'")
+    .get(live.actor, live.recoveryEntry ?? 0);
+  if (reached === undefined) return { value: { cleared: false }, notify: [] };
+  db.prepare("UPDATE incidents SET state = 'verified', closed_at = ? WHERE id = ?").run(
+    Date.now(),
+    live.id,
+  );
+  const body = `incident ${String(live.id)} recovered (${live.recoveryMode ?? ""}): ${live.actor} compacted its conversation successfully. Its conversation, branch, and work are as they were.`;
+  return { value: { cleared: true }, notify: tell(db, live, role, body) };
+}
+
+export function clearFailure(
+  db: DatabaseSync,
+  session: Session,
+  args: OpArgs<"incident.clear">,
+): Done {
   const live = liveIncident(db, session.id);
-  if (live === undefined || live.state === "recovering")
+  if (live === undefined || (live.phase === "compaction") !== (args.compacted === true))
     return { value: { cleared: false }, notify: [] };
+  if (live.state === "recovering") return verifyCompaction(db, live, session.role);
   db.prepare("UPDATE incidents SET state = 'cleared', closed_at = ? WHERE id = ?").run(
     Date.now(),
     live.id,
@@ -183,7 +210,14 @@ export function clearFailure(db: DatabaseSync, session: Session): Done {
   return { value: { cleared: true }, notify: [] };
 }
 
-function probeText(parent: string, role: "mate" | "worker", id: number): string {
+function probeText(
+  parent: string,
+  role: "mate" | "worker",
+  id: number,
+  compaction: boolean,
+): string {
+  if (compaction)
+    return `recovery check ${String(id)} from ${parent}: your conversation is being compacted again. This is a health check, not new work. Do not resume, continue, or change any task work.`;
   const action =
     role === "worker"
       ? 'Call report(status="note", text=<one sentence on what you are doing>)'
@@ -274,8 +308,9 @@ export function recover(
   requireRecoverable(db, inc, args, t);
   const plan = recoveryPlan(db, inc, args.mode, false);
   const live = args.mode === "retry";
-  const body = probeText(session.lane, plan.role, inc.id);
-  const fields = { for: plan.role, recovery: inc.id };
+  const compaction = inc.phase === "compaction";
+  const body = probeText(session.lane, plan.role, inc.id, compaction);
+  const fields = { for: plan.role, recovery: inc.id, ...(compaction ? { compaction } : {}) };
   const draft = { card: inc.card, author: `mate:${session.lane}`, kind: "comment", body, fields };
   const entry = addEntry(db, draft, live ? [inc.actor] : []);
   db.prepare(
@@ -328,17 +363,21 @@ function roleOf(db: DatabaseSync, actor: string): "mate" | "worker" {
     : "worker";
 }
 
+function answeredAndActed(db: DatabaseSync, inc: Incident, acted: boolean): boolean {
+  if (inc.phase === "compaction" || !acted) return false;
+  const taken = db
+    .prepare("SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND intake = 'taken'")
+    .get(inc.actor, inc.recoveryEntry ?? 0);
+  return taken !== undefined;
+}
+
 export function reconcileIncidents(db: DatabaseSync, now: number, t: Timings): string[] {
   const notify: string[] = [];
   const recovering = db.prepare("SELECT * FROM incidents WHERE state = 'recovering'").all();
   for (const row of recovering) {
     const inc = incidentFrom(row);
     const role = roleOf(db, inc.actor);
-    const taken =
-      db
-        .prepare("SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND intake = 'taken'")
-        .get(inc.actor, inc.recoveryEntry ?? 0) !== undefined;
-    if (taken && row["control_at"] !== null) {
+    if (answeredAndActed(db, inc, row["control_at"] !== null)) {
       db.prepare("UPDATE incidents SET state = 'verified', closed_at = ? WHERE id = ?").run(
         now,
         inc.id,
