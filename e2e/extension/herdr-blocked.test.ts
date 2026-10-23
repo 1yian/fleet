@@ -174,3 +174,27 @@ test("a worker woken by a job result that ends its turn without a handoff does n
   await until(pane, "the worker to settle idle", (s) => s.status === "idle");
   await stays(pane, "idle");
 });
+
+test("a worker whose last turn failed with an HTTP 400 provider error does not read blocked", async () => {
+  h.onModel(() => ({ fail: "400 invalid_request_error: messages must not be empty" }), "mate");
+  const { pane } = await workerPane("provider 400");
+  await h.waitForNth((event) => event["type"] === "settled", 1, "the failed turn to settle");
+  await until(pane, "the worker to settle idle", (s) => s.status === "idle");
+  await stays(pane, "idle");
+});
+
+test("a worker that reported blocked then ended a healthy turn with an automatic stopped report reads idle", async () => {
+  h.onModel(
+    () => ({ tool: "report", args: { status: "blocked", text: "missing access" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "waiting" }), "mate");
+  h.onModel(() => ({ text: "looking into it" }), "mate");
+  h.onModel(() => ({ text: "still looking into it" }), "mate");
+  const { pane, mate, card } = await workerPane("blocked then stopped");
+  await until(pane, "the blocked report to block the worker", (s) => s.status === "blocked");
+  await mate.call("comment", { card, text: "access restored, carry on" });
+  await mate.waitForEntry((entry) => entry.fields["status"] === "stopped", "the stopped report");
+  await until(pane, "the stopped report to clear the block", (s) => s.status === "idle");
+  await stays(pane, "idle");
+});

@@ -164,7 +164,10 @@ export class WorkerRun {
   private async fileStopped(text: string): Promise<void> {
     await this.link
       .call("report", { status: "stopped", text })
-      .then(() => this.jobs.sync())
+      .then(() => {
+        this.owe(undefined);
+        return this.jobs.sync();
+      })
       .catch(() => {
         if (this.latest?.status === "stopped") this.unsent = text;
       });
