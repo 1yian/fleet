@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardViewSchema, check, type Card, type Entry } from "@fleet/protocol";
+import { CardViewSchema, OPS, check, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
@@ -183,4 +183,36 @@ test("a ship card that only did an operation is reminded how to close it", async
     reminder.body,
     /\(merging, \d+ min\)\. No PR was found for its branch: comment the worker to open one from its task branch\. If it made no code change, close it with close\(card, summary\)\. Otherwise close\(card, summary=<why>, landed=false\)\.$/,
   );
+});
+
+test("a worker that reconnects while its run_long job runs is not reported idle until the job ends", async () => {
+  const busy = await newCard(fleet.main, "reconnects mid-job");
+  const token = await begin(fleet.main, busy);
+  const first = await fleet.cardd.connect(token);
+  const [task] = await first.waitForEntries(1);
+  first.ack(task?.id ?? 0);
+  const { job, heartbeatMs } = check(
+    OPS["job.start"].result,
+    await first.call("job.start", { label: "tests", command: "npm test" }),
+  );
+  const heartbeat = setInterval(() => {
+    fleet.cardd.post(token, "job.alive", { job }).catch(() => undefined);
+  }, heartbeatMs);
+  try {
+    first.send({ t: "activity", state: "waiting" });
+    await first.close();
+    await fleet.cardd.connect(token);
+
+    const control = await newCard(fleet.main, "idle control");
+    const controlWorker = await fleet.cardd.connect(await begin(fleet.main, control));
+    const [controlTask] = await controlWorker.waitForEntries(1);
+    controlWorker.ack(controlTask?.id ?? 0);
+    await findingFor(control, "worker-idle");
+    assert.deepEqual(await findings(busy), []);
+
+    await fleet.cardd.post(token, "job.finish", { job, exitCode: 0, outputTail: "ok" });
+    await findingFor(busy, "worker-idle");
+  } finally {
+    clearInterval(heartbeat);
+  }
 });
