@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Blockage, failureLabel } from "./blockage.ts";
+import { compactionFailed, compactionSucceeded } from "./compaction-backoff.ts";
 import type { Link } from "./link.ts";
 import { routerResumeAt } from "./router-cooldown.ts";
 
@@ -52,11 +53,13 @@ export class Failures {
     pi.on("session_compact_failed", (event, ctx) => {
       if (event.aborted) return;
       const error = event.errorMessage ?? FALLBACK_COMPACTION;
+      compactionFailed(error);
       const idle = ctx.isIdle();
       this.compactionPending = idle ? undefined : error;
       this.report(error, true, idle);
     });
     pi.on("session_compact", () => {
+      compactionSucceeded();
       this.compactionPending = undefined;
       blockage.release();
       if (!this.compactionReported) return;
