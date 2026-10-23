@@ -73,7 +73,10 @@ const PAUSE = () => ({
   },
 });
 
-async function workerPane(title: string): Promise<{
+async function workerPane(
+  title: string,
+  builtinTools = false,
+): Promise<{
   readonly pane: string;
   readonly mate: Awaited<ReturnType<Cardd["connect"]>>;
   readonly card: number;
@@ -89,7 +92,10 @@ async function workerPane(title: string): Promise<{
     OPS["attempt.begin"].result,
     await mate.call("attempt.begin", { card: card.id, host: "maverick", task: "investigate" }),
   );
-  const pane = await startMain(lab, here, h, false, [...mateArgs(h), ...workerFleetArgs(token)]);
+  const pane = await startMain(lab, here, h, false, [
+    ...mateArgs(h).filter((arg) => !builtinTools || arg !== "--no-builtin-tools"),
+    ...workerFleetArgs(token),
+  ]);
   return { pane, mate, card: card.id, token };
 }
 
@@ -172,6 +178,23 @@ test("a worker woken by a job result that ends its turn without a handoff does n
   const { pane, mate } = await workerPane("job result");
   await mate.waitForEntry((entry) => entry.fields["status"] === "stopped", "the stopped report");
   await until(pane, "the worker to settle idle", (s) => s.status === "idle");
+  await stays(pane, "idle");
+});
+
+test("a worker whose tools fail but whose turn ends normally does not read blocked", async () => {
+  h.onModel(() => ({ tool: "bash", args: { command: "exit 7" } }), "mate");
+  h.onModel((turns) => {
+    assert.match(turns.at(-1)?.text ?? "", /exited with code 7/);
+    return { tool: "read", args: { path: "missing-tool-error-guard.txt" } };
+  }, "mate");
+  h.onModel((turns) => {
+    assert.match(turns.at(-1)?.text ?? "", /ENOENT/);
+    return PAUSE();
+  }, "mate");
+  h.onModel(() => ({ text: "tool failures handled, waiting" }), "mate");
+  const { pane } = await workerPane("tool errors", true);
+  await h.waitForNth((event) => event["type"] === "settled", 1, "the healthy turn to settle");
+  await until(pane, "the worker to settle idle after tool failures", (s) => s.status === "idle");
   await stays(pane, "idle");
 });
 
