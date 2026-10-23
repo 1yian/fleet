@@ -145,6 +145,11 @@ export class LiveFleet {
       (arg) => !["--no-context-files", "--no-builtin-tools"].includes(arg),
     );
     this.mainPane = await startMain(this.lab, this.here, this.h, false, [...args, "-e", PROBE]);
+    await this.h.waitForNth(
+      (event) => event["type"] === "fleet_connected",
+      3,
+      "main, ops and far to connect",
+    );
     return this.mainPane;
   }
 

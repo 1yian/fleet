@@ -459,7 +459,6 @@ export const PushedEntrySchema = Type.Object({
 });
 
 const ServerMessage = Type.Union([
-  Type.Object({ t: Type.Literal("maintenance"), request: MaintenanceSchema }),
   Type.Object({
     t: Type.Literal("welcome"),
     session: Type.String(),
@@ -483,6 +482,7 @@ const ServerMessage = Type.Union([
     ok: Type.Literal(false),
     error: Type.String(),
   }),
+  Type.Object({ t: Type.Literal("maintenance"), request: MaintenanceSchema }),
 ]);
 export type ServerMessage = Static<typeof ServerMessage>;
 
