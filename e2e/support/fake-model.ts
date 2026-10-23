@@ -78,7 +78,7 @@ export default function fakeModel(pi: ExtensionAPI): void {
     fauxProvider({ provider: "google-vertex", models: [{ id: "gemini-2.5-pro" }] }),
     fauxProvider({
       provider: "tier",
-      models: [{ id: "orchestrator" }, { id: "auto" }, { id: "quick" }],
+      models: [{ id: "orchestrator" }, { id: "auto" }, { id: "quick" }, { id: "compact" }],
     }),
   ];
   for (const faux of providers) {

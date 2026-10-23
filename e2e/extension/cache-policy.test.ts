@@ -60,8 +60,8 @@ function wireArgs(): string[] {
 const requests = (role: "mate" | "worker") =>
   h.wire.filter((call) => call.role === role && !call.warm);
 
-test("main asks for one-hour prompt retention, whatever it inherits", async () => {
-  const herdr = await startLab("short");
+test("main asks for five-minute prompt retention, whatever it inherits", async () => {
+  const herdr = await startLab("long");
   h.onModel(() => ({ tool: "slow_tool" }), "mate");
   configureMain(scratch, cardd.url, mainToken);
   await startMain(herdr, scratch, h, false, wireArgs());
@@ -73,7 +73,7 @@ test("main asks for one-hour prompt retention, whatever it inherits", async () =
 
   assert.ok(requests("mate").length >= 2);
   for (const call of requests("mate"))
-    assert.deepEqual([...new Set(call.ttls)], ["1h"], "every cache breakpoint asks for one hour");
+    assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
 });
 
 test("a worker keeps the five-minute retention, whatever main inherited", async () => {
@@ -114,8 +114,8 @@ test("a worker keeps the five-minute retention, whatever main inherited", async 
     assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
 });
 
-test("a second mate started by fleet up asks for one-hour retention, and again after a restart", async () => {
-  const herdr = await startLab("short");
+test("a second mate started by fleet up asks for five-minute retention, and again after a restart", async () => {
+  const herdr = await startLab("long");
   scratch.addLane("cnp", {
     url: cardd.url,
     token: cardd.addLane("cnp", "main"),
@@ -124,7 +124,7 @@ test("a second mate started by fleet up asks for one-hour retention, and again a
   const fleet = (...args: string[]): string =>
     scratch.fleet(args, {
       ...h.piEnv("mate"),
-      PI_CACHE_RETENTION: "short",
+      PI_CACHE_RETENTION: "long",
       HERDR_SESSION: herdr.name,
     });
 
@@ -145,5 +145,5 @@ test("a second mate started by fleet up asks for one-hour retention, and again a
   await main.close();
   assert.ok(requests("mate").length >= 2);
   for (const call of requests("mate"))
-    assert.deepEqual([...new Set(call.ttls)], ["1h"], "every cache breakpoint asks for one hour");
+    assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
 });

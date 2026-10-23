@@ -19,7 +19,14 @@ const noComments = {
 };
 
 export default defineConfig(
-  { ignores: ["**/node_modules/", "**/dist/", "packages/board/src/vendor/"] },
+  {
+    ignores: [
+      "**/node_modules/",
+      "**/dist/",
+      "packages/board/src/vendor/",
+      "packages/extension/vendor/",
+    ],
+  },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

@@ -33,7 +33,6 @@ const VALUE_OPTIONS = new Set([
   "--roots",
   "--direnv",
   "--seed",
-  "--source",
   "--compactor",
   "--thinking",
   "--root",
@@ -67,7 +66,6 @@ const { values, positionals } = parseArgs({
     roots: { type: "string" },
     direnv: { type: "string" },
     seed: { type: "string" },
-    source: { type: "string" },
     compactor: { type: "string" },
     thinking: { type: "string" },
     root: { type: "string" },
@@ -151,10 +149,9 @@ switch (command ?? "") {
     break;
   case "home": {
     if (rest[0] === "memory" && rest[1] !== undefined) {
-      const { seed, source, compactor, thinking } = values;
+      const { seed, compactor, thinking } = values;
       const options = {
         ...(seed === undefined ? {} : { seed }),
-        ...(source === undefined ? {} : { source }),
         ...(compactor === undefined ? {} : { compactor }),
         ...(thinking === undefined ? {} : { thinking }),
       };

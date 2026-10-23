@@ -15,18 +15,18 @@ The captain's routine is one step: open a terminal in the fleet repository and r
 
 Every host that runs a mate or a worker needs these tools on the `PATH` of the mates' and workers' shells and of a non-interactive SSH session. One check owns the list: `packages/extension/src/prerequisites.ts`.
 
-| Tool                | Minimum                        | Why                                                  | Install or fix                                                                                    |
-| ------------------- | ------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `node`              | 24                             | Runs the extension, `fleet`, and `cardd`.            | `brew install node@24` (macOS) or see https://nodejs.org                                          |
-| `git`               | 2.31                           | Lane homes, worktrees, and dispatch.                 | `brew install git` (macOS) or `apt install git` (Debian)                                          |
-| `gh`                | any, and logged in             | Finds and merges pull requests.                      | `brew install gh` or `apt install gh`, then `gh auth login`. The check runs `gh auth status`.     |
-| `herdr`             | 0.9.5                          | Every mate, worker, and job runs in a herdr pane.    | https://github.com/herdrdev/herdr/releases                                                        |
-| `zstd`              | any                            | Archives a closed card's worktree.                   | `brew install zstd` or `apt install zstd`                                                         |
-| `no-mistakes`       | any                            | Validates the changes of projects that use it.       | `curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh \| sh` |
-| `direnv`            | any                            | Mates and clone commands run under `direnv exec`.    | `brew install direnv` or `apt install direnv`                                                     |
-| conversation memory | the loader accepts the package | A mate with `config/optchat.json` loads it at start. | Install the loader from the dotfiles, then `<checkout>/bin/fleet home memory <lane>` (section 4)  |
+| Tool                | Minimum                  | Why                                                  | Install or fix                                                                                    |
+| ------------------- | ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `node`              | 24                       | Runs the extension, `fleet`, and `cardd`.            | `brew install node@24` (macOS) or see https://nodejs.org                                          |
+| `git`               | 2.31                     | Lane homes, worktrees, and dispatch.                 | `brew install git` (macOS) or `apt install git` (Debian)                                          |
+| `gh`                | any, and logged in       | Finds and merges pull requests.                      | `brew install gh` or `apt install gh`, then `gh auth login`. The check runs `gh auth status`.     |
+| `herdr`             | 0.9.5                    | Every mate, worker, and job runs in a herdr pane.    | https://github.com/herdrdev/herdr/releases                                                        |
+| `zstd`              | any                      | Archives a closed card's worktree.                   | `brew install zstd` or `apt install zstd`                                                         |
+| `no-mistakes`       | any                      | Validates the changes of projects that use it.       | `curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh \| sh` |
+| `direnv`            | any                      | Mates and clone commands run under `direnv exec`.    | `brew install direnv` or `apt install direnv`                                                     |
+| conversation memory | the lane has its profile | A mate with `config/optchat.json` loads it at start. | `<checkout>/bin/fleet home memory <lane>` (section 4)                                             |
 
-Conversation memory is checked for every home on the host whose `config/optchat.json` does not say `"enabled": false`. The loader (`~/.pi/agent/extensions/fm-optchat` and `~/.pi/agent/optchat/package.mjs`) must be there, the package that the file names (by default `config/optchat/package`) must exist, and the loader's own `verifyPackage` must accept it. A package that is there but stale, such as after a dotfiles update changed a patch, fails the check as a missing one does. A stale package once crash-looped four mates.
+Conversation memory is checked for every home on the host whose `config/optchat.json` does not say `"enabled": false`. The profile that the file names must have its `AGENTS.md` and `config.json`. Without them the memory cannot start, and the mate would crash-loop. OptChat itself ships in this repository, so there is nothing to install for it.
 
 The fleet checks all of this on each host before it starts a mate, and before `/updatefleet` changes anything:
 
@@ -129,7 +129,7 @@ pi
 - `workerArgs` are extra Pi arguments for main's workers. A `--model` in them picks the workers' model. Without one, workers start on Pi's global default model, `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json` of the host where the mate runs. A worker never takes its model from its folder, so a worker in a worktree of this repository does not run on the mates' tier.
 - For main's own Pi, use Pi's settings: `.pi/settings.json` sets `tier/orchestrator`. `args` is only used when `fleet up` starts a second mate.
 - `data/charter.md` is added to main's role contract at every start. Keep the lane table there: each lane's name, host, and scope. The captain's preferences are not charter text: they are standing rules (below).
-- The fleet sets Pi's prompt cache retention by role: every mate asks for one-hour retention and every worker keeps the five-minute default. It overrides an inherited `PI_CACHE_RETENTION` and changes no settings file. Cache warming is not set per role: it follows Pi's global `cacheWarming` setting until Pi can set it per process. The reasons and the limits are in [code.md](code.md#prompt-cache-policy).
+- The fleet sets Pi's prompt cache retention for every mate and worker to the five-minute default. It overrides an inherited `PI_CACHE_RETENTION` and changes no settings file. Cache warming is not set per role: it follows Pi's global `cacheWarming` setting until Pi can set it per process. The reasons and the limits are in [code.md](code.md#prompt-cache-policy).
 - The fleet also limits a worker's context by role: an effective limit of the model's own window capped at 500K, compacting at 80% of it: 400K on a 1M model, 160K on a 200K model. A mate keeps Pi's own limits. It changes no settings file. The reasons and the limits are in [code.md](code.md#worker-context-policy).
 - `pi -c` continues the last conversation in this folder. Plain `pi` starts a new one, and conversation memory carries what matters.
 
@@ -153,7 +153,7 @@ A stow in main does not stow the second mates: each one runs its own `/stow`.
 
 ### Conversation memory (optchat)
 
-Every mate has conversation memory the way Firstmate's homes do. The loader is the user-level `~/.pi/agent/extensions/fm-optchat`, from the dotfiles. Firstmate sets `FM_HOME` for it with `optpi`. Here, `.pi/extensions/fleet.ts` loads it again with `FM_HOME` set to the home, when the home has `config/optchat.json`. Nothing else changes in `~/.pi`.
+Every mate has conversation memory: OptChat, which ships in this repository at `packages/extension/vendor/optchat` (see its `README.md` for the version and changes). `.pi/extensions/fleet.ts` loads it when the home has `config/optchat.json`. Nothing is installed in `~/.pi`, and a dotfiles update cannot change it.
 
 One command turns memory on in a home, for main and for each second mate alike:
 
@@ -161,17 +161,16 @@ One command turns memory on in a home, for main and for each second mate alike:
 <checkout>/bin/fleet home memory <lane> [--seed <profile folder>] [--compactor tier/compact] [--thinking low]
 ```
 
-It does three things, all inside that lane's home, and skips each one that is done already:
+It does two things, all inside that lane's home, and skips each one that is done already:
 
-- prepares the pinned pi-optchat package in `config/optchat/package` with the loader's own helper, `~/.pi/agent/optchat/package.mjs`. It fetches the version that the helper pins with `npm pack`. `--source <folder>` prepares it from a published copy that is already on disk instead. If the loader refuses the package that is there, such as after a dotfiles update changed a patch, it moves that copy to `config/optchat/package.stale-<time>` and prepares the package again. Run the command again in each home after such an update, before the mates restart.
-- makes the lane's profile in `data/optchat/profiles/<lane>`. With `--seed`, it copies only `AGENTS.md` and `config.json` from that folder, such as the lane's old Firstmate profile. Without it, the profile is new. Either way the memory starts empty.
-- writes `config/optchat.json`: the package, `data/optchat` as the memory home, and the lane as the profile. `--compactor` and `--thinking` pick the memory's compactor. Without `--compactor`, the memory uses the mate's own model. If the file is there with `"enabled": false`, it sets `"enabled": true` and keeps the rest.
+- makes the lane's profile in `data/optchat/profiles/<lane>`. With `--seed`, it copies only `AGENTS.md` and `config.json` from that folder, such as the lane's old Firstmate profile. Without it, the profile is new. Either way the memory starts empty. A profile that has only one of the two files gets the missing one, and the file that is there is kept.
+- writes `config/optchat.json`: `data/optchat` as the memory home, and the lane as the profile. `--compactor` and `--thinking` pick the model that writes the memory's summaries. Without `--compactor`, summaries go to `tier/compact`, and to the mate's own model only on a host that has no such tier. Summaries are thousands of small calls a day, so they never default to the mate's expensive model. If the file is there with `"enabled": false`, it sets `"enabled": true` and keeps the rest.
 
 Each lane has its own profile in its own home. Never copy one home's `config/`, `data/`, or `state/` into another. The profile's lock socket must fit a socket path (103 bytes on macOS), so the command refuses a home whose path is too long.
 
 The mate gets memory at its next start. `/firstmate-memory` shows whether it is active, and `state/optchat-activation.json` in the home is the receipt. To turn it off, set `"enabled": false` in `config/optchat.json` and restart the mate. To turn it on again, run `fleet home memory <lane>` and restart the mate.
 
-The loader must treat a `[fleet]` message as a normal turn that enters memory. That needs the dotfiles at or after https://github.com/1yian/dotfiles/pull/34 on every host that runs a mate. `e2e/extension/memory.test.ts` checks it for main and for a second mate.
+A `[fleet]` message is a normal turn that enters memory. `e2e/extension/memory.test.ts` checks it for main and for a second mate. An older home's `config/optchat.json` may still name a `package`: it is ignored, and the `config/optchat/package` folder can be deleted.
 
 ## 5. Second mates
 

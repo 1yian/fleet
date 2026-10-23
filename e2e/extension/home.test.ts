@@ -139,21 +139,18 @@ test("fleet migrate moves the earlier layout into the repo, keeps what it replac
 test("a plain pi in the repo is main: it loads the fleet extension from the repo, its charter, and memory", async () => {
   earlierLayout();
   migrate();
-  const loader = join(h.dir, "agent", "extensions", "fm-optchat");
-  mkdirSync(loader, { recursive: true });
+  const profile = join(scratch.root, "data", "optchat", "profiles", "main");
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "AGENTS.md"), "# main\n");
+  const model = { provider: "fake", model: "scripted", thinking: "off" };
   writeFileSync(
-    join(loader, "index.ts"),
-    `import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-const home = process.env["FM_HOME"];
-export default function () {
-  if (home === undefined) return;
-  mkdirSync(join(home, "state"), { recursive: true });
-  writeFileSync(join(home, "state", "optchat-activation.json"), JSON.stringify({ home, cwd: process.cwd() }));
-}
-`,
+    join(profile, "config.json"),
+    JSON.stringify({ compactor: model, subagent: model }),
   );
-  writeFileSync(join(scratch.root, "config", "optchat.json"), JSON.stringify({ enabled: true }));
+  writeFileSync(
+    join(scratch.root, "config", "optchat.json"),
+    JSON.stringify({ enabled: true, memoryHome: "data/optchat", profile: "main" }),
+  );
   h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, scratch, h);
   const card: unknown = await ghost.call("card.new", { title: "Ship the fix", kind: "scout" });
@@ -167,7 +164,8 @@ export default function () {
   const receipt = parseRecord(
     readFileSync(join(scratch.root, "state", "optchat-activation.json"), "utf8"),
   );
-  assert.equal(receipt["home"], realpathSync(scratch.root));
+  assert.equal(receipt["profile"], "main");
+  assert.equal(receipt["memoryHome"], join(realpathSync(scratch.root), "data", "optchat"));
 });
 
 test("a worker in a worktree of the repo starts with only the extension it was given, and no installed packages", async () => {

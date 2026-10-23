@@ -1,87 +1,24 @@
-import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
-  renameSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { isRecord } from "./lane-config.ts";
 
 export interface MemoryOptions {
   readonly seed?: string;
-  readonly source?: string;
   readonly compactor?: string;
   readonly thinking?: string;
 }
 
-const PACKAGE = join("config", "optchat", "package");
 const MEMORY_HOME = join("data", "optchat");
+const PROFILE_FILES = ["AGENTS.md", "config.json"] as const;
+type ProfileFile = (typeof PROFILE_FILES)[number];
 const SOCKET_PATH_LIMIT = process.platform === "darwin" ? 103 : 107;
-
-const run = (file: string, args: readonly string[], cwd?: string): string =>
-  execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], cwd }).trim();
-
-export const agentDir = (): string =>
-  process.env["PI_CODING_AGENT_DIR"] ?? join(homedir(), ".pi", "agent");
-
-function fetchPublished(helperDir: string, into: string): string {
-  const manifest: unknown = JSON.parse(readFileSync(join(helperDir, "manifest.json"), "utf8"));
-  const name = isRecord(manifest) ? manifest["package"] : undefined;
-  const version = isRecord(manifest) ? manifest["version"] : undefined;
-  if (typeof name !== "string" || typeof version !== "string") {
-    throw new Error(`${join(helperDir, "manifest.json")} names no package and version`);
-  }
-  const tarball = run("npm", [
-    "pack",
-    `${name}@${version}`,
-    "--silent",
-    "--pack-destination",
-    into,
-  ]);
-  run("tar", ["-xzf", join(into, tarball.split("\n").at(-1) ?? ""), "-C", into]);
-  return join(into, "package");
-}
-
-export function packageProblem(helper: string, target: string): string | undefined {
-  const check = `const { verifyPackage } = await import(${JSON.stringify(pathToFileURL(helper).href)}); try { verifyPackage(${JSON.stringify(target)}); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }`;
-  try {
-    run("node", ["--input-type=module", "-e", check]);
-    return undefined;
-  } catch (error) {
-    const stderr: unknown = Reflect.get(Object(error), "stderr");
-    const lines =
-      typeof stderr === "string" ? stderr.split("\n").filter((line) => line.trim() !== "") : [];
-    return lines.at(-1) ?? "the loader refused it";
-  }
-}
-
-function preparePackage(home: string, source: string | undefined): string {
-  const target = join(home, PACKAGE);
-  const helper = realpathSync(join(agentDir(), "optchat", "package.mjs"));
-  const stale = `${PACKAGE}.stale-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  if (existsSync(target)) {
-    if (packageProblem(helper, target) === undefined) return `package: ${PACKAGE} is there already`;
-    renameSync(target, join(home, stale));
-  }
-  const scratch = mkdtempSync(join(tmpdir(), "fleet-optchat-"));
-  try {
-    const published = source ?? fetchPublished(join(helper, ".."), scratch);
-    run("node", [helper, "prepare", published, target]);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-  return existsSync(join(home, stale))
-    ? `package: prepared again in ${PACKAGE}, because the loader refused the old one, now in ${stale}`
-    : `package: prepared in ${PACKAGE}`;
-}
 
 function makeProfile(home: string, lane: string, options: MemoryOptions): string {
   const profile = join(home, MEMORY_HOME, "profiles", lane);
@@ -91,26 +28,31 @@ function makeProfile(home: string, lane: string, options: MemoryOptions): string
       `the profile's socket path is longer than ${String(SOCKET_PATH_LIMIT)} bytes: ${socket}`,
     );
   }
-  if (existsSync(join(profile, "AGENTS.md"))) return `profile: ${lane} is there already`;
+  const missing = PROFILE_FILES.filter((file) => !existsSync(join(profile, file)));
+  if (missing.length === 0) return `profile: ${lane} is there already`;
   mkdirSync(profile, { recursive: true, mode: 0o700 });
-  if (options.seed !== undefined) {
-    for (const file of ["AGENTS.md", "config.json"]) {
+  const defaults = defaultProfile(lane, options);
+  for (const file of missing) {
+    if (options.seed === undefined) {
+      writeFileSync(join(profile, file), defaults[file], { mode: 0o600 });
+    } else {
       copyFileSync(join(options.seed, file), join(profile, file));
     }
-    return `profile: ${lane}, from ${options.seed}`;
   }
-  const [provider = "pending", model = "pending"] = options.compactor?.split("/") ?? [];
+  const source = options.seed === undefined ? "" : ` from ${options.seed}`;
+  if (missing.length < PROFILE_FILES.length)
+    return `profile: ${lane}, added ${missing.join(" and ")}${source}`;
+  return `profile: ${lane}, ${options.seed === undefined ? "new" : `from ${options.seed}`}`;
+}
+
+function defaultProfile(lane: string, options: MemoryOptions): Record<ProfileFile, string> {
+  const [provider = "tier", model = "compact"] = options.compactor?.split("/") ?? [];
   const choice = { provider, model, thinking: options.thinking ?? "low" };
   const settings = { compactor: choice, subagent: { ...choice, thinking: "off" } };
-  writeFileSync(join(profile, "config.json"), `${JSON.stringify(settings, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  writeFileSync(
-    join(profile, "AGENTS.md"),
-    `# ${lane}\n\nThe ${lane} mate's conversation recall. The fleet's role contract, the lane's charter, and the cards remain authoritative.\n`,
-    { mode: 0o600 },
-  );
-  return `profile: ${lane}, new`;
+  return {
+    "config.json": `${JSON.stringify(settings, null, 2)}\n`,
+    "AGENTS.md": `# ${lane}\n\nThe ${lane} mate's conversation recall. The fleet's role contract, the lane's charter, and the cards remain authoritative.\n`,
+  };
 }
 
 function writeSettings(home: string, lane: string, options: MemoryOptions): string {
@@ -127,7 +69,6 @@ function writeSettings(home: string, lane: string, options: MemoryOptions): stri
   const [provider, model] = options.compactor?.split("/") ?? [];
   const settings = {
     enabled: true,
-    package: PACKAGE,
     memoryHome: MEMORY_HOME,
     profile: lane,
     ...(options.thinking === undefined ? {} : { thinking: options.thinking }),
@@ -139,14 +80,8 @@ function writeSettings(home: string, lane: string, options: MemoryOptions): stri
 }
 
 export function setUpMemory(home: string, lane: string, options: MemoryOptions): string[] {
-  const loader = join(agentDir(), "extensions", "fm-optchat", "index.ts");
-  if (!existsSync(loader)) throw new Error(`${loader} is missing: install the memory loader first`);
   if (options.compactor !== undefined && !/^[^/]+\/[^/]+$/.test(options.compactor)) {
     throw new Error("--compactor is provider/model, such as tier/compact");
   }
-  return [
-    preparePackage(home, options.source),
-    makeProfile(home, lane, options),
-    writeSettings(home, lane, options),
-  ];
+  return [makeProfile(home, lane, options), writeSettings(home, lane, options)];
 }
