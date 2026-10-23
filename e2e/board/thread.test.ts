@@ -145,7 +145,6 @@ test("one mate's order to its worker and its answer to main read differently, wi
 test("a worker's report reads worker to its mate, and the task reads mate to worker", async () => {
   const { card, worker } = await shipped("Fix the footer");
   await worker.call("report", { status: "working", text: "reading the footer code" });
-  await cleo.waitForEntry((entry) => entry.kind === "report", "the report");
   await open(card);
   await thread().getByText("reading the footer code").waitFor();
   assert.deepEqual(await flows(), ["cleo → worker", "worker → cleo"]);

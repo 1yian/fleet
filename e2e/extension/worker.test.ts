@@ -110,7 +110,6 @@ test("a worker woken from a pause is nudged and stopped when it ends a run on a 
   h.onModel(() => ({ tool: "report", args: { status: "paused", text: "waiting for CI" } }));
   h.onModel(() => ({ text: "waiting" }));
   await worker("start");
-  await fleet.main.waitForEntries(1);
   await h.waitFor((e) => e["type"] === "settled", "the paused run to settle");
   assert.equal(h.calls.length, 2);
 

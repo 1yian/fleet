@@ -30,7 +30,41 @@ export function confirm(db: DatabaseSync, session: string, inFile: readonly numb
   return low;
 }
 
-export function toPush(db: DatabaseSync, session: string, atConnect: boolean): Push[] {
+const QUIET_STATUSES: ReadonlySet<unknown> = new Set(["working", "paused", "note", "in-review"]);
+
+function isRoutine(entry: Entry): boolean {
+  if (entry.fields["routine"] === true) return true;
+  return entry.kind === "report" && QUIET_STATUSES.has(entry.fields["status"]);
+}
+
+export interface Batching {
+  readonly now: number;
+  readonly window: number;
+}
+
+function releasable(db: DatabaseSync, session: string, batching: Batching): boolean {
+  const row = db.prepare("SELECT batch_since AS since FROM sessions WHERE id = ?").get(session);
+  const since = row?.["since"];
+  if (typeof since !== "number") {
+    db.prepare("UPDATE sessions SET batch_since = ? WHERE id = ?").run(batching.now, session);
+    return false;
+  }
+  return batching.now - since >= batching.window;
+}
+
+export function dueBatches(db: DatabaseSync, batching: Batching): string[] {
+  return db
+    .prepare("SELECT id FROM sessions WHERE batch_since IS NOT NULL AND ?1 - batch_since >= ?2")
+    .all(batching.now, batching.window)
+    .map((row) => String(row["id"]));
+}
+
+export function toPush(
+  db: DatabaseSync,
+  session: string,
+  atConnect: boolean,
+  batching: Batching,
+): Push[] {
   const states = atConnect ? "('pending', 'pushed', 'acknowledged')" : "('pending')";
   const rows = json(
     db,
@@ -40,15 +74,30 @@ export function toPush(db: DatabaseSync, session: string, atConnect: boolean): P
      WHERE d.session = ? AND d.state IN ${states} ORDER BY e.id`,
     session,
   );
-  const pushes = rows.map((row) => {
+  const queued = new Set(
+    db
+      .prepare("SELECT entry FROM deliveries WHERE session = ? AND state = 'pending'")
+      .all(session)
+      .map((row) => Number(row["entry"])),
+  );
+  const all = rows.map((row) => {
     const { entry, name, again = false } = check(PushedEntrySchema, row);
-    return {
+    const push = {
       entry,
       name,
       again,
       mode: entry.fields["now"] === true ? "steer" : "followUp",
     } as const;
+    return {
+      push,
+      held: queued.has(entry.id) && !again && entry.fields["now"] !== true && isRoutine(entry),
+    };
   });
+  const holding = all.some(({ held }) => held);
+  const urgent = all.some(({ held }) => !held);
+  const release = !holding || urgent || releasable(db, session, batching);
+  if (release) db.prepare("UPDATE sessions SET batch_since = NULL WHERE id = ?").run(session);
+  const pushes = all.filter(({ held }) => release || !held).map(({ push }) => push);
   const mark = db.prepare(
     "UPDATE deliveries SET state = 'pushed', updated_at = ? WHERE session = ? AND entry = ? AND state = 'pending'",
   );

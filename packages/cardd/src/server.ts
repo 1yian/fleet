@@ -204,11 +204,17 @@ class Hub {
     return session;
   }
 
+  private batching(): { now: number; window: number } {
+    return { now: this.timing.wall(), window: this.timing.batch };
+  }
+
   flush(session: string, atConnect: boolean): void {
     const socket = this.sockets.get(session);
     if (socket === undefined) return;
     for (const request of pendingFor(this.db, session)) send(socket, { t: "maintenance", request });
-    for (const push of transaction(this.db, () => toPush(this.db, session, atConnect))) {
+    for (const push of transaction(this.db, () =>
+      toPush(this.db, session, atConnect, this.batching()),
+    )) {
       send(socket, { t: "entry", ...push });
     }
   }

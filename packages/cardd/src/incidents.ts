@@ -189,7 +189,7 @@ function verifyCompaction(db: DatabaseSync, live: Incident, role: "mate" | "work
     live.id,
   );
   const body = `incident ${String(live.id)} recovered (${live.recoveryMode ?? ""}): ${live.actor} compacted its conversation successfully. Its conversation, branch, and work are as they were.`;
-  return { value: { cleared: true }, notify: tell(db, live, role, body) };
+  return { value: { cleared: true }, notify: tell(db, live, role, body, true) };
 }
 
 export function clearFailure(

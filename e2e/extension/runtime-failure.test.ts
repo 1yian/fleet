@@ -440,6 +440,7 @@ test("a failed compaction is its own incident with the original error, and recov
   const turnsBefore = h.callsOf("cleo").length;
   compactorUp = true;
   await recover(fleet.main, heard, "retry");
+  setClock(T0 + 17_000);
   const done = await fleet.main.waitForEntry(
     (entry) => entry.body.includes("recovered (retry)"),
     "a successful compaction",
@@ -468,7 +469,8 @@ test("a failed compaction is its own incident with the original error, and recov
     0,
   );
   assert.equal(
-    heardFailures(fleet.main).filter((entry) => entry.body.includes("compaction failed")).length,
+    heardFailures(fleet.main).filter((entry) => /compaction failed.*Incident 1,/.test(entry.body))
+      .length,
     1,
   );
 });
