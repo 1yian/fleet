@@ -25,7 +25,7 @@ const workerFleetArgs = (token: string): string[] => {
 };
 beforeEach(async () => {
   cardd = await Cardd.start();
-  cardd.dashTokens(["worker:c-1-a1"]);
+  cardd.dashTokens(["worker:c-2-a1"]);
   h = await Harness.start();
   mkdirSync(join(h.dir, "agent", "extensions"), { recursive: true });
   execFileSync("herdr", ["integration", "install", "pi"], {
