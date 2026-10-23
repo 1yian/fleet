@@ -95,7 +95,7 @@ async function laterCheck(): Promise<void> {
   );
 }
 
-test("a router exhaustion wakes its parent once at the earliest real cooldown expiry, and the parent recovers it on the same card", async () => {
+test("a router exhaustion wakes its parent once at the earliest real cooldown expiry, and the parent restarts it on the same card", async () => {
   const base = Date.now();
   const earliest = base + 300 * SECOND;
   writeCooldowns("4101.json", {
@@ -145,7 +145,8 @@ test("a router exhaustion wakes its parent once at the earliest real cooldown ex
 
   const [, incident, generation] =
     /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
-  await fleet.main.call("incident.recover", {
+  await fleet.main.call("card.restart", {
+    card: heard.card,
     incident: Number(incident),
     generation: Number(generation),
     mode: "retry",
