@@ -169,6 +169,7 @@ export async function replaceWorker(
   link: Link,
   launch: Launch,
   recovery: { card: number; host: string; repeat: boolean },
+  avoid: readonly string[] = [],
 ): Promise<string> {
   const plan = await link.call("attempt.resume", { card: recovery.card });
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
@@ -192,7 +193,7 @@ export async function replaceWorker(
         String(HERDR_READY_WAIT_MS),
         "--",
       ],
-      fleetArgs({ url: launch.url, token: plan.token, role: "worker" }),
+      fleetArgs({ url: launch.url, token: plan.token, role: "worker", avoid }),
       ["--session-id", plan.session, ...launch.piArgs],
     ].flat(),
   );

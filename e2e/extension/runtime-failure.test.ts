@@ -30,7 +30,7 @@ function setClock(ms: number): void {
   writeFileSync(next, new Date(ms).toISOString());
   renameSync(next, clockFile);
 }
-const isFailure = (entry: Entry): boolean => entry.fields["condition"] === "runtime-failure";
+const isFailure = (e: Entry): boolean => e.fields["condition"] === "runtime-failure";
 const heardFailures = (mate: Session): Entry[] =>
   mate.entries.map((push) => push.entry).filter(isFailure);
 const incidentOf = (entry: Entry): { incident: number; generation: number } => {
@@ -316,9 +316,9 @@ test("a local router cooldown, vendor quota, stale module, and bad credentials a
       /mode=retry\), eligible at/,
     ],
     [
-      "API error (status 402 Payment Required): Grok credits exhausted",
+      "claude-max 5h quota has exhausted. Restart worker to launch on a new provider.",
       "vendor-quota",
-      /Restarting is not a repair for vendor-quota/,
+      /mode=replace\)\.$/,
     ],
     [
       "Cannot find module '/old/bundle/index.js' imported from /app/pi.js",
@@ -331,14 +331,15 @@ test("a local router cooldown, vendor quota, stale module, and bad credentials a
     const card = await newCard(fleet.main, kind);
     const session = await actor(card);
     await session.call("incident.report", { error });
-    const heard = await fleet.main.waitForEntry(
-      (entry) => isFailure(entry) && entry.card === card.id,
-      kind,
-    );
+    const own = (entry: Entry): boolean => isFailure(entry) && entry.card === card.id;
+    const heard = await fleet.main.waitForEntry(own, kind);
     assert.match(heard.body, new RegExp(`Classified ${kind}\\.`));
     assert.match(heard.body, next);
-    if (kind === "vendor-quota")
-      await assert.rejects(recover(fleet.main, heard, "replace"), /is blocked/);
+    if (kind === "vendor-quota") {
+      assert.ok(heard.body.includes(`: ${error} Classified vendor-quota.`), heard.body);
+      const bad = { card: card.id, ...incidentOf(heard), mode: "retry", key: "k", avoid: ["x"] };
+      await assert.rejects(fleet.main.call("card.restart", bad), /avoid applies only when/);
+    }
   }
 });
 

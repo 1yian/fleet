@@ -23,8 +23,9 @@ export function describe(inc: Incident, label: string): string {
     lost: "its process stopped without a final event",
   }[inc.phase];
   const cause = inc.phase === "turn" || inc.phase === "compaction" ? `: ${inc.error}` : "";
+  const end = cause.endsWith(".") ? "" : ".";
   const ids = `Incident ${String(inc.id)}, process generation ${String(inc.generation)}.`;
-  return `runtime failure: ${label} ${what}${cause}. Classified ${inc.classification}. ${ids} ${nextStep(inc)}`;
+  return `runtime failure: ${label} ${what}${cause}${end} Classified ${inc.classification}. ${ids} ${nextStep(inc)}`;
 }
 
 export function labelOf(inc: Incident, role: "mate" | "worker"): string {

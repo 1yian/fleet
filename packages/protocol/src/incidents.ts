@@ -1,6 +1,7 @@
 import Type from "typebox";
 
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
+const Provider = Type.String({ pattern: "^[A-Za-z0-9._:/@+-]+$", maxLength: 100 });
 
 export const INCIDENT_OPS = {
   "incident.report": {
@@ -51,6 +52,14 @@ export const INCIDENT_OPS = {
       ),
       mode: Type.Enum(["retry", "replace"]),
       key: Key,
+      avoid: Type.Optional(
+        Type.Array(Provider, {
+          minItems: 1,
+          maxItems: 20,
+          description:
+            "Exact provider names the restarted worker must not use, for this restart only",
+        }),
+      ),
     }),
     result: Type.Object({
       incident: Type.Union([Type.Integer(), Type.Null()]),

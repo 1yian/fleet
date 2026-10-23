@@ -195,7 +195,19 @@ function start(
   link.start();
 }
 
+const AVOID_FLAG = "--fleet-avoid=";
+
+function exportAvoid(): void {
+  const given = process.argv.find((arg) => arg.startsWith(AVOID_FLAG));
+  if (given !== undefined) process.env["PI_TIERS_AVOID"] = given.slice(AVOID_FLAG.length);
+}
+
 export default function fleet(pi: ExtensionAPI): void {
+  exportAvoid();
+  pi.registerFlag("fleet-avoid", {
+    type: "string",
+    description: "Comma-separated providers the model router must skip",
+  });
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
