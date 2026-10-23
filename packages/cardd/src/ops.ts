@@ -1,5 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
+import {
+  check,
+  OPS,
+  type Card,
+  type OpArgs,
+  type OpName,
+  type ReportStatus,
+} from "@fleet/protocol";
 import {
   beginAttempt,
   finishJob,
@@ -13,7 +20,6 @@ import {
 } from "./attempts.ts";
 import { boardView, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
-import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { acknowledgeMaintenance, maintenanceStatus, requestMaintenance } from "./maintenance.ts";
@@ -21,9 +27,8 @@ import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
 import { restartCard } from "./restarts.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
-import type { PullRequest } from "./github.ts";
 import { loadPlan } from "./plans.ts";
-import { lookUpPr, recordReportedPr } from "./pulls.ts";
+import { recordReportedPr } from "./pulls.ts";
 import { requireOwedBy } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { scriptWake } from "./wakes.ts";
@@ -43,18 +48,12 @@ interface Done {
   readonly value: unknown;
   readonly notify: readonly string[];
 }
-type PrFields =
-  | { readonly pr: string; readonly prState: PullRequest["state"] }
+type LandingFields =
+  | { readonly pr: string; readonly merged?: true }
   | { readonly prNote: string }
   | { readonly landing: string }
   | Record<string, never>;
-type Handler = (
-  db: DatabaseSync,
-  session: Session,
-  args: unknown,
-  timing: Timings,
-  pr: PrFields,
-) => Done;
+type Handler = (db: DatabaseSync, session: Session, args: unknown, timing: Timings) => Done;
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
   "in-review",
@@ -227,21 +226,21 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
-  report: (db, session, raw, _timing, pr) => {
+  report: (db, session, raw) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     requireShortPause(args.status, args.until);
-    const card = getCard(db, session.card);
-    requireOpen(db, card);
+    const card = openCardWithPr(db, session.card, args.pr);
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
     const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
-    const withdrawn = rework(db, card, args.status);
+    const withdrawn =
+      args.merged === true ? withdrawMerge(db, card, "merged") : rework(db, card, args.status);
     const fields = {
       status: args.status,
       key: args.key,
       until: args.until,
       replyTo: args.replyTo,
-      ...pr,
+      ...landingOf(db, card, args),
     };
     const report: Draft = {
       card: card.id,
@@ -250,9 +249,10 @@ const HANDLERS: Record<OpName, Handler> = {
       body: args.text,
       fields,
     };
-    const approvable = !("prState" in pr) || pr.prState === "OPEN";
     const asked =
-      args.status === "done" && approvable ? mergeQuestion(db, card, [report]) : undefined;
+      args.status === "done" && args.merged !== true
+        ? mergeQuestion(db, card, [report])
+        : undefined;
     const statusAfter = statusWith(db, card, asked === undefined ? [report] : [report, asked]);
     addEntry(db, { ...report, fields: { ...fields, statusAfter } }, to);
     const merge = asked === undefined ? [] : writeMergeQuestion(db, card, asked);
@@ -260,11 +260,19 @@ const HANDLERS: Record<OpName, Handler> = {
   },
 };
 
-async function findReportedPr(db: DatabaseSync, session: Session, raw: unknown): Promise<PrFields> {
-  const { status, pr } = check(OPS.report.args, raw);
-  if (status !== "done" || session.card === null) return {};
-  const card = getCard(db, session.card);
-  if (card.kind !== "ship") return {};
+function openCardWithPr(db: DatabaseSync, id: number, pr: string | undefined): Card {
+  requireOpen(db, getCard(db, id));
+  recordReportedPr(db, id, pr);
+  return getCard(db, id);
+}
+
+function landingOf(db: DatabaseSync, card: Card, args: OpArgs<"report">): LandingFields {
+  if (args.merged === true) {
+    if (args.status !== "done" || card.pr === null)
+      throw new Error("a merged report must be done and name its PR URL");
+    return { merged: true, pr: card.pr };
+  }
+  if (args.status !== "done" || card.kind !== "ship") return {};
   if (card.delivery === "local-only") {
     const local = localLanding(db, card.id);
     if (local === undefined) return { landing: "local-only: the card has no branch" };
@@ -272,29 +280,22 @@ async function findReportedPr(db: DatabaseSync, session: Session, raw: unknown):
       landing: `local-only: branch ${local.branch} lands on local ${local.base} when the card closes`,
     };
   }
-  recordReportedPr(db, card.id, pr);
-  const found = await lookUpPr(db, session.card);
-  if (found.kind === "found") return { pr: found.pr.url, prState: found.pr.state };
-  if (found.kind === "unknown") return { prNote: `PR unknown: ${found.reason}` };
-  if (found.branches.length === 0) return { prNote: "no PR: the card has no branch" };
-  return { prNote: `no PR has branch ${found.branches.join(" or ")} as its head` };
+  if (card.pr !== null) return { pr: card.pr };
+  return { prNote: "no PR URL reported: the worker reports it with report(pr=<full url>)" };
 }
 
-export async function performOp(
+export function performOp(
   db: DatabaseSync,
   session: Session,
   op: OpName,
   args: unknown,
   timing: Timings,
-): Promise<Done> {
+): Done {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
-  const merged = op === "close.begin" ? await recordMerge(db, check(OPS[op].args, args).card) : [];
-  const pr = op === "report" ? await findReportedPr(db, session, args) : {};
-  const done = transaction(db, () => {
-    const result = HANDLERS[op](db, session, args, timing, pr);
+  return transaction(db, () => {
+    const result = HANDLERS[op](db, session, args, timing);
     noteControl(db, session.id, op);
     return result;
   });
-  return { ...done, notify: [...new Set([...merged, ...done.notify])] };
 }

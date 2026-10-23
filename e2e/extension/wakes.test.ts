@@ -4,6 +4,7 @@ import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
+import { CardViewSchema, check } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
@@ -204,7 +205,7 @@ test("a scheduled wake names its purpose and is answered, and the weekly entry j
   );
 });
 
-test("an unanswered wake is resent once, then main hears, and later wakes are skipped until it is withdrawn", async () => {
+test("an unanswered wake is resent and never suppresses later scheduled wakes", async () => {
   answering = false;
   setPlan(PLAN);
   startMate("up");
@@ -217,26 +218,27 @@ test("an unanswered wake is resent once, then main hears, and later wakes are sk
   assert.deepEqual(await hears(/still owed/), [
     `[fleet] check on c-1 ads (finding): reply ${id} is still owed to main: "${label}". Please answer with comment(card=1, text, replyTo="${id}").`,
   ]);
-  const escalation = await main.waitForEntry(
-    (entry) => entry.kind === "finding" && entry.body.includes("unanswered"),
-    "main to hear the unanswered wake",
-  );
-  assert.equal(
-    escalation.body,
-    `reply ${id} unanswered: ads got the scheduled wake and one resend, and has not replied: "${label}". Ask again, or withdraw it with comment(card=1, text, withdraws="${id}").`,
-  );
+  await until(async () => {
+    const reminders = check(
+      CardViewSchema,
+      await main.call("card", { card: LANE_CARD }),
+    ).entries.filter(
+      (entry) => entry.fields["reply"] === id && entry.fields["condition"] === "reply-resent",
+    );
+    return reminders.length >= 3 ? true : undefined;
+  }, "three resends of the unanswered wake");
 
   setClock("2026-05-05T09:00:00Z");
-  const skipNote = `scheduled wake 2026-05-05T09:00 UTC skipped: ${id} is still unanswered`;
-  await until(
-    async () => ((await laneThread()).some((entry) => entry.body === skipNote) ? true : undefined),
-    "the skip note",
+  const second = (await hears(WAKE, 2))[1] ?? "";
+  assert.match(second, /^\[fleet\] scheduled wake 2026-05-05T09:00 UTC: Review ad spend/);
+  assert.equal(
+    (await cardd.board()).cards.find((card) => card.id === LANE_CARD)?.replies.length,
+    2,
   );
-  assert.deepEqual(heard(WAKE), [wake]);
 
   await main.call("comment", { lane: "ads", text: "Drop that wake", withdraws: id });
   setClock("2026-05-06T09:00:00Z");
-  const woken = (await hears(WAKE, 2))[1] ?? "";
+  const woken = (await hears(WAKE, 3))[2] ?? "";
   assert.match(
     woken,
     /^\[fleet\] scheduled wake 2026-05-06T09:00 UTC: Review ad spend; Evening look \[due 2026-05-05T17:00\] \(reply owed, r-\d+:/,
@@ -291,7 +293,7 @@ test("a changed plan applies after the mate restarts, and a cardd restart repeat
   const latest = systemOf(h.callsOf("mate").at(-1) ?? []);
   assert.match(latest, /- every day at 09:00: Morning B/);
   assert.doesNotMatch(latest, /Morning A|Evening A/);
-  assert.equal(heard(WAKE).length, 4);
+  assert.equal((await laneThread()).filter((entry) => entry.author === "schedule").length, 4);
 });
 
 test("a script wakes the mate with a note, no worker starts, and a bad plan or note is refused", async () => {

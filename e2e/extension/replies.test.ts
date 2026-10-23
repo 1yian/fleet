@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
-import { CardSchema, check, OPS, type BoardCard, type Card } from "@fleet/protocol";
+import { CardSchema, CardViewSchema, check, OPS, type BoardCard, type Card } from "@fleet/protocol";
 import { Cardd } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
@@ -99,6 +99,19 @@ async function onBoard(card: Card): Promise<BoardCard> {
   return found;
 }
 
+async function resends(card: Card, id: string, count: number): Promise<void> {
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    const thread = check(CardViewSchema, await asMain("card", { card: card.id }));
+    const reminders = thread.entries.filter(
+      (entry) => entry.fields["condition"] === "reply-resent" && entry.fields["reply"] === id,
+    );
+    if (reminders.length >= count) return;
+    assert.ok(Date.now() < deadline, `waiting for ${id} to be resent ${String(count)} times`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 async function mainWithCard(name: string): Promise<Card> {
   await startMain(lab, scratch, h);
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
@@ -120,13 +133,9 @@ const pausing = (text: string, replyTo?: string): Move => ({
   args: { status: "paused", text, until: LATER, ...(replyTo === undefined ? {} : { replyTo }) },
 });
 
-test("a silent worker gets one resend, then its mate gets one escalation, and the reply stays open", async () => {
+test("a silent worker is sent the reply again every five minutes, its mate is never told, and the reply stays open", async () => {
   script("default", () => pausing("still building"));
-  script("mate", (said) =>
-    /\(finding\): reply r-\d+ unanswered/.test(said) && !said.includes("branch")
-      ? { tool: "board", args: { card: 1 } }
-      : undefined,
-  );
+  script("mate", () => undefined);
   const card = await mainWithCard("dev-port");
 
   await asMain("comment", {
@@ -143,45 +152,24 @@ test("a silent worker gets one resend, then its mate gets one escalation, and th
   assert.deepEqual(await hears("default", /still owed/), [
     `[fleet] check on c-1 dev-port (finding): reply ${id} is still owed to main: "Which port does the dev server use?". Please answer with report(status, text, replyTo="${id}").`,
   ]);
-  const escalation = `[fleet] check on c-1 dev-port (finding): reply ${id} unanswered: c-1-a1 got your comment and one resend, and has not replied: "Which port does the dev server use?". Ask again, or withdraw it with comment(card=1, text, withdraws="${id}").`;
-  assert.deepEqual(await hears("mate", /unanswered/), [escalation]);
+  await resends(card, id, 3);
+  const entries = check(CardViewSchema, await asMain("card", { card: card.id })).entries;
+  const times = entries
+    .filter((entry) => entry.fields["reply"] === id && entry.fields["condition"] === "reply-resent")
+    .map((entry) => entry.createdAt);
+  const gap = (times[2] ?? 0) - (times[1] ?? 0);
+  assert.ok(
+    gap >= 1500 && gap < 1800,
+    `five-minute resend cadence scaled to 1500 ms: ${String(gap)} ms`,
+  );
+  assert.deepEqual(heard("mate", /unanswered/), []);
   assert.deepEqual(heard("mate", /paused: still building/), [
     "[fleet] c-1 dev-port paused: still building",
   ]);
-
-  const shown = await until(
-    () =>
-      h
-        .callsOf("mate")
-        .flat()
-        .find((turn) => turn.role === "toolResult" && turn.text.includes("replies[1]"))?.text,
-    "main to read the card",
-  );
-  assert.match(
-    shown,
-    new RegExp(
-      `^replies\\[1\\]\\{id,from,owes,asked,resent,escalated,text\\}:\\n {2}${id},main,c-1-a1,\\d+s ago,\\d+s ago,\\d+s ago,Which port does the dev server use\\?$`,
-      "m",
-    ),
-  );
-
-  await asMain("comment", { card: card.id, text: "Which branch is it on?", reply: true });
-  await hears("mate", /unanswered/, 2);
-  assert.equal(heard("default", new RegExp(`reply ${id} is still owed`)).length, 1);
-  assert.deepEqual(heard("mate", new RegExp(`reply ${id} unanswered`)), [escalation]);
   const open = (await onBoard(card)).replies;
   assert.deepEqual(
-    open.map((each) => [
-      each.id,
-      each.from,
-      each.owes,
-      each.resentAt !== null,
-      each.escalatedAt !== null,
-    ]),
-    [
-      [id, "main", "c-1-a1", true, true],
-      [open[1]?.id, "main", "c-1-a1", true, true],
-    ],
+    open.map((each) => [each.id, each.from, each.owes, each.resentAt !== null]),
+    [[id, "main", "c-1-a1", true]],
   );
 });
 
@@ -216,7 +204,7 @@ test("a correlated report answers the reply and stops its nudges, and a wrong id
   assert.deepEqual((await onBoard(card)).replies, []);
 
   await asMain("comment", { card: card.id, text: "Which branch is it on?", reply: true });
-  await hears("mate", /unanswered/);
+  await hears("default", /still owed.*Which branch/);
   assert.deepEqual(heard("default", new RegExp(`${id} is still owed`)), []);
   assert.deepEqual(heard("mate", new RegExp(`${id} unanswered`)), []);
 });
@@ -240,7 +228,7 @@ async function mainWithCleo(): Promise<{ lane: Card; ads: Card }> {
   return { lane, ads };
 }
 
-test("a silent second mate gets one resend on its lane card, then main gets one escalation", async () => {
+test("a silent second mate gets repeated resends on its lane card without an escalation", async () => {
   script("default", () => undefined);
   const { lane } = await mainWithCleo();
 
@@ -254,9 +242,8 @@ test("a silent second mate gets one resend on its lane card, then main gets one 
   assert.deepEqual(await hears("default", /still owed/), [
     `[fleet] check on c-1 cleo (finding): reply ${id} is still owed to main: "Is the ads report ready?". Please answer with comment(card=1, text, replyTo="${id}") or hold(card=1, question, replyTo="${id}").`,
   ]);
-  assert.deepEqual(await hears("mate", /unanswered/), [
-    `[fleet] check on c-1 cleo (finding): reply ${id} unanswered: cleo got your comment and one resend, and has not replied: "Is the ads report ready?". Ask again, or withdraw it with comment(card=1, text, withdraws="${id}").`,
-  ]);
+  await resends(lane, id, 3);
+  assert.deepEqual(heard("mate", /unanswered/), []);
   assert.deepEqual(
     (await onBoard(lane)).replies.map((each) => [each.id, each.from, each.owes]),
     [[id, "main", "cleo"]],
@@ -291,7 +278,7 @@ test("a second mate's uncorrelated comment leaves the reply open, and its correl
   assert.deepEqual((await onBoard(ads)).replies, []);
 
   await asMain("comment", { lane: "cleo", text: "Is the ads report ready?", reply: true });
-  await hears("mate", /unanswered/);
+  await hears("default", /still owed.*Is the ads report ready/);
   assert.deepEqual(heard("mate", new RegExp(`${id} unanswered`)), []);
   assert.equal((await onBoard(lane)).replies.length, 1);
 });
@@ -306,11 +293,11 @@ async function captainAsks(page: Page, card: number, text: string): Promise<void
   await page.getByRole("list", { name: "Thread" }).getByText(text).waitFor();
 }
 
-test("a captain's board comment owes a reply from main, nagged once, and main's answer is threaded under it", async () => {
+test("a captain's board comment owes a reply from main, which is resent and answered on the thread", async () => {
   const page = await browser.newPage();
   script("mate", (said) => {
     const id = idIn(said);
-    return said.includes("unanswered") && id !== undefined
+    return said.includes("still owed") && id !== undefined
       ? { tool: "comment", args: { card: 1, text: "Port 5173.", replyTo: id } }
       : undefined;
   });
@@ -337,9 +324,7 @@ test("a captain's board comment owes a reply from main, nagged once, and main's 
   assert.deepEqual(await hears("mate", /still owed/), [
     `[fleet] check on c-1 dev-port (finding): reply ${id} is still owed to captain: "Which port does the dev server use?". Please answer the captain on the board with comment(card=1, text, replyTo="${id}") or hold(card=1, question, replyTo="${id}").`,
   ]);
-  assert.deepEqual(await hears("mate", /unanswered/), [
-    `[fleet] check on c-1 dev-port (finding): reply ${id} unanswered: the captain asked on the board, and you got it and one resend, and have not replied: "Which port does the dev server use?". Do it now: answer the captain on the board with comment(card=1, text, replyTo="${id}") or hold(card=1, question, replyTo="${id}").`,
-  ]);
+  assert.deepEqual(heard("mate", /unanswered/), []);
 
   const nested = page.locator(".message.captain > .replies > .message");
   await nested.getByText("Port 5173.").waitFor();

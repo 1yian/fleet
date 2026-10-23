@@ -2,7 +2,8 @@ import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
-import { ReportPr, ReportStatus } from "./report.ts";
+import { ActivityMessage, LandingFields } from "./progress.ts";
+import { ReportStatus } from "./report.ts";
 import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
 
 export * from "./branch.ts";
@@ -97,7 +98,6 @@ export const OwedReplySchema = Type.Object({
   text: Type.String(),
   askedAt: Type.Integer(),
   resentAt: Nullable(Type.Integer()),
-  escalatedAt: Nullable(Type.Integer()),
 });
 export type OwedReply = Static<typeof OwedReplySchema>;
 
@@ -268,7 +268,6 @@ export const OPS = {
       mode: Type.Enum(["done", "dropped"]),
       verify: Type.Boolean(),
       land: Type.Boolean(),
-      noRepoHint: Type.Optional(Type.String()),
       attempts: Type.Array(
         Type.Object({
           session: Type.String(),
@@ -373,7 +372,7 @@ export const OPS = {
       key: Type.Optional(Key),
       until: Type.Optional(Type.Integer()),
       replyTo: ReplyTo,
-      pr: ReportPr,
+      ...LandingFields,
     }),
     result: CardSchema,
   },
@@ -391,7 +390,7 @@ const ClientMessage = Type.Union([
     maintenance: Type.Optional(Type.Boolean()),
   }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
-  Type.Object({ t: Type.Literal("activity"), state: Type.Enum(["running", "idle", "waiting"]) }),
+  ActivityMessage,
   Type.Object({
     t: Type.Literal("call"),
     id: Type.Integer(),

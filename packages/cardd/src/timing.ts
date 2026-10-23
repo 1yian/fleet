@@ -5,36 +5,42 @@ export interface Timings {
   readonly neverConnected: number;
   readonly notConnected: number;
   readonly stall: number;
-  readonly idle: number;
+  readonly spin: number;
+  readonly idleNudge: number;
+  readonly idleTell: number;
   readonly heartbeat: number;
   readonly intake: number;
+  readonly intakeTold: number;
   readonly reply: number;
   readonly verify: number;
   readonly batch: number;
   readonly retryDelays: readonly number[];
-  readonly reminders: readonly number[];
-  readonly finished: readonly number[];
-  readonly escalations: readonly number[];
+  readonly repeat: number;
+  readonly waiting: number;
+  readonly decision: number;
   readonly wall: () => number;
 }
 
 export function timings(scale: number, wall: () => number = Date.now): Timings {
   const at = (minutes: number): number => Math.max(1, Math.round(minutes * MINUTE * scale));
   return {
-    every: at(1),
+    every: at(0.25),
     neverConnected: at(2),
     notConnected: at(2),
-    stall: at(15),
-    idle: at(2),
+    stall: at(5),
+    spin: at(60),
+    idleNudge: at(2),
+    idleTell: at(5),
     heartbeat: at(0.5),
     intake: at(2),
-    reply: at(5),
+    intakeTold: at(15),
+    reply: at(2),
     verify: at(10),
     batch: at(5),
     retryDelays: [at(0.5), at(2)],
-    reminders: [at(30), at(60), at(120), at(360)],
-    finished: [at(5), at(15), at(30), at(60), at(120), at(360)],
-    escalations: [at(30), at(120), at(360)],
+    repeat: at(5),
+    waiting: at(15),
+    decision: at(240),
     wall,
   };
 }

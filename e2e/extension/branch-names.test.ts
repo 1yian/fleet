@@ -72,10 +72,9 @@ function commitIn(repo: string, file: string): string {
   return tip(repo, "HEAD");
 }
 
-test("a worker names its branch, the fleet finds its PR by that name, and close sees the work land", async () => {
+test("a worker names its branch, reports its PR and the merge, and close sees the work land", async () => {
   const p = await lab({});
   const { h, mate, clone } = p;
-  const { gh } = p.cardd;
   p.cardd.yolo("site");
   const pr = "https://github.com/acme/site/pull/9";
   h.onModel(() => ({ tool: "branch", args: { name: "fix/credit-readback" } }), "worker");
@@ -86,16 +85,14 @@ test("a worker names its branch, the fleet finds its PR by that name, and close 
     );
     assert.equal(branchIn(treeOf(clone)), "fix/credit-readback");
     assert.deepEqual(branchesOf(clone).sort(), ["fix/credit-readback", "main"]);
-    gh.setPr(pr, "OPEN", { ci: "pass" });
-    gh.setHead(pr, "fix/credit-readback");
-    return { tool: "report", args: { status: "done", text: "PR opened" } };
+    return { tool: "report", args: { status: "done", text: "PR merged", pr, merged: true } };
   }, "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   mateMoves(h, [CARD_NEW, dispatch(), "dispatched", ["board", { card: 1 }]]);
-  h.onModel(() => {
-    gh.setPr(pr, "MERGED");
-    return { tool: "close", args: { card: 1, summary: `Added the credit in ${pr}.` } };
-  }, "mate");
+  h.onModel(
+    () => ({ tool: "close", args: { card: 1, summary: `Added the credit in ${pr}.` } }),
+    "mate",
+  );
   h.onModel(() => ({ text: "closed" }), "mate");
   await mateConnected(h);
   mate.prompt("add credit");
@@ -103,7 +100,7 @@ test("a worker names its branch, the fleet finds its PR by that name, and close 
   const done = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(done),
-    `[fleet] c-1 add-credit done: PR opened (PR ${pr}) (card now merging)`,
+    `[fleet] c-1 add-credit done: PR merged (PR ${pr}, merged) (card now merging)`,
   );
   const view = await resultOf(h, 4);
   assert.match(view, /fix\/credit-readback/);
@@ -114,22 +111,27 @@ test("a worker names its branch, the fleet finds its PR by that name, and close 
 });
 
 async function otherHeadRun(
-  state: "MERGED" | "OPEN" | "CLOSED",
+  state: "MERGED" | "OPEN",
   closeAs: (pr: string) => Args,
 ): Promise<{ closing: string; p: DispatchLab }> {
   scratch = new Scratch();
   const p = await lab({ extension: join(scratch.root, "packages/extension/src/index.ts") });
   const { h, mate, clone } = p;
-  const { gh } = p.cardd;
   p.cardd.yolo("site");
   const pr = "https://github.com/acme/site/pull/12";
   h.onModel(() => ({ tool: "branch", args: { name: "fix/credit-readback" } }), "worker");
   h.onModel(() => {
     commitIn(treeOf(clone), "credit.txt");
     commitIn(treeOf(clone), "credit-details.txt");
-    gh.setPr(pr, "OPEN", { ci: "pass" });
-    gh.setHead(pr, "c-77-credit-readback");
-    return { tool: "report", args: { status: "done", text: "PR opened", pr } };
+    return {
+      tool: "report",
+      args: {
+        status: "done",
+        text: state === "MERGED" ? "PR merged" : "PR opened",
+        pr,
+        ...(state === "MERGED" ? { merged: true } : {}),
+      },
+    };
   }, "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   mateMoves(h, [CARD_NEW, dispatch(), "dispatched"]);
@@ -139,7 +141,6 @@ async function otherHeadRun(
       git(clone, "commit", "-qm", "Squashed credit");
       assert.notEqual(tip(clone, "main"), tip(treeOf(clone), "HEAD"));
     }
-    gh.setPr(pr, state);
     return { tool: "close", args: closeAs(pr) };
   }, "mate");
   h.onModel(
@@ -160,10 +161,11 @@ async function otherHeadRun(
   assert.ok(existsSync(`${clone}.archive/c-1-a1.tar.zst`));
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(branchesOf(clone).includes("c-77-credit-readback"), false);
+  assert.deepEqual(p.cardd.gh.calls(), []);
   return { closing, p };
 }
 
-test("a PR merged under another head branch counts as landed when the worker reports its URL", async () => {
+test("a PR merged under another head branch counts as landed when the worker reports its URL and the merge, and no gh call is made", async () => {
   const { closing } = await otherHeadRun("MERGED", (pr) => ({
     card: 1,
     summary: `Added the credit in ${pr}.`,
@@ -171,7 +173,7 @@ test("a PR merged under another head branch counts as landed when the worker rep
   assert.match(closing, /^c-1 is done\. Unlanded work is archived/);
 });
 
-test("an unmerged PR under another head branch is still not landed", async () => {
+test("a PR the worker has not reported merged is not landed, whatever its head branch", async () => {
   const { closing } = await otherHeadRun("OPEN", (pr) => ({
     card: 1,
     summary: `Added the credit in ${pr}.`,
@@ -180,11 +182,6 @@ test("an unmerged PR under another head branch is still not landed", async () =>
     closing,
     /^c-1 did not land: its PR https:\/\/github\.com\/acme\/site\/pull\/12 has not merged/,
   );
-});
-
-test("a closed-unmerged PR under another head branch is still refused and archived when dropped", async () => {
-  const { closing } = await otherHeadRun("CLOSED", (pr) => ({ card: 1, summary: pr }));
-  assert.match(closing, /has not merged/);
 });
 
 test("a malformed name, a name taken in the clone, and a name taken on origin are refused, and the branch stays as it was", async () => {

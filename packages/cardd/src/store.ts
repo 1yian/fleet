@@ -326,7 +326,12 @@ export function activityOf(db: DatabaseSync, card: Card, lane: boolean): Activit
 
 export type SessionState = "idle" | "running" | "waiting" | "exited" | "lost";
 
-export function setSessionState(db: DatabaseSync, session: string, state: SessionState): boolean {
+export function setSessionState(
+  db: DatabaseSync,
+  session: string,
+  state: SessionState,
+  progress = false,
+): boolean {
   const now = Date.now();
   const before = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
   db.prepare("UPDATE sessions SET state = ?, last_seen = ? WHERE id = ? AND state <> 'closed'").run(
@@ -338,6 +343,9 @@ export function setSessionState(db: DatabaseSync, session: string, state: Sessio
     `UPDATE attempts SET state = 'active', updated_at = ?
      WHERE state = 'starting' AND id = (SELECT attempt FROM sessions WHERE id = ?)`,
   ).run(now, session);
+  if (state === "running" && before !== "running")
+    db.prepare("UPDATE sessions SET turn_since = ? WHERE id = ?").run(now, session);
+  if (progress) db.prepare("UPDATE sessions SET progress_at = ? WHERE id = ?").run(now, session);
   if (state === "running" || state === "idle") {
     db.prepare(
       `UPDATE cards SET last_activity = ?

@@ -4,12 +4,12 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardSchema, check } from "@fleet/protocol";
+import { CardSchema, check, OPS } from "@fleet/protocol";
 import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord } from "../support/json.ts";
-import { configureMain, Scratch, startMain } from "../support/scratch.ts";
+import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -65,6 +65,72 @@ async function wake(name: string): Promise<void> {
   await ghost.call("hold", { card: card.id, question: "ok?", options: ["Yes"] });
   await ghost.close();
 }
+
+test("a worker with an owed handoff shows blocked until it reports completion", async () => {
+  cardd.addProject("web", { maverick: here.root });
+  const mate = await cardd.connect(ghostToken);
+  const card = check(
+    CardSchema,
+    await mate.call("card.new", { title: "handoff", kind: "scout", project: "web" }),
+  );
+  const { token } = check(
+    OPS["attempt.begin"].result,
+    await mate.call("attempt.begin", { card: card.id, host: "maverick", task: "investigate" }),
+  );
+  h.onModel(
+    () => ({ tool: "report", args: { status: "blocked", text: "missing access" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "waiting" }), "mate");
+  let reply = "";
+  h.onModel((turns) => {
+    reply = /reply owed, (r-\d+)/.exec(turns.at(-1)?.text ?? "")?.[1] ?? "";
+    return {
+      tool: "report",
+      args: {
+        status: "paused",
+        text: "waiting without answering",
+        until: new Date(Date.now() + 3_600_000).toISOString(),
+      },
+    };
+  }, "mate");
+  h.onModel(() => ({ text: "waiting for the next message" }), "mate");
+  h.onModel(
+    () => ({ tool: "report", args: { status: "done", text: "report written", replyTo: reply } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "finished" }), "mate");
+  const pane = await startMain(lab, here, h, false, [
+    ...mateArgs(h),
+    "--fleet-url",
+    cardd.url,
+    "--fleet-token",
+    token,
+    "--fleet-role",
+    "worker",
+  ]);
+  await until(pane, "an owed handoff to block the worker", (s) => s.status === "blocked");
+  const blocked = await mate.waitForEntry((entry) => entry.kind === "report", "the blocked report");
+  assert.equal(blocked.body, "missing access");
+  await mate.call("comment", { card: card.id, text: "Which port?", reply: true });
+  await mate.waitForEntry(
+    (entry) => entry.fields["status"] === "paused",
+    "the report that left the reply owed",
+  );
+  await h.waitForNth(
+    (event) => event["type"] === "settled" && event["aborted"] === false,
+    2,
+    "the unanswered turn to settle",
+  );
+  assert.equal((await agentOf(pane)).status, "blocked");
+  assert.match(reply, /^r-\d+$/);
+  await mate.call("comment", { card: card.id, text: "access restored, answer now" });
+  await mate.waitForEntry((entry) => entry.fields["status"] === "done", "the completed report");
+  assert.equal(
+    (await until(pane, "the obligation to clear", (s) => s.status === "idle")).status,
+    "idle",
+  );
+});
 
 test("a mate whose turn failed reads blocked in herdr with the cause, and the next good turn clears it", async () => {
   h.onModel(() => ({ fail: "You exceeded your current quota, please check your plan" }), "mate");

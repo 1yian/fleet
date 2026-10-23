@@ -68,9 +68,10 @@ function scriptMate(...dispatches: { host: string }[]): void {
     );
   }
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  parts.cardd.gh.setPr(PR, "OPEN", { ci: "pass" });
-  parts.cardd.gh.setHead(PR, "c-1-a1");
-  h.onModel(() => ({ tool: "report", args: { status: "done", text: "PR green" } }), "worker");
+  h.onModel(
+    () => ({ tool: "report", args: { status: "done", text: "PR green", pr: PR } }),
+    "worker",
+  );
 }
 
 test("dispatch starts a worker in its own worktree, and the worker's report reaches the mate", async () => {

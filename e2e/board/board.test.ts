@@ -149,9 +149,7 @@ test("the thread is the conversation between the owner and its mate, with each a
   await thread.getByText("waiting for your answer above").waitFor();
   await page.getByRole("button", { name: "yes" }).click();
   const pr = "https://github.com/acme/web/pull/3";
-  cardd.gh.setPr(pr, "OPEN", { ci: "pass" });
-  cardd.gh.setHead(pr, `c-${String(card.id)}-a1`);
-  await worker.call("report", { status: "done", text: "a final note" });
+  await worker.call("report", { status: "done", text: "a final note", pr });
   await thread.getByText("a final note").waitFor();
 
   const items = await thread.getByRole("listitem").allInnerTexts();

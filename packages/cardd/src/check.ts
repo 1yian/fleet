@@ -1,13 +1,12 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs, quietSql } from "./attempts.ts";
-import { chaseIntake, dueBatches } from "./deliveries.ts";
-import type { PullRequest } from "./github.ts";
-import { withdrawMerge } from "./holds.ts";
+import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
 import { expireMaintenance } from "./maintenance.ts";
 import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
-import { lookUpPr } from "./pulls.ts";
+import { describe, labelOf } from "./incident-text.ts";
+import { incidentFrom } from "./incident-store.ts";
 import { replyNudges } from "./replies.ts";
 import { factsFrom, finishFrom, type Stage } from "./status.ts";
 import {
@@ -15,8 +14,8 @@ import {
   cardEntries,
   getCard,
   loadCards,
+  mainLane,
   parentOf,
-  transaction,
   workerOf,
 } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
@@ -27,18 +26,23 @@ interface Match {
   readonly lane: string;
   readonly condition: string;
   readonly text: string;
+  readonly tier: number;
   readonly to?: string;
-  readonly withdrawsMerge?: "closed" | "merged";
-  readonly ready?: boolean;
-  readonly quiet?: boolean;
+  readonly instance?: string;
+  readonly worker?: boolean;
 }
+
+const keyOf = (match: Match): string =>
+  `${match.condition}${match.instance === undefined ? "" : `:${match.instance}`}#${String(match.tier)}`;
 
 const WORKING: ReadonlySet<Stage> = new Set(["working", "in-review"]);
 
 const workerCards = (
   ids: readonly number[],
 ): string => `SELECT c.id AS card, c.lane AS lane, a.id AS attemptId, a.state AS attempt, a.created_at AS started,
-    s.state AS state, s.last_seen AS seen, coalesce(c.last_activity, s.last_seen, 0) AS active, s.id AS session
+    s.state AS state, s.last_seen AS seen, coalesce(c.last_activity, s.last_seen, 0) AS active, s.id AS session,
+    max(coalesce(s.turn_since, 0), coalesce(s.progress_at, 0),
+      coalesce((SELECT max(created_at) FROM entries WHERE card = c.id AND author LIKE 'worker:%'), 0)) AS productive
   FROM cards c JOIN attempts a ON a.card = c.id AND a.state IN ('starting', 'active')
   JOIN sessions s ON s.attempt = a.id
   WHERE c.id IN (${ids.map(Number).join(", ")})`;
@@ -48,38 +52,58 @@ const LATEST_REPORT = `(SELECT fields FROM entries WHERE card = w.card AND kind 
 const WORKER_RULES: readonly {
   condition: string;
   text: string;
-  where: string;
-  limit: keyof Timings;
+  where: (t: Timings) => string;
+  since: string;
+  first: (t: Timings) => number;
 }[] = [
   {
     condition: "worker-never-connected",
     text: "worker never connected",
-    where: "w.attempt = 'starting' AND ?1 - w.started > ?2",
-    limit: "neverConnected",
+    where: () => "w.attempt = 'starting'",
+    since: "w.started",
+    first: (t) => t.neverConnected,
   },
   {
     condition: "worker-not-connected",
     text: "worker not connected",
-    where: "w.attempt = 'active' AND w.state IN ('exited', 'lost') AND ?1 - w.seen > ?2",
-    limit: "notConnected",
+    where: () => "w.attempt = 'active' AND w.state IN ('exited', 'lost')",
+    since: "w.seen",
+    first: (t) => t.notConnected,
   },
   {
     condition: "worker-stalled",
     text: "worker stalled",
-    where: "w.state = 'running' AND ?1 - w.active > ?2",
-    limit: "stall",
+    where: () => "w.state = 'running'",
+    since: "w.active",
+    first: (t) => t.stall,
   },
   {
-    condition: "worker-idle",
-    text: "worker idle without a handoff",
-    where: `${quietSql("w.state", "w.attemptId")} AND ?1 - w.seen > ?2
-      AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
-      AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN ('pending', 'pushed'))
-      AND NOT (json_extract(${LATEST_REPORT}, '$.status') = 'paused'
-        AND coalesce(json_extract(${LATEST_REPORT}, '$.until'), 0) > ?1)`,
-    limit: "idle",
+    condition: "worker-spinning",
+    text: "worker spinning: one long turn with no report, commit, or file change",
+    where: (t) => `w.state = 'running' AND ?1 - w.active <= ${String(t.stall)}`,
+    since: "w.productive",
+    first: (t) => t.spin,
   },
 ];
+
+const IDLE_WORKERS = (
+  ids: readonly number[],
+): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen,
+    coalesce((SELECT max(created_at) FROM entries WHERE card = w.card AND author LIKE 'worker:%'), 0) AS spoke,
+    (SELECT max(created_at) FROM entries WHERE card = w.card AND author = 'check'
+      AND json_extract(fields, '$.condition') = 'worker-idle-nudge') AS nudged
+  FROM (${workerCards(ids)}) w
+  WHERE ${quietSql("w.state", "w.attemptId")}
+    AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
+    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN ('pending', 'pushed'))
+    AND NOT (coalesce(json_extract(${LATEST_REPORT}, '$.status'), '') = 'paused'
+      AND coalesce(json_extract(${LATEST_REPORT}, '$.until'), 0) > ?1)`;
+
+const NUDGE_TEXT =
+  "you went idle without reporting. If the work is done or you are stuck, call report now with the right status. If you are still working, carry on and report when you reach a handoff.";
+
+const repeatTier = (waited: number, first: number, every: number): number =>
+  waited < first ? 0 : 1 + Math.floor((waited - first) / every);
 
 function rows(
   db: DatabaseSync,
@@ -94,19 +118,42 @@ function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     .filter(({ standing }) => WORKING.has(standing.stage))
     .map(({ card }) => card.id);
   if (ids.length === 0) return [];
-  return WORKER_RULES.flatMap(({ condition, text, where, limit }) =>
+  const running = WORKER_RULES.flatMap(({ condition, text, where, since, first }) =>
     rows(
       db,
-      `SELECT w.card AS card, w.lane AS lane FROM (${workerCards(ids)}) w WHERE ${where}`,
+      `SELECT w.card AS card, w.lane AS lane, ${since} AS since FROM (${workerCards(ids)}) w WHERE ${where(t)} AND ?1 >= ${since}`,
       now,
-      Number(t[limit]),
-    ).map((row) => ({
-      card: Number(row["card"]),
-      lane: String(row["lane"]),
-      condition,
-      text,
-    })),
+    ).flatMap((row) => {
+      const tier = repeatTier(now - Number(row["since"]), first(t), t.repeat);
+      return tier === 0
+        ? []
+        : [{ card: Number(row["card"]), lane: String(row["lane"]), condition, text, tier }];
+    }),
   );
+  const idle = rows(db, IDLE_WORKERS(ids), now).flatMap((row): Match[] => {
+    const card = Number(row["card"]);
+    const lane = String(row["lane"]);
+    const nudged = typeof row["nudged"] === "number" ? row["nudged"] : 0;
+    if (nudged <= Number(row["spoke"]) || nudged < Number(row["seen"])) {
+      if (now - Number(row["seen"]) < t.idleNudge) return [];
+      const text = `reminder: ${NUDGE_TEXT}`;
+      return [
+        {
+          card,
+          lane,
+          condition: "worker-idle-nudge",
+          text,
+          tier: 1,
+          instance: String(row["seen"]),
+          worker: true,
+        },
+      ];
+    }
+    const tier = repeatTier(now - nudged, t.idleTell, t.repeat);
+    const text = "worker idle without a handoff, and it did not act on a nudge";
+    return tier === 0 ? [] : [{ card, lane, condition: "worker-idle", text, tier }];
+  });
+  return [...running, ...idle];
 }
 
 const PROCESS_PHASES: Readonly<Record<string, "startup" | "lost">> = {
@@ -128,13 +175,6 @@ function withIncidents(
   });
 }
 
-function reminderTier(waited: number, at: readonly number[]): number {
-  const passed = at.filter((time) => waited >= time).length;
-  const last = at.at(-1) ?? 0;
-  const gap = last - (at.at(-2) ?? 0);
-  return passed < at.length || gap <= 0 ? passed : passed + Math.floor((waited - last) / gap);
-}
-
 function actingLane(db: DatabaseSync, card: number, lane: string): string {
   const { hold } = factsFrom(cardEntries(db, card));
   return hold?.holder === "main" ? (parentOf(db, lane) ?? lane) : lane;
@@ -147,18 +187,21 @@ function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: un
   if (kind !== "ship")
     return "Relay the findings, then close it with close(card, summary), or close(card, summary=<why>, landed=false) if it did not land.";
   if (hasPr)
-    return "Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge its PR, then close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
-  return "No PR was found for its branch: comment the worker to open one from its task branch. If it made no code change, close it with close(card, summary). Otherwise close(card, summary=<why>, landed=false).";
+    return "Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge its PR and report it merged, then close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
+  return "The worker has not reported a PR: comment it to report its PR URL. If it made no code change, close it with close(card, summary). Otherwise close(card, summary=<why>, landed=false).";
 }
 
 const minutesSince = (now: number, since: number): number => Math.round((now - since) / MINUTE);
-const stateOf = (db: DatabaseSync, lane: string | null): unknown =>
+const UP: ReadonlySet<unknown> = new Set(["starting", "idle", "running", "waiting"]);
+
+const mateState = (db: DatabaseSync, lane: string | null): unknown =>
   lane === null
     ? undefined
     : db.prepare("SELECT state FROM sessions WHERE id = ? AND role = 'mate'").get(lane)?.["state"];
 
+const isUp = (db: DatabaseSync, lane: string): boolean => UP.has(mateState(db, lane));
+
 function finishedMatches(
-  db: DatabaseSync,
   card: {
     id: number;
     lane: string;
@@ -173,37 +216,12 @@ function finishedMatches(
   t: Timings,
 ): Match[] {
   const since = Math.max(card.since, finish.at);
-  const name = `c-${String(card.id)}`;
+  const tier = repeatTier(now - since, t.repeat, t.repeat);
+  if (tier === 0) return [];
   const close = closeAdvice(card.kind, finish.merged, card.pr !== null, card.delivery);
   const waited = `${card.status}, ${String(minutesSince(now, since))} min`;
-  const tier = reminderTier(now - since, t.finished);
-  const reminders: Match[] =
-    tier === 0
-      ? []
-      : [
-          {
-            card: card.id,
-            lane: card.lane,
-            condition: `finished-${String(tier)}`,
-            text: `reminder: ${name} is finished and still open (${waited}). ${close}`,
-            ready: stateOf(db, card.lane) === "idle",
-          },
-        ];
-  const parent = parentOf(db, card.lane);
-  const escalation = reminderTier(now - since, t.escalations);
-  if (parent === null || escalation === 0) return reminders;
-  const text = `escalation: ${name} finished ${String(minutesSince(now, since))} min ago and ${card.lane} has not closed it (${card.status}). ${close} Or ask ${card.lane} why.`;
-  return [
-    ...reminders,
-    {
-      card: card.id,
-      lane: card.lane,
-      to: parent,
-      condition: `escalated-${String(escalation)}`,
-      text,
-      ready: stateOf(db, parent) === "idle",
-    },
-  ];
+  const text = `reminder: c-${String(card.id)} is finished and still open (${waited}). ${close}`;
+  return [{ card: card.id, lane: card.lane, condition: "finished", text, tier }];
 }
 
 function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
@@ -213,20 +231,44 @@ function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     const { hold } = standing.facts;
     const finish = finishFrom(entries);
     if (hold === undefined && (finish.merged || finish.workerDone)) {
-      return finishedMatches(db, { ...own, since: standing.since }, finish, now, t);
+      return finishedMatches({ ...own, since: standing.since }, finish, now, t);
     }
     const lane = actingLane(db, card, own.lane);
-    const acted = db
-      .prepare("SELECT max(created_at) AS at FROM entries WHERE card = ? AND author = ?")
-      .get(card, `mate:${lane}`)?.["at"];
-    const since = Math.max(standing.since, typeof acted === "number" ? acted : 0);
-    const tier = reminderTier(now - since, t.reminders);
+    const tier = repeatTier(now - standing.since, t.waiting, t.waiting);
     if (tier === 0) return [];
-    const text = `reminder: this card has waited for you (${own.status}, ${String(minutesSince(now, since))} min)`;
-    const ready = stateOf(db, lane) === "idle";
-    return [{ card, lane, condition: `reminder-${String(tier)}`, text, ready }];
+    const text = `reminder: this card has waited for you (${own.status}, ${String(minutesSince(now, standing.since))} min)`;
+    return [{ card, lane, condition: "reminder", text, tier }];
   });
 }
+
+function decisionMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+  return loadCards(db)
+    .filter(({ standing }) => standing.status === "needs-you")
+    .sort((a, b) => a.standing.since - b.standing.since)
+    .flatMap(({ card, standing }) => {
+      const tier = repeatTier(now - standing.since, t.decision, t.decision);
+      if (tier === 0) return [];
+      const main = mainLane(db);
+      const hours = String(Math.round((now - standing.since) / (60 * MINUTE)));
+      const question = firstLine(standing.facts.hold?.question ?? "");
+      const text = `reminder: c-${String(card.id)} has waited ${hours} h for the captain's decision: ${question}`;
+      return [
+        {
+          card: card.id,
+          lane: main,
+          condition: "decision-waiting",
+          text,
+          tier,
+        },
+      ];
+    });
+}
+
+const firstLine = (text: string): string =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line !== "") ?? "";
 
 const MISSED_HEARTBEATS = 3;
 
@@ -260,6 +302,57 @@ function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
   });
 }
 
+function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+  return rows(
+    db,
+    `SELECT j.id AS id, j.label AS label, j.updated_at AS since, a.card AS card, c.lane AS lane
+     FROM jobs j JOIN attempts a ON a.id = j.attempt JOIN cards c ON c.id = a.card
+     WHERE j.state = 'lost' AND a.state IN ('starting', 'active')
+       AND NOT EXISTS (SELECT 1 FROM jobs later
+         WHERE later.attempt = j.attempt AND later.label = j.label AND later.id > j.id)
+     ORDER BY j.id`,
+  ).flatMap((row) => {
+    const tier = repeatTier(now - Number(row["since"]), t.repeat, t.repeat);
+    if (tier === 0) return [];
+    const id = String(row["id"]);
+    const text = `reminder: job ${id} (${String(row["label"])}) is still lost. It is not run again: ask the worker to run it again, or to drop it.`;
+    return [
+      {
+        card: Number(row["card"]),
+        lane: String(row["lane"]),
+        condition: "job-lost-open",
+        instance: id,
+        text,
+        tier,
+      },
+    ];
+  });
+}
+
+function incidentMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+  return rows(
+    db,
+    "SELECT * FROM incidents WHERE state IN ('open', 'blocked', 'recovering') AND parent IS NOT NULL AND phase IN ('turn', 'compaction')",
+  )
+    .map(incidentFrom)
+    .flatMap((inc) => {
+      const tier = repeatTier(now - inc.firstAt, t.repeat, t.repeat);
+      if (inc.parent === null || tier === 0) return [];
+      const role = db.prepare("SELECT role FROM sessions WHERE id = ?").get(inc.actor)?.["role"];
+      const text = `reminder: ${describe(inc, labelOf(inc, role === "mate" ? "mate" : "worker"))}`;
+      return [
+        {
+          card: inc.card,
+          lane: inc.parent,
+          condition: "runtime-failure-open",
+          instance: String(inc.id),
+          text,
+          tier,
+        },
+      ];
+    });
+}
+
 function holdMatches(db: DatabaseSync, now: number): Match[] {
   return loadCards(db).flatMap(({ card, standing }) => {
     const { hold } = standing.facts;
@@ -272,111 +365,29 @@ function holdMatches(db: DatabaseSync, now: number): Match[] {
         lane: actingLane(db, card.id, card.lane),
         condition: `hold-ended:${String(until)}`,
         text: `hold ended; it waits on ${hold.holder === "owner" ? "its mate" : hold.holder} again`,
+        tier: 1,
       },
     ];
   });
 }
 
-const PR_LOOKUPS_AT_ONCE = 4;
-
-async function inBatches<T, R>(
-  items: readonly T[],
-  size: number,
-  each: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = [];
-  for (let at = 0; at < items.length; at += size)
-    results.push(...(await Promise.all(items.slice(at, at + size).map(each))));
-  return results;
-}
-
-export async function readPullRequests(
-  db: DatabaseSync,
-): Promise<Map<number, PullRequest | undefined>> {
-  const cards = rows(
-    db,
-    `SELECT c.id AS id FROM cards c JOIN projects p ON p.name = c.project
-       WHERE c.kind = 'ship' AND c.delivery IS NOT 'local-only'
-         AND (p.repo IS NOT NULL OR c.pr IS NOT NULL)
-         AND EXISTS (SELECT 1 FROM attempts a WHERE a.card = c.id)`,
-  );
-  const open = cards.filter((row) => {
-    const { status } = getCard(db, Number(row["id"]));
-    return status !== "done" && status !== "dropped";
-  });
-  const read = await inBatches(open, PR_LOOKUPS_AT_ONCE, async (row) => {
-    const card = Number(row["id"]);
-    const found = await lookUpPr(db, card);
-    if (found.kind === "unknown") console.error(`timed check: c-${String(card)}: ${found.reason}`);
-    return [card, found] as const;
-  });
-  return new Map(
-    read.flatMap(([card, found]): [number, PullRequest | undefined][] =>
-      found.kind === "none" ? [] : [[card, found.kind === "found" ? found.pr : undefined]],
-    ),
-  );
-}
-
-const PR_CONDITIONS: ReadonlySet<string> = new Set(["pr-merged", "pr-closed", "checks-failed"]);
-
-function prMatches(db: DatabaseSync, prs: ReadonlyMap<number, PullRequest | undefined>): Match[] {
-  return [...prs].flatMap(([card, pr]): Match[] => {
-    if (pr === undefined) return [];
-    const { lane, status } = getCard(db, card);
-    if (pr.state === "MERGED") {
-      return [
-        {
-          card,
-          lane,
-          condition: "pr-merged",
-          text: "PR merged; close it with close(card, summary)",
-          withdrawsMerge: "merged" as const,
-        },
-      ];
-    }
-    if (pr.state === "CLOSED")
-      return [
-        {
-          card,
-          lane,
-          condition: "pr-closed",
-          text: "PR closed without a merge",
-          withdrawsMerge: "closed" as const,
-        },
-      ];
-    if (status !== "merging" || pr.failed.length === 0) return [];
-    return [
-      {
-        card,
-        lane,
-        condition: "checks-failed",
-        text: `checks failed: ${pr.failed.join(", ")}`,
-      },
-    ];
-  });
-}
-
-function clearStopped(
-  db: DatabaseSync,
-  now: number,
-  matches: readonly Match[],
-  prs: ReadonlyMap<number, PullRequest | undefined>,
-): void {
-  const live = new Set(matches.map((match) => `${String(match.card)}/${match.condition}`));
-  const unread = new Set([...prs].flatMap(([card, pr]) => (pr === undefined ? [card] : [])));
+function clearStopped(db: DatabaseSync, now: number, matches: readonly Match[]): void {
+  const live = new Set(matches.map((match) => `${String(match.card)}/${keyOf(match)}`));
   for (const open of rows(
     db,
     "SELECT id, card, condition FROM findings WHERE cleared_at IS NULL",
   )) {
-    const card = Number(open["card"]);
-    const condition = String(open["condition"]);
-    const stays =
-      live.has(`${String(card)}/${condition}`) ||
-      (unread.has(card) && PR_CONDITIONS.has(condition));
-    if (!stays) {
-      db.prepare("UPDATE findings SET cleared_at = ? WHERE id = ?").run(now, Number(open["id"]));
-    }
+    if (live.has(`${String(open["card"])}/${String(open["condition"])}`)) continue;
+    db.prepare(
+      `DELETE FROM deliveries WHERE entry IN (
+      SELECT id FROM entries WHERE card = ? AND author = 'check' AND json_extract(fields, '$.finding') = ?)`,
+    ).run(Number(open["card"]), String(open["condition"]));
+    db.prepare("UPDATE findings SET cleared_at = ? WHERE id = ?").run(now, Number(open["id"]));
   }
+}
+
+function recipientOf(db: DatabaseSync, match: Match): string | undefined {
+  return match.worker === true ? workerOf(db, match.card) : (match.to ?? match.lane);
 }
 
 function writeFindings(
@@ -386,43 +397,50 @@ function writeFindings(
   notify: Set<string>,
 ): void {
   for (const match of matches) {
+    const key = keyOf(match);
     const open = db
       .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
-      .get(match.card, match.condition);
-    if (open !== undefined || match.ready === false) continue;
-    if (match.withdrawsMerge !== undefined) {
-      for (const lane of withdrawMerge(db, getCard(db, match.card), match.withdrawsMerge))
-        notify.add(lane);
-    }
-    const fields = { condition: match.condition };
-    const to = match.quiet === true ? [] : [match.to ?? match.lane];
-    addEntry(
+      .get(match.card, key);
+    const to = recipientOf(db, match);
+    if (open !== undefined || to === undefined) continue;
+    if (match.worker !== true && !isUp(db, to)) continue;
+    const fields = { condition: match.condition, tier: match.tier, finding: key };
+    remind(
       db,
       { card: match.card, author: "check", kind: "finding", body: match.text, fields },
-      to,
+      [to],
+      `${match.condition}:${match.instance ?? ""}`,
     );
     db.prepare("INSERT INTO findings (card, condition, opened_at) VALUES (?, ?, ?)").run(
       match.card,
-      match.condition,
+      key,
       now,
     );
-    for (const each of to) notify.add(each);
+    notify.add(to);
   }
 }
 
-export function runCheck(
-  db: DatabaseSync,
-  now: number,
-  t: Timings,
-  prs: ReadonlyMap<number, PullRequest | undefined> = new Map(),
-): string[] {
+export function runCheck(db: DatabaseSync, now: number, t: Timings): string[] {
+  const stopped = new Set(
+    loadCards(db)
+      .filter(
+        ({ standing }) =>
+          standing.status === "done" ||
+          standing.status === "dropped" ||
+          standing.status === "waiting" ||
+          standing.status === "paused",
+      )
+      .map(({ card }) => card.id),
+  );
   const matches = [
     ...withIncidents(db, workerMatches(db, now, t), now, t),
     ...reminderMatches(db, now, t),
+    ...decisionMatches(db, now, t),
+    ...lostJobMatches(db, now, t),
+    ...incidentMatches(db, now, t),
     ...holdMatches(db, now),
-    ...prMatches(db, prs),
-  ];
-  clearStopped(db, now, matches, prs);
+  ].filter((match) => !stopped.has(match.card));
+  clearStopped(db, now, matches);
   const notify = new Set<string>([
     ...lostJobs(db, now, t),
     ...chaseIntake(db, now, t),
@@ -435,22 +453,4 @@ export function runCheck(
   ]);
   writeFindings(db, now, matches, notify);
   return [...notify];
-}
-
-export async function recordMerge(db: DatabaseSync, card: number): Promise<string[]> {
-  const { kind, delivery } = getCard(db, card);
-  if (kind !== "ship" || delivery === "local-only" || finishFrom(cardEntries(db, card)).merged)
-    return [];
-  const found = await lookUpPr(db, card);
-  if (found.kind !== "found" || found.pr.state !== "MERGED") return [];
-  const pr = found.pr;
-  return transaction(db, () => {
-    const notify = new Set<string>();
-    const matches = prMatches(db, new Map([[card, pr]])).map((match) => ({
-      ...match,
-      quiet: true,
-    }));
-    writeFindings(db, Date.now(), matches, notify);
-    return [...notify];
-  });
 }

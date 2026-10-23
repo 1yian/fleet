@@ -71,7 +71,7 @@ CREATE TABLE deliveries (
   entry INTEGER NOT NULL REFERENCES entries (id),
   state TEXT NOT NULL CHECK (state IN ('pending', 'pushed', 'acknowledged', 'confirmed')),
   updated_at INTEGER NOT NULL, intake TEXT NOT NULL DEFAULT 'waiting'
-  CHECK (intake IN ('waiting', 'resent', 'escalated', 'taken')),
+  CHECK (intake IN ('waiting', 'resent', 'escalated', 'taken')), resends INTEGER NOT NULL DEFAULT 0, told_at INTEGER,
   PRIMARY KEY (session, entry)
 ) STRICT, WITHOUT ROWID;
 
@@ -188,7 +188,7 @@ CREATE TABLE sessions (
     state IN ('starting', 'idle', 'running', 'waiting', 'exited', 'lost', 'closed')
   ),
   low_water INTEGER NOT NULL DEFAULT 0,
-  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)), maintenance INTEGER NOT NULL DEFAULT 0 CHECK (maintenance IN (0, 1)), batch_since INTEGER,
+  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)), maintenance INTEGER NOT NULL DEFAULT 0 CHECK (maintenance IN (0, 1)), batch_since INTEGER, turn_since INTEGER, progress_at INTEGER,
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
 ) STRICT;
 
