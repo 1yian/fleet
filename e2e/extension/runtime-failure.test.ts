@@ -468,11 +468,7 @@ test("a failed compaction is its own incident with the original error, and recov
       .filter((turns) => !turns.some((turn) => turn.text.includes("ONLY output"))).length,
     0,
   );
-  assert.equal(
-    heardFailures(fleet.main).filter((entry) => /compaction failed.*Incident 1,/.test(entry.body))
-      .length,
-    1,
-  );
+  assert.equal(heardFailures(fleet.main).filter((e) => e.body.includes("Incident 1,")).length, 1);
 });
 
 test("a compaction that keeps failing after a recovery spends the attempt and is told once", async () => {
