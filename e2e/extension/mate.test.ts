@@ -5,6 +5,7 @@ import { CardSchema, check, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, startFleet, type Fleet } from "../support/fleet.ts";
 import type { FakeGitHub } from "../support/github.ts";
+import { tempDir } from "../support/run-root.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
@@ -74,7 +75,7 @@ test("hold sets a hold, and clear=true clears it only with words the captain sai
 });
 
 test("yolo on puts a done PR in Merging with no question; yolo off holds it for the merge question, and close refuses both until the PR merges", async () => {
-  fleet.cardd.addProject("api", { maverick: "/clones/api" }, "acme/api");
+  fleet.cardd.addProject("api", { maverick: tempDir("mate-api-") }, "acme/api");
   fleet.cardd.yolo("api");
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const yolo = await cardIn(cleo, "Speed up the API", "api");
@@ -104,7 +105,7 @@ test("yolo on puts a done PR in Merging with no question; yolo off holds it for 
   );
   assert.equal(
     unmerged,
-    `c-${String(yolo.id)} did not land: its PR ${apiPr} has not merged. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it and report it merged, then close it. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
+    `c-${String(yolo.id)} did not land: its PR ${apiPr} has not merged on GitHub. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it and report it merged, then close it. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
   );
   assert.deepEqual([gh.state(apiPr), gh.state(webPr)], ["OPEN", "OPEN"]);
 });

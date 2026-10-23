@@ -4,6 +4,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { BoardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { tempDir } from "../support/run-root.ts";
 import type { FakeGitHub } from "../support/github.ts";
 
 const PR = "https://github.com/acme/web/pull/7";
@@ -13,6 +14,7 @@ let fleet: Fleet;
 let gh: FakeGitHub;
 beforeEach(async () => {
   fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  fleet.cardd.moveClone("web", "maverick", tempDir("merge-web-"));
   gh = fleet.cardd.gh;
 });
 afterEach(async () => {
@@ -235,13 +237,48 @@ test("a worker's merged report makes the open merge question moot, and the card 
   });
 });
 
+test("close re-verifies a reported PR that GitHub now shows merged, and closes it as Done", async () => {
+  fleet.cardd.yolo("web");
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  gh.setPr(PR, "MERGED");
+  const plan = check(
+    OPS["close.begin"].result,
+    await fleet.main.call("close.begin", { card: card.id, landed: true }),
+  );
+  assert.deepEqual([plan.mode, plan.verify], ["done", false]);
+  const closed = await fleet.main.call("close.finish", {
+    card: card.id,
+    mode: "done",
+    text: "closed",
+    archives: [],
+    left: [],
+  });
+  assert.equal(check(OPS["close.finish"].result, closed).status, "done");
+  await assert.rejects(fleet.main.call("close.begin", { card: card.id, landed: false }), {
+    message: `c-${String(card.id)} is already done`,
+  });
+});
+
+test("close names the access problem when GitHub cannot be asked about the PR", async () => {
+  fleet.cardd.yolo("web");
+  const card = await newCard(fleet.main, "Users see one scrollbar");
+  await done(card);
+  await assert.rejects(fleet.main.call("close.begin", { card: card.id }), {
+    message: new RegExp(
+      `could not be checked on GitHub .*Fix the access to the project's GitHub account, then close it again`,
+    ),
+  });
+});
+
 test("a done ship card whose PR has not merged does not close as Done", async () => {
   fleet.cardd.yolo("web");
   const card = await newCard(fleet.main, "Users see one scrollbar");
   const worker = await done(card);
+  gh.setPr(PR, "OPEN");
   assert.equal(await status(fleet.main, card), "merging");
   await assert.rejects(fleet.main.call("close.begin", { card: card.id }), {
-    message: `c-${String(card.id)} did not land: its PR ${PR} has not merged. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it and report it merged, then close it. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
+    message: `c-${String(card.id)} did not land: its PR ${PR} has not merged on GitHub. Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge it and report it merged, then close it. To end it anyway, call close(card, summary=<why it is dropped>, landed=false). That marks it Dropped and archives its work.`,
   });
   await merge(worker);
   const plan = check(
