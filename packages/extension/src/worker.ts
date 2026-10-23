@@ -1,4 +1,4 @@
-import { OPS, type Entry } from "@fleet/protocol";
+import { OPS } from "@fleet/protocol";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { parseUtc, textOf } from "./inbox.ts";
@@ -71,9 +71,6 @@ export class WorkerRun {
   private nudged = false;
   private recoveryCheck = false;
   private lastText = "";
-  private readonly replies = new Set<string>();
-  private owed: string | undefined;
-  private asks = 0;
   private readonly link: Link;
   private readonly jobs: Jobs;
   private readonly failures: Failures;
@@ -91,45 +88,8 @@ export class WorkerRun {
     this.recoveryCheck = false;
   }
 
-  receive(entry: Entry): void {
-    const { fields } = entry;
-    if (fields["for"] === "worker" && typeof fields["owes"] === "string")
-      this.replies.add(`r-${String(entry.id)}`);
-    if (fields["condition"] === "reply-resent" && typeof fields["reply"] === "string")
-      this.replies.add(fields["reply"]);
-    if (typeof fields["withdraws"] === "string") this.replies.delete(fields["withdraws"]);
-    this.owe(this.owed);
-    this.reconcile();
-  }
-
-  reconcile(): void {
-    const ask = ++this.asks;
-    this.link
-      .call("replies.owed", {})
-      .then((ids) => {
-        if (ask !== this.asks) return;
-        if (ids.length === this.replies.size && ids.every((id) => this.replies.has(id))) return;
-        this.replies.clear();
-        for (const id of ids) this.replies.add(id);
-        this.owe(this.owed);
-      })
-      .catch(() => undefined);
-    this.releaseDecision();
-  }
-
-  private releaseDecision(): void {
-    this.link
-      .call("hold.open", {})
-      .then((open) => {
-        if (open || this.owed !== "owed: needs-decision") return;
-        this.owe(undefined);
-      })
-      .catch(() => undefined);
-  }
-
   private owe(label: string | undefined): void {
-    this.owed = label;
-    this.failures.obligation(this.replies.size > 0 ? "owed: reply" : label);
+    this.failures.obligation(label);
   }
 
   checkingHealth(): void {
@@ -163,27 +123,10 @@ export class WorkerRun {
         };
         const card = await this.link.call("report", args);
         this.latest = { status: params.status, until };
-        if (params.replyTo !== undefined) this.replies.delete(params.replyTo);
-        if (
-          params.status === "blocked" ||
-          params.status === "failed" ||
-          params.status === "needs-decision"
-        )
-          this.owe(`owed: ${params.status}`);
-        else if (
-          params.status === "done" ||
-          params.status === "paused" ||
-          params.status === "resolved"
-        )
-          this.owe(undefined);
-        else this.owe(this.owed);
-        this.reconcile();
+        this.owe(params.status === "blocked" ? "blocked: reported" : undefined);
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
       },
-    });
-    pi.on("agent_start", () => {
-      this.reconcile();
     });
     pi.on("input", () => {
       this.reset();
@@ -200,7 +143,6 @@ export class WorkerRun {
       )
         return undefined;
       this.nudged = true;
-      this.owe("owed: handoff");
       const nudge = {
         type: "custom_message",
         customType: "fleet-nudge",
@@ -210,7 +152,6 @@ export class WorkerRun {
       return { continue: true, entries: [nudge] };
     });
     pi.on("agent_settled", async (event) => {
-      this.reconcile();
       if (!event.aborted && (this.failures.lastFailed || this.mayEnd())) return;
       const text = event.aborted
         ? "stopped from the pane"
@@ -221,7 +162,6 @@ export class WorkerRun {
   }
 
   private async fileStopped(text: string): Promise<void> {
-    this.owe("owed: handoff");
     await this.link
       .call("report", { status: "stopped", text })
       .then(() => this.jobs.sync())

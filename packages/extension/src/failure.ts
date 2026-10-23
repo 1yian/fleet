@@ -5,6 +5,12 @@ import type { Link } from "./link.ts";
 import { routerResumeAt } from "./router-cooldown.ts";
 
 const FALLBACK_COMPACTION = "the conversation compaction failed with no error message";
+const MODEL_FAULTS: ReadonlySet<string> = new Set([
+  "router-cooldown",
+  "vendor-quota",
+  "auth",
+  "transient",
+]);
 const FALLBACK = "the model turn failed with no error message";
 
 export class Failures {
@@ -101,7 +107,7 @@ export class Failures {
         else this.reported = true;
         const label = failureLabel(result.classification, compaction);
         if (compaction) this.compactionLabel = label;
-        if (blocks) blockage?.raise(label, since);
+        if (blocks && !MODEL_FAULTS.has(result.classification)) blockage?.raise(label, since);
       },
       () => {
         if (compaction) this.compactionUnsent = error;
