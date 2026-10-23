@@ -10,7 +10,11 @@ export function registerIntake(pi: ExtensionAPI, link: Link): void {
   pi.on("message_end", (event) => {
     const id = fleetEntryId(event.message);
     if (id !== undefined) inContext.add(id);
-    if (event.message.role === "assistant") lastStop = event.message.stopReason;
+    if (event.message.role !== "assistant") return;
+    lastStop = event.message.stopReason;
+    if (UNFINISHED.has(lastStop)) return;
+    for (const entry of inContext) link.ack(entry);
+    inContext.clear();
   });
   pi.on("agent_settled", (event) => {
     const taken = !event.aborted && !UNFINISHED.has(lastStop);

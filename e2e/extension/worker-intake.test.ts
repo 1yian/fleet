@@ -100,3 +100,21 @@ test("a job result whose turn the provider fails is not lost: its mate hears one
     0,
   );
 });
+
+test("a worker that reads its assignment and then stays in one long run is not flagged as having missed it", async () => {
+  h.onModel(() => ({ tool: "report", args: { status: "note", text: "on it" } }));
+  h.onModel(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+    return { text: "the long run is done" };
+  });
+  h.startPi("c-1-a1", env, [EXTENSION]);
+
+  await h.waitForCall(2, "default", 30_000);
+  const entries = fleet.main.entries.map((push) => push.entry);
+  assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
+  assert.equal(
+    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
+      .length,
+    0,
+  );
+});
