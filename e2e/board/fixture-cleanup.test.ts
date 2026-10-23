@@ -3,8 +3,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { boundBoardFile } from "../support/board.ts";
 import { spawnGuarded } from "../support/guarded.ts";
 import { tempDir } from "../support/run-root.ts";
+
+boundBoardFile();
 
 const KANBAN = fileURLToPath(new URL("./kanban.test.ts", import.meta.url));
 
@@ -44,7 +47,7 @@ DatabaseSync.prototype.prepare = function (sql) {
   const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(
     (resolve, reject) => {
       child.once("error", reject);
-      child.once("exit", (code, signal) => {
+      child.once("close", (code, signal) => {
         resolve([code, signal]);
       });
     },
