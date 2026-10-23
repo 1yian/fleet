@@ -379,3 +379,49 @@ test("a replacement requested again with the same key while it is still starting
   assert.equal(view.filter((entry) => entry.body.includes("recovered (replace)")).length, 1);
   assert.equal(view.filter((entry) => entry.fields["status"] === "note").length, 1);
 });
+
+test("a stale import on the nudge turn is one incident, replaced on the same card and conversation, with no stopped report", async () => {
+  parts = await startDispatchLab({ cardd: { CARDD_TIMING_SCALE: "0.02" } });
+  const { h, mate } = parts;
+  const nudge =
+    "Cannot find module '/pi/dist/bundle/chunks/openai-completions-X.js' imported from /pi/dist/bundle/chunk-Y.js";
+  let ran = 0;
+  scriptMate(1, (turns) =>
+    turns.at(-1)?.role === "user" && (lastUser(turns) ?? "").includes("Recover with")
+      ? { tool: "recover", args: { ...incidentIn(turns), mode: "replace", key: "same" } }
+      : { text: "noted" },
+  );
+  for (let call = 0; call < 8; call += 1)
+    h.onModel((turns) => {
+      if ((lastUser(turns) ?? "").includes("recovery check"))
+        return turns.at(-1)?.role === "toolResult"
+          ? { text: "recovered" }
+          : { tool: "report", args: { status: "note", text: "alive after replacement" } };
+      ran += 1;
+      return ran === 1 ? { text: "I think I am done" } : { fail: nudge };
+    }, "worker");
+  await mateConnected(h);
+  mate.prompt("ship it");
+
+  const entries = await waitFor(
+    () => entriesOf(1),
+    (view) => view.some((entry) => entry.body.includes("recovered (replace)")),
+  );
+  const failures = entries.filter((entry) => entry.fields["condition"] === "runtime-failure");
+  assert.equal(failures.filter((entry) => entry.body.startsWith("runtime failure")).length, 1);
+  assert.match(
+    failures[0]?.body ?? "",
+    /Classified stale-module\. Incident 1, process generation 1\./,
+  );
+  assert.deepEqual(
+    entries.filter((entry) => entry.fields["status"] === "stopped"),
+    [],
+  );
+  const fresh =
+    h.callsOf("worker").findLast((turns) => (lastUser(turns) ?? "").includes("recovery check")) ??
+    [];
+  assert.ok(
+    fresh.some((turn) => turn.text.includes("fix the scrollbar")),
+    "the old conversation is gone",
+  );
+});
