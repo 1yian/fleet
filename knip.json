@@ -28,7 +28,8 @@
         "src/relaunch.ts",
         "src/calm/index.ts",
         "src/transcript/index.ts",
-        "src/optchat.ts"
+        "src/optchat.ts",
+        "src/cache-ttl.ts"
       ],
       "ignore": ["vendor/**"]
     },
