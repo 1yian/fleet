@@ -208,6 +208,7 @@ test("a recovery check on the live process is verified by a real answer and an a
     "recovery to verify",
   );
   assert.match(done.body, /answered the recovery check and acted/);
+  assert.doesNotMatch(done.body, /compact/);
   const probe = (await h.waitForCall(1)).findLast((turn) => turn.role === "user")?.text ?? "";
   assert.match(
     probe,
@@ -438,6 +439,15 @@ test("a failed compaction is its own incident with the original error, and recov
   );
   assert.deepEqual(await cardsOnBoard(), cardsBefore);
   assert.equal(done.card, heard.card);
+  assert.ok(
+    h
+      .callsOf("cleo")
+      .slice(turnsBefore)
+      .some((turns) =>
+        turns.some((turn) => turn.text.includes("ONLY output the structured summary")),
+      ),
+    "no real compaction ran after the recovery",
+  );
   assert.equal(
     h
       .callsOf("cleo")

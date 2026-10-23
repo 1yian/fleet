@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { open } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -16,10 +18,12 @@ import {
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
 import type { Harness, Turn } from "../support/harness.ts";
+import { gateOf } from "../support/hold-start.ts";
 import { records } from "../support/json.ts";
 
 type Handler = Parameters<Harness["onModel"]>[0];
 
+const HOLD = fileURLToPath(new URL("../support/hold-start.ts", import.meta.url));
 const STALE = "Cannot find module '/old/pi/dist/index.js' imported from /app/pi/loader.js";
 const UNTIL = "2099-01-01T00:00:00Z";
 
@@ -303,3 +307,75 @@ async function paneOf(lab: DispatchLab["lab"], attempt: string): Promise<string>
 async function boardNames(): Promise<[number, string][]> {
   return (await parts.cardd.board()).cards.map((each) => [each.id, each.name]);
 }
+
+test("a replacement requested again with the same key while it is still starting leaves the starting process alone", async () => {
+  parts = await startDispatchLab({
+    cardd: { CARDD_TIMING_SCALE: "0.02" },
+    workerArgs: ["-e", HOLD],
+  });
+  const { h, lab, clone, mate, cardd } = parts;
+  const tree = `${clone}.worktrees/c-1-a1`;
+  const gate = gateOf(join(h.dir, "worker-args"));
+  let failed = false;
+  let incident = { incident: 0, generation: 0 };
+  let starting: number | undefined;
+  let phase: "first" | "again" | "done" = "first";
+  const replace = (): { tool: string; args: Record<string, string | number> } => ({
+    tool: "recover",
+    args: { ...incident, mode: "replace", key: "same" },
+  });
+  scriptMate(1, async (turns) => {
+    if (phase === "first") {
+      if (turns.at(-1)?.role !== "user" || !lastUser(turns)?.includes("runtime failure"))
+        return { text: "noted" };
+      incident = incidentIn(turns);
+      execFileSync("sh", ["-c", 'mkfifo "$0"', gate]);
+      phase = "again";
+      return replace();
+    }
+    if (phase === "again") {
+      phase = "done";
+      starting = await workerGroupOf(lab, "c-1-a1");
+      return replace();
+    }
+    return { text: "noted" };
+  });
+  for (let call = 0; call < 12; call += 1)
+    h.onModel((turns) => {
+      if ((lastUser(turns) ?? "").includes("recovery check"))
+        return turns.at(-1)?.role === "toolResult"
+          ? { text: "recovered" }
+          : { tool: "report", args: { status: "note", text: "alive after replacement" } };
+      if (failed) return { text: "took the task" };
+      failed = true;
+      writeFileSync(join(tree, "dirty.txt"), "uncommitted work\n");
+      return { fail: STALE };
+    }, "worker");
+  await mateConnected(h);
+  mate.prompt("ship it");
+
+  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+  assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on local/);
+  assert.match(
+    results.at(-1) ?? "",
+    /already runs on local, so this repeated request left it alone/,
+  );
+  const sessions = (await cardd.post(parts.mainToken, "card", { card: 1 })).status;
+  assert.equal(sessions, 200);
+  assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
+  const release = await open(gate, "w");
+  await release.close();
+  await waitFor(
+    () => entriesOf(1),
+    (view) => view.some((entry) => entry.body.includes("recovered (replace)")),
+    WORKER_WAIT_MS,
+  );
+
+  assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
+  assert.deepEqual(await workersOf(lab), ["c-1-a1"]);
+  assert.deepEqual(await boardNames(), [[1, "task-1"]]);
+  assert.equal(readFileSync(join(tree, "dirty.txt"), "utf8"), "uncommitted work\n");
+  const view = await entriesOf(1);
+  assert.equal(view.filter((entry) => entry.body.includes("recovered (replace)")).length, 1);
+  assert.equal(view.filter((entry) => entry.fields["status"] === "note").length, 1);
+});
