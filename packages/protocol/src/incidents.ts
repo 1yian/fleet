@@ -9,7 +9,18 @@ export const INCIDENT_OPS = {
       error: Type.String({ minLength: 1, maxLength: 20_000 }),
       phase: Type.Optional(Type.Enum(["turn", "compaction"])),
     }),
-    result: Type.Object({ incident: Type.Integer(), opened: Type.Boolean() }),
+    result: Type.Object({
+      incident: Type.Integer(),
+      opened: Type.Boolean(),
+      classification: Type.Enum([
+        "stale-module",
+        "router-cooldown",
+        "vendor-quota",
+        "auth",
+        "transient",
+        "unknown",
+      ]),
+    }),
   },
   "incident.clear": {
     roles: ["mate", "worker"],

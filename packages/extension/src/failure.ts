@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Blockage, failureLabel } from "./blockage.ts";
 import type { Link } from "./link.ts";
 
 const FALLBACK_COMPACTION = "the conversation compaction failed with no error message";
@@ -10,7 +11,10 @@ export class Failures {
   private reported = false;
   private compactionReported = false;
   private compactionUnsent: string | undefined;
+  private compactionPending: string | undefined;
+  private compactionLabel = failureLabel(undefined, true);
   private readonly link: Link;
+  private blockage: Blockage | undefined;
 
   constructor(link: Link) {
     this.link = link;
@@ -29,27 +33,42 @@ export class Failures {
     const compaction = this.compactionUnsent;
     this.unsent = undefined;
     this.compactionUnsent = undefined;
-    if (error !== undefined) this.send(error);
-    if (compaction !== undefined) this.sendCompaction(compaction);
+    if (error !== undefined) this.report(error, false, false);
+    if (compaction !== undefined) this.report(compaction, true, false);
   }
 
   register(pi: ExtensionAPI): void {
+    const blockage = new Blockage(pi);
+    this.blockage = blockage;
+    pi.on("agent_start", () => {
+      blockage.release();
+    });
     pi.on("message_end", (event) => {
       const { message } = event;
       if (message.role !== "assistant") return;
       this.failed = message.stopReason === "error" ? (message.errorMessage ?? FALLBACK) : undefined;
     });
-    pi.on("session_compact_failed", (event) => {
-      if (!event.aborted) this.sendCompaction(event.errorMessage ?? FALLBACK_COMPACTION);
+    pi.on("session_compact_failed", (event, ctx) => {
+      if (event.aborted) return;
+      const error = event.errorMessage ?? FALLBACK_COMPACTION;
+      const idle = ctx.isIdle();
+      this.compactionPending = idle ? undefined : error;
+      this.report(error, true, idle);
     });
     pi.on("session_compact", () => {
+      this.compactionPending = undefined;
+      blockage.release();
       if (!this.compactionReported) return;
       this.compactionReported = false;
       this.link.call("incident.clear", { compacted: true }).catch(() => undefined);
     });
     pi.on("agent_settled", (event) => {
       if (event.aborted) return;
-      if (this.failed !== undefined) this.send(this.failed);
+      const pending = this.compactionPending;
+      this.compactionPending = undefined;
+      if (pending !== undefined && this.failed === undefined)
+        blockage.raise(this.compactionLabel, blockage.now);
+      if (this.failed !== undefined) this.report(this.failed, false, true);
       else if (this.reported) {
         this.reported = false;
         this.link.call("incident.clear", {}).catch(() => undefined);
@@ -57,24 +76,22 @@ export class Failures {
     });
   }
 
-  private sendCompaction(error: string): void {
-    this.link.call("incident.report", { error, phase: "compaction" }).then(
-      () => {
-        this.compactionReported = true;
+  private report(error: string, compaction: boolean, blocks: boolean): void {
+    const blockage = this.blockage;
+    const since = blockage?.now ?? 0;
+    const phase = compaction ? ({ phase: "compaction" } as const) : {};
+    this.link.call("incident.report", { error, ...phase }).then(
+      (result) => {
+        if (compaction) this.compactionReported = true;
+        else this.reported = true;
+        const label = failureLabel(result.classification, compaction);
+        if (compaction) this.compactionLabel = label;
+        if (blocks) blockage?.raise(label, since);
       },
       () => {
-        this.compactionUnsent = error;
-      },
-    );
-  }
-
-  private send(error: string): void {
-    this.link.call("incident.report", { error }).then(
-      () => {
-        this.reported = true;
-      },
-      () => {
-        this.unsent = error;
+        if (compaction) this.compactionUnsent = error;
+        else this.unsent = error;
+        if (blocks) blockage?.raise(failureLabel(undefined, compaction), since);
       },
     );
   }

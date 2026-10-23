@@ -141,7 +141,7 @@ export function reportFailure(
   const now = t.wall();
   if (live?.state === "recovering") {
     return {
-      value: { incident: live.id, opened: false },
+      value: { incident: live.id, opened: false, classification: live.classification },
       notify: failRecovery(db, live, session.role, error, t),
     };
   }
@@ -150,7 +150,10 @@ export function reportFailure(
       Date.now(),
       live.id,
     );
-    return { value: { incident: live.id, opened: false }, notify: [] };
+    return {
+      value: { incident: live.id, opened: false, classification: live.classification },
+      notify: [],
+    };
   }
   const card = cardOfActor(db, session, error);
   const actor = { id: session.id, role: session.role, lane: session.lane, card };
@@ -168,7 +171,10 @@ export function reportFailure(
     now,
     t,
   );
-  return { value: { incident: made.inc.id, opened: true }, notify: made.notify };
+  return {
+    value: { incident: made.inc.id, opened: true, classification: made.inc.classification },
+    notify: made.notify,
+  };
 }
 
 function verifyCompaction(db: DatabaseSync, live: Incident, role: "mate" | "worker"): Done {
