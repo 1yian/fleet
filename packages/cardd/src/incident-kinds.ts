@@ -45,11 +45,11 @@ const KINDS: readonly (readonly [Kind, RegExp])[] = [
   ],
   [
     "router-cooldown",
-    /no model is available for tier|every model is cooling|all candidates (are )?excluded|cooldown/i,
+    /no usable model for tier|no model is available for tier|every model is cooling|all candidates (are )?excluded|cooldown/i,
   ],
   [
     "vendor-quota",
-    /quota|credit balance|insufficient (funds|credits)|billing|exceeded your current|usage limit/i,
+    /quota|credit balance|insufficient (funds|credits)|billing|payment required|\b402\b|exceeded your current|usage limit/i,
   ],
   ["auth", /\b401\b|\b403\b|invalid api key|unauthori[sz]ed|authentication|permission denied/i],
   [

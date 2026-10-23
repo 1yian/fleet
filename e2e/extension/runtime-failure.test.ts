@@ -300,12 +300,12 @@ test("retry-after holds recovery until the controlled time, then exactly one wak
 test("a local router cooldown, vendor quota, stale module, and bad credentials are told apart", async () => {
   const kinds: [string, string, RegExp][] = [
     [
-      "no model is available for tier default: every model is cooling",
+      "pi-tiers: no usable model for tier 'default' (anthropic/claude-opus-5-5 on anthropic: cooling, openai/gpt-5 on openai: cooling)",
       "router-cooldown",
       /mode=retry\), eligible at/,
     ],
     [
-      "insufficient_quota: You exceeded your current quota",
+      "API error (status 402 Payment Required): Grok credits exhausted",
       "vendor-quota",
       /Restarting is not a repair for vendor-quota/,
     ],
@@ -389,7 +389,8 @@ async function untilBoard(known: number): Promise<{ id: number; status: string }
   );
 }
 
-const COMPACTOR_DOWN = "no model is available for tier default: every model is cooling";
+const COMPACTOR_DOWN =
+  "pi-tiers: no usable model for tier 'default' (anthropic/claude-opus-5-5 on anthropic: cooling, openai/gpt-5 on openai: cooling)";
 const BIG = "lorem ipsum dolor ".repeat(8000);
 
 async function compactingCleo(compactorUp: () => boolean): Promise<void> {
@@ -415,7 +416,7 @@ test("a failed compaction is its own incident with the original error, and recov
   assert.match(
     heard.body,
     new RegExp(
-      `^runtime failure: cleo its conversation compaction failed: Auto-compaction failed: Summarization failed: ${COMPACTOR_DOWN}\\.`,
+      `^runtime failure: cleo its conversation compaction failed: Auto-compaction failed: Summarization failed: ${COMPACTOR_DOWN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.`,
     ),
   );
   assert.match(heard.body, /Classified router-cooldown\./);
@@ -477,7 +478,9 @@ test("a compaction that keeps failing after a recovery spends the attempt and is
 
   assert.match(
     failed.body,
-    new RegExp(`did not verify: Compaction failed: Summarization failed: ${COMPACTOR_DOWN}`),
+    new RegExp(
+      `did not verify: Compaction failed: Summarization failed: ${COMPACTOR_DOWN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    ),
   );
   assert.equal(
     fleet.main.entries.filter((push) => push.entry.body.includes("did not verify")).length,

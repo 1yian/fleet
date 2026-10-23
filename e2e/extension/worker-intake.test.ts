@@ -12,7 +12,8 @@ import { records } from "../support/json.ts";
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const RESULT = "[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 0: green";
 const AGAIN = `${RESULT} (sent again: the turn that got it ended before it was taken in)`;
-const ROUTING = "no model is available for tier default: every model is cooling";
+const ROUTING =
+  "pi-tiers: no usable model for tier 'default' (anthropic/claude-opus-5-5 on anthropic: cooling, openai/gpt-5 on openai: cooling)";
 
 let fleet: Fleet;
 let h: Harness;
@@ -65,7 +66,9 @@ test("a job result whose turn the provider fails is not lost: its mate hears one
   );
   assert.match(
     heard.body,
-    new RegExp(`its model turn failed: ${ROUTING}\\. Classified router-cooldown\\.`),
+    new RegExp(
+      `its model turn failed: ${ROUTING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\. Classified router-cooldown\\.`,
+    ),
   );
   const due = await fleet.main.waitForEntry(
     (entry) => entry.body.includes("is eligible for recovery now"),
