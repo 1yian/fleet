@@ -141,7 +141,10 @@ export class LiveFleet {
   }
 
   async startMain(): Promise<string> {
-    this.mainPane = await startMain(this.lab, this.here, this.h);
+    const args = mateArgs(this.h).filter(
+      (arg) => !["--no-context-files", "--no-builtin-tools"].includes(arg),
+    );
+    this.mainPane = await startMain(this.lab, this.here, this.h, false, [...args, "-e", PROBE]);
     return this.mainPane;
   }
 

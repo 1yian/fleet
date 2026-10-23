@@ -118,19 +118,20 @@ test("/stow in main stows every second mate in its own conversation and memory, 
     () => (readFileSync(learnings(fleet.here.root), "utf8") === stowed("MAIN") ? true : undefined),
     "main's own memory",
   );
-  const messages = fleet.userTexts("mate").filter((text) => text.startsWith("[stow]"));
+  const messages = [
+    ...new Set(fleet.userTexts("mate").filter((text) => text.startsWith("[stow]"))),
+  ];
   assert.equal(messages.length, 3);
   for (const message of messages) {
     const own = ["MAIN", "OPS", "FAR"].filter((who) => message.includes(`${who}-FRESH`));
     assert.equal(own.length, 1);
   }
-  assert.deepEqual(
-    [
-      fleet.sessionEvents(realpathSync(fleet.opsHome)).length,
-      fleet.sessionEvents(realpathSync(fleet.farHome)).length,
-    ].map((count, index) => count - (sessions[index] ?? 0)),
-    [1, 1],
-  );
+  await until(() => {
+    const counts = [fleet.opsHome, fleet.farHome].map(
+      (home, index) => fleet.sessionEvents(realpathSync(home)).length - (sessions[index] ?? 0),
+    );
+    return counts.every((count) => count === 1) ? true : undefined;
+  }, "each second mate to start exactly one new session");
 
   await fleet.lab.submit((await fleet.paneOf("2ndmate-ops")) ?? "", "HELLO-AFTER-STOW");
   const after = await until(

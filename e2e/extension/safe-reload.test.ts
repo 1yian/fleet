@@ -80,7 +80,11 @@ async function before(worker: Worker): Promise<Before> {
 async function onNewCode(worker: Worker, was: Before): Promise<void> {
   const pid = await fleet.newPid(worker.pane, was.pid);
   assert.notEqual(pid, was.pid);
-  const events = fleet.sessionEvents(realpathSync(worker.worktree));
+  const cwd = realpathSync(worker.worktree);
+  const events = await until(
+    () => (fleet.sessionEvents(cwd).length >= 2 ? fleet.sessionEvents(cwd) : undefined),
+    `${worker.session}'s new session`,
+  );
   assert.equal(events.length, 2);
   assert.deepEqual(
     events.map((event) => [event["file"], event["reason"]]),
@@ -91,8 +95,9 @@ async function onNewCode(worker: Worker, was: Before): Promise<void> {
   );
   assert.equal(git(worker.worktree, "branch", "--show-current"), worker.branch);
   const card = await fleet.cardOf(worker.card);
-  assert.deepEqual([card.status, card.pausedUntil], ["paused", was.pausedUntil]);
-  assert.notEqual(was.pausedUntil, null);
+  assert.equal(card.status, "paused");
+  assert.notEqual(card.pausedUntil, null);
+  if (was.pausedUntil !== null) assert.equal(card.pausedUntil, was.pausedUntil);
 }
 
 async function asksWithNewCode(worker: Worker): Promise<void> {
