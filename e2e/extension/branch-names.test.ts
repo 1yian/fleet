@@ -141,6 +141,7 @@ async function otherHeadRun(
       git(clone, "commit", "-qm", "Squashed credit");
       assert.notEqual(tip(clone, "main"), tip(treeOf(clone), "HEAD"));
     }
+    if (state !== "MERGED") p.cardd.gh.setPr(pr, "OPEN");
     return { tool: "close", args: closeAs(pr) };
   }, "mate");
   h.onModel(
@@ -161,7 +162,11 @@ async function otherHeadRun(
   assert.ok(existsSync(`${clone}.archive/c-1-a1.tar.zst`));
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(branchesOf(clone).includes("c-77-credit-readback"), false);
-  assert.deepEqual(p.cardd.gh.calls(), []);
+  assert.equal(
+    p.cardd.gh.calls().every((call) => call.startsWith("pr view ")),
+    true,
+  );
+  if (state === "MERGED") assert.deepEqual(p.cardd.gh.calls(), []);
   return { closing, p };
 }
 

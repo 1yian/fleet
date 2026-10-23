@@ -21,7 +21,7 @@ import {
 } from "./attempts.ts";
 import { boardView, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
-import { closeBegin, closeFinish } from "./closing.ts";
+import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { acknowledgeMaintenance, maintenanceStatus, requestMaintenance } from "./maintenance.ts";
 import { markStopping } from "./incident-lanes.ts";
@@ -30,7 +30,7 @@ import { restartCard } from "./restarts.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import { loadPlan } from "./plans.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
-import { normalizeReport } from "./merged-report.ts";
+import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
 import { requireOwedBy } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { scriptWake } from "./wakes.ts";
@@ -61,6 +61,7 @@ type Handler = (
   args: unknown,
   timing: Timings,
   note?: string,
+  closeCheck?: CloseCheck,
 ) => Done;
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
@@ -122,8 +123,10 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "maintenance.ack": (db, session, raw) =>
     acknowledgeMaintenance(db, session, check(OPS["maintenance.ack"].args, raw)),
-  "close.begin": closeBegin,
-  "close.finish": closeFinish,
+  "close.begin": (db, session, raw, _timing, _note, closeCheck) =>
+    closeBegin(db, session, raw, closeCheck),
+  "close.finish": (db, session, raw, _timing, _note, closeCheck) =>
+    closeFinish(db, session, raw, closeCheck),
   hold,
   release,
   "card.new": (db, session, raw) => {
@@ -316,8 +319,19 @@ export async function performOp(
     op === "report" && session.card !== null
       ? await normalizeReport(db, hosts, session.card, args)
       : undefined;
+  const closeCheck =
+    op === "close.begin" || op === "close.finish"
+      ? await reverifyAtClose(db, hosts, op, args)
+      : undefined;
   return transaction(db, () => {
-    const result = HANDLERS[op](db, session, report?.args ?? args, timing, report?.note);
+    const result = HANDLERS[op](
+      db,
+      session,
+      report?.args ?? args,
+      timing,
+      report?.note,
+      closeCheck,
+    );
     noteControl(db, session.id, op);
     return result;
   });

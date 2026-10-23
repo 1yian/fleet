@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
-import { check, OPS, type OpArgs } from "@fleet/protocol";
+import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import type { Hosts } from "./pulls.ts";
 import { getCard, listProjects } from "./store.ts";
+import { cardEntries } from "./store.ts";
+import { finishFrom } from "./status.ts";
 
 const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
@@ -70,19 +72,33 @@ async function verify(
   if (own.kind !== "ship" || own.delivery === "local-only")
     return { note: "merged does not apply to this card; the report counts as done" };
   if (pr === undefined) return { note: "merged needs a PR URL; the report counts as done" };
+  return checkPr(db, hosts, own, pr);
+}
+
+async function checkPr(
+  db: DatabaseSync,
+  hosts: Hosts,
+  own: Card,
+  pr: string,
+): Promise<{ merged?: true; note?: string; unknown?: string }> {
+  const card = own.id;
   const project = listProjects(db).find((each) => each.name === own.project);
   const latest = db
     .prepare("SELECT host FROM attempts WHERE card = ? ORDER BY n DESC LIMIT 1")
     .get(card);
   const place = project?.clones.find((clone) => clone.host === latest?.["host"]);
-  if (place === undefined) return { note: "PR unknown: no project clone for this attempt" };
+  if (place === undefined)
+    return {
+      note: "PR unknown: no project clone for this attempt",
+      unknown: "no project clone for this attempt",
+    };
   try {
     return (await mergedOn(hosts, place, pr))
       ? { merged: true }
       : { note: `${pr} has not merged; the report counts as done` };
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error);
-    return { note: `PR unknown: ${why}. The report counts as done` };
+    return { note: `PR unknown: ${why}. The report counts as done`, unknown: why };
   }
 }
 
@@ -99,4 +115,26 @@ export async function normalizeReport(
     args: { ...args, status: merged === true ? "merged" : "done", merged: merged === true },
     ...(note === undefined ? {} : { note }),
   };
+}
+
+function unmergedShipPr(db: DatabaseSync, id: number): { card: Card; pr: string } | undefined {
+  if (db.prepare("SELECT 1 FROM cards WHERE id = ?").get(id) === undefined) return undefined;
+  const card = getCard(db, id);
+  if (card.kind !== "ship" || card.delivery === "local-only" || card.pr === null) return undefined;
+  return finishFrom(cardEntries(db, id)).merged ? undefined : { card, pr: card.pr };
+}
+
+export async function reverifyAtClose(
+  db: DatabaseSync,
+  hosts: Hosts,
+  op: "close.begin" | "close.finish",
+  raw: unknown,
+): Promise<{ merged: boolean; unknown?: string }> {
+  const args = check(OPS[op].args, raw);
+  if ("mode" in args && args.mode !== "done") return { merged: false };
+  const target = unmergedShipPr(db, args.card);
+  if (target === undefined) return { merged: false };
+  const { merged, unknown } = await checkPr(db, hosts, target.card, target.pr);
+  if (merged === true) return { merged: true };
+  return unknown === undefined ? { merged: false } : { merged: false, unknown };
 }
