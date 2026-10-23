@@ -45,11 +45,11 @@ const KINDS: readonly (readonly [Kind, RegExp])[] = [
   ],
   [
     "router-cooldown",
-    /no model is available for tier|every model is cooling|all candidates (are )?excluded|cooldown/i,
+    /no usable model for tier|no model is available for tier|every model is cooling|all candidates (are )?excluded|cooldown/i,
   ],
   [
     "vendor-quota",
-    /quota|credit balance|insufficient (funds|credits)|billing|exceeded your current|usage limit/i,
+    /quota|credit balance|insufficient (funds|credits)|billing|payment required|\b402\b|exceeded your current|usage limit/i,
   ],
   ["auth", /\b401\b|\b403\b|invalid api key|unauthori[sz]ed|authentication|permission denied/i],
   [
@@ -70,12 +70,19 @@ export function eligibleAt(
   retries: number,
   now: number,
   t: Timings,
+  routerResumeAt?: number,
 ): number | null {
   const after = retryAfterMs(error);
-  const base = DELAYED.has(kind)
-    ? (t.retryDelays[Math.min(retries, t.retryDelays.length - 1)] ?? 0)
-    : 0;
-  const at = Math.max(base > 0 ? now + base : 0, after === undefined ? 0 : now + after);
+  const known = kind === "router-cooldown" && routerResumeAt !== undefined;
+  const base =
+    DELAYED.has(kind) && !known
+      ? (t.retryDelays[Math.min(retries, t.retryDelays.length - 1)] ?? 0)
+      : 0;
+  const at = Math.max(
+    base > 0 ? now + base : 0,
+    after === undefined ? 0 : now + after,
+    known ? routerResumeAt : 0,
+  );
   return at > 0 ? at : null;
 }
 

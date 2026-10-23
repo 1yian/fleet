@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Blockage, failureLabel } from "./blockage.ts";
 import type { Link } from "./link.ts";
+import { routerResumeAt } from "./router-cooldown.ts";
 
 const FALLBACK_COMPACTION = "the conversation compaction failed with no error message";
 const FALLBACK = "the model turn failed with no error message";
@@ -80,7 +81,9 @@ export class Failures {
     const blockage = this.blockage;
     const since = blockage?.now ?? 0;
     const phase = compaction ? ({ phase: "compaction" } as const) : {};
-    this.link.call("incident.report", { error, ...phase }).then(
+    const resumeAt = routerResumeAt(error);
+    const resume = resumeAt === undefined ? {} : { resumeAt };
+    this.link.call("incident.report", { error, ...phase, ...resume }).then(
       (result) => {
         if (compaction) this.compactionReported = true;
         else this.reported = true;
