@@ -3,8 +3,8 @@
 // {"enabled":true,"memoryHome":"data/optchat","profile":"main","thinking":"low"}
 // The fixed profile must already exist at memoryHome/profiles/profile with AGENTS.md
 // (`fleet home memory <lane>` makes it). No earlier sessions are imported.
-// The summary model is fixed by the fleet (src/compaction-model.ts): tier/compact, or a Vertex
-// model for a session on Vertex. compactorProvider/compactorModel in the file are ignored.
+// The summary model is fixed by the fleet (src/compaction-model.ts): tier/compact, or the Vertex
+// chain (vertex-claude haiku, then gemini-3.8-flash) for a CNP session. compactorProvider/compactorModel in the file are ignored.
 // Activation receipts are private state/optchat-activation.json, current pid/session only.
 // Long-result archives are retained profile-local at firstmate-results/ (0700/0600).
 // Set enabled:false and restart to disable without deleting history or archives.
@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, realpat
 import { resolve, dirname } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { withFirstmateOptChat, operationalTypes } from "./compat.ts";
-import { compactorFor } from "../../../src/compaction-model.ts";
+import { chainLabel, compactorFor, firstAvailable } from "../../../src/compaction-model.ts";
 import optchat, { promptFor } from "../src/index.ts";
 import * as profiles from "../src/profiles.ts";
 import * as prompts from "../src/prompts.ts";
@@ -87,9 +87,9 @@ export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> 
     // Summaries are many small calls: they go to the fleet's compactor, never to the mate's own model.
     const wanted = compactorFor(ctx.model, process.cwd(), process.env);
     const own = { provider: ctx.model.provider, model: ctx.model.id };
-    const found = ctx.modelRegistry.find(wanted.model.provider, wanted.model.id);
-    if (!found && wanted.vertexOnly && ctx.model.provider !== wanted.model.provider) throw new Error(`Conversation-memory model ${wanted.model.provider}/${wanted.model.id} is not available, and this session must summarize on Vertex`);
-    const fixed = found ? { provider: wanted.model.provider, model: wanted.model.id } : own;
+    const hit = firstAvailable(wanted, (model) => ctx.modelRegistry.find(model.provider, model.id));
+    if (!hit && wanted.vertexOnly) throw new Error(`Conversation-memory: none of ${chainLabel(wanted)} is available, and this session must summarize on Vertex`);
+    const fixed = hit ? { provider: hit.model.provider, model: hit.model.id } : own;
     compactor = { ...fixed, thinking: config.thinking || "low" };
     if (!ctx.modelRegistry.find(compactor.provider, compactor.model)) throw new Error(`Conversation-memory model ${compactor.provider}/${compactor.model} is not supported by this supervisor`);
     const previous = profiles.loadConfig(profileDir);

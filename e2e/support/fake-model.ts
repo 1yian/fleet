@@ -73,11 +73,18 @@ const respond: FauxResponseFactory = async (context, options, _state, model) => 
 export default function fakeModel(pi: ExtensionAPI): void {
   const argvFile = process.env["FLEET_ARGV_FILE"];
   if (argvFile !== undefined) writeFileSync(argvFile, `${process.argv.join("\n")}\n`);
+  const missing = new Set((process.env["FLEET_FAKE_MISSING"] ?? "").split(",").filter(Boolean));
+  const present = (provider: string, models: { id: string }[]): { id: string }[] =>
+    models.filter((model) => !missing.has(`${provider}/${model.id}`));
   const providers = [
     fauxProvider({ provider: "fake", models: [{ id: "scripted" }] }),
     fauxProvider({
       provider: "google-vertex",
-      models: [{ id: "gemini-2.5-pro" }, { id: "gemini-2.5-flash" }],
+      models: present("google-vertex", [{ id: "gemini-2.5-pro" }, { id: "gemini-3.8-flash" }]),
+    }),
+    fauxProvider({
+      provider: "vertex-claude",
+      models: present("vertex-claude", [{ id: "claude-haiku-5-5" }]),
     }),
     fauxProvider({
       provider: "tier",
@@ -85,6 +92,7 @@ export default function fakeModel(pi: ExtensionAPI): void {
     }),
   ];
   for (const faux of providers) {
+    if (faux.models.length === 0) continue;
     faux.setResponses(Array.from({ length: CALLS }, () => respond));
     pi.registerProvider(faux.provider);
   }

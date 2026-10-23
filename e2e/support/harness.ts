@@ -58,6 +58,14 @@ function rawText(data: RawData): string {
     : Buffer.from(data).toString("utf8");
 }
 
+function tryRecord(line: string): JsonRecord | undefined {
+  try {
+    return parseRecord(line);
+  } catch {
+    return undefined;
+  }
+}
+
 function toTurns(body: JsonRecord): Turn[] {
   const messages = Array.isArray(body["messages"]) ? body["messages"] : [];
   return messages.filter(isRecord).map((message) => ({
@@ -69,9 +77,20 @@ function toTurns(body: JsonRecord): Turn[] {
 export class Pi {
   private readonly child: ChildProcess;
   private readonly exited: Promise<void>;
+  readonly responses: JsonRecord[] = [];
   constructor(child: ChildProcess) {
     this.child = child;
-    child.stdout?.resume();
+    let buffered = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      buffered += chunk;
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        const record = tryRecord(line);
+        if (record?.["type"] === "response") this.responses.push(record);
+      }
+    });
     this.exited = new Promise((resolve) => {
       child.once("exit", () => {
         resolve();
@@ -85,6 +104,16 @@ export class Pi {
 
   compact(): void {
     this.command({ type: "compact" });
+  }
+
+  async compactResponse(): Promise<JsonRecord> {
+    const deadline = Date.now() + WAIT_MS * 2;
+    for (;;) {
+      const found = this.responses.find((record) => record["command"] === "compact");
+      if (found !== undefined) return found;
+      if (Date.now() > deadline) throw new Error("no response to the compact command");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
   }
 
   abort(): void {

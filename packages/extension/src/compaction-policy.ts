@@ -1,5 +1,5 @@
 import { AgentSession } from "@earendil-works/pi-coding-agent";
-import { compactorFor } from "./compaction-model.ts";
+import { chainLabel, compactorFor, firstAvailable } from "./compaction-model.ts";
 import { isRecord } from "./lane-config.ts";
 import { methodOf, once } from "./patch.ts";
 
@@ -21,11 +21,11 @@ function compactionModel(session: object, selected: unknown): unknown {
   const id = stringField(selected, "id");
   if (provider === undefined || id === undefined) return selected;
   const wanted = compactorFor({ provider, id }, process.cwd(), process.env);
-  const found = registered(session, wanted.model.provider, wanted.model.id);
-  if (found !== undefined) return found;
-  if (wanted.vertexOnly && provider !== wanted.model.provider)
+  const hit = firstAvailable(wanted, (model) => registered(session, model.provider, model.id));
+  if (hit !== undefined) return hit.found;
+  if (wanted.vertexOnly)
     throw new Error(
-      `Fleet compaction: ${wanted.model.provider}/${wanted.model.id} is not available, and this session must compact on Vertex`,
+      `Fleet compaction: none of ${chainLabel(wanted)} is available, and this session must compact on Vertex`,
     );
   return selected;
 }

@@ -333,6 +333,6 @@ test("a Vertex mate's memory summaries run on Vertex, whatever its profile names
     .callsOf("mate")
     .flatMap((turns, index) => (isSummary(turns) ? [models[index]] : []));
   assert.ok(summaries.length > 0, "no summary call was made");
-  assert.deepEqual([...new Set(summaries)], ["google-vertex/gemini-2.5-flash"]);
+  assert.deepEqual([...new Set(summaries)], ["vertex-claude/claude-haiku-5-5"]);
   assert.ok(!models.includes("tier/compact"));
 });

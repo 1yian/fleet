@@ -85,6 +85,8 @@ async function summarizingModel(agent: string): Promise<string> {
   }
 }
 
+const HAIKU = "vertex-claude/claude-haiku-5-5";
+const GEMINI = "google-vertex/gemini-3.8-flash";
 const VERTEX = ["--provider", "google-vertex", "--model", "gemini-2.5-pro"];
 
 test("a worker's compaction runs on tier/compact, not on its session model", async () => {
@@ -98,25 +100,54 @@ test("a mate's compaction runs on tier/compact, not on its session model", async
 });
 
 test("a CNP-style mate on Vertex compacts on Vertex and never on tier/compact", async () => {
-  assert.equal(await summaryModel("mate", VERTEX, "manual"), "google-vertex/gemini-2.5-flash");
-  assert.equal(await summaryModel("mate", VERTEX, "automatic"), "google-vertex/gemini-2.5-flash");
+  assert.equal(await summaryModel("mate", VERTEX, "manual"), HAIKU);
+  assert.equal(await summaryModel("mate", VERTEX, "automatic"), HAIKU);
   assert.ok(!h.modelsOf("mate-manual").includes("tier/compact"));
   assert.ok(!h.modelsOf("mate-automatic").includes("tier/compact"));
 });
 
 test("a CNP-style worker on Vertex compacts on Vertex and never on tier/compact", async () => {
-  assert.equal(await summaryModel("worker", VERTEX, "manual"), "google-vertex/gemini-2.5-flash");
+  assert.equal(await summaryModel("worker", VERTEX, "manual"), HAIKU);
   assert.ok(!h.modelsOf("worker-manual").includes("tier/compact"));
 });
 
 test("a CNP-rule session on a tier model compacts on Vertex, never on tier/compact", async () => {
   const cnp = { PI_TIERS_RULE: "cnp" };
   const tier = ["--provider", "tier", "--model", "orchestrator"];
-  assert.equal(await summaryModel("mate", tier, "manual", cnp), "google-vertex/gemini-2.5-flash");
-  assert.equal(
-    await summaryModel("worker", tier, "automatic", cnp),
-    "google-vertex/gemini-2.5-flash",
-  );
+  assert.equal(await summaryModel("mate", tier, "manual", cnp), HAIKU);
+  assert.equal(await summaryModel("worker", tier, "automatic", cnp), HAIKU);
   assert.ok(!h.modelsOf("mate-manual").includes("tier/compact"));
   assert.ok(!h.modelsOf("worker-automatic").includes("tier/compact"));
+});
+
+test("CNP compaction falls to gemini-3.8-flash when haiku is unavailable", async () => {
+  const cnp = { PI_TIERS_RULE: "cnp", FLEET_FAKE_MISSING: HAIKU };
+  const tier = ["--provider", "tier", "--model", "orchestrator"];
+  assert.equal(await summaryModel("mate", tier, "manual", cnp), GEMINI);
+  assert.equal(await summaryModel("worker", VERTEX, "automatic", cnp), GEMINI);
+  assert.ok(!h.modelsOf("mate-manual").includes(HAIKU));
+});
+
+test("CNP compaction fails loudly when both Vertex models are unavailable", async () => {
+  const cnp = { PI_TIERS_RULE: "cnp", FLEET_FAKE_MISSING: `${HAIKU},${GEMINI}` };
+  const agent = "mate-none";
+  h.onModel(() => ({ text: "ok" }), agent);
+  const pi = await startAs("mate", agent, ["--provider", "tier", "--model", "orchestrator"], cnp);
+  for (let turn = 1; turn <= TURNS; turn += 1) {
+    pi.prompt(`${BIG}${String(turn)}`);
+    await h.waitForNth((event) => event["type"] === "settled", turn, "the turn to settle");
+  }
+  pi.compact();
+  const response = await pi.compactResponse();
+  assert.equal(response["success"], false);
+  assert.match(
+    String(response["error"]),
+    /none of vertex-claude\/claude-haiku-5-5 then google-vertex\/gemini-3\.8-flash is available/,
+  );
+  const models = h.modelsOf(agent);
+  assert.ok(
+    models.every((model) => model === "tier/orchestrator"),
+    models.join(),
+  );
+  assert.ok(!h.callsOf(agent).some(isSummary));
 });
