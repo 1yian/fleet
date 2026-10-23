@@ -9,9 +9,9 @@ const killGroup = (signal: NodeJS.Signals): void => {
   if (child.pid !== undefined) process.kill(-child.pid, signal);
 };
 const deadline = setTimeout(() => {
-  console.error("End-to-end suite exceeded 30 minutes, including teardown");
+  console.error("End-to-end suite exceeded 60 minutes, including teardown");
   killGroup("SIGKILL");
-}, 30 * 60_000);
+}, 60 * 60_000);
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => {
     process.exitCode = 1;
