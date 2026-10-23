@@ -31,6 +31,7 @@ interface Item {
   readonly since: number;
   readonly to: string;
   readonly line: string;
+  readonly captain: boolean;
 }
 
 const BUNDLE = "decisions";
@@ -44,7 +45,7 @@ function captainItem(
   const main = mainLane(db);
   const question = firstLine(standing.facts.hold?.question ?? "");
   const line = `c-${String(card.id)} ${card.title} - waiting on the captain (${waited(now, standing.since)}): ${question}`;
-  return { card: card.id, since: standing.since, to: main, line };
+  return { card: card.id, since: standing.since, to: main, line, captain: true };
 }
 
 function mateItem(db: DatabaseSync, loaded: Loaded, now: number): Item[] {
@@ -56,7 +57,15 @@ function mateItem(db: DatabaseSync, loaded: Loaded, now: number): Item[] {
   const why = hold === undefined ? standing.status : `${standing.status}, ${hold.holder} hold`;
   const question = hold === undefined ? "" : `: ${firstLine(hold.question)}`;
   const line = `c-${String(card.id)} ${card.title} (${why}, ${waited(now, standing.since)})${question}`;
-  return [{ card: card.id, since: standing.since, to: actingLane(db, card.id, card.lane), line }];
+  return [
+    {
+      card: card.id,
+      since: standing.since,
+      to: actingLane(db, card.id, card.lane),
+      line,
+      captain: false,
+    },
+  ];
 }
 
 function openItems(db: DatabaseSync, now: number): Item[] {
@@ -80,10 +89,22 @@ function lastBundle(db: DatabaseSync, to: string): { at: number; count: number }
   return { at: Number(row?.["at"]), count: Number(row?.["count"]) };
 }
 
+const group = (title: string, items: readonly Item[]): string[] =>
+  items.length === 0 ? [] : [`${title}\n${items.map(({ line }) => `- ${line}`).join("\n")}`];
+
 function bundleText(items: readonly Item[]): string {
-  const list = items.map(({ line }) => `- ${line}`).join("\n");
   const count = items.length === 1 ? "1 card needs" : `${String(items.length)} cards need`;
-  return `reminder: ${count} a decision or action from you. Act on each now. If nothing can be done yet, hold it with until=<date> so reminders stop until then.\n${list}`;
+  const sections = [
+    ...group(
+      "You can settle or close these yourself. Act on each now:",
+      items.filter(({ captain }) => !captain),
+    ),
+    ...group(
+      "Waiting on the captain. Bring each up with him again in chat now, as one short list with your recommendation for each. Do not hold a card with a date to quiet it:",
+      items.filter(({ captain }) => captain),
+    ),
+  ];
+  return `reminder: ${count} a decision or action from you. Give a hold an until=<date> only when the card waits on an outside event (a quota reset, a third party, a CI run) or the captain said later or named a date.\n${sections.join("\n")}`;
 }
 
 export function bundleMatches(db: DatabaseSync, now: number, t: Timings): BundleMatch[] {
