@@ -18,7 +18,6 @@ export interface Timings {
   readonly repeat: number;
   readonly finished: number;
   readonly waiting: number;
-  readonly decision: number;
   readonly wall: () => number;
 }
 
@@ -41,8 +40,7 @@ export function timings(scale: number, wall: () => number = Date.now): Timings {
     retryDelays: [at(0.5), at(2)],
     repeat: at(5),
     finished: at(120),
-    waiting: at(15),
-    decision: at(240),
+    waiting: at(30),
     wall,
   };
 }

@@ -136,24 +136,24 @@ test("a paused worker is neither nudged nor reported", async () => {
   assert.equal(await status(fleet.main, card), "paused");
 });
 
-test("a card that waits on its mate is reminded flat, one reminder each tier, until it is held for a date", async () => {
+test("a card that waits on its mate is reminded in a flat bundle, one reminder each tier, until it is held for a date", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const card = await newCard(cleo, "blocked");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
   await worker.call("report", { status: "blocked", text: "the API is down" });
 
-  await reach(cleo, card, "reminder", 3);
-  const sent = await tiersOf(card, "reminder");
+  await reach(cleo, card, "decisions", 3);
+  const sent = await tiersOf(card, "decisions");
   assert.deepEqual(sent, inOrder(sent));
   assert.match(
     cleo.entries.at(-1)?.entry.body ?? "",
-    /^reminder: this card has waited for you \(with-mate, \d+ min\)$/,
+    /^reminder: 1 card needs a decision or action from you\. Act on each now\. If nothing can be done yet, hold it with until=<date> so reminders stop until then\.\n- c-\d+ blocked \(with-mate, \d+ min\)$/,
   );
 
   await cleo.call("hold", { card: card.id, question: "later?", until: Date.now() + 3_600_000 });
-  const stopped = (await tiersOf(card, "reminder")).length;
+  const stopped = (await tiersOf(card, "decisions")).length;
   await metronome(6);
-  assert.equal((await tiersOf(card, "reminder")).length, stopped);
+  assert.equal((await tiersOf(card, "decisions")).length, stopped);
 });
 
 test("a hold that waits on main reminds main, and not the lane mate that raised it", async () => {
@@ -161,12 +161,12 @@ test("a hold that waits on main reminds main, and not the lane mate that raised 
   const card = await newCard(cleo, "Ads stay under budget");
   await cleo.call("hold", { card: card.id, question: "Raise the budget?", options: ["No"] });
 
-  await reach(fleet.main, card, "reminder", 1);
+  await reach(fleet.main, card, "decisions", 1);
   const reminded = (session: Session): string[] =>
     session.entries
       .filter(({ entry }) => entry.card === card.id && entry.author === "check")
       .map(({ entry }) => String(entry.fields["condition"]));
-  assert.deepEqual(reminded(fleet.main), ["reminder"]);
+  assert.deepEqual(reminded(fleet.main), ["decisions"]);
   assert.deepEqual(reminded(cleo), []);
 });
 
@@ -180,8 +180,8 @@ test("a dated hold that comes back is announced at once, then reminded flat unti
     "the hold to come back",
   );
   assert.match(ended.body, /^hold ended; it waits on main again$/);
-  await reach(fleet.main, card, "reminder", 2);
-  const sent = await tiersOf(card, "reminder");
+  await reach(fleet.main, card, "decisions", 2);
+  const sent = await tiersOf(card, "decisions");
   assert.deepEqual(sent, inOrder(sent));
 
   await fleet.main.call("hold", {
@@ -189,16 +189,16 @@ test("a dated hold that comes back is announced at once, then reminded flat unti
     question: "wait again",
     until: Date.now() + 3_600_000,
   });
-  const stopped = (await tiersOf(card, "reminder")).length;
+  const stopped = (await tiersOf(card, "decisions")).length;
   await metronome(6);
-  assert.equal((await tiersOf(card, "reminder")).length, stopped);
+  assert.equal((await tiersOf(card, "decisions")).length, stopped);
 });
 
 test("a mate that is busy and then idle again is not reminded twice for the same tier", async () => {
   const card = await newCard(fleet.main, "blocked");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   await worker.call("report", { status: "blocked", text: "the API is down" });
-  await reach(fleet.main, card, "reminder", 1);
+  await reach(fleet.main, card, "decisions", 1);
 
   fleet.main.send({ t: "activity", state: "running" });
   await fleet.main.call("board", {});
@@ -206,8 +206,8 @@ test("a mate that is busy and then idle again is not reminded twice for the same
   fleet.main.send({ t: "activity", state: "idle" });
   await fleet.main.call("board", {});
 
-  await reach(fleet.main, card, "reminder", 2);
-  const sent = await tiersOf(card, "reminder");
+  await reach(fleet.main, card, "decisions", 2);
+  const sent = await tiersOf(card, "decisions");
   assert.deepEqual(sent, inOrder(sent));
 });
 
@@ -366,33 +366,6 @@ test("a repeating obligation leaves only its latest reminder for a reconnect, no
       )
       .map(({ entry }) => entry.fields["tier"]),
     [3],
-  );
-});
-
-test("captain decisions repeat to main every four hours, oldest first", async () => {
-  await fleet.cardd.stop();
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.0001" });
-  const first = await newCard(fleet.main, "oldest decision", "captain");
-  await fleet.main.call("hold", { card: first.id, question: "First?" });
-  const second = await newCard(fleet.main, "newer decision", "captain");
-  await fleet.main.call("hold", { card: second.id, question: "Second?" });
-  await reach(fleet.main, second, "decision-waiting", 2);
-  const decisions = fleet.main.entries
-    .filter(({ entry }) => entry.fields["condition"] === "decision-waiting")
-    .map(({ entry }) => entry);
-  assert.deepEqual(
-    decisions.map((entry) => [entry.card, entry.fields["tier"]]),
-    [
-      [first.id, 1],
-      [second.id, 1],
-      [first.id, 2],
-      [second.id, 2],
-    ],
-  );
-  const elapsed = (decisions[2]?.createdAt ?? 0) - (decisions[0]?.createdAt ?? 0);
-  assert.ok(
-    elapsed >= 1400 && elapsed <= 1600,
-    `four-hour cadence scaled to 1440 ms: ${String(elapsed)} ms`,
   );
 });
 
