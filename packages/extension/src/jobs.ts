@@ -21,16 +21,12 @@ const StopJobParams = Type.Object({
   job: Type.Integer({ description: "The number of one of your own run_long jobs" }),
 });
 
-export const callUrl = (wsUrl: string): string =>
-  wsUrl.replace(/^ws/, "http").replace(/\/session$/, "/call");
-
 const tabName = (job: number, label: string): string => `job-${String(job)}-${label}`;
 
 interface JobOptions {
   readonly timeoutMs: number;
   readonly tailLines?: number;
   readonly lineChars?: number;
-  readonly env?: Readonly<Record<string, string>>;
 }
 
 export class Jobs {
@@ -45,10 +41,6 @@ export class Jobs {
 
   get waiting(): boolean {
     return this.running.size > 0;
-  }
-
-  has(label: string): boolean {
-    return [...this.running.values()].includes(label);
   }
 
   finished(job: unknown): void {
@@ -76,8 +68,8 @@ export class Jobs {
     const file = join(tmpdir(), `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`);
     const tab = tabName(job, label);
     try {
-      const url = callUrl(this.cardd.url);
-      const { timeoutMs, tailLines, lineChars, env } = options;
+      const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
+      const { timeoutMs, tailLines, lineChars } = options;
       const body = {
         url,
         token: this.cardd.token,
@@ -87,7 +79,6 @@ export class Jobs {
         heartbeatMs,
         tailLines,
         lineChars,
-        env,
       };
       writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
       const created = await herdr("local", [
