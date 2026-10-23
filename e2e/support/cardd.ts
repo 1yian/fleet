@@ -90,7 +90,7 @@ export class Cardd {
       const token = (session: string): string =>
         createHmac("sha256", key).update(session).digest("base64url");
       if (!sessions.every((session) => token(session).startsWith("-"))) continue;
-      const db = new DatabaseSync(this.db);
+      const db = new DatabaseSync(this.db, { timeout: 5000 });
       db.prepare("INSERT INTO secrets (name, value) VALUES ('token-key', ?)").run(key);
       db.close();
       return;
@@ -144,7 +144,7 @@ export class Cardd {
   }
 
   recordPrByHand(card: number, url: string): void {
-    const db = new DatabaseSync(this.db);
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
     db.prepare("UPDATE cards SET pr = ? WHERE id = ?").run(url, card);
     db.close();
   }
