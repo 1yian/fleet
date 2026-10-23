@@ -196,7 +196,7 @@ test("a worker that reconnects while its run_long job runs is not reported idle 
     await first.call("job.start", { label: "tests", command: "npm test" }),
   );
   const heartbeat = setInterval(() => {
-    void fleet.cardd.post(token, "job.alive", { job });
+    fleet.cardd.post(token, "job.alive", { job }).catch(() => undefined);
   }, heartbeatMs);
   try {
     first.send({ t: "activity", state: "waiting" });
