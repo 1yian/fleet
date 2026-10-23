@@ -11,7 +11,6 @@ import { isRecord } from "./lane-config.ts";
 
 export interface MemoryOptions {
   readonly seed?: string;
-  readonly compactor?: string;
   readonly thinking?: string;
 }
 
@@ -46,8 +45,7 @@ function makeProfile(home: string, lane: string, options: MemoryOptions): string
 }
 
 function defaultProfile(lane: string, options: MemoryOptions): Record<ProfileFile, string> {
-  const [provider = "tier", model = "compact"] = options.compactor?.split("/") ?? [];
-  const choice = { provider, model, thinking: options.thinking ?? "low" };
+  const choice = { provider: "tier", model: "compact", thinking: options.thinking ?? "low" };
   const settings = { compactor: choice, subagent: { ...choice, thinking: "off" } };
   return {
     "config.json": `${JSON.stringify(settings, null, 2)}\n`,
@@ -66,22 +64,16 @@ function writeSettings(home: string, lane: string, options: MemoryOptions): stri
     });
     return "settings: turned memory on in config/optchat.json";
   }
-  const [provider, model] = options.compactor?.split("/") ?? [];
   const settings = {
     enabled: true,
     memoryHome: MEMORY_HOME,
     profile: lane,
     ...(options.thinking === undefined ? {} : { thinking: options.thinking }),
-    ...(model === undefined ? {} : { compactorModel: model }),
-    ...(provider === undefined || model === undefined ? {} : { compactorProvider: provider }),
   };
   writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
   return "settings: wrote config/optchat.json";
 }
 
 export function setUpMemory(home: string, lane: string, options: MemoryOptions): string[] {
-  if (options.compactor !== undefined && !/^[^/]+\/[^/]+$/.test(options.compactor)) {
-    throw new Error("--compactor is provider/model, such as tier/compact");
-  }
   return [makeProfile(home, lane, options), writeSettings(home, lane, options)];
 }

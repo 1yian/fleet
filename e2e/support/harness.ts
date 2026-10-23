@@ -181,6 +181,7 @@ export class Harness {
     sessionId: string,
     env: Record<string, string> = {},
     extensions: readonly string[] = [],
+    modelArgs: readonly string[] = [],
   ): Pi {
     const agentDir = join(this.dir, "agent");
     const workDir = join(this.dir, "work");
@@ -189,6 +190,7 @@ export class Harness {
     const args = [
       ["--mode", "rpc", ...this.piArgs(), "-e", join(SUPPORT, "probe.ts")],
       extensions.flatMap((path) => ["-e", path]),
+      modelArgs,
       ["--session-id", sessionId],
     ].flat();
     const child = spawnGuarded(PI_BIN, args, {

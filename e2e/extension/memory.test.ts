@@ -259,7 +259,7 @@ test("`fleet home memory` turns a second mate's memory back on after it was set 
     token,
     args: [...mateArgs(h), "-e", PROBE],
   });
-  scratch.fleet(["home", "memory", "board", "--compactor", "fake/scripted"], agent);
+  scratch.fleet(["home", "memory", "board"], agent);
   const settings = join(home, "config", "optchat.json");
   const written = parseRecord(readFileSync(settings, "utf8"));
   writeFileSync(settings, JSON.stringify({ ...written, enabled: false }));
@@ -293,7 +293,7 @@ test("`fleet home memory` turns a second mate's memory back on after it was set 
 const isSummary = (turns: readonly Turn[]): boolean =>
   turns.some((turn) => turn.role === "system" && turn.text.includes("You write OptChat's memory"));
 
-test("a mate whose memory names no summary model summarizes on tier/compact, never on its own model", async () => {
+test("a mate summarizes its memory on tier/compact, never on its own model or the one its profile names", async () => {
   installMemory();
   h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, scratch, h);
@@ -314,4 +314,25 @@ test("a mate whose memory names no summary model summarizes on tier/compact, nev
   assert.ok(summaries.length > 0, "no summary call was made");
   assert.deepEqual([...new Set(summaries)], ["tier/compact"]);
   assert.deepEqual([...new Set(turns)], ["fake/scripted"]);
+});
+
+test("a Vertex mate's memory summaries run on Vertex, whatever its profile names, and never on tier/compact", async () => {
+  installMemory();
+  h.onModel(() => ({ text: "noted" }), "mate");
+  const vertex = ["--provider", "google-vertex", "--model", "gemini-2.5-pro"];
+  await startMain(lab, scratch, h, false, [...mateArgs(h), ...vertex]);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  const long = `Validation continues: ${IDLE_WORD}. ${"The parser keeps every field. ".repeat(40)}`;
+  await cleo.call("comment", { lane: "cleo", text: long });
+  await until(
+    () => (h.callsOf("mate").some(isSummary) ? true : undefined),
+    "a summary of the long message",
+  );
+  const models = h.modelsOf("mate");
+  const summaries = h
+    .callsOf("mate")
+    .flatMap((turns, index) => (isSummary(turns) ? [models[index]] : []));
+  assert.ok(summaries.length > 0, "no summary call was made");
+  assert.deepEqual([...new Set(summaries)], ["google-vertex/gemini-2.5-flash"]);
+  assert.ok(!models.includes("tier/compact"));
 });

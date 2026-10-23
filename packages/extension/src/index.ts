@@ -7,6 +7,7 @@ import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
 import { applyCompactionBackoff } from "./compaction-backoff.ts";
+import { applyCompactionPolicy } from "./compaction-policy.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { Failures } from "./failure.ts";
@@ -168,6 +169,7 @@ function start(
   applyCachePolicy(role);
   applyContextPolicy(role);
   applyCompactionBackoff();
+  applyCompactionPolicy();
   pi.on("before_agent_start", (event) => ({
     systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? mateContract() : ""}`,
   }));

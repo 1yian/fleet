@@ -245,7 +245,7 @@ test("fleet up says it could not check when gh fails for a reason that is not ab
   );
 });
 
-const MODEL = { provider: "fake", model: "scripted", thinking: "off" };
+const MODEL = { provider: "tier", model: "compact", thinking: "off" };
 
 test("fleet up starts no mate whose conversation memory has no profile, and starts it once the profile exists", (t) => {
   if (secondMateProfileSkip) {
@@ -272,15 +272,7 @@ test("fleet up starts no mate whose conversation memory has no profile, and star
     refusal(["up"], {}),
     `optchat of lane cleo has no config.json in profile ${profile} on ${HOST}. ${fix}\n`,
   );
-  const made = scratch.fleet([
-    "home",
-    "memory",
-    "cleo",
-    "--compactor",
-    "fake/scripted",
-    "--thinking",
-    "off",
-  ]);
+  const made = scratch.fleet(["home", "memory", "cleo", "--thinking", "off"]);
   assert.match(made, /cleo: profile: cleo, added config\.json\n/);
   assert.equal(readFileSync(join(profile, "AGENTS.md"), "utf8"), "# cleo\n");
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "config.json"), "utf8")), {

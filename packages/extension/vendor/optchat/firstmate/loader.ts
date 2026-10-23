@@ -3,8 +3,8 @@
 // {"enabled":true,"memoryHome":"data/optchat","profile":"main","thinking":"low"}
 // The fixed profile must already exist at memoryHome/profiles/profile with AGENTS.md
 // (`fleet home memory <lane>` makes it). No earlier sessions are imported.
-// compactorProvider/compactorModel pick the summary model; without them it is tier/compact when
-// that model exists, otherwise the mate's own model.
+// The summary model is fixed by the fleet (src/compaction-model.ts): tier/compact, or a Vertex
+// model for a session on Vertex. compactorProvider/compactorModel in the file are ignored.
 // Activation receipts are private state/optchat-activation.json, current pid/session only.
 // Long-result archives are retained profile-local at firstmate-results/ (0700/0600).
 // Set enabled:false and restart to disable without deleting history or archives.
@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, realpat
 import { resolve, dirname } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { withFirstmateOptChat, operationalTypes } from "./compat.ts";
+import { compactionModelFor } from "../../../src/compaction-model.ts";
 import optchat, { promptFor } from "../src/index.ts";
 import * as profiles from "../src/profiles.ts";
 import * as prompts from "../src/prompts.ts";
@@ -28,7 +29,6 @@ interface Config {
 }
 type ProfileSettings = ReturnType<typeof profiles.loadConfig>;
 const VENDORED = "pi-optchat@0.9.0+fleet";
-const DEFAULT_COMPACTOR = { provider: "tier", model: "compact" };
 // Explicit Firstmate identity is required at user scope. Unlike the old project
 // loader, the extension's own source directory is not a Firstmate home.
 const homeInput = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE;
@@ -84,11 +84,11 @@ export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> 
     } else pi.appendEntry("optchat.profile", { name: config.profile });
     if (!ctx.model) throw new Error("Select the supervisor model before initializing conversation memory");
     if (ctx.model.provider === "codex-native") throw new Error("Native Codex thread reuse is not supported for conversation compression; use an ordinary Pi provider before enabling memory");
-    // Summaries are many small calls: without a configured model they go to the cheap compact tier,
-    // never to the mate's own (expensive) model, unless this Pi has no such tier.
-    const fallback = ctx.modelRegistry.find(DEFAULT_COMPACTOR.provider, DEFAULT_COMPACTOR.model)
-      ? DEFAULT_COMPACTOR : { provider: ctx.model.provider, model: ctx.model.id };
-    compactor = { provider: config.compactorProvider || fallback.provider, model: config.compactorModel || fallback.model, thinking: config.thinking || "low" };
+    // Summaries are many small calls: they go to the fleet's compactor, never to the mate's own model.
+    const wanted = compactionModelFor(ctx.model);
+    const own = { provider: ctx.model.provider, model: ctx.model.id };
+    const fixed = ctx.modelRegistry.find(wanted.provider, wanted.id) ? { provider: wanted.provider, model: wanted.id } : own;
+    compactor = { ...fixed, thinking: config.thinking || "low" };
     if (!ctx.modelRegistry.find(compactor.provider, compactor.model)) throw new Error(`Conversation-memory model ${compactor.provider}/${compactor.model} is not supported by this supervisor`);
     const previous = profiles.loadConfig(profileDir);
     // Resolve against this supervisor's own registry/account, never OptChat's first-party defaults.
