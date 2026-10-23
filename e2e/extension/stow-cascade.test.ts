@@ -143,9 +143,15 @@ test("/stow in main stows every second mate in its own conversation and memory, 
   assert.equal(await fleet.piIn(worker.pane), workerPid);
   assert.equal((await fleet.cardOf(worker.card)).status, "paused");
 
+  const finished = ["ops", "far"].map(
+    (lane) => `[fleet] maintenance: ${lane} (mate): stow completed - ${NOW_LINE}`,
+  );
   const heard = await until(
-    () => fleet.heardBy("mate", "[fleet] maintenance: far"),
-    "main to hear the stows finish",
+    () =>
+      fleet.h
+        .callsOf("mate")
+        .find((turns) => finished.every((line) => turns.some((turn) => turn.text === line))),
+    "main to hear both stows finish",
   );
   const told = heard.map((turn) => turn.text);
   assert.ok(told.includes(`[fleet] maintenance: ops (mate): stow completed - ${NOW_LINE}`));
