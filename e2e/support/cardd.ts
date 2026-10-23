@@ -68,7 +68,11 @@ export class Cardd {
     args: readonly string[] = [],
     seed?: (db: string) => void,
   ): Promise<Cardd> {
-    const cardd = new Cardd(env, args);
+    const cardd = new Cardd(env, [
+      "--hosts",
+      JSON.stringify({ local: ["sh", "-c"], maverick: ["sh", "-c"], p620: ["sh", "-c"] }),
+      ...args,
+    ]);
     seed?.(cardd.db);
     await cardd.boot();
     return cardd;

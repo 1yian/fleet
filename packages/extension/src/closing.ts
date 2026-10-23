@@ -173,8 +173,7 @@ async function unlandedWarning(
     for (const file of found.files) detail.push(`  file ${attempt.session}: ${file}`);
   }
   if (left.length === 0) return undefined;
-  const where = plan.noRepoHint === undefined ? "" : `${plan.noRepoHint}. In its clones, `;
-  return `c-${String(card)} was not closed. ${where}${left.join("; ")}:\n${detail.join("\n")}\nIf this work landed elsewhere (another card's branch or PR) or is not wanted, call close again with confirm=true: the card ends Done and this work is archived first. If it did not land and should not end Done, land it, or end it with close(card, summary=<why it is dropped>, landed=false).`;
+  return `c-${String(card)} was not closed. ${left.join("; ")}:\n${detail.join("\n")}\nIf this work landed elsewhere (another card's branch or PR), call close again with confirm=true: the card ends Done and this work is archived first. If it did not land and should not end Done, land it, or end it with close(card, summary=<why it is dropped>, landed=false).`;
 }
 
 async function retire(attempt: Attempt): Promise<string | null> {

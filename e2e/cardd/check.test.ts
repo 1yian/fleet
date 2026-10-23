@@ -292,7 +292,7 @@ test("a ship card that only did an operation is reminded how to close it", async
   const reminder = await reach(fleet.main, card, "finished", 1);
   assert.match(
     reminder.body,
-    /\(merging, \d+ min\)\. The worker has not reported a PR: comment it to report its PR URL\. If it made no code change, close it with close\(card, summary\)\. Otherwise close\(card, summary=<why>, landed=false\)\.$/,
+    /\(merging, \d+ min\)\. Its work may have landed from another branch\. Close it with close\(card, summary\): if close warns about commits or files not on the base branch and the work landed elsewhere, call close again with confirm=true\. If it never landed and will not, close\(card, summary=<why>, landed=false\)\.$/,
   );
 });
 
@@ -396,7 +396,7 @@ test("captain decisions repeat to main every four hours, oldest first", async ()
   );
 });
 
-test("fleet never asks GitHub for a PR's state: the worker reports the PR and the merge, and close trusts it", async () => {
+test("legacy done reports with an explicit merge marker do not query GitHub, and close trusts them", async () => {
   fleet.cardd.yolo("web");
   const pr = "https://github.com/acme/web/pull/7";
   fleet.cardd.gh.setPr(pr, "OPEN");

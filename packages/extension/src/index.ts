@@ -13,6 +13,7 @@ import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
+import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
@@ -98,6 +99,18 @@ function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: 
   return jobs;
 }
 
+function sendEntry(
+  pi: ExtensionAPI,
+  entry: Entry,
+  mode: "steer" | "followUp",
+  content: string,
+): void {
+  pi.sendMessage(
+    { customType: "fleet", content, display: true, details: { entryId: entry.id } },
+    { triggerTurn: entry.fields["compaction"] !== true, deliverAs: mode },
+  );
+}
+
 function start(
   pi: ExtensionAPI,
   { url, token, role, lane }: Config,
@@ -134,22 +147,18 @@ function start(
       const seen = again ? injectedAgain : injected;
       if (seen.has(entry.id)) return;
       seen.add(entry.id);
-      pi.sendMessage(
-        {
-          customType: "fleet",
-          content: format(entry, name, again),
-          display: true,
-          details: { entryId: entry.id },
-        },
-        { triggerTurn: entry.fields["compaction"] !== true, deliverAs: mode },
-      );
-      if (entry.fields["compaction"] === true) {
-        failures.expectCompaction();
-        compact();
-      }
-      pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-      if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
-      noteWorkerInput(entry, entry.fields["recovery"] !== undefined);
+      const deliver = (extra: string): void => {
+        sendEntry(pi, entry, mode, format(entry, name, again) + extra);
+        if (entry.fields["compaction"] === true) {
+          failures.expectCompaction();
+          compact();
+        }
+        pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
+        if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
+        noteWorkerInput(entry, entry.fields["recovery"] !== undefined);
+      };
+      if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
+      else deliver("");
     },
   });
   const noteWorkerInput = (entry: Entry, recovery: boolean): void => {

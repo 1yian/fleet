@@ -90,10 +90,10 @@ class Hub {
     if (notify.length > 0) this.web.changed();
   }
 
-  perform(session: Session, op: string, args: unknown): HttpOutcome {
+  async perform(session: Session, op: string, args: unknown): Promise<HttpOutcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
-      const done = performOp(this.db, session, op, args, this.timing);
+      const done = await performOp(this.db, session, op, args, this.timing, this.hosts);
       for (const recipient of done.notify) this.flush(recipient, false);
       this.web.changed();
       return { ok: true, value: done.value };
@@ -120,7 +120,9 @@ class Hub {
           this.web.changed();
       } else {
         const id = message.id;
-        send(socket, { t: "result", id, ...this.perform(live(), message.op, message.args) });
+        void this.perform(live(), message.op, message.args).then((outcome) => {
+          send(socket, { t: "result", id, ...outcome });
+        });
       }
     };
     socket.on("message", (data) => {
@@ -158,7 +160,7 @@ class Hub {
     }
     try {
       const body = check(HttpCallSchema, JSON.parse(await readBody(request)));
-      const outcome = this.perform(session, body.op, body.args);
+      const outcome = await this.perform(session, body.op, body.args);
       reply(outcome.ok ? 200 : 400, outcome);
     } catch (error) {
       reply(400, { ok: false, error: reason(error) });

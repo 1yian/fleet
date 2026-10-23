@@ -73,6 +73,31 @@ test("close finds that an operation landed, closes it as Done, and removes its w
   assert.deepEqual(await workersOf(parts.lab), []);
 });
 
+function squashFromAnotherBranch(): void {
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+  git("checkout", "-q", "-b", "landed-elsewhere");
+  writeFileSync(join(clone, "fix.txt"), "one\n");
+  git("add", "fix.txt");
+  git("commit", "-q", "-m", "landed through another card");
+  git("checkout", "-q", "main");
+  git("merge", "--squash", "landed-elsewhere");
+  git("commit", "-q", "-m", "squash another card");
+  git("branch", "-D", "landed-elsewhere");
+}
+
+function assertArchive(archive: string): void {
+  const packed = execFileSync("zstd", ["-dc", archive]);
+  const files = execFileSync("tar", ["-tf", "-"], { input: packed, encoding: "utf8" });
+  assert.match(files, /c-1-a1\/commits\.bundle/);
+  const untracked = execFileSync("tar", ["-xOf", "-", "c-1-a1/untracked.tar"], { input: packed });
+  const scratch = execFileSync("tar", ["-xOf", "-", "scratch.txt"], {
+    input: untracked,
+    encoding: "utf8",
+  });
+  assert.equal(scratch, "two\n");
+}
+
 function assertWarned(text: string | undefined): void {
   assert.ok(text !== undefined);
   assert.match(
@@ -93,6 +118,7 @@ test("close warns about unlanded work and leaves the card open; confirm=true end
     git("add", "fix.txt");
     git("commit", "-q", "-m", "the fix");
     writeFileSync(join(tree, "scratch.txt"), "two\n");
+    squashFromAnotherBranch();
     return { tool: "report", args: { status: "done", text: "fixed" } };
   });
   h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Landed elsewhere." } }), "mate");
@@ -107,7 +133,7 @@ test("close warns about unlanded work and leaves the card open; confirm=true end
   const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
   const archive = `${clone}.archive/c-1-a1.tar.zst`;
   assert.equal(results.at(-1), `c-1 is done. Unlanded work is archived in local:${archive}.`);
-  assert.equal(existsSync(archive), true);
+  assertArchive(archive);
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(await workersOf(parts.lab), []);
 });
@@ -115,7 +141,6 @@ test("close warns about unlanded work and leaves the card open; confirm=true end
 test("a merged report for a PR from another branch closes the card Done on its own and archives the leftover commits", async () => {
   const pr = "https://github.com/acme/site/pull/381";
   gh.setPr(pr, "MERGED");
-  gh.setHead(pr, "cleo-other-card");
   scriptOperation(() => {
     const tree = `${clone}.worktrees/c-1-a1`;
     const git = (...args: string[]) =>
@@ -124,6 +149,7 @@ test("a merged report for a PR from another branch closes the card Done on its o
     git("add", "fix.txt");
     git("commit", "-q", "-m", "the fix");
     writeFileSync(join(tree, "scratch.txt"), "two\n");
+    squashFromAnotherBranch();
     return { tool: "report", args: { status: "merged", text: "landed in another card", pr } };
   });
   h.onModel(() => ({ text: "reported" }), "worker");
@@ -142,7 +168,7 @@ test("a merged report for a PR from another branch closes the card Done on its o
   mate.prompt("add credit");
 
   await h.waitForCall(3, "mate", WORKER_WAIT_MS);
-  assert.equal(existsSync(`${clone}.archive/c-1-a1.tar.zst`), true);
+  assertArchive(`${clone}.archive/c-1-a1.tar.zst`);
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(await workersOf(parts.lab), []);
 });
@@ -175,42 +201,15 @@ test("close warns about work that did not land and leaves it in place; landed=fa
   assert.deepEqual(await workersOf(parts.lab), []);
 });
 
-test("close of a project with no GitHub repo on record says so, and names the command that sets it", async () => {
-  await stopDispatchLab(parts);
-  parts = await startDispatchLab({ repo: false });
-  ({ h, clone, mate } = parts);
-  scriptOperation(() => {
-    const tree = `${clone}.worktrees/c-1-a1`;
-    const git = (...args: string[]) =>
-      execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
-    writeFileSync(join(tree, "fix.txt"), "one\n");
-    git("add", "fix.txt");
-    git("commit", "-q", "-m", "the fix");
-    return { tool: "report", args: { status: "done", text: "merged it" } };
-  });
-  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Merged." } }), "mate");
-  h.onModel(() => ({ text: "refused" }), "mate");
-  await mateConnected();
-  mate.prompt("add credit");
-
-  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.match(
-    results.at(-1) ?? "",
-    /^c-1 was not closed\. c-1's project site has no GitHub repo on record, so close cannot see whether its PR merged\. Set it on the cardd host with `cardd project repo site <owner>\/<name> --db <cards\.db>`, then close again\. In its clones, c-1-a1 on local has 1 commit not on main:\n {2}commit c-1-a1: [0-9a-f]+ the fix\nIf this work landed elsewhere/,
-  );
-  assert.equal(worktreesOf(clone).length, 2);
-});
-
 test("with yolo on, the mate comments the worker to merge without asking; the worker merges, and close closes the card at once", async () => {
   const pr = "https://github.com/acme/site/pull/3";
-  gh.setPr(pr, "OPEN", { ci: "pass" });
-  gh.setHead(pr, "c-1-a1");
-  scriptOperation(() => ({ tool: "report", args: { status: "done", text: "credit added" } }));
+  gh.setPr(pr, "OPEN");
+  scriptOperation(() => ({ tool: "report", args: { status: "done", text: "credit added", pr } }));
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /Merge your PR now/);
     execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
-    return { tool: "report", args: { status: "done", text: "merged it" } };
+    return { tool: "report", args: { status: "done", text: "merged it", pr, merged: true } };
   }, "worker");
   h.onModel(() => ({ tool: "comment", args: { card: 1, text: "Merge your PR now." } }), "mate");
   h.onModel(() => ({ text: "asked the worker to merge" }), "mate");
@@ -244,9 +243,7 @@ test("a ship card done with no PR on its branch reaches the mate, which asks the
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /Open your PR/);
-    gh.setPr(pr, "OPEN", { ci: "pass" });
-    gh.setHead(pr, "c-1-a1");
-    return { tool: "report", args: { status: "done", text: "PR opened" } };
+    return { tool: "report", args: { status: "done", text: "PR opened", pr } };
   }, "worker");
   h.onModel(
     () => ({ tool: "comment", args: { card: 1, text: "Open your PR from your task branch." } }),
@@ -260,7 +257,7 @@ test("a ship card done with no PR on its branch reaches the mate, which asks the
   const missing = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.equal(
     lastUser(missing),
-    "[fleet] c-1 add-credit done: fixed (no PR has branch c-1-a1 as its head) (card now merging)",
+    "[fleet] c-1 add-credit done: fixed (no PR URL reported: the worker reports it with report(pr=<full url>)) (card now merging)",
   );
   const found = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
   assert.equal(

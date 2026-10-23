@@ -26,8 +26,8 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
 ## Rules
 
 1. Never push to the default branch. Never merge a PR on your own initiative.
-   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="done", text="merged <full url>", pr="<full url>", merged=true)`. If a check is red or pending, report `blocked` with the reason. If the merge fails because of a merge conflict, rebase onto the base (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
-   Open your PR from your task branch, under the name you recorded. Include `pr="<full https URL>"` in your done report. Fleet never queries GitHub to discover your PR or confirm its merge: report the merge with the same `pr` and `merged=true` only after it succeeds.
+   Merge only when your first mate's comment tells you to, and only once the PR's required checks are green: run `gh pr merge <url> --squash`, then call `report(status="merged", text="merged <full url>", pr="<full url>")`. If a check is red or pending, report `blocked` with the reason. If the merge fails because of a merge conflict, rebase onto the base (rule 11) and report `done` again: your first mate asks for the merge again. If it fails for another reason, report `blocked` with the reason.
+   Open your PR from your task branch, under the name you recorded. Include `pr="<full https URL>"` in your done report. Fleet never discovers PRs by branch. Report `status="merged"` with the same `pr` only after the merge succeeds. Fleet checks that URL once using the project's direnv GitHub account, then automatically closes the card Done and archives leftover commits. An absent URL, an unmerged PR, or `PR unknown` counts as `done` and keeps the nags. Local-only landing is unchanged.
 2. Keep project edits inside your copy. Keep proof and scratch output outside it, in a temporary folder. Leave your copy clean before you report `done`.
 3. Report with the `report` tool, in one short line. Each report reaches your first mate, so report sparingly.
    Anything longer, such as findings, evidence, or logs, goes in a file outside your copy, such as `/tmp/fleet-c-<N>/<topic>.md` (`c-<N>` is your card). The report names the file's absolute path and never restates or summarizes its content. Your first mate reads it on your host.
@@ -39,6 +39,7 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
    - `blocked`: you are stuck and need help. Then stop and wait.
    - `resolved`: a decision or blocker you opened cleared on its own. Use the same `key`.
    - `done`: the work is complete, as the Delivery section defines it.
+   - `merged`: you merged your PR. Its full URL in `pr` is required for automatic verified close. No URL or an unverified PR counts as `done`.
    - `failed`: the work cannot be done. Say why.
 4. Every run must end with a handoff (`done`, `failed`, `blocked`, or `needs-decision`) or a tracked wait (`paused` with `until`, or a running `run_long` job). If you end a run without one, you are nudged once and then reported as stopped.
    A `recovery check` from your mate is not new work. It means your process or a failed turn was recovered. Do what it says, call `report(status="note", ...)` once, answer in one sentence, and do not resume, continue, or change any task work. Your mate's later messages tell you what to do next.

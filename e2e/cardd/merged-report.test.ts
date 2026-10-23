@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardSchema, CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
+import { CardSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import { tempDir } from "../support/run-root.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
   fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  fleet.cardd.moveClone("web", "maverick", tempDir("merged-web-"));
 });
 afterEach(async () => {
   await fleet.cardd.stop();
@@ -30,34 +31,33 @@ const closePlan = async (card: Card) =>
 test("a merged report for a PR from another branch is verified and the card closes as Done without branch checks", async () => {
   const pr = "https://github.com/acme/web/pull/381";
   fleet.cardd.gh.setPr(pr, "MERGED");
-  fleet.cardd.gh.setHead(pr, "cleo-other-card");
   const card = await newCard(fleet.main, "Mercedes");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   await worker.call("report", { status: "merged", text: "landed in another card", pr });
 
   const report = await reportOf(card);
   assert.equal(report.fields["status"], "merged");
-  assert.equal(report.fields["prState"], "MERGED");
+  assert.equal(report.fields["merged"], true);
+  assert.deepEqual(fleet.cardd.gh.calls(), [`pr view ${pr} --json url,state`]);
   assert.equal(await status(fleet.main, card), "with-mate");
   const plan = await closePlan(card);
   assert.equal(plan.mode, "done");
   assert.equal(plan.verify, false);
-  const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
-  assert.ok(view.entries.some((entry) => entry.fields["condition"] === "pr-merged"));
-  const reminder = await findingFor(card, "finished-1");
+  const reminder = await findingFor(card, "finished");
   assert.match(reminder.body, /Close it now with close\(card, summary\)\.$/);
 });
 
 test("merged without a URL, and merged with a PR that has not merged, count as done with the close and confirm nag", async () => {
   const open = "https://github.com/acme/web/pull/9";
-  fleet.cardd.gh.setPr(open, "OPEN", { ci: "pass" });
+  fleet.cardd.gh.setPr(open, "OPEN");
+  fleet.cardd.yolo("web");
   const bare = await newCard(fleet.main, "no url");
   const bareWorker = await fleet.cardd.connect(await begin(fleet.main, bare));
   await bareWorker.call("report", { status: "merged", text: "merged it" });
   const report = await reportOf(bare);
   assert.equal(report.fields["status"], "done");
-  assert.match(String(report.fields["prNote"]), /without a PR URL/);
-  const reminder = await findingFor(bare, "finished-1");
+  assert.match(String(report.fields["prNote"]), /needs a PR URL/);
+  const reminder = await findingFor(bare, "finished");
   assert.match(
     reminder.body,
     /call close again with confirm=true\. If it never landed and will not, close\(card, summary=<why>, landed=false\)\.$/,
@@ -72,7 +72,7 @@ test("merged without a URL, and merged with a PR that has not merged, count as d
     "the report",
   );
   assert.equal(second.fields["status"], "done");
-  assert.match(String(second.fields["prNote"]), /has not merged, so the report counts as done/);
+  assert.match(String(second.fields["prNote"]), /has not merged; the report counts as done/);
 });
 
 test("the merged check runs with the clone's direnv account, and a PR that account cannot see is PR unknown", async () => {
