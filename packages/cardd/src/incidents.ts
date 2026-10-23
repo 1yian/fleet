@@ -192,7 +192,10 @@ export function clearFailure(
   const live = liveIncident(db, session.id);
   if (live === undefined || (live.phase === "compaction") !== (args.compacted === true))
     return { value: { cleared: false }, notify: [] };
-  if (live.state === "recovering") return verifyCompaction(db, live, session.role);
+  if (live.state === "recovering")
+    return live.phase === "compaction"
+      ? verifyCompaction(db, live, session.role)
+      : { value: { cleared: false }, notify: [] };
   db.prepare("UPDATE incidents SET state = 'cleared', closed_at = ? WHERE id = ?").run(
     Date.now(),
     live.id,
