@@ -21,7 +21,7 @@ function under(folder: string, child: string): boolean {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
-export function isCnp(session: ModelRef, cwd: string, env: NodeJS.ProcessEnv): boolean {
+function isCnp(session: ModelRef, cwd: string, env: NodeJS.ProcessEnv): boolean {
   return (
     session.provider === VERTEX_PROVIDER ||
     env["PI_TIERS_RULE"] === CNP_RULE ||
