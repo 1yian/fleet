@@ -25,6 +25,7 @@ import { lookUpPr } from "./pulls.ts";
 import { requireOwedBy } from "./replies.ts";
 import { factsFrom } from "./status.ts";
 import type { Timings } from "./timing.ts";
+import { recordValidation, revalidate, startValidation } from "./validations.ts";
 import { scriptWake } from "./wakes.ts";
 import {
   addCard,
@@ -221,6 +222,12 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "incident.recover": (db, session, raw, timing) =>
     recover(db, session, check(OPS["incident.recover"].args, raw), timing),
+  "validation.start": (db, session, raw) =>
+    startValidation(db, session, check(OPS["validation.start"].args, raw)),
+  "validation.result": (db, session, raw) =>
+    recordValidation(db, session, check(OPS["validation.result"].args, raw)),
+  "validation.revalidate": (db, session, raw) =>
+    revalidate(db, session, check(OPS["validation.revalidate"].args, raw)),
   report: (db, session, raw, _timing, pr) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
