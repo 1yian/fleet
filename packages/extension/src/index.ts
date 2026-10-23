@@ -86,11 +86,7 @@ function tellUnreadable(pi: ExtensionAPI, error: string): void {
   );
 }
 
-function workerTools(
-  pi: ExtensionAPI,
-  link: Link,
-  cardd: { url: string; token: string },
-): Jobs {
+function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: string }): Jobs {
   const jobs = new Jobs(link, cardd);
   jobs.register(pi);
   registerBranch(pi, link);
