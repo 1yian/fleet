@@ -127,7 +127,7 @@ export async function restartLane(home: string, lane: string): Promise<string> {
   return withLanes(() => act(config, lane, "restart"));
 }
 
-export async function restartAll(config: LaneConfig): Promise<string[]> {
+async function restartAll(config: LaneConfig): Promise<string[]> {
   const lines: string[] = [];
   for (const host of hostsOf(config)) {
     try {

@@ -6,6 +6,7 @@ import {
   type ClientMessage,
   type OpName,
   type ServerMessage,
+  type Maintenance,
 } from "@fleet/protocol";
 
 type Push = Extract<ServerMessage, { t: "entry" }>;
@@ -30,6 +31,7 @@ export interface LinkOptions {
   readonly process?: string;
   readonly onPush: (push: Push) => void;
   readonly onConnect: () => void;
+  readonly onMaintenance?: (request: Maintenance) => void;
   readonly onUnreadable: (error: string) => void;
 }
 
@@ -57,6 +59,7 @@ export class Link {
         t: "hello",
         token: this.options.token,
         inFile: this.options.inFile(),
+        maintenance: this.options.onMaintenance !== undefined,
       } as const;
       this.send(id === undefined ? hello : { ...hello, process: id });
     });
@@ -127,6 +130,7 @@ export class Link {
       this.untoldAcks.clear();
       this.options.onConnect();
     } else if (message.t === "entry") this.options.onPush(message);
+    else if (message.t === "maintenance") this.options.onMaintenance?.(message.request);
     else {
       this.pending.get(message.id)?.(message);
       this.pending.delete(message.id);

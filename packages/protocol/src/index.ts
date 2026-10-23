@@ -1,10 +1,12 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 import { INCIDENT_OPS } from "./incidents.ts";
+import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { ReportPr, ReportStatus } from "./report.ts";
 import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
 
 export * from "./branch.ts";
+export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./cooldowns.ts";
 export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
@@ -362,6 +364,7 @@ export const OPS = {
     result: Type.Object({ entry: Type.Integer() }),
   },
   ...INCIDENT_OPS,
+  ...MAINTENANCE_OPS,
   report: {
     roles: ["worker"],
     args: Type.Object({
@@ -385,6 +388,7 @@ const ClientMessage = Type.Union([
     token: Type.String(),
     inFile: Type.Array(Type.Integer()),
     process: Type.Optional(Type.String()),
+    maintenance: Type.Optional(Type.Boolean()),
   }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
   Type.Object({ t: Type.Literal("activity"), state: Type.Enum(["running", "idle", "waiting"]) }),
@@ -455,6 +459,7 @@ export const PushedEntrySchema = Type.Object({
 });
 
 const ServerMessage = Type.Union([
+  Type.Object({ t: Type.Literal("maintenance"), request: MaintenanceSchema }),
   Type.Object({
     t: Type.Literal("welcome"),
     session: Type.String(),

@@ -1,18 +1,18 @@
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { check, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
 import { arrangeOn, tagUntaggedWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
 import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
-import { fleet, hostsOf, restartAll, withLanes } from "./lanes.ts";
+import { fleet, hostsOf, withLanes } from "./lanes.ts";
 import type { Link } from "./link.ts";
+import { maintenanceReport, ownPane, relaunchSelf, requestAndAwait } from "./maintenance.ts";
 
 const UPDATE_WAIT_MS = 900_000;
+const MAINTENANCE_WAIT_MS = Number(process.env["FLEET_MAINTENANCE_WAIT_MS"]) || 30_000;
 const CARDD_WAIT_MS = Number(process.env["FLEET_CARDD_WAIT_MS"]) || 60_000;
 const VERSION_TIMEOUT_MS = 2_000;
-const RELAUNCH = fileURLToPath(new URL("./relaunch.ts", import.meta.url));
 
 type HostReply =
   | { readonly state: "ready" | "unreachable" | "refused" | "failed"; readonly lines: string[] }
@@ -29,6 +29,8 @@ const str = (row: Record<string, unknown>, key: string): string => {
   const value = row[key];
   return typeof value === "string" ? value : "";
 };
+const messageOf = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 const short = (sha: string): string => sha.slice(0, 7);
 
 function pulledParts(row: Record<string, unknown>): string[] {
@@ -256,14 +258,17 @@ async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolea
       ok: false,
       text: `Fleet update stopped: cardd does not run the new code, so no mate was restarted, and main keeps running.\nHosts:\n${hostLines}`,
     };
-  const lanes = await restartAll(config);
+  const lanes = await requestAndAwait(link, "reload", randomUUID(), MAINTENANCE_WAIT_MS).then(
+    maintenanceReport,
+    (error: unknown) => [`Unable to reload: ${messageOf(error)}`],
+  );
   const sidebars = await arrangeAll(config);
   return {
     ok: true,
     text: [
       "Fleet updated.",
       `Hosts:\n${hostLines}`,
-      `Lanes:\n${bullets(lanes)}`,
+      `Reloads at each safe point (pending is not completed):\n${lanes.join("\n")}`,
       `Sidebars:\n${bullets(sidebars)}`,
       ...changeLines(replies, carddStep !== undefined),
     ].join("\n"),
@@ -306,28 +311,10 @@ function changeLines(replies: readonly HostReply[], carddUpdated: boolean): stri
   ];
 }
 
-const ownPane = (): string | undefined => {
-  const pane = process.env["HERDR_PANE_ID"];
-  return pane === undefined || pane === "" ? undefined : pane;
-};
-
 const mainLine = (): string =>
   ownPane() === undefined
     ? "Main: not in a herdr pane, so it cannot restart itself. Restart it with `pi -c` in its home."
     : "Main: restarts on its own conversation when this turn ends.";
-
-function restartMain(ctx: ExtensionContext): void {
-  const pane = ownPane();
-  if (pane === undefined) return;
-  const args = process.argv.slice(2).filter((arg) => arg !== "-c" && arg !== "--continue");
-  const helper = spawn(
-    process.execPath,
-    [RELAUNCH, String(process.pid), pane, process.cwd(), ...args],
-    { detached: true, stdio: "ignore" },
-  );
-  helper.unref();
-  ctx.shutdown();
-}
 
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
@@ -351,7 +338,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     name: "update_fleet",
     label: "Update fleet",
     description:
-      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it restarts every lane that is not held, reorders every host's herdr sidebar whether or not any mate started there and reports each host that could not be ordered, and restarts main on its conversation when this turn ends. Use it only when the captain asks to update the fleet.",
+      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it requests safe-point reloads of connected workers and second mates without interrupting their turns or long jobs, preserves stopped lanes and task waits, reports pending versus completed requests, reorders every host's herdr sidebar, and restarts main on its conversation when this turn ends. Use it only when the captain asks to update the fleet.",
     parameters: Type.Object({}),
     execute: async () => {
       const result = await run();
@@ -362,7 +349,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
   });
   pi.registerCommand("updatefleet", {
     description:
-      "Update the fleet to the latest origin/main on every host and cardd, restart cardd when its code changed, restart every lane, arrange every host's herdr sidebar, then restart main on its conversation.",
+      "Update the fleet to the latest origin/main on every host and cardd, restart cardd when its code changed, request safe-point reloads of workers and second mates, arrange every host's herdr sidebar, then restart main on its conversation.",
     handler: async (_args, ctx) => {
       if (ctx.hasUI) ctx.ui.notify("Updating the fleet on every host...", "info");
       const result = await run().catch((error: unknown) => ({
@@ -379,6 +366,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
   pi.on("agent_settled", (_event, ctx) => {
     if (!restartPending) return;
     restartPending = false;
-    restartMain(ctx);
+    const pane = ownPane();
+    if (pane !== undefined) relaunchSelf(ctx, pane);
   });
 }

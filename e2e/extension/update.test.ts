@@ -46,6 +46,7 @@ const startLab = (carddWaitS: number): Promise<HerdrLab> =>
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "1000",
     FLEET_CARDD_WAIT_MS: String(carddWaitS * 1000),
+    FLEET_MAINTENANCE_WAIT_MS: "20000",
   });
 
 beforeEach(async () => {
@@ -184,9 +185,12 @@ test("/updatefleet pulls origin's new commit into every home on every host and c
       `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
       `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
       `- local cardd (${app.root}): updated ${range}; board built; its code did not change, so it was not restarted`,
-      "Lanes:",
-      "- ops (local): started",
-      "- far (p620): started",
+      "Reloads at each safe point (pending is not completed):",
+      "Reloaded and verified:",
+      "- far (mate): reload completed - reconnected on a new process",
+      "- ops (mate): reload completed - reconnected on a new process",
+      "Unable to reload:",
+      "- ghost (mate): reload failed - runs code from before safe reloads, so it was left running: restart it by hand",
       "Sidebars:",
       "- local: ordered",
       "- p620: ordered",
@@ -308,7 +312,7 @@ test("/updatefleet backs up cardd's database and restarts cardd on the new code 
   const range = `${old.slice(0, 7)}..${fresh.slice(0, 7)} (1 commit)`;
   const start = said.indexOf("[fleet] update:");
   assert.equal(
-    said.slice(start, said.indexOf("\nLanes:", start)),
+    said.slice(start, said.indexOf("\nReloads at each", start)),
     [
       "[fleet] update: Fleet updated.",
       "Hosts:",

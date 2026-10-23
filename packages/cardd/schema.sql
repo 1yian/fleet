@@ -149,6 +149,19 @@ CREATE TABLE lanes (
   parent TEXT REFERENCES lanes (name)
 , card INTEGER REFERENCES cards (id)) STRICT;
 
+CREATE TABLE maintenance (
+  id INTEGER PRIMARY KEY,
+  batch TEXT NOT NULL,
+  requester TEXT NOT NULL REFERENCES sessions (id),
+  session TEXT NOT NULL REFERENCES sessions (id),
+  kind TEXT NOT NULL CHECK (kind IN ('reload', 'stow')),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'reloading', 'completed', 'failed')),
+  process TEXT,
+  detail TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (batch, session)
+) STRICT;
+
 CREATE TABLE projects (
   name TEXT PRIMARY KEY,
   clones TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(clones)),
@@ -175,7 +188,7 @@ CREATE TABLE sessions (
     state IN ('starting', 'idle', 'running', 'waiting', 'exited', 'lost', 'closed')
   ),
   low_water INTEGER NOT NULL DEFAULT 0,
-  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)),
+  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)), maintenance INTEGER NOT NULL DEFAULT 0 CHECK (maintenance IN (0, 1)),
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
 ) STRICT;
 
