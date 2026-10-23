@@ -123,6 +123,29 @@ test("an idle worker is nudged itself once, and its mate hears only when it is s
   );
 });
 
+test("a worker that answers every nudge with a short turn and no report is still reported to its mate", async () => {
+  const card = await newCard(fleet.main, "answers nudges without reporting");
+  const worker = await idle(await begin(fleet.main, card));
+  let answered = 0;
+  const answer = setInterval(() => {
+    const nudges = worker.entries.filter(
+      ({ entry }) => entry.fields["condition"] === "worker-idle-nudge",
+    );
+    if (nudges.length <= answered) return;
+    answered = nudges.length;
+    worker.ack(nudges[nudges.length - 1]?.entry.id ?? 0);
+    worker.send({ t: "activity", state: "running" });
+    setTimeout(() => {
+      worker.send({ t: "activity", state: "idle" });
+    }, 40);
+  }, 5);
+  beats.push(answer);
+
+  await reach(worker, card, "worker-idle-nudge", 1);
+  await reach(fleet.main, card, "worker-idle", 1);
+  assert.equal(await status(fleet.main, card), "working");
+});
+
 test("a paused worker is neither nudged nor reported", async () => {
   const card = await newCard(fleet.main, "paused");
   const worker = await idle(await begin(fleet.main, card));

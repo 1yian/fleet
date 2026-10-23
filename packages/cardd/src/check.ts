@@ -85,7 +85,11 @@ const IDLE_WORKERS = (
 ): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen,
     coalesce((SELECT max(created_at) FROM entries WHERE card = w.card AND author LIKE 'worker:%'), 0) AS spoke,
     (SELECT max(created_at) FROM entries WHERE card = w.card AND author = 'check'
-      AND json_extract(fields, '$.condition') = 'worker-idle-nudge') AS nudged
+      AND json_extract(fields, '$.condition') = 'worker-idle-nudge') AS nudged,
+    (SELECT min(created_at) FROM entries WHERE card = w.card AND author = 'check'
+      AND json_extract(fields, '$.condition') = 'worker-idle-nudge'
+      AND created_at > coalesce((SELECT max(created_at) FROM entries
+        WHERE card = w.card AND author LIKE 'worker:%'), 0)) AS ignored
   FROM (${workerCards(ids)}) w
   WHERE ${quietSql("w.state", "w.attemptId")}
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
@@ -127,25 +131,31 @@ function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   const idle = rows(db, IDLE_WORKERS(ids), now).flatMap((row): Match[] => {
     const card = Number(row["card"]);
     const lane = String(row["lane"]);
+    const seen = Number(row["seen"]);
     const nudged = typeof row["nudged"] === "number" ? row["nudged"] : 0;
-    if (nudged <= Number(row["spoke"]) || nudged < Number(row["seen"])) {
-      if (now - Number(row["seen"]) < t.idleNudge) return [];
-      const text = `reminder: ${NUDGE_TEXT}`;
-      return [
-        {
-          card,
-          lane,
-          condition: "worker-idle-nudge",
-          text,
-          tier: 1,
-          instance: String(row["seen"]),
-          worker: true,
-        },
-      ];
-    }
-    const tier = repeatTier(now - nudged, t.idleTell, t.repeat);
+    const ignored = typeof row["ignored"] === "number" ? row["ignored"] : undefined;
+    const settled = now - seen >= t.idleNudge;
+    const nudge: Match[] =
+      settled && (ignored === undefined || nudged < seen)
+        ? [
+            {
+              card,
+              lane,
+              condition: "worker-idle-nudge",
+              text: `reminder: ${NUDGE_TEXT}`,
+              tier: 1,
+              instance: String(seen),
+              worker: true,
+            },
+          ]
+        : [];
+    const tier =
+      ignored === undefined || !settled ? 0 : repeatTier(now - ignored, t.idleTell, t.repeat);
     const text = "worker idle without a handoff, and it did not act on a nudge";
-    return tier === 0 ? [] : [{ card, lane, condition: "worker-idle", text, tier }];
+    return [
+      ...nudge,
+      ...(tier === 0 ? [] : [{ card, lane, condition: "worker-idle", text, tier }]),
+    ];
   });
   return [...running, ...idle];
 }
