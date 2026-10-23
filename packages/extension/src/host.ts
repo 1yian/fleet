@@ -161,6 +161,13 @@ export async function piRunning(host: string, pane: string): Promise<boolean> {
   return processes.some((each) => field(each, "argv0") === "pi" || field(each, "name") === "pi");
 }
 
+export async function piPids(host: string, pane: string): Promise<number[]> {
+  const { processes } = await foreground(host, pane);
+  return processes
+    .filter((each) => field(each, "argv0") === "pi" || field(each, "name") === "pi")
+    .flatMap((each) => (typeof each["pid"] === "number" ? [each["pid"]] : []));
+}
+
 export async function shellIdle(host: string, pane: string): Promise<boolean> {
   const { group, shell } = await foreground(host, pane);
   return group !== undefined && group === shell;

@@ -4,6 +4,8 @@ CREATE INDEX entries_by_card ON entries (card, id);
 
 CREATE UNIQUE INDEX one_live_attempt ON attempts (card) WHERE state IN ('starting', 'active');
 
+CREATE UNIQUE INDEX one_live_incident ON incidents (actor) WHERE state IN ('open', 'recovering', 'blocked');
+
 CREATE UNIQUE INDEX one_mate_per_lane ON sessions (lane) WHERE role = 'mate';
 
 CREATE UNIQUE INDEX one_open_finding ON findings (card, condition) WHERE cleared_at IS NULL;
@@ -98,6 +100,33 @@ CREATE TABLE findings (
   cleared_at INTEGER
 ) STRICT;
 
+CREATE TABLE incidents (
+  id INTEGER PRIMARY KEY,
+  actor TEXT NOT NULL REFERENCES sessions (id),
+  card INTEGER NOT NULL REFERENCES cards (id),
+  parent TEXT,
+  generation INTEGER NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('turn', 'compaction', 'startup', 'lost')),
+  classification TEXT NOT NULL,
+  error TEXT NOT NULL,
+  source TEXT NOT NULL,
+  intent TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('open', 'recovering', 'blocked', 'verified', 'cleared', 'superseded')),
+  count INTEGER NOT NULL DEFAULT 1,
+  retries INTEGER NOT NULL DEFAULT 0,
+  replacements INTEGER NOT NULL DEFAULT 0,
+  eligible_at INTEGER,
+  due_told INTEGER NOT NULL DEFAULT 0,
+  recovery_key TEXT,
+  recovery_mode TEXT CHECK (recovery_mode IN ('retry', 'replace')),
+  recovery_entry INTEGER REFERENCES entries (id),
+  recovery_deadline INTEGER,
+  control_at INTEGER,
+  first_at INTEGER NOT NULL,
+  last_at INTEGER NOT NULL,
+  closed_at INTEGER
+) STRICT;
+
 CREATE TABLE jobs (
   id INTEGER PRIMARY KEY,
   attempt INTEGER NOT NULL REFERENCES attempts (id),
@@ -146,7 +175,7 @@ CREATE TABLE sessions (
     state IN ('starting', 'idle', 'running', 'waiting', 'exited', 'lost', 'closed')
   ),
   low_water INTEGER NOT NULL DEFAULT 0,
-  last_seen INTEGER,
+  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)),
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
 ) STRICT;
 

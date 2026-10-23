@@ -27,6 +27,7 @@ export interface LinkOptions {
   readonly url: string;
   readonly token: string;
   readonly inFile: () => number[];
+  readonly process?: string;
   readonly onPush: (push: Push) => void;
   readonly onConnect: () => void;
   readonly onUnreadable: (error: string) => void;
@@ -51,7 +52,13 @@ export class Link {
     const socket = new WebSocket(this.options.url);
     this.socket = socket;
     socket.addEventListener("open", () => {
-      this.send({ t: "hello", token: this.options.token, inFile: this.options.inFile() });
+      const { process: id } = this.options;
+      const hello = {
+        t: "hello",
+        token: this.options.token,
+        inFile: this.options.inFile(),
+      } as const;
+      this.send(id === undefined ? hello : { ...hello, process: id });
     });
     socket.addEventListener("message", (event) => {
       let message: ServerMessage;

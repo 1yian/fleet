@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +7,7 @@ import { registerBranch } from "./branch.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
+import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs } from "./jobs.ts";
@@ -15,6 +17,7 @@ import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { registerMate } from "./mate.ts";
+import { registerRecover } from "./recover.ts";
 import { registerQuestions } from "./questions.ts";
 import { registerReview } from "./review.ts";
 import { standingRules } from "./standing.ts";
@@ -72,10 +75,22 @@ function piArgs(): string[] {
   return Array.isArray(parsed) ? parsed.filter((arg) => typeof arg === "string") : [];
 }
 
+function tellUnreadable(pi: ExtensionAPI, error: string): void {
+  pi.sendMessage(
+    {
+      customType: "fleet-link",
+      content: `[fleet] link: cardd sent a message this session cannot read (${error}). It may run other code than this extension. The session keeps reconnecting.`,
+      display: true,
+    },
+    { triggerTurn: false },
+  );
+}
+
 function start(
   pi: ExtensionAPI,
   { url, token, role, lane }: Config,
   sessionFile: string | undefined,
+  compact: () => void,
 ): void {
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
@@ -84,22 +99,17 @@ function start(
     url,
     token,
     inFile: () => idsInSessionFile(sessionFile),
+    process: randomUUID(),
     onUnreadable: (error) => {
       if (unreadable === error) return;
       unreadable = error;
-      pi.sendMessage(
-        {
-          customType: "fleet-link",
-          content: `[fleet] link: cardd sent a message this session cannot read (${error}). It may run other code than this extension. The session keeps reconnecting.`,
-          display: true,
-        },
-        { triggerTurn: false },
-      );
+      tellUnreadable(pi, error);
     },
     onConnect: () => {
       unreadable = undefined;
       pi.events.emit("fleet:connected", {});
       worker?.flush();
+      failures.flush();
       jobs?.sync().catch(() => undefined);
     },
     onPush: ({ entry, name, mode, again = false }) => {
@@ -113,26 +123,37 @@ function start(
           display: true,
           details: { entryId: entry.id },
         },
-        { triggerTurn: true, deliverAs: mode },
+        { triggerTurn: entry.fields["compaction"] !== true, deliverAs: mode },
       );
+      if (entry.fields["compaction"] === true) {
+        failures.expectCompaction();
+        compact();
+      }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.kind === "job-result" || entry.kind === "review-feedback")
         jobs?.finished(entry.fields["job"]);
-      worker?.reset();
+      noteWorkerInput(entry.fields["recovery"] !== undefined);
     },
   });
+  const noteWorkerInput = (recovery: boolean): void => {
+    if (recovery) worker?.checkingHealth();
+    else worker?.reset();
+  };
   const jobs = role === "worker" ? new Jobs(link, { url, token }) : undefined;
   jobs?.register(pi);
   if (jobs !== undefined) {
     registerReview(pi, jobs);
     registerBranch(pi, link);
   }
-  const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs);
+  const failures = new Failures(link);
+  failures.register(pi);
+  const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
   worker?.register(pi);
-  const lanes = lane === "main" ? registerLanes(pi, HOME()) : undefined;
+  const lanes = lane === "main" ? registerLanes(pi, HOME(), link) : undefined;
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
     registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
+    registerRecover(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
     registerStow(pi, HOME(), lane);
     registerPlan(pi, link);
   }
@@ -171,7 +192,9 @@ export default function fleet(pi: ExtensionAPI): void {
     const found = config(pi);
     if (started || found === undefined) return;
     started = true;
-    start(pi, found, ctx.sessionManager.getSessionFile());
+    start(pi, found, ctx.sessionManager.getSessionFile(), () => {
+      ctx.compact();
+    });
     if (found.lane !== undefined) titleMate(pi, found.lane).catch(() => undefined);
   });
 }

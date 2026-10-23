@@ -1,7 +1,7 @@
 import type { Delivery, OpResult } from "@fleet/protocol";
 import { SYNC_FUNCTIONS } from "./clones.ts";
 import { fleetArgs } from "./fleet-args.ts";
-import { field, herdr, onHost, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
+import { field, herdr, onHost, piPids, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
 import type { Link } from "./link.ts";
 
@@ -155,4 +155,60 @@ export async function dispatch(
   const note = "Your session was restarted. Continue your task from where you stopped.";
   await link.call("comment", { card: request.card, text: note });
   return `Restarted ${where} on its own session, branch ${plan.branch}.`;
+}
+
+const STOP_WAIT_MS = 15_000;
+
+async function stopPi(host: string, pane: string, session: string): Promise<void> {
+  const signals = ["TERM", "KILL"] as const;
+  for (const signal of signals) {
+    for (const pid of await piPids(host, pane))
+      await onHost(host, ["kill", `-${signal}`, String(pid)]).catch(() => undefined);
+    if (await until(() => shellIdle(host, pane), STOP_WAIT_MS)) return;
+  }
+  throw new Error(
+    `could not confirm that the old process of ${session} stopped, so nothing was started in its place`,
+  );
+}
+
+export async function replaceWorker(
+  link: Link,
+  launch: Launch,
+  recovery: { card: number; host: string; repeat: boolean },
+): Promise<string> {
+  const task = "recovery: the session is being replaced";
+  const plan = await link.call("attempt.begin", {
+    card: recovery.card,
+    host: recovery.host,
+    task,
+    replace: false,
+  });
+  if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
+  const pane = await worktreePane(recovery.host, plan, recovery.card);
+  if (await piRunning(recovery.host, pane)) {
+    if (recovery.repeat)
+      return `A process of ${plan.session} already runs on ${recovery.host}, so this repeated request left it alone.`;
+    await stopPi(recovery.host, pane, plan.session);
+  }
+  await startAgent(
+    recovery.host,
+    pane,
+    [
+      [
+        "agent",
+        "start",
+        plan.session,
+        "--kind",
+        "pi",
+        "--pane",
+        pane,
+        "--timeout",
+        String(HERDR_READY_WAIT_MS),
+        "--",
+      ],
+      fleetArgs({ url: launch.url, token: plan.token, role: "worker" }),
+      ["--session-id", plan.session, ...launch.piArgs],
+    ].flat(),
+  );
+  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
 }

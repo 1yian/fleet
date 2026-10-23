@@ -2,6 +2,7 @@ import { OPS } from "@fleet/protocol";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { parseUtc, textOf } from "./inbox.ts";
+import type { Failures } from "./failure.ts";
 import type { Jobs } from "./jobs.ts";
 import type { Link } from "./link.ts";
 
@@ -53,19 +54,27 @@ export class WorkerRun {
   private latest: LatestReport | undefined;
   private unsent: string | undefined;
   private nudged = false;
+  private recoveryCheck = false;
   private lastText = "";
   private readonly link: Link;
   private readonly jobs: Jobs;
+  private readonly failures: Failures;
 
-  constructor(link: Link, jobs: Jobs) {
+  constructor(link: Link, jobs: Jobs, failures: Failures) {
     this.link = link;
     this.jobs = jobs;
+    this.failures = failures;
   }
 
   reset(): void {
     this.latest = undefined;
     this.unsent = undefined;
     this.nudged = false;
+    this.recoveryCheck = false;
+  }
+
+  checkingHealth(): void {
+    this.recoveryCheck = true;
   }
 
   flush(): void {
@@ -104,7 +113,12 @@ export class WorkerRun {
       if (event.message.role === "assistant") this.lastText = textOf(event.message);
     });
     pi.on("agent_before_settle", (event) => {
-      if (this.mayEnd() || event.context.pendingMessages.length > 0 || this.nudged)
+      if (
+        this.failures.lastFailed ||
+        this.mayEnd() ||
+        event.context.pendingMessages.length > 0 ||
+        this.nudged
+      )
         return undefined;
       this.nudged = true;
       const nudge = {
@@ -116,7 +130,7 @@ export class WorkerRun {
       return { continue: true, entries: [nudge] };
     });
     pi.on("agent_settled", async (event) => {
-      if (!event.aborted && this.mayEnd()) return;
+      if (!event.aborted && (this.failures.lastFailed || this.mayEnd())) return;
       const text = event.aborted
         ? "stopped from the pane"
         : `ended the run without a handoff: ${this.lastText}`;
@@ -135,7 +149,7 @@ export class WorkerRun {
   }
 
   private mayEnd(): boolean {
-    if (this.jobs.waiting) return true;
+    if (this.jobs.waiting || this.recoveryCheck) return true;
     if (this.latest === undefined) return false;
     const { status, until } = this.latest;
     if (status === "paused") return until !== undefined && until > Date.now();

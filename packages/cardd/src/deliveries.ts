@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, EntrySchema, PushedEntrySchema, type Entry } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
+import { LIVE_INCIDENT } from "./incident-store.ts";
 import { addEntry, ENTRY_JSON, getCard, json, parentOf } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -69,6 +70,7 @@ const NOT_TAKEN = `SELECT d.session AS session, d.intake AS intake, s.role AS ro
     AND ((s.role = 'mate' AND s.state = 'idle')
       OR (s.role = 'worker' AND ${quietSql("s.state", "s.attempt")}))
     AND ?1 - max(d.updated_at, coalesce(s.last_seen, 0)) > ?2
+    AND NOT ${LIVE_INCIDENT.replace("SESSION", "d.session")}
   ORDER BY d.entry`;
 
 function sender(author: string): string {
