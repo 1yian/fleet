@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { after, afterEach, before, beforeEach, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { seedKanban, type Kanban } from "../support/kanban.ts";
@@ -22,15 +22,16 @@ before(async () => {
 after(async () => {
   await browser.close();
 });
-beforeEach(async () => {
-  cardd = await Cardd.start({}, ["--board", BOARD]);
+beforeEach(async (context) => {
+  assert.ok("after" in context);
+  const server = await Cardd.start({}, ["--board", BOARD]);
+  context.after(() => server.stop());
+  cardd = server;
   main = await cardd.connect(cardd.addLane("main"));
   fleet = await seedKanban(cardd, main);
-  page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-});
-afterEach(async () => {
-  await page.close();
-  await cardd.stop();
+  const tab = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  context.after(() => tab.close());
+  page = tab;
 });
 
 const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");

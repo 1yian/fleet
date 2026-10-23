@@ -133,6 +133,7 @@ jobs:
         run: ./gitleaks git --redact --no-banner .
 
   e2e-pi:
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.pi == 'true'
     runs-on: ubuntu-latest
@@ -143,9 +144,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: node --test --test-concurrency=1 "e2e/pi/**/*.test.ts"
+      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/pi/**/*.test.ts"
 
   e2e-cardd:
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.cardd-e2e == 'true'
     runs-on: ubuntu-latest
@@ -157,9 +159,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: node --test --test-concurrency=1 "e2e/cardd/**/*.test.ts"
+      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/cardd/**/*.test.ts"
 
   e2e-extension:
+    timeout-minutes: 30
     name: e2e-extension (${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.extension-e2e == 'true'
@@ -191,9 +194,10 @@ jobs:
         run: npm install -g lavish-axi@0.1.90
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: node --test --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 "e2e/extension/**/*.test.ts"
+      - run: node --test --test-timeout=300000 --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 "e2e/extension/**/*.test.ts"
 
   e2e-board:
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.board-e2e == 'true'
     runs-on: ubuntu-latest
@@ -206,7 +210,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: node --test --test-concurrency=1 "e2e/board/**/*.test.ts"
+      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
 
   tests-required:
     needs: changes
