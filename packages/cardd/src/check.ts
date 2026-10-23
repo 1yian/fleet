@@ -1,6 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs, quietSql } from "./attempts.ts";
-import { chaseIntake } from "./deliveries.ts";
+import { chaseIntake, dueBatches } from "./deliveries.ts";
 import type { PullRequest } from "./github.ts";
 import { withdrawMerge } from "./holds.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
@@ -427,6 +427,7 @@ export function runCheck(
     ...lostJobs(db, now, t),
     ...chaseIntake(db, now, t),
     ...scheduledWakes(db, t.wall()),
+    ...dueBatches(db, { now: t.wall(), window: t.batch }),
     ...reconcileIncidents(db, now, t),
     ...lostMates(db, now, t),
     ...expireMaintenance(db, now, t),

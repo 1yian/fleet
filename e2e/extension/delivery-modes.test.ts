@@ -102,8 +102,7 @@ test("no-mistakes: the worker gets its mode from the card, the pipeline's done r
     await after(h, 2);
     return { tool: "report", args: { status: "in-review", text: "validation started" } };
   }, "worker");
-  h.onModel(async () => {
-    await after(h, 3);
+  h.onModel(() => {
     gh.setPr(pr, "OPEN", { ci: "pass" });
     gh.setHead(pr, "c-1-a1");
     return { tool: "report", args: { status: "done", text: `PR ${pr} checks green` } };

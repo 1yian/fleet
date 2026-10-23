@@ -64,28 +64,33 @@ test("main reads a worker's report after its comment as one line: card name, sta
   await worker.waitForEntries(1);
 
   await worker.call("report", { status: "working", text: "Reading the lint config" });
-  assert.equal(
-    lastUser(await h.waitForCall(0, "mate", WAIT_MS)),
-    "[fleet] c-1 ban-code-comments working: Reading the lint config",
-  );
-
   await asMain("comment", { card: card.id, text: "Put the rule in eslint.config.js" });
   await worker.waitForEntries(2);
   await worker.call("report", {
     status: "working",
     text: "The no-comments lint rule is in eslint.config.js",
   });
-  assert.equal(
-    lastUser(await h.waitForCall(1, "mate", WAIT_MS)),
-    "[fleet] c-1 ban-code-comments working: The no-comments lint rule is in eslint.config.js",
-  );
-
   await asMain("comment", { card: card.id, text: "Stop and report what blocks you" });
   await worker.waitForEntries(3);
   await worker.call("report", { status: "blocked", text: "The lint gate is red on main" });
-  assert.equal(
-    lastUser(await h.waitForCall(2, "mate", WAIT_MS)),
-    "[fleet] c-1 ban-code-comments blocked: The lint gate is red on main (card now with-mate)",
+  await h.waitForCall(0, "mate", WAIT_MS);
+  const lines = (): string[] =>
+    h
+      .callsOf("mate")
+      .flatMap((turns) => turns.filter((turn) => turn.role === "user").map((turn) => turn.text))
+      .filter((text) => text.startsWith("[fleet] c-1"));
+  const deadline = Date.now() + WAIT_MS;
+  while (new Set(lines()).size < 3) {
+    assert.ok(Date.now() < deadline, "timed out waiting for the batch and the blocked report");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.deepEqual(
+    [...new Set(lines())],
+    [
+      "[fleet] c-1 ban-code-comments working: Reading the lint config",
+      "[fleet] c-1 ban-code-comments working: The no-comments lint rule is in eslint.config.js",
+      "[fleet] c-1 ban-code-comments blocked: The lint gate is red on main (card now with-mate)",
+    ],
   );
   await worker.close();
 });

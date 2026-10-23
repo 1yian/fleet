@@ -36,8 +36,14 @@ export function tell(
   inc: Incident,
   role: "mate" | "worker",
   body: string,
+  routine = false,
 ): string[] {
-  const fields = { condition: "runtime-failure", incident: inc.id, role };
+  const fields = {
+    condition: "runtime-failure",
+    incident: inc.id,
+    role,
+    ...(routine ? { routine } : {}),
+  };
   if (inc.parent === null) {
     const hold = { ...fields, holder: "captain", options: [], merge: false, until: null };
     addEntry(db, { card: inc.card, author: "check", kind: "hold", body, fields: hold }, []);
