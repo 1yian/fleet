@@ -9,6 +9,7 @@ export const REPORT_STATUSES = [
   "resolved",
   "in-review",
   "done",
+  "merged",
   "failed",
   "stopped",
 ] as const;

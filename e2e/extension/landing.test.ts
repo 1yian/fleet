@@ -73,7 +73,107 @@ test("close finds that an operation landed, closes it as Done, and removes its w
   assert.deepEqual(await workersOf(parts.lab), []);
 });
 
-test("close refuses Done for work that did not land and leaves it in place; landed=false drops it and archives it", async () => {
+function squashFromAnotherBranch(): void {
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+  git("checkout", "-q", "-b", "landed-elsewhere");
+  writeFileSync(join(clone, "fix.txt"), "one\n");
+  git("add", "fix.txt");
+  git("commit", "-q", "-m", "landed through another card");
+  git("checkout", "-q", "main");
+  git("merge", "--squash", "landed-elsewhere");
+  git("commit", "-q", "-m", "squash another card");
+  git("branch", "-D", "landed-elsewhere");
+}
+
+function assertArchive(archive: string): void {
+  const packed = execFileSync("zstd", ["-dc", archive]);
+  const files = execFileSync("tar", ["-tf", "-"], { input: packed, encoding: "utf8" });
+  assert.match(files, /c-1-a1\/commits\.bundle/);
+  const untracked = execFileSync("tar", ["-xOf", "-", "c-1-a1/untracked.tar"], { input: packed });
+  const scratch = execFileSync("tar", ["-xOf", "-", "scratch.txt"], {
+    input: untracked,
+    encoding: "utf8",
+  });
+  assert.equal(scratch, "two\n");
+}
+
+function assertWarned(text: string | undefined): void {
+  assert.ok(text !== undefined);
+  assert.match(
+    text,
+    /^c-1 was not closed\. c-1-a1 on local has 1 commit not on main and 1 uncommitted file:\n/,
+  );
+  assert.match(text, /^ {2}commit c-1-a1: [0-9a-f]+ the fix$/m);
+  assert.match(text, /^ {2}file c-1-a1: \?\? scratch\.txt$/m);
+  assert.match(text, /call close again with confirm=true/);
+}
+
+test("close warns about unlanded work and leaves the card open; confirm=true ends it Done and archives the work first", async () => {
+  scriptOperation(() => {
+    const tree = `${clone}.worktrees/c-1-a1`;
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+    writeFileSync(join(tree, "fix.txt"), "one\n");
+    git("add", "fix.txt");
+    git("commit", "-q", "-m", "the fix");
+    writeFileSync(join(tree, "scratch.txt"), "two\n");
+    squashFromAnotherBranch();
+    return { tool: "report", args: { status: "done", text: "fixed" } };
+  });
+  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Landed elsewhere." } }), "mate");
+  h.onModel((turns) => {
+    assertWarned(toolResults(turns).at(-1));
+    assert.equal(worktreesOf(clone).length, 2);
+    return { tool: "close", args: { card: 1, summary: "Landed elsewhere.", confirm: true } };
+  }, "mate");
+  await mateConnected();
+  mate.prompt("add credit");
+
+  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+  const archive = `${clone}.archive/c-1-a1.tar.zst`;
+  assert.equal(results.at(-1), `c-1 is done. Unlanded work is archived in local:${archive}.`);
+  assertArchive(archive);
+  assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
+  assert.deepEqual(await workersOf(parts.lab), []);
+});
+
+test("a merged report for a PR from another branch closes the card Done on its own and archives the leftover commits", async () => {
+  const pr = "https://github.com/acme/site/pull/381";
+  gh.setPr(pr, "MERGED");
+  scriptOperation(() => {
+    const tree = `${clone}.worktrees/c-1-a1`;
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", tree, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+    writeFileSync(join(tree, "fix.txt"), "one\n");
+    git("add", "fix.txt");
+    git("commit", "-q", "-m", "the fix");
+    writeFileSync(join(tree, "scratch.txt"), "two\n");
+    squashFromAnotherBranch();
+    return { tool: "report", args: { status: "merged", text: "landed in another card", pr } };
+  });
+  h.onModel(() => ({ text: "reported" }), "worker");
+  h.onModel((turns) => {
+    const message = lastUser(turns) ?? "";
+    const archive = `${clone}.archive/c-1-a1.tar.zst`;
+    assert.match(message, /^\[fleet\] c-1 .*merged: landed in another card/);
+    assert.ok(
+      message.includes(
+        `Closed automatically: c-1 is done. Unlanded work is archived in local:${archive}.`,
+      ),
+    );
+    return { text: "relayed" };
+  }, "mate");
+  await mateConnected();
+  mate.prompt("add credit");
+
+  await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assertArchive(`${clone}.archive/c-1-a1.tar.zst`);
+  assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
+  assert.deepEqual(await workersOf(parts.lab), []);
+});
+
+test("close warns about work that did not land and leaves it in place; landed=false drops it and archives it", async () => {
   scriptOperation(() => {
     const tree = `${clone}.worktrees/c-1-a1`;
     const git = (...args: string[]) =>
@@ -86,10 +186,7 @@ test("close refuses Done for work that did not land and leaves it in place; land
   });
   h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Done." } }), "mate");
   h.onModel((turns) => {
-    assert.equal(
-      toolResults(turns).at(-1),
-      "c-1 did not land: c-1-a1 on local has 1 commit not on main and 1 uncommitted file. Land it, or end it with close(card, summary=<why it is dropped>, landed=false), which archives it.",
-    );
+    assertWarned(toolResults(turns).at(-1));
     assert.equal(worktreesOf(clone).length, 2);
     return { tool: "close", args: { card: 1, summary: "The fix is not wanted.", landed: false } };
   }, "mate");
@@ -107,10 +204,7 @@ test("close refuses Done for work that did not land and leaves it in place; land
 test("with yolo on, the mate comments the worker to merge without asking; the worker merges, and close closes the card at once", async () => {
   const pr = "https://github.com/acme/site/pull/3";
   gh.setPr(pr, "OPEN");
-  scriptOperation(() => ({
-    tool: "report",
-    args: { status: "done", text: "credit added", pr },
-  }));
+  scriptOperation(() => ({ tool: "report", args: { status: "done", text: "credit added", pr } }));
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /Merge your PR now/);

@@ -39,14 +39,19 @@ if [ -f "$out" ]; then echo "$out"; fi`;
 const UNLANDED_COUNTS_SCRIPT = `set -eu
 wt=$1 clone=$2 branch=$3 base=$4
 ${ORIGIN_BASE_IF_FETCHED}
-ahead=0 dirty=0
+ahead=0 dirty=0 commits="" files=""
 if [ -d "$wt" ]; then
   ahead=$(git -C "$wt" rev-list --count HEAD --not "$base" \${origin:+"$origin"})
+  commits=$(git -C "$wt" log --oneline -n 10 HEAD --not "$base" \${origin:+"$origin"})
+  files=$(git -C "$wt" status --porcelain | head -n 20)
   dirty=$(git -C "$wt" status --porcelain | wc -l | tr -d ' ')
 elif git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
   ahead=$(git -C "$clone" rev-list --count "refs/heads/$branch" --not "$base" \${origin:+"$origin"})
+  commits=$(git -C "$clone" log --oneline -n 10 "refs/heads/$branch" --not "$base" \${origin:+"$origin"})
 fi
-echo "$ahead $dirty"`;
+echo "$ahead $dirty"
+if [ -n "$commits" ]; then echo "$commits" | sed 's/^/c /'; fi
+if [ -n "$files" ]; then echo "$files" | sed 's/^/f /'; fi`;
 
 const LAND_LOCALLY_SCRIPT = `set -eu
 clone=$1 branch=$2 base=$3
@@ -104,7 +109,16 @@ async function landLocally(card: number, plan: OpResult<"close.begin">): Promise
   }
 }
 
-async function unlandedCounts(attempt: Attempt): Promise<{ ahead: number; dirty: number }> {
+const EMPTY: Unlanded = { ahead: 0, dirty: 0, commits: [], files: [] };
+
+interface Unlanded {
+  ahead: number;
+  dirty: number;
+  commits: string[];
+  files: string[];
+}
+
+async function unlandedCounts(attempt: Attempt): Promise<Unlanded> {
   const { host, clone, branch, base, session } = attempt;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
@@ -118,8 +132,11 @@ async function unlandedCounts(attempt: Attempt): Promise<{ ahead: number; dirty:
     branch,
     base,
   ]);
-  const [ahead = 0, dirty = 0] = out.trim().split(" ").map(Number);
-  return { ahead, dirty };
+  const [counts = "", ...rest] = out.trimEnd().split("\n");
+  const [ahead = 0, dirty = 0] = counts.trim().split(" ").map(Number);
+  const tagged = (tag: string) =>
+    rest.filter((line) => line.startsWith(`${tag} `)).map((line) => line.slice(2));
+  return { ahead, dirty, commits: tagged("c"), files: tagged("f") };
 }
 
 function describe({ ahead, dirty }: { ahead: number; dirty: number }, base: string): string {
@@ -130,25 +147,33 @@ function describe({ ahead, dirty }: { ahead: number; dirty: number }, base: stri
   return parts.join(" and ");
 }
 
-async function unlanded(attempt: Attempt): Promise<string> {
-  return describe(await unlandedCounts(attempt), attempt.base);
+async function inspect(attempt: Attempt): Promise<Unlanded> {
+  try {
+    return await unlandedCounts(attempt);
+  } catch (error) {
+    if (attempt.live || !(error instanceof HostUnreachable)) throw error;
+    return EMPTY;
+  }
 }
 
-async function requireLanded(card: number, plan: OpResult<"close.begin">): Promise<void> {
+async function unlandedWarning(
+  card: number,
+  plan: OpResult<"close.begin">,
+  confirmed: boolean,
+): Promise<string | undefined> {
+  if (!plan.verify || confirmed) return undefined;
   const left: string[] = [];
+  const detail: string[] = [];
   for (const attempt of plan.attempts) {
-    try {
-      const what = await unlanded(attempt);
-      if (what !== "") left.push(`${attempt.session} on ${attempt.host} has ${what}`);
-    } catch (error) {
-      if (attempt.live || !(error instanceof HostUnreachable)) throw error;
-    }
+    const found = await inspect(attempt);
+    const what = describe(found, attempt.base);
+    if (what === "") continue;
+    left.push(`${attempt.session} on ${attempt.host} has ${what}`);
+    for (const commit of found.commits) detail.push(`  commit ${attempt.session}: ${commit}`);
+    for (const file of found.files) detail.push(`  file ${attempt.session}: ${file}`);
   }
-  if (left.length === 0) return;
-  const unlandedWork = left.join("; ");
-  const end =
-    "end it with close(card, summary=<why it is dropped>, landed=false), which archives it";
-  throw new Error(`c-${String(card)} did not land: ${unlandedWork}. Land it, or ${end}.`);
+  if (left.length === 0) return undefined;
+  return `c-${String(card)} was not closed. ${left.join("; ")}:\n${detail.join("\n")}\nIf this work landed elsewhere (another card's branch or PR), call close again with confirm=true: the card ends Done and this work is archived first. If it did not land and should not end Done, land it, or end it with close(card, summary=<why it is dropped>, landed=false).`;
 }
 
 async function retire(attempt: Attempt): Promise<string | null> {
@@ -186,15 +211,21 @@ async function retire(attempt: Attempt): Promise<string | null> {
 
 export async function close(
   link: Link,
-  request: { card: number; text: string; landed?: boolean | undefined },
+  request: {
+    card: number;
+    text: string;
+    landed?: boolean | undefined;
+    confirm?: boolean | undefined;
+  },
 ): Promise<string> {
-  const { card: id, text, landed } = request;
+  const { card: id, text, landed, confirm } = request;
   const plan = await link.call("close.begin", {
     card: id,
     ...(landed === undefined ? {} : { landed }),
   });
   const moved = plan.land ? await landLocally(id, plan) : "";
-  if (plan.verify) await requireLanded(id, plan);
+  const warning = await unlandedWarning(id, plan, confirm === true);
+  if (warning !== undefined) return warning;
   const archives: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
   for (const attempt of plan.attempts) {

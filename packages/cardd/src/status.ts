@@ -162,6 +162,7 @@ const REPORT_EFFECTS: Partial<Record<string, ReportEffect>> = {
     moveTo(tally, "in-review");
   },
   done,
+  merged: done,
 };
 
 const mergeChoice = (entry: Entry): boolean => text(entry, "choice") === MERGE_OPTIONS[0];
@@ -320,6 +321,7 @@ const HANDOFF_REPORTS: ReadonlySet<string> = new Set([
   "stopped",
   "in-review",
   "done",
+  "merged",
 ]);
 
 const isMerge = (entry: Entry): boolean =>

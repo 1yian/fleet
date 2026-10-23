@@ -28,7 +28,8 @@ import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
 import { restartCard } from "./restarts.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import { loadPlan } from "./plans.ts";
-import { recordReportedPr } from "./pulls.ts";
+import { recordReportedPr, type Hosts } from "./pulls.ts";
+import { normalizeReport } from "./merged-report.ts";
 import { requireOwedBy } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { scriptWake } from "./wakes.ts";
@@ -53,11 +54,18 @@ type LandingFields =
   | { readonly prNote: string }
   | { readonly landing: string }
   | Record<string, never>;
-type Handler = (db: DatabaseSync, session: Session, args: unknown, timing: Timings) => Done;
+type Handler = (
+  db: DatabaseSync,
+  session: Session,
+  args: unknown,
+  timing: Timings,
+  note?: string,
+) => Done;
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
   "in-review",
   "done",
+  "merged",
   "failed",
   "blocked",
   "needs-decision",
@@ -226,7 +234,7 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
-  report: (db, session, raw) => {
+  report: (db, session, raw, _timing, note) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     requireShortPause(args.status, args.until);
@@ -241,6 +249,7 @@ const HANDLERS: Record<OpName, Handler> = {
       until: args.until,
       replyTo: args.replyTo,
       ...landingOf(db, card, args),
+      ...(note === undefined ? {} : { prNote: note }),
     };
     const report: Draft = {
       card: card.id,
@@ -268,7 +277,7 @@ function openCardWithPr(db: DatabaseSync, id: number, pr: string | undefined): C
 
 function landingOf(db: DatabaseSync, card: Card, args: OpArgs<"report">): LandingFields {
   if (args.merged === true) {
-    if (args.status !== "done" || card.pr === null)
+    if ((args.status !== "done" && args.status !== "merged") || card.pr === null)
       throw new Error("a merged report must be done and name its PR URL");
     return { merged: true, pr: card.pr };
   }
@@ -284,17 +293,22 @@ function landingOf(db: DatabaseSync, card: Card, args: OpArgs<"report">): Landin
   return { prNote: "no PR URL reported: the worker reports it with report(pr=<full url>)" };
 }
 
-export function performOp(
+export async function performOp(
   db: DatabaseSync,
   session: Session,
   op: OpName,
   args: unknown,
   timing: Timings,
-): Done {
+  hosts: Hosts,
+): Promise<Done> {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
+  const report =
+    op === "report" && session.card !== null
+      ? await normalizeReport(db, hosts, session.card, args)
+      : undefined;
   return transaction(db, () => {
-    const result = HANDLERS[op](db, session, args, timing);
+    const result = HANDLERS[op](db, session, report?.args ?? args, timing, report?.note);
     noteControl(db, session.id, op);
     return result;
   });

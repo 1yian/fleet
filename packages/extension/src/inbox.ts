@@ -43,7 +43,7 @@ const suffix = (entry: Entry, key: string, label: string): string => {
 function prSuffix(entry: Entry): string {
   const url = field(entry, "pr");
   if (url === undefined) return suffix(entry, "prNote", "") + suffix(entry, "landing", "");
-  return ` (PR ${url}${entry.fields["merged"] === true ? ", merged" : ""})`;
+  return ` (PR ${url}${entry.fields["merged"] === true ? ", merged" : ""})${suffix(entry, "prNote", "")}`;
 }
 
 function replySuffix(entry: Entry): string {

@@ -6,7 +6,13 @@ import type { Failures } from "./failure.ts";
 import type { Jobs } from "./jobs.ts";
 import type { Link } from "./link.ts";
 
-const HANDOFFS: ReadonlySet<string> = new Set(["done", "failed", "blocked", "needs-decision"]);
+const HANDOFFS: ReadonlySet<string> = new Set([
+  "done",
+  "merged",
+  "failed",
+  "blocked",
+  "needs-decision",
+]);
 const PAUSE_DEFAULT_MS = 2 * 60 * 60 * 1000;
 const NUDGE =
   "[fleet] Your run is ending without a handoff. Report done, failed, blocked, or " +
@@ -23,9 +29,13 @@ const ReportParams = Type.Object({
       "resolved",
       "in-review",
       "done",
+      "merged",
       "failed",
     ],
-    { description: "done, failed, blocked, and needs-decision hand the card off" },
+    {
+      description:
+        "done, merged, failed, blocked, and needs-decision hand the card off. merged requires pr: its full URL",
+    },
   ),
   text: Type.String({ minLength: 1, description: "What happened, in one or two sentences" }),
   key: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "Decision key" })),
