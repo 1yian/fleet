@@ -172,12 +172,10 @@ export async function replaceWorker(
 ): Promise<string> {
   const plan = await link.call("attempt.resume", { card: recovery.card });
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
+  if (recovery.repeat)
+    return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
   const pane = await worktreePane(recovery.host, plan, recovery.card);
-  if (await piRunning(recovery.host, pane)) {
-    if (recovery.repeat)
-      return `A process of ${plan.session} already runs on ${recovery.host}, so this repeated request left it alone.`;
-    await stopPi(recovery.host, pane, plan.session);
-  }
+  if (await piRunning(recovery.host, pane)) await stopPi(recovery.host, pane, plan.session);
   await startAgent(
     recovery.host,
     pane,

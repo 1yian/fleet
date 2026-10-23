@@ -83,7 +83,7 @@ test("a worker with a stale module is replaced on its own conversation and work,
   scriptMate(2, async (turns) => {
     if (turns.at(-1)?.role === "toolResult" && !repeated) {
       repeated = true;
-      started = await workerGroupOf(lab, "c-1-a1");
+      started = await readyWorkerGroup(lab, "c-1-a1");
       return replace();
     }
     if (turns.at(-1)?.role !== "user" || !(lastUser(turns) ?? "").includes("runtime failure"))
@@ -118,6 +118,7 @@ test("a worker with a stale module is replaced on its own conversation and work,
     () => entriesOf(1),
     (view) => view.some((entry) => entry.body.includes("recovered (replace)")),
   );
+  await verifyDuplicate(incident);
   const entries = recovered;
   assert.equal(
     entries.filter((entry) => entry.fields["condition"] === "runtime-failure").length,
@@ -127,7 +128,7 @@ test("a worker with a stale module is replaced on its own conversation and work,
     entries.find((entry) => entry.body.includes("model turn failed"))?.body ?? "",
     /Classified stale-module\./,
   );
-  const results = toolResults(await h.waitForCall(7, "mate", WORKER_WAIT_MS));
+  const results = await mateResults(h, 6);
   assert.match(
     results.at(-2) ?? "",
     /^Started c-1-a1 again on local, on its own session and branch c-1-a1\. The recovery check reaches it/,
@@ -147,12 +148,7 @@ test("a worker with a stale module is replaced on its own conversation and work,
     [2, "task-2"],
   ]);
   assert.equal(readFileSync(join(tree, "dirty.txt"), "utf8"), "uncommitted work\n");
-  assert.equal(
-    execFileSync("git", ["-C", tree, "rev-parse", "--abbrev-ref", "HEAD"], {
-      encoding: "utf8",
-    }).trim(),
-    "c-1-a1",
-  );
+  assert.equal(branchOfTree(tree), "c-1-a1");
   const fresh = h.callsOf("worker").findLast((turns) => cardFor(turns) === 1) ?? [];
   assert.ok(
     fresh.some((turn) => turn.text.includes("fix the scrollbar")),
@@ -160,11 +156,62 @@ test("a worker with a stale module is replaced on its own conversation and work,
   );
   assert.match(
     lastUser(fresh) ?? "",
-    /recovery check 1 from main: this is a health check, not new work/,
+    new RegExp(
+      `recovery check ${String(incident.incident)} from main: this is a health check, not new work`,
+    ),
   );
   assert.equal(entries.filter((entry) => entry.fields["status"] === "note").length, 1);
   assert.ok(existsSync(tree));
 });
+
+async function readyWorkerGroup(lab: DispatchLab["lab"], attempt: string): Promise<number> {
+  const group = await waitFor(
+    () => workerGroupOf(lab, attempt),
+    (value) => value !== undefined,
+    WORKER_WAIT_MS,
+  );
+  if (group === undefined) throw new Error(`${attempt} has no process group`);
+  return group;
+}
+
+function branchOfTree(tree: string): string {
+  return execFileSync("git", ["-C", tree, "rev-parse", "--abbrev-ref", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+}
+
+async function verifyDuplicate(incident: { incident: number; generation: number }): Promise<void> {
+  const duplicate = await parts.cardd.post(parts.mainToken, "card.restart", {
+    card: 1,
+    ...incident,
+    mode: "replace",
+    key: "same",
+  });
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(duplicate.body, {
+    ok: true,
+    value: {
+      incident: incident.incident,
+      mode: "replace",
+      actor: "c-1-a1",
+      role: "worker",
+      lane: "main",
+      host: "local",
+      card: 1,
+      generation: incident.generation,
+      replaced: true,
+      repeat: true,
+    },
+  });
+}
+
+function mateResults(h: Harness, count: number): Promise<string[]> {
+  return waitFor(
+    () => Promise.resolve(toolResults(h.callsOf("mate").at(-1) ?? [])),
+    (each) => each.length >= count,
+    WORKER_WAIT_MS,
+  );
+}
 
 test("a worker that cannot start is reported once, replaced once, and then blocked for the owner", async () => {
   parts = await startDispatchLab({
@@ -334,7 +381,7 @@ test("a replacement requested again with the same key while it is still starting
     }
     if (phase === "again") {
       phase = "done";
-      starting = await workerGroupOf(lab, "c-1-a1");
+      starting = await readyWorkerGroup(lab, "c-1-a1");
       return replace();
     }
     return { text: "noted" };
@@ -353,11 +400,11 @@ test("a replacement requested again with the same key while it is still starting
   await mateConnected(h);
   mate.prompt("ship it");
 
-  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+  const results = await mateResults(h, 4);
   assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on local/);
   assert.match(
     results.at(-1) ?? "",
-    /already runs on local, so this repeated request left it alone/,
+    /already runs or is starting on local, so this repeated request left it alone/,
   );
   const sessions = (await cardd.post(parts.mainToken, "card", { card: 1 })).status;
   assert.equal(sessions, 200);
@@ -386,7 +433,7 @@ test("a stale import on the nudge turn is one incident, replaced on the same car
     "Cannot find module '/pi/dist/bundle/chunks/openai-completions-X.js' imported from /pi/dist/bundle/chunk-Y.js";
   let ran = 0;
   scriptMate(1, (turns) =>
-    turns.at(-1)?.role === "user" && (lastUser(turns) ?? "").includes("Recover with")
+    turns.at(-1)?.role === "user" && (lastUser(turns) ?? "").includes("Classified stale-module")
       ? {
           tool: "restart_card",
           args: { card: 1, ...incidentIn(turns), mode: "replace", key: "same" },
@@ -413,7 +460,7 @@ test("a stale import on the nudge turn is one incident, replaced on the same car
   assert.equal(failures.filter((entry) => entry.body.startsWith("runtime failure")).length, 1);
   assert.match(
     failures[0]?.body ?? "",
-    /Classified stale-module\. Incident 1, process generation 1\./,
+    /Classified stale-module\. Incident \d+, process generation 1\./,
   );
   assert.deepEqual(
     entries.filter((entry) => entry.fields["status"] === "stopped"),

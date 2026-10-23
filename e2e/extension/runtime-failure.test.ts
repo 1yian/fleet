@@ -11,7 +11,6 @@ import { tempDir } from "../support/run-root.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const T0 = Date.parse("2026-05-04T09:00:00Z");
-
 let fleet: Fleet;
 let h: Harness;
 let clockFile: string;
@@ -31,7 +30,6 @@ function setClock(ms: number): void {
   writeFileSync(next, new Date(ms).toISOString());
   renameSync(next, clockFile);
 }
-
 const isFailure = (entry: Entry): boolean => entry.fields["condition"] === "runtime-failure";
 const heardFailures = (mate: Session): Entry[] =>
   mate.entries.map((push) => push.entry).filter(isFailure);
@@ -61,19 +59,22 @@ async function laterCheck(mate = fleet.main): Promise<void> {
   );
 }
 
-async function worker(card: Card, task = "the task"): Promise<Pi> {
+async function worker(card: Card, task = "the task", startup = "immediate"): Promise<Pi> {
   const env = {
     FLEET_URL: fleet.cardd.url,
     FLEET_TOKEN: await begin(fleet.main, card, task),
     FLEET_ROLE: "worker",
   };
+  if (startup === "after-watchdog")
+    await fleet.main.waitForEntry(
+      (entry) => entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
+      "the slow startup to be observed before the worker connects",
+    );
   return h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
 }
-
 async function actor(card: Card): Promise<Session> {
   return fleet.cardd.connect(await begin(fleet.main, card));
 }
-
 const recover = (
   mate: Session,
   heard: Entry,
@@ -81,20 +82,14 @@ const recover = (
   key = `k-${mode}`,
   generation = incidentOf(heard).generation,
 ): Promise<unknown> =>
-  mate.call("card.restart", {
-    card: heard.card,
-    incident: incidentOf(heard).incident,
-    generation,
-    mode,
-    key,
-  });
+  mate.call("card.restart", { card: heard.card, ...incidentOf(heard), generation, mode, key });
 
 test("a failed worker turn reaches its mate once with the sanitized cause, and no stop, nudge, or reminder follows", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   h.onModel(() => ({
     fail: "provider exploded: code 42 Authorization: Bearer sk-secret1234567890abcdef",
   }));
-  await worker(card);
+  await worker(card, "the task", "after-watchdog");
   const heard = await fleet.main.waitForEntry(isFailure, "the failed turn to reach the mate");
 
   assert.equal(heard.kind, "finding");
@@ -105,7 +100,7 @@ test("a failed worker turn reaches its mate once with the sanitized cause, and n
   assert.ok(!heard.body.includes("sk-secret"), heard.body);
   assert.match(
     heard.body,
-    /Classified unknown\. Incident 1, process generation 1\. Recover with restart_card\(/,
+    /Classified unknown\. Incident \d+, process generation 1\. Recover with restart_card\(/,
   );
 
   await laterCheck();
@@ -115,7 +110,7 @@ test("a failed worker turn reaches its mate once with the sanitized cause, and n
   const thread1 = await thread(card, again);
   assert.equal(thread1.filter(isFailure).length, 1);
   assert.deepEqual(
-    thread1.filter((entry) => entry.kind === "finding" && !isFailure(entry)),
+    thread1.filter((entry) => entry.id > heard.id && entry.kind === "finding" && !isFailure(entry)),
     [],
   );
   assert.equal(thread1.filter((entry) => entry.kind === "report").length, 0);
@@ -161,7 +156,7 @@ test("a worker process killed with no final event raises one unknown incident th
     await open.wait;
     return { text: "never" };
   });
-  const pi = await worker(card);
+  const pi = await worker(card, "the task", "after-watchdog");
   await h.waitForCall(0);
   await pi.kill();
   const heard = await fleet.main.waitForEntry(
@@ -173,11 +168,14 @@ test("a worker process killed with no final event raises one unknown incident th
   assert.equal(heard.fields["condition"], "worker-not-connected");
   assert.match(
     heard.body,
-    /^worker not connected\. Incident 1, process generation 1\. Recover with/,
+    /^worker not connected\. Incident \d+, process generation 1\. Recover with/,
   );
   assert.match(heard.body, /mode=replace\)\.$/);
   await laterCheck();
-  assert.equal(fleet.main.entries.filter((push) => push.entry.card === card.id).length, 1);
+  const later = fleet.main.entries.filter(
+    ({ entry }) => entry.card === card.id && entry.id >= heard.id,
+  );
+  assert.equal(later.length, 1);
   await assert.rejects(
     recover(fleet.main, heard, "retry"),
     /retry is not available .* Available: replace/,
@@ -192,7 +190,7 @@ test("a recovery check on the live process is verified by a real answer and an a
   h.onModel(() => ({ fail: "provider exploded: code 42" }));
   h.onModel(() => ({ tool: "report", args: { status: "note", text: "alive and idle" } }));
   h.onModel(() => ({ text: "recovered, nothing resumed" }));
-  await worker(card, "fix the scrollbar");
+  await worker(card, "fix the scrollbar", "after-watchdog");
   const heard = await fleet.main.waitForEntry(isFailure, "the failed turn");
 
   const cardsBefore = await cardsOnBoard();
@@ -218,7 +216,9 @@ test("a recovery check on the live process is verified by a real answer and an a
   const probe = (await h.waitForCall(1)).findLast((turn) => turn.role === "user")?.text ?? "";
   assert.match(
     probe,
-    /^\[fleet\] main on c-1 users-see-one-scrollbar: recovery check 1 from main: this is a health check, not new work\./,
+    new RegExp(
+      `^\\[fleet\\] main on c-1 users-see-one-scrollbar: recovery check ${String(incidentOf(heard).incident)} from main: this is a health check, not new work\\.`,
+    ),
   );
   assert.ok((await h.waitForCall(1)).some((turn) => turn.text.includes("fix the scrollbar")));
   const notes = (await thread(card)).filter((entry) => entry.fields["status"] === "note");
@@ -240,7 +240,7 @@ test("a recovery check that fails again is reported once per attempt, and the bu
   const card = await newCard(fleet.main, "Users see one scrollbar");
   for (const error of ["first", "second", "third"])
     h.onModel(() => ({ fail: `provider exploded: ${error}` }));
-  await worker(card);
+  await worker(card, "the task", "after-watchdog");
   const heard = await fleet.main.waitForEntry(isFailure, "the failed turn");
 
   await recover(fleet.main, heard, "retry", "a");
@@ -254,9 +254,11 @@ test("a recovery check that fails again is reported once per attempt, and the bu
     "the second retry to fail",
   );
 
-  assert.match(
+  assert.ok(
+    spent.body.includes(
+      `Recover with restart_card(card=${String(card.id)}, incident=${String(incidentOf(heard).incident)}, generation=1, mode=replace)`,
+    ),
     spent.body,
-    /Recover with restart_card\(card=\d+, incident=1, generation=1, mode=replace\)/,
   );
   await assert.rejects(
     recover(fleet.main, heard, "retry", "c"),
