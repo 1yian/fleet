@@ -8,17 +8,10 @@ import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
 import { describe, labelOf } from "./incident-text.ts";
 import { incidentFrom } from "./incident-store.ts";
 import { replyNudges } from "./replies.ts";
-import { factsFrom, finishFrom, type Stage } from "./status.ts";
-import {
-  addEntry,
-  cardEntries,
-  getCard,
-  loadCards,
-  mainLane,
-  parentOf,
-  workerOf,
-} from "./store.ts";
-import { MINUTE, type Timings } from "./timing.ts";
+import { finishFrom, type Stage } from "./status.ts";
+import { addEntry, getCard, loadCards, workerOf } from "./store.ts";
+import { type Timings } from "./timing.ts";
+import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { scheduledWakes } from "./wakes.ts";
 
 interface Match {
@@ -30,6 +23,7 @@ interface Match {
   readonly to?: string;
   readonly instance?: string;
   readonly worker?: boolean;
+  readonly fields?: Record<string, unknown>;
 }
 
 const keyOf = (match: Match): string =>
@@ -175,11 +169,6 @@ function withIncidents(
   });
 }
 
-function actingLane(db: DatabaseSync, card: number, lane: string): string {
-  const { hold } = factsFrom(cardEntries(db, card));
-  return hold?.holder === "main" ? (parentOf(db, lane) ?? lane) : lane;
-}
-
 function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: unknown): string {
   if (merged) return "Close it now with close(card, summary).";
   if (kind === "ship" && delivery === "local-only")
@@ -191,7 +180,6 @@ function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: un
   return "Its work may have landed from another branch. Close it with close(card, summary): if close warns about commits or files not on the base branch and the work landed elsewhere, call close again with confirm=true. If it never landed and will not, close(card, summary=<why>, landed=false).";
 }
 
-const minutesSince = (now: number, since: number): number => Math.round((now - since) / MINUTE);
 const UP: ReadonlySet<unknown> = new Set(["starting", "idle", "running", "waiting"]);
 
 const mateState = (db: DatabaseSync, lane: string | null): unknown =>
@@ -224,51 +212,15 @@ function finishedMatches(
   return [{ card: card.id, lane: card.lane, condition: "finished", text, tier }];
 }
 
-function reminderMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+function finishedCards(db: DatabaseSync, t: Timings): Match[] {
   return loadCards(db).flatMap(({ card: own, entries, standing }) => {
     if (own.status !== "with-mate" && own.status !== "merging") return [];
-    const card = own.id;
     const { hold } = standing.facts;
     const finish = finishFrom(entries);
-    if (hold === undefined && (finish.merged || finish.workerDone)) {
-      return finishedMatches({ ...own, since: standing.since }, finish, t.wall(), t);
-    }
-    const lane = actingLane(db, card, own.lane);
-    const tier = repeatTier(now - standing.since, t.waiting, t.waiting);
-    if (tier === 0) return [];
-    const text = `reminder: this card has waited for you (${own.status}, ${String(minutesSince(now, standing.since))} min)`;
-    return [{ card, lane, condition: "reminder", text, tier }];
+    if (hold !== undefined || !(finish.merged || finish.workerDone)) return [];
+    return finishedMatches({ ...own, since: standing.since }, finish, t.wall(), t);
   });
 }
-
-function decisionMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
-  return loadCards(db)
-    .filter(({ standing }) => standing.status === "needs-you")
-    .sort((a, b) => a.standing.since - b.standing.since)
-    .flatMap(({ card, standing }) => {
-      const tier = repeatTier(now - standing.since, t.decision, t.decision);
-      if (tier === 0) return [];
-      const main = mainLane(db);
-      const hours = String(Math.round((now - standing.since) / (60 * MINUTE)));
-      const question = firstLine(standing.facts.hold?.question ?? "");
-      const text = `reminder: c-${String(card.id)} has waited ${hours} h for the captain's decision: ${question}`;
-      return [
-        {
-          card: card.id,
-          lane: main,
-          condition: "decision-waiting",
-          text,
-          tier,
-        },
-      ];
-    });
-}
-
-const firstLine = (text: string): string =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line !== "") ?? "";
 
 const MISSED_HEARTBEATS = 3;
 
@@ -404,7 +356,12 @@ function writeFindings(
     const to = recipientOf(db, match);
     if (open !== undefined || to === undefined) continue;
     if (match.worker !== true && !isUp(db, to)) continue;
-    const fields = { condition: match.condition, tier: match.tier, finding: key };
+    const fields = {
+      ...match.fields,
+      condition: match.condition,
+      tier: match.tier,
+      finding: key,
+    };
     remind(
       db,
       { card: match.card, author: "check", kind: "finding", body: match.text, fields },
@@ -434,8 +391,8 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings): string[] {
   );
   const matches = [
     ...withIncidents(db, workerMatches(db, now, t), now, t),
-    ...reminderMatches(db, now, t),
-    ...decisionMatches(db, now, t),
+    ...finishedCards(db, t),
+    ...bundleMatches(db, now, t),
     ...lostJobMatches(db, now, t),
     ...incidentMatches(db, now, t),
     ...holdMatches(db, now),

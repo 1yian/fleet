@@ -88,6 +88,7 @@ cardd card delivery <number> <mode> --db <file>
 - Workers report `pr` explicitly when done and `merged=true` after merging. `cardd` never queries GitHub for discovery, checks, or merge confirmation. A done report without a PR reaches its mate without a merge question. Close trusts the worker's merge report. Authority still comes from the captain or yolo, not the report.
 - Finished open cards repeat to their own mate every two hours. Escalating unresolved work is the second mate's decision.
 - `timing.ts` owns the thresholds and test scale. Three missed job heartbeats make a job lost. Its mate is reminded until the job is rerun or dropped. `job.drop` sets `dropped_at` on a lost job, for its worker or a mate of its lane, and the job stays lost. Dropping twice is safe, and a job that is not lost is left as it is.
+- `bundle.ts` builds the one decision list for each mate: with-mate and merging cards, holds waiting on it, and for main every captain-held card, marked as the captain's. The holder of the hold picks the mate, not the card's lane. It is sent when its oldest card has waited 30 minutes and the last list went out 30 minutes ago, so a card resolved or held between lists never starts a second clock. A dated hold keeps its card off the list until the date.
 
 ### Runtime incidents
 
