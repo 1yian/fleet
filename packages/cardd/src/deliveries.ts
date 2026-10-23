@@ -14,7 +14,7 @@ export interface Push {
 
 export function confirm(db: DatabaseSync, session: string, inFile: readonly number[]): number {
   const mark = db.prepare(
-    "UPDATE deliveries SET state = 'confirmed', updated_at = ? WHERE session = ? AND entry = ?",
+    "UPDATE deliveries SET state = 'confirmed', intake = 'taken', updated_at = ? WHERE session = ? AND entry = ?",
   );
   for (const entry of inFile) mark.run(Date.now(), session, entry);
   const row = db

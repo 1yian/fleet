@@ -98,3 +98,30 @@ test("a comment a waiting worker never takes in is resent three times, then main
   assert.deepEqual(sent(cleo, "finding"), []);
   await worker.close();
 });
+
+test("an assignment already in the worker's conversation after a restart is never resent or reported missed", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
+  const main = fleet.main;
+  const card = await newCard(cleo, "Users see one scrollbar");
+  const token = await begin(cleo, card);
+  const first = await fleet.cardd.connect(token, [], false);
+  const [task] = await first.waitForEntries(1);
+  const assignment = task?.id ?? 0;
+  await first.close();
+
+  const worker = await fleet.cardd.connect(token, [assignment], false);
+  await cleo.call("comment", { card: card.id, text: "use the v2 endpoint" });
+  const missed = await main.waitForEntry(
+    (entry) => entry.fields["condition"] === "missed",
+    "main to hear that the worker missed the comment",
+  );
+
+  assert.match(missed.body, /did not take in this comment from cleo/);
+  const assignments = worker.entries.filter(({ entry }) => entry.id === assignment);
+  assert.deepEqual(assignments, []);
+  const reports = main.entries.filter(
+    ({ entry }) => entry.fields["condition"] === "missed" && entry.fields["entry"] === assignment,
+  );
+  assert.deepEqual(reports, []);
+  await worker.close();
+});
