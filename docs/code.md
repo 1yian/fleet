@@ -14,7 +14,7 @@ Code in this repository has no comments. A lint rule fails on any comment. What 
 
 `npm run test:e2e` runs tests through `e2e/run.ts`. Each test has five minutes. The whole runner has thirty minutes, including teardown. Node's test timeout does not stop a file that finished its tests but still has open handles. The outer deadline kills only the process group it started and returns failure. CI also bounds each end-to-end job to thirty minutes, including installation and build.
 
-The kanban and links fixtures register cleanup as each resource is acquired. A seed failure before the page exists must still stop its server. These board fixtures use normal timers: they do not assert timed-check behavior, and an accelerated timed check competes with fixture database writes.
+Every board test file calls `boundBoardFile` from `e2e/support/board.ts`, which ends the file after ten minutes even if its tests finished with open handles. Board fixtures register cleanup through `startBoardServer` and `openBoardPage` as each resource is acquired. A seed failure before the page exists must still stop its server. The kanban and links fixtures use normal timers: they do not assert timed-check behavior, and an accelerated timed check competes with fixture database writes.
 
 ## Protocol
 
