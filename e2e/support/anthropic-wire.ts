@@ -3,6 +3,7 @@ import { isRecord, optionalString, type JsonRecord } from "./json.ts";
 export interface WireCall {
   readonly role: "mate" | "worker";
   readonly warm: boolean;
+  readonly tools: readonly string[];
   readonly ttls: readonly string[];
   readonly systemTtls: string[];
   readonly markedBlocks: readonly string[];
@@ -66,11 +67,17 @@ function turnsOf(body: JsonRecord): WireCall["turns"] {
   ];
 }
 
+function toolNames(body: JsonRecord): string[] {
+  const tools = Array.isArray(body["tools"]) ? body["tools"].filter(isRecord) : [];
+  return tools.map((tool) => optionalString(tool, "name") ?? "");
+}
+
 export function wireCall(body: JsonRecord): WireCall {
   const turns = turnsOf(body);
   return {
     role: turns[0]?.text.includes(WORKER_CONTRACT) === true ? "worker" : "mate",
     warm: body["max_tokens"] === 1,
+    tools: toolNames(body),
     ttls: ttlsIn(body),
     systemTtls: ttlsIn(body["system"]),
     markedBlocks: markedTexts(body),

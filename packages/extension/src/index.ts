@@ -221,7 +221,7 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
   let started = false;
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("resources_discover", (_event, ctx) => {
     const found = config(pi);
     if (started || found === undefined) return;
     started = true;
