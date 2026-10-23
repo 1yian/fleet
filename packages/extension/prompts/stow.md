@@ -52,7 +52,7 @@ Keep the fleet's delivery posture and the captain's private strategy out of proj
 A reset loses what only this conversation holds, and that includes work that is under way. Make sure the important open work you are holding is on the board: file what was never filed, and correct what you now know is wrong.
 
 - Read the board first. Never file a second card for work that has one.
-- Work nobody has started and that is yours to do gets a card: `card_new`. Work that belongs in a second mate's lane goes to that mate with `comment` (main only).
+- Work nobody has started and that is yours to do gets a card: `dispatch` creates it with its worker, and `card_new` is only for a captain-only card. Work that belongs in a second mate's lane goes to that mate with `comment` (main only).
 - News for an existing card goes on that card: `comment`, or `hold` when the next step is a question for the captain or for main.
 - Do not write open work into a memory file.
 - This covers only the open work this conversation holds. It is not a check of the board against GitHub, and you never report it as one. Where the right correction is a judgment you cannot make, leave the record alone and say what it waits on.

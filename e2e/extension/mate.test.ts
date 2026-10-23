@@ -114,7 +114,7 @@ test("main hands work to a second mate with comment(lane), and card_new refuses 
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   h.onModel(() => ({
     tool: "card_new",
-    args: { title: "Ads stay under budget", name: "ads-budget", kind: "scout", lane: "cleo" },
+    args: { title: "Ads stay under budget", name: "ads-budget", kind: "captain", lane: "cleo" },
   }));
   h.onModel(() => ({
     tool: "comment",

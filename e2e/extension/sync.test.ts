@@ -64,15 +64,20 @@ const deleteOnRemote = (name: string): void => {
 };
 
 function scriptCard(beforeDone: () => void = () => undefined): void {
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
-      args: { title: "Add credit", name: "add-credit", kind: "ship", project: "site" },
+      tool: "dispatch",
+      args: {
+        title: "Add credit",
+        name: "add-credit",
+        kind: "ship",
+        project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "add the credit",
+      },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "add the credit" } }),
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");

@@ -117,8 +117,13 @@ test("a second mate with a stale module is replaced on its own session, lane car
     before = await groupOf("ops");
     cardsBefore = await cardNames();
     return {
-      tool: "recover",
-      args: { incident: Number(found?.[1]), generation: Number(found?.[2]), mode: "replace" },
+      tool: "restart_card",
+      args: {
+        card: Number(/c-(\d+)/.exec(user)?.[1]),
+        incident: Number(found?.[1]),
+        generation: Number(found?.[2]),
+        mode: "replace",
+      },
     };
   };
   for (let call = 0; call < 24; call += 1)

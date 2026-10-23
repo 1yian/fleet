@@ -144,6 +144,20 @@ export const CardViewSchema = Type.Object({
 });
 export type CardView = Static<typeof CardViewSchema>;
 
+const AttemptPlan = Type.Object({
+  session: Type.String(),
+  token: Type.String(),
+  resumed: Type.Boolean(),
+  active: Type.Boolean(),
+  connected: Type.Boolean(),
+  clone: Type.String(),
+  base: Type.String(),
+  branch: Type.String(),
+  name: Type.String(),
+  lane: Type.String(),
+  delivery: Nullable(Delivery),
+});
+
 export const OPS = {
   "card.new": {
     roles: ["mate"],
@@ -290,23 +304,15 @@ export const OPS = {
     args: Type.Object({
       card: Type.Integer(),
       host: Type.String({ minLength: 1 }),
-      replace: Type.Optional(Type.Boolean()),
       task: Type.String({ minLength: 1 }),
       delivery: Type.Optional(Delivery),
     }),
-    result: Type.Object({
-      session: Type.String(),
-      token: Type.String(),
-      resumed: Type.Boolean(),
-      active: Type.Boolean(),
-      connected: Type.Boolean(),
-      clone: Type.String(),
-      base: Type.String(),
-      branch: Type.String(),
-      name: Type.String(),
-      lane: Type.String(),
-      delivery: Nullable(Delivery),
-    }),
+    result: AttemptPlan,
+  },
+  "attempt.resume": {
+    roles: ["mate"],
+    args: Type.Object({ card: Type.Integer() }),
+    result: AttemptPlan,
   },
   "branch.name": {
     roles: ["worker"],
@@ -318,12 +324,10 @@ export const OPS = {
     args: Type.Object({
       label: Type.String({ minLength: 1 }),
       command: Type.String({ minLength: 1 }),
-      review: Type.Optional(Type.String({ minLength: 1 })),
     }),
     result: Type.Object({
       job: Type.Integer(),
       heartbeatMs: Type.Integer({ minimum: 1 }),
-      key: Nullable(Key),
     }),
   },
   "job.alive": {

@@ -48,22 +48,20 @@ const systemOf = (turns: Turn[]): string =>
 const isWorker = (turns: Turn[]): boolean => systemOf(turns).includes("# Worker role contract");
 
 async function dispatchWorker(): Promise<{ main: string; worker: string }> {
-  h.onModel(
-    () => ({
-      tool: "card_new",
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => {
+    return {
+      tool: "dispatch",
       args: {
         title: "Users see one scrollbar",
         name: "one-scrollbar",
         kind: "ship",
         project: "fleet",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "fix the scrollbar",
       },
-    }),
-    "mate",
-  );
-  h.onModel((turns) => {
-    const created = turns.findLast((turn) => turn.role === "toolResult")?.text ?? "";
-    const card = Number(/c-(\d+)/.exec(created)?.[1]);
-    return { tool: "dispatch", args: { card, host: "local", task: "fix the scrollbar" } };
+    };
   }, "mate");
   await startMain(lab, scratch, h, false, settingsArgs(h));
   const asked: unknown = await cleo.call("card.new", { title: "Ship the fix", kind: "scout" });

@@ -2,12 +2,12 @@ import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type OpName, type ReportStatus } from "@fleet/protocol";
 import {
   beginAttempt,
-  cancelReviewWaits,
   finishJob,
   localLanding,
   nameBranch,
   ownJob,
   runningJobs,
+  resumeAttempt,
   startJob,
   touchJob,
 } from "./attempts.ts";
@@ -17,13 +17,13 @@ import { recordMerge } from "./check.ts";
 import { closeBegin, closeFinish } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { markStopping } from "./incident-lanes.ts";
-import { clearFailure, noteControl, recover, reportFailure } from "./incidents.ts";
+import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
+import { restartCard } from "./restarts.ts";
 import { hold, mergeQuestion, release, withdrawMerge, writeMergeQuestion } from "./holds.ts";
 import type { PullRequest } from "./github.ts";
 import { loadPlan } from "./plans.ts";
 import { lookUpPr, recordReportedPr } from "./pulls.ts";
 import { requireOwedBy } from "./replies.ts";
-import { factsFrom } from "./status.ts";
 import type { Timings } from "./timing.ts";
 import { recordValidation, revalidate, startValidation } from "./validations.ts";
 import { scriptWake } from "./wakes.ts";
@@ -92,22 +92,17 @@ const REWORK: ReadonlySet<ReportStatus> = new Set([
   "stopped",
 ]);
 
-function rework(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
-  if (status === "stopped") cancelReviewWaits(db, card.id);
-  return REWORK.has(status) ? withdrawMerge(db, card) : [];
+const MAX_PAUSE_MS = 24 * 60 * 60 * 1000;
+
+function requireShortPause(status: ReportStatus, until: number | undefined): void {
+  if (status === "paused" && until !== undefined && until > Date.now() + MAX_PAUSE_MS)
+    throw new Error(
+      "paused until must be within 24 hours from now; ask your mate for a dated hold for longer waits",
+    );
 }
 
-function reviewFeedback(
-  db: DatabaseSync,
-  id: number,
-  fields: { job: number; label: string; exitCode: number; resolves: string },
-  body: string,
-  session: string,
-): void {
-  const entry: Draft = { card: id, author: "captain", kind: "review-feedback", body, fields };
-  const open = factsFrom(cardEntries(db, id)).hold?.keys.includes(fields.resolves) === true;
-  if (open) requireOpen(db, getCard(db, id));
-  addEntry(db, entry, [session]);
+function rework(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
+  return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
 const HANDLERS: Record<OpName, Handler> = {
@@ -160,11 +155,16 @@ const HANDLERS: Record<OpName, Handler> = {
     }
     const begun = beginAttempt(db, card, {
       host: args.host,
-      replace: args.replace ?? false,
       task: args.task,
       delivery: args.delivery,
     });
     return { value: begun, notify: [] };
+  },
+  "attempt.resume": (db, session, raw) => {
+    const { card: id } = check(OPS["attempt.resume"].args, raw);
+    const card = ownCard(db, session, id);
+    requireOpen(db, card);
+    return { value: resumeAttempt(db, card), notify: [] };
   },
   "branch.name": (db, session, raw) => {
     const args = check(OPS["branch.name"].args, raw);
@@ -172,11 +172,8 @@ const HANDLERS: Record<OpName, Handler> = {
   },
   "job.start": (db, session, raw, timing) => {
     const args = check(OPS["job.start"].args, raw);
-    const { id, key } = startJob(db, session.id, { ...args, review: args.review !== undefined });
-    const value = { job: id, heartbeatMs: timing.heartbeat, key };
-    if (key === null || args.review === undefined) return { value, notify: [] };
-    const decision = { status: "needs-decision", key, text: args.review };
-    return { value, notify: HANDLERS.report(db, session, decision, timing, {}).notify };
+    const job = startJob(db, session.id, args);
+    return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
   },
   "job.alive": (db, session, raw) => {
     const args = check(OPS["job.alive"].args, raw);
@@ -191,12 +188,7 @@ const HANDLERS: Record<OpName, Handler> = {
     });
     if (finished === undefined || session.card === null)
       return { value: { recorded: false }, notify: [] };
-    const { label, resolves } = finished;
-    const fields = { job: args.job, label, exitCode: args.exitCode };
-    if (resolves !== null) {
-      reviewFeedback(db, session.card, { ...fields, resolves }, args.outputTail, session.id);
-      return { value: { recorded: true }, notify: [session.id] };
-    }
+    const fields = { job: args.job, label: finished.label, exitCode: args.exitCode };
     const entry = {
       card: session.card,
       author: `job:${String(args.job)}`,
@@ -214,10 +206,6 @@ const HANDLERS: Record<OpName, Handler> = {
       throw new Error(
         `job ${String(args.job)} is not one of this worker's jobs: nothing was stopped`,
       );
-    if (own.review)
-      throw new Error(
-        `job ${String(args.job)} is a review wait: end its page with lavish-axi end instead`,
-      );
     return { value: { label: own.label, running: own.running }, notify: [] };
   },
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
@@ -229,8 +217,8 @@ const HANDLERS: Record<OpName, Handler> = {
     value: markStopping(db, session, check(OPS["lane.stopping"].args, raw)),
     notify: [],
   }),
-  "incident.recover": (db, session, raw, timing) =>
-    recover(db, session, check(OPS["incident.recover"].args, raw), timing),
+  "card.restart": (db, session, raw, timing) =>
+    restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
   "validation.start": (db, session, raw) =>
     startValidation(db, session, check(OPS["validation.start"].args, raw)),
   "validation.result": (db, session, raw) =>
@@ -240,6 +228,7 @@ const HANDLERS: Record<OpName, Handler> = {
   report: (db, session, raw, _timing, pr) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
+    requireShortPause(args.status, args.until);
     const card = getCard(db, session.card);
     requireOpen(db, card);
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);

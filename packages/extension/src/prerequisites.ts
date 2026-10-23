@@ -47,13 +47,6 @@ const TOOLS: readonly Tool[] = [
   { name: "direnv", version: ["version"], fix: BREW_OR_APT("direnv") },
 ];
 
-const LAVISH: Tool = {
-  name: "lavish-axi",
-  version: ["--version"],
-  floor: "0.1.80",
-  fix: "npm install -g lavish-axi",
-};
-
 const versionParts = (text: string): number[] | undefined =>
   /(\d+)\.(\d+)\.(\d+)/.exec(text)?.slice(1).map(Number);
 
@@ -179,5 +172,3 @@ export function hostProblems(root: string): string[] {
   const host = hostname();
   return [...TOOLS.flatMap((tool) => toolProblem(tool, host) ?? []), ...memoryProblems(root, host)];
 }
-
-export const lavishProblem = (): string | undefined => toolProblem(LAVISH, hostname());

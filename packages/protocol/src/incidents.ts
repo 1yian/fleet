@@ -32,18 +32,21 @@ export const INCIDENT_OPS = {
     args: Type.Object({ lane: Type.String({ minLength: 1 }) }),
     result: Type.Object({ stopping: Type.Boolean() }),
   },
-  "incident.recover": {
+  "card.restart": {
     roles: ["mate"],
     args: Type.Object({
-      incident: Type.Integer(),
-      generation: Type.Integer({
-        description: "The process generation the incident names: a changed one means it is stale",
-      }),
+      card: Type.Integer(),
+      incident: Type.Optional(Type.Integer()),
+      generation: Type.Optional(
+        Type.Integer({
+          description: "Required with incident: the process generation the incident names",
+        }),
+      ),
       mode: Type.Enum(["retry", "replace"]),
       key: Key,
     }),
     result: Type.Object({
-      incident: Type.Integer(),
+      incident: Type.Union([Type.Integer(), Type.Null()]),
       mode: Type.Enum(["retry", "replace"]),
       actor: Type.String(),
       role: Type.Enum(["mate", "worker"]),

@@ -25,7 +25,7 @@ type Handler = Parameters<Harness["onModel"]>[0];
 
 const HOLD = fileURLToPath(new URL("../support/hold-start.ts", import.meta.url));
 const STALE = "Cannot find module '/old/pi/dist/index.js' imported from /app/pi/loader.js";
-const UNTIL = "2099-01-01T00:00:00Z";
+const UNTIL = new Date(Date.now() + 3_600_000).toISOString();
 
 let parts: DispatchLab;
 afterEach(async (t) => {
@@ -45,21 +45,21 @@ const cardFor = (turns: Turn[]): number =>
 function scriptMate(workers: number, react: Handler): void {
   const { h } = parts;
   for (let card = 1; card <= workers; card += 1)
+    h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  for (let card = 1; card <= workers; card += 1)
     h.onModel(
       () => ({
-        tool: "card_new",
+        tool: "dispatch",
         args: {
           title: `Task ${String(card)}`,
           name: `task-${String(card)}`,
           kind: "ship",
           project: "site",
+          intent: "Fix the scrollbar",
+          host: "local",
+          task: "fix the scrollbar",
         },
       }),
-      "mate",
-    );
-  for (let card = 1; card <= workers; card += 1)
-    h.onModel(
-      () => ({ tool: "dispatch", args: { card, host: "local", task: "fix the scrollbar" } }),
       "mate",
     );
   h.onModel(() => ({ text: "dispatched" }), "mate");
@@ -77,8 +77,8 @@ test("a worker with a stale module is replaced on its own conversation and work,
   let started: number | undefined;
   let repeated = false;
   const replace = (): { tool: string; args: Record<string, string | number> } => ({
-    tool: "recover",
-    args: { ...incident, mode: "replace", key: "same" },
+    tool: "restart_card",
+    args: { card: 1, ...incident, mode: "replace", key: "same" },
   });
   scriptMate(2, async (turns) => {
     if (turns.at(-1)?.role === "toolResult" && !repeated) {
@@ -174,7 +174,7 @@ test("a worker that cannot start is reported once, replaced once, and then block
   const { h, mate, cardd, lab } = parts;
   scriptMate(1, (turns) =>
     turns.at(-1)?.role === "user" && (lastUser(turns) ?? "").includes("Recover with")
-      ? { tool: "recover", args: { ...incidentIn(turns), mode: "replace" } }
+      ? { tool: "restart_card", args: { card: 1, ...incidentIn(turns), mode: "replace" } }
       : { text: "noted" },
   );
   await mateConnected(h);
@@ -190,7 +190,8 @@ test("a worker that cannot start is reported once, replaced once, and then block
   assert.match(told[0]?.body ?? "", /^worker never connected\. Incident 1, process generation 0\./);
   assert.equal(view.filter((entry) => entry.body.includes("did not verify")).length, 1);
   assert.deepEqual(await workersOf(lab), []);
-  const again = await cardd.post(parts.mainToken, "incident.recover", {
+  const again = await cardd.post(parts.mainToken, "card.restart", {
+    card: 1,
     incident: 1,
     generation: 0,
     mode: "replace",
@@ -227,18 +228,16 @@ test("a stale compactor import is replaced on the same card and conversation, an
   const tree = `${clone}.worktrees/c-1-a1`;
   let compactorUp = false;
   let before: number | undefined;
-  h.onModel(
-    () => ({
-      tool: "card_new",
-      args: { title: "Task 1", name: "task-1", kind: "ship", project: "site" },
-    }),
-    "mate",
-  );
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
       tool: "dispatch",
       args: {
-        card: 1,
+        title: "Task 1",
+        name: "task-1",
+        kind: "ship",
+        project: "site",
+        intent: "Fix the scrollbar",
         host: "local",
         task: `fix the scrollbar ${"lorem ipsum dolor ".repeat(9000)}`,
       },
@@ -252,7 +251,7 @@ test("a stale compactor import is replaced on the same card and conversation, an
         return { text: "noted" };
       before = await workerGroupOf(lab, "c-1-a1");
       compactorUp = true;
-      return { tool: "recover", args: { ...incidentIn(turns), mode: "replace" } };
+      return { tool: "restart_card", args: { card: 1, ...incidentIn(turns), mode: "replace" } };
     }, "mate");
   scriptCompactingWorker(tree, () => compactorUp);
   await mateConnected(h);
@@ -321,8 +320,8 @@ test("a replacement requested again with the same key while it is still starting
   let starting: number | undefined;
   let phase: "first" | "again" | "done" = "first";
   const replace = (): { tool: string; args: Record<string, string | number> } => ({
-    tool: "recover",
-    args: { ...incident, mode: "replace", key: "same" },
+    tool: "restart_card",
+    args: { card: 1, ...incident, mode: "replace", key: "same" },
   });
   scriptMate(1, async (turns) => {
     if (phase === "first") {
@@ -388,7 +387,10 @@ test("a stale import on the nudge turn is one incident, replaced on the same car
   let ran = 0;
   scriptMate(1, (turns) =>
     turns.at(-1)?.role === "user" && (lastUser(turns) ?? "").includes("Recover with")
-      ? { tool: "recover", args: { ...incidentIn(turns), mode: "replace", key: "same" } }
+      ? {
+          tool: "restart_card",
+          args: { card: 1, ...incidentIn(turns), mode: "replace", key: "same" },
+        }
       : { text: "noted" },
   );
   for (let call = 0; call < 8; call += 1)

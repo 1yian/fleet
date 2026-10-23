@@ -19,15 +19,20 @@ afterEach(async (t) => {
 
 function scriptDispatch(): void {
   const { h } = parts;
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
-      args: { title: "Add credit", name: "add-credit", kind: "ship", project: "site" },
+      tool: "dispatch",
+      args: {
+        title: "Add credit",
+        name: "add-credit",
+        kind: "ship",
+        project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "add the credit",
+      },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "add the credit" } }),
     "mate",
   );
   h.onModel(() => ({ text: "done" }), "mate");
@@ -70,15 +75,20 @@ test("close refreshes a clone whose remote only the .envrc makes reachable", asy
   parts = await startDispatchLab({ remote: true, gate: "allowed" });
   const { h } = parts;
   const stale = tip(parts.clone);
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
-      args: { title: "Add credit", name: "add-credit", kind: "ship", project: "site" },
+      tool: "dispatch",
+      args: {
+        title: "Add credit",
+        name: "add-credit",
+        kind: "ship",
+        project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "add the credit",
+      },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "add the credit" } }),
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");

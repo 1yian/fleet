@@ -1,6 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
-import { cancelReviewWaits } from "./attempts.ts";
 import { requireOrdinary } from "./change.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
@@ -137,7 +136,6 @@ function shipCardClonesToRefresh(
 export function closeFinish(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS["close.finish"].args, raw);
   const { card } = closable(db, session, { card: args.card, landed: args.mode === "done" });
-  cancelReviewWaits(db, card.id);
   const now = Date.now();
   db.prepare(
     `UPDATE sessions SET state = 'closed' WHERE attempt IN

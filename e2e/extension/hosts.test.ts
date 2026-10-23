@@ -44,21 +44,23 @@ async function closeInSecondMatesLane(
   settings: { host?: string },
 ): Promise<string> {
   const mainToken = cardd.addLane("main");
+  const fleetToken = cardd.addLane("fleet", "main");
   scratch.addLane("fleet", {
     url: cardd.url,
-    token: cardd.addLane("fleet", "main"),
+    token: fleetToken,
     args: [...mateArgs(h), "-e", PROBE],
     ...settings,
   });
   cardd.addProject("fleet", clones, "acme/fleet");
   const main = await cardd.connect(mainToken);
-  h.onModel(
-    () => ({
-      tool: "card_new",
-      args: { title: "Fix the sidebar", name: "fix-sidebar", kind: "ship", project: "fleet" },
-    }),
-    "mate",
-  );
+  const lane = await cardd.connect(fleetToken);
+  await lane.call("card.new", {
+    title: "Fix the sidebar",
+    name: "fix-sidebar",
+    kind: "ship",
+    project: "fleet",
+  });
+  await lane.close();
   h.onModel(
     () => ({ tool: "close", args: { card: 2, summary: "not needed", landed: false } }),
     "mate",
@@ -68,7 +70,7 @@ async function closeInSecondMatesLane(
   scratch.fleet(["up", "fleet"], { HERDR_SESSION: lab.name });
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to join the fleet");
   await main.call("comment", { lane: "fleet", text: "Close it." });
-  const results = toolResults(await h.waitForCall(2, "mate", WAIT_MS));
+  const results = toolResults(await h.waitForCall(1, "mate", WAIT_MS));
   await main.close();
   return results.at(-1) ?? "";
 }

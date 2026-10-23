@@ -49,21 +49,21 @@ const workers = (): Promise<string[]> => workersOf(lab);
 const mateConnected = () => connected(h);
 
 function scriptMate(...dispatches: { host: string }[]): void {
-  h.onModel(
-    () => ({
-      tool: "card_new",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "site",
-      },
-    }),
-    "mate",
-  );
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   for (const { host } of dispatches) {
     h.onModel(
-      () => ({ tool: "dispatch", args: { card: 1, host, task: "fix the scrollbar" } }),
+      () => ({
+        tool: "dispatch",
+        args: {
+          title: "Users see one scrollbar",
+          name: "one-scrollbar",
+          kind: "ship",
+          project: "site",
+          intent: "Fix the scrollbar",
+          host,
+          task: "fix the scrollbar",
+        },
+      }),
       "mate",
     );
   }
@@ -145,20 +145,20 @@ test("a dispatch whose connection drops after the worker started finds it, and a
 });
 
 test("dropping a card stops the worker, archives its unlanded work, and removes the worktree and branches", async () => {
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
+      tool: "dispatch",
       args: {
         title: "Users see one scrollbar",
         name: "one-scrollbar",
         kind: "ship",
         project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "fix the scrollbar",
       },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
@@ -207,20 +207,20 @@ test("dropping a card stops the worker, archives its unlanded work, and removes 
 });
 
 test("a rerun of close after the worktree is gone still deletes the branch and reports the archive", async () => {
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
+      tool: "dispatch",
       args: {
         title: "Users see one scrollbar",
         name: "one-scrollbar",
         kind: "ship",
         project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "fix the scrollbar",
       },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
@@ -250,102 +250,21 @@ test("a rerun of close after the worktree is gone still deletes the branch and r
   );
 });
 
-test("an unreachable host of a replaced attempt does not block closing, and its work stays in place", async () => {
-  h.onModel(
-    () => ({
-      tool: "card_new",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "site",
-      },
-    }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "far", task: "fix the scrollbar" } }),
-    "mate",
-  );
-  h.onModel(() => {
-    writeFileSync(join(h.dir, "far-down"), "the host is down\n");
-    return {
-      tool: "dispatch",
-      args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
-    };
-  }, "mate");
-  h.onModel(
-    () => ({ tool: "close", args: { card: 1, summary: "the design changed", landed: false } }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "dropped" }), "mate");
-  await mateConnected();
-  mate.prompt("ship the scrollbar fix");
-
-  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.match(
-    results.at(-1) ?? "",
-    /^c-1 is dropped\. Left in place: far c-1-a1 \(herdr worktree on far failed: .*timed out.*\)\.$/,
-  );
-  assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
-});
-
-test("a killed archive step of a replaced attempt aborts the close instead of leaving it in place", async () => {
-  h.onModel(
-    () => ({
-      tool: "card_new",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "site",
-      },
-    }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "far", task: "fix the scrollbar" } }),
-    "mate",
-  );
-  h.onModel(() => {
-    writeFileSync(join(h.dir, "far-down"), "flood\n");
-    return {
-      tool: "dispatch",
-      args: { card: 1, host: "local", task: "fix the scrollbar", replace: true },
-    };
-  }, "mate");
-  h.onModel(
-    () => ({ tool: "close", args: { card: 1, summary: "the design changed", landed: false } }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "dropped" }), "mate");
-  await mateConnected();
-  mate.prompt("ship the scrollbar fix");
-
-  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.match(results.at(-1) ?? "", /^sh on far failed: /);
-  assert.deepEqual(worktrees(), [
-    "branch refs/heads/main",
-    "branch refs/heads/c-1-a1",
-    "branch refs/heads/c-1-a2",
-  ]);
-});
-
 test("a branch that cannot be deleted aborts the close, and a rerun finishes it", async () => {
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
+      tool: "dispatch",
       args: {
         title: "Users see one scrollbar",
         name: "one-scrollbar",
         kind: "ship",
         project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "fix the scrollbar",
       },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
     "mate",
   );
   const lock = `${clone}/.git/refs/heads/c-1-a1.lock`;
@@ -371,21 +290,21 @@ test("a branch that cannot be deleted aborts the close, and a rerun finishes it"
   );
 });
 
-test("dispatching a card whose worker died restarts it on its own session", async () => {
+test("restart_card restarts a card whose worker died on its own session", async () => {
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
-      tool: "card_new",
+      tool: "dispatch",
       args: {
         title: "Users see one scrollbar",
         name: "one-scrollbar",
         kind: "ship",
         project: "site",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "fix the scrollbar",
       },
     }),
-    "mate",
-  );
-  h.onModel(
-    () => ({ tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } }),
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
@@ -393,7 +312,7 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   let returned = 0;
   h.onModel(() => {
     asked = Date.now();
-    return { tool: "dispatch", args: { card: 1, host: "local", task: "fix the scrollbar" } };
+    return { tool: "restart_card", args: { card: 1, key: "died" } };
   }, "mate");
   h.onModel(() => {
     returned = Date.now();
@@ -417,7 +336,10 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   await h.waitForNth((e) => e["type"] === "fleet_connected", 1, "the mate's connection");
   mate.prompt("the worker died; restart it");
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.equal(results.at(-1), "Restarted c-1-a1 on local on its own session, branch c-1-a1.");
+  assert.equal(
+    results.at(-1),
+    "Started c-1-a1 again on local, on its own session and branch c-1-a1.",
+  );
   assert.ok(
     returned - asked < FORMER_REFUSED_START_WAIT_MS,
     `the restart held the mate for ${String(returned - asked)} ms`,
@@ -425,7 +347,7 @@ test("dispatching a card whose worker died restarts it on its own session", asyn
   const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
   assert.equal(
     lastUser(resumed),
-    "[fleet] main on c-1 one-scrollbar: Your session was restarted. Continue your task from where you stopped.",
+    "[fleet] main on c-1 one-scrollbar: Your session was restarted on the same card and conversation. Continue your task from where you stopped.",
   );
   assert.ok(
     resumed.some(

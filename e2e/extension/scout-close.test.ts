@@ -64,17 +64,19 @@ afterEach(async (t) => {
 
 test("normal close delivers an unchanged scout after main coordinates separate implementation, preserving its report", async () => {
   const report = join(scratch.parent, "reports", "assessment.md");
-  h.onModel(
-    () => ({
-      tool: "card_new",
-      args: { title: "Assess the lifecycle", name: "assessment", kind: "scout", project: "fleet" },
-    }),
-    "mate",
-  );
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
       tool: "dispatch",
-      args: { card: 2, host: "local", task: "Write the read-only assessment." },
+      args: {
+        title: "Assess the lifecycle",
+        name: "assessment",
+        kind: "scout",
+        project: "fleet",
+        intent: "Fix the scrollbar",
+        host: "local",
+        task: "Write the read-only assessment.",
+      },
     }),
     "mate",
   );

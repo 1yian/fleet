@@ -47,7 +47,7 @@ test("a second mate whose process is killed with no final event raises one incid
 
   assert.match(
     heard.body,
-    /^runtime failure: cleo its process stopped without a final event\. Classified unknown\. Incident 1, process generation 1\. Recover with recover\(incident=1, generation=1, mode=replace\)\.$/,
+    /^runtime failure: cleo its process stopped without a final event\. Classified unknown\. Incident 1, process generation 1\. Recover with restart_card\(card=\d+, incident=1, generation=1, mode=replace\)\.$/,
   );
   await laterCheck();
   assert.equal(fleet.main.entries.filter((push) => isFailure(push.entry)).length, 1);

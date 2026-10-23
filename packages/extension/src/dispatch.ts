@@ -1,20 +1,7 @@
-import { readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Delivery, OpResult } from "@fleet/protocol";
 import { SYNC_FUNCTIONS } from "./clones.ts";
 import { fleetArgs } from "./fleet-args.ts";
-import {
-  field,
-  herdr,
-  isLocal,
-  onHost,
-  piPids,
-  piRunning,
-  records,
-  shellIdle,
-  worktreeOf,
-} from "./host.ts";
+import { field, herdr, onHost, piPids, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
 import type { Link } from "./link.ts";
 
@@ -132,7 +119,6 @@ export async function dispatch(
     card: number;
     host: string;
     task: string;
-    replace: boolean;
     delivery?: Delivery | undefined;
   },
 ): Promise<string> {
@@ -140,11 +126,7 @@ export async function dispatch(
   const where = `${plan.session} on ${request.host}`;
   const pane = await worktreePane(request.host, plan, request.card);
   if (await piRunning(request.host, pane)) {
-    if (await runsOlderCode(request.host, pane)) await stopPi(request.host, pane, plan.session);
-    else
-      return plan.connected
-        ? `c-${String(request.card)} is already running as ${where}.`
-        : `Found ${where} already starting.`;
+    return `Found ${where} already starting.`;
   }
   await startAgent(
     request.host,
@@ -166,41 +148,10 @@ export async function dispatch(
       ["--session-id", plan.session, ...launch.piArgs],
     ].flat(),
   );
-  if (!plan.active) return `Dispatched ${where}, branch ${plan.branch}.`;
-  const note = "Your session was restarted. Continue your task from where you stopped.";
-  await link.call("comment", { card: request.card, text: note });
-  return `Restarted ${where} on its own session, branch ${plan.branch}.`;
+  return `Dispatched ${where}, branch ${plan.branch}.`;
 }
 
 const STOP_WAIT_MS = 15_000;
-
-const CLOCK_SLACK_MS = 1000;
-const ELAPSED_UNITS_MS = [86_400_000, 3_600_000, 60_000, 1000];
-
-function startedAt(elapsed: string): number {
-  const fields = elapsed.split(/[-:]/).map(Number);
-  const units = ELAPSED_UNITS_MS.slice(ELAPSED_UNITS_MS.length - fields.length);
-  return Date.now() - fields.reduce((sum, value, index) => sum + value * (units[index] ?? 0), 0);
-}
-
-function newestChange(dir: string): number {
-  return readdirSync(dir, { withFileTypes: true }).reduce((newest, entry) => {
-    const path = join(dir, entry.name);
-    return Math.max(newest, entry.isDirectory() ? newestChange(path) : statSync(path).mtimeMs);
-  }, 0);
-}
-
-async function runsOlderCode(host: string, pane: string): Promise<boolean> {
-  if (!isLocal(host)) return false;
-  const installed = newestChange(dirname(fileURLToPath(import.meta.url)));
-  for (const pid of await piPids(host, pane)) {
-    const elapsed = (
-      await onHost(host, ["ps", "-o", "etime=", "-p", String(pid)]).catch(() => "")
-    ).trim();
-    if (elapsed !== "" && installed - startedAt(elapsed) > CLOCK_SLACK_MS) return true;
-  }
-  return false;
-}
 
 async function stopPi(host: string, pane: string, session: string): Promise<void> {
   const signals = ["TERM", "KILL"] as const;
@@ -219,13 +170,7 @@ export async function replaceWorker(
   launch: Launch,
   recovery: { card: number; host: string; repeat: boolean },
 ): Promise<string> {
-  const task = "recovery: the session is being replaced";
-  const plan = await link.call("attempt.begin", {
-    card: recovery.card,
-    host: recovery.host,
-    task,
-    replace: false,
-  });
+  const plan = await link.call("attempt.resume", { card: recovery.card });
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
   const pane = await worktreePane(recovery.host, plan, recovery.card);
   if (await piRunning(recovery.host, pane)) {

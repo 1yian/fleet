@@ -12,7 +12,7 @@ export function nextStep(inc: Incident): string {
   if (modes.length === 0)
     return `Restarting is not a repair for ${inc.classification}: it needs intervention, not recovery.`;
   const when = inc.eligibleAt === null ? "." : `, eligible at ${stamp(inc.eligibleAt)}.`;
-  return `Recover with recover(incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")})${when}`;
+  return `Recover with restart_card(card=${String(inc.card)}, incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")})${when}`;
 }
 
 export function describe(inc: Incident, label: string): string {

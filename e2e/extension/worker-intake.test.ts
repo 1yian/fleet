@@ -73,7 +73,8 @@ test("a job result whose turn the provider fails is not lost: its mate hears one
   );
   const [, incident, generation] =
     /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
-  await fleet.main.call("incident.recover", {
+  await fleet.main.call("card.restart", {
+    card: heard.card,
     incident: Number(incident),
     generation: Number(generation),
     mode: "retry",
