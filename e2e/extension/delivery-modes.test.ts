@@ -351,3 +351,32 @@ test("local-only with a commit keeps the land hold on done", async () => {
   assert.match(lastUser(done) ?? "", /needs-you/);
   assert.match(await resultOf(h, 4), /^c-1 has an open hold/);
 });
+
+test("local-only with a branch fast-forwarded to origin/main ahead of local main keeps the land hold on done", async () => {
+  const p = await lab({ remote: true, delivery: "local-only" });
+  const { h, mate, clone, remote } = p;
+  h.onModel(async () => {
+    await after(h, 2);
+    git(treeOf(clone), "merge", "-q", "--ff-only", "origin/main");
+    return { tool: "report", args: { status: "done", text: "branch c-1-a1 ready" } };
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  mateMoves(h, [
+    CARD_NEW,
+    dispatch({ delivery: "local-only" }),
+    "dispatched",
+    ["close", { card: 1, summary: "Added the credit." }],
+    "asked the captain",
+  ]);
+  const other = `${clone}.other`;
+  git(clone, "clone", "-q", remote ?? "", other);
+  commitIn(other, "upstream.txt");
+  git(other, "push", "-q", "origin", "HEAD:main");
+  git(clone, "fetch", "-q", "origin");
+  await mateConnected(h);
+  mate.prompt("add credit, only locally");
+
+  const done = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assert.match(lastUser(done) ?? "", /needs-you/);
+  assert.match(await resultOf(h, 4), /^c-1 has an open hold/);
+});

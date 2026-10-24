@@ -13,9 +13,7 @@ const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 const EMPTY_SCRIPT = `set -eu
 wt=$1 base=$2
 [ -d "$wt" ] || exit 1
-origin=""
-if git -C "$wt" rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null; then origin="origin/$base"; fi
-ahead=$(git -C "$wt" rev-list --count HEAD --not "$base" \${origin:+"$origin"})
+ahead=$(git -C "$wt" rev-list --count HEAD --not "$base")
 dirty=$(git -C "$wt" status --porcelain | wc -l | tr -d ' ')
 [ "$ahead" -eq 0 ] && [ "$dirty" -eq 0 ]`;
 

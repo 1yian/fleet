@@ -245,7 +245,7 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
 export function withdrawMerge(
   db: DatabaseSync,
   card: Card,
-  why: "reworked" | "merged" = "reworked",
+  why: "reworked" | "merged" | "empty" = "reworked",
 ): string[] {
   const open = openMergeHold(db, card);
   if (open === undefined) return [];
@@ -253,6 +253,7 @@ export function withdrawMerge(
     reworked:
       "The PR is being reworked, so the merge question is withdrawn. It is asked again when the work is done.",
     merged: "The worker reported the PR merged, so the merge question is moot and withdrawn.",
+    empty: "The branch has no commits and no changes, so the land question is moot and withdrawn.",
   }[why];
   const fields = { hold: open.entry, occurrence: open.occurrence, withdrawn: true };
   const draft: Draft = { card: card.id, author: "fleet", kind: "release", body, fields };

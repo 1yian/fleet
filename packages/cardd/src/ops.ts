@@ -119,7 +119,13 @@ function requireShortPause(status: ReportStatus, until: number | undefined): voi
     );
 }
 
-function rework(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
+function rework(
+  db: DatabaseSync,
+  card: Card,
+  status: ReportStatus,
+  emptyBranch: true | undefined,
+): string[] {
+  if (emptyBranch === true) return withdrawMerge(db, card, "empty");
   return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
@@ -274,7 +280,9 @@ const HANDLERS: Record<OpName, Handler> = {
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
     const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
     const withdrawn =
-      args.merged === true ? withdrawMerge(db, card, "merged") : rework(db, card, args.status);
+      args.merged === true
+        ? withdrawMerge(db, card, "merged")
+        : rework(db, card, args.status, emptyBranch);
     const fields = {
       status: args.status,
       key: args.key,
