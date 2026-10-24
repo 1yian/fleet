@@ -187,10 +187,15 @@ export class Harness {
     return this.agentModels.get(agent) ?? [];
   }
 
-  piArgs(): string[] {
+  piArgs(builtinTools = false): string[] {
     return [
       ["--offline", "--no-approve", "--no-extensions", "--no-skills", "--no-prompt-templates"],
-      ["--no-themes", "--no-context-files", "--no-mcp", "--no-builtin-tools"],
+      [
+        "--no-themes",
+        "--no-context-files",
+        "--no-mcp",
+        ...(builtinTools ? [] : ["--no-builtin-tools"]),
+      ],
       ["-e", join(SUPPORT, "fake-model.ts"), "--provider", "fake", "--model", "scripted"],
       ["--session-dir", join(this.dir, "sessions")],
     ].flat();
@@ -211,13 +216,14 @@ export class Harness {
     env: Record<string, string> = {},
     extensions: readonly string[] = [],
     modelArgs: readonly string[] = [],
+    builtinTools = false,
   ): Pi {
     const agentDir = join(this.dir, "agent");
     const workDir = join(this.dir, "work");
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(workDir, { recursive: true });
     const args = [
-      ["--mode", "rpc", ...this.piArgs(), "-e", join(SUPPORT, "probe.ts")],
+      ["--mode", "rpc", ...this.piArgs(builtinTools), "-e", join(SUPPORT, "probe.ts")],
       extensions.flatMap((path) => ["-e", path]),
       modelArgs,
       ["--session-id", sessionId],

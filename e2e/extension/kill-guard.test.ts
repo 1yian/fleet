@@ -8,7 +8,6 @@ import { spawnGuarded } from "../support/guarded.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
-const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 const REFUSED =
   /refused: pkill, killall, and kill fed by pgrep, pidof, or ps signal every matching process/;
 
@@ -40,11 +39,19 @@ test("a worker is refused a kill by name or pattern, so another run's process on
   const attempts = [
     `pkill -f "${marker}"`,
     `killall -r "${marker}"`,
+    `if pgrep -f ${marker} >/dev/null; then pkill -f ${marker}; fi`,
+    `out="$(pkill -f ${marker})"; echo "$out"`,
+    `"pkill" -f ${marker}`,
+    `env pkill -f ${marker}`,
     `kill $(pgrep -f "${marker}")`,
-    `pgrep -f "${marker}" | xargs kill -TERM`,
+    `pgrep -f ${marker} | xargs -I{} kill {}`,
     `ps -eo pid,args | grep "${marker}" | awk '{print $1}' | xargs kill`,
   ];
   for (const command of attempts) h.onModel(() => ({ tool: "bash", args: { command } }));
+  h.onModel(() => ({
+    tool: "bash",
+    args: { command: "printf 'pkill and killall\\n' | grep -c pkill" },
+  }));
   let aliveAfterAttempts = false;
   h.onModel(() => {
     aliveAfterAttempts = alive(bystander);
@@ -64,13 +71,15 @@ test("a worker is refused a kill by name or pattern, so another run's process on
   h.startPi(
     `c-${String(card.id)}-a1`,
     { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" },
-    [EXTENSION, SHELL],
+    [EXTENSION],
+    [],
+    true,
   );
   await fleet.main.waitForEntries(1);
 
   for (const [index, command] of attempts.entries())
     assert.match(lastText(h.calls[index + 1]), REFUSED, command);
+  assert.match(lastText(h.calls[attempts.length + 1]), /^1\s*$/);
   assert.equal(aliveAfterAttempts, true);
-  assert.match(lastText(h.calls[attempts.length + 1]), /exit 0$/);
   assert.equal(await exited, "SIGTERM");
 });
