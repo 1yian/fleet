@@ -179,7 +179,7 @@ class Hub {
     this.sockets.get(session.id)?.close(CLOSE_SUPERSEDED, "a newer connection took over");
     this.sockets.set(session.id, socket);
     const { lowWater, reporters } = transaction(this.db, () => {
-      setSessionState(this.db, session.id, "idle");
+      setSessionState(this.db, session.id, message.running === true ? "running" : "idle");
       adoptProcess(this.db, session.id, message.process);
       const told = adoptMaintenance(
         this.db,

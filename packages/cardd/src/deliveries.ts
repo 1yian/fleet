@@ -118,7 +118,7 @@ const UNREAD_RESENDS = 3;
 const NOT_TAKEN = `SELECT d.session AS session, d.resends AS resends, d.told_at AS told, d.updated_at AS updated, s.role AS role, ${ENTRY_JSON} AS j
   FROM deliveries d JOIN sessions s ON s.id = d.session JOIN entries e ON e.id = d.entry
   WHERE d.intake IN ('waiting', 'resent') AND d.state <> 'pending'
-    AND s.state IN ('idle', 'running', 'waiting')
+    AND s.state IN ('idle', 'waiting')
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "d.session")}
     AND (?1 - d.updated_at >= ?2 OR (d.resends >= ${String(UNREAD_RESENDS)} AND (d.told_at IS NULL OR ?1 - d.told_at >= ?3)))
   ORDER BY d.entry`;

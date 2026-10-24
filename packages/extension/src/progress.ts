@@ -51,6 +51,17 @@ function streamGate(now: () => number = Date.now): () => boolean {
   };
 }
 
+export function trackRun(pi: ExtensionAPI): () => boolean {
+  let going = false;
+  pi.on("agent_start", () => {
+    going = true;
+  });
+  pi.on("agent_settled", () => {
+    going = false;
+  });
+  return () => going;
+}
+
 export function reportActivity(
   pi: ExtensionAPI,
   link: Link,

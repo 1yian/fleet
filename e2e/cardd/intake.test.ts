@@ -125,3 +125,84 @@ test("an assignment already in the worker's conversation after a restart is neve
   assert.deepEqual(reports, []);
   await worker.close();
 });
+
+test("a comment waits unresent and unreported while the worker's run is going, and is chased once the run ends without taking it in", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
+  const main = fleet.main;
+  const busyCard = await newCard(cleo, "Long run");
+  const busy = await fleet.cardd.connect(await begin(cleo, busyCard), [], false);
+  const [task] = await busy.waitForEntries(1);
+  busy.send({ t: "activity", state: "running" });
+  busy.ack(task?.id ?? 0);
+  await cleo.call("comment", { card: busyCard.id, text: "use the v2 endpoint" });
+  await busy.waitForEntries(2);
+
+  const idleCard = await newCard(cleo, "Idle");
+  const idle = await fleet.cardd.connect(await begin(cleo, idleCard), [], false);
+  const [idleTask] = await idle.waitForEntries(1);
+  idle.ack(idleTask?.id ?? 0);
+  await cleo.call("comment", { card: idleCard.id, text: "use the v3 endpoint" });
+  await main.waitForEntry(
+    (entry) => entry.fields["condition"] === "missed" && entry.card === idleCard.id,
+    "main to hear the idle worker missed its comment",
+  );
+
+  assert.deepEqual(sent(busy, "comment"), [
+    ["the task\n\nDelivery: no-mistakes", false],
+    ["use the v2 endpoint", false],
+  ]);
+  const busyMissed = main.entries.filter(
+    ({ entry }) => entry.fields["condition"] === "missed" && entry.card === busyCard.id,
+  );
+  assert.deepEqual(busyMissed, []);
+
+  busy.send({ t: "activity", state: "idle" });
+  const missed = await main.waitForEntry(
+    (entry) => entry.fields["condition"] === "missed" && entry.card === busyCard.id,
+    "main to hear the worker missed the comment once its run ended",
+  );
+  assert.match(missed.body, /did not take in this comment from cleo, re-sent 3 times/);
+  await Promise.all([busy.close(), idle.close()]);
+});
+
+test("a comment already overdue when a running worker reconnects is not sent again or reported missed", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
+  const main = fleet.main;
+  const busyCard = await newCard(cleo, "Long run");
+  const busyToken = await begin(cleo, busyCard);
+  const busy = await fleet.cardd.connect(busyToken, [], false);
+  const [task] = await busy.waitForEntries(1);
+  busy.send({ t: "activity", state: "running" });
+  busy.ack(task?.id ?? 0);
+  await cleo.call("comment", { card: busyCard.id, text: "use the v2 endpoint" });
+  await busy.waitForEntries(2);
+
+  const idleCard = await newCard(cleo, "Idle");
+  const idle = await fleet.cardd.connect(await begin(cleo, idleCard), [], false);
+  const [idleTask] = await idle.waitForEntries(1);
+  idle.ack(idleTask?.id ?? 0);
+  await cleo.call("comment", { card: idleCard.id, text: "use the v3 endpoint" });
+  await main.waitForEntry(
+    (entry) => entry.fields["condition"] === "missed" && entry.card === idleCard.id,
+    "main to hear the idle worker missed its comment, long after the busy one was overdue",
+  );
+
+  await busy.close();
+  const back = await fleet.cardd.connect(busyToken, [task?.id ?? 0], false, true);
+  const laterCard = await newCard(cleo, "Later idle");
+  const later = await fleet.cardd.connect(await begin(cleo, laterCard), [], false);
+  const [laterTask] = await later.waitForEntries(1);
+  later.ack(laterTask?.id ?? 0);
+  await cleo.call("comment", { card: laterCard.id, text: "use the v4 endpoint" });
+  await main.waitForEntry(
+    (entry) => entry.fields["condition"] === "missed" && entry.card === laterCard.id,
+    "main to hear the later idle worker missed its comment",
+  );
+
+  assert.deepEqual(sent(back, "comment"), [["use the v2 endpoint", false]]);
+  const busyMissed = main.entries.filter(
+    ({ entry }) => entry.fields["condition"] === "missed" && entry.card === busyCard.id,
+  );
+  assert.deepEqual(busyMissed, []);
+  await Promise.all([back.close(), idle.close(), later.close()]);
+});

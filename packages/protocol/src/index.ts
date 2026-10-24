@@ -369,6 +369,7 @@ const ClientMessage = Type.Union([
     inFile: Type.Array(Type.Integer()),
     process: Type.Optional(Type.String()),
     maintenance: Type.Optional(Type.Boolean()),
+    running: Type.Optional(Type.Boolean()),
   }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
   ActivityMessage,

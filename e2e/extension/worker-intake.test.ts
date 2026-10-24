@@ -3,9 +3,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Card } from "@fleet/protocol";
+import { WebSocket, WebSocketServer } from "ws";
+import { parseServerMessage, type Card } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
-import { Harness, type Turn } from "../support/harness.ts";
+import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 
@@ -117,4 +118,162 @@ test("a worker that reads its assignment and then stays in one long run is not f
       .length,
     0,
   );
+});
+
+test("a job result that arrives while the worker is in one long run is not sent again or flagged as missed, and is taken in when the run ends", async () => {
+  h.onModel(() => ({ tool: "run_long", args: { label: "tests", command: "echo green" } }));
+  h.onModel(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+    return { text: "the long run is over" };
+  });
+  h.onModel(() => ({ text: "took the job result" }));
+  h.startPi("c-1-a1", env, [EXTENSION]);
+
+  assert.equal(lastUser(await h.waitForCall(2, "default", 30_000)), RESULT);
+  const entries = fleet.main.entries.map((push) => push.entry);
+  assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
+  assert.equal(
+    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
+      .length,
+    0,
+  );
+});
+
+test("a comment that arrives after the worker's connection dropped and came back during one long run is not sent again or flagged as missed", async () => {
+  h.onModel(() => ({ tool: "report", args: { status: "note", text: "on it" } }));
+  h.onModel(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    return { text: "the long run is over" };
+  });
+  h.onModel(() => ({ text: "took the comment" }));
+  h.startPi("c-1-a1", env, [EXTENSION]);
+
+  await h.waitForCall(1, "default", 30_000);
+  await fleet.cardd.restart();
+  const main = await fleet.cardd.connect(fleet.mainToken);
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the worker to reconnect");
+  await main.call("comment", { card: card.id, text: "a follow-up", now: false });
+  await h.waitForCall(2, "default", 60_000);
+
+  const entries = main.entries.map((push) => push.entry);
+  assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
+  assert.equal(
+    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
+      .length,
+    0,
+  );
+});
+
+interface Proxy {
+  readonly url: string;
+  readonly dropped: () => number;
+  readonly held: () => boolean;
+  readonly reconnect: () => void;
+  readonly release: () => void;
+  readonly close: () => Promise<void>;
+}
+
+async function proxyTo(upstream: string): Promise<Proxy> {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise((resolve) => server.once("listening", resolve));
+  let holding = false;
+  let dropping = false;
+  let welcomeHeld = false;
+  let dropped = 0;
+  const heldFrames: { client: WebSocket; text: string }[] = [];
+  server.on("connection", (client) => {
+    const up = new WebSocket(upstream);
+    const early: string[] = [];
+    client.on("message", (data) => {
+      const text = Buffer.isBuffer(data) ? data.toString("utf8") : "";
+      if (up.readyState === WebSocket.OPEN) up.send(text);
+      else early.push(text);
+    });
+    up.on("open", () => {
+      for (const text of early) up.send(text);
+    });
+    up.on("message", (data) => {
+      const text = Buffer.isBuffer(data) ? data.toString("utf8") : "";
+      const kind = parseServerMessage(text).t;
+      if (dropping && kind === "entry") {
+        dropped += 1;
+        return;
+      }
+      if (holding) {
+        if (kind === "welcome") welcomeHeld = true;
+        heldFrames.push({ client, text });
+        return;
+      }
+      client.send(text);
+    });
+    client.on("close", () => {
+      up.close();
+    });
+    up.on("close", () => {
+      client.close();
+    });
+  });
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : 0;
+  return {
+    url: `ws://127.0.0.1:${String(port)}`,
+    dropped: () => dropped,
+    held: () => welcomeHeld,
+    reconnect: () => {
+      holding = true;
+      dropping = true;
+      for (const client of server.clients) client.terminate();
+    },
+    release: () => {
+      holding = false;
+      for (const { client, text } of heldFrames.splice(0)) client.send(text);
+    },
+    close: async () => {
+      for (const client of server.clients) client.terminate();
+      await new Promise((resolve) => {
+        server.close(resolve);
+      });
+    },
+  };
+}
+
+test("a run that ends between a running hello and its welcome leaves the worker idle, so a comment it never took in is sent again and flagged as missed", async () => {
+  const proxy = await proxyTo(fleet.cardd.url);
+  const held = gate();
+  h.onModel(async () => {
+    await held.wait;
+    return { text: "the long run is over" };
+  });
+  try {
+    const pi = h.startPi("c-1-a1", { ...env, FLEET_URL: proxy.url }, [EXTENSION]);
+    await h.waitForCall(0, "default", 30_000);
+    await h.waitFor((e) => e["type"] === "fleet_connected", "the worker to connect");
+
+    proxy.reconnect();
+    const deadline = Date.now() + 20_000;
+    while (!proxy.held()) {
+      if (Date.now() > deadline) throw new Error("the reconnect never reached its welcome");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await fleet.main.call("comment", { card: card.id, text: "a follow-up", now: false });
+    while (proxy.dropped() < 1) {
+      if (Date.now() > deadline) throw new Error("the comment never reached the worker's session");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    pi.abort();
+    await h.waitFor((e) => e["type"] === "settled", "the aborted run to settle");
+    proxy.release();
+
+    const missedBy = Date.now() + 40_000;
+    while (!fleet.main.entries.some(({ entry }) => entry.fields["condition"] === "missed")) {
+      if (Date.now() > missedBy) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const missed = fleet.main.entries.find(({ entry }) => entry.fields["condition"] === "missed");
+    assert.match(missed?.entry.body ?? "no missed finding", /did not take in this comment/);
+    assert.ok(proxy.dropped() >= 4);
+  } finally {
+    held.open();
+    await proxy.close();
+  }
 });

@@ -198,10 +198,15 @@ export class Cardd {
     return response.status;
   }
 
-  async connect(token: string, inFile: readonly number[] = [], takesIn = true): Promise<Session> {
+  async connect(
+    token: string,
+    inFile: readonly number[] = [],
+    takesIn = true,
+    running = false,
+  ): Promise<Session> {
     const session = new Session(new WebSocket(this.url), takesIn);
     await session.opened;
-    session.send({ t: "hello", token, inFile });
+    session.send(running ? { t: "hello", token, inFile, running } : { t: "hello", token, inFile });
     await until(() => session.welcome ?? session.closeCode, "welcome or close");
     return session;
   }
@@ -251,7 +256,13 @@ export class Cardd {
 }
 
 type Outgoing =
-  | { t: "hello"; token: string; inFile: readonly number[]; maintenance?: boolean }
+  | {
+      t: "hello";
+      token: string;
+      inFile: readonly number[];
+      maintenance?: boolean;
+      running?: boolean;
+    }
   | { t: "ack"; entry: number }
   | { t: "activity"; state: "running" | "idle" | "waiting"; progress?: boolean }
   | { t: "call"; id: number; op: string; args: unknown };
