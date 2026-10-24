@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
+import { shimmedEnv } from "./shims.ts";
 import { StringDecoder } from "node:string_decoder";
 
 const TAIL_LINES = 40;
@@ -128,6 +129,7 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   const child = spawn("sh", ["-c", job.command], {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
+    env: shimmedEnv(process.env),
   });
   const pid = child.pid;
   const signalGroup = (signal: NodeJS.Signals | 0): boolean => {

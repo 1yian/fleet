@@ -18,6 +18,7 @@ import { registerIntake } from "./intake.ts";
 import { Jobs, registerDropJob } from "./jobs.ts";
 import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
 import { Link, type Push } from "./link.ts";
+import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { reportActivity, trackRun } from "./progress.ts";
@@ -218,6 +219,7 @@ function exportAvoid(): void {
 }
 
 export default function fleet(pi: ExtensionAPI): void {
+  shimKillCommands();
   exportAvoid();
   pi.registerFlag("fleet-avoid", {
     type: "string",

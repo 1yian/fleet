@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { PATTERN_KILL_REASON } from "./shims.ts";
 
 const SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "run_long"]);
 const SEGMENT = "[^|;&\\n]*?";
@@ -14,8 +15,17 @@ const DAEMON_ADMIN: readonly RegExp[] = [
 const DAEMON_REASON =
   "refused: the no-mistakes daemon is shared by everything on this host, and a stop or restart disrupts work of other cards. Fleet never starts, stops, or restarts it. If the daemon is down, report blocked and say so: your first mate hears of it.";
 
+const LISTER = "(\\S*/)?(pgrep|pidof|ps)\\b";
+const KILL_FED_BY_LISTER: readonly RegExp[] = [
+  new RegExp(`\\bkill\\b[^|;&\\n]*(\\$\\(|\`)\\s*${LISTER}`),
+  new RegExp(
+    `(^|[|;&\\n(\`]|\\$\\()\\s*${LISTER}[^;&\\n]*\\|[^;&\\n]*\\bxargs\\b[^|;&\\n]*\\bkill\\b`,
+  ),
+];
+
 function guardReason(command: string): string | undefined {
   if (DAEMON_ADMIN.some((pattern) => pattern.test(command))) return DAEMON_REASON;
+  if (KILL_FED_BY_LISTER.some((pattern) => pattern.test(command))) return PATTERN_KILL_REASON;
   return undefined;
 }
 
