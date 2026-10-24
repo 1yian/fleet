@@ -51,6 +51,17 @@ function streamGate(now: () => number = Date.now): () => boolean {
   };
 }
 
+export function trackRun(pi: ExtensionAPI): () => boolean {
+  let going = false;
+  pi.on("agent_start", () => {
+    going = true;
+  });
+  pi.on("agent_settled", () => {
+    going = false;
+  });
+  return () => going;
+}
+
 export function reportActivity(
   pi: ExtensionAPI,
   link: Link,
@@ -58,17 +69,10 @@ export function reportActivity(
 ): void {
   const progressed = progressSince();
   const streaming = streamGate();
-  let inRun = false;
   const active = (): void => {
     link.activity("running");
   };
-  pi.on("agent_start", () => {
-    inRun = true;
-    active();
-  });
-  pi.events.on("fleet:connected", () => {
-    if (inRun) active();
-  });
+  pi.on("agent_start", active);
   pi.on("tool_execution_start", active);
   pi.on("tool_execution_update", () => {
     if (streaming()) active();
@@ -80,7 +84,6 @@ export function reportActivity(
     link.activity("running", await progressed());
   });
   pi.on("agent_settled", () => {
-    inRun = false;
     link.activity(settled());
   });
 }

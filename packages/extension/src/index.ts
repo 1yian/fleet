@@ -20,7 +20,7 @@ import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts"
 import { Link, type Push } from "./link.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
-import { reportActivity } from "./progress.ts";
+import { reportActivity, trackRun } from "./progress.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { MaintenanceQueue } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
@@ -119,6 +119,7 @@ function start(
   ctx: ExtensionContext,
   extensionsReady: Promise<void>,
 ): void {
+  const runInProgress = trackRun(pi);
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
   pi.on("agent_settled", () => {
@@ -131,6 +132,7 @@ function start(
     token,
     inFile: () => idsInSessionFile(sessionFile),
     process: randomUUID(),
+    running: runInProgress,
     onUnreadable: (error) => {
       if (unreadable === error) return;
       unreadable = error;

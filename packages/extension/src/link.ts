@@ -29,6 +29,7 @@ export interface LinkOptions {
   readonly token: string;
   readonly inFile: () => number[];
   readonly process?: string;
+  readonly running?: () => boolean;
   readonly onPush: (push: Push) => void;
   readonly onConnect: () => void;
   readonly onMaintenance?: (request: Maintenance) => void;
@@ -60,6 +61,7 @@ export class Link {
         token: this.options.token,
         inFile: this.options.inFile(),
         maintenance: this.options.onMaintenance !== undefined,
+        running: this.options.running?.() === true,
       } as const;
       this.send(id === undefined ? hello : { ...hello, process: id });
     });
