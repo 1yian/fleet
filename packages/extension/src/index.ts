@@ -141,7 +141,6 @@ function start(
       unreadable = undefined;
       pi.events.emit("fleet:connected", {});
       worker?.flush();
-      worker?.reconcile();
       failures.flush();
       jobs?.sync().catch(() => undefined);
     },
@@ -163,13 +162,12 @@ function start(
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
-      noteWorkerInput(entry, entry.fields["recovery"] !== undefined);
+      noteWorkerInput(entry.fields["recovery"] !== undefined);
     };
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
     else deliver("");
   };
-  const noteWorkerInput = (entry: Entry, recovery: boolean): void => {
-    worker?.receive(entry);
+  const noteWorkerInput = (recovery: boolean): void => {
     if (recovery) worker?.checkingHealth();
     else worker?.reset();
   };

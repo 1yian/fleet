@@ -5,6 +5,8 @@ import type { Link } from "./link.ts";
 import { routerResumeAt } from "./router-cooldown.ts";
 
 const FALLBACK_COMPACTION = "the conversation compaction failed with no error message";
+const PI_FAULT =
+  /cannot find (module|package)|ERR_MODULE_NOT_FOUND|failed to load url|does not provide an export/i;
 const FALLBACK = "the model turn failed with no error message";
 
 export class Failures {
@@ -14,7 +16,6 @@ export class Failures {
   private compactionReported = false;
   private compactionUnsent: string | undefined;
   private compactionPending: string | undefined;
-  private compactionLabel = failureLabel(undefined, true);
   private readonly link: Link;
   private blockage: Blockage | undefined;
   private owed: string | undefined;
@@ -80,7 +81,7 @@ export class Failures {
       const pending = this.compactionPending;
       this.compactionPending = undefined;
       if (pending !== undefined && this.failed === undefined)
-        blockage.raise(this.compactionLabel, blockage.now);
+        this.raisePiFault(pending, true, blockage.now);
       if (this.failed !== undefined) this.report(this.failed, false, true);
       else if (this.reported) {
         this.reported = false;
@@ -96,18 +97,20 @@ export class Failures {
     const resumeAt = routerResumeAt(error);
     const resume = resumeAt === undefined ? {} : { resumeAt };
     this.link.call("incident.report", { error, ...phase, ...resume }).then(
-      (result) => {
+      () => {
         if (compaction) this.compactionReported = true;
         else this.reported = true;
-        const label = failureLabel(result.classification, compaction);
-        if (compaction) this.compactionLabel = label;
-        if (blocks) blockage?.raise(label, since);
+        if (blocks) this.raisePiFault(error, compaction, since);
       },
       () => {
         if (compaction) this.compactionUnsent = error;
         else this.unsent = error;
-        if (blocks) blockage?.raise(failureLabel(undefined, compaction), since);
+        if (blocks) this.raisePiFault(error, compaction, since);
       },
     );
+  }
+
+  private raisePiFault(error: string, compaction: boolean, since: number): void {
+    if (PI_FAULT.test(error)) this.blockage?.raise(failureLabel("stale-module", compaction), since);
   }
 }
