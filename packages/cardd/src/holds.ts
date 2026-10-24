@@ -5,7 +5,7 @@ import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { askersOf, requireOwedBy } from "./replies.ts";
-import { factsFrom, type Facts, type Hold } from "./status.ts";
+import { factsFrom, finishFrom, type Facts, type Hold } from "./status.ts";
 import {
   addEntry,
   cardEntries,
@@ -273,6 +273,7 @@ export function mergeQuestion(
   if (card.kind !== "ship" || what === undefined || !facts.awaitingMerge) return undefined;
   if (facts.hold !== undefined || facts.mergeApproved) return undefined;
   if (yoloFor(db, card.id)) return undefined;
+  if (finishFrom([...cardEntries(db, card.id), ...written]).emptyBranch) return undefined;
   const holder: Holder = levelsOf(db, card).includes("main") ? "main" : "captain";
   const fields = {
     holder,

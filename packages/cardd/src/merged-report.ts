@@ -9,7 +9,7 @@ import { finishFrom } from "./status.ts";
 
 const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
-function routeFor(hosts: Hosts, host: string): readonly string[] {
+export function routeFor(hosts: Hosts, host: string): readonly string[] {
   const configured = hosts[host];
   if (configured !== undefined) return configured;
   const local = hostname().toLowerCase();

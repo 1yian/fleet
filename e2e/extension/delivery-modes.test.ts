@@ -302,3 +302,52 @@ test("a local-only project with an origin starts from local main, refuses a stal
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.deepEqual(branchesOf(clone), ["main"]);
 });
+
+test("local-only with nothing to land: a done report on an empty clean branch opens no land hold, and the mate closes the card as done", async () => {
+  const p = await lab({});
+  const { h, mate } = p;
+  h.onModel(async (turns) => {
+    assert.equal(lastUser(turns), taskFor("local-only"));
+    await after(h, 2);
+    return { tool: "report", args: { status: "done", text: "operation finished, no code change" } };
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  mateMoves(h, [
+    CARD_NEW,
+    dispatch({ delivery: "local-only" }),
+    "dispatched",
+    ["close", { card: 1, summary: "Operation finished." }],
+    "closed",
+  ]);
+  await mateConnected(h);
+  mate.prompt("run the operation, only locally");
+
+  const done = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assert.match(lastUser(done) ?? "", /^\[fleet\] c-1 add-credit done: operation finished/);
+  assert.match(await resultOf(h, 4), /^c-1 is done\./);
+  assert.deepEqual(await workersOf(p.lab), []);
+});
+
+test("local-only with a commit keeps the land hold on done", async () => {
+  const p = await lab({});
+  const { h, mate, clone } = p;
+  h.onModel(async () => {
+    await after(h, 2);
+    commitIn(treeOf(clone), "credit.txt");
+    return { tool: "report", args: { status: "done", text: "branch c-1-a1 ready" } };
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  mateMoves(h, [
+    CARD_NEW,
+    dispatch({ delivery: "local-only" }),
+    "dispatched",
+    ["close", { card: 1, summary: "Added the credit." }],
+    "asked the captain",
+  ]);
+  await mateConnected(h);
+  mate.prompt("add credit, only locally");
+
+  const done = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assert.match(lastUser(done) ?? "", /needs-you/);
+  assert.match(await resultOf(h, 4), /^c-1 has an open hold/);
+});

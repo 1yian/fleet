@@ -311,6 +311,7 @@ export function standingFrom(basis: Basis, entries: readonly Entry[], now: numbe
 export interface Finish {
   readonly merged: boolean;
   readonly workerDone: boolean;
+  readonly emptyBranch: boolean;
   readonly at: number;
 }
 
@@ -328,7 +329,7 @@ const isMerge = (entry: Entry): boolean =>
   entry.kind === "report" && entry.author.startsWith("worker:") && entry.fields["merged"] === true;
 
 export function finishFrom(entries: readonly Entry[]): Finish {
-  const finish = { merged: false, workerDone: false, at: 0 };
+  const finish = { merged: false, workerDone: false, emptyBranch: false, at: 0 };
   for (const entry of entries) {
     const status = text(entry, "status");
     if (isMerge(entry)) {
@@ -336,8 +337,10 @@ export function finishFrom(entries: readonly Entry[]): Finish {
       finish.at = entry.createdAt;
     } else if (entry.kind === "comment" && toWorker(entry)) {
       finish.workerDone = false;
+      finish.emptyBranch = false;
     } else if (entry.kind === "report" && status !== undefined && HANDOFF_REPORTS.has(status)) {
       finish.workerDone = status === "done";
+      finish.emptyBranch = finish.workerDone && entry.fields["emptyBranch"] === true;
       if (finish.workerDone) finish.at = entry.createdAt;
     }
   }
