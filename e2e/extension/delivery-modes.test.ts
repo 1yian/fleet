@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import {
@@ -379,4 +379,60 @@ test("local-only with a branch fast-forwarded to origin/main ahead of local main
   const done = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
   assert.match(lastUser(done) ?? "", /needs-you/);
   assert.match(await resultOf(h, 4), /^c-1 has an open hold/);
+});
+
+test("local-only with an untracked file and no commits keeps the land hold on done", async () => {
+  const p = await lab({});
+  const { h, mate, clone } = p;
+  h.onModel(async () => {
+    await after(h, 2);
+    writeFileSync(join(treeOf(clone), "scratch.txt"), "scratch\n");
+    return { tool: "report", args: { status: "done", text: "branch c-1-a1 ready" } };
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  mateMoves(h, [
+    CARD_NEW,
+    dispatch({ delivery: "local-only" }),
+    "dispatched",
+    ["close", { card: 1, summary: "Left a file." }],
+    "asked the captain",
+  ]);
+  await mateConnected(h);
+  mate.prompt("run it, only locally");
+
+  const done = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assert.match(lastUser(done) ?? "", /needs-you/);
+  assert.match(await resultOf(h, 4), /^c-1 has an open hold/);
+});
+
+test("local-only hold from an untracked file is withdrawn when the file is removed and the worker reports done again", async () => {
+  const p = await lab({});
+  const { h, mate, clone, cardd } = p;
+  h.onModel(async () => {
+    await after(h, 2);
+    writeFileSync(join(treeOf(clone), "scratch.txt"), "scratch\n");
+    return { tool: "report", args: { status: "done", text: "branch c-1-a1 ready" } };
+  }, "worker");
+  h.onModel(async () => {
+    assert.ok((await cardd.board()).holds.some((each) => each.card === 1));
+    rmSync(join(treeOf(clone), "scratch.txt"));
+    return { tool: "report", args: { status: "done", text: "removed the scratch file" } };
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  mateMoves(h, [
+    CARD_NEW,
+    dispatch({ delivery: "local-only" }),
+    "dispatched",
+    "waiting",
+    "waiting",
+    ["close", { card: 1, summary: "Operation finished." }],
+    "closed",
+  ]);
+  await mateConnected(h);
+  mate.prompt("run it, only locally");
+
+  await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  await h.waitForCall(5, "mate", WORKER_WAIT_MS);
+  assert.match(await resultOf(h, 6), /^c-1 is done\./);
+  assert.deepEqual((await cardd.board()).holds, []);
 });
