@@ -118,3 +118,22 @@ test("a worker that reads its assignment and then stays in one long run is not f
     0,
   );
 });
+
+test("a job result that arrives while the worker is in one long run is not sent again or flagged as missed, and is taken in when the run ends", async () => {
+  h.onModel(() => ({ tool: "run_long", args: { label: "tests", command: "echo green" } }));
+  h.onModel(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+    return { text: "the long run is over" };
+  });
+  h.onModel(() => ({ text: "took the job result" }));
+  h.startPi("c-1-a1", env, [EXTENSION]);
+
+  assert.equal(lastUser(await h.waitForCall(2, "default", 30_000)), RESULT);
+  const entries = fleet.main.entries.map((push) => push.entry);
+  assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
+  assert.equal(
+    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
+      .length,
+    0,
+  );
+});
