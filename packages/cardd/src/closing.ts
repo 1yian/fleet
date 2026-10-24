@@ -25,13 +25,13 @@ interface Done {
 }
 
 function notLanded(db: DatabaseSync, card: Card, check?: CloseCheck): string | undefined {
-  const { workerDone } = finishFrom(cardEntries(db, card.id));
+  const { workerDone, emptyBranch } = finishFrom(cardEntries(db, card.id));
   const worked = db.prepare("SELECT 1 FROM attempts WHERE card = ?").get(card.id) !== undefined;
   if (worked && !workerDone) return "the worker has not reported done";
   if (card.kind !== "ship") return undefined;
   if (!worked) return "no worker ran it";
   if (card.delivery === "local-only")
-    return loadCard(db, card.id).standing.stage === "merging"
+    return emptyBranch || loadCard(db, card.id).standing.stage === "merging"
       ? undefined
       : "its branch has not landed on the local base branch. close lands it once the landing is authorized: yolo on, or the captain's word for it on the merge question";
   if (card.pr !== null) return unmergedPr(card.pr, check);
@@ -65,7 +65,8 @@ function outcome(
     );
   }
   const ship = card.kind === "ship";
-  return { mode: "done", verify: ship, land: ship && card.delivery === "local-only" };
+  const empty = finishFrom(cardEntries(db, card.id)).emptyBranch;
+  return { mode: "done", verify: ship, land: ship && card.delivery === "local-only" && !empty };
 }
 
 function closable(

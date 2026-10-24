@@ -36,6 +36,7 @@ import {
   writeMergeQuestion,
 } from "./holds.ts";
 import { loadPlan } from "./plans.ts";
+import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
@@ -69,6 +70,7 @@ type Handler = (
   timing: Timings,
   note?: string,
   closeCheck?: CloseCheck,
+  emptyBranch?: true,
 ) => Done;
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
@@ -117,7 +119,13 @@ function requireShortPause(status: ReportStatus, until: number | undefined): voi
     );
 }
 
-function rework(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
+function rework(
+  db: DatabaseSync,
+  card: Card,
+  status: ReportStatus,
+  emptyBranch: true | undefined,
+): string[] {
+  if (emptyBranch === true) return withdrawMerge(db, card, "empty");
   return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
@@ -264,7 +272,7 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
-  report: (db, session, raw, _timing, note) => {
+  report: (db, session, raw, _timing, note, _closeCheck, emptyBranch) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     requireShortPause(args.status, args.until);
@@ -272,12 +280,15 @@ const HANDLERS: Record<OpName, Handler> = {
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
     const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
     const withdrawn =
-      args.merged === true ? withdrawMerge(db, card, "merged") : rework(db, card, args.status);
+      args.merged === true
+        ? withdrawMerge(db, card, "merged")
+        : rework(db, card, args.status, emptyBranch);
     const fields = {
       status: args.status,
       key: args.key,
       until: args.until,
       replyTo: args.replyTo,
+      emptyBranch,
       ...landingOf(db, card, args),
       ...(note === undefined ? {} : { prNote: note }),
     };
@@ -337,6 +348,10 @@ export async function performOp(
     op === "report" && session.card !== null
       ? await normalizeReport(db, hosts, session.card, args)
       : undefined;
+  const emptyBranch =
+    op === "report" && session.card !== null
+      ? await emptyLocalBranch(db, hosts, session.card, report?.args ?? args)
+      : undefined;
   const closeCheck =
     op === "close.begin" || op === "close.finish"
       ? await reverifyAtClose(db, hosts, op, args)
@@ -349,6 +364,7 @@ export async function performOp(
       timing,
       report?.note,
       closeCheck,
+      emptyBranch,
     );
     noteControl(db, session.id, op);
     return result;
