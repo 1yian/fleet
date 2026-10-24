@@ -15,27 +15,18 @@ const DAEMON_REASON =
   "refused: the no-mistakes daemon is shared by everything on this host, and a stop or restart disrupts work of other cards. Fleet never starts, stops, or restarts it. If the daemon is down, report blocked and say so: your first mate hears of it.";
 
 const SIGNAL_BY_NAME: ReadonlySet<string> = new Set(["pkill", "killall"]);
-const LISTER = "(\\S*/)?(pgrep|pidof|ps)\\b";
-const KILL_FED_BY_LISTER: readonly RegExp[] = [
-  new RegExp(`\\bkill\\b[^|;&\\n]*(\\$\\(|\`)\\s*${LISTER}`),
-  new RegExp(
-    `(^|[|;&\\n(\`]|\\$\\()\\s*${LISTER}[^;&\\n]*\\|[^;&\\n]*\\bxargs\\b[^|;&\\n]*\\bkill\\b`,
-  ),
-];
-const PREFIXES: ReadonlySet<string> = new Set([
-  "sudo",
-  "nohup",
-  "exec",
-  "command",
-  "env",
-  "time",
-  "timeout",
-  "xargs",
+const LISTERS: ReadonlySet<string> = new Set(["pgrep", "pidof", "ps"]);
+const WRAPPERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["sudo", new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"])],
+  ["nohup", new Set<string>()],
+  ["exec", new Set(["-a"])],
+  ["command", new Set<string>()],
+  ["env", new Set(["-u", "-C", "-S"])],
+  ["time", new Set(["-f", "-o"])],
+  ["timeout", new Set(["-s", "-k"])],
+  ["nice", new Set(["-n"])],
+  ["xargs", new Set(["-n", "-I", "-L", "-P", "-d", "-s", "-E", "-a"])],
 ]);
-
-const PATTERN_KILL_REASON =
-  "refused: pkill, killall, and kill fed by pgrep, pidof, or ps signal every matching process of this account on the host, including other workers' test runs, builds, and jobs. Signal only a PID that you started yourself, or stop your own job with stop_job.";
-
 const KEYWORDS: ReadonlySet<string> = new Set([
   "if",
   "then",
@@ -47,83 +38,151 @@ const KEYWORDS: ReadonlySet<string> = new Set([
   "!",
 ]);
 
-const isAssignment = (word: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
-const baseName = (word: string): string | undefined => word.split("/").at(-1);
+const PATTERN_KILL_REASON =
+  "refused: pkill, killall, and kill fed by pgrep, pidof, or ps signal every matching process of this account on the host, including other workers' test runs, builds, and jobs. Signal only a PID that you started yourself, or stop your own job with stop_job.";
 
-interface Parsed {
-  segments: string[][];
-  masked: string;
+interface Cmd {
+  words: string[];
+  pipeline: number;
+  subs: Cmd[];
 }
 
-function parse(command: string): Parsed {
-  const segments: string[][] = [[]];
-  let masked = "";
+interface Walk {
+  src: string;
+  pos: number;
+  pipelines: number;
+  all: Cmd[];
+}
+
+const isAssignment = (word: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
+const baseName = (word: string): string => word.split("/").at(-1) ?? word;
+
+function walk(state: Walk, closer: string | undefined): Cmd[] {
+  const first = state.all.length;
+  let pipeline = state.pipelines++;
+  let cmd: Cmd = { words: [], pipeline, subs: [] };
   let word: string | undefined;
   let quote: string | undefined;
+  let depth = 0;
   const endWord = (): void => {
-    if (word !== undefined) segments.at(-1)?.push(word);
+    if (word !== undefined) cmd.words.push(word);
     word = undefined;
   };
-  const endSegment = (): void => {
+  const endCommand = (newPipeline: boolean): void => {
     endWord();
-    segments.push([]);
+    if (newPipeline) pipeline = state.pipelines++;
+    cmd = { words: [], pipeline, subs: [] };
   };
-  for (let i = 0; i < command.length; i++) {
-    const char = command.charAt(i);
+  const register = (): void => {
+    if (!state.all.includes(cmd)) state.all.push(cmd);
+  };
+  const substitute = (end: string): void => {
+    register();
+    cmd.subs.push(...walk(state, end));
+    word = (word ?? "") + "\u0000";
+  };
+  while (state.pos < state.src.length) {
+    const char = state.src.charAt(state.pos);
+    const next = state.src.charAt(state.pos + 1);
+    state.pos++;
     if (quote === "'") {
-      if (char === "'") {
-        quote = undefined;
-        masked += char;
-      } else {
-        word = (word ?? "") + char;
-        masked += " ";
-      }
+      if (char === "'") quote = undefined;
+      else word = (word ?? "") + char;
       continue;
     }
-    masked += char;
-    if (char === "\\" && i + 1 < command.length) {
-      i++;
-      const next = command.charAt(i);
+    if (char === "\\") {
       word = (word ?? "") + next;
-      masked += next;
-    } else if (char === quote) {
-      quote = undefined;
-    } else if (char === "$" && command.charAt(i + 1) === "(") {
-      i++;
-      masked += "(";
-      endSegment();
+      state.pos++;
+    } else if (char === "$" && next === "(") {
+      state.pos++;
+      substitute(")");
     } else if (char === "`") {
-      endSegment();
+      if (closer === "`") break;
+      substitute("`");
     } else if (quote === '"') {
-      word = (word ?? "") + char;
+      if (char === '"') quote = undefined;
+      else word = (word ?? "") + char;
     } else if (char === "'" || char === '"') {
       quote = char;
       word ??= "";
-    } else if (/\s/.test(char) && char !== "\n") {
+    } else if (/[ \t\r]/.test(char)) {
       endWord();
-    } else if ("|;&\n(){}".includes(char)) {
-      endSegment();
+    } else if (char === "|") {
+      if (next === "|") {
+        state.pos++;
+        register();
+        endCommand(true);
+      } else {
+        if (next === "&") state.pos++;
+        register();
+        endCommand(false);
+      }
+    } else if (
+      char === "&" &&
+      (next === ">" || [">", "<"].includes(state.src.charAt(state.pos - 2)))
+    ) {
+      word = (word ?? "") + char;
+    } else if (char === ")" && depth === 0 && closer === ")") {
+      break;
+    } else if (";&\n(){}".includes(char)) {
+      if (char === "(") depth++;
+      if (char === ")") depth--;
+      register();
+      endCommand(true);
     } else {
       word = (word ?? "") + char;
     }
   }
   endWord();
-  return { segments, masked };
+  register();
+  return state.all.slice(first).filter((entry) => entry.words.length > 0 || entry.subs.length > 0);
 }
 
-function signalsByName(words: string[]): boolean {
-  const rest = words.filter((word) => !KEYWORDS.has(word) && !isAssignment(word));
-  const program = rest[0] === undefined ? undefined : baseName(rest[0]);
-  if (program === undefined) return false;
-  if (SIGNAL_BY_NAME.has(program)) return true;
-  if (!PREFIXES.has(program)) return false;
-  return rest.slice(1).some((word) => SIGNAL_BY_NAME.has(baseName(word) ?? ""));
+function chainOf(words: string[]): string[] {
+  const chain: string[] = [];
+  let i = 0;
+  const at = (index: number): string => words.at(index) ?? "";
+  while (i < words.length && (KEYWORDS.has(at(i)) || isAssignment(at(i)))) i++;
+  while (i < words.length) {
+    const program = baseName(at(i));
+    chain.push(program);
+    const optionsWithArgument = WRAPPERS.get(program);
+    if (optionsWithArgument === undefined) break;
+    i++;
+    while (i < words.length) {
+      const word = at(i);
+      if (program === "command" && (word === "-v" || word === "-V")) return chain;
+      if (word.startsWith("-")) i += optionsWithArgument.has(word) ? 2 : 1;
+      else if (program === "env" && isAssignment(word)) i++;
+      else break;
+    }
+    if (program === "timeout") i++;
+  }
+  return chain;
 }
+
+const hasProgram = (cmd: Cmd, names: ReadonlySet<string>): boolean =>
+  chainOf(cmd.words).some((program) => names.has(program));
 
 function signalsByPattern(command: string): boolean {
-  const { segments, masked } = parse(command);
-  if (segments.some(signalsByName)) return true;
-  return KILL_FED_BY_LISTER.some((pattern) => pattern.test(masked));
+  const state: Walk = { src: command, pos: 0, pipelines: 0, all: [] };
+  walk(state, undefined);
+  const { all } = state;
+  if (all.some((cmd) => hasProgram(cmd, SIGNAL_BY_NAME))) return true;
+  const fed = all.some(
+    (cmd) => hasProgram(cmd, new Set(["kill"])) && cmd.subs.some((sub) => hasProgram(sub, LISTERS)),
+  );
+  if (fed) return true;
+  return all.some(
+    (lister) =>
+      hasProgram(lister, LISTERS) &&
+      all.some(
+        (sink) =>
+          sink.pipeline === lister.pipeline &&
+          hasProgram(sink, new Set(["xargs"])) &&
+          hasProgram(sink, new Set(["kill"])),
+      ),
+  );
 }
 
 function guardReason(command: string): string | undefined {
