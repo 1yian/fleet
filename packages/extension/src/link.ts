@@ -41,6 +41,7 @@ export class Link {
   private connected = false;
   private stopped = false;
   private backoff = 250;
+  private latest: "running" | "idle" | "waiting" | undefined;
   private nextId = 1;
   private readonly pending = new Map<number, (result: Result) => void>();
   private readonly untoldAcks = new Set<number>();
@@ -117,6 +118,7 @@ export class Link {
   }
 
   activity(state: "running" | "idle" | "waiting", progress = false): void {
+    this.latest = state;
     if (this.connected) this.send({ t: "activity", state, ...(progress ? { progress } : {}) });
   }
 
@@ -126,18 +128,22 @@ export class Link {
 
   private receive(message: ServerMessage): void {
     if (this.stopped && (message.t === "entry" || message.t === "maintenance")) return;
-    if (message.t === "welcome") {
-      this.connected = true;
-      this.backoff = 250;
-      for (const entry of this.untoldAcks) this.send({ t: "ack", entry });
-      this.untoldAcks.clear();
-      this.options.onConnect();
-    } else if (message.t === "entry") this.options.onPush(message);
+    if (message.t === "welcome") this.welcomed();
+    else if (message.t === "entry") this.options.onPush(message);
     else if (message.t === "maintenance") this.options.onMaintenance?.(message.request);
     else {
       this.pending.get(message.id)?.(message);
       this.pending.delete(message.id);
     }
+  }
+
+  private welcomed(): void {
+    this.connected = true;
+    this.backoff = 250;
+    for (const entry of this.untoldAcks) this.send({ t: "ack", entry });
+    this.untoldAcks.clear();
+    if (this.latest !== undefined) this.send({ t: "activity", state: this.latest });
+    this.options.onConnect();
   }
 
   private failPending(error: string): void {
