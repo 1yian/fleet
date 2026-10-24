@@ -137,3 +137,28 @@ test("a job result that arrives while the worker is in one long run is not sent 
     0,
   );
 });
+
+test("a comment that arrives after the worker's connection dropped and came back during one long run is not sent again or flagged as missed", async () => {
+  h.onModel(() => ({ tool: "report", args: { status: "note", text: "on it" } }));
+  h.onModel(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    return { text: "the long run is over" };
+  });
+  h.onModel(() => ({ text: "took the comment" }));
+  h.startPi("c-1-a1", env, [EXTENSION]);
+
+  await h.waitForCall(1, "default", 30_000);
+  await fleet.cardd.restart();
+  const main = await fleet.cardd.connect(fleet.mainToken);
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the worker to reconnect");
+  await main.call("comment", { card: card.id, text: "a follow-up", now: false });
+  await h.waitForCall(2, "default", 60_000);
+
+  const entries = main.entries.map((push) => push.entry);
+  assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
+  assert.equal(
+    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
+      .length,
+    0,
+  );
+});
