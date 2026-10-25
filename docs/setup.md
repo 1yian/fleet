@@ -262,6 +262,7 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
 | `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
 | `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                 |
+| `fleet cost`                             | Prints this host's last-24-hour usage rows as JSON. Main reads it for its daily cost line.  |
 | `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.

@@ -125,7 +125,7 @@ function toolProblem(tool: Tool, host: string): string | undefined {
   return versionProblem(tool, probed.output, host) ?? loginProblem(tool, host);
 }
 
-function settingsOf(home: string): Record<string, unknown> | undefined {
+export function settingsOf(home: string): Record<string, unknown> | undefined {
   const file = join(home, "config", "optchat.json");
   if (!existsSync(file)) return undefined;
   try {
@@ -138,7 +138,7 @@ function settingsOf(home: string): Record<string, unknown> | undefined {
 
 const PROFILE_FILES = ["AGENTS.md", "config.json"];
 
-function profileOf(home: string, settings: Record<string, unknown>): string {
+export function profileOf(home: string, settings: Record<string, unknown>): string {
   const memoryHome = settings["memoryHome"];
   const profile = settings["profile"];
   return join(
