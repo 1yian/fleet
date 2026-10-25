@@ -148,6 +148,14 @@ function deliverAfterSync(
   );
 }
 
+function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["role"]): void {
+  applyCachePolicy(role);
+  applyCacheBreakLog(pi, ctx);
+  applyContextPolicy(role);
+  applyCompactionBackoff();
+  applyCompactionPolicy();
+}
+
 function start(
   pi: ExtensionAPI,
   { url, token, role, lane }: Config,
@@ -236,11 +244,7 @@ function start(
     registerUpdate(pi, HOME(), link);
   }
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);
-  applyCachePolicy(role);
-  applyCacheBreakLog(pi, ctx);
-  applyContextPolicy(role);
-  applyCompactionBackoff();
-  applyCompactionPolicy();
+  applyPolicies(pi, ctx, role);
   if (role === "mate") appendMateContract(pi);
   pi.on("session_shutdown", () => {
     link.stop();
