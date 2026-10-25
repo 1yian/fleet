@@ -33,6 +33,7 @@ const VALUE_OPTIONS = new Set([
   "--hosts",
   "--roots",
   "--direnv",
+  "--tier",
   "--seed",
   "--thinking",
   "--root",
@@ -65,6 +66,7 @@ const { values, positionals } = parseArgs({
     hosts: { type: "string" },
     roots: { type: "string" },
     direnv: { type: "string" },
+    tier: { type: "string" },
     seed: { type: "string" },
     thinking: { type: "string" },
     root: { type: "string" },
@@ -175,6 +177,7 @@ switch (command ?? "") {
       roots: isRecord(roots)
         ? Object.fromEntries(Object.entries(roots).map(([k, v]) => [k, String(v)]))
         : {},
+      ...(values.tier === undefined ? {} : { tier: values.tier }),
       args: strings(json(values.args)),
       workerArgs: strings(json(values["worker-args"])),
       ...(values.direnv === undefined ? {} : { direnv: values.direnv }),

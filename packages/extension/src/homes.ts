@@ -181,7 +181,7 @@ async function start(root: string, info: LaneHome): Promise<void> {
     pane = field(isRecord(created["root_pane"]) ? created["root_pane"] : undefined, "pane_id");
   } else pane = await panesOf(workspace);
   if (pane === undefined) throw new Error(`workspace ${mateTitle(info.lane)} has no pane`);
-  const pi = ["pi", "--continue", ...mateStartArgs(info.config.args)];
+  const pi = ["pi", "--continue", ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
   const command = direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi];
   await herdr(["pane", "run", pane, `cd ${quote(info.home)} && ${command.map(quote).join(" ")}`]);

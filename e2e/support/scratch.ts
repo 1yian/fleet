@@ -68,6 +68,7 @@ export class Scratch {
       hosts?: unknown;
       roots?: unknown;
       direnv?: string;
+      tier?: string;
     },
   ): string {
     const args = ["home", "add", lane, "--url", settings.url, "--token", settings.token];
@@ -79,6 +80,7 @@ export class Scratch {
       JSON.stringify(settings.roots ?? {}),
     );
     if (settings.direnv !== undefined) args.push("--direnv", settings.direnv);
+    if (settings.tier !== undefined) args.push("--tier", settings.tier);
     if (settings.host !== undefined) args.push("--host", settings.host);
     return this.fleet(args).trim();
   }
