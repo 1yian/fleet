@@ -48,9 +48,9 @@ function stableSystem(payload: Record<string, unknown>): string {
   const raw = payload["system"] ?? payload["instructions"] ?? "";
   const blocks: unknown[] = Array.isArray(raw) ? raw : [raw];
   const marked = blocks.map((block) => isRecord(block) && isRecord(block["cache_control"]));
-  const last = marked.lastIndexOf(true);
+  const head = marked.indexOf(true);
   const text = blocks
-    .slice(0, last < 0 ? blocks.length : last + 1)
+    .slice(0, head < 0 ? blocks.length : head + 1)
     .map(textOf)
     .join("\n");
   return text.split(TAIL_MARK)[0] ?? "";
@@ -167,7 +167,15 @@ class CacheBreakLog {
   constructor(pi: ExtensionAPI, started: ExtensionContext) {
     this.pi = pi;
     this.tally = tallyOf(started);
-    if (this.tally.count > 0) this.show(started);
+    this.show(started);
+  }
+
+  restart(ctx: ExtensionContext): void {
+    this.tally = tallyOf(ctx);
+    this.previous = undefined;
+    this.sent = undefined;
+    this.compacted = false;
+    this.show(ctx);
   }
 
   request(payload: unknown): void {
@@ -235,7 +243,10 @@ class CacheBreakLog {
   }
 
   private show(ctx: ExtensionContext): void {
-    ctx.ui.setStatus(STATUS_KEY, statusText(this.tally.count, this.tally.last));
+    ctx.ui.setStatus(
+      STATUS_KEY,
+      this.tally.count > 0 ? statusText(this.tally.count, this.tally.last) : undefined,
+    );
   }
 }
 
@@ -244,6 +255,9 @@ export function applyCacheBreakLog(pi: ExtensionAPI, started: ExtensionContext):
   pi.on("before_provider_request", (event) => {
     log.request(event.payload);
     return undefined;
+  });
+  pi.on("session_start", (_event, ctx) => {
+    log.restart(ctx);
   });
   pi.on("session_compact", () => {
     log.compaction();
