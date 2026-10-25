@@ -16,6 +16,7 @@ import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs, registerDropJob } from "./jobs.ts";
+import { enableCodemode } from "./codemode.ts";
 import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
 import { Link, type Push } from "./link.ts";
 import { shimKillCommands } from "./shims.ts";
@@ -149,6 +150,7 @@ function start(
   ctx: ExtensionContext,
   extensionsReady: Promise<void>,
 ): void {
+  enableCodemode(pi);
   const runInProgress = trackRun(pi);
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();

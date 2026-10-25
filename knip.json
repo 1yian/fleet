@@ -14,6 +14,7 @@
         "support/fake-anthropic.ts",
         "support/probe.ts",
         "support/late-tools.ts",
+        "support/codemode-limit.ts",
         "support/shell-tool.ts",
         "support/orphan-runner.ts",
         "support/leak-fixture.ts",
