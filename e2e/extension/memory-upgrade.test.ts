@@ -7,6 +7,7 @@ import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { configureMain, Scratch, settingsArgs, startMain } from "../support/scratch.ts";
+import { parseRecord } from "../support/json.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const WAIT_MS = 60_000;
@@ -21,12 +22,13 @@ let h: Harness;
 let lab: HerdrLab;
 let scratch: Scratch;
 let cleo: Session;
+let mainToken: string;
 let memoryHome: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
   scratch = new Scratch("fleet");
-  const mainToken = cardd.addLane("main", undefined, scratch.root);
+  mainToken = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, mainToken);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   memoryHome = tempDir("fleet-memory-");
@@ -207,4 +209,39 @@ test("a standing-rule edit rewrites only the system tail, not the cached role bl
   assert.ok(tailBefore.text.includes("Prefer short replies."), "the tail held the first rule");
   assert.ok(tailAfter.text.includes("Always answer in haiku."), "the tail has the edit");
   assert.equal(tailAfter.ttl, "1h", "the tail has its own one-hour mark");
+});
+
+test("a second mate's plan sits in the tail, after the marker and before its rules", async () => {
+  scratch.addLane("ads", { url: cardd.url, token: cardd.addLane("ads", "main"), args: wireArgs() });
+  const planned = cardd.admin(
+    "lane",
+    "plan",
+    "ads",
+    "--plan",
+    JSON.stringify({ goal: "Keep the ad spend under the cap.", timezone: "UTC", wakes: [] }),
+  );
+  assert.equal(planned.status, 0, planned.stderr);
+  scratch.fleet(["up", "ads"], { HERDR_SESSION: lab.name });
+  await until(
+    () =>
+      parseRecord(cardd.admin("lane", "plan", "ads").stdout)["active"] === null ? undefined : true,
+    "ads to load its plan",
+  );
+  const home = `${scratch.root}.worktrees/lane-ads`;
+  mkdirSync(join(home, "data"), { recursive: true });
+  writeFileSync(join(home, "data", "captain.md"), "Prefer short replies.\n");
+  await cardd
+    .connect(mainToken)
+    .then((main) =>
+      main.call("comment", { lane: "ads", text: "Start." }).finally(() => main.close()),
+    );
+  await h.waitForCall(0, "mate", WAIT_MS);
+
+  const call = h.wire.find((each) => each.role === "mate" && !each.warm);
+  const [stable, tail] = call?.systemBlocks ?? [];
+  assert.ok(stable && tail && call?.systemBlocks.length === 2, "the system prompt is two blocks");
+  assert.ok(!stable.text.includes("Keep the ad spend"), "the plan is not in the stable block");
+  const plan = tail.text.indexOf("Keep the ad spend");
+  const rules = tail.text.indexOf("Prefer short replies.");
+  assert.ok(plan >= 0 && rules > plan, "the tail holds the plan, then the rules");
 });
