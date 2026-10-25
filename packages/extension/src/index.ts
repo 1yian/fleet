@@ -11,6 +11,7 @@ import { applyCompactionBackoff } from "./compaction-backoff.ts";
 import { applyCompactionPolicy } from "./compaction-policy.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
+import { watchMainCardd } from "./cardd-watch.ts";
 import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
@@ -58,8 +59,11 @@ function config(pi: ExtensionAPI): Config | undefined {
   const url = value("fleet-url", "FLEET_URL");
   const token = value("fleet-token", "FLEET_TOKEN");
   const role = value("fleet-role", "FLEET_ROLE");
+  const named = process.env["FLEET_LANE"];
   if (url !== undefined && token !== undefined && (role === "worker" || role === "mate"))
-    return { url, token, role };
+    return role === "worker" || named === undefined || named === ""
+      ? { url, token, role }
+      : { url, token, role, lane: named };
   const lane = readLaneConfig(HOME());
   if (lane === undefined) return undefined;
   exportHosts(lane);
@@ -221,6 +225,7 @@ function start(
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
   }
+  watchMainCardd(pi, link, { url, role, lane }, HOME());
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
