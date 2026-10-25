@@ -89,8 +89,8 @@ test("a worker with a stale module is replaced on its own conversation and work,
     if (turns.at(-1)?.role !== "user" || !(lastUser(turns) ?? "").includes("runtime failure"))
       return { text: "noted" };
     incident = incidentIn(turns);
-    before = await workerGroupOf(lab, "c-1-a1");
-    beside = await workerGroupOf(lab, "c-2-a1");
+    before = await readyWorkerGroup(lab, "c-1-a1");
+    beside = await readyWorkerGroup(lab, "c-2-a1");
     return replace();
   });
   for (let call = 0; call < 12; call += 1)
@@ -296,7 +296,7 @@ test("a stale compactor import is replaced on the same card and conversation, an
     h.onModel(async (turns) => {
       if (turns.at(-1)?.role !== "user" || !(lastUser(turns) ?? "").includes("runtime failure"))
         return { text: "noted" };
-      before = await workerGroupOf(lab, "c-1-a1");
+      before = await readyWorkerGroup(lab, "c-1-a1");
       compactorUp = true;
       return { tool: "restart_card", args: { card: 1, ...incidentIn(turns), mode: "replace" } };
     }, "mate");
