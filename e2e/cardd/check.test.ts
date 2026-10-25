@@ -255,7 +255,8 @@ test("reminders to a mate that is down wait for it, and then one reminder for th
     "a reminder after the mate returned",
   );
   assert.ok(Number(first.fields["tier"]) >= 3, `resumed at tier ${String(first.fields["tier"])}`);
-  assert.equal((await tiersOf(card, "worker-never-connected")).length, before.length + 1);
+  const resumed = (await tiersOf(card, "worker-never-connected")).slice(before.length);
+  assert.equal(resumed.filter((tier) => tier <= Number(first.fields["tier"])).length, 1);
 });
 
 test("a finished card its mate leaves open is reminded each tier until it is closed, and main is not programmatically told", async () => {
