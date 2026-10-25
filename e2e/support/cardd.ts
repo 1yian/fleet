@@ -216,6 +216,10 @@ export class Cardd {
     await this.boot(new URL(this.url.replace(/^ws/, "http")).port);
   }
 
+  signal(name: "SIGSTOP" | "SIGCONT"): void {
+    this.child?.kill(name);
+  }
+
   async stop(): Promise<void> {
     const child = this.child;
     if (child?.exitCode !== null || child.signalCode !== null) return;

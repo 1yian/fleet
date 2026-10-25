@@ -11,7 +11,7 @@ import {
   type ServerMessage,
 } from "@fleet/protocol";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
-import { runCheck } from "./check.ts";
+import { MISSED_HEARTBEATS, runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
@@ -83,9 +83,16 @@ class Hub {
     }
   }
 
+  private lastTick = Date.now();
+  private graceUntil = 0;
+
   check(): void {
+    const now = Date.now();
+    if (now - this.lastTick > this.timing.every + this.timing.heartbeat)
+      this.graceUntil = now + MISSED_HEARTBEATS * this.timing.heartbeat;
+    this.lastTick = now;
     this.fillRepos();
-    const notify = transaction(this.db, () => runCheck(this.db, Date.now(), this.timing));
+    const notify = transaction(this.db, () => runCheck(this.db, now, this.timing, this.graceUntil));
     for (const recipient of notify) this.flush(recipient, false);
     if (notify.length > 0) this.web.changed();
   }
