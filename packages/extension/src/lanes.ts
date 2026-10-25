@@ -214,11 +214,7 @@ const isCostRow = (row: Record<string, unknown>): row is Record<string, unknown>
 async function costLines(config: LaneConfig): Promise<string[]> {
   const lines: string[] = [];
   for (const host of hostsOf(config)) {
-    try {
-      lines.push(...(await rows(config, host, ["cost"])).filter(isCostRow).map(costLine));
-    } catch {
-      continue;
-    }
+    lines.push(...(await rows(config, host, ["cost"])).filter(isCostRow).map(costLine));
   }
   return lines;
 }
@@ -272,7 +268,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   };
   const dailyCost = async (): Promise<void> => {
     if (isDown() || !noticeDue(home, Date.now())) return;
-    const lines = await costLines(config);
+    const lines = await costLines(config).catch(() => []);
     if (lines.length === 0 || isDown()) return;
     mkdirSync(join(home, "state"), { recursive: true });
     writeFileSync(join(home, COST_NOTICE), String(Date.now()));

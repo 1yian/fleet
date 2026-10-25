@@ -11,7 +11,7 @@ import {
   type Outcome,
 } from "./homes.ts";
 import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
-import { costLine, costRows } from "./cost.ts";
+import { costRows } from "./cost.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences } from "./standing.ts";
@@ -21,7 +21,7 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | cost [--json] | migrate [--undo]";
+  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | cost | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -214,9 +214,7 @@ switch (command ?? "") {
     break;
   }
   case "cost": {
-    const rows = costRows(root, Date.now());
-    if (values.json === true) console.log(JSON.stringify(rows));
-    else for (const row of rows) console.log(costLine(row));
+    console.log(JSON.stringify(costRows(root, Date.now())));
     break;
   }
   case "migrate":
