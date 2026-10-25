@@ -70,6 +70,17 @@ $CARDD serve --db ~/.fleet/cards.db --listen "$IP:7420" --hostname "$NAME:7420" 
 
 On macOS, run it under launchd with `KeepAlive` so it restarts after a crash or a reboot, as the job `dev.fleet.cardd` in `~/Library/LaunchAgents/dev.fleet.cardd.plist`. The board is then at `http://<NAME>:7420/`.
 
+Set `ProcessType` to `Interactive` in the plist, next to `KeepAlive`:
+
+```xml
+<key>KeepAlive</key>
+<true/>
+<key>ProcessType</key>
+<string>Interactive</string>
+```
+
+Without it, launchd applies light resource limits (`launchd.plist(5)`): it throttles CPU and I/O, and `cardd` ran below the Docker VM and the agents it serves. `Interactive` gives it normal priority. The plist is written by hand, so nothing in this repository rewrites it. `/updatefleet` pulls code and runs `cardd.restart` (`launchctl kickstart -k`), which restarts the job without re-reading the plist. To apply a plist change, the captain edits the file, then runs `launchctl bootout gui/<uid>/dev.fleet.cardd` and `launchctl bootstrap gui/<uid> ~/Library/LaunchAgents/dev.fleet.cardd.plist`. Check it with `launchctl print gui/<uid>/dev.fleet.cardd | grep -i processtype`.
+
 `/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). Do not update or restart it by hand. `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
 
 ## 3. Lanes and projects
