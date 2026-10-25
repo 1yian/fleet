@@ -22,6 +22,7 @@ import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { reportActivity, trackRun } from "./progress.ts";
+import { MUTABLE_TAIL } from "./cache-ttl.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { MaintenanceQueue } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
@@ -201,7 +202,7 @@ function start(
   applyCompactionBackoff();
   applyCompactionPolicy();
   pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? mateContract() : ""}`,
+    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? `${MUTABLE_TAIL}${mateContract()}` : ""}`,
   }));
   pi.on("session_shutdown", () => {
     link.stop();

@@ -20,21 +20,36 @@ function systemOf(payload: Block): Block[] {
   return blocksOf(payload["system"]);
 }
 
+export const MUTABLE_TAIL = "\u2063fleet-mutable-tail\u2063";
+
+function splitTail(payload: Block, blocks: Block[]): Block[] {
+  const at = blocks.findIndex((block) => String(block["text"]).includes(MUTABLE_TAIL));
+  const block = blocks[at];
+  if (block === undefined) return blocks.slice(-1);
+  const [head = "", ...rest] = String(block["text"]).split(MUTABLE_TAIL);
+  const tail = rest.join("");
+  const parts: Block[] = [{ ...block, text: head }];
+  if (tail.trim() !== "") parts.push({ type: "text", text: tail });
+  payload["system"] = [...blocks.slice(0, at), ...parts, ...blocks.slice(at + 1)];
+  return parts;
+}
+
 function marked(blocks: Block[]): Block[] {
   return blocks.filter((block) => isBlock(block["cache_control"]));
 }
 
 function splitMateCacheTtl(payload: unknown): unknown {
   if (!isBlock(payload) || !Array.isArray(payload["messages"])) return payload;
-  const systemBlocks = systemOf(payload);
-  const last = systemBlocks[systemBlocks.length - 1];
-  if (last === undefined) return payload;
+  systemOf(payload);
+  const stable = splitTail(payload, blocksOf(payload["system"]));
+  const systemBlocks = blocksOf(payload["system"]);
+  if (stable.length === 0) return payload;
 
   const tools = blocksOf(payload["tools"]);
   const messages = blocksOf(payload["messages"]);
   const messageBlocks = messages.flatMap((message) => [message, ...blocksOf(message["content"])]);
   for (const block of [...systemBlocks, ...tools]) delete block["cache_control"];
-  last["cache_control"] = { type: "ephemeral", ttl: STABLE_TTL };
+  for (const block of stable) block["cache_control"] = { type: "ephemeral", ttl: STABLE_TTL };
 
   const view = marked(messageBlocks);
   for (const block of view) {
@@ -42,7 +57,7 @@ function splitMateCacheTtl(payload: unknown): unknown {
     if (isBlock(control)) delete control["ttl"];
   }
   const topLevel = isBlock(payload["cache_control"]) ? 1 : 0;
-  const excess = 1 + topLevel + view.length - MAX_BREAKPOINTS;
+  const excess = stable.length + topLevel + view.length - MAX_BREAKPOINTS;
   for (const block of view.slice(0, Math.max(0, excess))) delete block["cache_control"];
   return payload;
 }

@@ -97,7 +97,7 @@ test("OptChat's cache marks land on the request when the mate's model is a route
   assert.deepEqual(
     last.systemTtls,
     ["1h"],
-    "the system prompt carries only the mate's one-hour mark",
+    "the system prompt carries only the mate's one-hour mark when it has no tail",
   );
   assert.ok(last.markedBlocks.length >= 2, "the view and the request end carry no marks");
   const view = last.markedBlocks.filter((text) => VIEW_LINE.test(text));
@@ -179,4 +179,32 @@ test("memory in a mate's home never opens a connected-window socket or a pending
   assert.ok(existsSync(join(profile, "lock.sock")), "the profile lock is not held");
   assert.ok(!existsSync(join(profile, "windows.sock")), "a connected-window socket is open");
   assert.ok(!existsSync(join(profile, "pending-reports.json")), "a pending-report journal exists");
+});
+
+test("a standing-rule edit rewrites only the system tail, not the cached role block", async () => {
+  mkdirSync(join(scratch.root, "data"), { recursive: true });
+  writeFileSync(join(scratch.root, "data", "captain.md"), "Prefer short replies.\n");
+  await startMain(lab, scratch, h, false, wireArgs());
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  await cleo.call("comment", { lane: "cleo", text: "First step passed." });
+  await h.waitForCall(0, "mate", WAIT_MS);
+  writeFileSync(join(scratch.root, "data", "captain.md"), "Always answer in haiku.\n");
+  await cleo.call("comment", { lane: "cleo", text: "Second step passed." });
+  await h.waitForCall(1, "mate", WAIT_MS);
+
+  const [before, after] = h.wire.filter((call) => call.role === "mate" && !call.warm);
+  assert.ok(before !== undefined && after !== undefined, "the mate sent fewer than two requests");
+  const [stableBefore, tailBefore] = before.systemBlocks;
+  const [stableAfter, tailAfter] = after.systemBlocks;
+  assert.ok(
+    stableBefore && tailBefore && stableAfter && tailAfter,
+    "the system prompt is two blocks",
+  );
+  assert.equal(after.systemBlocks.length, 2, "the system prompt is still two blocks");
+  assert.deepEqual(stableAfter, stableBefore, "the stable block is unchanged");
+  assert.equal(stableAfter.ttl, "1h", "the stable block keeps its one-hour mark");
+  assert.ok(stableAfter.text.includes("You are the first mate"));
+  assert.ok(tailBefore.text.includes("Prefer short replies."), "the tail held the first rule");
+  assert.ok(tailAfter.text.includes("Always answer in haiku."), "the tail has the edit");
+  assert.equal(tailAfter.ttl, "1h", "the tail has its own one-hour mark");
 });

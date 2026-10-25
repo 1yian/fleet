@@ -6,6 +6,7 @@ export interface WireCall {
   readonly tools: readonly string[];
   readonly ttls: readonly string[];
   readonly systemTtls: string[];
+  readonly systemBlocks: readonly { readonly text: string; readonly ttl: string | undefined }[];
   readonly markedBlocks: readonly string[];
   readonly turns: readonly { readonly role: string; readonly text: string }[];
 }
@@ -39,6 +40,18 @@ function ttlsIn(value: unknown): string[] {
     ? [optionalString(value["cache_control"], "ttl") ?? "default"]
     : [];
   return [...own, ...Object.values(value).flatMap(ttlsIn)];
+}
+
+function systemBlocksOf(body: JsonRecord): WireCall["systemBlocks"] {
+  const system = body["system"];
+  if (typeof system === "string") return [{ text: system, ttl: undefined }];
+  if (!Array.isArray(system)) return [];
+  return system.filter(isRecord).map((block) => ({
+    text: optionalString(block, "text") ?? "",
+    ttl: isRecord(block["cache_control"])
+      ? (optionalString(block["cache_control"], "ttl") ?? "default")
+      : undefined,
+  }));
 }
 
 function markedTexts(body: JsonRecord): string[] {
@@ -80,6 +93,7 @@ export function wireCall(body: JsonRecord): WireCall {
     tools: toolNames(body),
     ttls: ttlsIn(body),
     systemTtls: ttlsIn(body["system"]),
+    systemBlocks: systemBlocksOf(body),
     markedBlocks: markedTexts(body),
     turns,
   };
