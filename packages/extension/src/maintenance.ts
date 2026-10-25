@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { maintenanceLine, type Maintenance } from "@fleet/protocol";
-import { readLaneConfig } from "./lane-config.ts";
+import { mateRelaunchArgs, readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
 
 const RELAUNCH = fileURLToPath(new URL("./relaunch.ts", import.meta.url));
@@ -13,8 +13,10 @@ export const ownPane = (): string | undefined => {
 };
 
 export function relaunchSelf(ctx: ExtensionContext, pane: string): void {
-  const args = process.argv.slice(2).filter((arg) => arg !== "-c" && arg !== "--continue");
-  const direnv = readLaneConfig(process.cwd())?.direnv;
+  const running = process.argv.slice(2).filter((arg) => arg !== "-c" && arg !== "--continue");
+  const lane = readLaneConfig(process.cwd());
+  const args = lane === undefined ? running : mateRelaunchArgs(running, lane);
+  const direnv = lane?.direnv;
   const helper = spawn(
     process.execPath,
     [RELAUNCH, String(process.pid), pane, process.cwd(), ...args],

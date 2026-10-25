@@ -111,11 +111,18 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
 const MATE_MODEL = "tier/orchestrator";
 const MODEL_FLAGS = ["--model", "--provider"];
 
+const picksModel = (args: readonly string[]): boolean =>
+  args.some((arg) => MODEL_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)));
+
 export function mateStartArgs(args: readonly string[], tier: string = MATE_MODEL): string[] {
-  const explicit = args.some((arg) =>
-    MODEL_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)),
-  );
-  return explicit ? [...args] : ["--model", tier, ...args];
+  return picksModel(args) ? [...args] : ["--model", tier, ...args];
+}
+
+export function mateRelaunchArgs(running: readonly string[], lane: LaneConfig): string[] {
+  if (picksModel(lane.args)) return [...running];
+  const at = running.indexOf("--model");
+  const rest = at === -1 ? running : [...running.slice(0, at), ...running.slice(at + 2)];
+  return mateStartArgs(rest, lane.tier);
 }
 
 export function workerPiArgs(lane: LaneConfig): string[] {
