@@ -20,6 +20,8 @@ import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
 import { Web } from "./web.ts";
+import { LoopHealth } from "./health.ts";
+import { version } from "./version.ts";
 
 const CLOSE_BAD_MESSAGE = 4000;
 const CLOSE_NOT_LIVE = 4001;
@@ -53,14 +55,20 @@ function readBody(request: IncomingMessage): Promise<string> {
 }
 
 class Hub {
-  private readonly sockets = new Map<string, WebSocket>();
+  private readonly bySession = new Map<string, WebSocket>();
   private readonly db: DatabaseSync;
   private readonly timing: Timings;
   private readonly hosts: Hosts;
   private readonly reading = new Set<string>();
   readonly web: Web;
+  readonly health: LoopHealth;
+  open = 0;
 
   constructor(db: DatabaseSync, timing: Timings, files: string | undefined, hosts: Hosts) {
+    this.health = new LoopHealth(
+      { sockets: () => this.open, sessions: () => this.bySession.size },
+      version(db).commit,
+    );
     this.db = db;
     this.timing = timing;
     this.hosts = hosts;
@@ -91,10 +99,21 @@ class Hub {
     if (now - this.lastTick > this.timing.every + this.timing.heartbeat)
       this.graceUntil = now + MISSED_HEARTBEATS * this.timing.heartbeat;
     this.lastTick = now;
+    const started = performance.now();
     this.fillRepos();
+    const filled = performance.now();
     const notify = transaction(this.db, () => runCheck(this.db, now, this.timing, this.graceUntil));
+    const checked = performance.now();
     for (const recipient of notify) this.flush(recipient, false);
     if (notify.length > 0) this.web.changed();
+    const ended = performance.now();
+    const parts: [string, number][] = [
+      ["fillRepos", filled - started],
+      ["runCheck", checked - filled],
+      ["flush", ended - checked],
+    ];
+    const slowest = parts.reduce((a, b) => (b[1] > a[1] ? b : a));
+    this.health.tick(ended - started, slowest[0]);
   }
 
   async perform(session: Session, op: string, args: unknown): Promise<HttpOutcome> {
@@ -142,11 +161,19 @@ class Hub {
       }
     });
     socket.on("close", (code) => {
-      if (session === undefined || this.sockets.get(session.id) !== socket) return;
-      this.sockets.delete(session.id);
+      if (session === undefined || this.bySession.get(session.id) !== socket) return;
+      this.bySession.delete(session.id);
       if (setSessionState(this.db, session.id, code === 1000 ? "exited" : "lost"))
         this.web.changed();
     });
+  }
+
+  answerHealth(request: IncomingMessage, response: ServerResponse): boolean {
+    if (request.method !== "GET" || request.url !== "/api/health") return false;
+    response
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify(this.health.snapshot()));
+    return true;
   }
 
   async answerHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -183,8 +210,8 @@ class Hub {
       socket.close(CLOSE_NOT_LIVE, "unknown token, or the attempt ended");
       return undefined;
     }
-    this.sockets.get(session.id)?.close(CLOSE_SUPERSEDED, "a newer connection took over");
-    this.sockets.set(session.id, socket);
+    this.bySession.get(session.id)?.close(CLOSE_SUPERSEDED, "a newer connection took over");
+    this.bySession.set(session.id, socket);
     const { lowWater, reporters } = transaction(this.db, () => {
       setSessionState(this.db, session.id, message.running === true ? "running" : "idle");
       adoptProcess(this.db, session.id, message.process);
@@ -208,7 +235,7 @@ class Hub {
   }
 
   flush(session: string, atConnect: boolean): void {
-    const socket = this.sockets.get(session);
+    const socket = this.bySession.get(session);
     if (socket === undefined) return;
     for (const request of pendingFor(this.db, session)) send(socket, { t: "maintenance", request });
     for (const push of transaction(this.db, () =>
@@ -239,7 +266,14 @@ export async function serve(
     hub.check();
   }, timing.every).unref();
   const server = createServer((request, response) => {
-    void hub.answerHttp(request, response);
+    if (!hub.answerHealth(request, response)) void hub.answerHttp(request, response);
+  });
+  server.on("connection", (socket) => {
+    hub.open += 1;
+    hub.health.accept();
+    socket.once("close", () => {
+      hub.open -= 1;
+    });
   });
   const sessions = new WebSocketServer({ noServer: true });
   const boards = new WebSocketServer({ noServer: true });

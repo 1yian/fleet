@@ -97,6 +97,16 @@ cardd card delivery <number> <mode> --db <file>
 - `timing.ts` owns the thresholds and test scale. Three missed job heartbeats make a job lost. Its mate is reminded until the job is rerun or dropped. `job.drop` sets `dropped_at` on a lost job, for its worker or a mate of its lane, and the job stays lost. Dropping twice is safe, and a job that is not lost is left as it is. A lost job that is not dropped runs again when its heartbeat returns: `job.alive` sets it back to running and sends its worker a `job-result` entry marked `revived`. The extension syncs its tracked jobs from `cardd` before it delivers any job result, and keeps the result pending if the sync fails. The timed check skips lost-job detection for the first three heartbeat periods after `cardd` starts, so a restart does not lose jobs that have not yet reported. After a late check tick (the event loop stalled), job loss is skipped for three heartbeats too, so live jobs can report again.
 - `bundle.ts` builds the one decision list for each mate: with-mate and merging cards, holds waiting on it, and for main every captain-held card, marked as the captain's. The holder of the hold picks the mate, not the card's lane. It is sent when its oldest card has waited 30 minutes and the last list went out 30 minutes ago, so a card resolved or held between lists never starts a second clock. A dated hold keeps its card off the list until the date.
 
+### Health and logs
+
+- Every `cardd serve` log line starts with an ISO timestamp (`log.ts`).
+- `health.ts` watches the event loop with `monitorEventLoopDelay`. A line `warning: event loop lag p99 <ms> ms, max <ms> ms` is logged when the p99 or the max is over 1 second. The max counts because a starved loop records one huge sample, which the p99 hides. A smaller spike than the worst one since the last summary is not logged again.
+- A check tick over 500 ms logs `warning: check took <ms> ms, over 500 ms (slowest part: <name>)`.
+- Every five minutes it logs `health: loop p50 ... p99 ... max ...; longest tick <ms> (<part>); accepted <n>; sockets <n>; sessions <n>; rss <MB>`, then starts a new window.
+- `GET /api/health` answers `Health` from `@fleet/protocol` with no card loading and no auth: `commit`, `now` and `windowStart` (epoch ms), `loopP50Ms`, `loopP99Ms`, `loopMaxMs` (since `windowStart`, the last five-minute summary), `lastLagMs` and `lastLagAt` (the last lag over 1 second, `null` until one happens, never reset), `lastTickMs`, `longestTickMs` (this window), `sockets` (open connections), `sessions` (live session sockets), and `rssBytes`.
+- Policy: alert and shed load, never exit on lag. `cardd` has no exit or restart on lag.
+- `e2e/cardd/health.test.ts` freezes a real `cardd` with SIGSTOP and SIGCONT, then reads the health and the log.
+
 ### Runtime incidents
 
 - A runtime incident is one failure episode of one actor, a worker or a mate: a model turn that ended in an error, a worker that never connected, or a worker connection that was lost. `incidents.ts` owns them. They are not report entries, so they never change a card's status and never take back a `done` or a pause. The record keeps the actor's intent (working, paused, completed, closed) from the card when the incident opens, and only a working card is offered recovery.

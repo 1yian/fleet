@@ -7,10 +7,12 @@ import { DatabaseSync } from "node:sqlite";
 import {
   BoardSchema,
   check,
+  HealthSchema,
   parseServerMessage,
   ThreadSchema,
   type Board,
   type BoardAction,
+  type Health,
   type Entry,
   type ServerMessage,
   type Thread,
@@ -54,6 +56,7 @@ export class Cardd {
   private child: ChildProcess | undefined;
   private supervised = false;
   private readonly env: NodeJS.ProcessEnv;
+  output = "";
   private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");
 
   private readonly args: readonly string[];
@@ -253,9 +256,21 @@ export class Cardd {
       },
     );
     this.child = child;
-    let out = "";
-    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
-    this.url = await until(() => /listening on (\S+)/.exec(out)?.[1], "cardd to listen");
+    this.output = "";
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (this.output += chunk));
+    this.url = await until(() => /listening on (\S+)/.exec(this.output)?.[1], "cardd to listen");
+  }
+
+  async health(): Promise<Health> {
+    return check(HealthSchema, await (await fetch(this.http("/api/health"))).json());
+  }
+
+  async freeze(ms: number): Promise<void> {
+    const pid = this.child?.pid;
+    if (pid === undefined) throw new Error("cardd is not running");
+    process.kill(pid, "SIGSTOP");
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    process.kill(pid, "SIGCONT");
   }
 }
 
