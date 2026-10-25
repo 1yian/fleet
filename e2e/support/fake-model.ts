@@ -95,7 +95,13 @@ export default function fakeModel(pi: ExtensionAPI): void {
     }),
     fauxProvider({
       provider: "tier",
-      models: [{ id: "orchestrator" }, { id: "auto" }, { id: "quick" }, { id: "compact" }],
+      models: [
+        { id: "orchestrator" },
+        { id: "weaker-orchestrator" },
+        { id: "auto" },
+        { id: "quick" },
+        { id: "compact" },
+      ],
     }),
   ];
   for (const faux of providers) {
