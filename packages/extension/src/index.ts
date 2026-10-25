@@ -231,7 +231,6 @@ function start(
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
   }
-
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);
   applyCachePolicy(role);
   applyCacheBreakLog(pi, ctx);
