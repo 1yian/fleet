@@ -177,7 +177,9 @@ function start(
         compact();
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-      if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
+      if (entry.kind === "job-result" && entry.fields["revived"] === true)
+        jobs?.revived(entry.fields["job"], entry.fields["label"]);
+      else if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
       noteWorkerInput(entry.fields["recovery"] !== undefined);
     };
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);

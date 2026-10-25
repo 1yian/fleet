@@ -325,13 +325,26 @@ export function finishJob(
   return { label };
 }
 
-export function touchJob(db: DatabaseSync, session: string, job: number): boolean {
+export function touchJob(
+  db: DatabaseSync,
+  session: string,
+  job: number,
+): { running: boolean; revived?: { label: string } } {
+  const attempt = attemptOf(db, session);
+  const before = db
+    .prepare("SELECT state FROM jobs WHERE id = ? AND attempt = ?")
+    .get(job, attempt);
   const row = db
     .prepare(
-      "UPDATE jobs SET state = 'running', updated_at = ? WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING id",
+      `UPDATE jobs SET state = 'running', updated_at = ?
+       WHERE id = ? AND attempt = ? AND (state = 'running' OR (state = 'lost' AND dropped_at IS NULL))
+       RETURNING label`,
     )
-    .get(Date.now(), job, attemptOf(db, session));
-  return row !== undefined;
+    .get(Date.now(), job, attempt);
+  if (row === undefined) return { running: false };
+  if (before?.["state"] === "lost")
+    return { running: true, revived: { label: String(row["label"]) } };
+  return { running: true };
 }
 
 export function ownJob(
