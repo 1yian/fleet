@@ -11,6 +11,7 @@ Conversation memory for fleet mates. `packages/extension/src/optchat.ts` loads `
 
 - The loader imports the source from this folder instead of a prepared package in each home, and no longer checks a package fingerprint. `config/optchat.json` needs no `package`.
 - `IMPORT_GUIDANCE` now comes from `src/prompts.ts`, where 0.9.0 moved it.
+- `viewBudget` in `config/optchat.json` (bytes, 16000 to 128000) sets the memory view budget, which is the `VIEW` constant (128000) when absent. The loader passes it to `optchat()`, which passes it to `Memory.open`.
 - Without `compactorProvider` and `compactorModel`, summaries go to `tier/compact` when that model exists, not to the mate's own model.
 
 ## Patches on upstream

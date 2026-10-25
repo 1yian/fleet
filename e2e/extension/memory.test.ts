@@ -343,3 +343,57 @@ test("a Vertex mate's memory summaries run on Vertex, whatever its profile names
   assert.deepEqual([...new Set(summaries)], ["vertex-claude/claude-haiku-5-5"]);
   assert.ok(!models.includes("tier/compact"));
 });
+
+const VIEW_WORD = "RADISH";
+const VIEW_MESSAGES = 190;
+const chatBytes = (turns: readonly Turn[]): number => {
+  const sizes = turns
+    .filter((turn) => turn.role === "user")
+    .flatMap((turn) => {
+      const found = /<chat>[\s\S]*<\/chat>/.exec(turn.text);
+      return found === null ? [] : [Buffer.byteLength(found[0])];
+    });
+  return Math.max(0, ...sizes);
+};
+
+async function viewSizes(viewBudget: number | undefined): Promise<number[]> {
+  installMemory();
+  const file = join(scratch.root, "config", "optchat.json");
+  const written = parseRecord(readFileSync(file, "utf8"));
+  const settings = viewBudget === undefined ? written : { ...written, viewBudget };
+  writeFileSync(file, JSON.stringify(settings));
+  const summary = `The parser keeps every field and the validation continues. ${"detail ".repeat(50)}`;
+  h.onModel((turns) => (isMains(turns) ? { tool: "yield" } : { text: summary }), "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  for (let n = 0; n < VIEW_MESSAGES; n += 1) {
+    const body = `${VIEW_WORD}-${String(n).padStart(3, "0")} ${"The parser keeps every field. ".repeat(14)}`;
+    const word = `${VIEW_WORD}-${String(n).padStart(3, "0")}`;
+    await cleo.call("comment", { lane: "cleo", text: body });
+    await until(
+      () =>
+        h.callsOf("mate").some((turns) => isMains(turns) && mentions(turns, word))
+          ? true
+          : undefined,
+      `main's turn on ${word}`,
+    );
+  }
+  const all = h.callsOf("mate").filter(isMains).map(chatBytes);
+  return all;
+}
+
+test("a home with viewBudget 64000 keeps its memory view within 64 KB and folds sooner", async () => {
+  const sizes = await viewSizes(64_000);
+  assert.ok(Math.max(...sizes) <= 64_000, `the view reached ${String(Math.max(...sizes))} bytes`);
+  assert.ok(
+    sizes.some((size, index) => index > 0 && size < (sizes[index - 1] ?? 0) * 0.8),
+    "the view never folded",
+  );
+});
+
+test("a home without viewBudget keeps the 128 KB view", async () => {
+  const sizes = await viewSizes(undefined);
+  const biggest = Math.max(...sizes);
+  assert.ok(biggest > 64_000, `the view stayed at ${String(biggest)} bytes`);
+  assert.ok(biggest <= 128_000, `the view reached ${String(biggest)} bytes`);
+});
