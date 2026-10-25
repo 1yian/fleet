@@ -146,7 +146,7 @@ function commitOf(body: string): string | undefined {
 
 class Incident {
   private failing = 0;
-  private downs = 0;
+  private allDown = true;
   private open = false;
   private readonly rules: Pick<Settings, "failures" | "downFailures">;
 
@@ -154,30 +154,26 @@ class Incident {
     this.rules = rules;
   }
 
+  get count(): number {
+    return this.failing;
+  }
+
   quiet(): void {
     this.failing = 0;
-    this.downs = 0;
+    this.allDown = true;
+    this.open = false;
   }
 
   record(label: Label): "alert" | "recovered" | undefined {
     if (label === "ok") {
       const wasOpen = this.open;
-      this.open = false;
       this.quiet();
       return wasOpen ? "recovered" : undefined;
     }
-    if (label === "down") {
-      this.downs += 1;
-      this.failing = 0;
-    } else {
-      this.failing += 1;
-      this.downs = 0;
-    }
-    const reached =
-      label === "down"
-        ? this.downs >= this.rules.downFailures
-        : this.failing >= this.rules.failures;
-    if (!reached || this.open) return undefined;
+    this.failing += 1;
+    this.allDown = this.allDown && label === "down";
+    const needed = this.allDown ? this.rules.downFailures : this.rules.failures;
+    if (this.failing < needed || this.open) return undefined;
     this.open = true;
     return "alert";
   }
@@ -200,8 +196,7 @@ export function watchMainCardd(
   where: { readonly url: string; readonly role: string; readonly lane: string | undefined },
   home: string,
 ): void {
-  if (where.role === "mate" && (where.lane === undefined || where.lane === "main"))
-    watchCardd(pi, link, where.url, home);
+  if (where.role === "mate" && where.lane === "main") watchCardd(pi, link, where.url, home);
 }
 
 function watchCardd(pi: ExtensionAPI, link: Link, url: string, home: string): void {
@@ -209,7 +204,6 @@ function watchCardd(pi: ExtensionAPI, link: Link, url: string, home: string): vo
   const rules = settings();
   const incident = new Incident(rules);
   let lastCommit: string | undefined;
-  let failedInARow = 0;
   let stopped = false;
   let timer: NodeJS.Timeout | undefined;
 
@@ -234,20 +228,21 @@ function watchCardd(pi: ExtensionAPI, link: Link, url: string, home: string): vo
     }
     if (!(await controlPasses(target.hostname, rules.controlPort, rules.deadlineMs)))
       return "unreachable";
-    if (fresh.state === "refused") return "down";
     return existing === undefined ? "down" : "refusing-new";
   };
 
   const probe = async (): Promise<void> => {
     if (lifecycleHeld(home)) {
       incident.quiet();
-      failedInARow = 0;
       return;
     }
     const found = await label();
-    failedInARow = found === "ok" ? 0 : failedInARow + 1;
+    if (lifecycleHeld(home)) {
+      incident.quiet();
+      return;
+    }
     const verdict = incident.record(found);
-    if (verdict === "alert" && found !== "ok") tell(describe(found, target, failedInARow));
+    if (verdict === "alert" && found !== "ok") tell(describe(found, target, incident.count));
     if (verdict === "recovered") tell(`[fleet] cardd probe: cardd answers again (${target.host}).`);
   };
 

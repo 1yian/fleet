@@ -59,8 +59,11 @@ function config(pi: ExtensionAPI): Config | undefined {
   const url = value("fleet-url", "FLEET_URL");
   const token = value("fleet-token", "FLEET_TOKEN");
   const role = value("fleet-role", "FLEET_ROLE");
+  const named = process.env["FLEET_LANE"];
   if (url !== undefined && token !== undefined && (role === "worker" || role === "mate"))
-    return { url, token, role };
+    return role === "worker" || named === undefined || named === ""
+      ? { url, token, role }
+      : { url, token, role, lane: named };
   const lane = readLaneConfig(HOME());
   if (lane === undefined) return undefined;
   exportHosts(lane);

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { createServer, connect, type Server, type Socket } from "node:net";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import { Harness, type Pi, type Turn } from "../support/harness.ts";
+import { LifecycleHolder } from "../support/lifecycle-holder.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
@@ -92,6 +95,7 @@ beforeEach(async () => {
       FLEET_URL: `ws://127.0.0.1:${String(door.port)}/session`,
       FLEET_TOKEN: token,
       FLEET_ROLE: "mate",
+      FLEET_LANE: "main",
       FLEET_FAKE_AGENT: "mate",
       FLEET_PROBE_INTERVAL_MS: "250",
       FLEET_PROBE_DEADLINE_MS: "1000",
@@ -138,9 +142,40 @@ test("main is told once when cardd refuses new connections, and once when it rec
 });
 
 test("a normal cardd restart does not alert main", async () => {
-  await cardd.restart();
-  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "main to reconnect");
+  const home = join(h.dir, "work");
+  mkdirSync(join(home, "state"), { recursive: true });
+  const owner = await LifecycleHolder.hold(home);
+  try {
+    await cardd.restart();
+    await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "main to reconnect");
+  } finally {
+    await owner.release();
+  }
   mate.prompt("status?");
   const turns = await h.waitForCall(h.callsOf("mate").length, "mate");
+  assert.deepEqual(probeLines(turns), []);
+});
+
+test("a mate that is not main is never told about cardd probes", async () => {
+  const token = cardd.addLane("second", undefined, tempDir("fleet-home-"));
+  const second = h.startPi(
+    "second",
+    {
+      FLEET_URL: `ws://127.0.0.1:${String(door.port)}/session`,
+      FLEET_TOKEN: token,
+      FLEET_ROLE: "mate",
+      FLEET_LANE: "second",
+      FLEET_FAKE_AGENT: "other",
+      FLEET_PROBE_INTERVAL_MS: "250",
+      FLEET_PROBE_DEADLINE_MS: "1000",
+      FLEET_PROBE_FAILS: "3",
+    },
+    [EXTENSION],
+  );
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "second to connect");
+  door.refusing = true;
+  await lastTurns((lines) => lines.length >= 1, "main's alert");
+  second.prompt("status?");
+  const turns = await h.waitForCall(h.callsOf("other").length, "other");
   assert.deepEqual(probeLines(turns), []);
 });
