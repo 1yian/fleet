@@ -201,16 +201,13 @@ function start(
         compact();
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-      noteWorkerInput(entry.fields["recovery"] !== undefined);
+      if (entry.fields["recovery"] !== undefined) worker?.checkingHealth();
+      else worker?.reset();
     };
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
     else if (entry.kind === "job-result" && jobs !== undefined)
       deliverAfterSync(jobs, seen, entry.id, deliver);
     else deliver("");
-  };
-  const noteWorkerInput = (recovery: boolean): void => {
-    if (recovery) worker?.checkingHealth();
-    else worker?.reset();
   };
   const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
   registerDropJob(pi, link);
@@ -224,7 +221,7 @@ function start(
   appendRolePrompt(pi, role);
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
-    registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
+    registerMate(pi, link, { url, piArgs: piArgs() }, lanes, lane === "main");
     registerRestart(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);

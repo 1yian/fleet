@@ -49,6 +49,7 @@ import {
   getCard,
   listProjects,
   mainLane,
+  setYolo,
   parentOf,
   transaction,
   type Session,
@@ -167,6 +168,13 @@ const HANDLERS: Record<OpName, Handler> = {
     if (session.lane !== mainLane(db) && getCard(db, card).lane !== session.lane)
       throw new Error(`c-${String(card)} is in another lane; ask main`);
     return { value: cardView(db, card), notify: [] };
+  },
+  "project.yolo": (db, session, raw) => {
+    if (session.lane !== mainLane(db))
+      throw new Error("only main can change a project's yolo flag");
+    const args = check(OPS["project.yolo"].args, raw);
+    setYolo(db, args.project, args.on);
+    return { value: args, notify: [] };
   },
   projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment,
