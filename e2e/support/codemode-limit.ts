@@ -5,7 +5,8 @@ export default function codemodeLimit(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "codemode_limit",
     label: "Codemode limit",
-    description: "Reports the codemode worker limit of this process.",
+    description:
+      "Reports the codemode worker limit of this Pi process. Pi applies the limit per process, not per host.",
     promptSnippet: "Codemode limit",
     parameters: Type.Object({}),
     execute: () =>
