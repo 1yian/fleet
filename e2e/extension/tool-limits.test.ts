@@ -88,6 +88,10 @@ test("run_long accepts two hours but rejects anything longer and paused dates ar
   assert.match(results[1] ?? "", /^Started job 1 \(at-limit\)/);
   assert.match(results[2] ?? "", /paused until must be within 24 hours from now/);
   assert.match(results[3] ?? "", /^Reported paused/);
-  const board = await parts.cardd.board();
-  assert.equal(board.cards[0]?.status, "paused");
+  const deadline = Date.now() + 5_000;
+  let status = (await parts.cardd.board()).cards[0]?.status;
+  while (status !== "paused" && Date.now() < deadline) {
+    status = (await parts.cardd.board()).cards[0]?.status;
+  }
+  assert.equal(status, "paused");
 });
