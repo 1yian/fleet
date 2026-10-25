@@ -78,7 +78,7 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
   }
 }
 
-test("OptChat's cache marks land on the request when the mate's model is a router's virtual model", async () => {
+async function assertViewMarked(): Promise<void> {
   const model = { provider: "tier", model: "quick", thinking: "off" };
   installMemory(
     { compactor: model, subagent: model },
@@ -107,6 +107,18 @@ test("OptChat's cache marks land on the request when the mate's model is a route
   );
   for (const text of view)
     assert.ok(text.endsWith("\n"), `a view mark is not on a whole block of lines: ${text}`);
+}
+
+test("OptChat's cache marks land on the request when the mate's model is a router's virtual model", async () => {
+  await assertViewMarked();
+});
+
+test("OptChat's cache marks land on the request when the mate's model uses the vertex-claude-api", async () => {
+  writeFileSync(
+    join(scratch.root, ".pi", "settings.json"),
+    JSON.stringify({ defaultProvider: "vertex-claude", defaultModel: "auto" }),
+  );
+  await assertViewMarked();
 });
 
 test("a rate-limited summary model falls back to the profile's next model at once, with no retry on the first", async () => {
