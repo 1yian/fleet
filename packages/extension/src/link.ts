@@ -94,12 +94,20 @@ export class Link {
     this.socket?.close(1000);
   }
 
-  call<N extends OpName>(op: N, args: unknown): Promise<OpResult<N>> {
+  call<N extends OpName>(op: N, args: unknown, deadlineMs?: number): Promise<OpResult<N>> {
     if (!this.connected)
       return Promise.reject(new Error("cardd is unreachable; try again shortly"));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
+      const timer =
+        deadlineMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              this.pending.delete(id);
+              reject(new Error("cardd did not answer in time"));
+            }, deadlineMs);
       this.pending.set(id, (result) => {
+        clearTimeout(timer);
         if (!result.ok) reject(new Error(result.error));
         else
           try {

@@ -81,22 +81,13 @@ function freshConnection(url: URL, deadlineMs: number): Promise<Fresh> {
 
 async function existingSocket(link: Link, deadlineMs: number): Promise<number | undefined> {
   const started = Date.now();
-  let timer: NodeJS.Timeout | undefined;
-  const late = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => {
-      resolve(undefined);
-    }, deadlineMs);
-  });
-  const answered = link.call("lane.plan", {}).then(
-    () => Date.now() - started,
-    (error: unknown) => {
-      const message = error instanceof Error ? error.message : "";
-      return /unreachable|closed the connection/.test(message) ? undefined : Date.now() - started;
-    },
-  );
-  const result = await Promise.race([answered, late]);
-  clearTimeout(timer);
-  return result;
+  try {
+    await link.call("lane.plan", {}, deadlineMs);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/unreachable|closed the connection|did not answer in time/.test(message)) return undefined;
+  }
+  return Date.now() - started;
 }
 
 function controlPasses(host: string, port: number, deadlineMs: number): Promise<boolean> {
