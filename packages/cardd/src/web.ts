@@ -86,8 +86,8 @@ export class Web {
     socket.on("close", () => this.live.delete(socket));
   }
 
-  changed(): void {
-    if (this.quiet !== undefined) {
+  changed(urgent = false): void {
+    if (this.quiet !== undefined && !urgent) {
       this.pending = true;
       return;
     }
@@ -95,6 +95,7 @@ export class Web {
   }
 
   private announce(): void {
+    clearTimeout(this.quiet);
     this.pending = false;
     for (const socket of this.live) socket.send("changed");
     this.quiet = setTimeout(() => {
@@ -139,7 +140,7 @@ export class Web {
     const body: unknown = JSON.parse(await readBody(request));
     const notify = transaction(this.db, () => boardAction(this.db, body));
     for (const session of notify) this.flush(session);
-    this.changed();
+    this.changed(true);
     const id: unknown =
       typeof body === "object" && body !== null ? Reflect.get(body, "card") : undefined;
     return { ok: true, card: typeof id === "number" ? getCard(this.db, id) : null };
