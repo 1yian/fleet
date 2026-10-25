@@ -249,7 +249,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   const checkHost = async (host: string): Promise<void> => {
     try {
       await share(host);
-      const out = await rows(config, host, ["up"]);
+      const out = await rows(config, host, ["up", "--maintenance"]);
       if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
       const of = (action: string) => out.filter((row) => text(row, "action") === action);
       tell(

@@ -114,15 +114,19 @@ function loginProblem(tool: Tool, host: string): string | undefined {
   if (tool.login === undefined) return undefined;
   const found = ghLogin((args) => runCaptured(tool.name, args), PROBE_TIMEOUT_MS / 1000);
   if (found.state === "logged-in") return undefined;
-  if (found.state === "unknown")
-    return `could not check ${tool.name} login on ${host}: ${found.reason}`;
+  if (found.state === "unknown") {
+    console.error(`warning: could not check ${tool.name} login on ${host}: ${found.reason}`);
+    return undefined;
+  }
   return `${tool.name} is not logged in on ${host}. Fix: ${tool.login.fix}`;
 }
 
-function toolProblem(tool: Tool, host: string): string | undefined {
+function toolProblem(tool: Tool, host: string, checkLogin: boolean): string | undefined {
   const probed = probeProblem(tool, host);
   if ("problem" in probed) return probed.problem;
-  return versionProblem(tool, probed.output, host) ?? loginProblem(tool, host);
+  return (
+    versionProblem(tool, probed.output, host) ?? (checkLogin ? loginProblem(tool, host) : undefined)
+  );
 }
 
 export function settingsOf(home: string): Record<string, unknown> | undefined {
@@ -168,7 +172,10 @@ function memoryProblems(root: string, host: string): string[] {
   });
 }
 
-export function hostProblems(root: string): string[] {
+export function hostProblems(root: string, checkLogin = true): string[] {
   const host = hostname();
-  return [...TOOLS.flatMap((tool) => toolProblem(tool, host) ?? []), ...memoryProblems(root, host)];
+  return [
+    ...TOOLS.flatMap((tool) => toolProblem(tool, host, checkLogin) ?? []),
+    ...memoryProblems(root, host),
+  ];
 }

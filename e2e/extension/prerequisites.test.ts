@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -149,7 +150,6 @@ const LOGGED_OUT = "You are not logged into any GitHub hosts. To log in, run: gh
 const INVALID =
   "github.com\n  X Failed to log in to github.com account 1yian\n  - The token in hosts.yml is invalid.";
 const NOT_LOGGED_IN = `gh is not logged in on ${HOST}. Fix: gh auth login\n`;
-const cannotCheck = (reason: string): string => `could not check gh login on ${HOST}: ${reason}\n`;
 
 test("fleet up refuses a gh that reports no logged-in host and names the login fix", () => {
   const PATH = ghPath("gh-logged-out", {
@@ -181,7 +181,20 @@ test("fleet up starts the mate when gh is logged in", () => {
   );
 });
 
-test("fleet up says it could not check, not that gh is logged out, when GitHub is unreachable", () => {
+function upWarning(PATH: string, extra: Record<string, string> = {}): string {
+  const done = spawnSync("node", [scratch.launch, "up"], {
+    encoding: "utf8",
+    env: { ...process.env, HERDR_SESSION: lab.name, PATH, ...extra },
+  });
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.stdout, "cleo: started in 2ndmate-cleo\n");
+  return done.stderr;
+}
+
+const warning = (reason: string): string =>
+  `warning: could not check gh login on ${HOST}: ${reason}\n`;
+
+test("fleet up warns, and still starts the mate, when GitHub is unreachable", () => {
   const PATH = ghPath("gh-unreachable", {
     plain: { code: 1, stderr: INVALID },
     json: entry(
@@ -190,12 +203,11 @@ test("fleet up says it could not check, not that gh is logged out, when GitHub i
     ),
   });
   assert.equal(
-    refusal(["up"], { PATH }),
-    cannotCheck(
+    upWarning(PATH),
+    warning(
       'github.com: Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused',
     ),
   );
-  assert.equal(status(), "cleo: down\n");
 });
 
 test("fleet up never prints a token that gh echoes in its error", () => {
@@ -207,41 +219,50 @@ test("fleet up never prints a token that gh echoes in its error", () => {
     ),
   });
   assert.equal(
-    refusal(["up"], { PATH }),
-    cannotCheck("github.com: dial tcp: lookup failed for token ghp_*** and github_pat_***"),
+    upWarning(PATH),
+    warning("github.com: dial tcp: lookup failed for token ghp_*** and github_pat_***"),
   );
 });
 
-test("fleet up says it could not check when gh itself reports a timeout", () => {
+test("fleet up warns, and still starts the mate, when gh itself reports a timeout", () => {
   const PATH = ghPath("gh-reports-timeout", {
     plain: { code: 1, stderr: "github.com\n  X Timeout trying to log in to github.com" },
     json: entry("timeout", "context deadline exceeded"),
   });
-  assert.equal(refusal(["up"], { PATH }), cannotCheck("github.com: timed out"));
+  assert.equal(upWarning(PATH), warning("github.com: timed out"));
 });
 
-test("fleet up says it could not check when the gh probe hangs past its timeout", () => {
+test("fleet up warns, and still starts the mate, when the gh probe hangs past its timeout", () => {
   const PATH = ghPath("gh-hangs", { plain: "hang" });
   assert.equal(
-    refusal(["up"], { PATH, FLEET_PROBE_TIMEOUT_MS: "1000" }),
-    cannotCheck("gh auth status did not finish within 1s"),
+    upWarning(PATH, { FLEET_PROBE_TIMEOUT_MS: "1000" }),
+    warning("gh auth status did not finish within 1s"),
   );
-  assert.equal(status(), "cleo: down\n");
 });
 
-test("fleet up says it could not check when the gh probe is killed", () => {
+test("fleet up warns, and still starts the mate, when the gh probe is killed", () => {
   const PATH = ghPath("gh-killed", { plain: "killed" });
-  assert.equal(refusal(["up"], { PATH }), cannotCheck("gh was stopped by SIGKILL"));
-  assert.equal(status(), "cleo: down\n");
+  assert.equal(upWarning(PATH), warning("gh was stopped by SIGKILL"));
 });
 
-test("fleet up says it could not check when gh fails for a reason that is not about login", () => {
+test("fleet up warns, and still starts the mate, when gh fails for a reason that is not about login", () => {
   const PATH = ghPath("gh-broken", {
     plain: { code: 2, stderr: "gh: failed to read configuration: permission denied" },
   });
   assert.equal(
-    refusal(["up"], { PATH }),
-    cannotCheck("gh auth status exited 2: gh: failed to read configuration: permission denied"),
+    upWarning(PATH),
+    warning("gh auth status exited 2: gh: failed to read configuration: permission denied"),
+  );
+});
+
+test("fleet up --maintenance never runs gh auth status, even when gh says logged out", () => {
+  const PATH = ghPath("gh-logged-out-maintenance", {
+    plain: { code: 1, stderr: LOGGED_OUT },
+    json: JSON.stringify({ hosts: {} }),
+  });
+  assert.equal(
+    scratch.fleet(["up", "--maintenance"], { HERDR_SESSION: lab.name, PATH }),
+    "cleo: started in 2ndmate-cleo\n",
   );
 });
 
