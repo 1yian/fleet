@@ -302,7 +302,51 @@ test("a result that arrives after the job was marked lost is still delivered onc
     process.kill(wrapper, "SIGCONT");
   }
 
-  const after = await h.waitForCall(5);
+  const after = await until(
+    () => h.calls.find((turns) => lastUser(turns)?.includes("exited 0") === true),
+    "the result",
+  );
   assert.equal(lastUser(after), "[fleet] c-1 users-see-one-scrollbar job 1 (late) exited 0: late");
   assert.equal(after.filter((turn) => turn.text.includes("exited 0")).length, 1);
+});
+
+test("a job marked lost while its wrapper is only stalled stays tracked after it beats again", async () => {
+  const slow = commandAwaitingGo(4);
+  const delivered = (): number =>
+    h.events.filter((event) => event["type"] === "fleet_delivered").length;
+  h.onModel(() => ({ tool: "run_long", args: { label: "stalled", command: slow.command } }));
+  h.onModel(() => ({ text: "waiting for the job" }));
+  const wrapper = { pid: 0 };
+  h.onModel(async () => {
+    const lostDelivered = delivered();
+    process.kill(wrapper.pid, "SIGCONT");
+    await until(() => (delivered() > lostDelivered ? true : undefined), "revival");
+    return { text: "still waiting" };
+  });
+  for (let i = 0; i < 4; i++)
+    h.onModel((turns) =>
+      lastUser(turns)?.includes("exited 0") === true
+        ? { tool: "report", args: { status: "done", text: "the job ended" } }
+        : { text: "still waiting" },
+    );
+  worker();
+  wrapper.pid = await wrapperOf(1, slow.ready);
+  process.kill(wrapper.pid, "SIGSTOP");
+  try {
+    await until(() => (said("job 1 (stalled) is running again") ? true : undefined), "revival");
+  } finally {
+    process.kill(wrapper.pid, "SIGCONT");
+  }
+  const stopped = (): boolean =>
+    fleet.main.entries.some(({ entry }) => entry.fields["status"] === "stopped");
+  assert.equal(said("Your run is ending without a handoff"), false);
+  assert.equal(stopped(), false);
+
+  writeFileSync(slow.go, "");
+  await until(
+    () =>
+      fleet.main.entries.some(({ entry }) => entry.fields["status"] === "done") ? true : undefined,
+    "the worker's report",
+  );
+  assert.equal(stopped(), false);
 });

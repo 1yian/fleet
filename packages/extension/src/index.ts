@@ -177,10 +177,13 @@ function start(
         compact();
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-      if (entry.kind === "job-result") jobs?.sync().catch(() => undefined);
       noteWorkerInput(entry.fields["recovery"] !== undefined);
     };
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
+    else if (entry.kind === "job-result" && jobs !== undefined)
+      void jobs.reconciled().then(() => {
+        deliver("");
+      });
     else deliver("");
   };
   const noteWorkerInput = (recovery: boolean): void => {
