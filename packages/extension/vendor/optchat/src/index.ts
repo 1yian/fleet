@@ -59,7 +59,7 @@ export const version = ((): string | undefined => {
 })();
 const brand = version ? `OptChat v${version}` : 'OptChat';
 
-export interface OptChatCapabilities { connectedWindows?: boolean; transientCustomTypes?: readonly string[] }
+export interface OptChatCapabilities { connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[] }
 
 export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilities = {}) {
   const transientMessages = new WeakSet<AgentMessage>();
@@ -207,7 +207,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       const memory = await Memory.open(memoryDirectory(dir), createCompressor(ctx.modelRegistry, () => config.compactor, message => {
         usage.compression(message, 'compactor', sessionId);
         status(ctx);
-      }, () => config.summaryAcceptBytes, undefined, () => config.compactorFallbacks ?? DEFAULT_COMPACTOR_FALLBACKS), warning => ctx.ui.notify(warning, 'error'), undefined, config.jobs);
+      }, () => config.summaryAcceptBytes, undefined, () => config.compactorFallbacks ?? DEFAULT_COMPACTOR_FALLBACKS), warning => ctx.ui.notify(warning, 'error'), capabilities.viewBudget, config.jobs);
       openingMemory = memory;
       const inbox = new Inbox(dir);
       const recovered = pendingImport(dir) ? 0 : inbox.recover(memory);
