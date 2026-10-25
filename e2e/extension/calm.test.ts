@@ -161,7 +161,7 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   keep("5-after-restart", restarted);
 
   await lab.submit(pane, "/calm");
-  await screenWhere(pane, "the expanded note and tool", showing([NOTE, TOOL_ROW]));
+  await screenWhere(pane, "the expanded note and tool", showing([NOTE, TOOL_ROW]), true);
   await lab.run(["pane", "send-text", pane, TRANSCRIPT_BOTTOM]);
   const bottom = await screenWhere(pane, "the restored transcript end", showing([BANNER_REPLY]));
   keep("6-calm-off-bottom", bottom);
