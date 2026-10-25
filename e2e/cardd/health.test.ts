@@ -31,7 +31,7 @@ test("a frozen event loop shows in /api/health and in a timestamped log line", a
   const line = fleet.cardd.output.split("\n").find((each) => each.includes("event loop lag"));
   assert.match(
     line ?? "",
-    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z warning: event loop lag \d+ ms, p99 .* max \d+/,
+    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z warning: event loop lag [\d.]+ ms, p99 .* max \d+/,
   );
   for (const each of fleet.cardd.output.split("\n").filter((one) => one !== ""))
     assert.match(each, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z /);

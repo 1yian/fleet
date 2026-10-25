@@ -1,4 +1,4 @@
-import { monitorEventLoopDelay } from "node:perf_hooks";
+import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import type { Health } from "@fleet/protocol";
 
 const NS = 1e6;
@@ -42,7 +42,7 @@ export class LoopHealth {
     this.log = log;
     this.windowStart = Date.now();
     this.live.enable();
-    this.expected = Date.now() + WATCH_MS;
+    this.expected = performance.now() + WATCH_MS;
     setInterval(() => {
       this.watch();
     }, WATCH_MS).unref();
@@ -65,12 +65,12 @@ export class LoopHealth {
   }
 
   private watch(): void {
-    const now = Date.now();
-    const late = now - this.expected;
+    const now = performance.now();
+    const late = ms((now - this.expected) * NS);
     this.expected = now + WATCH_MS;
     if (late <= LAG_LOG_MS) return;
     this.lastLagMs = late;
-    this.lastLagAt = now;
+    this.lastLagAt = Date.now();
     this.log(
       `warning: event loop lag ${String(late)} ms, p99 ${String(ms(this.live.percentile(99)))} ms, max ${String(ms(this.live.max))} ms`,
     );
