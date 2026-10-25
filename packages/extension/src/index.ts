@@ -22,6 +22,7 @@ import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { reportActivity, trackRun } from "./progress.ts";
+import { MUTABLE_TAIL } from "./cache-ttl.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
 import { MaintenanceQueue } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
@@ -76,6 +77,18 @@ function charter(): string {
 }
 
 const mateContract = (): string => charter() + standingRules(HOME());
+
+function appendRolePrompt(pi: ExtensionAPI, role: "mate" | "worker"): void {
+  pi.on("before_agent_start", (event) => ({
+    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? MUTABLE_TAIL : ""}`,
+  }));
+}
+
+function appendMateContract(pi: ExtensionAPI): void {
+  pi.on("before_agent_start", (event) => ({
+    systemPrompt: `${event.systemPrompt}${mateContract()}`,
+  }));
+}
 
 function piArgs(): string[] {
   const parsed: unknown = JSON.parse(process.env["FLEET_PI_ARGS"] ?? "[]");
@@ -183,6 +196,7 @@ function start(
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
+  appendRolePrompt(pi, role);
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
     registerMate(pi, link, { url, piArgs: piArgs() }, lanes);
@@ -200,9 +214,7 @@ function start(
   applyContextPolicy(role);
   applyCompactionBackoff();
   applyCompactionPolicy();
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? mateContract() : ""}`,
-  }));
+  if (role === "mate") appendMateContract(pi);
   pi.on("session_shutdown", () => {
     link.stop();
   });
