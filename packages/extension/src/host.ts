@@ -156,15 +156,25 @@ async function foreground(
   return { group: info["foreground_process_group_id"], shell: info["shell_pid"], processes };
 }
 
+function isPi(process: Record<string, unknown>): boolean {
+  const argv = Array.isArray(process["argv"]) ? process["argv"] : [];
+  const script = typeof argv[1] === "string" ? argv[1] : "";
+  return (
+    field(process, "argv0") === "pi" ||
+    field(process, "name") === "pi" ||
+    (argv[0] === "node" && script.split("/").pop() === "pi")
+  );
+}
+
 export async function piRunning(host: string, pane: string): Promise<boolean> {
   const { processes } = await foreground(host, pane);
-  return processes.some((each) => field(each, "argv0") === "pi" || field(each, "name") === "pi");
+  return processes.some(isPi);
 }
 
 export async function piPids(host: string, pane: string): Promise<number[]> {
   const { processes } = await foreground(host, pane);
   return processes
-    .filter((each) => field(each, "argv0") === "pi" || field(each, "name") === "pi")
+    .filter(isPi)
     .flatMap((each) => (typeof each["pid"] === "number" ? [each["pid"]] : []));
 }
 
