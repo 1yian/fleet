@@ -21,7 +21,7 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | cost | migrate [--undo]";
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | cost | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -57,6 +57,7 @@ const { values, positionals } = parseArgs({
     json: { type: "boolean" },
     undo: { type: "boolean" },
     check: { type: "boolean" },
+    maintenance: { type: "boolean" },
     from: { type: "string" },
     url: { type: "string" },
     token: { type: "string" },
@@ -104,7 +105,7 @@ function lane(): string {
 }
 
 if (command === "up" || command === "restart") {
-  const problems = hostProblems(root);
+  const problems = hostProblems(root, values.maintenance !== true);
   if (problems.length > 0) {
     console.error(problems.join("\n"));
     process.exit(1);
