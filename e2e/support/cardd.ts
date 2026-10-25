@@ -261,8 +261,8 @@ export class Cardd {
     this.url = await until(() => /listening on (\S+)/.exec(this.output)?.[1], "cardd to listen");
   }
 
-  failToServe(listen: string): { status: number | null; stderr: string } {
-    const args = [MAIN, "serve", "--db", this.db, "--listen", listen];
+  failToServe(...flags: string[]): { status: number | null; stderr: string } {
+    const args = [MAIN, "serve", "--db", this.db, ...flags];
     const { status, stderr } = spawnSync("node", args, { encoding: "utf8", env: this.env });
     return { status, stderr };
   }

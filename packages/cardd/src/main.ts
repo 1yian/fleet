@@ -10,6 +10,14 @@ import { setCardDelivery } from "./attempts.ts";
 import { parsePlan, setNextPlan, showPlans } from "./plans.ts";
 import { addLane, addProject, setClone, setProjectDelivery, setRepo, setYolo } from "./store.ts";
 
+if (process.argv[2] === "serve") {
+  stampLogLines();
+  process.on("uncaughtException", (error) => {
+    console.error(error.stack ?? String(error));
+    process.exit(1);
+  });
+}
+
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
@@ -27,14 +35,6 @@ const { values, positionals } = parseArgs({
     hosts: { type: "string", default: "{}" },
   },
 });
-if (positionals[0] === "serve") {
-  stampLogLines();
-  process.on("uncaughtException", (error) => {
-    console.error(error.stack ?? String(error));
-    process.exit(1);
-  });
-}
-
 if (values.db === undefined) throw new Error("--db is required");
 const db = openDatabase(values.db);
 const [command, ...rest] = positionals;

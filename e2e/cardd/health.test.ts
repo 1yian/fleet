@@ -37,13 +37,24 @@ test("a frozen event loop shows in /api/health and in a timestamped log line", a
     assert.match(each, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z /);
 });
 
-test("a startup failure reaches stderr with a timestamp on every line", () => {
-  const failed = fleet.cardd.failToServe("nonsense");
-  assert.notEqual(failed.status, 0);
-  const lines = failed.stderr.split("\n").filter((one) => one !== "");
-  assert.ok(lines.some((each) => each.includes("--listen nonsense must be")));
-  for (const each of lines) assert.match(each, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z /);
-});
+const STAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z /;
+
+for (const [name, flags, message] of [
+  ["an invalid --listen value", ["--listen", "nonsense"], "--listen nonsense must be"],
+  ["a --listen without a value", ["--listen"], "--listen"],
+  ["an unknown option", ["--unknown"], "--unknown"],
+] as const) {
+  test(`${name} fails at startup with a timestamp on every stderr line`, () => {
+    const failed = fleet.cardd.failToServe(...flags);
+    assert.notEqual(failed.status, 0);
+    const lines = failed.stderr.split("\n").filter((one) => one !== "");
+    assert.ok(
+      lines.some((each) => each.includes(message)),
+      failed.stderr,
+    );
+    for (const each of lines) assert.match(each, STAMP);
+  });
+}
 
 test("a second freeze shorter than the first still becomes the latest lag", async () => {
   await fleet.cardd.freeze(2500);
