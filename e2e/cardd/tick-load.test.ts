@@ -79,7 +79,8 @@ test("fresh connections and new sessions stay fast while cardd carries a long hi
   assert.ok(p95 < 250, `p95 of fresh connections was ${p95.toFixed(0)} ms`);
 
   const asked = performance.now();
-  await fleet.cardd.connect(token);
+  const session = await fleet.cardd.connect(token);
   const welcomed = performance.now() - asked;
+  assert.equal(session.welcome?.role, "worker");
   assert.ok(welcomed < 2000, `the welcome took ${welcomed.toFixed(0)} ms`);
 });
