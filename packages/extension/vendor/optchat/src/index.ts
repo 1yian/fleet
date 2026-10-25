@@ -378,10 +378,15 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     const last = ctx.sessionManager.getBranch().filter(e => e.type === 'message' && e.message.role === 'assistant').at(-1);
     return last ? Date.now() - Date.parse(last.timestamp) : 0;
   };
+  const cachedModel = (ctx: ExtensionContext): ExtensionContext['model'] => {
+    if (ctx.model?.api !== 'pi-virtual') return ctx.model;
+    const last = ctx.sessionManager.getBranch().filter(e => e.type === 'message' && e.message.role === 'assistant' && e.message.stopReason !== 'error' && e.message.stopReason !== 'aborted').at(-1);
+    return last?.type === 'message' && last.message.role === 'assistant' ? ctx.modelRegistry.find(last.message.provider, last.message.model) : undefined;
+  };
   const startRun = (ctx: ExtensionContext) => {
     flush(); keep = 0; runStarted = true;
     const fold = capabilities.foldTokens;
-    const limit = fold === undefined ? undefined : capabilities.foldAfterIdle?.(ctx.model);
+    const limit = fold === undefined ? undefined : capabilities.foldAfterIdle?.(cachedModel(ctx));
     const cold = limit !== undefined && cacheIdleMs(ctx) >= limit;
     if (fold === undefined || view === undefined || cold || (view.length + chars(run) + capped) / 4 >= fold) { run = []; capped = 0; logged = 0; view = undefined; }
     const config = active?.config;

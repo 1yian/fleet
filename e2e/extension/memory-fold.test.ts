@@ -120,12 +120,12 @@ function cachedArgs(): string[] {
 
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
-async function chatAfterGap(gapMs: number): Promise<Turn[][]> {
+async function chatAfterGap(gapMs: number, model = "auto"): Promise<Turn[][]> {
   h.onModel((turns) => (isMains(turns) ? { tool: "yield" } : { text: "noted" }), "mate");
   mkdirSync(join(h.dir, "agent"), { recursive: true });
   writeFileSync(
     join(h.dir, "agent", "settings.json"),
-    JSON.stringify({ defaultProvider: "tier", defaultModel: "auto" }),
+    JSON.stringify({ defaultProvider: "tier", defaultModel: model }),
   );
   await startMain(lab, scratch, h, false, cachedArgs());
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
@@ -150,6 +150,12 @@ const rebuilds = (calls: readonly Turn[][]): number =>
 test("a run that starts after the cache lifetime folds below foldTokens", async () => {
   installMemory({ mode: "fold" });
   const calls = await chatAfterGap(CACHE_LIFETIME_MS + 1_000);
+  assert.equal(rebuilds(calls), 1, "the idle gap should fold once");
+});
+
+test("a routed mate folds after the physical model's cache lifetime", async () => {
+  installMemory({ mode: "fold" });
+  const calls = await chatAfterGap(CACHE_LIFETIME_MS + 1_000, "routed");
   assert.equal(rebuilds(calls), 1, "the idle gap should fold once");
 });
 

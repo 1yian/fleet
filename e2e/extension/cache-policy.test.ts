@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
+import { tempDir } from "../support/run-root.ts";
 import { configureMain, Scratch, settingsArgs, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -21,6 +22,7 @@ let lab: HerdrLab | undefined;
 let scratch: Scratch;
 let cleo: Session;
 let mainToken: string;
+const memoryHomes: string[] = [];
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
@@ -38,9 +40,25 @@ afterEach(async (t) => {
   await lab?.printIfFailed(t);
   const stopped = await Promise.allSettled([cleo.close(), lab?.stop(), h.stop(), cardd.stop()]);
   scratch.dispose();
+  for (const home of memoryHomes.splice(0)) rmSync(home, { recursive: true, force: true });
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
+
+function installMemory(): void {
+  const memoryHome = tempDir("fleet-memory-");
+  memoryHomes.push(memoryHome);
+  const profile = join(memoryHome, "profiles", "main");
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "AGENTS.md"), "# Main\n\nThe first mate's memory.\n");
+  const model = { provider: "fake", model: "scripted", thinking: "off" };
+  writeFileSync(
+    join(profile, "config.json"),
+    JSON.stringify({ compactor: model, subagent: model }),
+  );
+  const config = { enabled: true, memoryHome, profile: "main", mode: "fold" };
+  writeFileSync(join(scratch.root, "config", "optchat.json"), JSON.stringify(config));
+}
 
 async function startLab(inherited: string): Promise<HerdrLab> {
   lab = await HerdrLab.start({
@@ -69,6 +87,7 @@ test("main caches system, tools and the view for one hour, whatever it inherits"
   const herdr = await startLab("short");
   h.onModel(() => ({ tool: "slow_tool" }), "mate");
   configureMain(scratch, cardd.url, mainToken);
+  installMemory();
   await startMain(herdr, scratch, h, false, wireArgs());
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to join the fleet");
   h.send(1, "followUp", "Are you there?");
