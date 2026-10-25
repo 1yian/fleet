@@ -7,7 +7,7 @@ import {
   type Entry,
   type OwedReply,
 } from "@fleet/protocol";
-import { cardEntries, loadCards, workerOf } from "./store.ts";
+import { cardEntries, workerOf, type Loaded } from "./store.ts";
 import { remind } from "./deliveries.ts";
 import type { Timings } from "./timing.ts";
 
@@ -146,19 +146,13 @@ function nudge(db: DatabaseSync, owed: Owed, now: number, t: Timings, since: num
   return [recipient];
 }
 
-export function replyNudges(db: DatabaseSync, now: number, t: Timings): string[] {
-  const asking = new Set(
-    db
-      .prepare(
-        "SELECT DISTINCT card FROM entries WHERE kind = 'comment' AND json_extract(fields, '$.owes') IS NOT NULL",
-      )
-      .all()
-      .map((row) => Number(row["card"])),
-  );
-  const cards = loadCards(db).filter(
-    ({ card }) => asking.has(card.id) && card.status !== "done" && card.status !== "dropped",
-  );
-  return cards.flatMap(({ entries, standing }) => {
+export function replyNudges(
+  db: DatabaseSync,
+  open: readonly Loaded[],
+  now: number,
+  t: Timings,
+): string[] {
+  return open.flatMap(({ entries, standing }) => {
     const { hold } = standing.facts;
     if (hold?.until !== null && hold?.until !== undefined && hold.until > now) return [];
     const freed = entries.findLast((entry) => entry.kind === "release" || entry.kind === "answer");

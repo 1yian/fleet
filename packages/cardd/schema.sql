@@ -2,6 +2,10 @@ CREATE INDEX deliveries_not_taken ON deliveries (session) WHERE intake IN ('wait
 
 CREATE INDEX entries_by_card ON entries (card, id);
 
+CREATE INDEX entries_check_bundle ON entries (json_extract(fields, '$.condition'), json_extract(fields, '$.to')) WHERE author = 'check';
+
+CREATE INDEX entries_cleanup ON entries (card) WHERE kind = 'cleanup';
+
 CREATE UNIQUE INDEX one_live_attempt ON attempts (card) WHERE state IN ('starting', 'active');
 
 CREATE UNIQUE INDEX one_live_incident ON incidents (actor) WHERE state IN ('open', 'recovering', 'blocked');

@@ -72,8 +72,23 @@ function boardCard(db: DatabaseSync, { card, entries, standing }: Loaded): Board
   };
 }
 
+const BOARD_TTL = 1000;
+const cached = new WeakMap<DatabaseSync, { changes: number; at: number; board: Board }>();
+
+const changesOf = (db: DatabaseSync): number =>
+  Number(db.prepare("SELECT total_changes() AS n").get()?.["n"]);
+
 export function boardView(db: DatabaseSync): Board {
   const now = Date.now();
+  const changes = changesOf(db);
+  const last = cached.get(db);
+  if (last?.changes === changes && now - last.at < BOARD_TTL) return last.board;
+  const board = buildBoard(db, now);
+  cached.set(db, { changes, at: now, board });
+  return board;
+}
+
+function buildBoard(db: DatabaseSync, now: number): Board {
   const holds: Board["holds"] = [];
   const cards = loadCards(db).map((each) => {
     const card = boardCard(db, each);

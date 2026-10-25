@@ -290,7 +290,7 @@ async function captainAsks(page: Page, card: number, text: string): Promise<void
   const box = page.getByRole("textbox", { name: "Comment" });
   await box.fill(text);
   await box.press("Enter");
-  await page.getByRole("list", { name: "Thread" }).getByText(text).waitFor();
+  await page.getByRole("list", { name: "Thread" }).getByText(text).first().waitFor();
 }
 
 test("a captain's board comment owes a reply from main, which is resent and answered on the thread", async () => {
