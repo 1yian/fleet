@@ -204,6 +204,7 @@ function start(
     registerRestart(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
+    showBoardLink(ctx, url);
   }
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
@@ -215,10 +216,7 @@ function start(
   applyContextPolicy(role);
   applyCompactionBackoff();
   applyCompactionPolicy();
-  if (role === "mate") {
-    appendMateContract(pi);
-    showBoardLink(ctx, url);
-  }
+  if (role === "mate") appendMateContract(pi);
   pi.on("session_shutdown", () => {
     link.stop();
   });
