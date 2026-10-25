@@ -6,9 +6,12 @@ import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import { configureMain, Scratch, startMain } from "../support/scratch.ts";
+import { configureMain, Scratch, settingsArgs, startMain } from "../support/scratch.ts";
 import { tempDir } from "../support/run-root.ts";
 
+const FAKE_MODEL = fileURLToPath(new URL("../support/fake-model.ts", import.meta.url));
+const FAKE_ANTHROPIC = fileURLToPath(new URL("../support/fake-anthropic.ts", import.meta.url));
+const CACHE_LIFETIME_MS = 15_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const FOLD_TOKENS = 10_000;
 const MESSAGES = 7;
@@ -107,4 +110,69 @@ test("without a mode, the view is rebuilt every turn, as before", async () => {
     broken.length >= MESSAGES - 1,
     `the prefix held for ${String(calls.length - broken.length)} calls`,
   );
+});
+
+function cachedArgs(model?: string): string[] {
+  const args = settingsArgs(h);
+  const at = args.indexOf(FAKE_MODEL);
+  return [
+    ...args.slice(0, at - 1),
+    ...args.slice(at + 1),
+    "-e",
+    FAKE_ANTHROPIC,
+    ...(model === undefined ? [] : ["--model", `tier/${model}`]),
+  ];
+}
+
+const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+
+async function chatAfterGap(gapMs: number, model?: string): Promise<Turn[][]> {
+  h.onModel((turns) => (isMains(turns) ? { tool: "yield" } : { text: "noted" }), "mate");
+  mkdirSync(join(h.dir, "agent"), { recursive: true });
+  writeFileSync(
+    join(h.dir, "agent", "settings.json"),
+    JSON.stringify({ defaultProvider: "tier", defaultModel: model ?? "auto" }),
+  );
+  await startMain(lab, scratch, h, false, cachedArgs(model));
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  for (let n = 1; n <= 3; n += 1) {
+    if (n === 3) await pause(gapMs);
+    await cleo.call("comment", { lane: "cleo", text: `Message ${String(n)}. ${FILLER}` });
+    if (n < 3)
+      await h.waitForNth((event) => event["type"] === "settled", n, `main's turn ${String(n)}`);
+    else
+      await h.waitForWire(
+        () => h.callsOf("mate").some((turns) => turns.some((t) => t.text.includes("Message 3."))),
+        "a model call that carries message 3",
+      );
+  }
+  return h.callsOf("mate").filter(isMains);
+}
+
+const rebuilds = (calls: readonly Turn[][]): number =>
+  calls.filter((after, index) => index > 0 && !extendsPrevious(calls[index - 1] ?? [], after))
+    .length;
+
+test("a run that starts after the cache lifetime folds below foldTokens", async () => {
+  installMemory({ mode: "fold" });
+  const calls = await chatAfterGap(CACHE_LIFETIME_MS + 1_000);
+  assert.equal(rebuilds(calls), 1, "the idle gap should fold once");
+});
+
+test("a routed mate folds after the physical model's cache lifetime", async () => {
+  installMemory({ mode: "fold" });
+  const calls = await chatAfterGap(CACHE_LIFETIME_MS + 1_000, "routed");
+  assert.equal(rebuilds(calls), 1, "the idle gap should fold once");
+});
+
+test("a run that starts inside the cache lifetime does not fold", async () => {
+  installMemory({ mode: "fold" });
+  const calls = await chatAfterGap(0);
+  assert.equal(rebuilds(calls), 0);
+});
+
+test("foldOnCacheExpiry false keeps the fold for the token threshold only", async () => {
+  installMemory({ mode: "fold", foldOnCacheExpiry: false });
+  const calls = await chatAfterGap(CACHE_LIFETIME_MS + 1_000);
+  assert.equal(rebuilds(calls), 0);
 });

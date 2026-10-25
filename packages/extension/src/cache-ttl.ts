@@ -51,11 +51,9 @@ function splitMateCacheTtl(payload: unknown): unknown {
   for (const block of [...systemBlocks, ...tools]) delete block["cache_control"];
   for (const block of stable) block["cache_control"] = { type: "ephemeral", ttl: STABLE_TTL };
 
+  for (const block of marked(messageBlocks))
+    block["cache_control"] = { type: "ephemeral", ttl: STABLE_TTL };
   const view = marked(messageBlocks);
-  for (const block of view) {
-    const control = block["cache_control"];
-    if (isBlock(control)) delete control["ttl"];
-  }
   const topLevel = isBlock(payload["cache_control"]) ? 1 : 0;
   const excess = stable.length + topLevel + view.length - MAX_BREAKPOINTS;
   for (const block of view.slice(0, Math.max(0, excess))) delete block["cache_control"];
