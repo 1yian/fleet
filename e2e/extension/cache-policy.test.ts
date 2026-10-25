@@ -61,20 +61,12 @@ const requests = (role: "mate" | "worker") =>
   h.wire.filter((call) => call.role === role && !call.warm);
 
 function assertMateBreakpoints(ttls: readonly string[]): void {
-  assert.deepEqual(
-    ttls.filter((ttl) => ttl === "1h"),
-    ["1h"],
-    "only the stable prefix asks for one hour",
-  );
   assert.ok(ttls.length >= 2, "the view keeps a breakpoint");
-  assert.ok(
-    ttls.filter((ttl) => ttl !== "1h").every((ttl) => ttl === "default"),
-    "the rest ask for five minutes",
-  );
+  assert.deepEqual([...new Set(ttls)], ["1h"], "every breakpoint asks for one hour");
 }
 
-test("main caches system and tools for one hour and the view for five minutes, whatever it inherits", async () => {
-  const herdr = await startLab("long");
+test("main caches system, tools and the view for one hour, whatever it inherits", async () => {
+  const herdr = await startLab("short");
   h.onModel(() => ({ tool: "slow_tool" }), "mate");
   configureMain(scratch, cardd.url, mainToken);
   await startMain(herdr, scratch, h, false, wireArgs());
@@ -124,8 +116,8 @@ test("a worker keeps the five-minute retention, whatever main inherited", async 
     assert.deepEqual([...new Set(call.ttls)], ["default"], "no breakpoint asks for one hour");
 });
 
-test("a second mate started by fleet up splits its cache lifetimes, and again after a restart", async () => {
-  const herdr = await startLab("long");
+test("a second mate started by fleet up caches for one hour, and again after a restart", async () => {
+  const herdr = await startLab("short");
   scratch.addLane("cnp", {
     url: cardd.url,
     token: cardd.addLane("cnp", "main"),
@@ -134,7 +126,7 @@ test("a second mate started by fleet up splits its cache lifetimes, and again af
   const fleet = (...args: string[]): string =>
     scratch.fleet(args, {
       ...h.piEnv("mate"),
-      PI_CACHE_RETENTION: "long",
+      PI_CACHE_RETENTION: "short",
       HERDR_SESSION: herdr.name,
     });
 

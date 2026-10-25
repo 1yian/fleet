@@ -59,7 +59,7 @@ export const version = ((): string | undefined => {
 })();
 const brand = version ? `OptChat v${version}` : 'OptChat';
 
-export interface OptChatCapabilities { connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[]; foldTokens?: number }
+export interface OptChatCapabilities { connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[]; foldTokens?: number; foldAfterIdle?: (model: ExtensionContext['model']) => number | undefined }
 
 export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilities = {}) {
   const transientMessages = new WeakSet<AgentMessage>();
@@ -78,6 +78,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
   let view: string | undefined;
   let prompt = '';
   let runStarted = false;
+  let settledAt: number | undefined;
   let fault: string | undefined;
   /** Reports not yet in memory. `count`: how many subagent reports the text joins. `batch`: held while the rest of that spawn runs, not sent yet.
    * `steered`: last sent into a running turn, where Esc or a dequeue can clear it from Pi's queue unseen. */
@@ -372,10 +373,17 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     }
     return { action: 'continue' };
   });
+  const cacheIdleMs = (ctx: ExtensionContext): number => {
+    if (settledAt !== undefined) return Date.now() - settledAt;
+    const last = ctx.sessionManager.getBranch().filter(e => e.type === 'message' && e.message.role === 'assistant').at(-1);
+    return last ? Date.now() - Date.parse(last.timestamp) : 0;
+  };
   const startRun = (ctx: ExtensionContext) => {
     flush(); keep = 0; runStarted = true;
     const fold = capabilities.foldTokens;
-    if (fold === undefined || view === undefined || (view.length + chars(run) + capped) / 4 >= fold) { run = []; capped = 0; logged = 0; view = undefined; }
+    const limit = fold === undefined ? undefined : capabilities.foldAfterIdle?.(ctx.model);
+    const cold = limit !== undefined && cacheIdleMs(ctx) >= limit;
+    if (fold === undefined || view === undefined || cold || (view.length + chars(run) + capped) / 4 >= fold) { run = []; capped = 0; logged = 0; view = undefined; }
     const config = active?.config;
     previous = fold === undefined ? config?.previousExchange ? previousExchange(ctx.sessionManager.getBranch(), config.previousExchangeKB * 1000) : [] : [];
     pi.appendEntry(RUN_BOUNDARY, { state: 'start' });
@@ -499,7 +507,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     // A report steered into this run that never reached it (Esc or a dequeue cleared Pi's queue) is sent again, now as its own turn.
     if (active && !fault && !stopping) for (const r of reports) if (r.steered && !r.batch) sendReport(r);
     if (runStarted) pi.appendEntry(RUN_BOUNDARY, { state: 'end' });
-    runStarted = false; status(ctx);
+    runStarted = false; settledAt = Date.now(); status(ctx);
     working = false; showTitle(ctx);
     if (active) {
       const dir = active.dir;
