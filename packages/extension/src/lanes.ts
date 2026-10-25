@@ -1,6 +1,9 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
+import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
@@ -193,6 +196,33 @@ export function registerLanes(pi: ExtensionAPI, home: string, link: Link): LaneS
   };
 }
 
+const COST_NOTICE = join("state", "cost-notice");
+
+function noticeDue(home: string, now: number): boolean {
+  try {
+    return now - Number(readFileSync(join(home, COST_NOTICE), "utf8")) >= DAY_MS;
+  } catch {
+    return true;
+  }
+}
+
+const isCostRow = (row: Record<string, unknown>): row is Record<string, unknown> & CostRow =>
+  typeof row["lane"] === "string" &&
+  typeof row["dollars"] === "number" &&
+  typeof row["coldStarts"] === "number";
+
+async function costLines(config: LaneConfig): Promise<string[]> {
+  const lines: string[] = [];
+  for (const host of hostsOf(config)) {
+    try {
+      lines.push(...(await rows(config, host, ["cost"])).filter(isCostRow).map(costLine));
+    } catch {
+      continue;
+    }
+  }
+  return lines;
+}
+
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
 function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
@@ -200,6 +230,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   const unshared = new Set<string>();
   let ticking = false;
   let shutDown = false;
+  const isDown = (): boolean => shutDown;
   const tell = (lines: readonly string[], urgent: boolean): void => {
     if (lines.length === 0 || shutDown) return;
     const content = `[fleet] lanes: ${lines.join("; ")}`;
@@ -239,6 +270,21 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
       tell([`${host} ${why}: ${messageOf(error)}`], true);
     }
   };
+  const dailyCost = async (): Promise<void> => {
+    if (isDown() || !noticeDue(home, Date.now())) return;
+    const lines = await costLines(config);
+    if (lines.length === 0 || isDown()) return;
+    mkdirSync(join(home, "state"), { recursive: true });
+    writeFileSync(join(home, COST_NOTICE), String(Date.now()));
+    pi.sendMessage(
+      {
+        customType: "fleet-cost",
+        content: `[fleet] cost, last 24 hours:\n${lines.join("\n")}`,
+        display: true,
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+  };
   const tick = async (): Promise<void> => {
     if (ticking || lanesHeld) return;
     ticking = true;
@@ -246,6 +292,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
       await withLanes(async () => {
         for (const host of hostsOf(config)) await checkHost(host);
       });
+      await dailyCost();
     } finally {
       ticking = false;
     }

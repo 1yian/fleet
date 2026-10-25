@@ -249,20 +249,21 @@ Main starts, and within a minute it has brought up every lane on every host that
 
 The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
-| Command                                  | Does                                                                                        |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `fleet status [--json]`                  | Shows each lane on this host: running, down, or stopped.                                    |
-| `fleet up [lane]`                        | Starts each lane that does not run. A stopped lane stays stopped unless it is named.        |
-| `fleet stop <lane>`                      | Closes the lane's workspace and holds the lane.                                             |
-| `fleet restart [lane]`                   | Starts the mate again on its conversation. No lane means every lane that is not held.       |
-| `fleet arrange`                          | Puts this host's herdr sidebar in order (below).                                            |
-| `fleet update [--check]`                 | Updates this host's checkout and lane homes for `/updatefleet` (section 7).                 |
-| `fleet cardd --root R --db D [--check]`  | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).                     |
-| `fleet home add <lane> ...`              | Makes a lane's home.                                                                        |
-| `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
-| `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
-| `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                 |
-| `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                |
+| Command                                  | Does                                                                                                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fleet status [--json]`                  | Shows each lane on this host: running, down, or stopped.                                                                                                                       |
+| `fleet up [lane]`                        | Starts each lane that does not run. A stopped lane stays stopped unless it is named.                                                                                           |
+| `fleet stop <lane>`                      | Closes the lane's workspace and holds the lane.                                                                                                                                |
+| `fleet restart [lane]`                   | Starts the mate again on its conversation. No lane means every lane that is not held.                                                                                          |
+| `fleet arrange`                          | Puts this host's herdr sidebar in order (below).                                                                                                                               |
+| `fleet update [--check]`                 | Updates this host's checkout and lane homes for `/updatefleet` (section 7).                                                                                                    |
+| `fleet cardd --root R --db D [--check]`  | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).                                                                                                        |
+| `fleet home add <lane> ...`              | Makes a lane's home.                                                                                                                                                           |
+| `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                                                                                                           |
+| `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it.                                                                                    |
+| `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                                                                                                    |
+| `fleet cost [--json]`                    | Prints one line per mate on this host: dollars for 24 hours, input as a share of full price, and cold starts. Main sends all hosts' lines to itself once a day, with one turn. |
+| `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                                                                                                   |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 

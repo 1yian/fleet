@@ -8,6 +8,7 @@ import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { toolResults } from "../support/dispatch-lab.ts";
 import { isRecord, records, type JsonRecord } from "../support/json.ts";
+import { OPS_TURNS, writeLedger } from "../support/ledger.ts";
 import { cloneWithRemote, landOnRemote, tip } from "../support/remote.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
@@ -162,6 +163,17 @@ test("main brings up every lane on both hosts, and starts a mate that dies", asy
   );
   await waitState(p620, "far", "running");
   assert.notEqual(await groupOf("far"), before);
+});
+
+test("main hears one cost line per mate in a message", async () => {
+  writeLedger(`${here.root}.worktrees/lane-ops`, OPS_TURNS);
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const turns = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(
+    users(turns),
+    /\[fleet\] cost, last 24 hours:\nops: \$1\.60 in 24h, input at 68\.5% of full price, cold starts: 1/,
+  );
 });
 
 test("main refreshes every project clone when it starts: a clean one fast-forwards, and a dirty one is left alone and reported", async () => {
