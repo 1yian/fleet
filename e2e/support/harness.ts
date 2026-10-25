@@ -82,6 +82,7 @@ export class Pi {
   private readonly child: ChildProcess;
   private readonly exited: Promise<void>;
   readonly responses: JsonRecord[] = [];
+  readonly uiRequests: JsonRecord[] = [];
   constructor(child: ChildProcess) {
     this.child = child;
     let buffered = "";
@@ -93,6 +94,7 @@ export class Pi {
       for (const line of lines) {
         const record = tryRecord(line);
         if (record?.["type"] === "response") this.responses.push(record);
+        if (record?.["type"] === "extension_ui_request") this.uiRequests.push(record);
       }
     });
     this.exited = new Promise((resolve) => {
@@ -100,6 +102,10 @@ export class Pi {
         resolve();
       });
     });
+  }
+
+  async waitForUi(match: (request: JsonRecord) => boolean, what: string): Promise<JsonRecord> {
+    return poll(() => this.uiRequests.find(match), what);
   }
 
   prompt(message: string): void {

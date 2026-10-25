@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
+import { showBoardLink } from "./board-link.ts";
 import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCacheBreakLog } from "./cache-breaks.ts";
@@ -227,6 +228,7 @@ function start(
     registerRestart(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
+    showBoardLink(ctx, url);
   }
   watchMainCardd(pi, link, { url, role, lane }, HOME());
   if (lane === "main") {
