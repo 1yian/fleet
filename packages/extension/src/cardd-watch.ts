@@ -226,9 +226,11 @@ function watchCardd(pi: ExtensionAPI, link: Link, url: string, home: string): vo
       if (changed) incident.quiet();
       return existing === undefined ? "slow" : "ok";
     }
+    if (existing !== undefined) return "refusing-new";
+    if (fresh.state === "refused") return "down";
     if (!(await controlPasses(target.hostname, rules.controlPort, rules.deadlineMs)))
       return "unreachable";
-    return existing === undefined ? "down" : "refusing-new";
+    return "down";
   };
 
   const probe = async (): Promise<void> => {

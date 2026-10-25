@@ -14,6 +14,8 @@ const WAIT_MS = 30_000;
 
 class Doorman {
   refusing = false;
+  alternating = false;
+  private stalled = false;
   readonly server: Server;
   private readonly open = new Set<Socket>();
   private readonly upstream: { host: string; port: number };
@@ -71,8 +73,11 @@ class Doorman {
             `127.0.0.1:${String(this.port)}`,
             `${this.upstream.host}:${String(this.upstream.port)}`,
           );
-        upstream.write(Buffer.from(text, "latin1"));
-      } else upstream.write(chunk);
+        if (this.alternating && text.includes("/api/version")) {
+          this.stalled = !this.stalled;
+          client.resetAndDestroy();
+        } else upstream.write(Buffer.from(text, "latin1"));
+      } else if (!this.stalled) upstream.write(chunk);
     });
     upstream.on("data", (chunk: Buffer) => client.write(chunk));
   }
@@ -178,4 +183,10 @@ test("a mate that is not main is never told about cardd probes", async () => {
   second.prompt("status?");
   const turns = await h.waitForCall(h.callsOf("other").length, "other");
   assert.deepEqual(probeLines(turns), []);
+});
+
+test("probes that alternate between refusing-new and down still alert at the shared failure count", async () => {
+  door.alternating = true;
+  const alerted = await lastTurns((lines) => lines.length >= 1, "the alert");
+  assert.match(alerted[0] ?? "", /3 failing probes in a row/);
 });
