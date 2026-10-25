@@ -21,7 +21,11 @@ export interface Turn {
   readonly role: string;
   readonly text: string;
 }
-export type Move = { readonly promptTokens?: number } & (
+export type Move = {
+  readonly promptTokens?: number;
+  readonly cacheRead?: number;
+  readonly cacheWrite?: number;
+} & (
   | { readonly text: string; readonly thinking?: string }
   | { readonly texts: readonly string[]; readonly thinking?: string }
   | {
@@ -247,6 +251,10 @@ export class Harness {
 
   send(id: number, mode: "steer" | "followUp", text: string): void {
     this.probe?.send(JSON.stringify({ type: "send", id, mode, text }));
+  }
+
+  command(command: Record<string, string>): void {
+    this.probe?.send(JSON.stringify(command));
   }
 
   releaseTool(): void {

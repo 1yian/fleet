@@ -1,5 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { probeEdits } from "./probe-edits.ts";
 import { isRecord, optionalNumber, optionalString, parseRecord } from "./json.ts";
 
 function entryIdOf(message: unknown): number | undefined {
@@ -21,10 +22,13 @@ export default function probe(pi: ExtensionAPI): void {
     for (const line of outbox.splice(0)) socket.send(line);
   });
 
+  const edit = probeEdits(pi, report);
+
   let release: (() => void) | undefined;
   socket.addEventListener("message", (event) => {
     const command = parseRecord(String(event.data));
     if (command["type"] === "release") release?.();
+    edit(command);
     if (command["type"] !== "send") return;
     pi.sendMessage(
       {
@@ -60,6 +64,7 @@ export default function probe(pi: ExtensionAPI): void {
     report({ type: "fleet_connected" });
   });
   pi.on("session_start", (event, ctx) => {
+    edit.started(ctx);
     report({
       type: "session",
       file: ctx.sessionManager.getSessionFile(),

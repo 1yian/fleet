@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Entry } from "@fleet/protocol";
 import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
+import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
 import { applyCompactionBackoff } from "./compaction-backoff.ts";
 import { applyCompactionPolicy } from "./compaction-policy.ts";
@@ -232,9 +233,9 @@ function start(
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
   }
-
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);
   applyCachePolicy(role);
+  applyCacheBreakLog(pi, ctx);
   applyContextPolicy(role);
   applyCompactionBackoff();
   applyCompactionPolicy();
