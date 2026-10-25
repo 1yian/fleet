@@ -222,6 +222,26 @@ test("closing the job tab still reaches the worker: the result, or a lost job", 
   }
 });
 
+test("a cardd stall longer than the keep-alive timeouts does not lose a live job", async () => {
+  const command = "sleep 8; echo done";
+  h.onModel(() => ({ tool: "run_long", args: { label: "stalled", command } }));
+  h.onModel(() => ({ text: "waiting" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "finished" } }));
+  worker();
+  await until(() => (said("Started job 1 (stalled)") ? true : undefined), "the job to start");
+  fleet.cardd.signal("SIGSTOP");
+  await new Promise((resolve) => setTimeout(resolve, 6000));
+  fleet.cardd.signal("SIGCONT");
+
+  const woken = lastUser(await h.waitForCall(2, "default", 30_000)) ?? "";
+  assert.equal(woken, "[fleet] c-1 users-see-one-scrollbar job 1 (stalled) exited 0: done");
+  assert.equal(said("no heartbeat"), false);
+  assert.equal(
+    findings().some((body) => body.includes("job lost")),
+    false,
+  );
+});
+
 const findings = (): string[] =>
   fleet.main.entries.filter(({ entry }) => entry.kind === "finding").map(({ entry }) => entry.body);
 

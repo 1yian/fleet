@@ -232,13 +232,13 @@ function finishedCards(db: DatabaseSync, t: Timings): Match[] {
   });
 }
 
-const MISSED_HEARTBEATS = 3;
+export const MISSED_HEARTBEATS = 3;
 
 let firstCheckAt: number | undefined;
 
-function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
+function lostJobs(db: DatabaseSync, now: number, t: Timings, graceUntil: number): string[] {
   firstCheckAt ??= now;
-  if (now - firstCheckAt < MISSED_HEARTBEATS * t.heartbeat) return [];
+  if (now - firstCheckAt < MISSED_HEARTBEATS * t.heartbeat || now < graceUntil) return [];
   return loseSilentJobs(db, now - MISSED_HEARTBEATS * t.heartbeat).flatMap((job) => {
     const card = getCard(db, job.card);
     const body = `job lost: job ${String(job.id)} (${job.label}) stopped reporting. It is not run again.`;
@@ -391,7 +391,7 @@ function writeFindings(
   }
 }
 
-export function runCheck(db: DatabaseSync, now: number, t: Timings): string[] {
+export function runCheck(db: DatabaseSync, now: number, t: Timings, graceUntil = 0): string[] {
   const stopped = new Set(
     loadCards(db)
       .filter(
@@ -413,7 +413,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings): string[] {
   ].filter((match) => !stopped.has(match.card));
   clearStopped(db, now, matches);
   const notify = new Set<string>([
-    ...lostJobs(db, now, t),
+    ...lostJobs(db, now, t, graceUntil),
     ...chaseIntake(db, now, t),
     ...scheduledWakes(db, t.wall()),
     ...dueBatches(db, { now: t.wall(), window: t.batch }),
