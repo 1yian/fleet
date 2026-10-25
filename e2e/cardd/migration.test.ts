@@ -269,7 +269,7 @@ test("a migration that meets a broken foreign key names the row and leaves the d
   assert.equal(run.status, 1, run.stderr);
   assert.match(
     run.stderr,
-    /foreign keys broken after migration 005-lane-card\.sql:\nentries\.card -> cards\.id: \{"id":16,"card":99,/,
+    /foreign keys broken after migration 005-lane-card\.sql:\n\S+ entries\.card -> cards\.id: \{"id":16,"card":99,/,
   );
   assert.equal(contents(file), before);
 });

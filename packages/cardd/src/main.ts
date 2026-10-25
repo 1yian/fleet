@@ -3,11 +3,20 @@ import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { openDatabase } from "./db.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
+import { stampLogLines } from "./log.ts";
 import { serve } from "./server.ts";
 import { DELIVERIES } from "@fleet/protocol";
 import { setCardDelivery } from "./attempts.ts";
 import { parsePlan, setNextPlan, showPlans } from "./plans.ts";
 import { addLane, addProject, setClone, setProjectDelivery, setRepo, setYolo } from "./store.ts";
+
+if (process.argv[2] === "serve") {
+  stampLogLines();
+  process.on("uncaughtException", (error) => {
+    console.error(error.stack ?? String(error));
+    process.exit(1);
+  });
+}
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
