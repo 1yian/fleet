@@ -48,11 +48,12 @@ const startsOn = async (): Promise<string[]> => {
   return h.modelsOf("mate");
 };
 
-async function verifyMate(args: string[], selected: string): Promise<void> {
+async function verifyMate(args: string[], selected: string, tier?: string): Promise<void> {
   const token = cardd.addLane("cnp", "main");
   scratch.addLane("cnp", {
     url: cardd.url,
     token,
+    ...(tier === undefined ? {} : { tier }),
     args: [...settingsArgs(h), "-e", PROBE, ...args],
   });
   const fleet = (...args: string[]): string =>
@@ -84,4 +85,8 @@ test("a second mate preserves explicit Vertex routing, including after restart",
 
 test("a second mate preserves a provider-qualified explicit model", async () => {
   await verifyMate(["--model", "google-vertex/gemini-2.5-pro"], "google-vertex/gemini-2.5-pro");
+});
+
+test("a second mate starts on its lane's configured tier, including after restart", async () => {
+  await verifyMate([], "tier/weaker-orchestrator", "tier/weaker-orchestrator");
 });

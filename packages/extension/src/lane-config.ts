@@ -16,6 +16,7 @@ export interface LaneConfig {
   readonly host?: string;
   readonly hosts: Record<string, unknown>;
   readonly roots: Record<string, string>;
+  readonly tier?: string;
   readonly args: readonly string[];
   readonly workerArgs: readonly string[];
   readonly direnv?: string;
@@ -52,6 +53,13 @@ function ownHost(file: string, value: unknown): string | undefined {
   if (typeof value !== "string" || value === "")
     throw new Error(`${file}: "host" must be this host's name`);
   return value;
+}
+
+function laneTier(file: string, value: unknown): { tier?: string } {
+  if (value === undefined) return {};
+  if (typeof value !== "string" || value.trim() === "")
+    throw new Error(`${file}: "tier" must be a model name such as ${MATE_MODEL}`);
+  return { tier: value };
 }
 
 function carddConfig(file: string, value: unknown): CarddConfig | undefined {
@@ -92,6 +100,7 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
     ...(own === undefined ? {} : { host: own }),
     hosts: isRecord(config["hosts"]) ? config["hosts"] : {},
     roots: stringRecord(config["roots"]),
+    ...laneTier(file, config["tier"]),
     args: strings(config["args"]),
     workerArgs: strings(config["workerArgs"]),
     ...(folder === undefined ? {} : { direnv: folder }),
@@ -102,11 +111,11 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
 const MATE_MODEL = "tier/orchestrator";
 const MODEL_FLAGS = ["--model", "--provider"];
 
-export function mateStartArgs(args: readonly string[]): string[] {
+export function mateStartArgs(args: readonly string[], tier: string = MATE_MODEL): string[] {
   const explicit = args.some((arg) =>
     MODEL_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)),
   );
-  return explicit ? [...args] : ["--model", MATE_MODEL, ...args];
+  return explicit ? [...args] : ["--model", tier, ...args];
 }
 
 export function workerPiArgs(lane: LaneConfig): string[] {
