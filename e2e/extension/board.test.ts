@@ -25,15 +25,79 @@ const toolResults = (turns: Turn[]): string[] =>
 
 type Args = Readonly<Record<string, string | number | boolean>>;
 
-async function mainCalls(calls: readonly (readonly [string, Args])[]): Promise<string[]> {
+async function mainCalls(
+  calls: readonly (readonly [string, Args])[],
+  extension = EXTENSION,
+  lane?: string,
+): Promise<string[]> {
   for (const [tool, args] of calls) h.onModel(() => ({ tool, args }));
   h.onModel(() => ({ text: "read" }));
-  const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: fleet.mainToken, FLEET_ROLE: "mate" };
-  const mate = h.startPi("main", env, [EXTENSION]);
+  const env = {
+    FLEET_URL: fleet.cardd.url,
+    FLEET_TOKEN: fleet.mainToken,
+    FLEET_ROLE: "mate",
+    ...(lane === undefined ? {} : { FLEET_LANE: lane }),
+  };
+  const mate = h.startPi("main", env, [extension]);
   await h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
   mate.prompt("What is on the board?");
   return toolResults(await h.waitForCall(calls.length));
 }
+
+test("main changes project yolo on the captain's word and the board reflects it", async () => {
+  const scratch = new Scratch();
+  try {
+    const worker = await fleet.cardd.connect(
+      await begin(fleet.main, await newCard(fleet.main, "Check worker authority")),
+    );
+    await assert.rejects(worker.call("project.yolo", { project: "web", on: true }), {
+      message: "worker sessions cannot call project.yolo",
+    });
+    const results = await mainCalls(
+      [
+        ["project_yolo", { project: "web", on: true }],
+        ["board", {}],
+        ["project_yolo", { project: "web", on: false }],
+        ["board", {}],
+      ],
+      `${scratch.root}/packages/extension/src/index.ts`,
+      "main",
+    );
+    assert.match(results[0] ?? "", /web: yolo on/);
+    assert.match(results[1] ?? "", /web,no-mistakes,maverick p620,on/);
+    assert.match(results[2] ?? "", /web: yolo off/);
+    assert.match(results[3] ?? "", /web,no-mistakes,maverick p620,off/);
+    const token = fleet.cardd.addLane("cleo", "main");
+    for (const on of [true, false]) {
+      assert.deepEqual(await fleet.cardd.post(token, "project.yolo", { project: "web", on }), {
+        status: 400,
+        body: { ok: false, error: "only main can change a project's yolo flag" },
+      });
+    }
+  } finally {
+    scratch.dispose();
+  }
+});
+
+test("a second mate is not offered project_yolo", async () => {
+  const scratch = new Scratch();
+  try {
+    const token = fleet.cardd.addLane("cleo", "main");
+    h.onModel(() => ({ tool: "project_yolo", args: { project: "web", on: true } }));
+    h.onModel(() => ({ text: "refused" }));
+    const mate = h.startPi(
+      "cleo",
+      { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "mate", FLEET_LANE: "cleo" },
+      [`${scratch.root}/packages/extension/src/index.ts`],
+    );
+    await h.waitFor((e) => e["type"] === "fleet_connected", "the second mate to connect");
+    mate.prompt("Try setting project yolo");
+    assert.match(toolResults(await h.waitForCall(1))[0] ?? "", /Tool project_yolo not found/);
+    assert.equal(check(OPS.projects.result, await fleet.main.call("projects", {}))[0]?.yolo, false);
+  } finally {
+    scratch.dispose();
+  }
+});
 
 const LONG_NOTE = `${"The scrollbar doubles because the panel and the page both scroll. ".repeat(6)}Report written: /tmp/scrollbar-report.md.`;
 

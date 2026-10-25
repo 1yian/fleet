@@ -141,7 +141,7 @@ test("a project's yolo flag sends a done card to Merging without a question, but
   assert.equal(await status(fleet.main, after), "needs-you");
 });
 
-test("a mate cannot turn a project's yolo flag on: no operation sets it, and projects shows it", async () => {
+test("legacy grants stay removed and projects shows the captain's CLI yolo changes", async () => {
   const flags = async () =>
     check(OPS.projects.result, await fleet.main.call("projects", {})).map((p) => [p.name, p.yolo]);
   const grant = { lane: "main", project: "web", words: "merge it", may: "merge", merge: true };

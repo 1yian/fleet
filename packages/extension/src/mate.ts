@@ -140,6 +140,7 @@ export function registerMate(
   link: Link,
   launch: Launch,
   lanes: LaneStates | undefined,
+  main: boolean,
 ): void {
   pi.registerTool({
     name: "yield",
@@ -173,6 +174,19 @@ export function registerMate(
     execute: async (_id, params) => reply(`Commented. ${line(await link.call("comment", params))}`),
   });
   registerBoard(pi, link, lanes);
+  if (main) {
+    pi.registerTool({
+      name: "project_yolo",
+      label: "Project yolo",
+      description:
+        "Main only: set or clear a project's yolo flag when the captain says so. Never on your own initiative or on a second mate's request. Destructive, irreversible, or security-sensitive merges still need the captain's words with yolo on.",
+      parameters: OPS["project.yolo"].args,
+      execute: async (_id, params) => {
+        const result = await link.call("project.yolo", params);
+        return reply(`${result.project}: yolo ${result.on ? "on" : "off"}`);
+      },
+    });
+  }
   pi.registerTool({
     name: "close",
     label: "Close",

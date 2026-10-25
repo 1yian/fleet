@@ -27,7 +27,6 @@ export const STATUSES = [
 ] as const;
 
 export const ATTENTIONS = ["blocked", "failed", "stopped"] as const;
-
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
@@ -56,7 +55,6 @@ const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null
 export type Status = Static<typeof Status>;
 export type Attention = Static<typeof Attention>;
 export type CardKind = Static<typeof CardKind>;
-
 export const CardName = Type.String({
   pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
   maxLength: 40,
@@ -183,6 +181,11 @@ export const OPS = {
   },
   board: { roles: ["mate"], args: Type.Object({}), result: Type.Array(BoardCardSchema) },
   card: { roles: ["mate"], args: Type.Object({ card: Type.Integer() }), result: CardViewSchema },
+  "project.yolo": {
+    roles: ["mate"],
+    args: Type.Object({ project: Type.String({ minLength: 1 }), on: Type.Boolean() }),
+    result: Type.Object({ project: Type.String(), on: Type.Boolean() }),
+  },
   projects: {
     roles: ["mate"],
     args: Type.Object({}),
