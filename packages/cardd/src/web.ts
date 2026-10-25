@@ -7,6 +7,7 @@ import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { getCard, transaction } from "./store.ts";
 import { version } from "./version.ts";
 
+const CHANGED_EVERY = 1000;
 const TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -68,6 +69,8 @@ export class Web {
   }
 
   private readonly live = new Set<WebSocket>();
+  private quiet: NodeJS.Timeout | undefined;
+  private pending = false;
   private readonly db: DatabaseSync;
   private readonly flush: (session: string) => void;
   private readonly files: string | undefined;
@@ -84,7 +87,21 @@ export class Web {
   }
 
   changed(): void {
+    if (this.quiet !== undefined) {
+      this.pending = true;
+      return;
+    }
+    this.announce();
+  }
+
+  private announce(): void {
+    this.pending = false;
     for (const socket of this.live) socket.send("changed");
+    this.quiet = setTimeout(() => {
+      this.quiet = undefined;
+      if (this.pending) this.announce();
+    }, CHANGED_EVERY);
+    this.quiet.unref();
   }
 
   async answer(request: IncomingMessage, response: ServerResponse): Promise<void> {

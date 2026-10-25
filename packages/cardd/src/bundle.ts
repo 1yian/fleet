@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { factsFrom, finishFrom, type Standing } from "./status.ts";
-import { cardEntries, loadCards, type Loaded, mainLane, parentOf } from "./store.ts";
+import { cardEntries, type Loaded, mainLane, parentOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
 
 export interface BundleMatch {
@@ -68,8 +68,8 @@ function mateItem(db: DatabaseSync, loaded: Loaded, now: number): Item[] {
   ];
 }
 
-function openItems(db: DatabaseSync, now: number): Item[] {
-  return loadCards(db).flatMap((loaded) =>
+function openItems(db: DatabaseSync, cards: readonly Loaded[], now: number): Item[] {
+  return cards.flatMap((loaded) =>
     loaded.standing.status === "needs-you"
       ? [captainItem(db, loaded.card, loaded.standing, now)]
       : mateItem(db, loaded, now),
@@ -107,9 +107,14 @@ function bundleText(items: readonly Item[]): string {
   return `reminder: ${count} a decision or action from you. Give a hold an until=<date> only when the card waits on an outside event (a quota reset, a third party, a CI run) or the captain said later or named a date.\n${sections.join("\n")}`;
 }
 
-export function bundleMatches(db: DatabaseSync, now: number, t: Timings): BundleMatch[] {
+export function bundleMatches(
+  db: DatabaseSync,
+  open: readonly Loaded[],
+  now: number,
+  t: Timings,
+): BundleMatch[] {
   const byMate = Map.groupBy(
-    openItems(db, now).sort((a, b) => a.since - b.since || a.card - b.card),
+    openItems(db, open, now).sort((a, b) => a.since - b.since || a.card - b.card),
     ({ to }) => to,
   );
   return [...byMate].flatMap(([to, items]): BundleMatch[] => {

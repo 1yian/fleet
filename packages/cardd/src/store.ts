@@ -5,7 +5,6 @@ import {
   CardSchema,
   check,
   DELIVERIES,
-  EntrySchema,
   type Activity,
   type Card,
   type Delivery,
@@ -221,11 +220,42 @@ export function loadCards(db: DatabaseSync): Loaded[] {
   );
 }
 
+export function loadOpenCards(db: DatabaseSync): Loaded[] {
+  const now = Date.now();
+  const sql = `SELECT ${CARD_JSON} AS j FROM cards
+    WHERE NOT EXISTS (SELECT 1 FROM entries WHERE card = cards.id AND kind = 'cleanup') ORDER BY id`;
+  return json(db, sql).map((row) => loaded(db, row, now));
+}
+
 export const getCard = (db: DatabaseSync, id: number): Card => loadCard(db, id).card;
 
+const pick = <T>(row: object, key: string, kind: "number" | "string", as: (v: unknown) => T): T => {
+  const value: unknown = Reflect.get(row, key);
+  if (typeof value !== kind) throw new Error(`invalid entry row: ${key}`);
+  return as(value);
+};
+
+function entryFrom(row: unknown): Entry {
+  if (typeof row !== "object" || row === null) throw new Error("invalid entry row");
+  const fields: unknown = Reflect.get(row, "fields");
+  if (typeof fields !== "object" || fields === null || Array.isArray(fields))
+    throw new Error("invalid entry row: fields");
+  const num = (key: string): number => pick(row, key, "number", Number);
+  const str = (key: string): string => pick(row, key, "string", String);
+  return {
+    id: num("id"),
+    card: num("card"),
+    author: str("author"),
+    kind: str("kind"),
+    body: str("body"),
+    fields: { ...fields },
+    createdAt: num("createdAt"),
+  };
+}
+
 export const cardEntries = (db: DatabaseSync, card: number): Entry[] =>
-  json(db, `SELECT ${ENTRY_JSON} AS j FROM entries e WHERE card = ? ORDER BY id`, card).map((row) =>
-    check(EntrySchema, row),
+  json(db, `SELECT ${ENTRY_JSON} AS j FROM entries e WHERE card = ? ORDER BY id`, card).map(
+    entryFrom,
   );
 
 function nameFrom(title: string): string {

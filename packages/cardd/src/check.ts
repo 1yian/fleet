@@ -9,7 +9,7 @@ import { describe, labelOf } from "./incident-text.ts";
 import { incidentFrom } from "./incident-store.ts";
 import { replyNudges } from "./replies.ts";
 import { finishFrom, type Stage } from "./status.ts";
-import { addEntry, getCard, loadCards, workerOf } from "./store.ts";
+import { addEntry, getCard, loadOpenCards, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { scheduledWakes } from "./wakes.ts";
@@ -111,10 +111,13 @@ function rows(
   return db.prepare(sql).all(...params);
 }
 
-function workerMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
-  const ids = loadCards(db)
-    .filter(({ standing }) => WORKING.has(standing.stage))
-    .map(({ card }) => card.id);
+function workerMatches(
+  db: DatabaseSync,
+  open: readonly Loaded[],
+  now: number,
+  t: Timings,
+): Match[] {
+  const ids = open.filter(({ standing }) => WORKING.has(standing.stage)).map(({ card }) => card.id);
   if (ids.length === 0) return [];
   const running = WORKER_RULES.flatMap(({ condition, text, where, since, first }) =>
     rows(
@@ -222,8 +225,8 @@ function finishedMatches(
   return [{ card: card.id, lane: card.lane, condition: "finished", text, tier }];
 }
 
-function finishedCards(db: DatabaseSync, t: Timings): Match[] {
-  return loadCards(db).flatMap(({ card: own, entries, standing }) => {
+function finishedCards(open: readonly Loaded[], t: Timings): Match[] {
+  return open.flatMap(({ card: own, entries, standing }) => {
     if (own.status !== "with-mate" && own.status !== "merging") return [];
     const { hold } = standing.facts;
     const finish = finishFrom(entries);
@@ -319,8 +322,8 @@ function incidentMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     });
 }
 
-function holdMatches(db: DatabaseSync, now: number): Match[] {
-  return loadCards(db).flatMap(({ card, standing }) => {
+function holdMatches(db: DatabaseSync, open: readonly Loaded[], now: number): Match[] {
+  return open.flatMap(({ card, standing }) => {
     const { hold } = standing.facts;
     const until = hold?.until ?? null;
     if (hold === undefined || until === null || until > now || standing.status === "waiting")
@@ -392,25 +395,20 @@ function writeFindings(
 }
 
 export function runCheck(db: DatabaseSync, now: number, t: Timings, graceUntil = 0): string[] {
-  const stopped = new Set(
-    loadCards(db)
-      .filter(
-        ({ standing }) =>
-          standing.status === "done" ||
-          standing.status === "dropped" ||
-          standing.status === "waiting" ||
-          standing.status === "paused",
-      )
+  const open = loadOpenCards(db);
+  const acting = new Set(
+    open
+      .filter(({ standing }) => standing.status !== "waiting" && standing.status !== "paused")
       .map(({ card }) => card.id),
   );
   const matches = [
-    ...withIncidents(db, workerMatches(db, now, t), now, t),
-    ...finishedCards(db, t),
-    ...bundleMatches(db, now, t),
+    ...withIncidents(db, workerMatches(db, open, now, t), now, t),
+    ...finishedCards(open, t),
+    ...bundleMatches(db, open, now, t),
     ...lostJobMatches(db, now, t),
     ...incidentMatches(db, now, t),
-    ...holdMatches(db, now),
-  ].filter((match) => !stopped.has(match.card));
+    ...holdMatches(db, open, now),
+  ].filter((match) => acting.has(match.card));
   clearStopped(db, now, matches);
   const notify = new Set<string>([
     ...lostJobs(db, now, t, graceUntil),
@@ -420,7 +418,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, graceUntil =
     ...reconcileIncidents(db, now, t),
     ...lostMates(db, now, t),
     ...expireMaintenance(db, now, t),
-    ...replyNudges(db, now, t),
+    ...replyNudges(db, open, now, t),
   ]);
   writeFindings(db, now, matches, notify);
   return [...notify];
