@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
+import { showBoardLink } from "./board-link.ts";
 import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
@@ -214,7 +215,10 @@ function start(
   applyContextPolicy(role);
   applyCompactionBackoff();
   applyCompactionPolicy();
-  if (role === "mate") appendMateContract(pi);
+  if (role === "mate") {
+    appendMateContract(pi);
+    showBoardLink(ctx, url);
+  }
   pi.on("session_shutdown", () => {
     link.stop();
   });
