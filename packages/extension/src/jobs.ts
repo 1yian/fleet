@@ -65,14 +65,6 @@ export class Jobs {
     return this.running.size > 0;
   }
 
-  finished(job: unknown): void {
-    if (typeof job === "number") this.running.delete(job);
-  }
-
-  revived(job: unknown, label: unknown): void {
-    if (typeof job === "number" && typeof label === "string") this.running.set(job, label);
-  }
-
   async sync(): Promise<void> {
     const jobs = await this.link.call("jobs", {});
     this.running.clear();
