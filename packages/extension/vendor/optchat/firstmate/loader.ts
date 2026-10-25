@@ -1,7 +1,7 @@
 // Fleet's conversation memory for mates: OptChat, vendored in this folder, loaded for the home in
 // FM_HOME (fleet's optchat.ts sets it). Configured in <home>/config/optchat.json:
 // {"enabled":true,"memoryHome":"data/optchat","profile":"main","thinking":"low","viewBudget":64000}
-// mode (optional, "turn" or "fold", default "turn"): "fold" keeps a plain transcript with a stable prompt prefix and folds it into
+// mode (optional, only "fold"): "fold" keeps a plain transcript with a stable prompt prefix and folds it into
 // the memory view once the context passes foldTokens (optional, whole tokens, 1000 or more, default 150000).
 // viewBudget (optional, bytes, 16000 to 128000, default 128000) sizes the memory view.
 // The fixed profile must already exist at memoryHome/profiles/profile with AGENTS.md
@@ -51,7 +51,7 @@ function readConfig(home: string): Config | undefined {
       (value.compactorModel !== undefined && (typeof value.compactorModel !== "string" || !value.compactorModel)) ||
       (value.compactorProvider !== undefined && (typeof value.compactorProvider !== "string" || !value.compactorProvider)) ||
       (value.viewBudget !== undefined && (!Number.isInteger(value.viewBudget) || (value.viewBudget as number) < MIN_VIEW_BUDGET || (value.viewBudget as number) > memory.VIEW)) ||
-      (value.mode !== undefined && value.mode !== "turn" && value.mode !== "fold") ||
+      (value.mode !== undefined && value.mode !== "fold") ||
       (value.foldTokens !== undefined && (!Number.isInteger(value.foldTokens) || (value.foldTokens as number) < MIN_FOLD_TOKENS)) ||
       (value.thinking !== undefined && (typeof value.thinking !== "string" || !["off", "minimal", "low", "medium", "high", "xhigh"].includes(value.thinking)))) {
     throw new Error("Invalid supervisor conversation-memory configuration in config/optchat.json");
