@@ -131,13 +131,21 @@ async function chatAfterGap(gapMs: number): Promise<Turn[][]> {
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
   for (let n = 1; n <= 3; n += 1) {
     if (n === 3) await pause(gapMs);
-    await cleo.call("comment", { lane: "cleo", text: `Message ${String(n)}.` });
-    await h.waitForNth((event) => event["type"] === "settled", n, `main's turn ${String(n)}`);
+    await cleo.call("comment", { lane: "cleo", text: `Message ${String(n)}. ${FILLER}` });
+    if (n < 3)
+      await h.waitForNth((event) => event["type"] === "settled", n, `main's turn ${String(n)}`);
+    else
+      await h.waitForWire(
+        () => h.callsOf("mate").some((turns) => turns.some((t) => t.text.includes("Message 3."))),
+        "a model call that carries message 3",
+      );
   }
   return h.callsOf("mate").filter(isMains);
 }
 
-const rebuilds = (calls: readonly Turn[][]): number => new Set(calls.map(viewOf)).size - 1;
+const rebuilds = (calls: readonly Turn[][]): number =>
+  calls.filter((after, index) => index > 0 && !extendsPrevious(calls[index - 1] ?? [], after))
+    .length;
 
 test("a run that starts after the cache lifetime folds below foldTokens", async () => {
   installMemory({ mode: "fold" });
