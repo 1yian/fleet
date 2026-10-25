@@ -65,10 +65,6 @@ export class Jobs {
     return this.running.size > 0;
   }
 
-  reconciled(): Promise<void> {
-    return this.sync().catch(() => undefined);
-  }
-
   async sync(): Promise<void> {
     const jobs = await this.link.call("jobs", {});
     this.running.clear();

@@ -326,7 +326,7 @@ test("a job marked lost while its wrapper is only stalled stays tracked after it
   for (let i = 0; i < 4; i++)
     h.onModel((turns) =>
       lastUser(turns)?.includes("exited 0") === true
-        ? { tool: "report", args: { status: "done", text: "the job ended" } }
+        ? { text: "the job ended" }
         : { text: "still waiting" },
     );
   worker();
@@ -344,9 +344,7 @@ test("a job marked lost while its wrapper is only stalled stays tracked after it
 
   writeFileSync(slow.go, "");
   await until(
-    () =>
-      fleet.main.entries.some(({ entry }) => entry.fields["status"] === "done") ? true : undefined,
-    "the worker's report",
+    () => (said("Your run is ending without a handoff") ? true : undefined),
+    "the nudge once the finished job is no longer tracked",
   );
-  assert.equal(stopped(), false);
 });

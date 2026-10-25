@@ -125,6 +125,22 @@ function sendEntry(
   );
 }
 
+function deliverAfterSync(
+  jobs: Jobs,
+  seen: Set<number>,
+  id: number,
+  deliver: (extra: string) => void,
+): void {
+  jobs.sync().then(
+    () => {
+      deliver("");
+    },
+    () => {
+      seen.delete(id);
+    },
+  );
+}
+
 function start(
   pi: ExtensionAPI,
   { url, token, role, lane }: Config,
@@ -181,9 +197,7 @@ function start(
     };
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
     else if (entry.kind === "job-result" && jobs !== undefined)
-      void jobs.reconciled().then(() => {
-        deliver("");
-      });
+      deliverAfterSync(jobs, seen, entry.id, deliver);
     else deliver("");
   };
   const noteWorkerInput = (recovery: boolean): void => {
