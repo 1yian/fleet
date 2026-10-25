@@ -111,18 +111,33 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
 const MATE_MODEL = "tier/orchestrator";
 const MODEL_FLAGS = ["--model", "--provider"];
 
+const isModelFlag = (arg: string, flag: string): boolean =>
+  arg === flag || arg.startsWith(`${flag}=`);
+
 const picksModel = (args: readonly string[]): boolean =>
-  args.some((arg) => MODEL_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`)));
+  args.some((arg) => MODEL_FLAGS.some((flag) => isModelFlag(arg, flag)));
+
+function splitModel(args: readonly string[]): { model: string[]; rest: string[] } {
+  const model: string[] = [];
+  const rest: string[] = [];
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at] ?? "";
+    const flag = MODEL_FLAGS.find((each) => isModelFlag(arg, each));
+    if (flag === undefined) rest.push(arg);
+    else if (arg === flag) model.push(arg, args[++at] ?? "");
+    else model.push(arg);
+  }
+  return { model, rest };
+}
 
 export function mateStartArgs(args: readonly string[], tier: string = MATE_MODEL): string[] {
   return picksModel(args) ? [...args] : ["--model", tier, ...args];
 }
 
 export function mateRelaunchArgs(running: readonly string[], lane: LaneConfig): string[] {
-  if (picksModel(lane.args)) return [...running];
-  const at = running.indexOf("--model");
-  const rest = at === -1 ? running : [...running.slice(0, at), ...running.slice(at + 2)];
-  return mateStartArgs(rest, lane.tier);
+  const { rest } = splitModel(running);
+  const configured = splitModel(lane.args).model;
+  return [...(configured.length > 0 ? configured : ["--model", lane.tier ?? MATE_MODEL]), ...rest];
 }
 
 export function workerPiArgs(lane: LaneConfig): string[] {
