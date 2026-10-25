@@ -125,6 +125,22 @@ function sendEntry(
   );
 }
 
+function deliverAfterSync(
+  jobs: Jobs,
+  seen: Set<number>,
+  id: number,
+  deliver: (extra: string) => void,
+): void {
+  jobs.sync().then(
+    () => {
+      deliver("");
+    },
+    () => {
+      seen.delete(id);
+    },
+  );
+}
+
 function start(
   pi: ExtensionAPI,
   { url, token, role, lane }: Config,
@@ -177,10 +193,11 @@ function start(
         compact();
       }
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
-      if (entry.kind === "job-result") jobs?.finished(entry.fields["job"]);
       noteWorkerInput(entry.fields["recovery"] !== undefined);
     };
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
+    else if (entry.kind === "job-result" && jobs !== undefined)
+      deliverAfterSync(jobs, seen, entry.id, deliver);
     else deliver("");
   };
   const noteWorkerInput = (recovery: boolean): void => {

@@ -352,6 +352,55 @@ test("a lost job is reminded to its mate each tier until the worker runs it agai
   assert.equal(counts(), stopped);
 });
 
+test("a job that was marked lost while its process lives is running again on its next heartbeat", async () => {
+  const card = await newCard(fleet.main, "silent but alive");
+  const token = await begin(fleet.main, card);
+  const worker = await fleet.cardd.connect(token);
+  const { job } = check(
+    OPS["job.start"].result,
+    await worker.call("job.start", { label: "poll", command: "lavish-axi poll" }),
+  );
+  await reach(fleet.main, card, "job-lost-open", 1);
+  const listed = async (): Promise<number[]> =>
+    check(OPS.jobs.result, await worker.call("jobs", {})).map((each) => each.id);
+  assert.deepEqual(await listed(), []);
+
+  const alive = check(OPS["job.alive"].result, await worker.call("job.alive", { job }));
+  assert.equal(alive.running, true);
+  assert.deepEqual(await listed(), [job]);
+  const isRevival = (entry: Entry): boolean => entry.fields["revived"] === true;
+  await worker.waitForEntry(isRevival, "the revival reaches the worker");
+  beats.push(
+    setInterval(() => {
+      worker.call("job.alive", { job }).catch(() => undefined);
+    }, 20),
+  );
+  const counts = (): number =>
+    fleet.main.entries.filter(({ entry }) => entry.fields["condition"] === "job-lost-open").length;
+  const before = counts();
+  await metronome(4);
+  assert.equal(counts(), before);
+  const done = check(
+    OPS["job.finish"].result,
+    await worker.call("job.finish", { job, exitCode: 0, outputTail: "ok" }),
+  );
+  assert.equal(done.recorded, true);
+});
+
+test("a dropped lost job stays lost when its wrapper heartbeats again", async () => {
+  const card = await newCard(fleet.main, "dropped then alive");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  const { job } = check(
+    OPS["job.start"].result,
+    await worker.call("job.start", { label: "poll", command: "lavish-axi poll" }),
+  );
+  await reach(fleet.main, card, "job-lost-open", 1);
+  await worker.call("job.drop", { job });
+  const alive = check(OPS["job.alive"].result, await worker.call("job.alive", { job }));
+  assert.equal(alive.running, false);
+  assert.deepEqual(check(OPS.jobs.result, await worker.call("jobs", {})), []);
+});
+
 test("a failed model call is repeated to the mate each tier until the worker answers again", async () => {
   const card = await newCard(fleet.main, "failing model");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));

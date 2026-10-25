@@ -65,10 +65,6 @@ export class Jobs {
     return this.running.size > 0;
   }
 
-  finished(job: unknown): void {
-    if (typeof job === "number") this.running.delete(job);
-  }
-
   async sync(): Promise<void> {
     const jobs = await this.link.call("jobs", {});
     this.running.clear();

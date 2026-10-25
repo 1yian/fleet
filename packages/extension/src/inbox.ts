@@ -67,6 +67,8 @@ function formatReport(entry: Entry, card: string): string {
 
 function formatJob(entry: Entry, card: string): string {
   const job = `job ${String(entry.fields["job"])} (${field(entry, "label") ?? "job"})`;
+  if (entry.fields["revived"] === true)
+    return `[fleet] ${card} ${job} is running again: ${entry.body}`;
   if (entry.fields["lost"] === true) return `[fleet] ${card} ${job} lost: ${entry.body}`;
   return `[fleet] ${card} ${job} exited ${String(entry.fields["exitCode"])}: ${entry.body}`;
 }

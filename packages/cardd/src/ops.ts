@@ -211,7 +211,19 @@ const HANDLERS: Record<OpName, Handler> = {
   },
   "job.alive": (db, session, raw) => {
     const args = check(OPS["job.alive"].args, raw);
-    return { value: { running: touchJob(db, session.id, args.job) }, notify: [] };
+    const { running, revived } = touchJob(db, session.id, args.job);
+    if (revived === undefined || session.card === null) return { value: { running }, notify: [] };
+    const fields = { job: args.job, label: revived.label, revived: true };
+    const body = "its process is alive again, so it is running again.";
+    const entry = {
+      card: session.card,
+      author: `job:${String(args.job)}`,
+      kind: "job-result",
+      body,
+      fields,
+    };
+    addEntry(db, entry, [session.id]);
+    return { value: { running }, notify: [session.id] };
   },
   "job.finish": (db, session, raw) => {
     const args = check(OPS["job.finish"].args, raw);

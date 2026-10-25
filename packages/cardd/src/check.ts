@@ -234,7 +234,11 @@ function finishedCards(db: DatabaseSync, t: Timings): Match[] {
 
 const MISSED_HEARTBEATS = 3;
 
+let firstCheckAt: number | undefined;
+
 function lostJobs(db: DatabaseSync, now: number, t: Timings): string[] {
+  firstCheckAt ??= now;
+  if (now - firstCheckAt < MISSED_HEARTBEATS * t.heartbeat) return [];
   return loseSilentJobs(db, now - MISSED_HEARTBEATS * t.heartbeat).flatMap((job) => {
     const card = getCard(db, job.card);
     const body = `job lost: job ${String(job.id)} (${job.label}) stopped reporting. It is not run again.`;
