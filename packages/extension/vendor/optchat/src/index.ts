@@ -13,7 +13,7 @@ import { createProfile, holdProfile, instructions, isWindows, lastProfile, listP
 import { allowSearch, CONTINUITY, IMPORT_GUIDANCE, MASTER, modelsHint, SEARCH_DOC, TURN_REFRESHED, VIEW_DOC } from './prompts.ts';
 import { anthropicRequest, cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
-import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, refreshedRun, refreshBudget, refreshFraction, refreshPoint, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
+import { asUser, boundedMessage, atWork, buildContext, chars, logMessage, previousExchange, refreshedRun, refreshBudget, refreshFraction, refreshPoint, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
 import { registerReportRenderer, type ReportDetails } from './report-message.ts';
 import { memoryTools, result, searchTool } from './tools.ts';
 import { Children, loadedBuiltins, modelsTool, refreshContextFiles, TASKS } from './agents.ts';
@@ -59,7 +59,7 @@ export const version = ((): string | undefined => {
 })();
 const brand = version ? `OptChat v${version}` : 'OptChat';
 
-export interface OptChatCapabilities { connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[] }
+export interface OptChatCapabilities { connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[]; foldTokens?: number }
 
 export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilities = {}) {
   const transientMessages = new WeakSet<AgentMessage>();
@@ -372,9 +372,11 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     return { action: 'continue' };
   });
   const startRun = (ctx: ExtensionContext) => {
-    flush(); run = []; logged = 0; keep = 0; view = undefined; runStarted = true;
+    flush(); keep = 0; runStarted = true;
+    const fold = capabilities.foldTokens;
+    if (fold === undefined || view === undefined || (view.length + chars(run)) / 4 >= fold) { run = []; logged = 0; view = undefined; }
     const config = active?.config;
-    previous = config?.previousExchange ? previousExchange(ctx.sessionManager.getBranch(), config.previousExchangeKB * 1000) : [];
+    previous = fold === undefined ? config?.previousExchange ? previousExchange(ctx.sessionManager.getBranch(), config.previousExchangeKB * 1000) : [] : [];
     pi.appendEntry(RUN_BOUNDARY, { state: 'start' });
   };
   // A report sent while Pi is idle starts its run without before_agent_start; it reuses the last built prompt.
@@ -460,7 +462,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       const current = ctx.getSystemPrompt();
       if (current.startsWith(MASTER.slice(0, 40))) prompt = current;
       // A turn past its budget moves its steps into the view, keeping the task and the last tool call whole (#146).
-      const refresh = refreshPoint(run, keep, refreshBudget(ctx.model?.contextWindow, refreshFraction(a.config.refreshAt)));
+      const refresh = refreshPoint(run, keep, refreshBudget(ctx.model?.contextWindow, capabilities.foldTokens === undefined ? refreshFraction(a.config.refreshAt) : 0));
       if (refresh) {
         const { cut, size } = refresh, began = Date.now();
         ctx.ui.setWorkingMessage(`OptChat: moving this turn's ${Math.round(size / 4000)}k tokens into memory…`);

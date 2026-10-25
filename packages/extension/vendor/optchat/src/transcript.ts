@@ -198,7 +198,7 @@ export function refreshFraction(setting: number, env = process.env.OPTCHAT_REFRE
 export function refreshBudget(contextWindow: number | undefined, fraction: number) {
   return contextWindow && fraction > 0 ? Math.floor(contextWindow * fraction * 4) : undefined;
 }
-const chars = (messages: readonly AgentMessage[]) => messages.reduce((sum, m) => sum + messageChars(m), 0);
+export const chars = (messages: readonly AgentMessage[]) => messages.reduce((sum, m) => sum + messageChars(m), 0);
 /** Where a refresh would cut the run: the last model reply, so its tool calls and their results stay whole. 0 when there is none after the task. */
 export function lastStep(run: readonly AgentMessage[]) {
   const task = run.findIndex(m => m.role === 'user'), step = run.findLastIndex(m => m.role === 'assistant');
