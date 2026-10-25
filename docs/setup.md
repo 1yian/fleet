@@ -183,6 +183,8 @@ Each lane has its own profile in its own home. Never copy one home's `config/`, 
 
 `config/optchat.json` also takes `"viewBudget"`, the size of the memory view in bytes, from 16000 to 128000 (default 128000). A smaller view costs fewer input tokens on every request, and summaries get coarser. It is set by hand in the lane's own home, then the mate restarts. `fleet home memory` keeps it.
 
+`config/optchat.json` also takes `"mode": "fold"` (default: absent, the view is rebuilt every turn) and `"foldTokens"` (whole tokens, 1000 or more, default 150000). In fold mode the chat grows as a plain transcript with a stable prompt prefix, which raises the cache hit rate. Once the context passes `foldTokens`, the transcript folds into the memory view once and then grows plainly again. Older history stays reachable through zoom. A long single turn is not folded until it ends. It is set by hand, then the mate restarts.
+
 The mate gets memory at its next start. `/firstmate-memory` shows whether it is active, and `state/optchat-activation.json` in the home is the receipt. To turn it off, set `"enabled": false` in `config/optchat.json` and restart the mate. To turn it on again, run `fleet home memory <lane>` and restart the mate.
 
 A `[fleet]` message is a normal turn that enters memory. `e2e/extension/memory.test.ts` checks it for main and for a second mate. An older home's `config/optchat.json` may still name a `package`: it is ignored, and the `config/optchat/package` folder can be deleted.

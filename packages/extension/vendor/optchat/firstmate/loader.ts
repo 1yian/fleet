@@ -1,6 +1,8 @@
 // Fleet's conversation memory for mates: OptChat, vendored in this folder, loaded for the home in
 // FM_HOME (fleet's optchat.ts sets it). Configured in <home>/config/optchat.json:
 // {"enabled":true,"memoryHome":"data/optchat","profile":"main","thinking":"low","viewBudget":64000}
+// mode (optional, only "fold"): "fold" keeps a plain transcript with a stable prompt prefix and folds it into
+// the memory view once the context passes foldTokens (optional, whole tokens, 1000 or more, default 150000).
 // viewBudget (optional, bytes, 16000 to 128000, default 128000) sizes the memory view.
 // The fixed profile must already exist at memoryHome/profiles/profile with AGENTS.md
 // (`fleet home memory <lane>` makes it). No earlier sessions are imported.
@@ -27,10 +29,13 @@ interface Config {
   compactorModel?: string;
   compactorProvider?: string;
   viewBudget?: number;
+  foldTokens?: number;
   thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 }
 type ProfileSettings = ReturnType<typeof profiles.loadConfig>;
 const MIN_VIEW_BUDGET = 16_000;
+const MIN_FOLD_TOKENS = 1_000;
+const DEFAULT_FOLD_TOKENS = 150_000;
 const VENDORED = "pi-optchat@0.9.0+fleet";
 // Explicit Firstmate identity is required at user scope. Unlike the old project
 // loader, the extension's own source directory is not a Firstmate home.
@@ -46,12 +51,15 @@ function readConfig(home: string): Config | undefined {
       (value.compactorModel !== undefined && (typeof value.compactorModel !== "string" || !value.compactorModel)) ||
       (value.compactorProvider !== undefined && (typeof value.compactorProvider !== "string" || !value.compactorProvider)) ||
       (value.viewBudget !== undefined && (!Number.isInteger(value.viewBudget) || (value.viewBudget as number) < MIN_VIEW_BUDGET || (value.viewBudget as number) > memory.VIEW)) ||
+      (value.mode !== undefined && value.mode !== "fold") ||
+      (value.foldTokens !== undefined && (!Number.isInteger(value.foldTokens) || (value.foldTokens as number) < MIN_FOLD_TOKENS)) ||
       (value.thinking !== undefined && (typeof value.thinking !== "string" || !["off", "minimal", "low", "medium", "high", "xhigh"].includes(value.thinking)))) {
     throw new Error("Invalid supervisor conversation-memory configuration in config/optchat.json");
   }
   return { enabled: true, memoryHome: value.memoryHome, profile: value.profile,
     compactorModel: value.compactorModel as string | undefined, compactorProvider: value.compactorProvider as string | undefined,
-    viewBudget: value.viewBudget as number | undefined, thinking: value.thinking as Config["thinking"] };
+    viewBudget: value.viewBudget as number | undefined,
+    foldTokens: value.mode === "fold" ? (value.foldTokens as number | undefined) ?? DEFAULT_FOLD_TOKENS : undefined, thinking: value.thinking as Config["thinking"] };
 }
 
 export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> {
@@ -113,7 +121,7 @@ export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> 
     prepare,
     receipt,
   });
-  await optchat(integration, { connectedWindows: false, viewBudget: config.viewBudget, transientCustomTypes: operationalTypes });
+  await optchat(integration, { connectedWindows: false, viewBudget: config.viewBudget, foldTokens: config.foldTokens, transientCustomTypes: operationalTypes });
   pi.registerCommand("firstmate-memory", {
     description: "Show this supervisor's conversation-memory profile and activation receipt",
     handler: async (_args, ctx) => {
