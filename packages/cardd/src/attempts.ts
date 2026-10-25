@@ -328,7 +328,7 @@ export function finishJob(
 export function touchJob(db: DatabaseSync, session: string, job: number): boolean {
   const row = db
     .prepare(
-      "UPDATE jobs SET updated_at = ? WHERE id = ? AND attempt = ? AND state = 'running' RETURNING id",
+      "UPDATE jobs SET state = 'running', updated_at = ? WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING id",
     )
     .get(Date.now(), job, attemptOf(db, session));
   return row !== undefined;
