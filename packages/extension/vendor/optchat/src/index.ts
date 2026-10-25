@@ -70,6 +70,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
   let closeWindows: (() => Promise<void>) | undefined;
   let recovery: Promise<void> | undefined;
   let run: AgentMessage[] = [];
+  let capped = 0;
   let previous: AgentMessage[] = [];
   let logged = 0;
   /** After a mid-turn refresh (#146), the run is sent from here on, after its task; 0 sends it whole. */
@@ -175,7 +176,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       await old.memory.close(); await checkpoints;
     } finally {
       await old.memory.close(); await old.unlock(); active = undefined;
-      run = []; previous = []; logged = 0; keep = 0; view = undefined; runStarted = false; receipts.clear(); prompt = ''; idle = () => true;
+      run = []; capped = 0; previous = []; logged = 0; keep = 0; view = undefined; runStarted = false; receipts.clear(); prompt = ''; idle = () => true;
       untitle?.(); untitle = undefined; title.clear(); working = false;
     }
   };
@@ -374,7 +375,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
   const startRun = (ctx: ExtensionContext) => {
     flush(); keep = 0; runStarted = true;
     const fold = capabilities.foldTokens;
-    if (fold === undefined || view === undefined || (view.length + chars(run)) / 4 >= fold) { run = []; logged = 0; view = undefined; }
+    if (fold === undefined || view === undefined || (view.length + chars(run) + capped) / 4 >= fold) { run = []; capped = 0; logged = 0; view = undefined; }
     const config = active?.config;
     previous = fold === undefined ? config?.previousExchange ? previousExchange(ctx.sessionManager.getBranch(), config.previousExchangeKB * 1000) : [] : [];
     pi.appendEntry(RUN_BOUNDARY, { state: 'start' });
@@ -432,6 +433,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       } catch (error) { ctx.abort(); fault = errorText(error); ctx.ui.notify(fault, 'error'); }
     }
     run.push(message);
+    if (bounded !== event.message) capped += Math.max(0, chars([event.message]) - chars([bounded]));
     if (view !== undefined) {
       try { flush(); } catch (error) { ctx.abort(); fault = errorText(error); ctx.ui.notify(fault, 'error'); }
     }
