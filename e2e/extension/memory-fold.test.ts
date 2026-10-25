@@ -112,22 +112,28 @@ test("without a mode, the view is rebuilt every turn, as before", async () => {
   );
 });
 
-function cachedArgs(): string[] {
+function cachedArgs(model?: string): string[] {
   const args = settingsArgs(h);
   const at = args.indexOf(FAKE_MODEL);
-  return [...args.slice(0, at - 1), ...args.slice(at + 1), "-e", FAKE_ANTHROPIC];
+  return [
+    ...args.slice(0, at - 1),
+    ...args.slice(at + 1),
+    "-e",
+    FAKE_ANTHROPIC,
+    ...(model === undefined ? [] : ["--model", `tier/${model}`]),
+  ];
 }
 
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 
-async function chatAfterGap(gapMs: number, model = "auto"): Promise<Turn[][]> {
+async function chatAfterGap(gapMs: number, model?: string): Promise<Turn[][]> {
   h.onModel((turns) => (isMains(turns) ? { tool: "yield" } : { text: "noted" }), "mate");
   mkdirSync(join(h.dir, "agent"), { recursive: true });
   writeFileSync(
     join(h.dir, "agent", "settings.json"),
-    JSON.stringify({ defaultProvider: "tier", defaultModel: model }),
+    JSON.stringify({ defaultProvider: "tier", defaultModel: model ?? "auto" }),
   );
-  await startMain(lab, scratch, h, false, cachedArgs());
+  await startMain(lab, scratch, h, false, cachedArgs(model));
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
   for (let n = 1; n <= 3; n += 1) {
     if (n === 3) await pause(gapMs);
