@@ -30,7 +30,7 @@ function anthropicShaped(payload: unknown) {
     && ['input', 'stream_options', 'store', 'prompt_cache_key', 'max_completion_tokens'].every(field => payload[field] === undefined);
 }
 export const anthropicRequest = (model: { api?: string } | undefined, payload: unknown) =>
-  model?.api === 'anthropic-messages' || model?.api === 'pi-virtual' && anthropicShaped(payload);
+  model?.api === 'anthropic-messages' || model?.api === 'vertex-claude-api' || model?.api === 'pi-virtual' && anthropicShaped(payload);
 
 /** The status line's own message, in Pi's context and in Anthropic's payload alike. */
 export const isAtWork = (message: unknown) => record(message) && message.role === 'user' && Array.isArray(message.content) && message.content.length === 1

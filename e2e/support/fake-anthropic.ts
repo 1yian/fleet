@@ -1,3 +1,4 @@
+import { streamSimple } from "@earendil-works/pi-ai/api/anthropic-messages";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const PROMPT_TOKENS_COST = { input: 300, output: 15, cacheRead: 30, cacheWrite: 375 };
@@ -35,6 +36,19 @@ export default function fakeAnthropic(pi: ExtensionAPI): void {
       ...["orchestrator", "auto", "quick"].flatMap((id) => model(id) ?? []),
       ...(model("small", 200_000) ?? []),
     ],
+  });
+  pi.registerProvider("vertex-claude", {
+    baseUrl: `${controlUrl()}/anthropic`,
+    apiKey: "scripted",
+    api: "vertex-claude-api",
+    headers: { "x-fake-agent": process.env["FLEET_FAKE_AGENT"] ?? "default" },
+    streamSimple: (target, context, options) =>
+      streamSimple(
+        { ...target, api: "anthropic-messages", compat: { supportsLongCacheRetention: true } },
+        context,
+        options,
+      ),
+    models: model("auto") ?? [],
   });
   let routes = 0;
   pi.registerVirtualModel({
