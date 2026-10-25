@@ -2,7 +2,7 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { Health } from "@fleet/protocol";
 
 const NS = 1e6;
-const FOLD_MS = 1000;
+const WATCH_MS = 100;
 const LAG_LOG_MS = 1000;
 const TICK_BUDGET_MS = 500;
 const SUMMARY_MS = 5 * 60_000;
@@ -21,7 +21,7 @@ const ms = (ns: number): number => Math.round((ns / NS) * 10) / 10;
 
 export class LoopHealth {
   private readonly live = monitorEventLoopDelay({ resolution: 10 });
-  private loggedWorst = 0;
+  private expected: number;
   private windowStart: number;
   private lastLagMs = 0;
   private lastLagAt: number | null = null;
@@ -42,9 +42,10 @@ export class LoopHealth {
     this.log = log;
     this.windowStart = Date.now();
     this.live.enable();
+    this.expected = Date.now() + WATCH_MS;
     setInterval(() => {
-      this.fold();
-    }, FOLD_MS).unref();
+      this.watch();
+    }, WATCH_MS).unref();
     setInterval(() => {
       this.summarize();
     }, SUMMARY_MS).unref();
@@ -63,15 +64,15 @@ export class LoopHealth {
       );
   }
 
-  private fold(): void {
-    if (this.live.count === 0) return;
-    const worst = Math.max(this.live.percentile(99), this.live.max);
-    if (worst / NS <= LAG_LOG_MS || worst === this.loggedWorst) return;
-    this.loggedWorst = worst;
-    this.lastLagMs = ms(worst);
-    this.lastLagAt = Date.now();
+  private watch(): void {
+    const now = Date.now();
+    const late = now - this.expected;
+    this.expected = now + WATCH_MS;
+    if (late <= LAG_LOG_MS) return;
+    this.lastLagMs = late;
+    this.lastLagAt = now;
     this.log(
-      `warning: event loop lag p99 ${String(ms(this.live.percentile(99)))} ms, max ${String(ms(this.live.max))} ms`,
+      `warning: event loop lag ${String(late)} ms, p99 ${String(ms(this.live.percentile(99)))} ms, max ${String(ms(this.live.max))} ms`,
     );
   }
 
@@ -85,7 +86,6 @@ export class LoopHealth {
   }
 
   snapshot(): Health {
-    this.fold();
     const { p50, p99, max } = this.stats();
     return {
       commit: this.commit,
@@ -110,7 +110,6 @@ export class LoopHealth {
       `health: loop p50 ${String(health.loopP50Ms)} ms, p99 ${String(health.loopP99Ms)} ms, max ${String(health.loopMaxMs)} ms; longest tick ${String(health.longestTickMs)} ms (${this.longest.ran}); accepted ${String(this.accepted)}; sockets ${String(health.sockets)}; sessions ${String(health.sessions)}; rss ${String(Math.round(health.rssBytes / 1048576))} MB`,
     );
     this.live.reset();
-    this.loggedWorst = 0;
     this.windowStart = Date.now();
     this.longest = { ms: 0, ran: "none" };
     this.accepted = 0;

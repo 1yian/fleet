@@ -10,6 +10,14 @@ import { setCardDelivery } from "./attempts.ts";
 import { parsePlan, setNextPlan, showPlans } from "./plans.ts";
 import { addLane, addProject, setClone, setProjectDelivery, setRepo, setYolo } from "./store.ts";
 
+if (process.argv.slice(2).includes("serve")) {
+  stampLogLines();
+  process.on("uncaughtException", (error) => {
+    console.error(error.stack ?? String(error));
+    process.exit(1);
+  });
+}
+
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
@@ -80,7 +88,6 @@ function parseClone(pair: string): [string, string] {
 }
 
 if (command === "serve") {
-  stampLogLines();
   const split = values.listen.lastIndexOf(":");
   const host = values.listen.slice(0, split).replace(/^\[(.*)\]$/, "$1");
   const port = values.listen.slice(split + 1);

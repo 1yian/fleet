@@ -261,6 +261,12 @@ export class Cardd {
     this.url = await until(() => /listening on (\S+)/.exec(this.output)?.[1], "cardd to listen");
   }
 
+  failToServe(listen: string): { status: number | null; stderr: string } {
+    const args = [MAIN, "serve", "--db", this.db, "--listen", listen];
+    const { status, stderr } = spawnSync("node", args, { encoding: "utf8", env: this.env });
+    return { status, stderr };
+  }
+
   async health(): Promise<Health> {
     return check(HealthSchema, await (await fetch(this.http("/api/health"))).json());
   }

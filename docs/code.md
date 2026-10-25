@@ -100,7 +100,7 @@ cardd card delivery <number> <mode> --db <file>
 ### Health and logs
 
 - Every `cardd serve` log line starts with an ISO timestamp (`log.ts`).
-- `health.ts` watches the event loop with `monitorEventLoopDelay`. A line `warning: event loop lag p99 <ms> ms, max <ms> ms` is logged when the p99 or the max is over 1 second. The max counts because a starved loop records one huge sample, which the p99 hides. A smaller spike than the worst one since the last summary is not logged again.
+- `health.ts` watches the event loop two ways. `monitorEventLoopDelay` feeds the five-minute summary. A 100 ms timer measures how late it fires, and a line `warning: event loop lag <ms> ms, p99 <ms> ms, max <ms> ms` is logged when it is over 1 second. That timer also sets the latest lag that `/api/health` reports, so every incident counts, not only a record one.
 - A check tick over 500 ms logs `warning: check took <ms> ms, over 500 ms (slowest part: <name>)`.
 - Every five minutes it logs `health: loop p50 ... p99 ... max ...; longest tick <ms> (<part>); accepted <n>; sockets <n>; sessions <n>; rss <MB>`, then starts a new window.
 - `GET /api/health` answers `Health` from `@fleet/protocol` with no card loading and no auth: `commit`, `now` and `windowStart` (epoch ms), `loopP50Ms`, `loopP99Ms`, `loopMaxMs` (since `windowStart`, the last five-minute summary), `lastLagMs` and `lastLagAt` (the last lag over 1 second, `null` until one happens, never reset), `lastTickMs`, `longestTickMs` (this window), `sockets` (open connections), `sessions` (live session sockets), and `rssBytes`.
