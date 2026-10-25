@@ -386,15 +386,16 @@ test("replayed lost and revival notices never change the tracked wait: only the 
   process.kill(wrapper, "SIGCONT");
   const failedRevival = await callWith((text) => text.includes("is running again"), secondLost);
   await handled(failedRevival);
-  const before = nudges();
   writeFileSync(slow.go, "");
   const result = await callWith((text) => text.includes("exited 0"), failedRevival);
   await handled(result);
-  await until(() => (nudges() > before ? true : undefined), "the nudge after the result");
+  const resultNudge = await callWith((text) => text.includes(nudge), result);
+  await handled(resultNudge);
+  const baseline = nudges();
   const replayedRevival = await callWith(
     (text) => text.includes("is running again") && text.includes(again),
     result,
   );
   await handled(replayedRevival);
-  assert.ok(nudges() > before);
+  await until(() => (nudges() > baseline ? true : undefined), "a fresh nudge after the replay");
 });
