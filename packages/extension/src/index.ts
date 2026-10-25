@@ -11,6 +11,7 @@ import { applyCompactionBackoff } from "./compaction-backoff.ts";
 import { applyCompactionPolicy } from "./compaction-policy.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
+import { watchMainCardd } from "./cardd-watch.ts";
 import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
@@ -204,6 +205,7 @@ function start(
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
   }
+  watchMainCardd(pi, link, { url, role, lane }, HOME());
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
