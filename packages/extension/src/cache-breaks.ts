@@ -244,21 +244,27 @@ class CacheBreakLog {
       endedAt: now,
       fingerprint: sent?.fingerprint,
     };
-    const broke =
-      before !== undefined &&
-      before.cached >= MIN_PRIOR_TOKENS &&
-      answer.read < before.cached * BREAK_BELOW_SHARE;
+    const broke = before !== undefined && isBreak(before, answer);
+    this.warmth = this.nextWarmth(ctx, answer, broke, now);
+    if (broke) this.record(ctx, { before, answer, sent, compacted, now });
+    else this.show(ctx);
+  }
+
+  private nextWarmth(
+    ctx: ExtensionContext,
+    answer: Answer,
+    broke: boolean,
+    now: number,
+  ): Warmth | undefined {
     const ttlMs = cacheLifetimeMs(ctx.modelRegistry.find(answer.provider, answer.model));
     const populated = answer.cached > 0;
-    const warm = ttlMs !== undefined && (populated || broke);
+    if (ttlMs === undefined || !(populated || broke)) return undefined;
     const earlier = this.warmth;
     const kept =
       earlier?.populated === true && now < earlier.answeredAt + earlier.ttlMs
         ? earlier.broke
         : undefined;
-    this.warmth = warm ? { answeredAt: now, ttlMs, populated, broke: kept } : undefined;
-    if (broke) this.record(ctx, { before, answer, sent, compacted, now });
-    else this.show(ctx);
+    return { answeredAt: now, ttlMs, populated, broke: kept };
   }
 
   private record(
@@ -321,6 +327,10 @@ class CacheBreakLog {
     const ctx = this.shown;
     if (ctx !== undefined) this.show(ctx);
   }
+}
+
+function isBreak(before: Previous, answer: Answer): boolean {
+  return before.cached >= MIN_PRIOR_TOKENS && answer.read < before.cached * BREAK_BELOW_SHARE;
 }
 
 export function applyCacheBreakLog(pi: ExtensionAPI, started: ExtensionContext): void {
