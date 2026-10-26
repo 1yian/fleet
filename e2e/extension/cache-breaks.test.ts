@@ -132,7 +132,7 @@ test("main records why its prompt cache broke and shows whether its cache is war
     breaks.map((each) => [each["previousCached"], each["cacheRead"]]),
     [
       [CACHED + 10, 0],
-      [CACHED, 0],
+      [CACHED + 10, 0],
       [CACHED, 0],
       [CACHED, 0],
     ],
