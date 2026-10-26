@@ -3,7 +3,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isRecord } from "./lane-config.ts";
 
 const CACHE_BREAK_ENTRY = "fleet-cache-break";
-const STATUS_KEY = "fleet-cache-breaks";
+const STATUS_KEY = "fleet-cache-state";
+const REFRESH_MS = 30_000;
+const MINUTE_MS = 60_000;
 
 const BREAK_BELOW_SHARE = 0.5;
 const MIN_PRIOR_TOKENS = 1024;
@@ -87,24 +89,52 @@ function numberOf(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function statusText(count: number, cause: string): string {
-  return `cache breaks ${String(count)} (last: ${cause})`;
+const SHORT_CAUSE: Record<CacheBreakCause, string> = {
+  model: "model",
+  compaction: "compact",
+  "system-prompt": "prompt",
+  tools: "tools",
+  idle: "idle",
+  other: "other",
+};
+
+function span(ms: number): string {
+  const minutes = Math.ceil(ms / MINUTE_MS);
+  if (ms < MINUTE_MS) return "<1m";
+  if (minutes < 60) return `${String(minutes)}m`;
+  const rest = minutes % 60;
+  return `${String(Math.floor(minutes / 60))}h${rest === 0 ? "" : `${String(rest)}m`}`;
 }
 
-interface Tally {
-  count: number;
-  last: string;
+interface Cold {
+  readonly since: number;
+  readonly cause: CacheBreakCause;
 }
 
-function tallyOf(ctx: ExtensionContext): Tally {
-  const tally: Tally = { count: 0, last: "" };
-  for (const entry of ctx.sessionManager.getEntries()) {
-    if (entry.type !== "custom" || entry.customType !== CACHE_BREAK_ENTRY) continue;
-    const data: unknown = entry.data;
-    tally.count += 1;
-    if (isRecord(data) && typeof data["cause"] === "string") tally.last = data["cause"];
-  }
-  return tally;
+interface Warmth {
+  readonly answeredAt: number;
+  readonly ttlMs: number;
+  readonly broke: Cold | undefined;
+}
+
+function statusText(warmth: Warmth, now: number): string {
+  const expires = warmth.answeredAt + warmth.ttlMs;
+  if (warmth.broke !== undefined)
+    return `cache cold ${span(now - warmth.broke.since)} ${SHORT_CAUSE[warmth.broke.cause]}`;
+  if (now >= expires) return `cache cold ${span(now - expires)}`;
+  return `cache warm ${span(expires - now)}`;
+}
+
+function cacheLifetimeMs(model: { promptCache?: { short?: number; long?: number } } | undefined) {
+  const seconds =
+    model?.promptCache?.[process.env["PI_CACHE_RETENTION"] === "long" ? "long" : "short"];
+  return seconds === undefined ? undefined : seconds * 1000;
+}
+
+function countOf(ctx: ExtensionContext): number {
+  return ctx.sessionManager
+    .getEntries()
+    .filter((entry) => entry.type === "custom" && entry.customType === CACHE_BREAK_ENTRY).length;
 }
 
 interface Sent {
@@ -157,7 +187,10 @@ function detailsOf(
 }
 
 class CacheBreakLog {
-  private tally: Tally;
+  private count: number;
+  private warmth: Warmth | undefined;
+  private shown: ExtensionContext | undefined;
+  private timer: NodeJS.Timeout | undefined;
   private previous: Previous | undefined;
   private sent: Sent | undefined;
   private compacted = false;
@@ -166,12 +199,19 @@ class CacheBreakLog {
 
   constructor(pi: ExtensionAPI, started: ExtensionContext) {
     this.pi = pi;
-    this.tally = tallyOf(started);
+    this.count = countOf(started);
     this.show(started);
   }
 
+  stop(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer);
+    this.timer = undefined;
+    this.shown = undefined;
+  }
+
   restart(ctx: ExtensionContext): void {
-    this.tally = tallyOf(ctx);
+    this.count = countOf(ctx);
+    this.warmth = undefined;
     this.previous = undefined;
     this.sent = undefined;
     this.compacted = false;
@@ -206,7 +246,10 @@ class CacheBreakLog {
       before !== undefined &&
       before.cached >= MIN_PRIOR_TOKENS &&
       answer.read < before.cached * BREAK_BELOW_SHARE;
+    const ttlMs = cacheLifetimeMs(ctx.modelRegistry.find(answer.provider, answer.model));
+    this.warmth = ttlMs === undefined ? undefined : { answeredAt: now, ttlMs, broke: undefined };
     if (broke) this.record(ctx, { before, answer, sent, compacted, now });
+    else this.show(ctx);
   }
 
   private record(
@@ -230,11 +273,12 @@ class CacheBreakLog {
       idleSeconds,
       ttlSeconds: ttl,
     });
-    this.tally = { count: this.tally.count + 1, last: cause };
+    this.count += 1;
+    if (this.warmth !== undefined) this.warmth = { ...this.warmth, broke: { since: now, cause } };
     this.pi.appendEntry(CACHE_BREAK_ENTRY, {
       at: new Date(now).toISOString(),
       cause,
-      count: this.tally.count,
+      count: this.count,
       idleSeconds: Math.round(idleSeconds),
       ttlSeconds: ttl,
       ...detailsOf(before, answer, sent?.fingerprint),
@@ -243,10 +287,30 @@ class CacheBreakLog {
   }
 
   private show(ctx: ExtensionContext): void {
-    ctx.ui.setStatus(
-      STATUS_KEY,
-      this.tally.count > 0 ? statusText(this.tally.count, this.tally.last) : undefined,
+    this.stop();
+    const warmth = this.warmth;
+    if (warmth === undefined) {
+      ctx.ui.setStatus(STATUS_KEY, undefined);
+      return;
+    }
+    const now = Date.now();
+    ctx.ui.setStatus(STATUS_KEY, statusText(warmth, now));
+    this.shown = ctx;
+    const expires = warmth.answeredAt + warmth.ttlMs;
+    const untilExpiry = expires - now;
+    const wait = warmth.broke === undefined && untilExpiry > 0 ? untilExpiry : REFRESH_MS;
+    this.timer = setTimeout(
+      () => {
+        this.refresh();
+      },
+      Math.min(wait, REFRESH_MS) + 1,
     );
+    this.timer.unref();
+  }
+
+  private refresh(): void {
+    const ctx = this.shown;
+    if (ctx !== undefined) this.show(ctx);
   }
 }
 
@@ -258,6 +322,9 @@ export function applyCacheBreakLog(pi: ExtensionAPI, started: ExtensionContext):
   });
   pi.on("session_start", (_event, ctx) => {
     log.restart(ctx);
+  });
+  pi.on("session_shutdown", () => {
+    log.stop();
   });
   pi.on("session_compact", () => {
     log.compaction();

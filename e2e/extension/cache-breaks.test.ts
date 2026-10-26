@@ -58,7 +58,7 @@ function recordedBreaks(file: string): Record<string, unknown>[] {
     .map((entry) => (isRecord(entry["data"]) ? entry["data"] : {}));
 }
 
-test("main records why its prompt cache broke and shows the count and last cause in its status line", async () => {
+test("main records why its prompt cache broke and shows whether its cache is warm or cold in its status line", async () => {
   const cacheHit = { text: "ok", cacheRead: CACHED, cacheWrite: 10 };
   const cacheMiss = { text: "ok", cacheRead: 0, cacheWrite: CACHED };
   for (const move of [cacheMiss, cacheHit, cacheMiss, cacheMiss, cacheMiss, cacheMiss])
@@ -82,27 +82,35 @@ test("main records why its prompt cache broke and shows the count and last cause
     }
   };
 
+  assert.ok(!(await lab.screen(pane)).includes("cache "), "no cache state before a request");
   await ask();
+  await status("cache warm");
+  await status("cache cold <1m");
   await ask();
   assert.deepEqual(recordedBreaks(file), [], "a warm cache read is not a break");
-  assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count before a break");
+  await status("cache warm");
+  assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   h.command({ type: "add_tool", name: "extra_tool" });
   await ask();
-  await status("cache breaks 1 (last: tools)");
+  await status("cache cold <1m tools");
+  assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   h.command({ type: "model", id: "quick" });
   await h.waitFor((event) => event["type"] === "model_set", "the model switch");
   await ask();
-  await status("cache breaks 2 (last: model)");
+  await status("cache cold <1m model");
+  assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   h.command({ type: "system", text: SECRET_SYSTEM_TEXT });
   await ask();
-  await status("cache breaks 3 (last: system-prompt)");
+  await status("cache cold <1m prompt");
+  assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   await new Promise((resolve) => setTimeout(resolve, FAKE_CACHE_LIFETIME_MS + 1_000));
   await ask();
-  await status("cache breaks 4 (last: idle)");
+  await status("cache cold <1m idle");
+  assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   const breaks = recordedBreaks(file);
   assert.deepEqual(
