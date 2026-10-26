@@ -246,6 +246,9 @@ class Hub {
   }
 }
 
+const LOOPBACK = new Set(["127.0.0.1", "::1"]);
+const LOOPBACK_NAMES = ["localhost", "127.0.0.1", "[::1]"];
+
 export async function serve(
   db: DatabaseSync,
   host: string,
@@ -302,6 +305,7 @@ export async function serve(
   const name = host.includes(":") ? `[${host}]` : host;
   const withPort = (each: string): string =>
     /:\d+$/.test(each) ? each : `${each}:${String(address.port)}`;
-  hub.web.allow([name, ...hostnames].map(withPort));
+  const aliases = LOOPBACK.has(address.address) ? LOOPBACK_NAMES : [];
+  hub.web.allow([name, ...aliases, ...hostnames].map(withPort));
   return `ws://${name}:${String(address.port)}/session`;
 }

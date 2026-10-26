@@ -337,7 +337,10 @@ function projectsOf(
     hosts: each.clones.map((clone) => clone.host).join(" "),
     yolo: each.yolo ? "on" : "off",
   }));
-  return { rows, hidden: projects.length - shown.length };
+  const hidden = projects.length - shown.length;
+  if (rows.length === 0)
+    return { rows: `${String(hidden)} registered, none open or on yolo`, hidden };
+  return { rows, hidden };
 }
 
 function lanesOf(lanes: NonNullable<Header["lanes"]>, every: boolean): Record<string, unknown> {
