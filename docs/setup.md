@@ -101,7 +101,13 @@ On loopback, `cardd` accepts the Host headers `127.0.0.1`, `localhost`, and `[::
 - `restart` is `stop`, then `start`.
 - `status` prints whether the pid is alive and exits non-zero when it is not.
 
-**A systemd user unit.** On a host with systemd, use `~/.config/systemd/user/cardd.service` with `ExecStart` set to the command above and `Restart=always`. Enable it with `systemctl --user enable --now cardd`. Run `loginctl enable-linger $USER` so it keeps running after logout.
+**A systemd user unit.** On a host with systemd, use `~/.config/systemd/user/cardd.service` with `Restart=always` and an `ExecStart` that uses `%h` for the home directory, because systemd expands neither `~` nor `$HOME`:
+
+```ini
+ExecStart=/usr/bin/node %h/.fleet/app/packages/cardd/src/main.ts serve --db %h/.fleet/cards.db --listen 127.0.0.1:7420 --hostname 127.0.0.1:7420 --board %h/.fleet/app/packages/board/dist
+```
+
+Use the absolute path of your `node`. Enable it with `systemctl --user enable --now cardd`. Run `loginctl enable-linger $USER` so it keeps running after logout.
 
 **Tie it to the update.** `/updatefleet` restarts `cardd` with the `restart` command of the `cardd` entry in main's `config/lane.json` (section 4). Point it at your supervisor:
 
