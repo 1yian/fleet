@@ -251,7 +251,12 @@ class CacheBreakLog {
     const ttlMs = cacheLifetimeMs(ctx.modelRegistry.find(answer.provider, answer.model));
     const populated = answer.cached > 0;
     const warm = ttlMs !== undefined && (populated || broke);
-    this.warmth = warm ? { answeredAt: now, ttlMs, populated, broke: undefined } : undefined;
+    const earlier = this.warmth;
+    const kept =
+      earlier?.populated === true && now < earlier.answeredAt + earlier.ttlMs
+        ? earlier.broke
+        : undefined;
+    this.warmth = warm ? { answeredAt: now, ttlMs, populated, broke: kept } : undefined;
     if (broke) this.record(ctx, { before, answer, sent, compacted, now });
     else this.show(ctx);
   }

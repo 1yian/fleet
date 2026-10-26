@@ -61,7 +61,7 @@ function recordedBreaks(file: string): Record<string, unknown>[] {
 test("main records why its prompt cache broke and shows whether its cache is warm or cold in its status line", async () => {
   const cacheHit = { text: "ok", cacheRead: CACHED, cacheWrite: 10 };
   const cacheMiss = { text: "ok", cacheRead: 0, cacheWrite: CACHED };
-  for (const move of [cacheMiss, cacheHit, cacheMiss, cacheMiss, cacheMiss, cacheMiss])
+  for (const move of [cacheMiss, cacheHit, cacheMiss, cacheHit, cacheMiss, cacheMiss, cacheMiss])
     h.onModel(() => move, "mate");
   const pane = await startMain(lab, scratch, h, false, wireArgs());
   const session = await h.waitFor((event) => event["type"] === "session", "the session file");
@@ -92,6 +92,9 @@ test("main records why its prompt cache broke and shows whether its cache is war
   assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   h.command({ type: "add_tool", name: "extra_tool" });
+  await ask();
+  await status("cache warm");
+  await status("broke <1m tools");
   await ask();
   await status("cache warm");
   await status("broke <1m tools");
