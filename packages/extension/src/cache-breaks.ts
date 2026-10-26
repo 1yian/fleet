@@ -114,15 +114,17 @@ interface Cold {
 interface Warmth {
   readonly answeredAt: number;
   readonly ttlMs: number;
+  readonly populated: boolean;
   readonly broke: Cold | undefined;
 }
 
 function statusText(warmth: Warmth, now: number): string {
   const expires = warmth.answeredAt + warmth.ttlMs;
-  if (warmth.broke !== undefined)
-    return `cache cold ${span(now - warmth.broke.since)} ${SHORT_CAUSE[warmth.broke.cause]}`;
+  const broke = warmth.broke;
+  const cause = broke === undefined ? "" : `${span(now - broke.since)} ${SHORT_CAUSE[broke.cause]}`;
+  if (broke !== undefined && !warmth.populated) return `cache cold ${cause}`;
   if (now >= expires) return `cache cold ${span(now - expires)}`;
-  return `cache warm ${span(expires - now)}`;
+  return `cache warm ${span(expires - now)}${broke === undefined ? "" : `, broke ${cause}`}`;
 }
 
 function cacheLifetimeMs(model: { promptCache?: { short?: number; long?: number } } | undefined) {
@@ -247,7 +249,9 @@ class CacheBreakLog {
       before.cached >= MIN_PRIOR_TOKENS &&
       answer.read < before.cached * BREAK_BELOW_SHARE;
     const ttlMs = cacheLifetimeMs(ctx.modelRegistry.find(answer.provider, answer.model));
-    this.warmth = ttlMs === undefined ? undefined : { answeredAt: now, ttlMs, broke: undefined };
+    const populated = answer.cached > 0;
+    const warm = ttlMs !== undefined && (populated || broke);
+    this.warmth = warm ? { answeredAt: now, ttlMs, populated, broke: undefined } : undefined;
     if (broke) this.record(ctx, { before, answer, sent, compacted, now });
     else this.show(ctx);
   }
@@ -298,7 +302,7 @@ class CacheBreakLog {
     this.shown = ctx;
     const expires = warmth.answeredAt + warmth.ttlMs;
     const untilExpiry = expires - now;
-    const wait = warmth.broke === undefined && untilExpiry > 0 ? untilExpiry : REFRESH_MS;
+    const wait = untilExpiry > 0 ? untilExpiry : REFRESH_MS;
     this.timer = setTimeout(
       () => {
         this.refresh();
