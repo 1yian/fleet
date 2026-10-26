@@ -29,6 +29,8 @@ beforeEach(async () => {
   scratch = new Scratch("fleet");
   const mainToken = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, mainToken);
+  mkdirSync(join(scratch.root, "state"), { recursive: true });
+  writeFileSync(join(scratch.root, "state", "cost-notice"), String(Date.now()));
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   memoryHome = tempDir("fleet-memory-");
   lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
