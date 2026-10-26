@@ -147,6 +147,20 @@ test("a name given with --hostname reaches the board, and no other name does", a
   assert.equal(await reach("board.example"), 403);
 });
 
+test("cardd on loopback also accepts localhost and ::1, and a refusal names the accepted hosts", async () => {
+  const port = base().port;
+  const reach = async (host: string): Promise<number> =>
+    (await send("/api/board", "GET", { host })).status;
+
+  assert.equal(await reach(`localhost:${port}`), 200);
+  assert.equal(await reach(`LOCALHOST:${port}`), 200);
+  assert.equal(await reach(`[::1]:${port}`), 200);
+  assert.equal(await reach(`evil.example:${port}`), 403);
+  assert.equal(await reach("localhost"), 403);
+  const refused = await send("/api/board", "GET", { host: `evil.example:${port}` });
+  assert.match(refused.body, /only to these hosts: .*127\.0\.0\.1:\d+/);
+});
+
 test("a name given with the default port is the same authority with or without the port", async () => {
   await cardd.stop();
   cardd = await Cardd.start({}, ["--hostname", "board.example:80"]);

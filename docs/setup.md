@@ -81,6 +81,46 @@ Set `ProcessType` to `Interactive` in the plist, next to `KeepAlive`:
 
 Without it, launchd applies light resource limits (`launchd.plist(5)`): it throttles CPU and I/O, and `cardd` ran below the Docker VM and the agents it serves. `Interactive` gives it normal priority. The plist is written by hand, so nothing in this repository rewrites it. `/updatefleet` pulls code and runs `cardd.restart` (`launchctl kickstart -k`), which restarts the job without re-reading the plist. To apply a plist change, the captain edits the file, then runs `launchctl bootout gui/<uid>/dev.fleet.cardd` and `launchctl bootstrap gui/<uid> ~/Library/LaunchAgents/dev.fleet.cardd.plist`. Check it with `launchctl print gui/<uid>/dev.fleet.cardd | grep -i processtype`.
 
+### Running cardd without launchd
+
+launchd is only one way to keep `cardd` running. Any supervisor works if it restarts `cardd` after a crash and gives `lane.json` a command that restarts it.
+
+For a single machine, such as a laptop, listen on loopback. The lanes, the mates, and the board are all on this machine, so nothing needs Tailscale:
+
+```sh
+node $HOME/.fleet/app/packages/cardd/src/main.ts serve --db ~/.fleet/cards.db \
+  --listen 127.0.0.1:7420 --hostname 127.0.0.1:7420 --board ~/.fleet/app/packages/board/dist
+```
+
+On loopback, `cardd` accepts the Host headers `127.0.0.1`, `localhost`, and `[::1]` with its port, plus each `--hostname`. It answers any other Host with a 403 that lists the hosts it accepts. This keeps the protection against DNS rebinding. Lane URLs are then `ws://127.0.0.1:7420/session`.
+
+**A user-space supervisor.** On a host without systemd, such as WSL2, write a small script, `fleet-cardd`, that takes `start`, `stop`, `restart`, and `status`:
+
+- `start` runs the command above in a loop, so it starts again after a crash. It appends to `~/.fleet/cardd.log` and writes the supervisor's pid to `~/.fleet/cardd.pid`. It does nothing when that pid is alive.
+- `stop` signals the pid in `~/.fleet/cardd.pid`, which ends the loop and `cardd`.
+- `restart` is `stop`, then `start`.
+- `status` prints whether the pid is alive and exits non-zero when it is not.
+
+**A systemd user unit.** On a host with systemd, use `~/.config/systemd/user/cardd.service` with `Restart=always` and an `ExecStart` that uses `%h` for the home directory, because systemd expands neither `~` nor `$HOME`:
+
+```ini
+ExecStart=/usr/bin/node %h/.fleet/app/packages/cardd/src/main.ts serve --db %h/.fleet/cards.db --listen 127.0.0.1:7420 --hostname 127.0.0.1:7420 --board %h/.fleet/app/packages/board/dist
+```
+
+Use the absolute path of your `node`. Enable it with `systemctl --user enable --now cardd`. Run `loginctl enable-linger $USER` so it keeps running after logout.
+
+**Tie it to the update.** `/updatefleet` restarts `cardd` with the `restart` command of the `cardd` entry in main's `config/lane.json` (section 4). Point it at your supervisor:
+
+```json
+"cardd": {
+  "root": "~/.fleet/app",
+  "db": "~/.fleet/cards.db",
+  "restart": ["fleet-cardd", "restart"]
+}
+```
+
+For systemd, use `["systemctl", "--user", "restart", "cardd"]`. The command must return once `cardd` has been told to restart. The update then waits up to a minute for `cardd` to answer on the new commit.
+
 `/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). Do not update or restart it by hand. `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
 
 ## 3. Lanes and projects

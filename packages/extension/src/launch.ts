@@ -50,35 +50,53 @@ const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
   return out;
 }, []);
 
-const { values, positionals } = parseArgs({
-  args: argv,
-  allowPositionals: true,
-  options: {
-    json: { type: "boolean" },
-    undo: { type: "boolean" },
-    check: { type: "boolean" },
-    maintenance: { type: "boolean" },
-    from: { type: "string" },
-    url: { type: "string" },
-    token: { type: "string" },
-    args: { type: "string" },
-    "worker-args": { type: "string" },
-    host: { type: "string" },
-    hosts: { type: "string" },
-    roots: { type: "string" },
-    direnv: { type: "string" },
-    tier: { type: "string" },
-    seed: { type: "string" },
-    thinking: { type: "string" },
-    root: { type: "string" },
-    db: { type: "string" },
-    running: { type: "string" },
-    restart: { type: "string" },
-    content: { type: "string" },
-    absent: { type: "boolean" },
-    script: { type: "string" },
-  },
-});
+if (argv.some((arg) => arg === "--help" || arg === "-h")) {
+  console.log(USAGE);
+  process.exit(0);
+}
+
+function parse(): ReturnType<typeof parseCommandLine> {
+  try {
+    return parseCommandLine();
+  } catch (error) {
+    console.error(`fleet: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
+    process.exit(2);
+  }
+}
+
+function parseCommandLine() {
+  return parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      json: { type: "boolean" },
+      undo: { type: "boolean" },
+      check: { type: "boolean" },
+      maintenance: { type: "boolean" },
+      from: { type: "string" },
+      url: { type: "string" },
+      token: { type: "string" },
+      args: { type: "string" },
+      "worker-args": { type: "string" },
+      host: { type: "string" },
+      hosts: { type: "string" },
+      roots: { type: "string" },
+      direnv: { type: "string" },
+      tier: { type: "string" },
+      seed: { type: "string" },
+      thinking: { type: "string" },
+      root: { type: "string" },
+      db: { type: "string" },
+      running: { type: "string" },
+      restart: { type: "string" },
+      content: { type: "string" },
+      absent: { type: "boolean" },
+      script: { type: "string" },
+    },
+  });
+}
+
+const { values, positionals } = parse();
 const [command, ...rest] = positionals;
 const root = codeRoot();
 

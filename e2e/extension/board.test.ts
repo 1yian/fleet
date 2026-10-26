@@ -380,3 +380,11 @@ test("board lists every project with board(projects=true), and past 8 projects t
   );
   assert.doesNotMatch(every ?? "", /projects=true/);
 });
+
+test("board header says how many projects are registered when none is open or on yolo", async () => {
+  for (const name of ["api", "app", "docs", "infra", "ios", "site", "tools", "www"])
+    fleet.cardd.addProject(name, { maverick: `/clones/${name}` });
+  const [header] = await mainCalls([["board", {}]]);
+  assert.match(header ?? "", /^projects: "9 registered, none open or on yolo"$/m);
+  assert.match(header ?? "", /list 9 more projects/);
+});

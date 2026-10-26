@@ -54,6 +54,10 @@ export class Web {
     }
   }
 
+  accepted(): string {
+    return `these hosts: ${[...this.hosts].join(", ")}`;
+  }
+
   permits(request: IncomingMessage): boolean {
     const header = request.headers.host;
     const host = header === undefined ? undefined : canonical(header);
@@ -111,7 +115,7 @@ export class Web {
     };
     try {
       if (!this.permits(request)) {
-        json(403, { ok: false, error: "cardd serves the board only to its own address" });
+        json(403, { ok: false, error: `cardd serves the board only to ${this.accepted()}` });
         return;
       }
       const value = await this.route(request);
