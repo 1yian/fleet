@@ -76,13 +76,18 @@ async function workerRuns(command: string, rollup: unknown): Promise<string> {
   return JSON.stringify(h.calls[1]);
 }
 
+const SHA = "abc123def4567890";
+const BIND = `--match-head-commit ${SHA}`;
 const MERGES: readonly [string, string][] = [
-  ["gh pr merge https://github.com/o/r/pull/7 --squash", "url"],
-  ["gh pr merge 7 --admin --squash", "admin"],
-  ["gh pr merge --auto --merge", "auto"],
-  ["gh pr merge my-branch -R o/r --rebase", "branch with repo"],
-  ["echo go && (gh pr merge 7 --squash)", "compound"],
-  ["gh api -X PUT repos/o/r/pulls/7/merge -f merge_method=squash", "api put"],
+  [`gh pr merge https://github.com/o/r/pull/7 --squash ${BIND}`, "url"],
+  [`gh pr merge 7 --admin --squash ${BIND}`, "admin"],
+  [`gh pr merge --auto --merge ${BIND}`, "auto"],
+  [`gh pr merge my-branch -R o/r --rebase ${BIND}`, "branch with repo"],
+  [`echo go && (gh pr merge 7 --squash ${BIND})`, "compound"],
+  [`gh -R o/r pr merge 7 --squash ${BIND}`, "global repo flag"],
+  [`gh pr \\\n merge 7 --squash ${BIND}`, "line continuation"],
+  [`gh api -X PUT repos/o/r/pulls/7/merge -f merge_method=squash -f sha=${SHA}`, "api put"],
+  [`gh api \\\n --method PUT repos/o/r/pulls/7/merge -f sha=${SHA}`, "api continuation"],
 ];
 
 for (const [command, label] of MERGES) {
@@ -106,7 +111,7 @@ for (const [command, label] of MERGES) {
 }
 
 test("a worker may merge a PR that has no checks", async () => {
-  const result = await workerRuns("gh pr merge 7 --squash", []);
+  const result = await workerRuns(`gh pr merge 7 --squash ${BIND}`, []);
   assert.doesNotMatch(result, /refused/);
   assert.equal(existsSync(merged), true);
 });
@@ -121,7 +126,53 @@ test("a worker is refused a GraphQL merge", async () => {
 });
 
 test("a worker is refused a merge when the check lookup fails", async () => {
-  const result = await workerRuns("gh pr merge 7 --squash", null);
+  const result = await workerRuns(`gh pr merge 7 --squash ${BIND}`, null);
   assert.match(result, /could not look up the PR's checks/);
   assert.equal(existsSync(merged), false);
 });
+
+for (const [command, label] of [
+  ["gh pr merge 7 --squash", "pr"],
+  ["gh pr merge 7 --squash --match-head-commit 0000000", "pr with another sha"],
+  ["gh api -X PUT repos/o/r/pulls/7/merge", "api"],
+] as const) {
+  test(`a worker is refused a green merge not bound to the head commit (${label})`, async () => {
+    const result = await workerRuns(command, GREEN);
+    assert.match(result, /not bound to it/);
+    assert.match(result, /abc123def4567890/);
+    assert.equal(existsSync(merged), false);
+  });
+}
+
+for (const [command, label] of [
+  ["GH_REPO=x/y gh pr merge 7 --squash", "GH_REPO"],
+  ["cd /tmp && gh pr merge 7 --squash", "cd with an unnamed repo"],
+] as const) {
+  test(`a worker is refused a merge whose repository cannot be resolved (${label})`, async () => {
+    const result = await workerRuns(`${command} ${BIND}`, GREEN);
+    assert.match(result, /cannot be resolved faithfully/);
+    assert.equal(existsSync(merged), false);
+  });
+}
+
+for (const [command, label] of [
+  ["gh api graphql --input mutation.json", "input file"],
+  ["gh api graphql -F query=@mutation.graphql", "query file"],
+] as const) {
+  test(`a worker is refused a GraphQL call whose query cannot be read (${label})`, async () => {
+    const result = await workerRuns(command, GREEN);
+    assert.match(result, /Inline the query/);
+    assert.equal(existsSync(merged), false);
+  });
+}
+
+for (const [command, label] of [
+  ["gh pr merge 7 --disable-auto", "disable auto-merge"],
+  ["gh api repos/o/r/pulls/7/merge", "merge status read"],
+] as const) {
+  test(`a worker may run a non-merging command while checks are red (${label})`, async () => {
+    const result = await workerRuns(command, RED_AND_PENDING);
+    assert.doesNotMatch(result, /refused/);
+    assert.equal(existsSync(merged), true);
+  });
+}
