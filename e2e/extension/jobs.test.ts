@@ -67,10 +67,36 @@ test("a run_long result wakes the worker, and the wait is not a stall", async ()
     fleet.main.entries.map(({ entry }) => [entry.fields["status"], entry.body]),
     [["failed", "two tests fail"]],
   );
-  const tabs = records(
-    (await lab.run(["tab", "list", "--workspace", env["HERDR_WORKSPACE_ID"] ?? ""]))["tabs"],
-  );
-  assert.ok(tabs.some((tab) => tab["label"] === "job-1-tests"));
+  const labels = async (): Promise<unknown[]> =>
+    records(
+      (await lab.run(["tab", "list", "--workspace", env["HERDR_WORKSPACE_ID"] ?? ""]))["tabs"],
+    ).map((tab) => tab["label"]);
+  const deadline = Date.now() + 10_000;
+  while ((await labels()).includes("job-1-tests") && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(await labels(), ["1"]);
+});
+
+test("a finished job releases its tab while a running job's tab stays", async () => {
+  const slow = commandAwaitingGo(9);
+  h.onModel(() => ({ tool: "run_long", args: { label: "quick", command: "echo fast" } }));
+  h.onModel(() => ({ tool: "run_long", args: { label: "slow", command: slow.command } }));
+  h.onModel(() => ({ text: "waiting" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "seen" } }));
+  try {
+    worker();
+    await until(() => (existsSync(slow.ready) ? true : undefined), "the slow job to start");
+    const labels = async (): Promise<unknown[]> =>
+      records(
+        (await lab.run(["tab", "list", "--workspace", env["HERDR_WORKSPACE_ID"] ?? ""]))["tabs"],
+      ).map((tab) => tab["label"]);
+    const deadline = Date.now() + 10_000;
+    while ((await labels()).includes("job-1-quick") && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(await labels(), ["1", "job-2-slow"]);
+  } finally {
+    writeFileSync(slow.go, "");
+  }
 });
 
 test("a job keeps running across a worker restart, and its result arrives once", async () => {
