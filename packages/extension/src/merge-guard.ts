@@ -11,7 +11,7 @@ const GH_PR_MERGE = /\bgh\b([^|;&\n]*?)\bpr\s+merge\b/g;
 const GH_API = /\bgh\s+api\b/g;
 const GRAPHQL_MERGE = /\b(mergePullRequest|enablePullRequestAutoMerge)\b/;
 const MERGE_PATH = /(?:^|\/)repos\/([^/\s]+\/[^/\s]+)\/pulls\/(\d+)\/merge$/;
-const MERGE_WORDS = /\bgh\b[^|;&\n]*(?:\bpr\s+merge\b|\bapi\b[^|;&\n]*merge)/i;
+const MERGE_WORDS = /\bgh\b[^|;&\n]*\bpr\s+merge\b/;
 const EXPANSION = "\u0000";
 const URL_REF = /^https?:\/\//;
 const ENV_SHIFT = /\b(?:GH_REPO|GH_HOST)=/;

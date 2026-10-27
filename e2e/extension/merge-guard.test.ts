@@ -295,3 +295,12 @@ test("a worker may run a readable non-merging GraphQL query that contains a back
   assert.doesNotMatch(result, /refused/);
   assert.equal(existsSync(merged), true);
 });
+
+test("a worker may run a non-merging GraphQL query that mentions a merge setting and a backslash", async () => {
+  const result = await workerRuns(
+    'gh api graphql -f query=\'{ repository(owner:"o", name:"r") { mergeCommitAllowed } }\' --jq \'.data.repository.mergeCommitAllowed | tostring + "\\n"\'',
+    RED_AND_PENDING,
+  );
+  assert.doesNotMatch(result, /refused/);
+  assert.equal(existsSync(merged), true);
+});
