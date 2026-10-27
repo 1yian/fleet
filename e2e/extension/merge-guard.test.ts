@@ -304,3 +304,13 @@ test("a worker may run a non-merging GraphQL query that mentions a merge setting
   assert.doesNotMatch(result, /refused/);
   assert.equal(existsSync(merged), true);
 });
+
+for (const [command, label] of [
+  ["git commit -m 'fix gh pr merge guard'", "pr merge"],
+  ["git commit -m 'document gh api -X PUT repos/o/r/pulls/7/merge'", "api merge"],
+] as const) {
+  test(`a worker may commit a message that mentions a merge command (${label})`, async () => {
+    const result = await workerRuns(command, null);
+    assert.doesNotMatch(result, /refused/);
+  });
+}
