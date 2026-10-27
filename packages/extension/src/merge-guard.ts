@@ -11,6 +11,7 @@ const GH_PR_MERGE = /\bgh\b([^|;&\n]*?)\bpr\s+merge\b/g;
 const GH_API = /\bgh\s+api\b/g;
 const GRAPHQL_MERGE = /\b(mergePullRequest|enablePullRequestAutoMerge)\b/;
 const MERGE_PATH = /(?:^|\/)repos\/([^/\s]+\/[^/\s]+)\/pulls\/(\d+)\/merge$/;
+const MERGE_WORDS = /\bgh\b[^|;&\n]*(?:\bpr\s+merge\b|\bapi\b[^|;&\n]*(?:merge|graphql))/i;
 const EXPANSION = "\u0000";
 const URL_REF = /^https?:\/\//;
 const ENV_SHIFT = /\b(?:GH_REPO|GH_HOST)=/;
@@ -50,6 +51,8 @@ const API_FLAGS_WITH_VALUE: ReadonlySet<string> = new Set([
 
 const MERGE_GRAPHQL_REASON =
   "refused: a GraphQL merge mutation cannot be checked against the PR's checks, and a query read from --input or an @file cannot be classified. Inline the query in the command, or merge with `gh pr merge <url> --match-head-commit <sha>` once every check on the PR's head commit has completed and passed.";
+const ESCAPE_REASON =
+  "refused: a merge command that contains a backslash escape cannot be classified safely. Rewrite it without backslashes (quote the value instead), then merge again.";
 const CONTEXT_REASON =
   "refused: the merge's repository cannot be resolved faithfully (GH_REPO, GH_HOST, cd, or a similar change of context). Name the PR with its full URL or pass -R <owner/repo>, and do not change the environment or directory in the same command.";
 
@@ -166,6 +169,7 @@ function isGet(parsed: ParsedArgs): boolean {
 }
 
 function bodySha(parsed: ParsedArgs): string | undefined {
+  if (flagValues(parsed, "--input").length > 0) return undefined;
   return flagValues(parsed, ...FIELD_FLAGS)
     .filter((value) => value.startsWith("sha="))
     .at(-1)
@@ -187,7 +191,7 @@ function apiMergeAttempt(parsed: ParsedArgs): MergeAttempt | undefined {
   const target = endpointTarget(endpoint, flagValue(parsed, "--hostname"));
   const match = MERGE_PATH.exec(target.path);
   if (match?.[1] === undefined || match[2] === undefined) return undefined;
-  const repo = match[1].includes("{") ? undefined : match[1];
+  const repo = match[1] === "{owner}/{repo}" ? undefined : match[1];
   return { ref: match[2], repo, host: target.host, sha: bodySha(parsed) };
 }
 
@@ -196,8 +200,7 @@ type MergeDetection =
   | { readonly kind: "graphql" }
   | { readonly kind: "merge"; readonly attempts: readonly MergeAttempt[] };
 
-function detectMerge(raw: string): MergeDetection {
-  const command = raw.replace(/\\\r?\n/g, " ");
+function detectMerge(command: string): MergeDetection {
   const attempts: MergeAttempt[] = [];
   for (const match of command.matchAll(GH_PR_MERGE)) {
     const rest = command.slice(match.index + match[0].length);
@@ -294,7 +297,9 @@ function pinned(attempt: MergeAttempt): boolean {
   return attempt.repo !== undefined || URL_REF.test(attempt.ref ?? "");
 }
 
-export async function mergeReason(command: string): Promise<string | undefined> {
+export async function mergeReason(raw: string): Promise<string | undefined> {
+  const command = raw.replace(/\\\r?\n/g, " ");
+  if (command.includes("\\") && MERGE_WORDS.test(command)) return ESCAPE_REASON;
   const detection = detectMerge(command);
   if (detection.kind === "none") return undefined;
   if (detection.kind === "graphql") return MERGE_GRAPHQL_REASON;

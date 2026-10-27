@@ -41,7 +41,7 @@ beforeEach(async () => {
     file,
     `#!/bin/sh
 case "$1 $2" in
-  "pr view") printf '%s' "$GH_HOST" > "${hostSeen}"; cat "${checks}" ;;
+  "pr view") case "$*" in *"{"*) echo "no such repository" >&2; exit 1 ;; esac; printf '%s' "$GH_HOST" > "${hostSeen}"; cat "${checks}" ;;
   *) touch "${merged}" ;;
 esac
 `,
@@ -247,4 +247,33 @@ test("a worker may run an explicit GET with fields against the merge endpoint", 
   );
   assert.doesNotMatch(result, /refused/);
   assert.equal(existsSync(merged), true);
+});
+
+test("a worker is refused a merge whose arguments hide a flag behind a backslash escape", async () => {
+  const result = await workerRuns(
+    `gh pr merge 7 --admin --squash ${BIND} --body Disable\\ --disable-auto`,
+    GREEN,
+  );
+  assert.match(result, /backslash escape/);
+  assert.equal(existsSync(merged), false);
+});
+
+for (const [command, label] of [
+  [`gh api -X PUT 'repos/{owner}/other/pulls/7/merge' -f sha=${SHA}`, "partial owner placeholder"],
+  [`gh api -X PUT 'repos/other/{repo}/pulls/7/merge' -f sha=${SHA}`, "partial repo placeholder"],
+] as const) {
+  test(`a worker is refused a REST merge with a partly resolved repository (${label})`, async () => {
+    const result = await workerRuns(command, null);
+    assert.match(result, /could not look up/);
+    assert.equal(existsSync(merged), false);
+  });
+}
+
+test("a worker is refused a REST merge whose sha is only a query parameter beside --input", async () => {
+  const result = await workerRuns(
+    `gh api -X PUT repos/o/r/pulls/7/merge --input body.json -f sha=${SHA}`,
+    GREEN,
+  );
+  assert.match(result, /not bound to it/);
+  assert.equal(existsSync(merged), false);
 });
