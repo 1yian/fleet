@@ -308,6 +308,10 @@ Main starts, and within a minute it has brought up every lane on every host that
 - `lane(name, "stop")` stops a lane and holds it, so main leaves it alone. `lane(name, "start")` starts it. `lane(name, "restart")` restarts one lane, and `lane("all", "restart")` every lane that is not held, on every host. Ask main in plain words: "restart the fleet".
 - Each second mate runs in its own herdr workspace, `2ndmate-<lane>`, in that host's `default` session, and continues its conversation when it starts again. Each mate names itself when it starts: its Pi session and its herdr workspace read `1stmate` for main and `2ndmate-<lane>` for a second mate. A mate still in a workspace from before, `fleet-<lane>`, is found there until it restarts. To see another host's workspaces in the herdr you already use, add the host once as a machine: `herdr machine add p620 --remote-session default`.
 
+Fleet never starts the herdr server. The first `herdr` client that runs on a host starts it, and the server keeps the open-file limit of the shell that started it. Every pane costs it two or three descriptors, so a login shell with the usual soft limit of 1024 (256 on macOS) runs out and `run_long` fails with `tab_create_failed`. Raise the soft limit where the host starts its login sessions, outside this repository: `/etc/security/limits.d` on Linux, a launchd limit on macOS. Check a running server with `grep "open files" /proc/<pid>/limits` (Linux) or `launchctl limit maxfiles` (macOS).
+
+A job's tab closes when the job finishes. Its result is in the `[fleet]` message, not in the tab.
+
 The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
 | Command                                  | Does                                                                                        |

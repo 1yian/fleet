@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
+import { herdr } from "./host.ts";
 import { shimmedEnv } from "./shims.ts";
 import { StringDecoder } from "node:string_decoder";
 
@@ -223,3 +224,5 @@ const result = await run(job);
 console.log(`\n[run_long] job ${String(job.job)} exited ${String(result.exitCode)}`);
 await post(job, result);
 clearInterval(heartbeat);
+const tab = process.env["HERDR_TAB_ID"];
+if (tab !== undefined) await herdr("local", ["tab", "close", tab]).catch(() => 0);
