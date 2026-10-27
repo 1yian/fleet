@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { mergeReason } from "./merge-guard.ts";
 import { PATTERN_KILL_REASON } from "./shims.ts";
 
 const SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "run_long"]);
@@ -29,12 +30,13 @@ function guardReason(command: string): string | undefined {
   return undefined;
 }
 
-export function registerGuard(pi: ExtensionAPI): void {
-  pi.on("tool_call", (event) => {
+export function registerGuard(pi: ExtensionAPI, role: "worker" | "mate"): void {
+  pi.on("tool_call", async (event) => {
     if (!SHELL_TOOLS.has(event.toolName)) return undefined;
     const command: unknown = Reflect.get(event.input, "command");
     if (typeof command !== "string") return undefined;
-    const reason = guardReason(command);
+    const reason =
+      guardReason(command) ?? (role === "worker" ? await mergeReason(command) : undefined);
     return reason === undefined ? undefined : { block: true, reason };
   });
 }
