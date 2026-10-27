@@ -277,3 +277,21 @@ test("a worker is refused a REST merge whose sha is only a query parameter besid
   assert.match(result, /not bound to it/);
   assert.equal(existsSync(merged), false);
 });
+
+test("a worker is refused a REST merge whose endpoint carries a query string", async () => {
+  const result = await workerRuns(
+    `gh api -X PUT 'repos/o/r/pulls/7/merge?merge_method=squash' -f sha=${SHA}`,
+    RED_AND_PENDING,
+  );
+  assert.match(result, /not every check/);
+  assert.equal(existsSync(merged), false);
+});
+
+test("a worker may run a readable non-merging GraphQL query that contains a backslash", async () => {
+  const result = await workerRuns(
+    "gh api graphql -f query='{ viewer { login } }' --jq '.data.viewer.login + \"\\n\"'",
+    RED_AND_PENDING,
+  );
+  assert.doesNotMatch(result, /refused/);
+  assert.equal(existsSync(merged), true);
+});

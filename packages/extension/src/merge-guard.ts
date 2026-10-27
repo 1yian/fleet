@@ -11,7 +11,7 @@ const GH_PR_MERGE = /\bgh\b([^|;&\n]*?)\bpr\s+merge\b/g;
 const GH_API = /\bgh\s+api\b/g;
 const GRAPHQL_MERGE = /\b(mergePullRequest|enablePullRequestAutoMerge)\b/;
 const MERGE_PATH = /(?:^|\/)repos\/([^/\s]+\/[^/\s]+)\/pulls\/(\d+)\/merge$/;
-const MERGE_WORDS = /\bgh\b[^|;&\n]*(?:\bpr\s+merge\b|\bapi\b[^|;&\n]*(?:merge|graphql))/i;
+const MERGE_WORDS = /\bgh\b[^|;&\n]*(?:\bpr\s+merge\b|\bapi\b[^|;&\n]*merge)/i;
 const EXPANSION = "\u0000";
 const URL_REF = /^https?:\/\//;
 const ENV_SHIFT = /\b(?:GH_REPO|GH_HOST)=/;
@@ -180,7 +180,8 @@ function endpointTarget(
   endpoint: string,
   hostname: string | undefined,
 ): { path: string; host: string | undefined } {
-  if (!URL_REF.test(endpoint)) return { path: endpoint, host: hostname };
+  if (!URL_REF.test(endpoint))
+    return { path: endpoint.split(/[?#]/)[0] ?? endpoint, host: hostname };
   const url = new URL(endpoint);
   return { path: url.pathname, host: url.hostname === "api.github.com" ? "github.com" : url.host };
 }
