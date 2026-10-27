@@ -8,7 +8,7 @@ interface MergeAttempt {
 }
 
 const COMMAND_START =
-  "(?:^|[;&|(\\n`{]|\\$\\()\\s*(?:\\w+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup)\\s+)?(?:(?:bash|sh|zsh)\\s+-\\w*c\\s+['\"]|eval\\s+['\"]?)?";
+  "(?:^|[;&|(\\n`{]|\\$\\()\\s*(?:(?:then|do|else|elif|if|while|until|time|!)\\s+)*(?:\\w+=\\S*\\s+)*(?:(?:env|command|exec|sudo|time|nohup)\\s+)?(?:(?:bash|sh|zsh)\\s+-\\w*c\\s+['\"]|eval\\s+['\"]?)?";
 const GH_PR_MERGE = new RegExp(`${COMMAND_START}gh\\b([^|;&\\n]*?)\\bpr\\s+merge\\b`, "g");
 const GH_API = new RegExp(`${COMMAND_START}gh\\s+api\\b`, "g");
 const GRAPHQL_MERGE = /\b(mergePullRequest|enablePullRequestAutoMerge)\b/;

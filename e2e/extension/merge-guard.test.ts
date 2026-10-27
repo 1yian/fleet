@@ -314,3 +314,15 @@ for (const [command, label] of [
     assert.doesNotMatch(result, /refused/);
   });
 }
+
+for (const [command, label] of [
+  [`if true; then gh pr merge 7 --admin --squash ${BIND}; fi`, "then"],
+  [`for i in 1; do gh pr merge 7 --squash ${BIND}; done`, "do"],
+  [`if false; then true; else gh pr merge 7 --squash ${BIND}; fi`, "else"],
+] as const) {
+  test(`a worker is refused a red merge after a shell keyword (${label})`, async () => {
+    const result = await workerRuns(command, RED_AND_PENDING);
+    assert.match(result, /not every check/);
+    assert.equal(existsSync(merged), false);
+  });
+}
