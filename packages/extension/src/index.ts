@@ -219,7 +219,7 @@ function start(
   };
   const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
   registerDropJob(pi, link);
-  registerGuard(pi);
+  registerGuard(pi, role);
   const failures = new Failures(link);
   failures.register(pi);
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
