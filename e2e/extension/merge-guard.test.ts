@@ -186,6 +186,7 @@ for (const [command, label] of [
   ],
   ['gh api graphql -f query="$QUERY"', "shell variable"],
   ['gh api graphql -f query="mutation { $(cat q) }"', "command substitution"],
+  ["gh api graphql -f query=`cat mutation.graphql`", "backtick substitution"],
 ] as const) {
   test(`a worker is refused a GraphQL call it cannot classify (${label})`, async () => {
     const result = await workerRuns(command, GREEN);
@@ -237,4 +238,13 @@ test("a REST merge with placeholders is resolved against the current repository"
   );
   assert.match(result, /not every check/);
   assert.equal(existsSync(merged), false);
+});
+
+test("a worker may run an explicit GET with fields against the merge endpoint", async () => {
+  const result = await workerRuns(
+    "gh api -X GET repos/o/r/pulls/7/merge -f foo=bar",
+    RED_AND_PENDING,
+  );
+  assert.doesNotMatch(result, /refused/);
+  assert.equal(existsSync(merged), true);
 });

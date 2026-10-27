@@ -74,7 +74,7 @@ function tokenize(text: string): string[] {
     } else if (char === "'" || char === '"') {
       quote = char;
       started = true;
-    } else if (/[|;&()`\n]/.test(char)) {
+    } else if (/[|;&()\n]/.test(char)) {
       flush();
       return tokens;
     } else if (/\s/.test(char)) {
@@ -161,8 +161,8 @@ function carriesGraphqlMerge(parsed: ParsedArgs): boolean {
 
 function isGet(parsed: ParsedArgs): boolean {
   const method = flagValue(parsed, "-X", "--method");
-  const body = flagValues(parsed, ...FIELD_FLAGS, "--input").length > 0;
-  return (method === undefined || method.toUpperCase() === "GET") && !body;
+  if (method !== undefined) return method.toUpperCase() === "GET";
+  return flagValues(parsed, ...FIELD_FLAGS, "--input").length === 0;
 }
 
 function bodySha(parsed: ParsedArgs): string | undefined {
