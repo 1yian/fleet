@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -26,6 +26,7 @@ let h: Harness;
 let bin: string;
 let merged: string;
 let checks: string;
+let hostSeen: string;
 
 beforeEach(async () => {
   fleet = await startFleet({});
@@ -33,13 +34,14 @@ beforeEach(async () => {
   bin = join(h.dir, "bin");
   merged = join(h.dir, "merged");
   checks = join(h.dir, "checks.json");
+  hostSeen = join(h.dir, "host");
   mkdirSync(bin);
   const file = join(bin, "gh");
   writeFileSync(
     file,
     `#!/bin/sh
 case "$1 $2" in
-  "pr view") cat "${checks}" ;;
+  "pr view") printf '%s' "$GH_HOST" > "${hostSeen}"; cat "${checks}" ;;
   *) touch "${merged}" ;;
 esac
 `,
@@ -176,3 +178,63 @@ for (const [command, label] of [
     assert.equal(existsSync(merged), true);
   });
 }
+
+for (const [command, label] of [
+  [
+    "gh api https://api.github.com/graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'",
+    "absolute endpoint",
+  ],
+  ['gh api graphql -f query="$QUERY"', "shell variable"],
+  ['gh api graphql -f query="mutation { $(cat q) }"', "command substitution"],
+] as const) {
+  test(`a worker is refused a GraphQL call it cannot classify (${label})`, async () => {
+    const result = await workerRuns(command, GREEN);
+    assert.match(result, /GraphQL merge mutation/);
+    assert.equal(existsSync(merged), false);
+  });
+}
+
+test("a worker may run a literal GraphQL query that declares variables", async () => {
+  const result = await workerRuns(
+    "gh api graphql -f query='query($id: ID!) { node(id: $id) { id } }'",
+    GREEN,
+  );
+  assert.doesNotMatch(result, /refused/);
+  assert.equal(existsSync(merged), true);
+});
+
+test("a disable-auto on the next line does not exempt the merge before it", async () => {
+  const result = await workerRuns(
+    `gh pr merge 7 --admin --squash ${BIND}\ngh pr merge 8 --disable-auto`,
+    RED_AND_PENDING,
+  );
+  assert.match(result, /not every check/);
+  assert.equal(existsSync(merged), false);
+});
+
+test("the last method flag decides whether a REST call merges", async () => {
+  const result = await workerRuns(
+    "gh api -X GET --method PUT repos/o/r/pulls/7/merge",
+    RED_AND_PENDING,
+  );
+  assert.match(result, /not every check/);
+  assert.equal(existsSync(merged), false);
+});
+
+test("a REST merge is looked up on the host of its absolute endpoint", async () => {
+  const result = await workerRuns(
+    `gh api https://enterprise.example/api/v3/repos/o/r/pulls/7/merge -X PUT -f sha=${SHA}`,
+    GREEN,
+  );
+  assert.doesNotMatch(result, /refused/);
+  assert.equal(readFileSync(hostSeen, "utf8"), "enterprise.example");
+});
+
+test("a REST merge with placeholders is resolved against the current repository", async () => {
+  const result = await workerRuns(
+    "gh api -X PUT repos/{owner}/{repo}/pulls/7/merge",
+    RED_AND_PENDING,
+  );
+  assert.match(result, /not every check/);
+  assert.equal(existsSync(merged), false);
+});

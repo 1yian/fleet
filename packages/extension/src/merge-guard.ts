@@ -11,7 +11,7 @@ const GH_PR_MERGE = /\bgh\b([^|;&\n]*?)\bpr\s+merge\b/g;
 const GH_API = /\bgh\s+api\b/g;
 const GRAPHQL_MERGE = /\b(mergePullRequest|enablePullRequestAutoMerge)\b/;
 const MERGE_PATH = /(?:^|\/)repos\/([^/\s]+\/[^/\s]+)\/pulls\/(\d+)\/merge$/;
-const SHORT_MERGE_PATH = /(?:^|\/)pulls\/(\d+)\/merge$/;
+const EXPANSION = "\u0000";
 const URL_REF = /^https?:\/\//;
 const ENV_SHIFT = /\b(?:GH_REPO|GH_HOST)=/;
 const CWD_SHIFT = /(?:^|[\s;&|(])(?:cd|pushd|export|env)\s/;
@@ -53,6 +53,10 @@ const MERGE_GRAPHQL_REASON =
 const CONTEXT_REASON =
   "refused: the merge's repository cannot be resolved faithfully (GH_REPO, GH_HOST, cd, or a similar change of context). Name the PR with its full URL or pass -R <owner/repo>, and do not change the environment or directory in the same command.";
 
+function marked(char: string, expands: boolean): string {
+  return expands && /[$`]/.test(char) ? char + EXPANSION : char;
+}
+
 function tokenize(text: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -66,17 +70,17 @@ function tokenize(text: string): string[] {
   for (const char of text) {
     if (quote !== undefined) {
       if (char === quote) quote = undefined;
-      else current += char;
+      else current += marked(char, quote === '"');
     } else if (char === "'" || char === '"') {
       quote = char;
       started = true;
-    } else if (/\s/.test(char)) {
-      flush();
     } else if (/[|;&()`\n]/.test(char)) {
       flush();
       return tokens;
+    } else if (/\s/.test(char)) {
+      flush();
     } else {
-      current += char;
+      current += marked(char, true);
       started = true;
     }
   }
@@ -97,28 +101,31 @@ function splitFlags(args: readonly string[], withValue: ReadonlySet<string>): st
 }
 
 interface ParsedArgs {
-  readonly flags: ReadonlyMap<string, string[]>;
+  readonly entries: readonly (readonly [string, string])[];
   readonly bare: ReadonlySet<string>;
   readonly positionals: readonly string[];
 }
 
 function parseArgs(raw: readonly string[], withValue: ReadonlySet<string>): ParsedArgs {
   const args = splitFlags(raw, withValue);
-  const flags = new Map<string, string[]>();
+  const entries: [string, string][] = [];
   const bare = new Set<string>();
   const positionals: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i] ?? "";
-    if (withValue.has(token)) {
-      flags.set(token, [...(flags.get(token) ?? []), args[(i += 1)] ?? ""]);
-    } else if (token.startsWith("-")) bare.add(token);
+    if (withValue.has(token)) entries.push([token, args[(i += 1)] ?? ""]);
+    else if (token.startsWith("-")) bare.add(token);
     else positionals.push(token);
   }
-  return { flags, bare, positionals };
+  return { entries, bare, positionals };
+}
+
+function flagValues(parsed: ParsedArgs, ...names: string[]): string[] {
+  return parsed.entries.filter(([name]) => names.includes(name)).map(([, value]) => value);
 }
 
 function flagValue(parsed: ParsedArgs, ...names: string[]): string | undefined {
-  return names.flatMap((name) => parsed.flags.get(name) ?? [])[0];
+  return flagValues(parsed, ...names).at(-1);
 }
 
 function prMergeAttempt(
@@ -136,39 +143,52 @@ function prMergeAttempt(
   };
 }
 
-function carriesGraphqlMerge(parsed: ParsedArgs): boolean {
-  const fields = ["-f", "-F", "--field", "--raw-field"].flatMap((n) => parsed.flags.get(n) ?? []);
-  return (
-    parsed.flags.has("--input") ||
-    fields.some((value) => value.startsWith("query=@") || GRAPHQL_MERGE.test(value))
-  );
+const FIELD_FLAGS = ["-f", "-F", "--field", "--raw-field"];
+
+function isGraphql(endpoint: string | undefined): boolean {
+  return endpoint === "graphql" || /^https?:\/\/[^?#]*\/graphql\/?(?:[?#]|$)/.test(endpoint ?? "");
 }
 
-function sendsRequestBody(parsed: ParsedArgs): boolean {
-  return ["-f", "-F", "--field", "--raw-field", "--input"].some((name) => parsed.flags.has(name));
+function carriesGraphqlMerge(parsed: ParsedArgs): boolean {
+  const fields = flagValues(parsed, ...FIELD_FLAGS);
+  const query = fields.filter((value) => value.startsWith("query="));
+  return (
+    parsed.entries.some(([name]) => name === "--input") ||
+    query.some((value) => value.startsWith("query=@") || value.includes(EXPANSION)) ||
+    fields.some((value) => GRAPHQL_MERGE.test(value))
+  );
 }
 
 function isGet(parsed: ParsedArgs): boolean {
   const method = flagValue(parsed, "-X", "--method");
-  return (method === undefined || method.toUpperCase() === "GET") && !sendsRequestBody(parsed);
+  const body = flagValues(parsed, ...FIELD_FLAGS, "--input").length > 0;
+  return (method === undefined || method.toUpperCase() === "GET") && !body;
 }
 
 function bodySha(parsed: ParsedArgs): string | undefined {
-  const fields = ["-f", "-F", "--field", "--raw-field"].flatMap((n) => parsed.flags.get(n) ?? []);
-  return fields.find((value) => value.startsWith("sha="))?.slice(4);
+  return flagValues(parsed, ...FIELD_FLAGS)
+    .filter((value) => value.startsWith("sha="))
+    .at(-1)
+    ?.slice(4);
+}
+
+function endpointTarget(
+  endpoint: string,
+  hostname: string | undefined,
+): { path: string; host: string | undefined } {
+  if (!URL_REF.test(endpoint)) return { path: endpoint, host: hostname };
+  const url = new URL(endpoint);
+  return { path: url.pathname, host: url.hostname === "api.github.com" ? "github.com" : url.host };
 }
 
 function apiMergeAttempt(parsed: ParsedArgs): MergeAttempt | undefined {
   const endpoint = parsed.positionals[0];
   if (endpoint === undefined || isGet(parsed)) return undefined;
-  const host = flagValue(parsed, "--hostname");
-  const sha = bodySha(parsed);
-  const full = MERGE_PATH.exec(endpoint);
-  if (full?.[1] !== undefined && full[2] !== undefined)
-    return { ref: full[2], repo: full[1], host, sha };
-  const short = SHORT_MERGE_PATH.exec(endpoint);
-  if (short?.[1] !== undefined) return { ref: short[1], repo: undefined, host, sha };
-  return undefined;
+  const target = endpointTarget(endpoint, flagValue(parsed, "--hostname"));
+  const match = MERGE_PATH.exec(target.path);
+  if (match?.[1] === undefined || match[2] === undefined) return undefined;
+  const repo = match[1].includes("{") ? undefined : match[1];
+  return { ref: match[2], repo, host: target.host, sha: bodySha(parsed) };
 }
 
 type MergeDetection =
@@ -187,8 +207,7 @@ function detectMerge(raw: string): MergeDetection {
   for (const match of command.matchAll(GH_API)) {
     const rest = command.slice(match.index + match[0].length);
     const parsed = parseArgs(tokenize(rest), API_FLAGS_WITH_VALUE);
-    if (parsed.positionals[0] === "graphql" && carriesGraphqlMerge(parsed))
-      return { kind: "graphql" };
+    if (isGraphql(parsed.positionals[0]) && carriesGraphqlMerge(parsed)) return { kind: "graphql" };
     const attempt = apiMergeAttempt(parsed);
     if (attempt !== undefined) attempts.push(attempt);
   }
