@@ -18,8 +18,10 @@ test(
     });
     socket.setEncoding("utf8");
     let reply = "";
+    let failure = "";
     socket.on("data", (chunk: string) => (reply += chunk));
-    const closed = once(socket, "close");
+    socket.on("error", (error: NodeJS.ErrnoException) => (failure = error.code ?? error.message));
+    const closed = new Promise((resolve) => socket.once("close", resolve));
     await once(socket, "connect");
 
     const pi = h.startPi("late-probe");
@@ -35,7 +37,10 @@ test(
     );
     await closed;
     await stopped;
-    assert.match(reply, /^HTTP\/1\.1 404 /);
+    assert.ok(
+      reply.startsWith("HTTP/1.1 404 ") || (reply === "" && failure === "ECONNRESET"),
+      `the handshake got neither a 404 nor a reset: ${JSON.stringify({ reply, failure })}`,
+    );
     assert.equal(h.calls.length, 1);
   },
 );
