@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "./cardd.ts";
@@ -46,7 +46,7 @@ function gateRemote(
   remote: string,
   gate: "allowed" | "blocked",
 ): Record<string, string> {
-  const folder = realpathSync(dirname(clone));
+  const folder = dirname(clone);
   const envrc = join(folder, ".envrc");
   const rewrite = `export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=url.${remote}.insteadOf GIT_CONFIG_VALUE_0=gated://site\n`;
   writeFileSync(envrc, rewrite);
