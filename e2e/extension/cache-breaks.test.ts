@@ -85,7 +85,7 @@ test("main records why its prompt cache broke and shows whether its cache is war
   assert.ok(!(await lab.screen(pane)).includes("cache "), "no cache state before a request");
   await ask();
   await status("cache warm");
-  await status("cache cold <1m");
+  await status("cache cold");
   await ask();
   assert.deepEqual(recordedBreaks(file), [], "a warm cache read is not a break");
   await status("cache warm");
@@ -94,29 +94,29 @@ test("main records why its prompt cache broke and shows whether its cache is war
   h.command({ type: "add_tool", name: "extra_tool" });
   await ask();
   await status("cache warm");
-  await status("broke <1m tools");
+  assert.ok(!(await lab.screen(pane)).includes("broke"), "no break history in the line");
   await ask();
   await status("cache warm");
-  await status("broke <1m tools");
+  assert.ok(!(await lab.screen(pane)).includes("broke"), "no break history in the line");
   assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   h.command({ type: "model", id: "quick" });
   await h.waitFor((event) => event["type"] === "model_set", "the model switch");
   await ask();
   await status("cache warm");
-  await status("broke <1m model");
+  assert.ok(!(await lab.screen(pane)).includes("broke"), "no break history in the line");
   assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   h.command({ type: "system", text: SECRET_SYSTEM_TEXT });
   await ask();
   await status("cache warm");
-  await status("broke <1m prompt");
+  assert.ok(!(await lab.screen(pane)).includes("broke"), "no break history in the line");
   assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   await new Promise((resolve) => setTimeout(resolve, FAKE_CACHE_LIFETIME_MS + 1_000));
   await ask();
   await status("cache warm");
-  await status("broke <1m idle");
+  assert.ok(!(await lab.screen(pane)).includes("broke"), "no break history in the line");
   assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
   const breaks = recordedBreaks(file);
