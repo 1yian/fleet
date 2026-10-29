@@ -19,7 +19,12 @@ afterEach(() => {
 });
 
 function runnerOf(mode: string, port: number): ChildProcess {
-  const env = { ...process.env, FLEET_E2E_TMPDIR: outer, LEAK_MODE: mode, LEAK_REPORT_PORT: String(port) };
+  const env = {
+    ...process.env,
+    FLEET_E2E_TMPDIR: outer,
+    LEAK_MODE: mode,
+    LEAK_REPORT_PORT: String(port),
+  };
   Reflect.deleteProperty(env, "NODE_TEST_CONTEXT");
   return spawn("node", ["--test", FIXTURE], {
     env,
