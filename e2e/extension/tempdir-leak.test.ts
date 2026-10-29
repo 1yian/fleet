@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 function runnerOf(mode: string, port: number): ChildProcess {
-  const env = { ...process.env, TMPDIR: outer, LEAK_MODE: mode, LEAK_REPORT_PORT: String(port) };
+  const env = { ...process.env, FLEET_E2E_TMPDIR: outer, LEAK_MODE: mode, LEAK_REPORT_PORT: String(port) };
   Reflect.deleteProperty(env, "NODE_TEST_CONTEXT");
   return spawn("node", ["--test", FIXTURE], {
     env,
@@ -70,24 +70,24 @@ async function runUntilWaiting(signal: NodeJS.Signals, target: "runner" | "test"
 
 const leftovers = (): string[] => readdirSync(outer);
 
-test("a passing run leaves nothing in its TMPDIR", async () => {
+test("a passing run leaves nothing in its run folder", async () => {
   assert.equal(await runToEnd("pass"), 0);
   assert.deepEqual(leftovers(), []);
 });
 
-test("a failing run leaves nothing in its TMPDIR", async () => {
+test("a failing run leaves nothing in its run folder", async () => {
   assert.notEqual(await runToEnd("fail"), 0);
   assert.deepEqual(leftovers(), []);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  test(`a run cancelled with ${signal} leaves nothing in its TMPDIR`, async () => {
+  test(`a run cancelled with ${signal} leaves nothing in its run folder`, async () => {
     await runUntilWaiting(signal, "test");
     assert.deepEqual(leftovers(), []);
   });
 }
 
-test("a run whose runner is interrupted leaves nothing in its TMPDIR", async () => {
+test("a run whose runner is interrupted leaves nothing in its run folder", async () => {
   await runUntilWaiting("SIGINT", "runner");
   assert.deepEqual(leftovers(), []);
 });

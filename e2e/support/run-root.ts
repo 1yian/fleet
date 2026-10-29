@@ -4,7 +4,7 @@ import { join } from "node:path";
 const PREFIX = "fr-";
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-const outerTmpdir = realpathSync("/tmp");
+const outerTmpdir = realpathSync(process.env["FLEET_E2E_TMPDIR"] ?? "/tmp");
 
 function alive(pid: number): boolean {
   try {
