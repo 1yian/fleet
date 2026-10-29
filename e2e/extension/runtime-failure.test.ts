@@ -31,8 +31,9 @@ function setClock(ms: number): void {
   renameSync(next, clockFile);
 }
 const isFailure = (e: Entry): boolean => e.fields["condition"] === "runtime-failure";
+const isReminder = (e: Entry): boolean => e.fields["condition"] === "runtime-failure-open";
 const laterFinding = (after: Entry) => (e: Entry) =>
-  e.id > after.id && e.kind === "finding" && !isFailure(e);
+  e.id > after.id && e.kind === "finding" && !isFailure(e) && !isReminder(e);
 const heardFailures = (mate: Session): Entry[] =>
   mate.entries.map((push) => push.entry).filter(isFailure);
 const incidentOf = (entry: Entry): { incident: number; generation: number } => {

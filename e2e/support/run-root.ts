@@ -1,11 +1,10 @@
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 const PREFIX = "fr-";
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-const outerTmpdir = tmpdir();
+const outerTmpdir = realpathSync(process.env["FLEET_E2E_TMPDIR"] ?? "/tmp");
 
 function alive(pid: number): boolean {
   try {
