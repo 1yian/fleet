@@ -279,6 +279,7 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 
 ## End-to-end tests
 
+- `e2e/support/run-root.ts` puts every test folder under one run folder in the real path of `/tmp`, whatever `TMPDIR` is. macOS's own `TMPDIR` is a long folder under `/var`, which is a symlink to `/private/var`. A memory profile's lock socket under it goes over macOS's 103-byte limit, so the memory never loads. And a path through the symlink differs from the real path that a pane's cwd and Pi report, so a test that builds one from the other no longer matches. The real `/tmp` keeps both the same on Linux and macOS.
 - `e2e/support/scratch.ts` makes a scratch copy of the repository with its own lane homes. A second mate's memory profile in a scratch home has a lock socket path longer than macOS's 103-byte limit, whatever `TMPDIR` is. So the tests that make one skip on macOS, and CI on Linux runs them.
 - `e2e/support/fake-model.ts` is a Pi extension that posts each model call to the test's control server and returns the move the test chooses. Everything else in Pi stays real.
 - `e2e/support/fake-anthropic.ts` registers a `tier` provider on Pi's real Anthropic Messages client, pointed at the control server, so the harness reads the actual request: its `cache_control` retention and whether it is a one-token warm. The harness answers with a server-sent-event stream. `harness.wire` lists the requests, with the role taken from the system prompt.
