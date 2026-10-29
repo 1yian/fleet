@@ -89,15 +89,6 @@ function numberOf(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-const SHORT_CAUSE: Record<CacheBreakCause, string> = {
-  model: "model",
-  compaction: "compact",
-  "system-prompt": "prompt",
-  tools: "tools",
-  idle: "idle",
-  other: "other",
-};
-
 function span(ms: number): string {
   const minutes = Math.ceil(ms / MINUTE_MS);
   if (ms < MINUTE_MS) return "<1m";
@@ -106,25 +97,16 @@ function span(ms: number): string {
   return `${String(Math.floor(minutes / 60))}h${rest === 0 ? "" : `${String(rest)}m`}`;
 }
 
-interface Cold {
-  readonly since: number;
-  readonly cause: CacheBreakCause;
-}
-
 interface Warmth {
   readonly answeredAt: number;
   readonly ttlMs: number;
   readonly populated: boolean;
-  readonly broke: Cold | undefined;
 }
 
 function statusText(warmth: Warmth, now: number): string {
   const expires = warmth.answeredAt + warmth.ttlMs;
-  const broke = warmth.broke;
-  const cause = broke === undefined ? "" : `${span(now - broke.since)} ${SHORT_CAUSE[broke.cause]}`;
-  if (broke !== undefined && !warmth.populated) return `cache cold ${cause}`;
-  if (now >= expires) return `cache cold ${span(now - expires)}`;
-  return `cache warm ${span(expires - now)}${broke === undefined ? "" : `, broke ${cause}`}`;
+  if (!warmth.populated || now >= expires) return "cache cold";
+  return `cache warm ${span(expires - now)}`;
 }
 
 function cacheLifetimeMs(model: { promptCache?: { short?: number; long?: number } } | undefined) {
@@ -259,12 +241,7 @@ class CacheBreakLog {
     const ttlMs = cacheLifetimeMs(ctx.modelRegistry.find(answer.provider, answer.model));
     const populated = answer.cached > 0;
     if (ttlMs === undefined || !(populated || broke)) return undefined;
-    const earlier = this.warmth;
-    const kept =
-      earlier?.populated === true && now < earlier.answeredAt + earlier.ttlMs
-        ? earlier.broke
-        : undefined;
-    return { answeredAt: now, ttlMs, populated, broke: kept };
+    return { answeredAt: now, ttlMs, populated };
   }
 
   private record(
@@ -289,7 +266,6 @@ class CacheBreakLog {
       ttlSeconds: ttl,
     });
     this.count += 1;
-    if (this.warmth !== undefined) this.warmth = { ...this.warmth, broke: { since: now, cause } };
     this.pi.appendEntry(CACHE_BREAK_ENTRY, {
       at: new Date(now).toISOString(),
       cause,
