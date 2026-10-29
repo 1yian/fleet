@@ -80,7 +80,7 @@ test("a second mate's close never refreshes another host's clone on its own host
   const before = tip(here.clone);
   const ahead = landOnRemote(here.remote, "merged-pr");
   const result = await closeInSecondMatesLane(
-    { local: here.clone, maverick: OTHER_HOSTS_PATH },
+    { local: here.clone, elsewhere: OTHER_HOSTS_PATH },
     {},
   );
 
@@ -89,7 +89,7 @@ test("a second mate's close never refreshes another host's clone on its own host
     result,
     new RegExp(`fleet on local: synced ${before.slice(0, 7)}\\.\\.${ahead.slice(0, 7)}`),
   );
-  assert.match(result, /fleet on maverick: skipped: no transport for maverick/);
+  assert.match(result, /fleet on elsewhere: skipped: no transport for elsewhere/);
   assert.doesNotMatch(result, /not a directory/);
   assert.equal(tip(here.clone), ahead);
 });
@@ -98,11 +98,11 @@ test("a second mate that names its own host refreshes that host's clone here, an
   const here = cloneWithRemote(dir, "here");
   const ahead = landOnRemote(here.remote, "merged-pr");
   const result = await closeInSecondMatesLane(
-    { p620: here.clone, maverick: OTHER_HOSTS_PATH },
+    { p620: here.clone, elsewhere: OTHER_HOSTS_PATH },
     { host: "p620" },
   );
 
   assert.match(result, /fleet on p620: synced /);
-  assert.match(result, /fleet on maverick: skipped: no transport for maverick/);
+  assert.match(result, /fleet on elsewhere: skipped: no transport for elsewhere/);
   assert.equal(tip(here.clone), ahead);
 });
