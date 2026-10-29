@@ -103,7 +103,7 @@ const waitState = (host: Scratch, lane: string, state: string) =>
     },
   );
 
-async function groupOf(lane: string): Promise<number> {
+async function paneInfo(lane: string): Promise<JsonRecord[]> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
   const workspace = workspaces.find((each) => each["label"] === `2ndmate-${lane}`);
   const listed = await lab.run([
@@ -113,9 +113,20 @@ async function groupOf(lane: string): Promise<number> {
     String(workspace?.["workspace_id"]),
   ]);
   const pane = String(records(listed["panes"])[0]?.["pane_id"]);
-  const info = records([(await lab.run(["pane", "process-info", "--pane", pane]))["process_info"]]);
-  return Number(info[0]?.["foreground_process_group_id"]);
+  return records([(await lab.run(["pane", "process-info", "--pane", pane]))["process_info"]]);
 }
+
+async function groupOf(lane: string): Promise<number> {
+  return Number((await paneInfo(lane))[0]?.["foreground_process_group_id"]);
+}
+
+const waitPi = (lane: string) =>
+  until(async () => {
+    const processes = records((await paneInfo(lane))[0]?.["foreground_processes"]);
+    return processes.some((each) => each["name"] === "pi" || each["argv0"] === "pi")
+      ? true
+      : undefined;
+  }, `${lane} to run Pi`);
 
 const sessionText = (): string =>
   readdirSync(join(h.dir, "sessions"))
@@ -250,6 +261,7 @@ test("main stops, restarts, and starts lanes with lane, its board shows them, an
     process.kill(-kicked, "SIGKILL");
     await until(async () => ((await groupOf("far")) === kicked ? undefined : true), "far to die");
     await waitState(p620, "far", "running");
+    await waitPi("far");
     assert.equal(states(here)["ops"], "stopped");
     return { tool: "board", args: {} };
   }, "mate");
