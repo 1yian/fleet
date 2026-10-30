@@ -15,21 +15,21 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-const comment = (text: string, now = false): Promise<unknown> =>
-  fleet.main.call("comment", { card: card.id, text, now });
+const comment = (text: string, later = false): Promise<unknown> =>
+  fleet.main.call("comment", { card: card.id, text, later });
 
-test("the task and each comment reach the worker, and now makes a comment a steer", async () => {
+test("the task and each comment reach the worker as a steer, and later opts in to a follow-up", async () => {
   const worker = await fleet.cardd.connect(token);
   await comment("use the v2 endpoint");
-  await comment("stop, the API is down", true);
+  await comment("when you are done, tidy up", true);
   await worker.waitForEntries(3);
 
   assert.deepEqual(
     worker.entries.map(({ entry, mode }) => [entry.author, entry.body, mode]),
     [
       ["mate:main", "the task\n\nDelivery: no-mistakes", "followUp"],
-      ["mate:main", "use the v2 endpoint", "followUp"],
-      ["mate:main", "stop, the API is down", "steer"],
+      ["mate:main", "use the v2 endpoint", "steer"],
+      ["mate:main", "when you are done, tidy up", "followUp"],
     ],
   );
 });
@@ -46,8 +46,8 @@ test("entries for an offline worker wait and arrive at connect, in order", async
 
 test("an older follow-up is resent after a newer steer reached the session file", async () => {
   const worker = await fleet.cardd.connect(token);
-  await comment("older follow-up");
-  await comment("newer steer", true);
+  await comment("older follow-up", true);
+  await comment("newer steer");
   const [task, older, newer] = await worker.waitForEntries(3);
   assert.ok(task !== undefined && older !== undefined && newer !== undefined);
   worker.ack(newer.id);
@@ -87,4 +87,23 @@ test("an unknown token is refused", async () => {
   assert.equal(stranger.welcome, undefined);
   const worker = await fleet.cardd.connect(token);
   assert.equal(worker.welcome?.role, "worker");
+});
+
+test("a done report with an unread comment is refused until the comment is taken in", async () => {
+  const worker = await fleet.cardd.connect(token, [], false);
+  const [task] = await worker.waitForEntries(1);
+  assert.ok(task !== undefined);
+  worker.ack(task.id);
+  await comment("scope changed: also cover the sidebar");
+  const [, steer] = await worker.waitForEntries(2);
+  assert.ok(steer !== undefined);
+
+  await assert.rejects(
+    worker.call("report", { status: "done", text: "finished" }),
+    /does not count yet: you have 1 unread comment.*scope changed: also cover the sidebar/s,
+  );
+  await worker.call("report", { status: "working", text: "reading the new scope" });
+  worker.ack(steer.id);
+  await fleet.main.call("board", {});
+  await worker.call("report", { status: "done", text: "finished with the sidebar" });
 });

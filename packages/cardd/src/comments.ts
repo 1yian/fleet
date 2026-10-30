@@ -55,7 +55,7 @@ function answerReply(db: DatabaseSync, session: Session, card: Card, args: Comme
   requireOwedBy(db, card, id, `mate:${session.lane}`);
   const to = withEcho(db, session, card, askersOf(db, card, id));
   const toCaptain = isCaptainsReply(db, card, id) ? { for: CAPTAIN } : {};
-  const fields = { replyTo: id, now: args.now, ...toCaptain };
+  const fields = { replyTo: id, later: args.later, ...toCaptain };
   const draft = {
     card: card.id,
     author: `mate:${session.lane}`,
@@ -105,7 +105,7 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
   const delivered = recipient === undefined ? {} : { for: route.kind };
   const own = {
     resolves: args.resolves,
-    now: args.now,
+    later: args.later,
     withdraws: args.withdraws,
     ...delivered,
     ...owes,

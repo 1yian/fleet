@@ -31,8 +31,8 @@ async function worker(task = "the task"): Promise<Pi> {
   const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
   return h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
 }
-const comment = (text: string, now = false): Promise<unknown> =>
-  fleet.main.call("comment", { card: card.id, text, now });
+const comment = (text: string, later = false): Promise<unklatern> =>
+  fleet.main.call("comment", { card: card.id, text, later });
 const fleetText = (text: string): string =>
   `[fleet] main on c-${String(card.id)} users-see-one-scrollbar: ${text}`;
 const lastUser = (turns: Turn[]): string | undefined =>
@@ -168,8 +168,8 @@ test("after a crash, recovery delivers the older follow-up once and never repeat
   h.onModel(() => ({ tool: "slow_tool" }));
   const pi = await worker("start");
   await h.waitFor((e) => e["type"] === "tool_waiting", "the tool call");
-  await comment("older follow-up");
-  await comment("newer steer", true);
+  await comment("older follow-up", true);
+  await comment("newer steer");
   await h.waitFor(delivered(OLDER), "the follow-up queued");
   await h.waitFor(delivered(NEWER), "the steer queued");
   const held = gate();
