@@ -8,7 +8,7 @@ const env = { ...process.env };
 if (faults.includes("restart-lacks-direnv") && command.includes("'restart'"))
   env["PATH"] = pathWithout("direnv");
 if (faults.includes("arrange-lacks-session") && command.includes("'arrange'"))
-  env["HERDR_SESSION"] = "fleet-lab-missing";
+  env["HERDR_SESSION"] = "not a session";
 const run = spawnSync("sh", ["-c", command], { encoding: "utf8", env });
 process.stdout.write(run.stdout);
 process.stderr.write(run.stderr);

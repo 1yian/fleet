@@ -163,6 +163,6 @@ test("/updatefleet names each host whose sidebar it could not order, and still o
   assertNoMateStarted();
   assert.match(
     report,
-    /Sidebars:\n- local: ordered\n- p620: not ordered - sh on p620 failed: herdr workspace on local failed: .*server_not_running/,
+    /Sidebars:\n- local: ordered\n- p620: not ordered - sh on p620 failed: herdr workspace on local failed: .*session name may only contain/,
   );
 });
