@@ -7,6 +7,7 @@ import {
   type OpName,
   type ReportStatus,
 } from "@fleet/protocol";
+import { requireCommentsRead } from "./deliveries.ts";
 import {
   beginAttempt,
   finishJob,
@@ -296,6 +297,7 @@ const HANDLERS: Record<OpName, Handler> = {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
     requireShortPause(args.status, args.until);
+    requireCommentsRead(db, session.id, args.status);
     const card = openCardWithPr(db, session.card, args.pr);
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
     const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];

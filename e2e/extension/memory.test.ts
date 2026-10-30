@@ -167,7 +167,7 @@ test("with memory on, main yields silently and keeps idle and mid-turn fleet mes
     "a turn ended with an error",
   );
   const assistant = messages.filter((message) => message["role"] === "assistant");
-  assert.equal(assistant.length, 3);
+  assert.equal(assistant.length, 2);
   for (const message of assistant) {
     const content = message["content"];
     assert.ok(Array.isArray(content));

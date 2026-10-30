@@ -211,7 +211,10 @@ test("with yolo on, the mate comments the worker to merge without asking; the wo
     execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
     return { tool: "report", args: { status: "done", text: "merged it", pr, merged: true } };
   }, "worker");
-  h.onModel(() => ({ tool: "comment", args: { card: 1, text: "Merge your PR now." } }), "mate");
+  h.onModel(
+    () => ({ tool: "comment", args: { card: 1, text: "Merge your PR now.", later: true } }),
+    "mate",
+  );
   h.onModel(() => ({ text: "asked the worker to merge" }), "mate");
   h.onModel(
     () => ({ tool: "close", args: { card: 1, summary: `Added the credit in ${pr}.` } }),
@@ -246,7 +249,10 @@ test("a ship card done with no PR on its branch reaches the mate, which asks the
     return { tool: "report", args: { status: "done", text: "PR opened", pr } };
   }, "worker");
   h.onModel(
-    () => ({ tool: "comment", args: { card: 1, text: "Open your PR from your task branch." } }),
+    () => ({
+      tool: "comment",
+      args: { card: 1, text: "Open your PR from your task branch.", later: true },
+    }),
     "mate",
   );
   h.onModel(() => ({ text: "asked for the PR" }), "mate");

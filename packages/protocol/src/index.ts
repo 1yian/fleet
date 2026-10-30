@@ -208,7 +208,7 @@ export const OPS = {
       ),
       text: Type.String({ minLength: 1 }),
       resolves: Type.Optional(Key),
-      now: Type.Optional(Type.Boolean()),
+      later: Type.Optional(Type.Boolean({ description: "Waits for the agent's run to end" })),
       reply: Type.Optional(
         Type.Boolean({
           description:

@@ -277,3 +277,20 @@ test("a run that ends between a running hello and its welcome leaves the worker 
     await proxy.close();
   }
 });
+
+test("a comment sent while the worker is mid-turn reaches it before its next model call", async () => {
+  h.onModel(async () => {
+    await fleet.main.call("comment", { card: card.id, text: "scope change: skip the tests" });
+    return { tool: "report", args: { status: "note", text: "running the tests" } };
+  });
+  h.onModel(() => ({ text: "changed course" }));
+  h.startPi("c-1-a1", env, [EXTENSION]);
+
+  const second = await h.waitForCall(1, "default", 30_000);
+  assert.ok(
+    second.some(
+      (turn) => turn.role === "user" && turn.text.includes("scope change: skip the tests"),
+    ),
+    "the model call after the tool result lacks the comment",
+  );
+});

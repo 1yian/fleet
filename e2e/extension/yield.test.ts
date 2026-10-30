@@ -128,7 +128,11 @@ test("yield leaves a queued fleet outcome for the next model call", async () => 
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
   await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
   await h.waitFor((event) => event["type"] === "tool_waiting", "the first tool");
-  await cleo.call("comment", { lane: "cleo", text: "The queued parser fix is ready." });
+  await cleo.call("comment", {
+    lane: "cleo",
+    text: "The queued parser fix is ready.",
+    later: true,
+  });
   await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the queued outcome");
   h.releaseTool();
   await settled();

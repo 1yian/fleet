@@ -32,6 +32,12 @@ export function confirm(db: DatabaseSync, session: string, inFile: readonly numb
 
 const QUIET_STATUSES: ReadonlySet<unknown> = new Set(["working", "paused", "note", "in-review"]);
 
+function isSteer(entry: Entry): boolean {
+  if (entry.kind !== "comment" || entry.fields["task"] === true) return false;
+  if (entry.fields["later"] === true) return false;
+  return entry.author.startsWith("mate:") || entry.author === "captain";
+}
+
 function isRoutine(entry: Entry): boolean {
   if (entry.fields["routine"] === true) return true;
   return entry.kind === "report" && QUIET_STATUSES.has(entry.fields["status"]);
@@ -86,11 +92,11 @@ export function toPush(
       entry,
       name,
       again,
-      mode: entry.fields["now"] === true ? "steer" : "followUp",
+      mode: isSteer(entry) ? "steer" : "followUp",
     } as const;
     return {
       push,
-      held: queued.has(entry.id) && !again && entry.fields["now"] !== true && isRoutine(entry),
+      held: queued.has(entry.id) && !again && !isSteer(entry) && isRoutine(entry),
     };
   });
   const holding = all.some(({ held }) => held);
@@ -202,4 +208,26 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
       resend.run(now, session, entry.id);
       return [session, ...heard];
     });
+}
+
+const HOLDS_ON_UNREAD: ReadonlySet<unknown> = new Set(["working", "note"]);
+
+export function requireCommentsRead(db: DatabaseSync, session: string, status: string): void {
+  if (HOLDS_ON_UNREAD.has(status)) return;
+  const rows = db
+    .prepare(
+      `SELECT e.author AS author, e.body AS body FROM deliveries d JOIN entries e ON e.id = d.entry
+       WHERE d.session = ? AND d.intake <> 'taken' AND e.kind = 'comment'
+         AND json_extract(e.fields, '$.task') IS NULL
+         AND json_extract(e.fields, '$.for') = 'worker'
+       ORDER BY e.id`,
+    )
+    .all(session);
+  if (rows.length === 0) return;
+  const unread = rows
+    .map((row) => `from ${sender(String(row["author"]))}: ${String(row["body"])}`)
+    .join("\n");
+  throw new Error(
+    `this ${status} report does not count yet: you have ${String(rows.length)} unread comment(s) that the fleet is delivering to you now. Read them, act on them, answer with report(status="working", text=...), then send this report again if it still holds.\n${unread}`,
+  );
 }
