@@ -31,7 +31,7 @@ async function worker(task = "the task"): Promise<Pi> {
   const env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
   return h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
 }
-const comment = (text: string, later = false): Promise<unklatern> =>
+const comment = (text: string, later = false): Promise<unknown> =>
   fleet.main.call("comment", { card: card.id, text, later });
 const fleetText = (text: string): string =>
   `[fleet] main on c-${String(card.id)} users-see-one-scrollbar: ${text}`;
