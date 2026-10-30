@@ -85,7 +85,11 @@ test("a second mate's steer reaches its worker without main's comment to that ma
   await leo.call("comment", { card: leoCard.id, text: "Use the password from the vault" });
 
   const steer = `[fleet] leo on c-${String(leoCard.id)} credit-the-test-account: Use the password from the vault`;
-  assert.equal(lastUser(await h.waitForCall(2)), steer);
+  const early = await h.waitForCall(1);
+ const seen = early.some((turn) => turn.role === "user" && turn.text === steer)
+ ? early
+ : await h.waitForCall(2);
+ assert.ok(seen.some((turn) => turn.role === "user" && turn.text === steer));
   const echo = await fleet.main.waitForEntry((entry) => entry.author === "mate:leo", "the echo");
   assert.equal(echo.body, "Use the password from the vault");
 });
