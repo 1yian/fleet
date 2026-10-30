@@ -40,7 +40,7 @@ const alive = (pid: number): boolean => {
 
 const LAUNCHER = `
 const { spawn } = require("node:child_process");
-const [cwd, script, ...rest] = process.argv.slice(1);
+const [cwd, script, ...rest] = process.argv.slice(2);
 spawn("sh", ["-c", script, "sh", ...rest], { cwd, detached: true, stdio: "ignore" }).unref();
 `;
 
