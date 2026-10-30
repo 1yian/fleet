@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
@@ -37,8 +40,8 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-const fleet = (args: readonly string[]): JsonRecord[] => {
-  const out = here.fleet([...args, "--json"], { ...lab.env, HERDR_SESSION: lab.name });
+const fleet = (args: readonly string[], extra: Record<string, string> = {}): JsonRecord[] => {
+  const out = here.fleet([...args, "--json"], { ...lab.env, HERDR_SESSION: lab.name, ...extra });
   const parsed: unknown = JSON.parse(out);
   return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
 };
@@ -67,15 +70,26 @@ test("fleet starts a herdr server that is not running, and starts the lanes agai
   assert.equal(workspaces.filter((each) => each["label"] === "2ndmate-ops").length, 1);
 });
 
-test("a recorded pane that herdr no longer has counts as a mate that is down", async () => {
+test("a recorded pane that is gone when herdr is asked about it counts as a mate that is down", async () => {
   fleet(["up"]);
   await until(() => (state() === "running" ? true : undefined), "ops to run");
-  const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
-  const workspace = String(
-    workspaces.find((each) => each["label"] === "2ndmate-ops")?.["workspace_id"],
+  const bin = join(here.parent, "vanishing-bin");
+  const marker = join(here.parent, "pane-vanished");
+  mkdirSync(bin);
+  const real = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = "pane process-info" ] && [ ! -e '${marker}' ]; then
+  touch '${marker}'
+  '${real}' pane close "$4" --session "$HERDR_SESSION" >/dev/null
+fi
+exec '${real}' "$@"
+`,
+    { mode: 0o755 },
   );
-  const panes = records((await lab.run(["pane", "list", "--workspace", workspace]))["panes"]);
-  const pane = String(panes[0]?.["pane_id"]);
-  await lab.run(["pane", "close", pane]);
-  assert.equal(state(), "down");
+  const out = fleet(["up"], { PATH: `${bin}:${process.env["PATH"] ?? ""}` });
+  assert.equal(out.find((row) => row["lane"] === "ops")?.["action"], "started");
+  assert.ok(existsSync(marker), "the pane was closed under the check");
+  await until(() => (state() === "running" ? true : undefined), "ops to run again");
 });
