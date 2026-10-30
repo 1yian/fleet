@@ -10,6 +10,11 @@ const ARCHIVE_SCRIPT = readFileSync(
   "utf8",
 );
 
+const STOP_PROCS_SCRIPT = readFileSync(
+  fileURLToPath(new URL("./stop-procs.sh", import.meta.url)),
+  "utf8",
+);
+
 type Attempt = OpResult<"close.begin">["attempts"][number];
 
 const ORIGIN_BASE_IF_FETCHED = `origin=""
@@ -176,17 +181,37 @@ async function unlandedWarning(
   return `c-${String(card)} was not closed. ${left.join("; ")}:\n${detail.join("\n")}\nIf this work landed elsewhere (another card's branch or PR), call close again with confirm=true: the card ends Done and this work is archived first. If it did not land and should not end Done, land it, or end it with close(card, summary=<why it is dropped>, landed=false).`;
 }
 
-async function retire(attempt: Attempt): Promise<string | null> {
+interface Retired {
+  archive: string | null;
+  stopped: string[];
+}
+
+function stoppedBy(session: string, out: string): string[] {
+  return out
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => {
+      const [pid = "", how = "", ...command] = line.split("\t");
+      const result =
+        how === "TERM" ? "stopped by TERM" : how === "KILL" ? "needed KILL" : "still running";
+      return `${session} pid ${pid} (${command.join(" ").trim()}) ${result}`;
+    });
+}
+
+async function retire(attempt: Attempt): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const tree = worktreeOf(listed, session);
   const own = field(tree, "branch");
   const drop = own === undefined || own === branch ? [branch] : [branch, own];
+  let stopped: string[] = [];
   if (tree !== undefined) {
     const workspace = field(tree, "open_workspace_id");
     if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
     const path = field(tree, "path") ?? "";
+    const found = await onHost(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
+    stopped = stoppedBy(session, found);
     await onHost(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
@@ -206,7 +231,7 @@ async function retire(attempt: Attempt): Promise<string | null> {
       ])
     ).trim();
   }
-  return archive === "" ? null : archive;
+  return { archive: archive === "" ? null : archive, stopped };
 }
 
 export async function close(
@@ -227,11 +252,13 @@ export async function close(
   const warning = await unlandedWarning(id, plan, confirm === true);
   if (warning !== undefined) return warning;
   const archives: string[] = [];
+  const stopped: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
   for (const attempt of plan.attempts) {
     try {
-      const path = await retire(attempt);
-      if (path !== null) archives.push(`${attempt.host}:${path}`);
+      const retired = await retire(attempt);
+      if (retired.archive !== null) archives.push(`${attempt.host}:${retired.archive}`);
+      stopped.push(...retired.stopped);
     } catch (error) {
       if (attempt.live || !(error instanceof HostUnreachable)) throw error;
       left.push({ session: attempt.session, host: attempt.host, reason: error.message });
@@ -244,19 +271,21 @@ export async function close(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
   const landing = moved === "" ? "" : ` ${moved}`;
-  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found)}`;
+  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, stopped)}`;
 }
 
 function outcome(
   archives: readonly string[],
   left: readonly { session: string; host: string; reason: string }[],
   clones: readonly string[],
+  stopped: readonly string[],
 ): string {
+  const ended = stopped.length === 0 ? "" : ` Stopped leftover processes: ${stopped.join("; ")}.`;
   const kept = archives.length === 0 ? "" : ` Unlanded work is archived in ${archives.join(", ")}.`;
   const stayed =
     left.length === 0
       ? ""
       : ` Left in place: ${left.map((each) => `${each.host} ${each.session} (${each.reason})`).join("; ")}.`;
   const found = clones.length === 0 ? "" : ` Clones: ${clones.join("; ")}.`;
-  return `${kept}${stayed}${found}`;
+  return `${ended}${kept}${stayed}${found}`;
 }
