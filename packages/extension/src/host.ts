@@ -201,20 +201,37 @@ export function worktreeOf(
 async function foreground(
   host: string,
   pane: string,
-): Promise<{ group: unknown; shell: unknown; processes: Record<string, unknown>[] }> {
+): Promise<{
+  missing: boolean;
+  group: unknown;
+  shell: unknown;
+  processes: Record<string, unknown>[];
+}> {
   const reply: Record<string, unknown> = await herdr(host, [
     "pane",
     "process-info",
     "--pane",
     pane,
   ]).catch((error: unknown) => {
-    if (error instanceof Error && error.message.includes("pane_not_found")) return {};
+    if (error instanceof Error && error.message.includes("pane_not_found"))
+      return { missing: true };
     throw error;
   });
   const info = reply["process_info"];
-  if (!isRecord(info)) return { group: undefined, shell: undefined, processes: [] };
+  if (!isRecord(info))
+    return {
+      missing: reply["missing"] === true,
+      group: undefined,
+      shell: undefined,
+      processes: [],
+    };
   const processes = records(info["foreground_processes"]);
-  return { group: info["foreground_process_group_id"], shell: info["shell_pid"], processes };
+  return {
+    missing: false,
+    group: info["foreground_process_group_id"],
+    shell: info["shell_pid"],
+    processes,
+  };
 }
 
 function isPi(process: Record<string, unknown>): boolean {
@@ -242,4 +259,8 @@ export async function piPids(host: string, pane: string): Promise<number[]> {
 export async function shellIdle(host: string, pane: string): Promise<boolean> {
   const { group, shell } = await foreground(host, pane);
   return group !== undefined && group === shell;
+}
+
+export async function paneMissing(host: string, pane: string): Promise<boolean> {
+  return (await foreground(host, pane)).missing;
 }
