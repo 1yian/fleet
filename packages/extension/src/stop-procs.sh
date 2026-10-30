@@ -23,7 +23,8 @@ snapshot() {
     ps -axo pid=,ppid=,stat=,args= | sed 's/^ */P /'
   } | ROOT=$root SELF=$$ awk '
     BEGIN { ROOT = ENVIRON["ROOT"]; SELF = ENVIRON["SELF"] }
-    function pathchar(c) { return c ~ /^[A-Za-z0-9._-]$/ }
+    function startsPath(c) { return c == "" || c ~ /^[ \t"\x27=:,(]$/ }
+    function endsPath(c) { return c == "" || c ~ /^[ \t"\x27\/:,]$/ }
     function below(pid,   p, n) {
       for (p = pid; p != "" && p != 0 && n < 64; p = parent[p]) {
         if (p == SELF) return 1
@@ -37,7 +38,7 @@ snapshot() {
       while ((at = index(rest, ROOT)) > 0) {
         before = (skipped + at > 1) ? substr(s, skipped + at - 1, 1) : ""
         after = substr(rest, at + length(ROOT), 1)
-        if (!pathchar(before) && !pathchar(after)) return 1
+        if (startsPath(before) && endsPath(after)) return 1
         skipped += at
         rest = substr(rest, at + 1)
       }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -38,9 +38,23 @@ const alive = (pid: number): boolean => {
   }
 };
 
-async function closeWithLeftover(body: string): Promise<{ pid: number; result: string }> {
+const LAUNCHER = `
+const { spawn } = require("node:child_process");
+const [cwd, script, ...rest] = process.argv.slice(1);
+spawn("sh", ["-c", script, "sh", ...rest], { cwd, detached: true, stdio: "ignore" }).unref();
+`;
+
+async function closeWithLeftover(
+  body: string,
+  options: { arg?: string; cwd?: string } = {},
+): Promise<{ pid: number; result: string }> {
   const pidFile = join(h.dir, "leftover.pid");
-  const start = `nohup setsid sh -c 'echo $$ > "${pidFile}"; ${body}' >/dev/null 2>&1 </dev/null &\nwhile [ ! -s "${pidFile}" ]; do sleep 0.1; done`;
+  const launcher = join(h.dir, "launch.cjs");
+  writeFileSync(launcher, LAUNCHER);
+  const script = `echo $$ > "${pidFile}"; ${body}`;
+  const extra = options.arg === undefined ? "" : ` '${options.arg}'`;
+  const cwd = options.cwd === undefined ? '"$PWD"' : `'${options.cwd}'`;
+  const start = `node "${launcher}" ${cwd} '${script}'${extra}\ni=0; while [ ! -s "${pidFile}" ]; do i=$((i+1)); [ $i -gt 100 ] && { echo "leftover did not start"; exit 1; }; sleep 0.1; done`;
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
@@ -90,4 +104,29 @@ test("close kills a leftover process that ignores TERM", async () => {
 test("close says nothing about processes when none were left", async () => {
   const { result } = await closeWithLeftover("exit 0");
   assert.equal(result, "c-1 is done.");
+});
+
+const survives = async (arg: (worktree: string) => string): Promise<void> => {
+  const { pid, result } = await closeWithLeftover("while :; do sleep 1; done", {
+    arg: arg(`${clone}.worktrees/c-1-a1`),
+    cwd: h.dir,
+  });
+  try {
+    assert.equal(result, "c-1 is done.");
+    assert.equal(alive(pid), true);
+  } finally {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      void 0;
+    }
+  }
+};
+
+test("close leaves a process that names a sibling directory of the worktree", async () => {
+  await survives((worktree) => `${worktree}+cache/server.js`);
+});
+
+test("close leaves a process that names the worktree path under another prefix", async () => {
+  await survives((worktree) => `/backup${worktree}/server.js`);
 });
