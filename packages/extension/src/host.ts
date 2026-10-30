@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { hostname } from "node:os";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -49,10 +49,62 @@ const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
     ? `killed by ${error.signal}`
     : `exit status ${String(error.code)}`;
 
+const OPEN_FILES = 65_536;
+const SERVER_WAIT_MS = 30_000;
+const RAISE_OPEN_FILES = `hard=$(ulimit -Hn); soft=$(ulimit -Sn); want=${String(OPEN_FILES)}; if [ "$hard" != unlimited ] && [ "$hard" -lt "$want" ]; then want=$hard; fi; if [ "$soft" != unlimited ] && [ "$soft" -lt "$want" ]; then ulimit -Sn "$want" 2>/dev/null; fi; exec "$@"`;
+
+const serverMissing = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes("server_not_running");
+
+let starting: Promise<void> | undefined;
+
+function startServer(session: string | undefined): Promise<void> {
+  starting ??= (async () => {
+    const select = session === undefined ? [] : ["--session", session];
+    const server = spawn("sh", ["-c", RAISE_OPEN_FILES, "herdr", "herdr", "server", ...select], {
+      detached: true,
+      stdio: "ignore",
+    });
+    server.unref();
+    const child = { exited: false };
+    server.once("exit", () => {
+      child.exited = true;
+    });
+    const deadline = Date.now() + SERVER_WAIT_MS;
+    while (Date.now() < deadline) {
+      const up = await herdrOnce("local", ["workspace", "list"], true).then(
+        () => true,
+        (error: unknown) => !serverMissing(error),
+      );
+      if (up) return;
+      if (child.exited) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("herdr server did not start");
+  })().finally(() => {
+    starting = undefined;
+  });
+  return starting;
+}
+
 export async function herdr(
   host: string,
   args: readonly string[],
   probe = false,
+): Promise<Record<string, unknown>> {
+  try {
+    return await herdrOnce(host, args, probe);
+  } catch (error) {
+    if (!serverMissing(error) || transport(host).length > 0) throw error;
+    await startServer(process.env["HERDR_SESSION"]);
+    return herdrOnce(host, args, probe);
+  }
+}
+
+async function herdrOnce(
+  host: string,
+  args: readonly string[],
+  probe: boolean,
 ): Promise<Record<string, unknown>> {
   const session = process.env["HERDR_SESSION"];
   const split = args.includes("--") ? args.indexOf("--") : args.length;
@@ -150,7 +202,16 @@ async function foreground(
   host: string,
   pane: string,
 ): Promise<{ group: unknown; shell: unknown; processes: Record<string, unknown>[] }> {
-  const info = (await herdr(host, ["pane", "process-info", "--pane", pane]))["process_info"];
+  const reply: Record<string, unknown> = await herdr(host, [
+    "pane",
+    "process-info",
+    "--pane",
+    pane,
+  ]).catch((error: unknown) => {
+    if (error instanceof Error && error.message.includes("pane_not_found")) return {};
+    throw error;
+  });
+  const info = reply["process_info"];
   if (!isRecord(info)) return { group: undefined, shell: undefined, processes: [] };
   const processes = records(info["foreground_processes"]);
   return { group: info["foreground_process_group_id"], shell: info["shell_pid"], processes };
