@@ -205,8 +205,8 @@ test("with yolo on, the mate comments the worker to merge without asking; the wo
   const pr = "https://github.com/acme/site/pull/3";
   gh.setPr(pr, "OPEN");
   scriptOperation(() => ({ tool: "report", args: { status: "done", text: "credit added", pr } }));
-  h.onModel(() => ({ text: "reported" }), "worker");
-  h.onModel((turns) => {
+  h.onModel(async (turns) => {
+    await h.waitForCall(4, "mate", WORKER_WAIT_MS);
     assert.match(lastUser(turns) ?? "", /Merge your PR now/);
     execFileSync("gh", ["pr", "merge", pr, "--squash"], { env: { ...process.env, ...gh.env } });
     return { tool: "report", args: { status: "done", text: "merged it", pr, merged: true } };
@@ -240,8 +240,8 @@ test("with yolo on, the mate comments the worker to merge without asking; the wo
 test("a ship card done with no PR on its branch reaches the mate, which asks the worker to open one", async () => {
   const pr = "https://github.com/acme/site/pull/4";
   scriptOperation(() => ({ tool: "report", args: { status: "done", text: "fixed" } }));
-  h.onModel(() => ({ text: "reported" }), "worker");
-  h.onModel((turns) => {
+  h.onModel(async (turns) => {
+    await h.waitForCall(4, "mate", WORKER_WAIT_MS);
     assert.match(lastUser(turns) ?? "", /Open your PR/);
     return { tool: "report", args: { status: "done", text: "PR opened", pr } };
   }, "worker");
