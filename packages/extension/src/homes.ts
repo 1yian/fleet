@@ -11,7 +11,15 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { arrangeHere, claimFollowers } from "./arrange.ts";
-import { field, herdr as herdrOn, piRunning, quote, records, shellIdle } from "./host.ts";
+import {
+  field,
+  herdr as herdrOn,
+  paneMissing,
+  piRunning,
+  quote,
+  records,
+  shellIdle,
+} from "./host.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
   isRecord,
@@ -125,7 +133,8 @@ async function running(lane: string): Promise<boolean> {
   if (workspace === undefined) return false;
   const pane = await panesOf(workspace);
   if (pane === undefined) return false;
-  return (await piRunning("local", pane)) || !(await shellIdle("local", pane));
+  const alive = (await piRunning("local", pane)) || !(await shellIdle("local", pane));
+  return alive && !(await paneMissing("local", pane));
 }
 
 export async function status(root: string): Promise<Status[]> {

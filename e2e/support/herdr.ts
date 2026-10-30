@@ -11,11 +11,13 @@ const WAIT_MS = 30_000;
 export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
   private server: ChildProcess | undefined;
+  env: Record<string, string> = {};
   private disarm = (): void => undefined;
 
   static async start(env: Record<string, string>): Promise<HerdrLab> {
     const lab = new HerdrLab();
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
+    lab.env = { ...env };
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawn("herdr", ["server", "--session", lab.name], {
       env: { ...process.env, ...env, HERDR_SESSION: lab.name },
@@ -81,10 +83,18 @@ export class HerdrLab {
     process.stderr.write(await this.report().catch((error: unknown) => `${String(error)}\n`));
   }
 
+  async killServer(): Promise<void> {
+    const server = this.server;
+    if (server?.exitCode !== null || server.signalCode !== null) return;
+    const exited = new Promise((resolve) => server.once("exit", resolve));
+    server.kill("SIGKILL");
+    await exited;
+  }
+
   async stop(): Promise<void> {
     await this.text(["session", "stop", this.name]).catch(() => "");
     const server = this.server;
-    if (server?.exitCode === null) {
+    if (server?.exitCode === null && server.signalCode === null) {
       const exited = new Promise((resolve) => server.once("exit", resolve));
       server.kill("SIGKILL");
       await exited;
