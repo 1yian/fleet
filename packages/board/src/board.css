@@ -1646,3 +1646,21 @@ button.event-head:hover .line {
     padding: 14px;
   }
 }
+.schedule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 4px;
+}
+.schedule-row .when {
+  font-weight: 600;
+}
+.schedule-row .route {
+  color: var(--faint);
+}
+.schedule-row .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

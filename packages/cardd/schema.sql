@@ -176,6 +176,18 @@ CREATE TABLE projects (
   default_base TEXT NOT NULL DEFAULT 'main',
   profile TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(profile)), yolo INTEGER NOT NULL DEFAULT 0 CHECK (yolo IN (0, 1)), repo TEXT) STRICT;
 
+CREATE TABLE schedules (
+  id INTEGER PRIMARY KEY,
+  owner TEXT NOT NULL REFERENCES lanes (name),
+  recipient TEXT NOT NULL REFERENCES lanes (name),
+  at TEXT NOT NULL,
+  on_date TEXT,
+  timezone TEXT NOT NULL,
+  text TEXT NOT NULL,
+  since INTEGER NOT NULL,
+  fired TEXT
+) STRICT;
+
 CREATE TABLE secrets (
   name TEXT PRIMARY KEY,
   value BLOB NOT NULL

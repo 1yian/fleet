@@ -5,11 +5,13 @@ import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { ActivityMessage, LandingFields } from "./progress.ts";
 import { ReportStatus } from "./report.ts";
-import { PlanSchema, WakeArgsSchema } from "./wakes.ts";
+import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
+import { PlanSchema } from "./wakes.ts";
 
 export * from "./branch.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
+export * from "./schedules.ts";
 export * from "./cooldowns.ts";
 export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
 
@@ -340,11 +342,7 @@ export const OPS = {
     args: Type.Object({}),
     result: Type.Boolean(),
   },
-  wake: {
-    roles: ["mate"],
-    args: WakeArgsSchema,
-    result: Type.Object({ entry: Type.Integer() }),
-  },
+  ...SCHEDULE_OPS,
   ...INCIDENT_OPS,
   ...JOB_OPS,
   ...MAINTENANCE_OPS,
@@ -396,6 +394,7 @@ export const BoardSchema = Type.Object({
       merge: Type.Boolean(),
     }),
   ),
+  schedules: Type.Array(ScheduleSchema),
 });
 export type Board = Static<typeof BoardSchema>;
 

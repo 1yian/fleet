@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { Board as BoardData, BoardCard } from "@fleet/protocol";
+import type { Board as BoardData, BoardCard, Schedule } from "@fleet/protocol";
 import {
   arrange,
   openIn,
@@ -149,7 +149,33 @@ function Heads(props: { readonly columns: Columns }) {
   );
 }
 
+const cadenceOf = (schedule: Schedule): string => {
+  if (schedule.on !== null) return `${schedule.on} ${schedule.at}`;
+  return `daily ${schedule.at}`;
+};
+
+function Schedules(props: { readonly schedules: readonly Schedule[] }) {
+  if (props.schedules.length === 0) return null;
+  return (
+    <section className="rail-section" aria-label="Schedules">
+      <h4>Schedules</h4>
+      {props.schedules.map((schedule) => (
+        <div key={schedule.id} className="schedule-row">
+          <span className="when">
+            {cadenceOf(schedule)} {schedule.timezone}
+          </span>
+          <span className="route">
+            {schedule.owner} to {schedule.to}
+          </span>
+          <span className="text">{schedule.text}</span>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function Rail(props: {
+  readonly schedules: readonly Schedule[];
   readonly columns: Columns;
   readonly now: number;
   readonly row: Render;
@@ -170,6 +196,7 @@ function Rail(props: {
         <Hidden label="Dropped" glyph="dropped" cards={columns.dropped} row={props.row} />
         <Hidden label="Older done" glyph="done" cards={columns.older} row={props.row} />
       </section>
+      <Schedules schedules={props.schedules} />
       {columns.mates.length === 0 ? null : (
         <section className="rail-section" aria-label="Mates">
           <h4>Mates</h4>
@@ -216,7 +243,13 @@ export function Kanban(props: Props) {
           <Lane key={lane.project} lane={lane} render={cardOf} row={row} />
         ))}
       </div>
-      <Rail columns={columns} now={now} row={row} onOpen={props.onOpen} />
+      <Rail
+        schedules={board.schedules}
+        columns={columns}
+        now={now}
+        row={row}
+        onOpen={props.onOpen}
+      />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardName, DELIVERIES, OPS, type Card } from "@fleet/protocol";
+import { CardName, DELIVERIES, OPS, type Card, type Schedule } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
@@ -135,6 +135,44 @@ function registerBoard(pi: ExtensionAPI, link: Link, lanes: LaneStates | undefin
   });
 }
 
+const scheduleLine = (s: Schedule): string => {
+  const when = s.on === null ? "every day" : `on ${s.on}`;
+  return `#${String(s.id)} ${when} at ${s.at} ${s.timezone}, from ${s.owner} to ${s.to}: ${s.text}`;
+};
+
+function registerSchedules(pi: ExtensionAPI, link: Link): void {
+  pi.registerTool({
+    name: "schedule_set",
+    label: "Schedule a message",
+    description:
+      "Makes, or with id changes, one of your schedules: cardd delivers your fixed text to a lane (to: main or a second mate) at a local time (at, timezone), every day, or once on a date (on). Delivery is a plain message that is resent until it is read. A schedule holds no condition and does no work: the receiver decides what to do. You change or remove only your own schedules.",
+    parameters: OPS["schedule.set"].args,
+    execute: async (_id, params) =>
+      reply(`Scheduled ${scheduleLine(await link.call("schedule.set", params))}`),
+  });
+  pi.registerTool({
+    name: "schedule_list",
+    label: "List schedules",
+    description:
+      "Lists your schedules, with the id each needs to change or remove it. As main it lists every lane's schedules.",
+    parameters: OPS["schedule.list"].args,
+    execute: async () => {
+      const all = await link.call("schedule.list", {});
+      return reply(all.length === 0 ? "No schedules." : all.map(scheduleLine).join("\n"));
+    },
+  });
+  pi.registerTool({
+    name: "schedule_remove",
+    label: "Remove a schedule",
+    description: "Removes one of your own schedules by id. It stops at once.",
+    parameters: OPS["schedule.remove"].args,
+    execute: async (_id, params) => {
+      const { id } = await link.call("schedule.remove", params);
+      return reply(`Removed schedule #${String(id)}.`);
+    },
+  });
+}
+
 export function registerMate(
   pi: ExtensionAPI,
   link: Link,
@@ -174,6 +212,7 @@ export function registerMate(
     execute: async (_id, params) => reply(`Commented. ${line(await link.call("comment", params))}`),
   });
   registerBoard(pi, link, lanes);
+  registerSchedules(pi, link);
   if (main) {
     pi.registerTool({
       name: "project_yolo",
