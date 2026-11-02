@@ -13,6 +13,7 @@ import {
 import { attemptsOf } from "./attempts.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
+import { allSchedules } from "./schedules.ts";
 import { openReplies } from "./replies.ts";
 import { factsFrom, type Hold } from "./status.ts";
 import {
@@ -100,7 +101,7 @@ function buildBoard(db: DatabaseSync, now: number): Board {
     }
     return card;
   });
-  return { cards, holds };
+  return { cards, holds, schedules: allSchedules(db) };
 }
 
 export function cardView(db: DatabaseSync, id: number): CardView {

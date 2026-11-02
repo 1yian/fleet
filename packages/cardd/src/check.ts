@@ -12,6 +12,7 @@ import { finishFrom, type Stage } from "./status.ts";
 import { addEntry, getCard, loadOpenCards, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
+import { firedSchedules } from "./schedules.ts";
 import { scheduledWakes } from "./wakes.ts";
 
 interface Match {
@@ -414,6 +415,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, graceUntil =
     ...lostJobs(db, now, t, graceUntil),
     ...chaseIntake(db, now, t),
     ...scheduledWakes(db, t.wall()),
+    ...firedSchedules(db, t.wall()),
     ...dueBatches(db, { now: t.wall(), window: t.batch }),
     ...reconcileIncidents(db, now, t),
     ...lostMates(db, now, t),

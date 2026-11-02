@@ -42,6 +42,7 @@ import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
+import { listSchedules, removeSchedule, setSchedule } from "./schedules.ts";
 import { scriptWake } from "./wakes.ts";
 import {
   addCard,
@@ -186,6 +187,16 @@ const HANDLERS: Record<OpName, Handler> = {
   wake: (db, session, raw) => {
     const entry = scriptWake(db, session.lane, check(OPS.wake.args, raw));
     return { value: { entry }, notify: [session.lane] };
+  },
+  "schedule.set": (db, session, raw, timing) => ({
+    value: setSchedule(db, session.lane, raw, timing.wall()),
+    notify: [],
+  }),
+  "schedule.list": (db, session) => ({ value: listSchedules(db, session.lane), notify: [] }),
+  "schedule.remove": (db, session, raw) => {
+    const { id } = check(OPS["schedule.remove"].args, raw);
+    removeSchedule(db, session.lane, id);
+    return { value: { id }, notify: [] };
   },
   "attempt.begin": (db, session, raw) => {
     const args = check(OPS["attempt.begin"].args, raw);
