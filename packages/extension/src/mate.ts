@@ -136,8 +136,7 @@ function registerBoard(pi: ExtensionAPI, link: Link, lanes: LaneStates | undefin
 }
 
 const scheduleLine = (s: Schedule): string => {
-  const when =
-    s.on === null ? `every ${s.days === null ? "day" : s.days.join(", ")}` : `on ${s.on}`;
+  const when = s.on === null ? "every day" : `on ${s.on}`;
   return `#${String(s.id)} ${when} at ${s.at} ${s.timezone}, from ${s.owner} to ${s.to}: ${s.text}`;
 };
 
@@ -146,7 +145,7 @@ function registerSchedules(pi: ExtensionAPI, link: Link): void {
     name: "schedule_set",
     label: "Schedule a message",
     description:
-      "Makes, or with id changes, one of your schedules: cardd delivers your fixed text to a lane (to: main or a second mate) at a local time (at, timezone), every day, on days, or once on a date (on). Delivery is a plain message that is resent until it is read. A schedule holds no condition and does no work: the receiver decides what to do. You change or remove only your own schedules.",
+      "Makes, or with id changes, one of your schedules: cardd delivers your fixed text to a lane (to: main or a second mate) at a local time (at, timezone), every day, or once on a date (on). Delivery is a plain message that is resent until it is read. A schedule holds no condition and does no work: the receiver decides what to do. You change or remove only your own schedules.",
     parameters: OPS["schedule.set"].args,
     execute: async (_id, params) =>
       reply(`Scheduled ${scheduleLine(await link.call("schedule.set", params))}`),

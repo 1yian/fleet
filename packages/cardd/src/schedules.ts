@@ -1,28 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
-import {
-  check,
-  MAX_SCHEDULES,
-  OPS,
-  WAKE_DAYS,
-  type OpArgs,
-  type Schedule,
-  type WakeDay,
-} from "@fleet/protocol";
-import Type from "typebox";
+import { check, MAX_SCHEDULES, OPS, type OpArgs, type Schedule } from "@fleet/protocol";
 import { dueSlots, localMinute, timeZoneProblem } from "./schedule.ts";
 import { addCard, addEntry, laneCardOf, mainLane } from "./store.ts";
 
 const AUTHOR = "schedule";
 const MAIN_CARD = "scheduled-messages";
-const DaysSchema = Type.Array(Type.Enum(WAKE_DAYS));
 
 interface Row extends Schedule {
   readonly since: number;
   readonly fired: string | null;
-}
-
-function parseDays(text: unknown): WakeDay[] | null {
-  return typeof text === "string" ? check(DaysSchema, JSON.parse(text)) : null;
 }
 
 const rowOf = (raw: Record<string, unknown>): Row => ({
@@ -31,7 +17,6 @@ const rowOf = (raw: Record<string, unknown>): Row => ({
   to: String(raw["recipient"]),
   at: String(raw["at"]),
   timezone: String(raw["timezone"]),
-  days: parseDays(raw["days"]),
   on: typeof raw["on_date"] === "string" ? raw["on_date"] : null,
   text: String(raw["text"]),
   since: Number(raw["since"]),
@@ -68,8 +53,8 @@ function checkedWhen(args: OpArgs<"schedule.set">, now: number): void {
   const problem = timeZoneProblem(args.timezone);
   if (problem !== undefined) throw new Error(`invalid timezone: ${problem}`);
   if (args.on === undefined) return;
-  if (args.days !== undefined) throw new Error("a one-time schedule has `on` or `days`, not both");
-  const valid = !Number.isNaN(Date.parse(`${args.on}T00:00:00Z`));
+  const parsed = new Date(`${args.on}T00:00:00Z`);
+  const valid = !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === args.on;
   if (!valid) throw new Error(`${args.on} is not a date`);
   if (`${args.on}T${args.at}` <= localMinute(now, args.timezone))
     throw new Error(`${args.on} ${args.at} ${args.timezone} has already passed`);
@@ -79,19 +64,11 @@ export function setSchedule(db: DatabaseSync, lane: string, raw: unknown, now: n
   const args = check(OPS["schedule.set"].args, raw);
   requireLane(db, args.to);
   checkedWhen(args, now);
-  const values = [
-    args.to,
-    args.at,
-    args.days === undefined ? null : JSON.stringify(args.days),
-    args.on ?? null,
-    args.timezone,
-    args.text,
-    now,
-  ];
+  const values = [args.to, args.at, args.on ?? null, args.timezone, args.text, now];
   if (args.id !== undefined) {
     requireOwn(db, lane, args.id);
     db.prepare(
-      `UPDATE schedules SET recipient = ?, at = ?, days = ?, on_date = ?, timezone = ?, text = ?,
+      `UPDATE schedules SET recipient = ?, at = ?, on_date = ?, timezone = ?, text = ?,
          since = ?, fired = NULL WHERE id = ?`,
     ).run(...values, args.id);
     return listSchedules(db, lane).find(({ id }) => id === args.id) ?? failed();
@@ -101,8 +78,8 @@ export function setSchedule(db: DatabaseSync, lane: string, raw: unknown, now: n
     throw new Error(`you have ${String(own)} schedules: remove one before you add another`);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO schedules (owner, recipient, at, days, on_date, timezone, text, since)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO schedules (owner, recipient, at, on_date, timezone, text, since)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(lane, ...values);
   return listSchedules(db, lane).find(({ id }) => id === Number(lastInsertRowid)) ?? failed();
@@ -125,7 +102,7 @@ function dueMinute(row: Row, now: number): string | undefined {
   const plan = {
     goal: "",
     timezone: row.timezone,
-    wakes: [{ at: row.at, ...(row.days === null ? {} : { days: row.days }), purpose: "" }],
+    wakes: [{ at: row.at, purpose: "" }],
   };
   return dueSlots(plan, row.since, now)[0]?.minute;
 }
@@ -148,7 +125,7 @@ function cardFor(db: DatabaseSync, recipient: string): number {
 export function firedSchedules(db: DatabaseSync, now: number): string[] {
   return rows(db).flatMap((row) => {
     const minute = dueMinute(row, now);
-    if (minute === undefined || minute === row.fired) return [];
+    if (minute === undefined || (row.fired !== null && minute <= row.fired)) return [];
     const fields = {
       for: "mate",
       wake: "message",

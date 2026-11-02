@@ -151,8 +151,7 @@ function Heads(props: { readonly columns: Columns }) {
 
 const cadenceOf = (schedule: Schedule): string => {
   if (schedule.on !== null) return `${schedule.on} ${schedule.at}`;
-  const days = schedule.days === null ? "daily" : schedule.days.join(", ");
-  return `${days} ${schedule.at}`;
+  return `daily ${schedule.at}`;
 };
 
 function Schedules(props: { readonly schedules: readonly Schedule[] }) {

@@ -181,7 +181,6 @@ CREATE TABLE schedules (
   owner TEXT NOT NULL REFERENCES lanes (name),
   recipient TEXT NOT NULL REFERENCES lanes (name),
   at TEXT NOT NULL,
-  days TEXT CHECK (days IS NULL OR json_valid(days)),
   on_date TEXT,
   timezone TEXT NOT NULL,
   text TEXT NOT NULL,

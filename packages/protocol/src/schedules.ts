@@ -1,5 +1,5 @@
 import Type, { type Static, type TSchema } from "typebox";
-import { WAKE_DAYS, WakeArgsSchema } from "./wakes.ts";
+import { WakeArgsSchema } from "./wakes.ts";
 
 export const MAX_SCHEDULES = 24;
 
@@ -18,18 +18,11 @@ const Fields = {
     minLength: 1,
     description: "An IANA time zone name, such as America/Chicago. The time is in it",
   }),
-  days: Type.Optional(
-    Type.Array(Type.Enum(WAKE_DAYS), {
-      minItems: 1,
-      uniqueItems: true,
-      description: "The days of the week it applies to. Leave it out for every day",
-    }),
-  ),
   on: Type.Optional(
     Type.String({
       pattern: "^\\d{4}-\\d{2}-\\d{2}$",
       description:
-        "A local date, YYYY-MM-DD, for a message that is delivered once and then removed. Leave it out, with days, for a recurring message",
+        "A local date, YYYY-MM-DD, for a message that is delivered once and then removed. Leave it out for a message that repeats every day",
     }),
   ),
   text: Type.String({
@@ -45,7 +38,6 @@ export const ScheduleSchema = Type.Object({
   to: Type.String(),
   at: Type.String(),
   timezone: Type.String(),
-  days: Nullable(Type.Array(Type.Enum(WAKE_DAYS))),
   on: Nullable(Type.String()),
   text: Type.String(),
 });

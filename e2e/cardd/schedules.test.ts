@@ -90,10 +90,23 @@ test("a schedule can deliver to a mate, run once on a date, and be changed by it
   assert.deepEqual((await fleet.cardd.board()).schedules, []);
 });
 
+test("a daily schedule does not repeat a delivered slot when the clock falls back", async () => {
+  setClock("2026-10-31T00:00:00Z");
+  await set(ads, { at: "01:30", timezone: "America/Chicago" });
+  setClock("2026-11-01T06:30:00Z");
+  const first = await main.waitForEntry(isText, "main to hear the 01:30 message");
+  setClock("2026-11-01T07:00:00Z");
+  await set(cleo, { text: "marker", at: "01:00", timezone: "America/Chicago" });
+  const marker = await main.waitForEntry(isMarker, "main to hear the marker schedule");
+  assert.equal(heard(main, (entry) => isText(entry) && entry.id !== first.id).length, 0);
+  assert.ok(marker.id > first.id);
+});
+
 test("an unknown recipient, a bad zone, a past one-shot, and an empty text are refused", async () => {
   await assert.rejects(set(ads, { to: "nobody" }), /no lane nobody/);
   await assert.rejects(set(ads, { timezone: "Mars/Base" }), /timezone/);
   await assert.rejects(set(ads, { on: "2026-05-03" }), /already passed/);
+  await assert.rejects(set(ads, { on: "2027-02-30" }), /not a date/);
   await assert.rejects(set(ads, { text: "  " }));
   assert.deepEqual((await fleet.cardd.board()).schedules, []);
 });
