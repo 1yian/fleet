@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +47,7 @@ spawn("sh", ["-c", script, "sh", ...rest], { cwd, detached: true, stdio: "ignore
 
 async function closeWithLeftover(
   body: string,
-  options: { arg?: string; cwd?: string } = {},
+  options: { arg?: string; cwd?: string; outside?: boolean } = {},
 ): Promise<{ pid: number; result: string }> {
   const pidFile = join(h.dir, "leftover.pid");
   const launcher = join(h.dir, "launch.cjs");
@@ -54,7 +55,9 @@ async function closeWithLeftover(
   const script = `echo $$ > "${pidFile}"; ${body}`;
   const extra = options.arg === undefined ? "" : ` '${options.arg}'`;
   const cwd = options.cwd === undefined ? '"$PWD"' : `'${options.cwd}'`;
-  const start = `node "${launcher}" ${cwd} '${script}'${extra}\ni=0; while [ ! -s "${pidFile}" ]; do i=$((i+1)); [ $i -gt 100 ] && { echo "leftover did not start"; exit 1; }; sleep 0.1; done`;
+  const launch = `node "${launcher}" ${cwd} '${script}'${extra}`;
+  if (options.outside === true) execSync(launch, { cwd: h.dir });
+  const start = `${options.outside === true ? "" : launch}\ni=0; while [ ! -s "${pidFile}" ]; do i=$((i+1)); [ $i -gt 100 ] && { echo "leftover did not start"; exit 1; }; sleep 0.1; done`;
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
     () => ({
@@ -110,6 +113,7 @@ const survives = async (arg: (worktree: string) => string): Promise<void> => {
   const { pid, result } = await closeWithLeftover("while :; do sleep 1; done", {
     arg: arg(`${clone}.worktrees/c-1-a1`),
     cwd: h.dir,
+    outside: true,
   });
   try {
     assert.equal(result, "c-1 is done.");

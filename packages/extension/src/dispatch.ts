@@ -1,5 +1,6 @@
 import type { Delivery, OpResult } from "@fleet/protocol";
 import { SYNC_FUNCTIONS } from "./clones.ts";
+import { contain, releaseAll } from "./containment.ts";
 import { fleetArgs } from "./fleet-args.ts";
 import { field, herdr, onHost, piPids, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
@@ -33,25 +34,34 @@ if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1
 fi
 git -C "$clone" worktree add -q --no-track -b "$branch" "$path" "$start"`;
 
-async function worktreePane(host: string, plan: Plan, card: number): Promise<string> {
+async function worktreePane(
+  host: string,
+  plan: Plan,
+  card: number,
+): Promise<{ pane: string; path: string }> {
   const tree = worktreeOf(
     await herdr(host, ["worktree", "list", "--cwd", plan.clone]),
     plan.session,
   );
   const workspace = field(tree, "open_workspace_id");
+  const path = field(tree, "path") ?? `${plan.clone}.worktrees/${plan.session}`;
   if (workspace !== undefined) {
     const panes = records((await herdr(host, ["pane", "list", "--workspace", workspace]))["panes"]);
     const pane = field(panes[0], "pane_id");
     if (pane === undefined) throw new Error(`workspace ${workspace} on ${host} has no pane`);
-    return pane;
+    return { pane, path };
   }
-  const path = field(tree, "path") ?? `${plan.clone}.worktrees/${plan.session}`;
   if (tree === undefined) {
     const from = plan.delivery === "local-only" ? "local" : "origin";
     const args = [plan.clone, path, plan.branch, plan.base, from];
     await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", ...args]);
   }
-  return openWorkerWorkspace(host, path, { id: card, name: plan.name, lane: plan.lane });
+  const root = await openWorkerWorkspace(host, path, {
+    id: card,
+    name: plan.name,
+    lane: plan.lane,
+  });
+  return { pane: root, path };
 }
 
 const SHELL_WAIT_MS = 20_000;
@@ -124,7 +134,8 @@ export async function dispatch(
 ): Promise<string> {
   const plan = await link.call("attempt.begin", request);
   const where = `${plan.session} on ${request.host}`;
-  const pane = await worktreePane(request.host, plan, request.card);
+  const { pane, path } = await worktreePane(request.host, plan, request.card);
+  await contain(request.host, pane, path);
   if (await piRunning(request.host, pane)) {
     return `Found ${where} already starting.`;
   }
@@ -148,6 +159,7 @@ export async function dispatch(
       ["--session-id", plan.session, ...launch.piArgs],
     ].flat(),
   );
+  await contain(request.host, pane, path);
   return `Dispatched ${where}, branch ${plan.branch}.`;
 }
 
@@ -165,6 +177,12 @@ async function stopPi(host: string, pane: string, session: string): Promise<void
   );
 }
 
+async function closeWorkspace(host: string, clone: string, session: string): Promise<void> {
+  const tree = worktreeOf(await herdr(host, ["worktree", "list", "--cwd", clone]), session);
+  const workspace = field(tree, "open_workspace_id");
+  if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
+}
+
 export async function replaceWorker(
   link: Link,
   launch: Launch,
@@ -175,8 +193,12 @@ export async function replaceWorker(
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
   if (recovery.repeat)
     return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
-  const pane = await worktreePane(recovery.host, plan, recovery.card);
-  if (await piRunning(recovery.host, pane)) await stopPi(recovery.host, pane, plan.session);
+  const old = await worktreePane(recovery.host, plan, recovery.card);
+  if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
+  await closeWorkspace(recovery.host, plan.clone, plan.session);
+  await releaseAll(recovery.host, old.path);
+  const { pane, path } = await worktreePane(recovery.host, plan, recovery.card);
+  await contain(recovery.host, pane, path);
   await startAgent(
     recovery.host,
     pane,
@@ -197,5 +219,6 @@ export async function replaceWorker(
       ["--session-id", plan.session, ...launch.piArgs],
     ].flat(),
   );
+  await contain(recovery.host, pane, path);
   return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
 }
