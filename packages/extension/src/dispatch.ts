@@ -1,6 +1,6 @@
 import type { Delivery, OpResult } from "@fleet/protocol";
 import { SYNC_FUNCTIONS } from "./clones.ts";
-import { announce, contain, releaseAll } from "./containment.ts";
+import { contain, releaseAll } from "./containment.ts";
 import { fleetArgs } from "./fleet-args.ts";
 import { field, herdr, onHost, piPids, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
@@ -160,7 +160,7 @@ export async function dispatch(
     ].flat(),
   );
   await contain(request.host, pane, path);
-  return `Dispatched ${where}, branch ${plan.branch}.${await announce(request.host)}`;
+  return `Dispatched ${where}, branch ${plan.branch}.`;
 }
 
 const STOP_WAIT_MS = 15_000;
@@ -220,5 +220,5 @@ export async function replaceWorker(
     ].flat(),
   );
   await contain(recovery.host, pane, path);
-  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.${await announce(recovery.host)}`;
+  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
 }

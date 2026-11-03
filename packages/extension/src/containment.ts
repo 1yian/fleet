@@ -63,12 +63,3 @@ export async function releaseAll(host: string, worktree: string): Promise<string
     throw new Error(`processes of ${worktree} on ${host} survived containment cleanup`);
   return out;
 }
-
-const announced = new Set<string>();
-
-export async function announce(host: string): Promise<string> {
-  const backend = await backendOn(host);
-  if (announced.has(host)) return "";
-  announced.add(host);
-  return ` Process containment on ${host}: ${backend}.`;
-}
