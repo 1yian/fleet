@@ -256,6 +256,11 @@ export async function piPids(host: string, pane: string): Promise<number[]> {
     .flatMap((each) => (typeof each["pid"] === "number" ? [each["pid"]] : []));
 }
 
+export async function shellPid(host: string, pane: string): Promise<number | undefined> {
+  const { shell } = await foreground(host, pane);
+  return typeof shell === "number" ? shell : undefined;
+}
+
 export async function shellIdle(host: string, pane: string): Promise<boolean> {
   const { group, shell } = await foreground(host, pane);
   return group !== undefined && group === shell;

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { onHost, piPids } from "./host.ts";
+import { onHost, piPids, shellPid } from "./host.ts";
 
 const script = (name: string): string =>
   readFileSync(fileURLToPath(new URL(`./contain/${name}.sh`, import.meta.url)), "utf8");
@@ -16,14 +16,18 @@ const scriptFor = (backend: Backend): string =>
 
 const known = new Map<string, Promise<Backend>>();
 
-const asBackend = (name: string): Backend =>
-  BACKENDS.find((each) => each === name.trim()) ?? "sweep";
+function asBackend(name: string): Backend {
+  const found = BACKENDS.find((each) => each === name.trim());
+  if (found === undefined) throw new Error(`unknown containment backend "${name.trim()}"`);
+  return found;
+}
 
 function backendOn(host: string): Promise<Backend> {
   let found = known.get(host);
   if (found === undefined) {
-    found = onHost(host, ["sh", "-c", DETECT]).then(asBackend, () => "sweep" as const);
+    found = onHost(host, ["sh", "-c", DETECT]).then(asBackend);
     known.set(host, found);
+    found.catch(() => known.delete(host));
   }
   return found;
 }
@@ -47,13 +51,17 @@ async function run(
 }
 
 export async function contain(host: string, pane: string, worktree: string): Promise<void> {
-  const pids = await piPids(host, pane).catch(() => []);
-  if (pids.length === 0) return;
-  await run(host, "attach", worktree, pids).catch(() => undefined);
+  const shell = await shellPid(host, pane);
+  const pids = [...(shell === undefined ? [] : [shell]), ...(await piPids(host, pane))];
+  if (pids.length === 0) throw new Error(`no process to contain in pane ${pane} on ${host}`);
+  await run(host, "attach", worktree, pids);
 }
 
 export async function releaseAll(host: string, worktree: string): Promise<string> {
-  return run(host, "kill", worktree, []).catch(() => "");
+  const out = await run(host, "kill", worktree, []);
+  if (out.split("\n").some((line) => line.split("\t")[1] === "ALIVE"))
+    throw new Error(`processes of ${worktree} on ${host} survived containment cleanup`);
+  return out;
 }
 
 const announced = new Set<string>();

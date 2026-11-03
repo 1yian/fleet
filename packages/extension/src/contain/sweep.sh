@@ -4,7 +4,7 @@ record=$state/$unit
 backend_attach() {
   mkdir -p "$state"
   group=$(ps -o pgid= -p "${roots%% *}" 2>/dev/null | tr -d ' ')
-  [ -z "$group" ] || echo "$group" >"$record"
+  [ -n "$group" ] && echo "$group" >"$record"
 }
 
 group_of_record() {

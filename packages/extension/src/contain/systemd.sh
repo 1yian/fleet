@@ -13,7 +13,9 @@ cgroup_dir() {
 
 backend_attach() {
   if dir=$(cgroup_dir); then
-    for p in "$@"; do echo "$p" >"$dir/cgroup.procs" 2>/dev/null || true; done
+    for p in "$@"; do
+      echo "$p" >"$dir/cgroup.procs" 2>/dev/null || ! alive "$p" || return 1
+    done
     return 0
   fi
   list=$#

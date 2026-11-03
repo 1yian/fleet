@@ -2,8 +2,10 @@ own=$(sed -n 's/^0:://p' /proc/self/cgroup)
 dir=/sys/fs/cgroup${own%/}/$unit
 
 backend_attach() {
-  mkdir -p "$dir"
-  for p in "$@"; do echo "$p" >"$dir/cgroup.procs" 2>/dev/null || true; done
+  mkdir -p "$dir" || return 1
+  for p in "$@"; do
+    echo "$p" >"$dir/cgroup.procs" 2>/dev/null || ! alive "$p" || return 1
+  done
 }
 
 backend_members() {

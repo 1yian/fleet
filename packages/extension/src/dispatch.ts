@@ -135,6 +135,7 @@ export async function dispatch(
   const plan = await link.call("attempt.begin", request);
   const where = `${plan.session} on ${request.host}`;
   const { pane, path } = await worktreePane(request.host, plan, request.card);
+  await contain(request.host, pane, path);
   if (await piRunning(request.host, pane)) {
     return `Found ${where} already starting.`;
   }
@@ -189,6 +190,7 @@ export async function replaceWorker(
   const { pane, path } = await worktreePane(recovery.host, plan, recovery.card);
   if (await piRunning(recovery.host, pane)) await stopPi(recovery.host, pane, plan.session);
   await releaseAll(recovery.host, path);
+  await contain(recovery.host, pane, path);
   await startAgent(
     recovery.host,
     pane,
