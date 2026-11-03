@@ -123,6 +123,16 @@ For systemd, use `["systemctl", "--user", "restart", "cardd"]`. The command must
 
 `/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). Do not update or restart it by hand. `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
 
+## Process containment
+
+Fleet tracks every process a worker starts, so that `close`, a worker restart (`restart_card` replace) kill the whole tree, even processes that detach, double-fork, `setsid`, run from `/tmp`, or clear their environment. It picks a backend on each host from what the host can do, never from its name:
+
+- `systemd`: Linux with a systemd user session (`systemctl --user` works and `busctl` exists). Each worker's Pi and its children are moved into a transient scope named `fleet-worker-<session>-<hash of the worktree path>.scope`. Close and replace stop the scope's whole cgroup (TERM, then KILL after 5 seconds). Over ssh with no login session, enable lingering once: `loginctl enable-linger <user>`.
+- `cgroup`: Linux without a systemd user session, but with a writable cgroup v2 subtree for the user. Same behavior through a child cgroup and `cgroup.kill`.
+- `sweep`: everything else, including macOS today. Close stops the worker's process group and sweeps processes whose cwd or command line is inside the worktree. Processes that left both are not found. A launchd coalition backend needs herdr to start the pane inside a per-card launchd job, and herdr does not offer that yet.
+
+Fleet reports the backend once per host in the first dispatch or restart result: `Process containment on <host>: <backend>.` Containment never fails a dispatch: if attaching fails, the worktree sweep still runs on close.
+
 ## 3. Lanes and projects
 
 Run these once on the `cardd` host. `lane add` prints the mate's token. A lane's `--home` is informational.

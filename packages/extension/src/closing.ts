@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { OpResult } from "@fleet/protocol";
+import { releaseAll } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
@@ -211,7 +212,7 @@ async function retire(attempt: Attempt): Promise<Retired> {
     if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
     const path = field(tree, "path") ?? "";
     const found = await onHost(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
-    stopped = stoppedBy(session, found);
+    stopped = stoppedBy(session, found + (await releaseAll(host, path)));
     await onHost(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
