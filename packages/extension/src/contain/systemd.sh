@@ -7,7 +7,10 @@ bus() {
 bus
 
 cgroup_dir() {
-  path=$(systemctl --user show -p ControlGroup --value "$scope" 2>/dev/null) || return 2
+  if ! path=$(systemctl --user show -p ControlGroup --value "$scope" 2>/dev/null); then
+    systemctl --user show-environment >/dev/null 2>&1 || return 2
+    return 1
+  fi
   [ -n "$path" ] && [ -d "/sys/fs/cgroup$path" ] || return 1
   printf '/sys/fs/cgroup%s' "$path"
 }
