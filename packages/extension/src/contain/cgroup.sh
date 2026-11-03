@@ -9,7 +9,8 @@ backend_attach() {
 }
 
 backend_members() {
-  cat "$dir/cgroup.procs" 2>/dev/null
+  [ -d "$dir" ] || return 0
+  cat "$dir/cgroup.procs"
 }
 
 backend_signal() {

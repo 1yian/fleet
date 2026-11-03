@@ -7,8 +7,9 @@ bus() {
 bus
 
 cgroup_dir() {
-  path=$(systemctl --user show -p ControlGroup --value "$scope" 2>/dev/null) || return 1
-  [ -n "$path" ] && [ -d "/sys/fs/cgroup$path" ] && printf '/sys/fs/cgroup%s' "$path"
+  path=$(systemctl --user show -p ControlGroup --value "$scope" 2>/dev/null) || return 2
+  [ -n "$path" ] && [ -d "/sys/fs/cgroup$path" ] || return 1
+  printf '/sys/fs/cgroup%s' "$path"
 }
 
 backend_attach() {
@@ -25,8 +26,12 @@ backend_attach() {
 }
 
 backend_members() {
-  dir=$(cgroup_dir) || return 0
-  cat "$dir/cgroup.procs" 2>/dev/null
+  dir=$(cgroup_dir)
+  case $? in
+    0) cat "$dir/cgroup.procs" ;;
+    1) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 backend_signal() {

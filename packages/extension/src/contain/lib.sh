@@ -27,7 +27,8 @@ alive() {
 }
 
 drained() {
-  for p in $(backend_members); do
+  members=$(backend_members) || exit 1
+  for p in $members; do
     if alive "$p"; then return 1; fi
   done
   return 0
@@ -46,7 +47,8 @@ wait_drained() {
 reap() {
   tab=$(printf '\t')
   listing=""
-  for p in $(backend_members); do
+  members=$(backend_members) || exit 1
+  for p in $members; do
     alive "$p" || continue
     [ "$p" != "$$" ] || continue
     listing="$listing$p$tab$(ps -o args= -p "$p" 2>/dev/null | cut -c1-100)

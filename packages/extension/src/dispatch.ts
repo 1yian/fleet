@@ -177,6 +177,12 @@ async function stopPi(host: string, pane: string, session: string): Promise<void
   );
 }
 
+async function closeWorkspace(host: string, clone: string, session: string): Promise<void> {
+  const tree = worktreeOf(await herdr(host, ["worktree", "list", "--cwd", clone]), session);
+  const workspace = field(tree, "open_workspace_id");
+  if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
+}
+
 export async function replaceWorker(
   link: Link,
   launch: Launch,
@@ -187,9 +193,11 @@ export async function replaceWorker(
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
   if (recovery.repeat)
     return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
+  const old = await worktreePane(recovery.host, plan, recovery.card);
+  if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
+  await closeWorkspace(recovery.host, plan.clone, plan.session);
+  await releaseAll(recovery.host, old.path);
   const { pane, path } = await worktreePane(recovery.host, plan, recovery.card);
-  if (await piRunning(recovery.host, pane)) await stopPi(recovery.host, pane, plan.session);
-  await releaseAll(recovery.host, path);
   await contain(recovery.host, pane, path);
   await startAgent(
     recovery.host,

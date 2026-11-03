@@ -8,18 +8,22 @@ backend_attach() {
 }
 
 group_of_record() {
-  [ -s "$record" ] || return 1
-  cat "$record"
+  [ -e "$record" ] || return 0
+  group=$(cat "$record") || return 1
+  [ -n "$group" ] || return 1
+  printf '%s' "$group"
 }
 
 backend_members() {
-  group=$(group_of_record) || return 0
+  group=$(group_of_record) || return 1
+  [ -n "$group" ] || return 0
   [ "$group" != "$(ps -o pgid= -p $$ | tr -d ' ')" ] || return 0
   ps -axo pid=,pgid= | awk -v g="$group" '$2 == g { print $1 }'
 }
 
 backend_signal() {
-  group=$(group_of_record) || return 0
+  group=$(group_of_record) || return 1
+  [ -n "$group" ] || return 0
   kill "-$1" -- "-$group" 2>/dev/null || true
 }
 
