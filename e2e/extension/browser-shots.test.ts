@@ -74,6 +74,7 @@ test("a screenshot is refused when a failed login left the username in the page"
 for (const [place, what] of [
   ["split", "splits it across inline elements"],
   ["hidden", "splits it around an element that is not shown"],
+  ["cvhidden", "splits it around a hidden box and a shadow host with a direct text child"],
   ["hostsplit", "splits it between its text and an open shadow host"],
   ["closedsplit", "splits it between its text and a closed shadow host"],
   ["escaped", "writes it out as HTML character references"],

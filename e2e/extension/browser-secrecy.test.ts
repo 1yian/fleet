@@ -267,3 +267,52 @@ for (const [name, action] of [
     );
     assertNoSecretAnywhere();
   });
+
+const MARKED = {
+  key: "example.test",
+  value: JSON.stringify({ username: "mark", password: "hunter2" }),
+};
+const COPIED = {
+  key: "copy.test",
+  value: JSON.stringify({ username: "copyuser-x91", password: "S3cret\u00a92026" }),
+};
+
+const nothingOf = (...secrets: string[]): void => {
+  const places = [lab.cardd.output, lab.cardd.errors, vault.invocations().join("\n")];
+  for (const place of places)
+    for (const secret of secrets) assert.equal(place.includes(secret), false);
+};
+
+test("HTML that splits a password around a tag named like the username is refused whole", async () => {
+  await start([MARKED]);
+  const worker = await lab.worker("Look at the page");
+  await worker.act({ action: "open", url: lab.site.url("/composed", "login.example.test") });
+
+  for (const action of [
+    { action: "read", selector: "#who", html: true },
+    { action: "eval", expression: "document.getElementById('who').outerHTML" },
+    { action: "eval", expression: "document.documentElement.outerHTML" },
+  ] as const)
+    await assert.rejects(worker.act(action), OUTPUT_REFUSED);
+
+  assert.equal(await worker.act({ action: "read", selector: "#who" }), "[hidden]");
+  nothingOf("hunter2");
+});
+
+test("a password that the page source writes with a named character reference is refused", async () => {
+  await start([COPIED]);
+  const worker = await lab.worker("Look at the page");
+  await worker.act({ action: "open", url: lab.site.url("/copy", "login.example.test") });
+
+  await assert.rejects(
+    worker.act({ action: "eval", expression: "fetch(location.href).then((r) => r.text())" }),
+    OUTPUT_REFUSED,
+  );
+  assert.equal(await worker.act({ action: "read", selector: "#who" }), "[hidden]");
+  assert.equal(
+    await worker.act({ action: "read", selector: "#who", html: true }),
+    '<div id="who">[hidden]</div>',
+  );
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+  nothingOf("S3cret", "copyuser-x91");
+});

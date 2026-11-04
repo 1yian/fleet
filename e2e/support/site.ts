@@ -20,6 +20,8 @@ const PAGES: Readonly<Record<string, string>> = {
     <input id="q" style="position:fixed;left:20px;top:200px;width:200px;height:30px">
   </body>`,
   "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,
+  "/composed": `<!doctype html><title>Composed</title><body><div id="who">hun<mark>ter</mark>2</div></body>`,
+  "/copy": `<!doctype html><title>Copy</title><body><div id="who">S3cret&copy;2026</div></body>`,
   "/popup": `<!doctype html><title>Popup</title><body>
     <a id="blank" target="_blank" href="/b" style="position:fixed;left:20px;top:20px">open b</a>
     <p>popup page</p></body>`,
@@ -91,6 +93,17 @@ const PAGES: Readonly<Record<string, string>> = {
           gap.hidden = true;
           gap.textContent = "ignored";
           line.replaceChildren(text.slice(0, half), gap, text.slice(half));
+          spot.replaceChildren(line);
+        },
+        cvhidden: (text) => {
+          const half = Math.floor(text.length / 2);
+          const line = document.createElement("p");
+          const gap = document.createElement("span");
+          gap.style.cssText = "display: inline-block; width: 0; height: 0; content-visibility: hidden";
+          gap.textContent = "ignored";
+          const host = document.createElement("span");
+          host.attachShadow({ mode: "open" }).append(document.createTextNode(text.slice(half)));
+          line.replaceChildren(text.slice(0, half), gap, host);
           spot.replaceChildren(line);
         },
         hostsplit: hosted("open"),

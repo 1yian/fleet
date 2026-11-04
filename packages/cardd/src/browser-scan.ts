@@ -24,6 +24,23 @@ const SCAN = `function (...pairs) {
       .map((found) => unescaped(found[1] ?? found[2] ?? ""))
       .join("");
   };
+  const styleOf = (el) => {
+    try {
+      return view.getComputedStyle(el);
+    } catch (error) {
+      return null;
+    }
+  };
+  const boxed = (node) => {
+    try {
+      const range = doc.createRange();
+      range.selectNodeContents(node);
+      return [...range.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0);
+    } catch (error) {
+      return true;
+    }
+  };
+  const innerOf = (node) => (node.nodeType === 3 ? node.nodeValue : node.innerText) ?? "";
   const fields = ["INPUT", "TEXTAREA", "SELECT"];
   const views = [];
   const queue = [this];
@@ -32,11 +49,12 @@ const SCAN = `function (...pairs) {
       if (node.nodeType !== 1) continue;
       for (const attribute of node.attributes) views.push(attribute.value);
       if (fields.includes(node.tagName)) views.push(node.value);
+      if (node.tagName === "OPTION") views.push(node.text);
       queue.push(node);
       const root = rootOf(node);
       if (root === null) continue;
       queue.push(root);
-      views.push([...root.children].map((child) => child.innerText ?? "").join(""));
+      views.push([...root.childNodes].map(innerOf).join(""));
     }
   }
   const flat = (el) => {
@@ -56,14 +74,15 @@ const SCAN = `function (...pairs) {
     const node = top.nodes[top.at];
     top.at += 1;
     if (node.nodeType === 3) {
-      if (top.shown && top.visible) text.push(node.nodeValue ?? "");
+      if (top.shown && top.visible && boxed(node)) text.push(node.nodeValue ?? "");
     } else if (node.nodeType === 1) {
-      const style = view.getComputedStyle(node);
-      const shown = top.shown && style.display !== "none";
-      const visible = style.visibility === "visible";
-      const drawn = shown && visible;
+      const style = styleOf(node);
+      const shown = top.shown && (style === null || style.display !== "none");
+      const contents = shown && (style === null || style.contentVisibility !== "hidden");
+      const visible = style === null || style.visibility === "visible";
+      const drawn = contents && visible;
       text.push(drawn ? generated(node, "::before") : "");
-      stack.push({ nodes: flat(node), at: 0, shown, visible, tail: drawn ? generated(node, "::after") : "" });
+      stack.push({ nodes: flat(node), at: 0, shown: contents, visible, tail: drawn ? generated(node, "::after") : "" });
     }
   }
   views.push(text.join(""));

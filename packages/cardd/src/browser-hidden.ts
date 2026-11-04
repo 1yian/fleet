@@ -1,3 +1,5 @@
+import { ENTITIES, windows1252 } from "./browser-entities.ts";
+
 const HIDDEN = "[hidden]";
 
 const REFUSED_OUTPUT = "this output contains a stored credential; read it as text, which hides it";
@@ -14,80 +16,60 @@ const REFERENCES: Readonly<Record<string, readonly string[]>> = {
   "'": ["&#39;", "&#x27;", "&apos;"],
 };
 
-function markup(text: string): string {
+const GAP = "\u0000";
+
+function pieces(text: string): string[] {
   return Array.from(text, (char) => {
     if (/\s/.test(char)) return "\\s+";
     const spelled = REFERENCES[char];
     return spelled === undefined
       ? literal(char)
       : `(?:${[char, ...spelled].map(literal).join("|")})`;
-  }).join("");
+  });
 }
 
-const NAMED: Readonly<Record<string, string>> = {
-  Tab: "\t",
-  NewLine: "\n",
-  nbsp: "\u00a0",
-  excl: "!",
-  quot: '"',
-  QUOT: '"',
-  num: "#",
-  dollar: "$",
-  percnt: "%",
-  amp: "&",
-  AMP: "&",
-  apos: "'",
-  lpar: "(",
-  rpar: ")",
-  ast: "*",
-  midast: "*",
-  plus: "+",
-  comma: ",",
-  period: ".",
-  sol: "/",
-  colon: ":",
-  semi: ";",
-  lt: "<",
-  LT: "<",
-  equals: "=",
-  gt: ">",
-  GT: ">",
-  quest: "?",
-  commat: "@",
-  lsqb: "[",
-  lbrack: "[",
-  bsol: "\\",
-  rsqb: "]",
-  rbrack: "]",
-  Hat: "^",
-  lowbar: "_",
-  UnderBar: "_",
-  grave: "`",
-  DiacriticalGrave: "`",
-  lcub: "{",
-  lbrace: "{",
-  verbar: "|",
-  vert: "|",
-  VerticalLine: "|",
-  rcub: "}",
-  rbrace: "}",
-};
+const SCRUBBABLE = new Set(Object.values(REFERENCES).flat());
 
 const TAG = /<!--[\s\S]*?-->|<[/!?]?[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g;
-const REFERENCE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]*));?/g;
+const REFERENCE = /&(?:#(\d{1,7});?|#[xX]([0-9a-fA-F]{1,6});?|([A-Za-z][A-Za-z0-9]*)(;?))/g;
 
-function character(all: string, code: number): string {
-  return code === 0 || code > 0x10ffff ? all : String.fromCodePoint(code);
+function codePoint(code: number): string {
+  if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return "\ufffd";
+  return windows1252(code) ?? String.fromCodePoint(code);
 }
 
-function composed(text: string): string {
+function named(name: string, semicolon: string): string | undefined {
+  const exact = semicolon === ";" ? ENTITIES.get(`${name};`) : undefined;
+  if (exact !== undefined) return exact;
+  for (let size = name.length; size >= 2; size -= 1) {
+    const chars = ENTITIES.get(name.slice(0, size));
+    if (chars !== undefined) return `${chars}${name.slice(size)}${semicolon}`;
+  }
+  return undefined;
+}
+
+function decoded(
+  decimal?: string,
+  hex?: string,
+  name?: string,
+  semicolon?: string,
+): string | undefined {
+  if (decimal !== undefined) return codePoint(Number.parseInt(decimal, 10));
+  if (hex !== undefined) return codePoint(Number.parseInt(hex, 16));
+  return named(name ?? "", semicolon ?? "");
+}
+
+function compose(text: string, mark: string): string {
   return text
-    .replace(TAG, "")
-    .replace(REFERENCE, (all, decimal?: string, hex?: string, name?: string) => {
-      if (decimal !== undefined) return character(all, Number.parseInt(decimal, 10));
-      if (hex !== undefined) return character(all, Number.parseInt(hex, 16));
-      return NAMED[name ?? ""] ?? all;
-    });
+    .replace(TAG, mark)
+    .replace(
+      REFERENCE,
+      (all: string, decimal?: string, hex?: string, name?: string, semicolon?: string) => {
+        const chars = decoded(decimal, hex, name, semicolon);
+        if (chars === undefined) return all;
+        return SCRUBBABLE.has(all.toLowerCase()) ? chars : `${mark}${chars}${mark}`;
+      },
+    );
 }
 
 const jsonInner = (text: string): string => JSON.stringify(text).slice(1, -1);
@@ -108,14 +90,21 @@ function needlesOf(secrets: Iterable<string>): string[] {
   return [...needles];
 }
 
+const longestFirst = (needles: readonly string[]): string[] =>
+  [...needles].sort((a, b) => b.length - a.length);
+
 function patternOf(needles: readonly string[], flags: string): RegExp {
   return new RegExp(
-    [...needles]
-      .sort((a, b) => b.length - a.length)
-      .map(markup)
+    longestFirst(needles)
+      .map((needle) => pieces(needle).join(""))
       .join("|"),
     flags,
   );
+}
+
+function spanningOf(needles: readonly string[]): RegExp {
+  const alternatives = longestFirst(needles).map((needle) => pieces(needle).join(`${GAP}*`));
+  return new RegExp(`(?=(${alternatives.join("|")}))`, "gi");
 }
 
 function cleaner(secrets: Iterable<string>): (text: string) => string {
@@ -123,10 +112,13 @@ function cleaner(secrets: Iterable<string>): (text: string) => string {
   if (needles.length === 0) return (text) => text;
   const replace = patternOf(needles, "gi");
   const find = patternOf(needles, "i");
+  const spanning = spanningOf(needles);
   return (text) => {
-    const flat = text.replace(replace, HIDDEN);
-    if (find.test(composed(flat))) throw new Error(REFUSED_OUTPUT);
-    return flat;
+    const marked = compose(text, GAP);
+    if (find.test(marked.replaceAll(GAP, "")))
+      for (const found of marked.matchAll(spanning))
+        if (found[1]?.includes(GAP)) throw new Error(REFUSED_OUTPUT);
+    return text.replace(replace, HIDDEN);
   };
 }
 
@@ -134,7 +126,7 @@ export function exposure(secrets: Iterable<string>): (text: string) => boolean {
   const needles = needlesOf(secrets);
   if (needles.length === 0) return () => false;
   const find = patternOf(needles, "i");
-  return (text) => find.test(text) || find.test(composed(text));
+  return (text) => find.test(text) || find.test(compose(text, ""));
 }
 
 export const scrubbed = (text: string, secrets: Iterable<string>): string => cleaner(secrets)(text);
