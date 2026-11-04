@@ -27,6 +27,7 @@ import {
   openTabs,
   recordTab,
   retiredIn,
+  retiredOf,
   tabsOf,
   type Tab,
 } from "./browser-store.ts";
@@ -286,9 +287,13 @@ export class Browser {
     return undefined;
   }
 
-  private async sweep(cdp: Cdp): Promise<void> {
+  private async alive(cdp: Cdp): Promise<Set<string>> {
     const listed = parseCdp(TargetsSchema, await cdp.send("Target.getTargets"), "the target list");
-    const alive = new Set(listed.targetInfos.map((info) => info.targetId));
+    return new Set(listed.targetInfos.map((info) => info.targetId));
+  }
+
+  private async sweep(cdp: Cdp): Promise<void> {
+    const alive = await this.alive(cdp);
     const retired = retiredIn(this.db, alive);
     for (const tab of openTabs(this.db)) {
       if (!alive.has(tab.target)) this.closed(tab.target);
@@ -364,38 +369,55 @@ export class Browser {
   }
 
   private closeTabs(card: number): Promise<OpResult<"browser.release">> {
-    const tabs = tabsOf(this.db, card);
-    if (tabs.length === 0) return Promise.resolve({ closed: 0, note: null });
-    this.retire(tabs);
-    return this.closeAll(card, tabs, true);
+    this.retire(tabsOf(this.db, card));
+    const targets = retiredOf(this.db, card);
+    if (targets.length === 0) return Promise.resolve({ closed: 0, note: null });
+    return this.closeAll(card, targets, true);
+  }
+
+  private unreachable(card: number, count: number, error: unknown): OpResult<"browser.release"> {
+    return {
+      closed: 0,
+      note: `${reason(error)}. ${plural(count)} of c-${String(card)} stay open: cardd closes them when the browser answers again.`,
+    };
   }
 
   private async closeAll(
     card: number,
-    tabs: readonly Tab[],
+    targets: readonly string[],
     retry: boolean,
   ): Promise<OpResult<"browser.release">> {
     let cdp: Cdp;
     try {
       cdp = await this.connection();
     } catch (error) {
-      return {
-        closed: 0,
-        note: `${reason(error)}. ${plural(tabs.length)} of c-${String(card)} stay open: cardd closes them when the browser answers again.`,
-      };
+      return this.unreachable(card, targets.length, error);
     }
+    try {
+      return await this.closeAlive(cdp, targets);
+    } catch (error) {
+      if (!cdp.open && retry) return this.closeAll(card, targets, false);
+      return this.unreachable(card, targets.length, error);
+    }
+  }
+
+  private async closeAlive(
+    cdp: Cdp,
+    targets: readonly string[],
+  ): Promise<OpResult<"browser.release">> {
+    const alive = await this.alive(cdp);
     let closed = 0;
     const stuck: string[] = [];
-    for (const tab of tabs) {
+    for (const target of targets.filter((each) => alive.has(each))) {
       try {
-        await cdp.send("Target.closeTarget", { targetId: tab.target });
+        await cdp.send("Target.closeTarget", { targetId: target });
         closed += 1;
       } catch (error) {
-        if (!cdp.open && retry) return this.closeAll(card, tabs, false);
+        if (!cdp.open) throw error;
         if (isGone(error)) closed += 1;
         else stuck.push(reason(error));
       }
-      this.closed(tab.target);
+      this.closed(target);
     }
     const note =
       stuck[0] === undefined ? null : `${plural(stuck.length)} could not be closed: ${stuck[0]}`;

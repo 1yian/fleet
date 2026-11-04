@@ -291,12 +291,23 @@ test("an explicit close while the browser is down says the tab stays open, and w
   assert.deepEqual(await pathsOpen(), ["/a"]);
 
   await proxy.listen();
-  await until(async () => {
-    await viewOf();
-    return (await pathsOpen()).length === 0 ? true : undefined;
-  }, "a viewer poll to close the retired tab");
+  await act(own, { action: "close" });
+  assert.deepEqual(await pathsOpen(), []);
   assert.equal(await act(own, { action: "close" }), "You had no tab open.");
   assert.equal((await viewOf()).tabs.length, 0);
+});
+
+test("a release that could not reach the browser closes the retired tab when it is retried after the browser is back", async () => {
+  const own = await worker("Users see one scrollbar");
+  await act(own, { action: "open", url: site.url("/a") });
+  await proxy.stop();
+  assert.match((await released(own.card.id)).note ?? "", /1 tab of c-1 stay open/);
+  assert.deepEqual(await pathsOpen(), ["/a"]);
+
+  await proxy.listen();
+  assert.equal((await released(own.card.id)).note, null);
+  assert.deepEqual(await pathsOpen(), []);
+  assert.deepEqual(await released(own.card.id), { closed: 0, note: null });
 });
 
 test("open and read never reuse a tab that was opened before the card's current attempt began", async () => {

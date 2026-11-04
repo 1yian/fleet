@@ -31,6 +31,14 @@ export const tabsOf = (db: DatabaseSync, card: number): Tab[] =>
     .all(card)
     .map(rowToTab);
 
+export const retiredOf = (db: DatabaseSync, card: number): string[] =>
+  db
+    .prepare(
+      "SELECT target FROM browser_tabs WHERE card = ? AND closed_at IS NOT NULL ORDER BY opened_at",
+    )
+    .all(card)
+    .map((row) => String(row["target"]));
+
 export function recordTab(db: DatabaseSync, tab: Tab): void {
   db.prepare("INSERT INTO browser_tabs (target, card, label, opened_at) VALUES (?, ?, ?, ?)").run(
     tab.target,
