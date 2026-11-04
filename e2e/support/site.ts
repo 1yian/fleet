@@ -40,6 +40,30 @@ const PAGES: Readonly<Record<string, string>> = {
     </form></body>`,
   "/landing": `<!doctype html><title>Landing</title><body>
     <input name="q" type="text" autofocus></body>`,
+  "/nest": `<!doctype html><title>Nest</title><body>
+    <form>
+      <input name="u" type="text" autocomplete="username" oninput="show(this.value, this.value)">
+      <input name="p" type="password" autocomplete="current-password">
+    </form>
+    <div id="shadow"></div>
+    <iframe id="same" style="width:320px;height:60px"></iframe>
+    <iframe id="cross" style="width:320px;height:60px"></iframe>
+    <script>
+      const root = document.getElementById("shadow").attachShadow({ mode: "open" });
+      root.innerHTML = "<p></p><input>";
+      const loaded = (frame, url) => new Promise((resolve) => { frame.onload = () => resolve(); frame.src = url; });
+      window.show = (text, field) => {
+        root.querySelector("p").textContent = text;
+        root.querySelector("input").value = field;
+        const path = "/account?as=" + encodeURIComponent(text);
+        const other = location.origin.replace("login.example.test", "login.nothing.test");
+        window.framesReady = Promise.all([
+          loaded(document.getElementById("same"), path),
+          loaded(document.getElementById("cross"), other + path),
+        ]);
+        return window.framesReady;
+      };
+    </script></body>`,
   "/fragile": `<!doctype html><title>Fragile</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value; this.form.p.remove()">
@@ -90,7 +114,7 @@ export class TestSite {
       if (path === "/account") {
         const who = new URL(request.url ?? "/", "http://site").searchParams.get("as") ?? "";
         response
-          .writeHead(200, { "content-type": "text/html" })
+          .writeHead(200, { "content-type": "text/html; charset=utf-8" })
           .end(
             `<!doctype html><title>Account of ${who}</title><body><p id="who">${who}</p></body>`,
           );
@@ -98,7 +122,7 @@ export class TestSite {
       }
       const page = PAGES[path];
       if (page === undefined) response.writeHead(404).end();
-      else response.writeHead(200, { "content-type": "text/html" }).end(page);
+      else response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address: AddressInfo | string | null = server.address();

@@ -49,7 +49,7 @@ function cleaner(secrets: Iterable<string>): (text: string) => string {
 
 export const scrubbed = (text: string, secrets: Iterable<string>): string => cleaner(secrets)(text);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

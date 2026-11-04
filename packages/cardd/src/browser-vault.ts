@@ -3,6 +3,7 @@ import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
 import type { LoginsConfig } from "./browser-config.ts";
 import type { Credentials } from "./browser-fill.ts";
+import { isRecord } from "./browser-hidden.ts";
 import type { Hosts } from "./pulls.ts";
 
 const BWS_TIMEOUT_MS = 30_000;
@@ -76,13 +77,26 @@ export function credentialsOf(entry: Secret): Credentials {
   }
 }
 
-function valuesOf(entry: Secret): string[] {
+const FIELDS = ["username", "password", "totp"] as const;
+
+function protectedIn(entry: Secret): { values: string[]; known: boolean } {
+  let parsed: unknown;
   try {
-    const creds = credentialsOf(entry);
-    return [creds.username, creds.password, ...(creds.totp === undefined ? [] : [creds.totp])];
+    parsed = JSON.parse(entry.value);
   } catch {
-    return [];
+    return { values: [entry.value], known: true };
   }
+  if (!isRecord(parsed))
+    return { values: [entry.value, ...(typeof parsed === "string" ? [parsed] : [])], known: true };
+  const values: string[] = [];
+  let known = true;
+  for (const field of FIELDS) {
+    const value = parsed[field];
+    if (typeof value === "string") values.push(value);
+    else if (typeof value === "number") values.push(String(value));
+    else if (value !== undefined && value !== null) known = false;
+  }
+  return { values, known };
 }
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -106,7 +120,16 @@ export class Vault {
   async refresh(): Promise<Secret[]> {
     if (this.logins === undefined) return [];
     const secrets = await listSecrets(this.logins, this.hosts);
-    for (const secret of secrets) for (const value of valuesOf(secret)) this.held.add(value);
+    const unknown: string[] = [];
+    for (const secret of secrets) {
+      const { values, known } = protectedIn(secret);
+      for (const value of values) this.held.add(value);
+      if (!known) unknown.push(secret.key);
+    }
+    if (unknown.length > 0)
+      throw new Error(
+        `the Bitwarden entry ${unknown.join(", ")} has a username, password, or totp that is neither text nor empty, so the values to hide are not known. Its content is not shown`,
+      );
     this.loaded = true;
     this.opened.clear();
     return secrets;

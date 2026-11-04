@@ -15,6 +15,7 @@ import {
   WITH_TRICKY,
   assertNoSecretAnywhere as scan,
   bullets,
+  hidden,
   signedIn as signIn,
   until,
 } from "../support/login-fixtures.ts";
@@ -30,9 +31,9 @@ afterEach(async () => {
   vault.dispose();
 });
 
-async function start(entries = [GOOD]): Promise<void> {
+async function start(entries = [GOOD], isolated = false): Promise<void> {
   vault.publish(entries);
-  lab = await BrowserLab.start({ vault });
+  lab = await BrowserLab.start({ vault, isolated });
 }
 
 const assertNoSecretAnywhere = (spoken: readonly string[] = []): void => {
@@ -163,4 +164,74 @@ test("a screenshot after a login that failed halfway shows no echoed value eithe
   });
   assert.equal(await worker.shoot(), covered);
   assertNoSecretAnywhere();
+});
+
+test("a screenshot shows no value inside an iframe, a cross-site iframe, or an open shadow root", async () => {
+  await start([GOOD], true);
+  const worker = await signedIn("/nest");
+  await worker.act({ action: "eval", expression: "window.framesReady.then(() => 'ready')" });
+  const covered = await worker.shoot();
+  assert.equal(
+    await worker.act({
+      action: "eval",
+      expression: `document.getElementById("same").contentDocument.getElementById("who").textContent`,
+    }),
+    hidden("[hidden]"),
+  );
+
+  await worker.act({ action: "eval", expression: RETYPE });
+  await worker.act({
+    action: "eval",
+    expression: `window.show("${bullets(USERNAME.length)}", "").then(() => "ready")`,
+  });
+  assert.equal(await worker.shoot(), covered);
+  assertNoSecretAnywhere();
+});
+
+test("a username stays hidden when its entry has no password, also after a cardd restart", async () => {
+  await start([
+    { key: "example.test", value: JSON.stringify({ username: USERNAME, password: "" }) },
+  ]);
+  const before = await lab.worker("Look at the account");
+  await before.act({ action: "open", url: account(USERNAME, "login.example.test") });
+  await lab.cardd.restart();
+  const worker = await lab.reconnect(before);
+
+  const seen = [
+    await worker.act({ action: "read", selector: "#who" }),
+    await worker.act({ action: "eval", expression: "document.title" }),
+  ];
+  const covered = await worker.shoot();
+  await worker.act({
+    action: "eval",
+    expression: `document.getElementById("who").textContent = "${bullets(USERNAME.length)}"`,
+  });
+  assert.equal(await worker.shoot(), covered);
+  seen.push(await worker.act({ action: "open", url: account(USERNAME, "login.example.test") }));
+
+  assert.equal(seen[0], "[hidden]");
+  assert.match(seen[1] ?? "", /Account of \[hidden\]"$/);
+  assert.match(
+    seen[2] ?? "",
+    /^Opened "c-1 .*Account of \[hidden\]" at .*\?as=\[hidden\] in your tab /,
+  );
+  assertNoSecretAnywhere(seen);
+});
+
+test("an entry with a field that is neither text nor empty stops the browser until it is fixed", async () => {
+  await start([
+    { key: "example.test", value: JSON.stringify({ username: USERNAME, password: ["x"] }) },
+  ]);
+  const worker = await lab.worker("Look at the account");
+  await assert.rejects(
+    worker.act({ action: "open", url: account("someone", "login.example.test") }),
+    REFUSAL,
+  );
+  assert.deepEqual(await lab.chrome.pages(), []);
+
+  vault.publish([GOOD]);
+  assert.match(
+    await worker.act({ action: "open", url: account("someone", "login.example.test") }),
+    /^Opened /,
+  );
 });

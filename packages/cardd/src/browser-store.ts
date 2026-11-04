@@ -47,6 +47,13 @@ export function markClosed(db: DatabaseSync, target: string): void {
   );
 }
 
+export function retiredIn(db: DatabaseSync, targets: Iterable<string>): string[] {
+  const retired = db.prepare(
+    "SELECT 1 FROM browser_tabs WHERE target = ? AND closed_at IS NOT NULL",
+  );
+  return [...targets].filter((target) => retired.get(target) !== undefined);
+}
+
 export function labelOf(db: DatabaseSync, card: number): string {
   const { id, name } = getCard(db, card);
   return name === `c-${String(id)}` ? name : `c-${String(id)} ${name}`;

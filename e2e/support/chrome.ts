@@ -22,10 +22,15 @@ export class StandInChrome {
   static async start(
     rules = "MAP *.example.test 127.0.0.1",
     wanted?: number,
+    isolated = false,
   ): Promise<StandInChrome> {
     const port = wanted ?? (await freePort());
     const browser = await chromium.launch({
-      args: [`--remote-debugging-port=${String(port)}`, `--host-resolver-rules=${rules}`],
+      args: [
+        `--remote-debugging-port=${String(port)}`,
+        `--host-resolver-rules=${rules}`,
+        ...(isolated ? ["--site-per-process"] : []),
+      ],
     });
     return new StandInChrome(browser, `http://127.0.0.1:${String(port)}`);
   }

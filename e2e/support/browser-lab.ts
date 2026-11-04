@@ -35,10 +35,14 @@ function rawWorker(card: Card, token: string, session: Session): RawWorker {
   };
 }
 
+const RULES =
+  "MAP *.example.test 127.0.0.1, MAP *.nothing.test 127.0.0.1, MAP *.evil.test 127.0.0.1";
+
 export interface LabOptions {
   readonly vault?: FakeVault;
   readonly rules?: string;
   readonly proxied?: boolean;
+  readonly isolated?: boolean;
 }
 
 export interface Crew {
@@ -72,13 +76,10 @@ export class BrowserLab {
     this.mainToken = mainToken;
   }
 
-  static async start({
-    vault,
-    rules = "MAP *.example.test 127.0.0.1, MAP *.nothing.test 127.0.0.1, MAP *.evil.test 127.0.0.1",
-    proxied = false,
-  }: LabOptions = {}): Promise<BrowserLab> {
-    const chrome = await StandInChrome.start(rules);
-    const proxy = proxied ? await TcpProxy.start(chrome.port) : undefined;
+  static async start(options: LabOptions = {}): Promise<BrowserLab> {
+    const { vault, isolated } = options;
+    const chrome = await StandInChrome.start(options.rules ?? RULES, undefined, isolated);
+    const proxy = options.proxied === true ? await TcpProxy.start(chrome.port) : undefined;
     const endpoint = proxy?.endpoint ?? chrome.endpoint;
     const site = await TestSite.start();
     const config = vault === undefined ? JSON.stringify({ cdp: endpoint }) : vault.config(endpoint);

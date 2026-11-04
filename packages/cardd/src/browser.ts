@@ -25,6 +25,7 @@ import {
   markClosed,
   openTabs,
   recordTab,
+  retiredIn,
   tabsOf,
   type Tab,
 } from "./browser-store.ts";
@@ -59,7 +60,6 @@ const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
 export class Browser {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, string>();
-  private readonly retired = new Set<string>();
   private readonly turns = new Map<number, Promise<unknown>>();
   private readonly db: DatabaseSync;
   private readonly config: BrowserConfig | undefined;
@@ -236,27 +236,21 @@ export class Browser {
   }
 
   private retire(tabs: readonly Tab[]): void {
-    for (const tab of tabs) this.retired.add(tab.target);
+    for (const tab of tabs) this.closed(tab.target);
   }
 
   private closed(target: string): void {
     markClosed(this.db, target);
     this.sessions.delete(target);
-    this.retired.delete(target);
   }
 
   private stale(tab: Tab): boolean {
-    if (this.retired.has(tab.target)) return true;
     const began = attemptStartedAt(this.db, tab.card);
     return began !== undefined && tab.openedAt < began;
   }
 
   private async discard(cdp: Cdp, tab: Tab): Promise<void> {
-    try {
-      await cdp.send("Target.closeTarget", { targetId: tab.target });
-    } catch (error) {
-      if (!isGone(error)) return;
-    }
+    await cdp.send("Target.closeTarget", { targetId: tab.target }).catch(() => undefined);
     this.closed(tab.target);
   }
 
@@ -271,9 +265,14 @@ export class Browser {
   private async sweep(cdp: Cdp): Promise<void> {
     const listed = parseCdp(TargetsSchema, await cdp.send("Target.getTargets"), "the target list");
     const alive = new Set(listed.targetInfos.map((info) => info.targetId));
+    const retired = retiredIn(this.db, alive);
     for (const tab of openTabs(this.db)) {
       if (!alive.has(tab.target)) this.closed(tab.target);
       else if (cardEnded(this.db, tab.card) || this.stale(tab)) await this.discard(cdp, tab);
+    }
+    for (const target of retired) {
+      await cdp.send("Target.closeTarget", { targetId: target }).catch(() => undefined);
+      this.sessions.delete(target);
     }
   }
 
@@ -352,16 +351,13 @@ export class Browser {
     for (const tab of tabs) {
       try {
         await cdp.send("Target.closeTarget", { targetId: tab.target });
+        closed += 1;
       } catch (error) {
         if (!cdp.open && retry) return this.closeTabs(card, false);
-        if (!isGone(error)) {
-          stuck.push(reason(error));
-          this.retire([tab]);
-          continue;
-        }
+        if (isGone(error)) closed += 1;
+        else stuck.push(reason(error));
       }
       this.closed(tab.target);
-      closed += 1;
     }
     const note =
       stuck[0] === undefined ? null : `${plural(stuck.length)} could not be closed: ${stuck[0]}`;

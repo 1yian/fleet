@@ -14,9 +14,11 @@ let proxy: TcpProxy;
 let site: TestSite;
 let cardd: Cardd;
 let main: Session;
+let mainToken: string;
 
 interface Worker {
   readonly card: Card;
+  readonly token: string;
   readonly session: Session;
 }
 
@@ -25,7 +27,7 @@ beforeEach(async () => {
   proxy = await TcpProxy.start(chrome.port);
   site = await TestSite.start();
   cardd = await Cardd.start({}, ["--browser", JSON.stringify({ cdp: proxy.endpoint })]);
-  const mainToken = cardd.addLane("main");
+  mainToken = cardd.addLane("main");
   cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
   main = await cardd.connect(mainToken);
 });
@@ -43,7 +45,16 @@ afterEach(async () => {
 
 async function worker(title: string): Promise<Worker> {
   const card = await newCard(main, title);
-  return { card, session: await cardd.connect(await begin(main, card, "browse")) };
+  const token = await begin(main, card, "browse");
+  return { card, token, session: await cardd.connect(token) };
+}
+
+async function restartCardd(...who: Worker[]): Promise<Worker[]> {
+  await cardd.restart();
+  main = await cardd.connect(mainToken);
+  return Promise.all(
+    who.map(async (each) => ({ ...each, session: await cardd.connect(each.token) })),
+  );
 }
 
 async function act(who: Worker, args: Record<string, unknown>): Promise<string> {
@@ -234,18 +245,18 @@ test("a browser that is down does not block release, and a viewer poll closes th
   assert.match(down.note ?? "", /1 tab of c-1 stay open/);
   await assert.rejects(act(kept, { action: "read" }), /the shared browser is unreachable/);
   await closeCard(first.card.id);
-  assert.equal((await viewOf()).tabs.length, 2);
+  assert.deepEqual((await pathsOpen()).sort(), ["/a", "/b"]);
 
   await proxy.listen();
-  const view = await until(async () => {
-    const polled = await viewOf();
-    return polled.tabs.length === 1 ? polled : undefined;
+  await until(async () => {
+    await viewOf();
+    return (await pathsOpen()).length === 1 ? true : undefined;
   }, "a viewer poll to close the ended card's tab");
+  assert.deepEqual(await pathsOpen(), ["/b"]);
   assert.deepEqual(
-    view.tabs.map((tab) => tab.card),
+    (await viewOf()).tabs.map((tab) => tab.card),
     [kept.card.id],
   );
-  assert.deepEqual(await pathsOpen(), ["/b"]);
   assert.match(await act(kept, { action: "read" }), /bravo page/);
 });
 
@@ -277,11 +288,14 @@ test("an explicit close while the browser is down says the tab stays open, and w
     act(own, { action: "close" }),
     /Your tab was not closed and stays open\..*the shared browser is unreachable/,
   );
-  assert.equal((await viewOf()).tabs.length, 1);
+  assert.deepEqual(await pathsOpen(), ["/a"]);
 
   await proxy.listen();
-  assert.equal(await act(own, { action: "close" }), "Closed your tab.");
-  assert.deepEqual(await pathsOpen(), []);
+  await until(async () => {
+    await viewOf();
+    return (await pathsOpen()).length === 0 ? true : undefined;
+  }, "a viewer poll to close the retired tab");
+  assert.equal(await act(own, { action: "close" }), "You had no tab open.");
   assert.equal((await viewOf()).tabs.length, 0);
 });
 
@@ -300,4 +314,27 @@ test("open and read never reuse a tab that was opened before the card's current 
   cardd.startAttemptAfterTabs(own.card.id);
   await assert.rejects(act(own, { action: "read" }), /you have no tab yet/);
   assert.deepEqual(await pathsOpen(), []);
+});
+
+test("a tab that could not be closed stays retired across a cardd restart, is closed, and is never reused", async () => {
+  const restarted = await worker("Users see one scrollbar");
+  await act(restarted, { action: "open", url: site.url("/a") });
+  const old = (await viewOf()).tabs[0]?.target ?? "";
+  await proxy.stop();
+  assert.match((await released(restarted.card.id)).note ?? "", /1 tab of c-1 stay open/);
+  const [again] = await restartCardd(restarted);
+  assert.ok(again !== undefined);
+  assert.deepEqual(await pathsOpen(), ["/a"]);
+
+  await proxy.listen();
+  await until(async () => {
+    await viewOf();
+    return (await pathsOpen()).length === 0 ? true : undefined;
+  }, "a viewer poll to close the retired tab");
+  assert.match(await act(again, { action: "open", url: site.url("/b") }), /Bravo/);
+
+  const view = await viewOf();
+  assert.equal(view.tabs.length, 1);
+  assert.notEqual(view.tabs[0]?.target, old);
+  assert.deepEqual(await pathsOpen(), ["/b"]);
 });
