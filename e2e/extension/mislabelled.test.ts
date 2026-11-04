@@ -45,6 +45,10 @@ test("a second mate's workspace that a stray run renamed 1stmate is not duplicat
   const panes = await panesOf(ops);
   await fleet.lab.run(["workspace", "rename", ops, "1stmate"]);
 
+  const kept = fleet.here.fleet(["up"], { HERDR_SESSION: fleet.lab.name });
+  assert.equal(kept, "ops: already running in 2ndmate-ops\n");
+  assert.deepEqual([...(await labels()).values()].sort(), ["1stmate", "1stmate", "2ndmate-far"]);
+
   await updateFleet();
 
   await fleet.newPid(panes[0] ?? "", was);
