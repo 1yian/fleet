@@ -10,16 +10,22 @@ if (log !== undefined)
     `${JSON.stringify({ args, token: process.env["BWS_ACCESS_TOKEN"] === data["token"] })}\n`,
   );
 
-if (typeof data["outage"] === "string") {
-  console.error(data["outage"]);
+const TRAILER = [
+  "",
+  "Location:",
+  "   crates/bws/src/main.rs:68",
+  "",
+  "Backtrace omitted. Run with RUST_BACKTRACE=1 environment variable to display it.",
+  "Run with RUST_BACKTRACE=full to include source snippets.",
+];
+function fail(reason: string): never {
+  console.error(["Error: ", `   0: ${reason}`, ...TRAILER].join("\n"));
   process.exit(1);
 }
-if (process.env["BWS_ACCESS_TOKEN"] !== data["token"]) {
-  console.error(
-    `Error: [401 Unauthorized] the access token ${process.env["BWS_ACCESS_TOKEN"] ?? ""} was refused`,
-  );
-  process.exit(1);
-}
+
+if (typeof data["outage"] === "string") fail(data["outage"]);
+if (process.env["BWS_ACCESS_TOKEN"] !== data["token"])
+  fail(`[401 Unauthorized] the access token ${process.env["BWS_ACCESS_TOKEN"] ?? ""} was refused`);
 
 const words: string[] = [];
 for (let at = 0; at < args.length; at += 1) {
@@ -41,10 +47,7 @@ const shaped = (project: Record<string, unknown>, secret: Record<string, unknown
 
 if (noun === "secret" && verb === "list") {
   const project = projects.find((each) => each["id"] === target);
-  if (project === undefined) {
-    console.error("Error: project not found");
-    process.exit(1);
-  }
+  if (project === undefined) fail("project not found");
   console.log(JSON.stringify(secrets(project).map((secret) => shaped(project, secret))));
 } else if (noun === "secret" && verb === "get") {
   for (const project of projects) {
@@ -54,8 +57,7 @@ if (noun === "secret" && verb === "list") {
       process.exit(0);
     }
   }
-  console.error("Error: secret not found");
-  process.exit(1);
+  fail("secret not found");
 } else {
   console.error(`fake bws: ${words.join(" ")} is not supported`);
   process.exit(2);

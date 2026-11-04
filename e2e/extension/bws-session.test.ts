@@ -19,7 +19,7 @@ const PROBE = fileURLToPath(new URL("../support/probe.ts", import.meta.url));
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 const STALE_TOKEN = "stale-token-in-the-lane-file";
 const KEY = "E2E_API_KEY";
-const OUTAGE = "Error: simulated outage";
+const OUTAGE = "simulated outage";
 
 const hashOf = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 16);
@@ -180,7 +180,7 @@ test("with bws down, the mate falls back to its file token and its environment, 
   }, "the mate to say it fell back");
   assert.match(
     screen,
-    /fleet: lane token: from config\/lane\.json \(bws failed: bws exited with status 1: Error: simulated/,
+    /fleet: lane token: from config\/lane\.json \(bws failed: bws exited with status 1: simulated/,
   );
   assert.match(screen, new RegExp(`fleet: ${KEY}: from the environment \\(bws failed:`));
   assert.ok(!screen.includes(inherited), "the fallback value shows on the screen");

@@ -157,10 +157,10 @@ const outages: {
   {
     name: "bws is down",
     setUp: () => {
-      bws.failWith("Error: simulated outage");
+      bws.failWith("simulated outage");
       return bws.env;
     },
-    note: /\(bws failed: bws exited with status 1: Error: simulated outage\)/,
+    note: /\(bws failed: bws exited with status 1: simulated outage\)/,
   },
   {
     name: "the secret is not in bws",
@@ -180,7 +180,7 @@ const outages: {
       return bws.env;
     },
     block: () => ({ tokenFile: bws.tokenFile, project: randomUUID() }),
-    note: /\(bws failed: bws exited with status 1: Error: project not found\)/,
+    note: /\(bws failed: bws exited with status 1: project not found\)/,
   },
   {
     name: "the token file is missing",
@@ -203,7 +203,7 @@ const outages: {
       chmodSync(bws.tokenFile, 0o600);
       return bws.env;
     },
-    note: /\(bws failed: bws exited with status 1: Error: \[401 Unauthorized\] the access token \[hidden\] was refused\)/,
+    note: /\(bws failed: bws exited with status 1: \[401 Unauthorized\] the access token \[hidden\] was refused\)/,
   },
 ];
 
@@ -223,12 +223,12 @@ for (const { name, setUp, note, block } of outages) {
 
 test("with no token anywhere, fleet wake refuses and says where it looked", () => {
   configure(undefined, settings());
-  bws.failWith("Error: simulated outage");
+  bws.failWith("simulated outage");
   const run = wake("nothing", bws.env);
   assert.notEqual(run.status, 0);
   assert.match(
     run.err,
-    /fleet: lane token: not found \(bws failed: bws exited with status 1: Error: simulated outage, and config\/lane\.json has none\)/,
+    /fleet: lane token: not found \(bws failed: bws exited with status 1: simulated outage, and config\/lane\.json has none\)/,
   );
 });
 

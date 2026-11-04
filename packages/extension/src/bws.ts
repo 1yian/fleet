@@ -25,6 +25,8 @@ export interface Resolved {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const BARE_ERROR = /^error:$/i;
+const NUMBERED = /^\d+:\s*/;
 const BWS_TIMEOUT_MS = 20_000;
 const WHY_LIMIT = 160;
 
@@ -43,9 +45,13 @@ const textOf = (value: unknown, key: string): string | undefined => {
 
 class Failure extends Error {}
 
-function firstLine(text: string, hide: string): string {
-  const line = text.split("\n").find((each) => each.trim() !== "") ?? "";
-  const shown = line.trim().replaceAll(hide, "[hidden]");
+function reasonOf(text: string, hide: string): string {
+  const line =
+    text
+      .split("\n")
+      .map((each) => each.trim())
+      .find((each) => each !== "" && !BARE_ERROR.test(each)) ?? "";
+  const shown = line.replace(NUMBERED, "").replaceAll(hide, "[hidden]");
   return shown.length > WHY_LIMIT ? `${shown.slice(0, WHY_LIMIT)}...` : shown;
 }
 
@@ -56,7 +62,7 @@ function describeFailure(
 ): string {
   if (error.code === "ENOENT") return "bws is not on the PATH";
   if (error.killed === true) return `bws did not answer within ${String(BWS_TIMEOUT_MS / 1000)}s`;
-  const detail = firstLine(stderr, token);
+  const detail = reasonOf(stderr, token);
   return `bws exited with status ${String(error.code)}${detail === "" ? "" : `: ${detail}`}`;
 }
 
