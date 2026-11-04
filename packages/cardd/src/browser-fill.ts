@@ -46,7 +46,9 @@ const TYPE = `function (text) {
   if (document.activeElement !== this) return "gone";
   this.select();
   document.execCommand("insertText", false, text);
-  return this.value.length === text.length ? "typed" : "kept";
+  if (this.value === text) return "typed";
+  this.value = "";
+  return "kept";
 }`;
 
 type Slot = "user" | "password" | "code";

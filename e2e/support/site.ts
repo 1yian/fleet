@@ -109,6 +109,17 @@ const PAGES: Readonly<Record<string, string>> = {
           line.replaceChildren(text.slice(0, half), gap, host);
           spot.replaceChildren(line);
         },
+        flattened: (text) => {
+          const half = Math.floor(text.length / 2);
+          const line = document.createElement("p");
+          const gap = document.createElement("span");
+          gap.style.cssText = "display: inline-block; width: 0; height: 0; transform: rotate(45deg) scaleX(0)";
+          gap.textContent = "ignored";
+          const host = document.createElement("span");
+          host.attachShadow({ mode: "open" }).append(document.createTextNode(text.slice(half)));
+          line.replaceChildren(text.slice(0, half), gap, host);
+          spot.replaceChildren(line);
+        },
         hostsplit: hosted("open"),
         closedsplit: hosted("closed"),
         escaped: (text) => {
@@ -144,6 +155,11 @@ const PAGES: Readonly<Record<string, string>> = {
       window.ready = Promise.resolve();
       window.put = (text) => (window.ready = Promise.resolve(places[at](text)).then(() => "ready"));
     </script></body>`,
+  "/masked": `<!doctype html><title>Masked</title><body>
+    <form>
+      <input name="u" type="text" autocomplete="username">
+      <input name="p" type="password" autocomplete="current-password" oninput="this.value = '*'.repeat(this.value.length)">
+    </form></body>`,
   "/tall": `<!doctype html><title>Tall</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('who').textContent = this.value">

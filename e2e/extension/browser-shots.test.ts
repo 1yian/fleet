@@ -75,6 +75,7 @@ for (const [place, what] of [
   ["split", "splits it across inline elements"],
   ["hidden", "splits it around an element that is not shown"],
   ["cvhidden", "splits it around a hidden box and a shadow host with a direct text child"],
+  ["flattened", "splits it around a box that a transform flattens and a shadow host"],
   ["hostsplit", "splits it between its text and an open shadow host"],
   ["closedsplit", "splits it between its text and a closed shadow host"],
   ["escaped", "writes it out as HTML character references"],

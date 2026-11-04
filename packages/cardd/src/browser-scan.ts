@@ -6,9 +6,10 @@ import { call, type Page } from "./browser-page.ts";
 const GROUP = "fleet-scan";
 const WORLD = "fleet-scan";
 
-const SCAN = `function (...pairs) {
+const SCAN = `function (count, ...nodes) {
   const closed = new Map();
-  for (let i = 0; i < pairs.length; i += 2) closed.set(pairs[i], pairs[i + 1]);
+  for (let i = 0; i < count; i += 2) closed.set(nodes[i], nodes[i + 1]);
+  const undrawn = new Set(nodes.slice(count));
   const rootOf = (el) => el.shadowRoot ?? closed.get(el) ?? null;
   const doc = this.ownerDocument ?? this;
   const view = doc.defaultView;
@@ -74,7 +75,7 @@ const SCAN = `function (...pairs) {
     const node = top.nodes[top.at];
     top.at += 1;
     if (node.nodeType === 3) {
-      if (top.shown && top.visible && boxed(node)) text.push(node.nodeValue ?? "");
+      if (top.shown && top.visible && !undrawn.has(node) && boxed(node)) text.push(node.nodeValue ?? "");
     } else if (node.nodeType === 1) {
       const style = styleOf(node);
       const shown = top.shown && (style === null || style.display !== "none");
@@ -108,6 +109,9 @@ const ValueSchema = Type.Object({
   exceptionDetails: Type.Optional(Type.Unknown()),
 });
 const ViewsSchema = Type.Array(Type.String());
+const QuadsSchema = Type.Object({
+  quads: Type.Array(Type.Array(Type.Number(), { minItems: 8, maxItems: 8 })),
+});
 const FrameNodeSchema = Type.Object({
   frame: Type.Object({ id: Type.String() }),
   childFrames: Type.Optional(Type.Array(Type.Unknown())),
@@ -125,7 +129,12 @@ interface Scope {
   readonly nodeId: number;
   readonly frame: string;
   readonly closed: readonly number[];
+  readonly texts: readonly number[];
 }
+
+const TEXT_NODE = 3;
+const DOCUMENT_NODE = 9;
+const MIN_AREA = 1;
 
 const unreadable = (): Error =>
   new Error(
@@ -167,8 +176,49 @@ function indexOf(nodes: readonly FlatNode[]): {
   return { parents, frames };
 }
 
+function areaOf(quad: readonly number[]): number {
+  let twice = 0;
+  for (let at = 0; at < 8; at += 2) {
+    const next = (at + 2) % 8;
+    twice += (quad[at] ?? 0) * (quad[next + 1] ?? 0) - (quad[next] ?? 0) * (quad[at + 1] ?? 0);
+  }
+  return Math.abs(twice) / 2;
+}
+
+async function drawn(page: Page, nodeId: number): Promise<boolean> {
+  try {
+    const { quads } = parseCdp(
+      QuadsSchema,
+      await call(page, "DOM.getContentQuads", { nodeId }),
+      "a text's boxes",
+    );
+    return quads.some((quad) => areaOf(quad) >= MIN_AREA);
+  } catch {
+    return true;
+  }
+}
+
+function textsOf(
+  nodes: readonly FlatNode[],
+  parents: ReadonlyMap<number, number>,
+): Map<number, number[]> {
+  const types = new Map(nodes.map((node) => [node.nodeId, node.nodeType]));
+  const owned = new Map<number, number[]>();
+  for (const node of nodes) {
+    if (node.nodeType !== TEXT_NODE) continue;
+    let at = parents.get(node.nodeId);
+    while (at !== undefined && types.get(at) !== DOCUMENT_NODE) at = parents.get(at);
+    if (at === undefined) continue;
+    const own = owned.get(at);
+    if (own === undefined) owned.set(at, [node.nodeId]);
+    else own.push(node.nodeId);
+  }
+  return owned;
+}
+
 function scopesOf(nodes: readonly FlatNode[]): Scope[] {
   const { parents, frames } = indexOf(nodes);
+  const texts = textsOf(nodes, parents);
   const closed = new Map<string, number[]>();
   for (const node of nodes)
     for (const root of node.shadowRoots ?? []) {
@@ -178,13 +228,18 @@ function scopesOf(nodes: readonly FlatNode[]): Scope[] {
       closed.set(frame, [...(closed.get(frame) ?? []), node.nodeId, root.nodeId]);
     }
   const scopes = nodes
-    .filter((node) => node.nodeType === 9)
+    .filter((node) => node.nodeType === DOCUMENT_NODE)
     .map((node) => {
       const frame = nodes.find(
         (each) => each.parentId === node.nodeId && each.frameId !== undefined,
       )?.frameId;
       if (frame === undefined) throw unreadable();
-      return { nodeId: node.nodeId, frame, closed: closed.get(frame) ?? [] };
+      return {
+        nodeId: node.nodeId,
+        frame,
+        closed: closed.get(frame) ?? [],
+        texts: texts.get(node.nodeId) ?? [],
+      };
     });
   for (const frame of closed.keys())
     if (!scopes.some((scope) => scope.frame === frame)) throw unreadable();
@@ -274,6 +329,18 @@ class Scan {
     return worlds;
   }
 
+  private resolveAll(
+    page: Page,
+    nodeIds: readonly number[],
+    executionContextId: number,
+  ): Promise<{ objectId: string }[]> {
+    return Promise.all(
+      nodeIds.map(async (nodeId) => ({
+        objectId: await this.resolve(page, nodeId, executionContextId),
+      })),
+    );
+  }
+
   private async resolve(page: Page, nodeId: number, executionContextId: number): Promise<string> {
     const resolved = parseCdp(
       ResolvedSchema,
@@ -295,15 +362,21 @@ class Scan {
     const executionContextId = worlds.get(scope.frame);
     if (executionContextId === undefined) throw unreadable();
     const objectId = await this.resolve(page, scope.nodeId, executionContextId);
-    const closed: { objectId: string }[] = [];
-    for (const nodeId of scope.closed)
-      closed.push({ objectId: await this.resolve(page, nodeId, executionContextId) });
+    const closed = await this.resolveAll(page, scope.closed, executionContextId);
+    const checked = await Promise.all(
+      scope.texts.map(async (nodeId) => ({ nodeId, shown: await drawn(page, nodeId) })),
+    );
+    const undrawn = await this.resolveAll(
+      page,
+      checked.filter((each) => !each.shown).map((each) => each.nodeId),
+      executionContextId,
+    );
     const done = parseCdp(
       ValueSchema,
       await call(page, "Runtime.callFunctionOn", {
         objectId,
         functionDeclaration: SCAN,
-        arguments: closed,
+        arguments: [{ value: closed.length }, ...closed, ...undrawn],
         returnByValue: true,
       }).catch(() => {
         throw unreadable();

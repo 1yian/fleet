@@ -344,3 +344,16 @@ for (const [name, path, html] of [
     await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
     nothingOf("S3cret", "\u674e");
   });
+
+test("login reports a password field that rewrites what is typed into it as failed and empties it", async () => {
+  await start();
+  const worker = await lab.worker("Sign in to the portal");
+  await worker.act({ action: "open", url: lab.site.url("/masked", "login.example.test") });
+
+  await assert.rejects(
+    worker.act({ action: "login" }),
+    /^Error: login failed: the page did not keep the password that was typed into it$/,
+  );
+  assert.equal(await worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), '""');
+  assertNoSecretAnywhere();
+});
