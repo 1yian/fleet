@@ -16,7 +16,7 @@ export interface RawWorker {
   readonly token: string;
   readonly session: Session;
   readonly act: (args: Record<string, unknown>) => Promise<string>;
-  readonly shoot: () => Promise<string>;
+  readonly shoot: (fullPage?: boolean) => Promise<string>;
 }
 
 function rawWorker(card: Card, token: string, session: Session): RawWorker {
@@ -27,8 +27,8 @@ function rawWorker(card: Card, token: string, session: Session): RawWorker {
     token,
     session,
     act: async (args) => (await call(args)).text,
-    shoot: async () => {
-      const image = (await call({ action: "screenshot" })).image;
+    shoot: async (fullPage = false) => {
+      const image = (await call({ action: "screenshot", fullPage })).image;
       if (image === undefined) throw new Error("the screenshot came back without a picture");
       return image.data;
     },

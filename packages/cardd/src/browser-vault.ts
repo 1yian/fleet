@@ -79,24 +79,32 @@ export function credentialsOf(entry: Secret): Credentials {
 
 const FIELDS = ["username", "password", "totp"] as const;
 
-function protectedIn(entry: Secret): { values: string[]; known: boolean } {
-  let parsed: unknown;
+function parsedOf(text: string): { value: unknown } | undefined {
   try {
-    parsed = JSON.parse(entry.value);
+    return { value: JSON.parse(text) };
   } catch {
-    return { values: [entry.value], known: true };
+    return undefined;
   }
-  if (!isRecord(parsed))
-    return { values: [entry.value, ...(typeof parsed === "string" ? [parsed] : [])], known: true };
-  const values: string[] = [];
-  let known = true;
-  for (const field of FIELDS) {
-    const value = parsed[field];
-    if (typeof value === "string") values.push(value);
-    else if (typeof value === "number") values.push(String(value));
-    else if (value !== undefined && value !== null) known = false;
-  }
-  return { values, known };
+}
+
+const textOf = (value: unknown): string | undefined =>
+  typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+
+const absent = (value: unknown): boolean => value === undefined || value === null;
+
+function protectedIn(entry: Secret): { values: string[]; known: boolean } {
+  const record = parsedOf(entry.value)?.value;
+  if (!entry.value.trimStart().startsWith("{"))
+    return {
+      values: typeof record === "string" ? [entry.value, record] : [entry.value],
+      known: true,
+    };
+  if (!isRecord(record)) return { values: [entry.value], known: false };
+  const fields = FIELDS.map((field) => record[field]);
+  return {
+    values: fields.flatMap((value) => textOf(value) ?? []),
+    known: fields.every((value) => textOf(value) !== undefined || absent(value)),
+  };
 }
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -119,6 +127,7 @@ export class Vault {
 
   async refresh(): Promise<Secret[]> {
     if (this.logins === undefined) return [];
+    this.loaded = false;
     const secrets = await listSecrets(this.logins, this.hosts);
     const unknown: string[] = [];
     for (const secret of secrets) {
@@ -128,7 +137,7 @@ export class Vault {
     }
     if (unknown.length > 0)
       throw new Error(
-        `the Bitwarden entry ${unknown.join(", ")} has a username, password, or totp that is neither text nor empty, so the values to hide are not known. Its content is not shown`,
+        `the Bitwarden entry ${unknown.join(", ")} is malformed: it must be JSON like {"username": "...", "password": "..."} with each field text or empty, so the values to hide are not known. Fix the entry. Its content is not shown`,
       );
     this.loaded = true;
     this.opened.clear();

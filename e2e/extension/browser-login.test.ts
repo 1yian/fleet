@@ -5,6 +5,8 @@ import { FakeVault } from "../support/fake-vault.ts";
 import type { Turn } from "../support/harness.ts";
 import {
   ALL_VALUES,
+  ALT,
+  ALT_USER,
   BROKEN,
   FIELD,
   GOOD,
@@ -16,8 +18,8 @@ import {
   USERNAME,
   WITH_TRICKY,
   assertNoSecretAnywhere as scan,
-  bullets,
   hidden,
+  retext,
   signedIn as signIn,
   tabOf as tabIn,
   until,
@@ -204,10 +206,11 @@ test("a screenshot after login shows no typed value, also after a show-password 
   await worker.act({ action: "click", selector: "#reveal" });
   assert.equal(await worker.act({ action: "eval", expression: `${FIELD("p")}.type` }), '"text"');
 
+  await worker.shoot();
   const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(await tabOf(worker)), covered);
   await worker.act({ action: "eval", expression: RETYPE });
   assert.equal(await worker.shoot(), covered);
+  assert.notEqual(await lab.chrome.capture(await tabOf(worker)), covered);
 
   const styles = await worker.act({
     action: "eval",
@@ -349,7 +352,7 @@ const account = (who: string, host: string): string =>
   lab.site.url(`/account?as=${encodeURIComponent(who)}`, host);
 
 test("a fresh tab of another card never shows a username that a login put in the shared browser", async () => {
-  await start([GOOD, OTHER]);
+  await start([GOOD, OTHER, ALT]);
   const first = await signedIn();
   await lab.main.call("browser.release", { card: first.card.id });
   const seen: string[] = [];
@@ -368,10 +371,7 @@ test("a fresh tab of another card never shows a username that a login put in the
     assert.match(title, /Account of \[hidden\]"$/);
     assert.equal(await visitor.act({ action: "read", selector: "#who" }), "[hidden]");
     const covered = await visitor.shoot();
-    await visitor.act({
-      action: "eval",
-      expression: `document.getElementById("who").textContent = "${bullets(who.length)}"`,
-    });
+    await visitor.act({ action: "eval", expression: retext("who", ALT_USER) });
     assert.equal(await visitor.shoot(), covered);
     seen.push(opened, title);
   }

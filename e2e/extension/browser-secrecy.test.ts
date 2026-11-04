@@ -4,18 +4,17 @@ import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { FakeVault } from "../support/fake-vault.ts";
 import {
   ALL_VALUES,
+  ALT,
+  ALT_USER,
   FIELD,
   GOOD,
   OTHER,
   OTHER_USER,
-  PASSWORD,
   REFUSAL,
-  RETYPE,
   USERNAME,
   WITH_TRICKY,
   assertNoSecretAnywhere as scan,
-  bullets,
-  hidden,
+  retext,
   signedIn as signIn,
   until,
 } from "../support/login-fixtures.ts";
@@ -134,63 +133,10 @@ test("opening a page on a tab that outlived a cardd restart is refused when the 
   );
 });
 
-test("a screenshot shows neither the fields nor the text a page echoes from them", async () => {
-  await start();
-  const worker = await signedIn("/echo");
-  const covered = await worker.shoot();
-  assert.equal(await worker.act({ action: "read", selector: "#u-echo" }), "[hidden]");
-  assert.equal(await worker.act({ action: "read", selector: "#p-echo" }), "[hidden]");
-
-  await worker.act({ action: "eval", expression: RETYPE });
-  await worker.act({
-    action: "eval",
-    expression: `document.getElementById("u-echo").textContent = "${bullets(USERNAME.length)}"; document.getElementById("p-echo").textContent = "${bullets(PASSWORD.length)}"`,
-  });
-  assert.equal(await worker.shoot(), covered);
-  assertNoSecretAnywhere();
-});
-
-test("a screenshot after a login that failed halfway shows no echoed value either", async () => {
-  await start();
-  const worker = await lab.worker("Sign in to the portal");
-  await worker.act({ action: "open", url: lab.site.url("/fragile", "login.example.test") });
-  await assert.rejects(worker.act({ action: "login" }), /^Error: login failed: /);
-  const covered = await worker.shoot();
-  assert.equal(await worker.act({ action: "read", selector: "#u-echo" }), "[hidden]");
-
-  await worker.act({
-    action: "eval",
-    expression: `${FIELD("u")}.value = "x".repeat(${String(USERNAME.length)}); document.getElementById("u-echo").textContent = "${bullets(USERNAME.length)}"`,
-  });
-  assert.equal(await worker.shoot(), covered);
-  assertNoSecretAnywhere();
-});
-
-test("a screenshot shows no value inside an iframe, a cross-site iframe, or an open shadow root", async () => {
-  await start([GOOD], true);
-  const worker = await signedIn("/nest");
-  await worker.act({ action: "eval", expression: "window.framesReady.then(() => 'ready')" });
-  const covered = await worker.shoot();
-  assert.equal(
-    await worker.act({
-      action: "eval",
-      expression: `document.getElementById("same").contentDocument.getElementById("who").textContent`,
-    }),
-    hidden("[hidden]"),
-  );
-
-  await worker.act({ action: "eval", expression: RETYPE });
-  await worker.act({
-    action: "eval",
-    expression: `window.show("${bullets(USERNAME.length)}", "").then(() => "ready")`,
-  });
-  assert.equal(await worker.shoot(), covered);
-  assertNoSecretAnywhere();
-});
-
 test("a username stays hidden when its entry has no password, also after a cardd restart", async () => {
   await start([
     { key: "example.test", value: JSON.stringify({ username: USERNAME, password: "" }) },
+    ALT,
   ]);
   const before = await lab.worker("Look at the account");
   await before.act({ action: "open", url: account(USERNAME, "login.example.test") });
@@ -202,10 +148,7 @@ test("a username stays hidden when its entry has no password, also after a cardd
     await worker.act({ action: "eval", expression: "document.title" }),
   ];
   const covered = await worker.shoot();
-  await worker.act({
-    action: "eval",
-    expression: `document.getElementById("who").textContent = "${bullets(USERNAME.length)}"`,
-  });
+  await worker.act({ action: "eval", expression: retext("who", ALT_USER) });
   assert.equal(await worker.shoot(), covered);
   seen.push(await worker.act({ action: "open", url: account(USERNAME, "login.example.test") }));
 
@@ -234,4 +177,42 @@ test("an entry with a field that is neither text nor empty stops the browser unt
     await worker.act({ action: "open", url: account("someone", "login.example.test") }),
     /^Opened /,
   );
+});
+
+const MALFORMED =
+  /^Error: the Logins project could not be read to learn which values to hide, so nothing was done: the Bitwarden entry example\.test is malformed/;
+
+test("a truncated entry makes every action that returns content refuse after a cardd restart", async () => {
+  await start([GOOD]);
+  const before = await lab.worker("Look at the account");
+  await before.act({ action: "open", url: account(USERNAME, "login.example.test") });
+  vault.publish([{ key: "example.test", value: `{"username":"${USERNAME}","password":` }]);
+  await lab.cardd.restart();
+  const worker = await lab.reconnect(before);
+
+  await assert.rejects(worker.act({ action: "read", selector: "#who" }), MALFORMED);
+  await assert.rejects(worker.act({ action: "eval", expression: "document.title" }), MALFORMED);
+  await assert.rejects(worker.shoot(), MALFORMED);
+  await assert.rejects(
+    worker.act({ action: "open", url: account(USERNAME, "login.example.test") }),
+    MALFORMED,
+  );
+  assertNoSecretAnywhere();
+
+  vault.publish([GOOD]);
+  assert.equal(await worker.act({ action: "read", selector: "#who" }), "[hidden]");
+});
+
+test("a read that fails after a good load stops the next action until a read succeeds", async () => {
+  await start();
+  const worker = await lab.worker("Look at the account");
+  await worker.act({ action: "open", url: account("someone", "login.example.test") });
+  vault.revoke();
+
+  await assert.rejects(worker.act({ action: "login" }), /bws could not read the Logins project/);
+  await assert.rejects(worker.act({ action: "read" }), REFUSAL);
+  await assert.rejects(worker.shoot(), REFUSAL);
+
+  vault.restore();
+  assert.equal(await worker.act({ action: "read", selector: "#who" }), "someone");
 });

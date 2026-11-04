@@ -12,7 +12,19 @@ export const BROKEN = "hunter2-not-json-a8b7c6d5";
 const TRICKY = `Q"u0te\\Back'slash 9&+%~!z7`;
 export const OTHER_USER = "other.captain@nothing.test";
 const OTHER_PASSWORD = "Zx9-other-secret-b7e41c0d";
-const SECRETS = [PASSWORD, USERNAME, SEED, BROKEN, TRICKY, OTHER_USER, OTHER_PASSWORD];
+export const ALT_USER = "sailor.signin@example.test";
+export const ALT_PASSWORD = "Zq9xk2mwp&7-aligned-moose-4c8d3e1f";
+const SECRETS = [
+  PASSWORD,
+  USERNAME,
+  SEED,
+  BROKEN,
+  TRICKY,
+  OTHER_USER,
+  OTHER_PASSWORD,
+  ALT_USER,
+  ALT_PASSWORD,
+];
 
 export const GOOD = {
   key: "example.test",
@@ -21,6 +33,10 @@ export const GOOD = {
 export const OTHER = {
   key: "nothing.test",
   value: JSON.stringify({ username: OTHER_USER, password: OTHER_PASSWORD }),
+};
+export const ALT = {
+  key: "alt.test",
+  value: JSON.stringify({ username: ALT_USER, password: ALT_PASSWORD }),
 };
 export const WITH_TRICKY = {
   key: "example.test",
@@ -32,7 +48,8 @@ export const REFUSAL =
 export const FIELD = (name: string): string => `document.querySelector("input[name=${name}]")`;
 export const ALL_VALUES = "[...document.querySelectorAll('input')].map((el) => el.value)";
 export const RETYPE = `for (const [name, length] of [["u", ${String(USERNAME.length)}], ["p", ${String(PASSWORD.length)}]]) document.querySelector("input[name=" + name + "]").value = "x".repeat(length)`;
-export const bullets = (length: number): string => "\u2022".repeat(length);
+export const retext = (id: string, text: string): string =>
+  `document.getElementById("${id}").textContent = "${text}"`;
 export const hidden = (text: string): string => JSON.stringify(text);
 
 const WAIT_MS = 15_000;

@@ -8,6 +8,10 @@ export interface Posted {
   readonly code: string;
 }
 
+const MONOSPACE = "<style>html, body, input { font-family: monospace; }</style>";
+
+const withFont = (page: string): string => page.replace("</title>", `</title>${MONOSPACE}`);
+
 const PAGES: Readonly<Record<string, string>> = {
   "/a": `<!doctype html><title>Alpha</title><body data-owner="a">
     <p>alpha page</p>
@@ -64,6 +68,53 @@ const PAGES: Readonly<Record<string, string>> = {
         return window.framesReady;
       };
     </script></body>`,
+  "/split": `<!doctype html><title>Split</title><body>
+    <form>
+      <input name="u" type="text" autocomplete="username" oninput="show(this.value)">
+      <input name="p" type="password" autocomplete="current-password">
+    </form>
+    <p id="who"></p>
+    <script>
+      window.show = (text) => {
+        const first = Math.floor(text.length / 3);
+        const second = Math.floor((text.length * 2) / 3);
+        const strong = document.createElement("strong");
+        strong.textContent = text.slice(first, second);
+        document.getElementById("who").replaceChildren(text.slice(0, first), strong, text.slice(second));
+      };
+    </script></body>`,
+  "/tick": `<!doctype html><title>Tick</title><body>
+    <form>
+      <input name="u" type="text" autocomplete="username">
+      <input name="p" type="password" autocomplete="current-password">
+    </form>
+    <p id="who"></p>
+    <script>
+      let current = "";
+      document.querySelector("[name=u]").addEventListener("input", (event) => { current = event.target.value; });
+      window.set = (text) => {
+        current = text;
+        return new Promise((resolve) => {
+          const check = () => (document.getElementById("who").textContent === text ? resolve("ready") : setTimeout(check, 5));
+          check();
+        });
+      };
+      setInterval(() => { document.getElementById("who").replaceChildren(document.createTextNode(current)); }, 10);
+    </script></body>`,
+  "/tall": `<!doctype html><title>Tall</title><body>
+    <form>
+      <input name="u" type="text" autocomplete="username" oninput="document.getElementById('who').textContent = this.value">
+      <input name="p" type="password" autocomplete="current-password">
+    </form>
+    <div style="height:1400px"></div>
+    <p id="who"></p></body>`,
+  "/slide": `<!doctype html><title>Slide</title><body>
+    <style>@keyframes slide { from { margin-left: 0 } to { margin-left: 1000000px } }</style>
+    <form>
+      <input name="u" type="text" autocomplete="username" oninput="const who = document.getElementById('who'); who.textContent = this.value; who.style.animation = 'slide 100s linear forwards'">
+      <input name="p" type="password" autocomplete="current-password">
+    </form>
+    <p id="who"></p></body>`,
   "/fragile": `<!doctype html><title>Fragile</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value; this.form.p.remove()">
@@ -116,13 +167,16 @@ export class TestSite {
         response
           .writeHead(200, { "content-type": "text/html; charset=utf-8" })
           .end(
-            `<!doctype html><title>Account of ${who}</title><body><p id="who">${who}</p></body>`,
+            withFont(
+              `<!doctype html><title>Account of ${who}</title><body><p id="who">${who}</p></body>`,
+            ),
           );
         return;
       }
       const page = PAGES[path];
       if (page === undefined) response.writeHead(404).end();
-      else response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page);
+      else
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(withFont(page));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address: AddressInfo | string | null = server.address();

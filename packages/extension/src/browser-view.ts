@@ -142,8 +142,7 @@ async function main(): Promise<void> {
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });
-  const wanted = Number(process.env["FLEET_BROWSER_VIEW_PORT"] ?? "0");
-  await new Promise<void>((resolve) => server.listen(wanted, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address: AddressInfo | string | null = server.address();
   if (address === null || typeof address === "string") throw new Error("the viewer has no address");
   viewer.allow(address.port);
