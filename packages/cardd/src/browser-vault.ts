@@ -125,6 +125,10 @@ export class Vault {
     return [...this.held];
   }
 
+  hold(values: readonly string[]): void {
+    for (const value of values) this.held.add(value);
+  }
+
   async refresh(): Promise<Secret[]> {
     if (this.logins === undefined) return [];
     this.loaded = false;

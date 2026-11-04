@@ -333,14 +333,22 @@ export class Browser {
     }
   }
 
-  private async closeTabs(card: number, retry = true): Promise<OpResult<"browser.release">> {
+  private closeTabs(card: number): Promise<OpResult<"browser.release">> {
     const tabs = tabsOf(this.db, card);
-    if (tabs.length === 0) return { closed: 0, note: null };
+    if (tabs.length === 0) return Promise.resolve({ closed: 0, note: null });
+    this.retire(tabs);
+    return this.closeAll(card, tabs, true);
+  }
+
+  private async closeAll(
+    card: number,
+    tabs: readonly Tab[],
+    retry: boolean,
+  ): Promise<OpResult<"browser.release">> {
     let cdp: Cdp;
     try {
       cdp = await this.connection();
     } catch (error) {
-      this.retire(tabs);
       return {
         closed: 0,
         note: `${reason(error)}. ${plural(tabs.length)} of c-${String(card)} stay open: cardd closes them when the browser answers again.`,
@@ -353,7 +361,7 @@ export class Browser {
         await cdp.send("Target.closeTarget", { targetId: tab.target });
         closed += 1;
       } catch (error) {
-        if (!cdp.open && retry) return this.closeTabs(card, false);
+        if (!cdp.open && retry) return this.closeAll(card, tabs, false);
         if (isGone(error)) closed += 1;
         else stuck.push(reason(error));
       }

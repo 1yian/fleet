@@ -5,7 +5,7 @@ import { Cardd, type Session } from "./cardd.ts";
 import { StandInChrome, TcpProxy } from "./chrome.ts";
 import type { FakeVault } from "./fake-vault.ts";
 import { begin, newCard } from "./fleet.ts";
-import { Harness, type Turn } from "./harness.ts";
+import { Harness, type Pi, type Turn } from "./harness.ts";
 import { isRecord, parseRecord } from "./json.ts";
 import { TestSite } from "./site.ts";
 
@@ -43,11 +43,13 @@ export interface LabOptions {
   readonly rules?: string;
   readonly proxied?: boolean;
   readonly isolated?: boolean;
+  readonly logins?: Record<string, unknown>;
 }
 
 export interface Crew {
   readonly card: Card;
   readonly h: Harness;
+  readonly pi: Pi;
 }
 
 export class BrowserLab {
@@ -82,7 +84,10 @@ export class BrowserLab {
     const proxy = options.proxied === true ? await TcpProxy.start(chrome.port) : undefined;
     const endpoint = proxy?.endpoint ?? chrome.endpoint;
     const site = await TestSite.start();
-    const config = vault === undefined ? JSON.stringify({ cdp: endpoint }) : vault.config(endpoint);
+    const config =
+      vault === undefined
+        ? JSON.stringify({ cdp: endpoint })
+        : vault.config(endpoint, options.logins);
     const cardd = await Cardd.start(vault?.env ?? {}, ["--browser", config]);
     cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
     const mainToken = cardd.addLane("main");
@@ -96,8 +101,8 @@ export class BrowserLab {
     const card = await newCard(this.main, title);
     const token = await begin(this.main, card, "browse");
     const env = { FLEET_URL: this.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
-    h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
-    return { card, h };
+    const pi = h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
+    return { card, h, pi };
   }
 
   async worker(title: string): Promise<RawWorker> {

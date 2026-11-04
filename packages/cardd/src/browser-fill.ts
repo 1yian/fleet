@@ -41,7 +41,6 @@ const TypedSchema = Type.Object({
 });
 
 const TYPE = `function (text) {
-  this.__fleetFilled = true;
   if (!this.isConnected) return "gone";
   this.focus();
   if (document.activeElement !== this) return "gone";
@@ -114,8 +113,14 @@ async function enter(
   return outcome === "typed";
 }
 
-function codeFor(creds: Credentials, allowed: boolean): string | undefined {
-  return allowed && creds.totp !== undefined ? totpCode(creds.totp, Date.now()) : undefined;
+function codeFor(
+  creds: Credentials,
+  allowed: boolean,
+  hold: (value: string) => void,
+): string | undefined {
+  const code = allowed && creds.totp !== undefined ? totpCode(creds.totp, Date.now()) : undefined;
+  if (code !== undefined) hold(code);
+  return code;
 }
 
 export async function fillLogin(
@@ -123,13 +128,15 @@ export async function fillLogin(
   doc: Doc,
   creds: Credentials,
   codesAllowed: boolean,
+  hold: (value: string) => void,
 ): Promise<string> {
+  const code = codeFor(creds, codesAllowed, hold);
   const fields = await locate(page);
   await stillOn(page, doc);
   const wanted: [Slot, string, string | undefined][] = [
     ["user", "username", creds.username],
     ["password", "password", creds.password],
-    ["code", "one-time code", codeFor(creds, codesAllowed)],
+    ["code", "one-time code", code],
   ];
   const filled: string[] = [];
   const failed: string[] = [];

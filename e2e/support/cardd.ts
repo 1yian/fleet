@@ -157,6 +157,12 @@ export class Cardd {
     db.close();
   }
 
+  breakBrowserTabs(): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.exec("DROP TABLE browser_tabs");
+    db.close();
+  }
+
   startAttemptAfterTabs(card: number): void {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     db.prepare(

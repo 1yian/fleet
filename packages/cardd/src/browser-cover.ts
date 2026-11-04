@@ -1,119 +1,53 @@
 import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
+import { needlesOf } from "./browser-hidden.ts";
 import { call, type Page } from "./browser-page.ts";
+import { covers, scan, snapshotOf, type Rect, type Scanned } from "./browser-snapshot.ts";
 
 const GROUP = "fleet-cover";
 const WORLD = "fleet-cover";
 const MAX_HEIGHT = 16_384;
 
-const SCAN = `(secrets) => {
-  const squash = (text) => text.replace(/\\s+/g, " ");
-  const needles = secrets.map(squash).filter((secret) => secret.trim() !== "");
-  const hit = (text) => needles.some((needle) => squash(text).includes(needle));
-  const skipped = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "TITLE"];
+const STYLE = `() => {
+  const sheet = "*, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: none !important; }";
   const roots = [document];
   for (let at = 0; at < roots.length; at += 1)
     for (const el of roots[at].querySelectorAll("*")) if (el.shadowRoot !== null) roots.push(el.shadowRoot);
-  const rects = [];
-  let frames = 0;
-  const add = (box) => {
-    if (box.width > 0 && box.height > 0) rects.push([box.left, box.top, box.width, box.height]);
-  };
-  for (const root of roots) {
-    frames += root.querySelectorAll("iframe, frame").length;
-    for (const el of root.querySelectorAll("input, textarea, select")) {
-      const shown = el.tagName === "SELECT" ? [...el.options].map((option) => option.text).concat(el.value) : [el.value];
-      if (el.__fleetFilled === true || shown.some(hit)) add(el.getBoundingClientRect());
-    }
-    for (const el of root.querySelectorAll("[placeholder], [alt]"))
-      if (hit(el.getAttribute("placeholder") ?? "") || hit(el.getAttribute("alt") ?? "")) add(el.getBoundingClientRect());
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const parts = [];
-    const places = [];
-    let last = "";
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      if (skipped.includes(node.parentElement?.tagName ?? "")) continue;
-      const text = node.nodeValue ?? "";
-      for (let i = 0; i < text.length; i += 1) {
-        const space = /\\s/.test(text[i]);
-        if (space && last === " ") continue;
-        last = space ? " " : text[i];
-        parts.push(last);
-        places.push([node, i]);
-      }
-    }
-    const flat = parts.join("");
-    for (const needle of needles) {
-      for (let from = flat.indexOf(needle); from >= 0; from = flat.indexOf(needle, from + 1)) {
-        const range = document.createRange();
-        const start = places[from];
-        const end = places[from + needle.length - 1];
-        range.setStart(start[0], start[1]);
-        range.setEnd(end[0], end[1] + 1);
-        for (const box of range.getClientRects()) add(box);
-      }
-    }
-  }
-  return { rects, frames };
+  return roots.map((root) => {
+    const style = document.createElement("style");
+    style.textContent = sheet;
+    (root === document ? document.documentElement : root).appendChild(style);
+    return style;
+  });
 }`;
 
-const COVER = `(secrets) => {
-  const scan = ${SCAN};
-  const { rects, frames } = scan(secrets);
+const COVER = `(rects) => {
   const container = document.createElement("div");
+  container.setAttribute("data-fleet-cover", "container");
   container.style.cssText = "all: initial !important; display: block !important; position: absolute !important; left: 0 !important; top: 0 !important; width: 0 !important; height: 0 !important; z-index: 2147483647 !important;";
   document.documentElement.appendChild(container);
   for (const rect of rects) {
-    const x = Math.floor(rect[0]) - 2;
-    const y = Math.floor(rect[1]) - 2;
-    const width = Math.ceil(rect[0] + rect[2]) + 2 - x;
-    const height = Math.ceil(rect[1] + rect[3]) + 2 - y;
+    const left = Math.floor(rect.x) - 2;
+    const top = Math.floor(rect.y) - 2;
+    const width = Math.ceil(rect.x + rect.width) + 2 - left;
+    const height = Math.ceil(rect.y + rect.height) + 2 - top;
     const box = document.createElement("div");
-    const place = (left, top) => {
-      box.style.cssText = "all: initial !important; display: block !important; position: absolute !important; background: #000 !important; pointer-events: auto !important; left: " + left + "px !important; top: " + top + "px !important; width: " + width + "px !important; height: " + height + "px !important;";
+    box.setAttribute("data-fleet-cover", "box");
+    const place = (x, y) => {
+      box.style.cssText = "all: initial !important; display: block !important; position: absolute !important; background: #000 !important; left: " + x + "px !important; top: " + y + "px !important; width: " + width + "px !important; height: " + height + "px !important;";
     };
-    place(x + scrollX, y + scrollY);
+    place(left, top);
     container.appendChild(box);
     const at = box.getBoundingClientRect();
-    place(x + scrollX + (x - at.left), y + scrollY + (y - at.top));
+    place(left + (left - scrollX - at.left), top + (top - scrollY - at.top));
   }
-  return { container, frames };
+  return container;
 }`;
 
-const VERIFY = `function (secrets) {
-  const scan = ${SCAN};
-  const { rects, frames } = scan(secrets);
-  const container = this.container;
-  const boxes = [...container.children].map((box) => box.getBoundingClientRect());
-  let uncovered = 0;
-  for (const [x, y, width, height] of rects) {
-    const inside = boxes.some((b) => b.left <= x + 1 && b.top <= y + 1 && b.right >= x + width - 1 && b.bottom >= y + height - 1);
-    const cx = x + width / 2;
-    const cy = y + height / 2;
-    const onScreen = cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight;
-    const top = onScreen ? document.elementFromPoint(cx, cy) : container;
-    if (!inside || top === null || !container.contains(top)) uncovered += 1;
-  }
-  return { uncovered, frames, connected: container.isConnected };
-}`;
-
-const REMOVE = "function () { this.container.remove(); }";
-const COUNT = "function () { return this.frames; }";
+const REMOVE = "function () { for (const node of [].concat(this)) node.remove(); }";
 
 const CoveredSchema = Type.Object({
   result: Type.Object({ objectId: Type.String() }),
-  exceptionDetails: Type.Optional(Type.Unknown()),
-});
-const CountSchema = Type.Object({ result: Type.Object({ value: Type.Integer() }) });
-const VerifiedSchema = Type.Object({
-  result: Type.Object({
-    value: Type.Object({
-      uncovered: Type.Integer(),
-      frames: Type.Integer(),
-      connected: Type.Boolean(),
-    }),
-  }),
   exceptionDetails: Type.Optional(Type.Unknown()),
 });
 const NodeSchema = Type.Object({
@@ -137,11 +71,24 @@ const unreachable = (): Error =>
 const unstable = (): Error =>
   refused("the page changed while the picture was taken, so a value might have been shown");
 
-interface Doc {
+interface Held {
   readonly page: Page;
   readonly objectId: string;
-  readonly frames: number;
 }
+
+interface Target {
+  readonly page: Page;
+  readonly documents: number;
+  readonly remote: number;
+}
+
+const exposed = (documents: readonly Scanned[]): boolean =>
+  documents.some((doc) => doc.hits.some((hit) => !doc.boxes.some((box) => covers(box, hit))));
+
+const idsOf = (node: unknown): string[] => {
+  const { frame, childFrames } = parseCdp(NodeSchema, node, "a frame");
+  return [frame.id, ...(childFrames ?? []).flatMap(idsOf)];
+};
 
 const signature = (node: unknown): string[] => {
   const { frame, childFrames } = parseCdp(NodeSchema, node, "a frame");
@@ -150,8 +97,9 @@ const signature = (node: unknown): string[] => {
 
 export class Coverage {
   private readonly root: Page;
-  private readonly secrets: readonly string[];
-  private readonly docs: Doc[] = [];
+  private readonly needles: readonly string[];
+  private readonly held: Held[] = [];
+  private readonly targets: Target[] = [];
   private readonly frozen: Page[] = [];
   private readonly attached: Page[] = [];
   private readonly children = new Map<string, Page[]>();
@@ -161,7 +109,7 @@ export class Coverage {
 
   constructor(root: Page, secrets: readonly string[]) {
     this.root = root;
-    this.secrets = secrets;
+    this.needles = needlesOf(secrets);
   }
 
   async begin(fullPage: boolean): Promise<void> {
@@ -180,37 +128,32 @@ export class Coverage {
 
   async verify(): Promise<void> {
     if ((await this.shapeOf()) !== this.shape) throw unstable();
-    for (const doc of this.docs) {
-      const seen = parseCdp(
-        VerifiedSchema,
-        await call(doc.page, "Runtime.callFunctionOn", {
-          objectId: doc.objectId,
-          functionDeclaration: VERIFY,
-          arguments: [{ value: this.secrets }],
-          returnByValue: true,
-        }).catch(() => {
+    for (const target of this.targets) {
+      const documents = scan(
+        await snapshotOf(target.page).catch(() => {
           throw unstable();
         }),
-        "the covered page",
+        this.needles,
       );
-      const { uncovered, frames, connected } = seen.result.value;
-      if (seen.exceptionDetails !== undefined || !connected || uncovered > 0) throw unstable();
-      if (frames !== doc.frames) throw unstable();
+      const remote = documents.reduce((total, doc) => total + doc.remote, 0);
+      if (documents.length !== target.documents || remote !== target.remote) throw unstable();
+      if (exposed(documents)) throw unstable();
     }
   }
 
   async lift(): Promise<void> {
     this.unlisten?.();
-    for (const doc of this.docs.toReversed())
-      await call(doc.page, "Runtime.callFunctionOn", {
-        objectId: doc.objectId,
-        functionDeclaration: REMOVE,
-      }).catch(() => undefined);
-    for (const page of this.frozen)
+    for (const { page, objectId } of this.held.toReversed())
+      await call(page, "Runtime.callFunctionOn", { objectId, functionDeclaration: REMOVE }).catch(
+        () => undefined,
+      );
+    for (const page of this.frozen) {
+      await call(page, "Animation.setPlaybackRate", { playbackRate: 1 }).catch(() => undefined);
       await call(page, "Emulation.setScriptExecutionDisabled", { value: false }).catch(
         () => undefined,
       );
-    const pages = new Map(this.docs.map((doc) => [doc.page.session, doc.page]));
+    }
+    const pages = new Map(this.held.map((each) => [each.page.session, each.page]));
     for (const page of pages.values())
       await call(page, "Runtime.releaseObjectGroup", { objectGroup: GROUP }).catch(() => undefined);
     for (const page of this.attached)
@@ -238,31 +181,20 @@ export class Coverage {
     });
   }
 
-  private async over(page: Page): Promise<void> {
+  private async freeze(page: Page): Promise<void> {
     this.frozen.push(page);
     await call(page, "Emulation.setScriptExecutionDisabled", { value: true });
-    const main = await this.cover(page, undefined);
-    const local = await this.coverLocal(page);
-    this.attached.push(page);
-    await call(page, "Target.setAutoAttach", {
-      autoAttach: true,
-      waitForDebuggerOnStart: false,
-      flatten: true,
-    });
-    const children = this.children.get(page.session) ?? [];
-    if (local.reached + children.length < main + local.expected) throw unreachable();
-    for (const child of children) await this.over(child);
+    await call(page, "Animation.setPlaybackRate", { playbackRate: 0 });
   }
 
-  private async coverLocal(page: Page): Promise<{ reached: number; expected: number }> {
+  private async worlds(page: Page): Promise<Map<string, number>> {
     const tree = parseCdp(
       TreeSchema,
       await call(page, "Page.getFrameTree"),
       "the page's frames",
     ).frameTree;
-    const below = (tree.childFrames ?? []).flatMap(signature).map((each) => each.split("@")[0]);
-    let expected = 0;
-    for (const frameId of below) {
+    const worlds = new Map<string, number>();
+    for (const frameId of idsOf(tree)) {
       const world = parseCdp(
         WorldSchema,
         await call(page, "Page.createIsolatedWorld", { frameId, worldName: WORLD }).catch(() => {
@@ -270,34 +202,43 @@ export class Coverage {
         }),
         "a frame's world",
       );
-      expected += await this.cover(page, world.executionContextId);
+      worlds.set(frameId, world.executionContextId);
     }
-    return { reached: below.length, expected };
+    return worlds;
   }
 
-  private async cover(page: Page, contextId: number | undefined): Promise<number> {
+  private async hold(page: Page, expression: string, contextId: number): Promise<void> {
     const done = parseCdp(
       CoveredSchema,
-      await call(page, "Runtime.evaluate", {
-        expression: `(${COVER})(${JSON.stringify(this.secrets)})`,
-        objectGroup: GROUP,
-        ...(contextId === undefined ? {} : { contextId }),
-      }),
-      "the values to cover",
+      await call(page, "Runtime.evaluate", { expression, objectGroup: GROUP, contextId }),
+      "the page's cover",
     );
     if (done.exceptionDetails !== undefined) throw unreachable();
-    const { objectId } = done.result;
-    const counted = parseCdp(
-      CountSchema,
-      await call(page, "Runtime.callFunctionOn", {
-        objectId,
-        functionDeclaration: COUNT,
-        returnByValue: true,
-      }),
-      "the frames to cover",
-    );
-    this.docs.push({ page, objectId, frames: counted.result.value });
-    return counted.result.value;
+    this.held.push({ page, objectId: done.result.objectId });
+  }
+
+  private async over(page: Page): Promise<void> {
+    await this.freeze(page);
+    const worlds = await this.worlds(page);
+    for (const contextId of worlds.values()) await this.hold(page, `(${STYLE})()`, contextId);
+    this.attached.push(page);
+    await call(page, "Target.setAutoAttach", {
+      autoAttach: true,
+      waitForDebuggerOnStart: false,
+      flatten: true,
+    });
+    const children = this.children.get(page.session) ?? [];
+    const documents = scan(await snapshotOf(page), this.needles);
+    const remote = documents.reduce((total, doc) => total + doc.remote, 0);
+    if (remote > children.length) throw unreachable();
+    this.targets.push({ page, documents: documents.length, remote });
+    for (const doc of documents) {
+      const contextId = worlds.get(doc.frame);
+      if (contextId === undefined) throw unreachable();
+      const rects: Rect[] = doc.hits.map((hit) => hit.rect);
+      await this.hold(page, `(${COVER})(${JSON.stringify(rects)})`, contextId);
+    }
+    for (const child of children) await this.over(child);
   }
 
   private async shapeOf(): Promise<string> {

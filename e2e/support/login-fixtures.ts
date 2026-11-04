@@ -47,7 +47,7 @@ export const REFUSAL =
   /^Error: the Logins project could not be read to learn which values to hide, so nothing was done/;
 export const FIELD = (name: string): string => `document.querySelector("input[name=${name}]")`;
 export const ALL_VALUES = "[...document.querySelectorAll('input')].map((el) => el.value)";
-export const RETYPE = `for (const [name, length] of [["u", ${String(USERNAME.length)}], ["p", ${String(PASSWORD.length)}]]) document.querySelector("input[name=" + name + "]").value = "x".repeat(length)`;
+export const RETYPE = `document.querySelector("input[name=u]").value = "${ALT_USER}"; document.querySelector("input[name=p]").value = "${ALT_PASSWORD}"`;
 export const retext = (id: string, text: string): string =>
   `document.getElementById("${id}").textContent = "${text}"`;
 export const hidden = (text: string): string => JSON.stringify(text);

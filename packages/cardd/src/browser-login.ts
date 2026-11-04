@@ -88,7 +88,10 @@ export async function login(context: LoginContext, requested: string | undefined
   const entry = bestEntry(await vault.refresh(), where);
   if (entry === undefined) return notFound(context, site, where);
   const creds = credentialsOf(entry);
-  return fillLogin(page, doc, creds, logins.totp === true).then(
+  const hold = (value: string): void => {
+    vault.hold([value]);
+  };
+  return fillLogin(page, doc, creds, logins.totp === true, hold).then(
     (text) => ({ text: `filled: ${text} Entry: ${entry.key}.`, notify: [] }),
     (error: unknown) => {
       throw new Error(`login failed: ${error instanceof Error ? error.message : "it failed"}`);

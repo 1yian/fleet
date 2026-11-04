@@ -9,7 +9,6 @@ import {
   FIELD,
   GOOD,
   RETYPE,
-  USERNAME,
   assertNoSecretAnywhere as scan,
   hidden,
   retext,
@@ -66,7 +65,7 @@ test("a screenshot after a login that failed halfway shows no echoed value eithe
 
   await worker.act({
     action: "eval",
-    expression: `${FIELD("u")}.value = "x".repeat(${String(USERNAME.length)}); ${retext("u-echo", ALT_USER)}`,
+    expression: `${FIELD("u")}.value = "${ALT_USER}"; ${retext("u-echo", ALT_USER)}`,
   });
   assert.equal(await worker.shoot(), covered);
   assertNoSecretAnywhere();
@@ -135,11 +134,39 @@ test("a full-page screenshot hides a value below the fold", async () => {
   assertNoSecretAnywhere();
 });
 
-test("a screenshot of a page that moves a value while it is taken is refused", async () => {
+test("a screenshot of a page whose value moves by a CSS animation shows it nowhere", async () => {
   await start();
   const worker = await signedIn("/slide");
+  const covered = await worker.shoot();
+  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
 
-  await assert.rejects(worker.shoot(), /^Error: no picture was returned: /);
+  await worker.act({ action: "eval", expression: retext("who", ALT_USER) });
+  assert.equal(await worker.shoot(), covered);
   assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
+  assertNoSecretAnywhere();
+});
+
+test("a screenshot hides a value that a pseudo-element draws from an attribute", async () => {
+  await start();
+  const worker = await signedIn("/pseudo");
+  const covered = await worker.shoot();
+  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
+
+  await worker.act({
+    action: "eval",
+    expression: `document.getElementById("who").setAttribute("data-account", "${ALT_USER}")`,
+  });
+  assert.equal(await worker.shoot(), covered);
+  assertNoSecretAnywhere();
+});
+
+test("a screenshot hides a value that a closed shadow root holds", async () => {
+  await start();
+  const worker = await signedIn("/closed");
+  const covered = await worker.shoot();
+  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
+
+  await worker.act({ action: "eval", expression: `window.hold("${ALT_USER}")` });
+  assert.equal(await worker.shoot(), covered);
   assertNoSecretAnywhere();
 });

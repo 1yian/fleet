@@ -115,6 +115,24 @@ const PAGES: Readonly<Record<string, string>> = {
       <input name="p" type="password" autocomplete="current-password">
     </form>
     <p id="who"></p></body>`,
+  "/pseudo": `<!doctype html><title>Pseudo</title><body>
+    <style>#who::before { content: attr(data-account); }</style>
+    <form>
+      <input name="u" type="text" autocomplete="username" oninput="document.getElementById('who').setAttribute('data-account', this.value)">
+      <input name="p" type="password" autocomplete="current-password">
+    </form>
+    <span id="who" data-account=""></span></body>`,
+  "/closed": `<!doctype html><title>Closed</title><body>
+    <form>
+      <input name="u" type="text" autocomplete="username" oninput="window.hold(this.value)">
+      <input name="p" type="password" autocomplete="current-password">
+    </form>
+    <div id="host"></div>
+    <script>
+      const root = document.getElementById("host").attachShadow({ mode: "closed" });
+      root.innerHTML = "<p></p>";
+      window.hold = (text) => { root.querySelector("p").textContent = text; };
+    </script></body>`,
   "/fragile": `<!doctype html><title>Fragile</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value; this.form.p.remove()">

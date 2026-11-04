@@ -381,7 +381,10 @@ export async function performOp(
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
   if (isBrowserOp(op)) return performBrowserOp(db, browser, session, op, args);
-  return performStored(db, session, op, args, timing, hosts);
+  const done = await performStored(db, session, op, args, timing, hosts);
+  if (op === "report" && session.card !== null && check(OPS.report.args, args).status === "stopped")
+    await browser.release(session.card);
+  return done;
 }
 
 async function performStored(

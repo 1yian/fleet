@@ -30,15 +30,20 @@ function formsOf(secret: string): string[] {
   return [secret, escaped, jsonInner(escaped), component, component.replaceAll("%20", "+"), form];
 }
 
-function cleaner(secrets: Iterable<string>): (text: string) => string {
+export function needlesOf(secrets: Iterable<string>): string[] {
   const needles = new Set<string>();
   for (const secret of secrets) {
     if (secret === "") continue;
     for (const form of formsOf(secret)) needles.add(form);
   }
-  if (needles.size === 0) return (text) => text;
+  return [...needles];
+}
+
+function cleaner(secrets: Iterable<string>): (text: string) => string {
+  const needles = needlesOf(secrets);
+  if (needles.length === 0) return (text) => text;
   const pattern = new RegExp(
-    [...needles]
+    needles
       .sort((a, b) => b.length - a.length)
       .map(markup)
       .join("|"),
