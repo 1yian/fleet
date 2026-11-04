@@ -9,6 +9,7 @@ import {
   FIELD,
   GOOD,
   RETYPE,
+  USERNAME,
   assertNoSecretAnywhere as scan,
   hidden,
   retext,
@@ -92,6 +93,7 @@ test("a screenshot hides a value that the page splits across inline elements", a
 test("a screenshot hides a value that the page rewrites all the time", async () => {
   await start();
   const worker = await signedIn("/tick");
+  await worker.act({ action: "eval", expression: `window.shown("${USERNAME}")` });
   const covered = await worker.shoot();
   assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
 
@@ -146,27 +148,39 @@ test("a screenshot of a page whose value moves by a CSS animation shows it nowhe
   assertNoSecretAnywhere();
 });
 
-test("a screenshot hides a value that a pseudo-element draws from an attribute", async () => {
+test("a screenshot is refused when a pseudo-element draws a value from an attribute", async () => {
   await start();
   const worker = await signedIn("/pseudo");
-  const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
+
+  await assert.rejects(
+    worker.shoot(),
+    /^Error: no picture was returned: the page draws a hidden value with a CSS pseudo-element/,
+  );
+  assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
+  assert.equal(
+    await worker.act({ action: "eval", expression: "document.querySelectorAll('style').length" }),
+    "2",
+  );
 
   await worker.act({
     action: "eval",
-    expression: `document.getElementById("who").setAttribute("data-account", "${ALT_USER}")`,
+    expression: `document.getElementById("who").setAttribute("data-account", "someone")`,
   });
-  assert.equal(await worker.shoot(), covered);
+  assert.ok((await worker.shoot()).length > 0);
   assertNoSecretAnywhere();
 });
 
-test("a screenshot hides a value that a closed shadow root holds", async () => {
+test("a screenshot is refused when a closed shadow root shows a value", async () => {
   await start();
   const worker = await signedIn("/closed");
-  const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
 
-  await worker.act({ action: "eval", expression: `window.hold("${ALT_USER}")` });
-  assert.equal(await worker.shoot(), covered);
+  await assert.rejects(
+    worker.shoot(),
+    /^Error: no picture was returned: a closed shadow root on the page shows a hidden value/,
+  );
+  assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
+
+  await worker.act({ action: "eval", expression: `window.hold("someone")` });
+  assert.ok((await worker.shoot()).length > 0);
   assertNoSecretAnywhere();
 });

@@ -157,6 +157,14 @@ export class Cardd {
     db.close();
   }
 
+  commitStoppedReport(card: number): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, 'report', 'stopped from the pane', ?, ?)",
+    ).run(card, `worker:c-${String(card)}-a1`, JSON.stringify({ status: "stopped" }), Date.now());
+    db.close();
+  }
+
   breakBrowserTabs(): void {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     db.exec("DROP TABLE browser_tabs");

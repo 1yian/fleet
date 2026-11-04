@@ -20,9 +20,9 @@ import { screenshot } from "./browser-shot.ts";
 import { Vault } from "./browser-vault.ts";
 import {
   attemptStartedAt,
-  cardEnded,
   labelOf,
   markClosed,
+  mustRelease,
   openTabs,
   recordTab,
   retiredIn,
@@ -60,6 +60,7 @@ const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
 export class Browser {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, string>();
+  private readonly trusted = new Set<string>();
   private readonly turns = new Map<number, Promise<unknown>>();
   private readonly db: DatabaseSync;
   private readonly config: BrowserConfig | undefined;
@@ -121,11 +122,26 @@ export class Browser {
       return this.guarded(this.open(cdp, card, url).then(plain));
     }
     if (args.action !== "login") await this.vault.ready();
-    const page = await this.pageOf(await this.connection(), card);
+    const { page, target } = await this.pageOf(await this.connection(), card);
+    if (this.mayShowCode(target, args.action)) throw this.restarted();
     return this.guarded(
       args.action === "login"
         ? this.signIn(page, card, args.site)
         : this.pageAction(page, args, this.vault.values),
+    );
+  }
+
+  private mayShowCode(target: string, action: BrowserArgs["action"]): boolean {
+    return (
+      this.config?.logins?.totp === true &&
+      ["read", "eval", "screenshot"].includes(action) &&
+      !this.trusted.has(target)
+    );
+  }
+
+  private restarted(): Error {
+    return new Error(
+      "this tab was already open when cardd restarted, and it may show a one-time code that cardd can no longer hide, so nothing was returned: call browser with action open to load a fresh page, then try again",
     );
   }
 
@@ -242,6 +258,7 @@ export class Browser {
   private closed(target: string): void {
     markClosed(this.db, target);
     this.sessions.delete(target);
+    this.trusted.delete(target);
   }
 
   private stale(tab: Tab): boolean {
@@ -268,7 +285,7 @@ export class Browser {
     const retired = retiredIn(this.db, alive);
     for (const tab of openTabs(this.db)) {
       if (!alive.has(tab.target)) this.closed(tab.target);
-      else if (cardEnded(this.db, tab.card) || this.stale(tab)) await this.discard(cdp, tab);
+      else if (mustRelease(this.db, tab.card) || this.stale(tab)) await this.discard(cdp, tab);
     }
     for (const target of retired) {
       await cdp.send("Target.closeTarget", { targetId: target }).catch(() => undefined);
@@ -277,16 +294,19 @@ export class Browser {
   }
 
   private async open(cdp: Cdp, card: number, url: string): Promise<string> {
-    const own = (await this.current(cdp, card)) ?? (await this.create(cdp, card));
+    let tab = (await this.current(cdp, card)) ?? (await this.create(cdp, card));
     let page: Page;
     try {
-      page = await this.attach(cdp, own);
+      page = await this.attach(cdp, tab);
     } catch (error) {
       if (!isGone(error)) throw error;
-      this.closed(own.target);
-      page = await this.attach(cdp, await this.create(cdp, card));
+      this.closed(tab.target);
+      tab = await this.create(cdp, card);
+      page = await this.attach(cdp, tab);
     }
-    return `Opened ${await navigate(page, url)} in your tab ${labelOf(this.db, card)}.`;
+    const where = await navigate(page, url);
+    this.trusted.add(tab.target);
+    return `Opened ${where} in your tab ${labelOf(this.db, card)}.`;
   }
 
   private async create(cdp: Cdp, card: number): Promise<Tab> {
@@ -297,6 +317,7 @@ export class Browser {
     );
     const tab = { target: targetId, card, label: labelOf(this.db, card), openedAt: Date.now() };
     recordTab(this.db, tab);
+    this.trusted.add(targetId);
     return tab;
   }
 
@@ -320,12 +341,12 @@ export class Browser {
     return page;
   }
 
-  private async pageOf(cdp: Cdp, card: number): Promise<Page> {
+  private async pageOf(cdp: Cdp, card: number): Promise<{ page: Page; target: string }> {
     const own = await this.current(cdp, card);
     if (own === undefined)
       throw new Error("you have no tab yet: call browser with action open first");
     try {
-      return await this.attach(cdp, own);
+      return { page: await this.attach(cdp, own), target: own.target };
     } catch (error) {
       if (!isGone(error)) throw error;
       this.closed(own.target);

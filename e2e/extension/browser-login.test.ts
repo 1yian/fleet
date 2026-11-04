@@ -440,3 +440,36 @@ test("a one-time code that login generates is hidden like the other values", asy
   assert.match(lab.site.posted[0]?.code ?? "", /^\d{6}$/);
   assertNoSecretAnywhere(seen);
 });
+
+const AGAIN =
+  /^Error: this tab was already open when cardd restarted, and it may show a one-time code that cardd can no longer hide/;
+
+test("with one-time codes on, a tab that outlived a cardd restart is refused until it is opened again", async () => {
+  await start([GOOD], { totp: true });
+  const before = await lab.worker("Sign in to the portal");
+  await before.act({ action: "open", url: lab.site.url("/login", "login.example.test") });
+  await before.act({ action: "login" });
+  assert.equal(
+    await before.act({ action: "eval", expression: `${FIELD("c")}.value` }),
+    hidden("[hidden]"),
+  );
+  await lab.cardd.restart();
+  const worker = await lab.reconnect(before);
+
+  await assert.rejects(worker.act({ action: "read" }), AGAIN);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("c")}.value` }), AGAIN);
+  await assert.rejects(worker.shoot(), AGAIN);
+
+  assert.match(
+    await worker.act({ action: "open", url: lab.site.url("/login", "login.example.test") }),
+    /^Opened /,
+  );
+  const seen = [
+    await worker.act({ action: "eval", expression: `${FIELD("c")}.value` }),
+    await worker.act({ action: "read", selector: "form" }),
+  ];
+  assert.equal(seen[0], '""');
+  assert.doesNotMatch(seen[1] ?? "", /\d{6}/);
+  assert.ok((await worker.shoot()).length > 0);
+  assertNoSecretAnywhere(seen);
+});

@@ -69,5 +69,22 @@ export function attemptStartedAt(db: DatabaseSync, card: number): number | undef
   return typeof at === "number" ? at : undefined;
 }
 
-export const cardEnded = (db: DatabaseSync, card: number): boolean =>
-  ["done", "dropped"].includes(getCard(db, card).status);
+const ENDED = ["done", "dropped"];
+
+function stoppedAndIdle(db: DatabaseSync, card: number): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM entries e
+       WHERE e.card = ?1 AND e.kind = 'report'
+         AND e.id = (SELECT max(id) FROM entries WHERE card = e.card AND kind = 'report')
+         AND json_extract(e.fields, '$.status') = 'stopped'
+         AND NOT EXISTS (
+           SELECT 1 FROM sessions s JOIN attempts a ON a.id = s.attempt
+           WHERE a.card = e.card AND coalesce(s.turn_since, 0) > e.created_at)`,
+    )
+    .get(card);
+  return row !== undefined;
+}
+
+export const mustRelease = (db: DatabaseSync, card: number): boolean =>
+  ENDED.includes(getCard(db, card).status) || stoppedAndIdle(db, card);

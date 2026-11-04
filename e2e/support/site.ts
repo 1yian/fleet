@@ -92,12 +92,14 @@ const PAGES: Readonly<Record<string, string>> = {
     <script>
       let current = "";
       document.querySelector("[name=u]").addEventListener("input", (event) => { current = event.target.value; });
+      const shown = (text) => new Promise((resolve) => {
+        const check = () => (document.getElementById("who").textContent === text ? resolve("ready") : setTimeout(check, 5));
+        check();
+      });
+      window.shown = shown;
       window.set = (text) => {
         current = text;
-        return new Promise((resolve) => {
-          const check = () => (document.getElementById("who").textContent === text ? resolve("ready") : setTimeout(check, 5));
-          check();
-        });
+        return shown(text);
       };
       setInterval(() => { document.getElementById("who").replaceChildren(document.createTextNode(current)); }, 10);
     </script></body>`,

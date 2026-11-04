@@ -74,3 +74,46 @@ test("a tab of a run that was stopped while the browser was down is closed once 
   }, "a viewer poll to close the retired tab");
   held.open();
 });
+
+const pathsOf = async (): Promise<string[]> =>
+  (await lab.chrome.pages()).map((page) => new URL(page.url).pathname);
+
+test("a stopped report that was committed but never released closes the tab when the browser is polled after a restart", async () => {
+  const worker = await lab.worker("Look at the page");
+  await worker.act({ action: "open", url: lab.site.url("/a") });
+  lab.cardd.commitStoppedReport(worker.card.id);
+  await lab.cardd.restart();
+  const main = await lab.cardd.connect(lab.mainToken);
+  try {
+    assert.deepEqual(await pathsOf(), ["/a"]);
+    await until(async () => {
+      check(BROWSER_OPS["browser.view"].result, await main.call("browser.view", {}));
+      return (await pathsOf()).length === 0 ? true : undefined;
+    }, "a viewer poll to close the stopped run's tab");
+
+    const resumed = await lab.reconnect(worker);
+    assert.match(await resumed.act({ action: "open", url: lab.site.url("/b") }), /Bravo/);
+    assert.deepEqual(await pathsOf(), ["/b"]);
+  } finally {
+    await main.close();
+  }
+});
+
+test("a card that was resumed after the stop keeps its tab, whatever the viewer polls", async () => {
+  const worker = await lab.worker("Look at the page");
+  await worker.act({ action: "open", url: lab.site.url("/a") });
+  lab.cardd.commitStoppedReport(worker.card.id);
+  await lab.cardd.restart();
+  const main = await lab.cardd.connect(lab.mainToken);
+  try {
+    const resumed = await lab.reconnect(worker);
+    resumed.session.send({ t: "activity", state: "running" });
+    assert.match(await resumed.act({ action: "read" }), /alpha page/);
+    for (let poll = 0; poll < 3; poll += 1)
+      check(BROWSER_OPS["browser.view"].result, await main.call("browser.view", {}));
+    assert.deepEqual(await pathsOf(), ["/a"]);
+    assert.match(await resumed.act({ action: "read" }), /alpha page/);
+  } finally {
+    await main.close();
+  }
+});
