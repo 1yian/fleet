@@ -91,7 +91,9 @@ export class TestSite {
         const who = new URL(request.url ?? "/", "http://site").searchParams.get("as") ?? "";
         response
           .writeHead(200, { "content-type": "text/html" })
-          .end(`<!doctype html><title>Account of ${who}</title><body><p>account page</p></body>`);
+          .end(
+            `<!doctype html><title>Account of ${who}</title><body><p id="who">${who}</p></body>`,
+          );
         return;
       }
       const page = PAGES[path];

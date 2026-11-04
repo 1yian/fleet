@@ -4,6 +4,23 @@ const escapedByte = (char: string): string => `%${char.charCodeAt(0).toString(16
 
 const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const REFERENCES: Readonly<Record<string, readonly string[]>> = {
+  "&": ["&amp;", "&#38;", "&#x26;"],
+  "<": ["&lt;", "&#60;", "&#x3c;", "&#x3C;"],
+  ">": ["&gt;", "&#62;", "&#x3e;", "&#x3E;"],
+  '"': ["&quot;", "&#34;", "&#x22;"],
+  "'": ["&#39;", "&#x27;", "&apos;"],
+};
+
+function markup(text: string): string {
+  return Array.from(text, (char) => {
+    const spelled = REFERENCES[char];
+    return spelled === undefined
+      ? literal(char)
+      : `(?:${[char, ...spelled].map(literal).join("|")})`;
+  }).join("");
+}
+
 const jsonInner = (text: string): string => JSON.stringify(text).slice(1, -1);
 
 function formsOf(secret: string): string[] {
@@ -23,7 +40,7 @@ function cleaner(secrets: Iterable<string>): (text: string) => string {
   const pattern = new RegExp(
     [...needles]
       .sort((a, b) => b.length - a.length)
-      .map(literal)
+      .map(markup)
       .join("|"),
     "g",
   );

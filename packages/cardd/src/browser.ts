@@ -1,15 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Cdp, parseCdp, type BrowserArgs, type OpResult } from "@fleet/protocol";
 import Type from "typebox";
-import type { BrowserConfig, LoginsConfig } from "./browser-config.ts";
+import type { BrowserConfig } from "./browser-config.ts";
 import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
-import { login, valuesCovering } from "./browser-login.ts";
+import { login } from "./browser-login.ts";
 import {
   checkedUrl,
   clickPage,
   cut,
-  documentOf,
   navigate,
   pressKey,
   readPage,
@@ -18,6 +17,7 @@ import {
   type Page,
 } from "./browser-page.ts";
 import { screenshot } from "./browser-shot.ts";
+import { Vault } from "./browser-vault.ts";
 import {
   attemptStartedAt,
   cardEnded,
@@ -59,17 +59,16 @@ const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
 export class Browser {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, string>();
-  private readonly hidden = new Map<number, Set<string>>();
   private readonly retired = new Set<string>();
   private readonly turns = new Map<number, Promise<unknown>>();
   private readonly db: DatabaseSync;
   private readonly config: BrowserConfig | undefined;
-  private readonly hosts: Hosts;
+  private readonly vault: Vault;
 
   constructor(db: DatabaseSync, config: BrowserConfig | undefined, hosts: Hosts) {
     this.db = db;
     this.config = config;
-    this.hosts = hosts;
+    this.vault = new Vault(config?.logins, hosts);
   }
 
   view(): OpResult<"browser.view"> {
@@ -115,11 +114,19 @@ export class Browser {
 
   private async perform(card: number, args: BrowserArgs): Promise<Outcome> {
     if (args.action === "close") return plain(await this.closeOwn(card));
-    const cdp = await this.connection();
-    if (args.action === "open")
-      return this.guarded(card, this.open(cdp, card, checkedUrl(args.url)).then(plain));
-    const page = await this.pageOf(cdp, card);
-    return this.guarded(card, this.onPage(page, card, args));
+    if (args.action === "open") {
+      const url = checkedUrl(args.url);
+      await this.vault.beforeOpening(new URL(url).hostname.toLowerCase());
+      const cdp = await this.connection();
+      return this.guarded(this.open(cdp, card, url).then(plain));
+    }
+    if (args.action !== "login") await this.vault.ready();
+    const page = await this.pageOf(await this.connection(), card);
+    return this.guarded(
+      args.action === "login"
+        ? this.signIn(page, card, args.site)
+        : this.pageAction(page, args, this.vault.values),
+    );
   }
 
   private async closeOwn(card: number): Promise<string> {
@@ -131,58 +138,19 @@ export class Browser {
     return closed > 0 ? "Closed your tab." : "You had no tab open.";
   }
 
-  private async onPage(page: Page, card: number, args: BrowserArgs): Promise<Outcome> {
-    if (args.action === "login") return this.signIn(page, card, args.site);
-    await this.known(card, page);
-    return this.pageAction(page, args, [...(this.hidden.get(card) ?? [])]);
-  }
-
-  private hide(card: number, values: readonly string[]): void {
-    const known = this.hidden.get(card) ?? new Set<string>();
-    for (const value of values) known.add(value);
-    this.hidden.set(card, known);
-  }
-
-  private async known(card: number, page: Page, opening: readonly string[] = []): Promise<void> {
-    if (this.hidden.has(card)) return;
-    const logins = this.config?.logins;
-    this.hide(card, logins === undefined ? [] : await this.recalled(logins, page, opening));
-  }
-
-  private async recalled(
-    logins: LoginsConfig,
-    page: Page,
-    opening: readonly string[],
-  ): Promise<string[]> {
-    const { host } = await documentOf(page);
-    try {
-      return await valuesCovering(logins, this.hosts, [host, ...opening]);
-    } catch (error) {
-      throw new Error(
-        `this tab outlived a cardd restart, and the Logins project could not be read to learn which values on it to hide, so nothing was done: ${reason(error)}. Try again when the vault answers`,
-        { cause: error },
-      );
-    }
-  }
-
   private async signIn(page: Page, card: number, site: string | undefined): Promise<Outcome> {
-    const logins = this.config?.logins;
-    const hide = (values: readonly string[]): void => {
-      this.hide(card, values);
-    };
-    const done = await login({ db: this.db, hosts: this.hosts, logins, card, page, hide }, site);
+    const done = await login({ db: this.db, vault: this.vault, card, page }, site);
     return { result: { text: done.text }, notify: done.notify };
   }
 
-  private guarded(card: number, work: Promise<Outcome>): Promise<Outcome> {
-    const secrets = (): string[] => [...(this.hidden.get(card) ?? [])];
+  private guarded(work: Promise<Outcome>): Promise<Outcome> {
     return work.then(
       (done) => ({
         notify: done.notify,
-        result: { ...done.result, text: cut(scrubbed(done.result.text, secrets())) },
+        result: { ...done.result, text: cut(scrubbed(done.result.text, this.vault.values)) },
       }),
       (error: unknown) => {
-        throw new Error(scrubbed(reason(error), secrets()));
+        throw new Error(scrubbed(reason(error), this.vault.values));
       },
     );
   }
@@ -319,7 +287,6 @@ export class Browser {
       this.closed(own.target);
       page = await this.attach(cdp, await this.create(cdp, card));
     }
-    await this.known(card, page, [new URL(url).hostname.toLowerCase()]);
     return `Opened ${await navigate(page, url)} in your tab ${labelOf(this.db, card)}.`;
   }
 
@@ -331,7 +298,6 @@ export class Browser {
     );
     const tab = { target: targetId, card, label: labelOf(this.db, card), openedAt: Date.now() };
     recordTab(this.db, tab);
-    if (!this.hidden.has(card)) this.hidden.set(card, new Set());
     return tab;
   }
 
@@ -395,7 +361,6 @@ export class Browser {
         }
       }
       this.closed(tab.target);
-      this.hidden.delete(card);
       closed += 1;
     }
     const note =

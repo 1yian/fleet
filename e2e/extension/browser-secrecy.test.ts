@@ -105,7 +105,7 @@ test("opening a page on a tab that outlived a cardd restart hides the values in 
     here,
     /^Opened "c-1 .*Account of \[hidden\]" at http:\/\/login\.example\.test:\d+\/account\?as=\[hidden\] in your tab /,
   );
-  assert.equal(vault.invocations().length, 2);
+  assert.equal(vault.invocations().length, 4);
   assertNoSecretAnywhere([there, here]);
 });
 

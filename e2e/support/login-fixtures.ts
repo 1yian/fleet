@@ -28,7 +28,7 @@ export const WITH_TRICKY = {
 };
 
 export const REFUSAL =
-  /^Error: this tab outlived a cardd restart, and the Logins project could not be read/;
+  /^Error: the Logins project could not be read to learn which values to hide, so nothing was done/;
 export const FIELD = (name: string): string => `document.querySelector("input[name=${name}]")`;
 export const ALL_VALUES = "[...document.querySelectorAll('input')].map((el) => el.value)";
 export const RETYPE = `for (const [name, length] of [["u", ${String(USERNAME.length)}], ["p", ${String(PASSWORD.length)}]]) document.querySelector("input[name=" + name + "]").value = "x".repeat(length)`;

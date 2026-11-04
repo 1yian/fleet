@@ -8,12 +8,15 @@ import {
   BROKEN,
   FIELD,
   GOOD,
+  OTHER,
+  OTHER_USER,
   PASSWORD,
   REFUSAL,
   RETYPE,
   USERNAME,
   WITH_TRICKY,
   assertNoSecretAnywhere as scan,
+  bullets,
   hidden,
   signedIn as signIn,
   tabOf as tabIn,
@@ -68,8 +71,9 @@ test("login fills the page's username and password without the worker ever seein
   assert.equal(seen[4], '"[hidden]"');
   assert.equal(seen[6], "Welcome back");
   assert.deepEqual(lab.site.posted, [{ username: USERNAME, password: PASSWORD, code: "" }]);
-  assert.equal(vault.invocations().length, 1);
-  assert.match(vault.invocations()[0] ?? "", /^secret list [0-9a-f-]{36} --output json$/);
+  assert.equal(vault.invocations().length, 2);
+  for (const call of vault.invocations())
+    assert.match(call, /^secret list [0-9a-f-]{36} --output json$/);
   assertNoSecretAnywhere([heard(worker.h.calls)]);
 });
 
@@ -144,18 +148,35 @@ test("login never fills a page that is not the site, and says why", async () => 
     seen[1],
     "your tab is on login.evil.test, not example.test: open example.test's login page first",
   );
-  assert.deepEqual(vault.invocations(), []);
+  assert.equal(vault.invocations().length, 1);
   assert.deepEqual(lab.site.posted, []);
 });
 
-test("a vault that refuses the machine account is reported as failed with its reason", async () => {
+test("a vault that refuses the machine account stops the browser before anything is opened", async () => {
   await start();
   vault.revoke();
   const worker = await lab.crew("Sign in to the portal");
   browse(worker.h, { action: "open", url: lab.site.url("/login", "login.example.test") });
-  browse(worker.h, { action: "login" });
   worker.h.onModel(() => ({ tool: "report", args: { status: "blocked", text: "no vault" } }));
   const seen = results(await worker.h.waitForCall(2));
+  assert.equal(
+    seen[0],
+    "the Logins project could not be read to learn which values to hide, so nothing was done: bws could not read the Logins project on p620: Error: the access token is not valid. Try again when the vault answers",
+  );
+  assert.deepEqual(await lab.chrome.pages(), []);
+  assert.deepEqual(lab.site.posted, []);
+});
+
+test("a vault that fails while login reads it is reported as failed with its reason", async () => {
+  await start();
+  const worker = await lab.crew("Sign in to the portal");
+  browse(worker.h, { action: "open", url: lab.site.url("/login", "login.example.test") });
+  worker.h.onModel(() => {
+    vault.revoke();
+    return { tool: "browser", args: { action: "login" } };
+  });
+  worker.h.onModel(() => ({ tool: "report", args: { status: "blocked", text: "no vault" } }));
+  const seen = results(await worker.h.waitForCall(3));
   assert.equal(
     seen[1],
     "bws could not read the Logins project on p620: Error: the access token is not valid",
@@ -286,7 +307,7 @@ test("after cardd restarts with the tab kept, eval and screenshots still hide th
   assert.notEqual(await lab.chrome.capture(tab), covered);
   await worker.act({ action: "eval", expression: RETYPE });
   assert.equal(await worker.shoot(), covered);
-  assert.equal(vault.invocations().length, 2);
+  assert.equal(vault.invocations().length, 3);
   assertNoSecretAnywhere();
 });
 
@@ -322,4 +343,77 @@ test("after cardd restarts and the vault cannot be read, nothing from the tab is
 
   vault.restore();
   assert.equal(await worker.act({ action: "read", selector: "#p-echo" }), "[hidden]");
+});
+
+const account = (who: string, host: string): string =>
+  lab.site.url(`/account?as=${encodeURIComponent(who)}`, host);
+
+test("a fresh tab of another card never shows a username that a login put in the shared browser", async () => {
+  await start([GOOD, OTHER]);
+  const first = await signedIn();
+  await lab.main.call("browser.release", { card: first.card.id });
+  const seen: string[] = [];
+
+  for (const [who, host] of [
+    [USERNAME, "login.example.test"],
+    [OTHER_USER, "login.nothing.test"],
+  ] as const) {
+    const visitor = await lab.worker("Look at the account");
+    const opened = await visitor.act({ action: "open", url: account(who, host) });
+    assert.match(
+      opened,
+      /^Opened "c-\d+ .*Account of \[hidden\]" at http:\/\/.*\?as=\[hidden\] in your tab /,
+    );
+    const title = await visitor.act({ action: "eval", expression: "document.title" });
+    assert.match(title, /Account of \[hidden\]"$/);
+    assert.equal(await visitor.act({ action: "read", selector: "#who" }), "[hidden]");
+    const covered = await visitor.shoot();
+    await visitor.act({
+      action: "eval",
+      expression: `document.getElementById("who").textContent = "${bullets(who.length)}"`,
+    });
+    assert.equal(await visitor.shoot(), covered);
+    seen.push(opened, title);
+  }
+  assertNoSecretAnywhere(seen);
+});
+
+test("an entry added to the vault after the hidden values were loaded is hidden when its site is first opened", async () => {
+  await start([GOOD]);
+  const worker = await signedIn();
+  vault.publish([GOOD, OTHER]);
+
+  const opened = await worker.act({
+    action: "open",
+    url: account(OTHER_USER, "login.nothing.test"),
+  });
+
+  assert.match(opened, /Account of \[hidden\]" at http:\/\/.*\?as=\[hidden\] in your tab /);
+  assertNoSecretAnywhere([opened]);
+});
+
+test("the HTML of a page does not give a value back either", async () => {
+  await start();
+  const worker = await signedIn("/echo");
+  const seen = [
+    await worker.act({ action: "read", selector: "#p-echo", html: true }),
+    await worker.act({ action: "eval", expression: "document.body.outerHTML" }),
+  ];
+  assert.equal(seen[0], '<p id="p-echo">[hidden]</p>');
+  assert.match(
+    String(JSON.parse(seen[1] ?? "")),
+    /<p id="u-echo">\[hidden\]<\/p><p id="p-echo">\[hidden\]<\/p>/,
+  );
+  assertNoSecretAnywhere(seen);
+});
+
+test("a value that the page writes into an attribute does not come back through its HTML", async () => {
+  await start([WITH_TRICKY]);
+  const worker = await signedIn("/echo");
+  const html = await worker.act({
+    action: "eval",
+    expression: `(() => { const el = document.getElementById("p-echo"); el.setAttribute("title", ${FIELD("p")}.value); return [el.outerHTML, el.innerHTML]; })()`,
+  });
+  assert.deepEqual(JSON.parse(html), ['<p id="p-echo" title="[hidden]">[hidden]</p>', "[hidden]"]);
+  assertNoSecretAnywhere([html]);
 });
