@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  type Dirent,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,8 +92,16 @@ function callOf(record: JsonRecord): Call {
   };
 }
 
+function entriesOf(dir: string): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
 function filesUnder(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  return entriesOf(dir).flatMap((entry) => {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return filesUnder(path);
     return entry.isFile() ? [path] : [];
