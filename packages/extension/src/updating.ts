@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { check, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
-import { arrangeOn, tagUntaggedWorkers } from "./arrange.ts";
+import { arrangeOn, settleWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
 import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
 import { fleet, hostsOf, withLanes } from "./lanes.ts";
@@ -292,9 +292,8 @@ async function arrangeAll(config: LaneConfig): Promise<string[]> {
 
 async function tagWorkers(config: LaneConfig, link: Link): Promise<void> {
   const cards = await link.call("board", {});
-  const laneOfCard = new Map(cards.map((card) => [card.id, card.lane]));
-  for (const host of hostsOf(config))
-    await tagUntaggedWorkers(host, laneOfCard).catch(() => undefined);
+  const byId = new Map(cards.map((card) => [card.id, { lane: card.lane, name: card.name }]));
+  for (const host of hostsOf(config)) await settleWorkers(host, byId).catch(() => undefined);
 }
 
 function changeLines(replies: readonly HostReply[], carddUpdated: boolean): string[] {

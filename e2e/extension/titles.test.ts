@@ -101,31 +101,31 @@ test("main reads 1stmate and a second mate reads 2ndmate-<lane>, in herdr and in
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
 });
 
-test("lane tooling still finds a second mate that runs in its old fleet-<lane> workspace", async () => {
-  const created = await lab.run([
-    "workspace",
-    "create",
-    "--cwd",
-    cleoHome,
-    "--label",
-    "fleet-cleo",
-    "--no-focus",
-  ]);
-  const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
-  const pi = ["pi", "--continue", ...mateArgs(h)].map((arg) => `'${arg}'`).join(" ");
-  await lab.submit(pane, `cd '${cleoHome}' && env -u HERDR_WORKSPACE_ID ${pi}`);
+for (const label of ["fleet-cleo", "1stmate"]) {
+  test(`lane tooling finds a second mate by its home, whatever its workspace is labelled: ${label}`, async () => {
+    const created = await lab.run([
+      "workspace",
+      "create",
+      "--cwd",
+      cleoHome,
+      "--label",
+      label,
+      "--no-focus",
+    ]);
+    const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+    const pi = ["pi", "--continue", ...mateArgs(h)].map((arg) => `'${arg}'`).join(" ");
+    await lab.submit(pane, `cd '${cleoHome}' && env -u HERDR_WORKSPACE_ID ${pi}`);
 
-  await until(
-    "cleo to run",
-    () => Promise.resolve(fleet(["status"])),
-    (out) => out === "cleo: running\n",
-  );
-  assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
-  assert.deepEqual(
-    (await titles()).map(({ label }) => label),
-    ["fleet-cleo"],
-  );
-});
+    await until(
+      "cleo to run",
+      () => Promise.resolve(fleet(["status"])),
+      (out) => out === "cleo: running\n",
+    );
+    assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
+    const seen = (await titles()).map((each) => each.label);
+    assert.deepEqual(seen, [label]);
+  });
+}
 
 test("a mate Pi that only inherited a worker pane's herdr environment leaves that worker's workspace alone", async () => {
   const created = await lab.run([
