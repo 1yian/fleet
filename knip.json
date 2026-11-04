@@ -39,5 +39,5 @@
       "ignore": ["src/vendor/**"]
     }
   },
-  "ignoreBinaries": ["herdr", "lavish-axi", "pgrep"]
+  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "pgrep"]
 }

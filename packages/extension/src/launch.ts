@@ -3,6 +3,7 @@ import { arrangeHere } from "./arrange.ts";
 import {
   codeRoot,
   existingHome,
+  laneHomes,
   provision,
   restart,
   status,
@@ -10,7 +11,8 @@ import {
   up,
   type Outcome,
 } from "./homes.ts";
-import { isRecord, strings, type LaneConfig } from "./lane-config.ts";
+import { bwsConfig, isRecord, readLaneConfig, strings, type LaneConfig } from "./lane-config.ts";
+import { checkLaneSecrets } from "./lane-secrets.ts";
 import { costRows } from "./cost.ts";
 import { setUpMemory } from "./memory.ts";
 import { migrate, undoMigration } from "./migrate.ts";
@@ -21,12 +23,13 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T | home memory <lane> | wake <lane> <note> [--script NAME] | cost | migrate [--undo]";
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T|--bws JSON | home memory <lane> | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
   "--url",
   "--token",
+  "--bws",
   "--args",
   "--worker-args",
   "--host",
@@ -76,6 +79,7 @@ function parseCommandLine() {
       from: { type: "string" },
       url: { type: "string" },
       token: { type: "string" },
+      bws: { type: "string" },
       args: { type: "string" },
       "worker-args": { type: "string" },
       host: { type: "string" },
@@ -182,15 +186,17 @@ switch (command ?? "") {
       rest[0] !== "add" ||
       rest[1] === undefined ||
       values.url === undefined ||
-      values.token === undefined
+      (values.token === undefined && values.bws === undefined)
     )
       throw new Error(USAGE);
+    const bws = bwsConfig("--bws", json(values.bws));
     const hosts = json(values.hosts);
     const roots = json(values.roots);
     const config: LaneConfig = {
       lane: rest[1],
       url: values.url,
-      token: values.token,
+      ...(values.token === undefined ? {} : { token: values.token }),
+      ...(bws === undefined ? {} : { bws }),
       ...(values.host === undefined ? {} : { host: values.host }),
       hosts: isRecord(hosts) ? hosts : {},
       roots: isRecord(roots)
@@ -233,6 +239,23 @@ switch (command ?? "") {
         process.exit(1);
       },
     );
+    break;
+  }
+  case "secrets": {
+    const main = readLaneConfig(root);
+    const here = [
+      ...(main === undefined ? [] : [main]),
+      ...laneHomes(root).map((each) => each.config),
+    ];
+    const named = here.filter((each) => rest[0] === undefined || each.lane === rest[0]);
+    if (named.length === 0) throw new Error(`no lane ${rest[0] ?? ""} on this host`);
+    let failed = false;
+    for (const each of named) {
+      const checked = await checkLaneSecrets(each);
+      for (const line of checked.lines) console.log(line);
+      failed ||= checked.failed;
+    }
+    if (failed) process.exit(1);
     break;
   }
   case "cost": {

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import type { BwsConfig } from "./bws.ts";
 
 export interface CarddConfig {
   readonly host: string;
@@ -12,7 +13,8 @@ export interface CarddConfig {
 export interface LaneConfig {
   readonly lane: string;
   readonly url: string;
-  readonly token: string;
+  readonly token?: string;
+  readonly bws?: BwsConfig;
   readonly host?: string;
   readonly hosts: Record<string, unknown>;
   readonly roots: Record<string, string>;
@@ -62,6 +64,45 @@ function laneTier(file: string, value: unknown): { tier?: string } {
   return { tier: value };
 }
 
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const optionalText = (file: string, key: string, value: unknown): string | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "")
+    throw new Error(`${file}: "bws.${key}" must be a non-empty string`);
+  return value;
+};
+
+function bwsEnv(file: string, value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+  const entries = isRecord(value) ? Object.entries(value) : [];
+  const valid = entries.filter(
+    (entry): entry is [string, string] =>
+      ENV_NAME.test(entry[0]) && typeof entry[1] === "string" && entry[1] !== "",
+  );
+  if (!isRecord(value) || valid.length !== entries.length)
+    throw new Error(`${file}: "bws.env" maps environment variable names to bws keys or secret ids`);
+  return Object.fromEntries(valid);
+}
+
+export function bwsConfig(file: string, value: unknown): BwsConfig | undefined {
+  if (value === undefined) return undefined;
+  const settings = isRecord(value) ? value : {};
+  const tokenFile = optionalText(file, "tokenFile", settings["tokenFile"]);
+  const project = optionalText(file, "project", settings["project"]);
+  if (tokenFile === undefined || project === undefined)
+    throw new Error(`${file}: "bws" needs "tokenFile" and "project"`);
+  const common = optionalText(file, "common", settings["common"]);
+  const laneToken = optionalText(file, "laneToken", settings["laneToken"]);
+  return {
+    tokenFile,
+    project,
+    ...(common === undefined ? {} : { common }),
+    ...(laneToken === undefined ? {} : { laneToken }),
+    env: bwsEnv(file, settings["env"]),
+  };
+}
+
 function carddConfig(file: string, value: unknown): CarddConfig | undefined {
   if (value === undefined) return undefined;
   const { host = "local", root, db, restart } = isRecord(value) ? value : {};
@@ -76,6 +117,19 @@ function carddConfig(file: string, value: unknown): CarddConfig | undefined {
   return { host, root, db, restart: command };
 }
 
+const NEEDS = `needs "lane", "url", and a "token" or a "bws" block`;
+
+function credentials(file: string, config: Json): { token?: string; bws?: BwsConfig } {
+  const bws = bwsConfig(file, config["bws"]);
+  const token = config["token"];
+  if (typeof token !== "string" && (token !== undefined || bws === undefined))
+    throw new Error(`${file} ${NEEDS}`);
+  return {
+    ...(typeof token === "string" ? { token } : {}),
+    ...(bws === undefined ? {} : { bws }),
+  };
+}
+
 export function readLaneConfig(home: string): LaneConfig | undefined {
   const file = join(home, LANE_FILE);
   let text: string;
@@ -86,17 +140,16 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
   }
   const config: unknown = JSON.parse(text);
   if (!isRecord(config)) throw new Error(`${file} is not a JSON object`);
-  const { lane, url, token } = config;
-  if (typeof lane !== "string" || typeof url !== "string" || typeof token !== "string") {
-    throw new Error(`${file} needs "lane", "url", and "token"`);
-  }
+  const { lane, url } = config;
+  const secrets = credentials(file, config);
+  if (typeof lane !== "string" || typeof url !== "string") throw new Error(`${file} ${NEEDS}`);
   const folder = direnvFolder(file, config["direnv"]);
   const cardd = carddConfig(file, config["cardd"]);
   const own = ownHost(file, config["host"]);
   return {
     lane,
     url,
-    token,
+    ...secrets,
     ...(own === undefined ? {} : { host: own }),
     hosts: isRecord(config["hosts"]) ? config["hosts"] : {},
     roots: stringRecord(config["roots"]),

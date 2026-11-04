@@ -62,7 +62,8 @@ export class Scratch {
     lane: string,
     settings: {
       url: string;
-      token: string;
+      token?: string;
+      bws?: unknown;
       args?: readonly string[];
       host?: string;
       hosts?: unknown;
@@ -71,7 +72,9 @@ export class Scratch {
       tier?: string;
     },
   ): string {
-    const args = ["home", "add", lane, "--url", settings.url, "--token", settings.token];
+    const args = ["home", "add", lane, "--url", settings.url];
+    if (settings.token !== undefined) args.push("--token", settings.token);
+    if (settings.bws !== undefined) args.push("--bws", JSON.stringify(settings.bws));
     args.push("--args", JSON.stringify(settings.args ?? []));
     args.push(
       "--hosts",
@@ -112,7 +115,7 @@ export function settingsArgs(h: Harness): string[] {
 export function configureMain(
   scratch: Scratch,
   url: string,
-  token: string,
+  token: string | undefined,
   more: Record<string, unknown> = {},
 ): void {
   mkdirSync(join(scratch.root, "config"), { recursive: true });

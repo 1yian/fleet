@@ -7,6 +7,7 @@ const LIVE_FLEET = [
   "FLEET_ROOT",
   "FLEET_URL",
   "FLEET_TOKEN",
+  "FLEET_BWS",
   "FLEET_ROLE",
   "FLEET_PI_ARGS",
   "FLEET_CONFIG_DIR",
