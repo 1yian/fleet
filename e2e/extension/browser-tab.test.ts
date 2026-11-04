@@ -42,16 +42,13 @@ afterEach(async (t) => {
 });
 
 async function tabsOfMain(pane: string): Promise<{ label: string; pane: string }[]> {
-  const panes = records((await lab.run(["pane", "list"]))["panes"]);
-  const workspace = panes.find((each) => each["pane_id"] === pane)?.["workspace_id"];
-  const tabs = records((await lab.run(["tab", "list", "--workspace", String(workspace)]))["tabs"]);
+  const known = records((await lab.run(["pane", "list"]))["panes"]);
+  const workspace = String(known.find((each) => each["pane_id"] === pane)?.["workspace_id"]);
+  const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
+  const panes = records((await lab.run(["pane", "list", "--workspace", workspace]))["panes"]);
   return tabs.map((tab) => ({
     label: String(tab["label"]),
-    pane: String(
-      panes.find(
-        (each) => each["tab_id"] === tab["tab_id"] && each["workspace_id"] === workspace,
-      )?.["pane_id"],
-    ),
+    pane: String(panes.find((each) => each["tab_id"] === tab["tab_id"])?.["pane_id"]),
   }));
 }
 
