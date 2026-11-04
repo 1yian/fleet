@@ -26,6 +26,7 @@
       "entry": [
         "src/index.ts",
         "src/job.ts",
+        "src/browser-view.ts",
         "src/launch.ts",
         "src/relaunch.ts",
         "src/calm/index.ts",

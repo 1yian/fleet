@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { OpResult } from "@fleet/protocol";
+import { releaseBrowser } from "./browser-release.ts";
 import { releaseAll } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
@@ -265,6 +266,7 @@ export async function close(
       left.push({ session: attempt.session, host: attempt.host, reason: error.message });
     }
   }
+  const browser = await releaseBrowser(link, id);
   const finish = { card: id, mode: plan.mode, text, archives, left };
   const card = await link.call("close.finish", finish);
   const hostsJustUnreachable = new Set(left.map((each) => each.host));
@@ -272,7 +274,7 @@ export async function close(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
   const landing = moved === "" ? "" : ` ${moved}`;
-  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, stopped)}`;
+  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, stopped)}${browser}`;
 }
 
 function outcome(

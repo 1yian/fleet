@@ -1,0 +1,88 @@
+import { createServer, type IncomingMessage, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { optionalString, parseRecord } from "./json.ts";
+
+export interface Posted {
+  readonly username: string;
+  readonly password: string;
+  readonly code: string;
+}
+
+const PAGES: Readonly<Record<string, string>> = {
+  "/a": `<!doctype html><title>Alpha</title><body data-owner="a">
+    <p>alpha page</p>
+    <button id="count" style="position:fixed;left:20px;top:60px;width:200px;height:80px" onclick="document.getElementById('n').textContent = String(Number(document.getElementById('n').textContent) + 1)">count</button>
+    <span id="n" style="position:fixed;left:20px;top:160px">0</span>
+    <input id="q" style="position:fixed;left:20px;top:200px;width:200px;height:30px">
+  </body>`,
+  "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,
+  "/popup": `<!doctype html><title>Popup</title><body>
+    <a id="blank" target="_blank" href="/b" style="position:fixed;left:20px;top:20px">open b</a>
+    <p>popup page</p></body>`,
+  "/login": `<!doctype html><title>Sign in</title><body>
+    <form id="form" action="/session" method="post" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: this.c.value }) }).then(() => { document.title = 'Signed in'; document.getElementById('msg').textContent = 'Welcome back'; })">
+      <input name="u" type="text" autocomplete="username">
+      <input name="p" type="password" autocomplete="current-password">
+      <input name="c" type="text" autocomplete="one-time-code" placeholder="code">
+      <button id="submit" type="submit">Sign in</button>
+    </form><p id="msg"></p></body>`,
+};
+
+function bodyOf(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => (body += chunk));
+    request.on("end", () => {
+      resolve(body);
+    });
+    request.on("error", reject);
+  });
+}
+
+export class TestSite {
+  readonly posted: Posted[];
+  readonly port: number;
+  private readonly server: Server;
+
+  private constructor(server: Server, port: number, posted: Posted[]) {
+    this.server = server;
+    this.port = port;
+    this.posted = posted;
+  }
+
+  static async start(): Promise<TestSite> {
+    const posted: Posted[] = [];
+    const server = createServer((request, response) => {
+      const path = new URL(request.url ?? "/", "http://site").pathname;
+      if (request.method === "POST" && path === "/session") {
+        void bodyOf(request).then((body) => {
+          const sent = parseRecord(body);
+          posted.push({
+            username: optionalString(sent, "username") ?? "",
+            password: optionalString(sent, "password") ?? "",
+            code: optionalString(sent, "code") ?? "",
+          });
+          response.writeHead(204).end();
+        });
+        return;
+      }
+      const page = PAGES[path];
+      if (page === undefined) response.writeHead(404).end();
+      else response.writeHead(200, { "content-type": "text/html" }).end(page);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address: AddressInfo | string | null = server.address();
+    if (address === null || typeof address === "string") throw new Error("no site address");
+    return new TestSite(server, address.port, posted);
+  }
+
+  url(path: string, host = "127.0.0.1"): string {
+    return `http://${host}:${String(this.port)}${path}`;
+  }
+
+  async stop(): Promise<void> {
+    this.server.closeAllConnections();
+    await new Promise((resolve) => this.server.close(resolve));
+  }
+}

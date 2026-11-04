@@ -1,0 +1,111 @@
+import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { chromium, type Browser } from "playwright";
+import { isRecord, optionalString } from "./json.ts";
+
+export interface Target {
+  readonly id: string;
+  readonly type: string;
+  readonly title: string;
+  readonly url: string;
+}
+
+export class StandInChrome {
+  readonly endpoint: string;
+  private readonly browser: Browser;
+
+  private constructor(browser: Browser, endpoint: string) {
+    this.browser = browser;
+    this.endpoint = endpoint;
+  }
+
+  static async start(
+    rules = "MAP *.example.test 127.0.0.1",
+    wanted?: number,
+  ): Promise<StandInChrome> {
+    const port = wanted ?? (await freePort());
+    const browser = await chromium.launch({
+      args: [`--remote-debugging-port=${String(port)}`, `--host-resolver-rules=${rules}`],
+    });
+    return new StandInChrome(browser, `http://127.0.0.1:${String(port)}`);
+  }
+
+  async targets(): Promise<Target[]> {
+    const listed: unknown = await (await fetch(`${this.endpoint}/json/list`)).json();
+    if (!Array.isArray(listed)) throw new Error("/json/list is not a list");
+    return listed.filter(isRecord).map((each) => ({
+      id: optionalString(each, "id") ?? "",
+      type: optionalString(each, "type") ?? "",
+      title: optionalString(each, "title") ?? "",
+      url: optionalString(each, "url") ?? "",
+    }));
+  }
+
+  async pages(): Promise<Target[]> {
+    return (await this.targets()).filter((target) => target.type === "page");
+  }
+
+  get port(): number {
+    return Number(new URL(this.endpoint).port);
+  }
+
+  async stop(): Promise<void> {
+    await this.browser.close();
+  }
+}
+
+export class TcpProxy {
+  readonly port: number;
+  private server: Server | undefined;
+  private readonly sockets = new Set<Socket>();
+  private readonly target: number;
+
+  private constructor(port: number, target: number) {
+    this.port = port;
+    this.target = target;
+  }
+
+  static async start(target: number): Promise<TcpProxy> {
+    const proxy = new TcpProxy(await freePort(), target);
+    await proxy.listen();
+    return proxy;
+  }
+
+  get endpoint(): string {
+    return `http://127.0.0.1:${String(this.port)}`;
+  }
+
+  async listen(): Promise<void> {
+    const server = createServer((client) => {
+      const upstream = createConnection({ port: this.target, host: "127.0.0.1" });
+      for (const socket of [client, upstream]) {
+        this.sockets.add(socket);
+        socket.on("close", () => this.sockets.delete(socket));
+        socket.on("error", () => socket.destroy());
+      }
+      client.pipe(upstream).pipe(client);
+    });
+    await new Promise<void>((resolve) => server.listen(this.port, "127.0.0.1", resolve));
+    this.server = server;
+  }
+
+  async stop(): Promise<void> {
+    const server = this.server;
+    this.server = undefined;
+    for (const socket of this.sockets) socket.destroy();
+    if (server !== undefined) await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      server.close(() => {
+        resolve(port);
+      });
+    });
+  });
+}

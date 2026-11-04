@@ -57,6 +57,7 @@ export class Cardd {
   private supervised = false;
   private readonly env: NodeJS.ProcessEnv;
   output = "";
+  errors = "";
   private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");
 
   private readonly args: readonly string[];
@@ -251,13 +252,18 @@ export class Cardd {
       "node",
       [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`, ...this.args],
       {
-        stdio: ["ignore", "pipe", "inherit"],
+        stdio: ["ignore", "pipe", "pipe"],
         env: this.env,
       },
     );
     this.child = child;
     this.output = "";
+    this.errors = "";
     child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (this.output += chunk));
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      this.errors += chunk;
+      process.stderr.write(chunk);
+    });
     this.url = await until(() => /listening on (\S+)/.exec(this.output)?.[1], "cardd to listen");
   }
 

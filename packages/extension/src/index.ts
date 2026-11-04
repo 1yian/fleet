@@ -6,6 +6,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Entry } from "@fleet/protocol";
 import { showBoardLink } from "./board-link.ts";
 import { registerBranch } from "./branch.ts";
+import { registerBrowser } from "./browser.ts";
+import { showBrowserTab } from "./browser-tab.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
@@ -170,6 +172,7 @@ function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: 
   const jobs = new Jobs(link, cardd);
   jobs.register(pi);
   registerBranch(pi, link);
+  registerBrowser(pi, link);
   return jobs;
 }
 
@@ -291,6 +294,7 @@ function start(
   watchMainCardd(pi, link, { url, role, lane }, HOME());
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
+    showBrowserTab(pi, link, HOME());
     registerUpdate(pi, HOME(), link);
   }
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);

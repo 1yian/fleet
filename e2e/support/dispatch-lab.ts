@@ -31,6 +31,7 @@ export const avoidSeenOf = (h: Harness): string => join(h.dir, "worker-avoid");
 
 export interface LabOptions {
   readonly cardd?: Record<string, string>;
+  readonly carddArgs?: readonly string[];
   readonly mate?: Record<string, string>;
   readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
@@ -79,13 +80,14 @@ function addSite(
 
 export async function startDispatchLab({
   cardd: carddEnv,
+  carddArgs = [],
   mate: mateEnv,
   dashTokens = [],
   workerArgs = [],
   extension = EXTENSION,
   ...site
 }: LabOptions = {}): Promise<DispatchLab> {
-  const cardd = await Cardd.start(carddEnv);
+  const cardd = await Cardd.start(carddEnv, carddArgs);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = tempDir("fleet-home-");
   const mainToken = cardd.addLane("main", undefined, home);

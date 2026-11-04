@@ -1,5 +1,6 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
+import { BROWSER_OPS } from "./browser.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
@@ -9,6 +10,9 @@ import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
 import { PlanSchema } from "./wakes.ts";
 
 export * from "./branch.ts";
+export * from "./browser.ts";
+export * from "./cdp.ts";
+export * from "./health.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./schedules.ts";
@@ -345,6 +349,7 @@ export const OPS = {
   ...SCHEDULE_OPS,
   ...INCIDENT_OPS,
   ...JOB_OPS,
+  ...BROWSER_OPS,
   ...MAINTENANCE_OPS,
   report: {
     roles: ["worker"],
@@ -397,29 +402,6 @@ export const BoardSchema = Type.Object({
   schedules: Type.Array(ScheduleSchema),
 });
 export type Board = Static<typeof BoardSchema>;
-
-export const VersionSchema = Type.Object({
-  commit: Type.Union([Type.String(), Type.Null()]),
-  schema: Type.Integer(),
-});
-export type Version = Static<typeof VersionSchema>;
-
-export const HealthSchema = Type.Object({
-  commit: Type.Union([Type.String(), Type.Null()]),
-  now: Type.Integer(),
-  windowStart: Type.Integer(),
-  loopP50Ms: Type.Number(),
-  loopP99Ms: Type.Number(),
-  loopMaxMs: Type.Number(),
-  lastLagMs: Type.Number(),
-  lastLagAt: Type.Union([Type.Integer(), Type.Null()]),
-  lastTickMs: Type.Number(),
-  longestTickMs: Type.Number(),
-  sockets: Type.Integer(),
-  sessions: Type.Integer(),
-  rssBytes: Type.Integer(),
-});
-export type Health = Static<typeof HealthSchema>;
 
 export const ThreadSchema = Type.Object({ card: CardSchema, entries: Type.Array(EntrySchema) });
 export type Thread = Static<typeof ThreadSchema>;

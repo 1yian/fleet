@@ -135,6 +135,72 @@ Fleet tracks every process a worker starts, so that `close`, a worker restart (`
 
 A failure to attach containment fails the dispatch or restart, and a failure to confirm cleanup fails the close or restart, so nothing starts or finishes with processes left uncontained. Retry the operation once the host is reachable.
 
+## The shared browser
+
+Workers do not drive the captain's laptop. The fleet owns one Chrome, on p620, and every card gets its own tab in it.
+
+- `cardd` holds the only connection to Chrome (the Chrome DevTools Protocol, CDP). A worker calls the `browser` tool, and the tool calls `cardd`. A worker never gets the CDP address, so it cannot reach another card's tab. The tool takes no tab id: it always means the caller's own tab.
+- `cardd` records which card owns each tab (`browser_tabs`). `open` gives the card a tab labelled `c-<id> <name>` in its page title, and loads a page in it. `read`, `click`, `type`, `press`, `eval`, `screenshot`, `login`, and `close` act on that tab only.
+- A page cannot open a new window. `window.open` and links and forms with a `target` load in the card's own tab. A window that still appears is closed by `cardd` as soon as Chrome reports it.
+- Only `http` and `https` pages can be opened. A worker cannot open `chrome://`, `file://`, or `view-source:` pages.
+- `close`, a worker restart (`restart_card` replace), and the end of the card close every tab of the card, right after the card's processes are stopped (see Process containment). Output of `close` and `restart_card` says how many tabs were closed. A Chrome that is down does not block either: the output says that the tabs stay open, and `cardd` closes the tabs of an ended card the next time it connects.
+- The `Browser` tab in main's herdr workspace is a viewer, described below.
+
+### What the Chrome service must provide
+
+This service is not in this repository. It is a user service of the `yian` account on p620 that a dotfiles card builds. The fleet needs exactly this:
+
+| Item          | Requirement                                                                                                                                                                                                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Display       | `Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp`, as its own always-on unit that Chrome starts after. Chrome runs with `DISPLAY=:99`. A headful Chrome is wanted over `--headless`, because `--headless` puts `HeadlessChrome` in the user agent and some sites refuse it, and a real display is where passkey and permission prompts appear. |
+| Binary        | Google Chrome stable, 136 or newer (older ones accept `--remote-debugging-port` on the default profile, newer ones refuse it). The p620 build today is 155.                                                                                                                                                                                  |
+| Profile       | A dedicated, persistent user data directory that nothing else uses: `~/.local/share/fleet-browser/profile`, mode `0700`. Never `~/.config/google-chrome`. It keeps cookies, so a login survives a restart.                                                                                                                                   |
+| Flags         | `--user-data-dir=<profile> --remote-debugging-port=9222 --no-first-run --no-default-browser-check --password-store=basic --hide-crash-restore-bubble --window-size=1440,900 --window-position=0,0`. Do not pass `--no-sandbox`, `--headless`, or `--remote-allow-origins`: none is needed.                                                   |
+| Policy        | A managed policy file in `/etc/opt/chrome/policies/managed/` with `PasswordManagerEnabled: false`, `AutofillAddressEnabled: false`, `AutofillCreditCardEnabled: false`, `BrowserSignin: 0`, and `SyncDisabled: true`. Without it Chrome offers to save a password the fleet typed, and writes it to the profile.                             |
+| CDP bind      | Chrome binds `127.0.0.1:9222` only. Chrome ignores `--remote-debugging-address`: on Chrome 155 `--remote-debugging-address=0.0.0.0` still listens on `127.0.0.1` only.                                                                                                                                                                       |
+| Tailnet bind  | A forwarder that listens on p620's Tailscale address only and sends to `127.0.0.1:9222`: `tailscale serve --bg --tcp 9223 tcp://127.0.0.1:9222`. Never `tailscale funnel`, never a public interface, never a router port forward. A `socat` unit bound to `$(tailscale ip -4)` is an equal choice.                                           |
+| Address given | `cardd` is told `http://<p620's Tailscale IPv4 address>:9223`. It must be the IP address, not a MagicDNS name: Chrome answers `Host header is specified and is not an IP address or localhost` to any other Host on `/json/version`.                                                                                                         |
+| Reach         | CDP has no login, so whoever reaches `9223` controls every logged-in session. If the tailnet has ACLs, allow `9223` from the `cardd` host and the captain's laptop only. Block `9222` and `9223` on every other interface.                                                                                                                   |
+| Supervision   | `Restart=always` for both units, and `loginctl enable-linger yian`, so Chrome is up with no one logged in. Check: `curl -s http://127.0.0.1:9222/json/version` prints JSON.                                                                                                                                                                  |
+
+A restart of Chrome loses its tabs. `cardd` notices, and a card's next `open` makes a new tab.
+
+### Telling `cardd` about it
+
+`cardd serve` takes `--browser`, a JSON object:
+
+```sh
+--browser '{"cdp":"http://100.64.0.5:9223","logins":{"host":"p620","tokenFile":"~/.config/bws/browser-logins.token","project":"<the Logins project id>"}}'
+```
+
+- `cdp` is the address above. It is required. Without `--browser`, the `browser` tool tells a worker that this fleet has no shared browser, and main makes no `Browser` tab.
+- `logins` is optional. Without it, `login` says it is not set up. `host` is a name from `--hosts` (or a host that runs here): the host where `bws` and the token file are. `tokenFile` is the path there, and `~/` means that host's home. `project` is the id of the Logins project.
+- `logins.totp` is `false` by default and stays `false`. The captain has not approved one-time codes. With `true`, `login` also fills a one-time-code field from the entry's `totp` seed.
+
+`--browser` is part of `cardd`'s command line, so a change needs the captain to edit the launchd job as in section 2 and restart `cardd`.
+
+### Bitwarden logins
+
+The fleet fills passwords itself, so nobody pastes one into a chat. The captain creates this once, in Bitwarden Secrets Manager:
+
+1. A project named `Logins`. Its id goes into `logins.project`.
+2. A machine account, such as `fleet-browser`, with read access to the `Logins` project and to nothing else.
+3. An access token for that machine account. It lives on p620 only, in `~/.config/bws/browser-logins.token`, owner `yian`, mode `0600`, the same layout as the other tokens in `~/.config/bws/`. It is never in `cardd`'s command line, the database, or a chat.
+4. One secret in the `Logins` project for each site. The key is the site's host name, such as `github.com`. The value is JSON: `{"username": "...", "password": "..."}`. An optional `"totp"` seed is read only when `logins.totp` is true. A key covers its subdomains: `github.com` covers `gist.github.com`, and the longest key that covers the page wins.
+5. `bws` on p620's `PATH`.
+
+How `login` works: the worker is on a site's login page and calls `browser(action="login")`. `cardd` runs `bws secret list <project> --output json` on `logins.host` (over ssh when `--hosts` says so), with the token read from the token file there and passed to `bws` only as `BWS_ACCESS_TOKEN`, never on a command line. It reads the answer in its own memory, picks the entry whose key covers the page's host, and types the username and password into the page's fields with CDP input. The page must be on the entry's site: `login` refuses any other page. The values are never logged, stored, or written. They are kept in memory only so that `read` and `eval` on that tab show them as `[hidden]`. The worker's result says only `filled`, `not found`, or why it failed.
+
+`bws` cannot list one secret by key, so all secrets of the `Logins` project pass through `cardd`'s memory during a lookup. That is why the project is only for logins and the machine account sees nothing else. A screenshot taken after `login` shows the username, and the page itself shows the password only as dots.
+
+When the project has no entry for the site, `login` says `not found` and files a note on the card for its mate: `c-N needs a Bitwarden login for <site>`. The mate asks the captain once. He adds the secret in Bitwarden, and the worker calls `login` again. A repeated `login` does not ask again.
+
+Sites that need a passkey, a one-time code, or terms accepted are handled in the viewer: the captain clicks and types in the live tab once, and the session cookie stays in the profile.
+
+### The viewer
+
+Main's herdr workspace gets a tab named `Browser` when main starts, if `cardd` has `--browser`. It runs `packages/extension/src/browser-view.ts`, which starts a small page on `127.0.0.1` and opens it once in the host's default browser. The page lists the live tabs, one for each card, shows the selected tab as a live picture, and forwards clicks, scrolling, keys, and typed text to it, so the captain can do a passkey, a code, or a terms page himself. The viewer talks to Chrome directly for the picture, and asks `cardd` only which tabs exist and who owns them. It answers only for its own address (Host and Origin are checked). Set `FLEET_BROWSER_VIEW_OPEN=0` to stop it opening a page. A herdr pane that shows the picture itself is not used: see `docs/code.md`.
+
 ## 3. Lanes and projects
 
 Run these once on the `cardd` host. `lane add` prints the mate's token. A lane's `--home` is informational.
