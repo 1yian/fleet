@@ -217,3 +217,53 @@ test("a read that fails after a good load stops the next action until a read suc
   vault.restore();
   assert.equal(await worker.act({ action: "read", selector: "#who" }), "someone");
 });
+
+const OUTPUT_REFUSED =
+  /^Error: this output contains a stored credential; read it as text, which hides it$/;
+
+async function splitPage(): Promise<RawWorker> {
+  await start();
+  const worker = await signedIn("/places?at=split");
+  await worker.act({ action: "eval", expression: "window.ready" });
+  await worker.act({
+    action: "eval",
+    expression: `[...document.querySelectorAll('input')].forEach((el) => { el.value = ''; })`,
+  });
+  return worker;
+}
+
+for (const [name, action] of [
+  ["read with html", { action: "read", selector: "#spot", html: true }],
+  ["eval of outerHTML", { action: "eval", expression: "document.documentElement.outerHTML" }],
+  [
+    "eval of innerHTML",
+    { action: "eval", expression: "document.getElementById('spot').innerHTML" },
+  ],
+  [
+    "eval of an object that holds HTML",
+    {
+      action: "eval",
+      expression: "({ n: 1, parts: { html: document.getElementById('spot').innerHTML } })",
+    },
+  ],
+  [
+    "eval of JSON text that holds HTML",
+    {
+      action: "eval",
+      expression: "JSON.stringify({ html: document.getElementById('spot').innerHTML })",
+    },
+  ],
+] as const)
+  test(`${name} is refused when the page splits the username across elements`, async () => {
+    const worker = await splitPage();
+    await assert.rejects(worker.act(action), OUTPUT_REFUSED);
+
+    const text = await worker.act({ action: "read", selector: "#spot" });
+    assert.equal(text, "[hidden]");
+    await worker.act({ action: "eval", expression: 'window.put("someone")' });
+    assert.match(
+      await worker.act({ action: "read", selector: "#spot", html: true }),
+      /^<div id="spot"><p>so<strong>me<\/strong>one<\/p><\/div>$/,
+    );
+    assertNoSecretAnywhere();
+  });

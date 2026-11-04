@@ -1,5 +1,7 @@
 const HIDDEN = "[hidden]";
 
+const REFUSED_OUTPUT = "this output contains a stored credential; read it as text, which hides it";
+
 const escapedByte = (char: string): string => `%${char.charCodeAt(0).toString(16).toUpperCase()}`;
 
 const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -14,11 +16,78 @@ const REFERENCES: Readonly<Record<string, readonly string[]>> = {
 
 function markup(text: string): string {
   return Array.from(text, (char) => {
+    if (/\s/.test(char)) return "\\s+";
     const spelled = REFERENCES[char];
     return spelled === undefined
       ? literal(char)
       : `(?:${[char, ...spelled].map(literal).join("|")})`;
   }).join("");
+}
+
+const NAMED: Readonly<Record<string, string>> = {
+  Tab: "\t",
+  NewLine: "\n",
+  nbsp: "\u00a0",
+  excl: "!",
+  quot: '"',
+  QUOT: '"',
+  num: "#",
+  dollar: "$",
+  percnt: "%",
+  amp: "&",
+  AMP: "&",
+  apos: "'",
+  lpar: "(",
+  rpar: ")",
+  ast: "*",
+  midast: "*",
+  plus: "+",
+  comma: ",",
+  period: ".",
+  sol: "/",
+  colon: ":",
+  semi: ";",
+  lt: "<",
+  LT: "<",
+  equals: "=",
+  gt: ">",
+  GT: ">",
+  quest: "?",
+  commat: "@",
+  lsqb: "[",
+  lbrack: "[",
+  bsol: "\\",
+  rsqb: "]",
+  rbrack: "]",
+  Hat: "^",
+  lowbar: "_",
+  UnderBar: "_",
+  grave: "`",
+  DiacriticalGrave: "`",
+  lcub: "{",
+  lbrace: "{",
+  verbar: "|",
+  vert: "|",
+  VerticalLine: "|",
+  rcub: "}",
+  rbrace: "}",
+};
+
+const TAG = /<!--[\s\S]*?-->|<[/!?]?[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g;
+const REFERENCE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]*));?/g;
+
+function character(all: string, code: number): string {
+  return code === 0 || code > 0x10ffff ? all : String.fromCodePoint(code);
+}
+
+function composed(text: string): string {
+  return text
+    .replace(TAG, "")
+    .replace(REFERENCE, (all, decimal?: string, hex?: string, name?: string) => {
+      if (decimal !== undefined) return character(all, Number.parseInt(decimal, 10));
+      if (hex !== undefined) return character(all, Number.parseInt(hex, 16));
+      return NAMED[name ?? ""] ?? all;
+    });
 }
 
 const jsonInner = (text: string): string => JSON.stringify(text).slice(1, -1);
@@ -30,7 +99,7 @@ function formsOf(secret: string): string[] {
   return [secret, escaped, jsonInner(escaped), component, component.replaceAll("%20", "+"), form];
 }
 
-export function needlesOf(secrets: Iterable<string>): string[] {
+function needlesOf(secrets: Iterable<string>): string[] {
   const needles = new Set<string>();
   for (const secret of secrets) {
     if (secret === "") continue;
@@ -39,17 +108,33 @@ export function needlesOf(secrets: Iterable<string>): string[] {
   return [...needles];
 }
 
-function cleaner(secrets: Iterable<string>): (text: string) => string {
-  const needles = needlesOf(secrets);
-  if (needles.length === 0) return (text) => text;
-  const pattern = new RegExp(
-    needles
+function patternOf(needles: readonly string[], flags: string): RegExp {
+  return new RegExp(
+    [...needles]
       .sort((a, b) => b.length - a.length)
       .map(markup)
       .join("|"),
-    "g",
+    flags,
   );
-  return (text) => text.replace(pattern, HIDDEN);
+}
+
+function cleaner(secrets: Iterable<string>): (text: string) => string {
+  const needles = needlesOf(secrets);
+  if (needles.length === 0) return (text) => text;
+  const replace = patternOf(needles, "gi");
+  const find = patternOf(needles, "i");
+  return (text) => {
+    const flat = text.replace(replace, HIDDEN);
+    if (find.test(composed(flat))) throw new Error(REFUSED_OUTPUT);
+    return flat;
+  };
+}
+
+export function exposure(secrets: Iterable<string>): (text: string) => boolean {
+  const needles = needlesOf(secrets);
+  if (needles.length === 0) return () => false;
+  const find = patternOf(needles, "i");
+  return (text) => find.test(text) || find.test(composed(text));
 }
 
 export const scrubbed = (text: string, secrets: Iterable<string>): string => cleaner(secrets)(text);

@@ -1,66 +1,74 @@
 import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
-import { needlesOf } from "./browser-hidden.ts";
+import { exposure } from "./browser-hidden.ts";
 import { call, type Page } from "./browser-page.ts";
 
 const GROUP = "fleet-scan";
 const WORLD = "fleet-scan";
 
-const SCAN = `function (secrets) {
-  const unit = (c) => {
-    if (/\\s/.test(c)) return " ";
-    const lower = c.toLowerCase();
-    return lower.length === 1 ? lower : c;
-  };
-  const fold = (text) => {
-    let out = "";
-    for (const c of text) {
-      const next = unit(c);
-      if (next !== " " || !out.endsWith(" ")) out += next;
-    }
-    return out;
-  };
-  const needles = secrets.map(fold).filter((needle) => needle.trim() !== "");
-  const hit = (text) => {
-    const folded = fold(text);
-    return needles.some((needle) => folded.includes(needle));
-  };
+const SCAN = `function (...pairs) {
+  const closed = new Map();
+  for (let i = 0; i < pairs.length; i += 2) closed.set(pairs[i], pairs[i + 1]);
+  const rootOf = (el) => el.shadowRoot ?? closed.get(el) ?? null;
+  const doc = this.ownerDocument ?? this;
+  const view = doc.defaultView;
   const unescaped = (text) => text.replace(/\\\\([0-9a-fA-F]{1,6})\\s?|\\\\([\\s\\S])/g, (all, hex, char) => {
     if (hex === undefined) return char;
     const code = Number.parseInt(hex, 16);
     return code === 0 || code > 0x10ffff ? "\\ufffd" : String.fromCodePoint(code);
   });
-  const doc = this.ownerDocument ?? this;
-  const view = doc.defaultView;
   const generated = (el, which) => {
-    const content = view.getComputedStyle(el, which).content;
-    return [...content.matchAll(/"((?:[^"\\\\]|\\\\.)*)"|'((?:[^'\\\\]|\\\\.)*)'/g)]
+    const style = view.getComputedStyle(el, which);
+    if (style.display === "none") return "";
+    return [...style.content.matchAll(/"((?:[^"\\\\]|\\\\.)*)"|'((?:[^'\\\\]|\\\\.)*)'/g)]
       .map((found) => unescaped(found[1] ?? found[2] ?? ""))
       .join("");
   };
-  const unrendered = ["SCRIPT", "STYLE", "NOSCRIPT", "TITLE"];
   const fields = ["INPUT", "TEXTAREA", "SELECT"];
-  const text = [];
-  const stack = [[this, this.firstChild]];
-  while (stack.length > 0) {
-    const top = stack[stack.length - 1];
-    const node = top[1];
-    if (node === null) {
-      stack.pop();
-      if (top[0].nodeType === 1) text.push(generated(top[0], "::after"));
-      continue;
-    }
-    top[1] = node.nextSibling;
-    if (node.nodeType === 3) {
-      if (!unrendered.includes(node.parentElement?.tagName ?? "")) text.push(node.nodeValue ?? "");
-    } else if (node.nodeType === 1) {
-      for (const attribute of node.attributes) if (hit(attribute.value)) return true;
-      if (fields.includes(node.tagName) && hit(node.value)) return true;
-      text.push(generated(node, "::before"));
-      stack.push([node, node.firstChild]);
+  const views = [];
+  const queue = [this];
+  for (const parent of queue) {
+    for (let node = parent.firstChild; node !== null; node = node.nextSibling) {
+      if (node.nodeType !== 1) continue;
+      for (const attribute of node.attributes) views.push(attribute.value);
+      if (fields.includes(node.tagName)) views.push(node.value);
+      queue.push(node);
+      const root = rootOf(node);
+      if (root === null) continue;
+      queue.push(root);
+      views.push([...root.children].map((child) => child.innerText ?? "").join(""));
     }
   }
-  return hit(text.join(""));
+  const flat = (el) => {
+    const root = rootOf(el);
+    if (root !== null) return [...root.childNodes];
+    return el.tagName === "SLOT" ? el.assignedNodes({ flatten: true }) : [...el.childNodes];
+  };
+  const text = [];
+  const stack = [{ nodes: [...this.childNodes], at: 0, shown: true, visible: true, tail: "" }];
+  while (stack.length > 0) {
+    const top = stack[stack.length - 1];
+    if (top.at >= top.nodes.length) {
+      stack.pop();
+      text.push(top.tail);
+      continue;
+    }
+    const node = top.nodes[top.at];
+    top.at += 1;
+    if (node.nodeType === 3) {
+      if (top.shown && top.visible) text.push(node.nodeValue ?? "");
+    } else if (node.nodeType === 1) {
+      const style = view.getComputedStyle(node);
+      const shown = top.shown && style.display !== "none";
+      const visible = style.visibility === "visible";
+      const drawn = shown && visible;
+      text.push(drawn ? generated(node, "::before") : "");
+      stack.push({ nodes: flat(node), at: 0, shown, visible, tail: drawn ? generated(node, "::after") : "" });
+    }
+  }
+  views.push(text.join(""));
+  if (this.nodeType === 9) views.push(this.body?.innerText ?? "");
+  return views;
 }`;
 
 const FlatNodeSchema = Type.Object({
@@ -80,6 +88,7 @@ const ValueSchema = Type.Object({
   result: Type.Object({ value: Type.Optional(Type.Unknown()) }),
   exceptionDetails: Type.Optional(Type.Unknown()),
 });
+const ViewsSchema = Type.Array(Type.String());
 const FrameNodeSchema = Type.Object({
   frame: Type.Object({ id: Type.String() }),
   childFrames: Type.Optional(Type.Array(Type.Unknown())),
@@ -96,6 +105,7 @@ type FlatNode = Type.Static<typeof FlatNodeSchema>;
 interface Scope {
   readonly nodeId: number;
   readonly frame: string;
+  readonly closed: readonly number[];
 }
 
 const unreadable = (): Error =>
@@ -140,34 +150,39 @@ function indexOf(nodes: readonly FlatNode[]): {
 
 function scopesOf(nodes: readonly FlatNode[]): Scope[] {
   const { parents, frames } = indexOf(nodes);
-  const roots: [number, string | undefined][] = [];
-  for (const node of nodes) {
-    if (node.nodeType === 9)
-      roots.push([
-        node.nodeId,
-        nodes.find((each) => each.parentId === node.nodeId && each.frameId !== undefined)?.frameId,
-      ]);
-    for (const root of node.shadowRoots ?? [])
-      if (root.shadowRootType !== "user-agent")
-        roots.push([root.nodeId, frameOf(parents, frames, node.nodeId)]);
-  }
-  return roots.map(([nodeId, frame]) => {
-    if (frame === undefined) throw unreadable();
-    return { nodeId, frame };
-  });
+  const closed = new Map<string, number[]>();
+  for (const node of nodes)
+    for (const root of node.shadowRoots ?? []) {
+      if (root.shadowRootType !== "closed") continue;
+      const frame = frameOf(parents, frames, node.nodeId);
+      if (frame === undefined) throw unreadable();
+      closed.set(frame, [...(closed.get(frame) ?? []), node.nodeId, root.nodeId]);
+    }
+  const scopes = nodes
+    .filter((node) => node.nodeType === 9)
+    .map((node) => {
+      const frame = nodes.find(
+        (each) => each.parentId === node.nodeId && each.frameId !== undefined,
+      )?.frameId;
+      if (frame === undefined) throw unreadable();
+      return { nodeId: node.nodeId, frame, closed: closed.get(frame) ?? [] };
+    });
+  for (const frame of closed.keys())
+    if (!scopes.some((scope) => scope.frame === frame)) throw unreadable();
+  return scopes;
 }
 
 const isFrameOwner = (node: FlatNode): boolean =>
   ["IFRAME", "FRAME"].includes(node.nodeName.toUpperCase());
 
 class Scan {
-  private readonly needles: readonly string[];
+  private readonly exposed: (text: string) => boolean;
   private readonly touched: Page[] = [];
   private readonly children = new Map<string, Page[]>();
   private unlisten: (() => void) | undefined;
 
-  constructor(needles: readonly string[]) {
-    this.needles = needles;
+  constructor(exposed: (text: string) => boolean) {
+    this.exposed = exposed;
   }
 
   async shows(root: Page): Promise<boolean> {
@@ -240,6 +255,19 @@ class Scan {
     return worlds;
   }
 
+  private async resolve(page: Page, nodeId: number, executionContextId: number): Promise<string> {
+    const resolved = parseCdp(
+      ResolvedSchema,
+      await call(page, "DOM.resolveNode", { nodeId, executionContextId, objectGroup: GROUP }).catch(
+        () => {
+          throw unreadable();
+        },
+      ),
+      "a scope of the page",
+    );
+    return resolved.object.objectId;
+  }
+
   private async shown(
     page: Page,
     scope: Scope,
@@ -247,37 +275,29 @@ class Scan {
   ): Promise<boolean> {
     const executionContextId = worlds.get(scope.frame);
     if (executionContextId === undefined) throw unreadable();
-    const resolved = parseCdp(
-      ResolvedSchema,
-      await call(page, "DOM.resolveNode", {
-        nodeId: scope.nodeId,
-        executionContextId,
-        objectGroup: GROUP,
-      }).catch(() => {
-        throw unreadable();
-      }),
-      "a scope of the page",
-    );
+    const objectId = await this.resolve(page, scope.nodeId, executionContextId);
+    const closed: { objectId: string }[] = [];
+    for (const nodeId of scope.closed)
+      closed.push({ objectId: await this.resolve(page, nodeId, executionContextId) });
     const done = parseCdp(
       ValueSchema,
       await call(page, "Runtime.callFunctionOn", {
-        objectId: resolved.object.objectId,
+        objectId,
         functionDeclaration: SCAN,
-        arguments: [{ value: this.needles }],
+        arguments: closed,
         returnByValue: true,
       }).catch(() => {
         throw unreadable();
       }),
       "the page's scan",
     );
-    if (done.exceptionDetails !== undefined || typeof done.result.value !== "boolean")
-      throw unreadable();
-    return done.result.value;
+    if (done.exceptionDetails !== undefined) throw unreadable();
+    return parseCdp(ViewsSchema, done.result.value, "the page's text").some(this.exposed);
   }
 }
 
 export async function showsCredential(page: Page, secrets: readonly string[]): Promise<boolean> {
-  const scan = new Scan(needlesOf(secrets));
+  const scan = new Scan(exposure(secrets));
   try {
     return await scan.shows(page);
   } finally {

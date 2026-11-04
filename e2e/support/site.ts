@@ -75,7 +75,29 @@ const PAGES: Readonly<Record<string, string>> = {
         })();
         roots[mode].querySelector("p").textContent = text;
       };
+      const hosted = (mode) => (text) => {
+        const half = Math.floor(text.length / 2);
+        const line = document.createElement("p");
+        const host = document.createElement("span");
+        host.attachShadow({ mode }).textContent = text.slice(half);
+        line.replaceChildren(text.slice(0, half), host);
+        spot.replaceChildren(line);
+      };
       const places = {
+        hidden: (text) => {
+          const half = Math.floor(text.length / 2);
+          const line = document.createElement("p");
+          const gap = document.createElement("span");
+          gap.hidden = true;
+          gap.textContent = "ignored";
+          line.replaceChildren(text.slice(0, half), gap, text.slice(half));
+          spot.replaceChildren(line);
+        },
+        hostsplit: hosted("open"),
+        closedsplit: hosted("closed"),
+        escaped: (text) => {
+          spot.textContent = text.replace(/&/g, "&amp;").replace(/@/g, "&commat;").replace(/[.]/g, "&#x2e;");
+        },
         split: (text) => {
           const first = Math.floor(text.length / 3);
           const second = Math.floor((text.length * 2) / 3);
