@@ -18,17 +18,35 @@ cgroup_dir() {
   printf '/sys/fs/cgroup%s' "$path"
 }
 
-backend_attach() {
-  if dir=$(cgroup_dir); then
-    for p in "$@"; do
-      echo "$p" >"$dir/cgroup.procs" 2>/dev/null || ! alive "$p" || return 1
-    done
-    return 0
-  fi
-  list=$#
+start_scope() {
+  set -- $roots
   busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
     org.freedesktop.systemd1.Manager StartTransientUnit "ssa(sv)a(sa(sv))" \
-    "$scope" fail 2 PIDs au "$list" "$@" Description s "fleet worker $unit" 0 >/dev/null
+    "$scope" fail 3 PIDs au "$#" "$@" Description s "fleet worker $unit" Delegate b true 0 >/dev/null
+}
+
+attach_pid() {
+  err=$(busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+    org.freedesktop.systemd1.Manager AttachProcessesToUnit ssau "$scope" "" 1 "$1" 2>&1 >/dev/null) && return 0
+  alive "$1" || return 0
+  echo "$err" >&2
+  return 1
+}
+
+await_cgroup() {
+  tries=0
+  until cgroup_dir >/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 50 ] || { echo "$scope has no cgroup after 5 seconds" >&2; return 1; }
+    sleep 0.1
+  done
+}
+
+backend_attach() {
+  cgroup_dir >/dev/null || { start_scope && await_cgroup || return 1; }
+  for p in "$@"; do
+    attach_pid "$p" || return 1
+  done
 }
 
 backend_members() {
