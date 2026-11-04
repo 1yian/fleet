@@ -1,5 +1,6 @@
 import { keyPresses, parseCdp, type BrowserArgs, type Cdp } from "@fleet/protocol";
 import Type from "typebox";
+import { scrubbedValue } from "./browser-hidden.ts";
 
 export interface Page {
   readonly cdp: Cdp;
@@ -155,10 +156,14 @@ export async function readPage(page: Page, args: BrowserArgs): Promise<string> {
   return value;
 }
 
-export async function runExpression(page: Page, expression: string | undefined): Promise<string> {
+export async function runExpression(
+  page: Page,
+  expression: string | undefined,
+  secrets: readonly string[],
+): Promise<string> {
   if (expression === undefined) throw new Error("eval needs an expression");
   const value = await evaluate(page, expression);
-  return value === undefined ? "undefined" : JSON.stringify(value, null, 2);
+  return value === undefined ? "undefined" : JSON.stringify(scrubbedValue(value, secrets), null, 2);
 }
 
 async function centerOf(page: Page, selector: string): Promise<{ x: number; y: number }> {

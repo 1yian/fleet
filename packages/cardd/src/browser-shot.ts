@@ -5,26 +5,47 @@ import { call, summary, type Page } from "./browser-page.ts";
 const MASK_GROUP = "fleet-mask";
 
 const MASK = `(secrets) => {
+  const ordered = secrets.filter((secret) => secret !== "").sort((a, b) => b.length - a.length);
+  const blank = (text) => ordered.reduce((out, secret) => out.split(secret).join("\u2022".repeat(secret.length)), text);
   const props = ["-webkit-text-fill-color", "color", "caret-color", "text-shadow"];
   const covered = (el) =>
     el.__fleetFilled === true ||
-    (el.value !== "" && secrets.some((secret) => secret !== "" && el.value.includes(secret)));
-  const saved = [];
+    (el.value !== "" && ordered.some((secret) => el.value.includes(secret)));
+  const undo = [];
   for (const el of document.querySelectorAll("input, textarea")) {
     if (!covered(el)) continue;
-    saved.push([el, props.map((name) => [name, el.style.getPropertyValue(name), el.style.getPropertyPriority(name)])]);
+    const saved = props.map((name) => [name, el.style.getPropertyValue(name), el.style.getPropertyPriority(name)]);
+    undo.push(() => {
+      for (const [name, value, priority] of saved) {
+        if (value === "") el.style.removeProperty(name);
+        else el.style.setProperty(name, value, priority);
+      }
+    });
     for (const name of props) el.style.setProperty(name, name === "text-shadow" ? "none" : "transparent", "important");
   }
-  return saved;
+  for (const el of document.querySelectorAll("[placeholder], [alt]")) {
+    for (const name of ["placeholder", "alt"]) {
+      const before = el.getAttribute(name);
+      if (before === null || blank(before) === before) continue;
+      undo.push(() => el.setAttribute(name, before));
+      el.setAttribute(name, blank(before));
+    }
+  }
+  const skipped = ["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "TITLE"];
+  const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const before = node.nodeValue ?? "";
+    if (skipped.includes(node.parentElement?.tagName ?? "") || blank(before) === before) continue;
+    undo.push(() => { node.nodeValue = before; });
+    node.nodeValue = blank(before);
+  }
+  return undo;
 }`;
 
 const UNMASK = `function () {
-  for (const [el, saved] of this) {
-    for (const [name, value, priority] of saved) {
-      if (value === "") el.style.removeProperty(name);
-      else el.style.setProperty(name, value, priority);
-    }
-  }
+  for (const restore of this) restore();
 }`;
 
 const MaskedSchema = Type.Object({

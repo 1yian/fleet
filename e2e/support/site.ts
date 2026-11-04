@@ -33,6 +33,13 @@ const PAGES: Readonly<Record<string, string>> = {
       <input name="p" type="password" autocomplete="current-password" oninput="document.getElementById('p-echo').textContent = this.value">
     </form>
     <p id="u-echo"></p><p id="p-echo"></p></body>`,
+  "/sso": `<!doctype html><title>Single sign-on</title><body>
+    <form>
+      <input name="u" type="text" autocomplete="username" oninput="setTimeout(() => { location.href = location.href.replace('login.example.test', 'login.evil.test').replace('/sso', '/landing') }, 0)">
+      <input name="p" type="password" autocomplete="current-password">
+    </form></body>`,
+  "/landing": `<!doctype html><title>Landing</title><body>
+    <input name="q" type="text" autofocus></body>`,
   "/fragile": `<!doctype html><title>Fragile</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value; this.form.p.remove()">
@@ -78,6 +85,13 @@ export class TestSite {
           });
           response.writeHead(204).end();
         });
+        return;
+      }
+      if (path === "/account") {
+        const who = new URL(request.url ?? "/", "http://site").searchParams.get("as") ?? "";
+        response
+          .writeHead(200, { "content-type": "text/html" })
+          .end(`<!doctype html><title>Account of ${who}</title><body><p>account page</p></body>`);
         return;
       }
       const page = PAGES[path];

@@ -109,11 +109,11 @@ const valuesOf = (creds: Credentials): string[] => [
 export async function valuesCovering(
   logins: LoginsConfig,
   hosts: Hosts,
-  host: string,
+  pages: readonly string[],
 ): Promise<string[]> {
   const covering = (await listSecrets(logins, hosts)).filter((secret) => {
     const entryHost = hostOf(secret.key);
-    return entryHost !== undefined && covers(entryHost, host);
+    return entryHost !== undefined && pages.some((page) => covers(entryHost, page));
   });
   return covering.flatMap((entry) => {
     try {

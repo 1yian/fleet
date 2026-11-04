@@ -134,18 +134,14 @@ export class Screen {
     const cdp = await this.connection();
     const session = await this.session(cdp, target);
     let viewing = this.viewing.get(target);
-    if (viewing === undefined) {
-      viewing = { session, listeners: new Set(), lost: new Set(), last: undefined };
-      this.viewing.set(target, viewing);
-      await cdp.send("Target.activateTarget", { targetId: target });
-      await cdp.send("Page.enable", {}, { sessionId: session });
-      await cdp.send(
-        "Page.startScreencast",
-        { format: "jpeg", quality: 70, maxWidth: 1600, maxHeight: 1200 },
-        { sessionId: session },
-      );
+    try {
+      viewing ??= await this.begin(cdp, target, session);
+      viewing.last ??= await this.still(cdp, session);
+    } catch (error) {
+      const held = this.viewing.get(target);
+      if (held?.session === session && held.listeners.size === 0) this.stop(cdp, target, session);
+      throw error;
     }
-    viewing.last ??= await this.still(cdp, session);
     viewing.listeners.add(listener);
     viewing.lost.add(lost);
     listener(viewing.last);
@@ -155,6 +151,19 @@ export class Screen {
       if (viewing.listeners.size === 0 && this.viewing.get(target) === viewing)
         this.stop(cdp, target, session);
     };
+  }
+
+  private async begin(cdp: Cdp, target: string, session: string): Promise<Viewing> {
+    const viewing: Viewing = { session, listeners: new Set(), lost: new Set(), last: undefined };
+    this.viewing.set(target, viewing);
+    await cdp.send("Target.activateTarget", { targetId: target });
+    await cdp.send("Page.enable", {}, { sessionId: session });
+    await cdp.send(
+      "Page.startScreencast",
+      { format: "jpeg", quality: 70, maxWidth: 1600, maxHeight: 1200 },
+      { sessionId: session },
+    );
+    return viewing;
   }
 
   private async still(cdp: Cdp, session: string): Promise<Frame> {

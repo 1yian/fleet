@@ -1,24 +1,25 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
-import { BROWSER_OPS, check } from "@fleet/protocol";
-import { BrowserLab, browse, results, type RawWorker } from "../support/browser-lab.ts";
+import { BrowserLab, browse, results } from "../support/browser-lab.ts";
 import { FakeVault } from "../support/fake-vault.ts";
-import { filesHolding, formsOf } from "../support/leaks.ts";
 import type { Turn } from "../support/harness.ts";
-
-const USERNAME = "captain.login@example.test";
-const PASSWORD = "Tr0ub4dor&3-correct-horse-9f2e1b7a";
-const SEED = "JBSWY3DPEHPK3PXP";
-const BROKEN = "hunter2-not-json-a8b7c6d5";
-const TRICKY = `Q"u0te\\Back'slash 9&+%~!z7`;
-const SECRETS = [PASSWORD, USERNAME, SEED, BROKEN, TRICKY];
-const WAIT_MS = 15_000;
-
-const GOOD = {
-  key: "example.test",
-  value: JSON.stringify({ username: USERNAME, password: PASSWORD, totp: SEED }),
-};
+import {
+  ALL_VALUES,
+  BROKEN,
+  FIELD,
+  GOOD,
+  PASSWORD,
+  REFUSAL,
+  RETYPE,
+  USERNAME,
+  WITH_TRICKY,
+  assertNoSecretAnywhere as scan,
+  hidden,
+  signedIn as signIn,
+  tabOf as tabIn,
+  until,
+} from "../support/login-fixtures.ts";
+import type { RawWorker } from "../support/browser-lab.ts";
 
 let vault: FakeVault;
 let lab: BrowserLab;
@@ -37,21 +38,11 @@ async function start(entries = [GOOD, { key: "other.test", value: BROKEN }]): Pr
 }
 
 const heard = (turns: readonly Turn[][]): string => JSON.stringify(turns);
-
-function assertNoSecretAnywhere(spoken: readonly string[] = []): void {
-  const dir = process.env["TMPDIR"] ?? "/tmp";
-  const canary = `${dir}/canary-for-the-scan.txt`;
-  writeFileSync(canary, `the scan must see ${PASSWORD}`);
-  assert.deepEqual(filesHolding(SECRETS, dir, skipChromeProfile), [canary]);
-  writeFileSync(canary, "");
-  assert.deepEqual(filesHolding(SECRETS, dir, skipChromeProfile), []);
-  const places = [...spoken, lab.cardd.output, lab.cardd.errors, vault.invocations().join("\n")];
-  for (const place of places)
-    for (const secret of SECRETS)
-      for (const form of formsOf(secret)) assert.equal(place.includes(form), false);
-}
-
-const skipChromeProfile = (name: string): boolean => name.startsWith("playwright");
+const assertNoSecretAnywhere = (spoken: readonly string[] = []): void => {
+  scan(lab, vault, spoken);
+};
+const signedIn = (path?: string): Promise<RawWorker> => signIn(lab, path);
+const tabOf = (worker: RawWorker): Promise<string> => tabIn(lab, worker);
 
 test("login fills the page's username and password without the worker ever seeing them", async () => {
   await start();
@@ -186,44 +177,6 @@ test("an entry that is not usable is reported as failed without its content", as
   assertNoSecretAnywhere([heard(worker.h.calls)]);
 });
 
-async function until<T>(
-  read: () => T | undefined | Promise<T | undefined>,
-  what: string,
-): Promise<T> {
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    const value = await read();
-    if (value !== undefined) return value;
-    assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
-
-async function tabOf(worker: RawWorker): Promise<string> {
-  const view = check(BROWSER_OPS["browser.view"].result, await lab.main.call("browser.view", {}));
-  const target = view.tabs.find((tab) => tab.card === worker.card.id)?.target;
-  if (target === undefined) throw new Error("the card has no tab");
-  return target;
-}
-
-const FIELD = (name: string): string => `document.querySelector("input[name=${name}]")`;
-
-const ALL_VALUES = "[...document.querySelectorAll('input')].map((el) => el.value)";
-
-const RETYPE = `for (const [name, length] of [["u", ${String(USERNAME.length)}], ["p", ${String(PASSWORD.length)}]]) document.querySelector("input[name=" + name + "]").value = "x".repeat(length)`;
-
-async function signedIn(path = "/login"): Promise<RawWorker> {
-  const worker = await lab.worker("Sign in to the portal");
-  await worker.act({ action: "open", url: lab.site.url(path, "login.example.test") });
-  assert.match(
-    await worker.act({ action: "login" }),
-    /^filled: Filled the username and password\./,
-  );
-  return worker;
-}
-
-const hidden = (text: string): string => JSON.stringify(text);
-
 test("a screenshot after login shows no typed value, also after a show-password toggle", async () => {
   await start();
   const worker = await signedIn();
@@ -244,9 +197,7 @@ test("a screenshot after login shows no typed value, also after a show-password 
 });
 
 test("a password with quotes and backslashes does not come back through eval", async () => {
-  await start([
-    { key: "example.test", value: JSON.stringify({ username: USERNAME, password: TRICKY }) },
-  ]);
+  await start([WITH_TRICKY]);
   const worker = await signedIn();
   const seen = [
     await worker.act({ action: "eval", expression: `${FIELD("p")}.value` }),
@@ -364,11 +315,9 @@ test("after cardd restarts and the vault cannot be read, nothing from the tab is
   const worker = await lab.reconnect(before);
   vault.revoke();
 
-  const refusal =
-    /^Error: this tab outlived a cardd restart, and the Logins project could not be read/;
-  await assert.rejects(worker.act({ action: "read" }), refusal);
-  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), refusal);
-  await assert.rejects(worker.shoot(), refusal);
+  await assert.rejects(worker.act({ action: "read" }), REFUSAL);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), REFUSAL);
+  await assert.rejects(worker.shoot(), REFUSAL);
   assertNoSecretAnywhere();
 
   vault.restore();

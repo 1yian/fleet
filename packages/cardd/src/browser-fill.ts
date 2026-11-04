@@ -34,11 +34,21 @@ const PropertiesSchema = Type.Object({
   ),
 });
 const HandleSchema = Type.Object({ result: Type.Object({ objectId: Type.String() }) });
-const LengthSchema = Type.Object({ result: Type.Object({ value: Type.Number() }) });
-const FocusedSchema = Type.Object({ result: Type.Object({ value: Type.Boolean() }) });
+const TypedSchema = Type.Object({
+  result: Type.Object({
+    value: Type.Union([Type.Literal("typed"), Type.Literal("kept"), Type.Literal("gone")]),
+  }),
+});
 
-const FOCUS =
-  "function () { this.__fleetFilled = true; this.focus(); this.select(); return this.isConnected && document.activeElement === this; }";
+const TYPE = `function (text) {
+  this.__fleetFilled = true;
+  if (!this.isConnected) return "gone";
+  this.focus();
+  if (document.activeElement !== this) return "gone";
+  this.select();
+  document.execCommand("insertText", false, text);
+  return this.value.length === text.length ? "typed" : "kept";
+}`;
 
 type Slot = "user" | "password" | "code";
 
@@ -78,44 +88,30 @@ async function stillOn(page: Page, doc: Doc): Promise<void> {
     );
 }
 
-async function focus(page: Page, doc: Doc, objectId: string, name: string): Promise<void> {
-  let raw: unknown;
-  try {
-    raw = await call(page, "Runtime.callFunctionOn", {
-      objectId,
-      functionDeclaration: FOCUS,
-      returnByValue: true,
-    });
-  } catch (error) {
-    await stillOn(page, doc);
-    throw error;
-  }
-  if (!parseCdp(FocusedSchema, raw, "a field's focus").result.value)
-    throw new Error(
-      `the ${name} field left the page before it could be filled, so it was not typed`,
-    );
-}
-
 async function enter(
   page: Page,
   doc: Doc,
   field: { objectId: string; name: string },
   text: string,
 ): Promise<boolean> {
-  await stillOn(page, doc);
-  await focus(page, doc, field.objectId, field.name);
-  await stillOn(page, doc);
-  await call(page, "Input.insertText", { text });
-  const length = parseCdp(
-    LengthSchema,
-    await call(page, "Runtime.callFunctionOn", {
+  let raw: unknown;
+  try {
+    raw = await call(page, "Runtime.callFunctionOn", {
       objectId: field.objectId,
-      functionDeclaration: "function () { return this.value.length; }",
+      functionDeclaration: TYPE,
+      arguments: [{ value: text }],
       returnByValue: true,
-    }),
-    "a field's length",
-  );
-  return length.result.value === text.length;
+    });
+  } catch (error) {
+    await stillOn(page, doc);
+    throw error;
+  }
+  const outcome = parseCdp(TypedSchema, raw, "a field's fill").result.value;
+  if (outcome === "gone")
+    throw new Error(
+      `the ${field.name} field left the page before it could be filled, so it was not typed`,
+    );
+  return outcome === "typed";
 }
 
 function codeFor(creds: Credentials, allowed: boolean): string | undefined {
@@ -128,8 +124,8 @@ export async function fillLogin(
   creds: Credentials,
   codesAllowed: boolean,
 ): Promise<string> {
-  await stillOn(page, doc);
   const fields = await locate(page);
+  await stillOn(page, doc);
   const wanted: [Slot, string, string | undefined][] = [
     ["user", "username", creds.username],
     ["password", "password", creds.password],

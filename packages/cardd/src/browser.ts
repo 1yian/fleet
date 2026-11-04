@@ -143,19 +143,23 @@ export class Browser {
     this.hidden.set(card, known);
   }
 
-  private async known(card: number, page: Page): Promise<void> {
+  private async known(card: number, page: Page, opening: readonly string[] = []): Promise<void> {
     if (this.hidden.has(card)) return;
     const logins = this.config?.logins;
-    this.hide(card, logins === undefined ? [] : await this.recalled(logins, page));
+    this.hide(card, logins === undefined ? [] : await this.recalled(logins, page, opening));
   }
 
-  private async recalled(logins: LoginsConfig, page: Page): Promise<string[]> {
+  private async recalled(
+    logins: LoginsConfig,
+    page: Page,
+    opening: readonly string[],
+  ): Promise<string[]> {
     const { host } = await documentOf(page);
     try {
-      return await valuesCovering(logins, this.hosts, host);
+      return await valuesCovering(logins, this.hosts, [host, ...opening]);
     } catch (error) {
       throw new Error(
-        `this tab outlived a cardd restart, and the Logins project could not be read to learn which values on it to hide, so nothing was returned: ${reason(error)}. Try again when the vault answers`,
+        `this tab outlived a cardd restart, and the Logins project could not be read to learn which values on it to hide, so nothing was done: ${reason(error)}. Try again when the vault answers`,
         { cause: error },
       );
     }
@@ -198,7 +202,7 @@ export class Browser {
       case "press":
         return plain(await pressKey(page, args.key));
       case "eval":
-        return plain(await runExpression(page, args.expression));
+        return plain(await runExpression(page, args.expression, secrets));
       case "screenshot":
         return { result: await screenshot(page, args.fullPage === true, secrets), notify: [] };
       case "login":
@@ -315,6 +319,7 @@ export class Browser {
       this.closed(own.target);
       page = await this.attach(cdp, await this.create(cdp, card));
     }
+    await this.known(card, page, [new URL(url).hostname.toLowerCase()]);
     return `Opened ${await navigate(page, url)} in your tab ${labelOf(this.db, card)}.`;
   }
 

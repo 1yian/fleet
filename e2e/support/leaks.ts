@@ -19,15 +19,11 @@ function filesUnder(root: string, skip: (name: string) => boolean): string[] {
 }
 
 export function formsOf(secret: string): string[] {
-  const escaped = JSON.stringify(secret).slice(1, -1);
   const encoded = encodeURIComponent(secret);
-  return [
-    secret,
-    escaped,
-    JSON.stringify(escaped).slice(1, -1),
-    encoded,
-    encoded.replaceAll("%20", "+"),
-  ];
+  const layers = [secret];
+  for (let depth = 0; depth < 5; depth += 1)
+    layers.push(JSON.stringify(layers[depth]).slice(1, -1));
+  return [...layers, encoded, encoded.replaceAll("%20", "+")];
 }
 
 export function filesHolding(

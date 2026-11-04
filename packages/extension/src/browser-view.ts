@@ -86,19 +86,19 @@ class Viewer {
     return { tabs, problem: known.problem };
   }
 
-  private async stream(
-    request: IncomingMessage,
-    response: ServerResponse,
-    target: string,
-  ): Promise<void> {
+  private async stream(response: ServerResponse, target: string): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
     const send = (frame: Frame): void => {
       response.write(`data: ${JSON.stringify(frame)}\n\n`);
     };
-    const stop = await this.screen.watch(target, send, () => {
+    const watching: { stop: (() => void) | undefined } = { stop: undefined };
+    response.on("close", () => {
+      watching.stop?.();
+    });
+    watching.stop = await this.screen.watch(target, send, () => {
       response.end();
     });
-    request.on("close", stop);
+    if (response.destroyed) watching.stop();
   }
 
   private async route(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
@@ -106,7 +106,7 @@ class Viewer {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(VIEWER_PAGE);
     } else if (url.pathname === "/api/tabs") json(response, 200, await this.tabs());
     else if (url.pathname === "/api/stream")
-      await this.stream(request, response, url.searchParams.get("target") ?? "");
+      await this.stream(response, url.searchParams.get("target") ?? "");
     else if (url.pathname === "/api/input" && request.method === "POST") {
       await this.screen.input(check(InputSchema, JSON.parse(await readBody(request))));
       response.writeHead(204).end();
