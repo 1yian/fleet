@@ -6,6 +6,7 @@ import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { InputSchema, Screen, type Frame } from "./browser-screen.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
 import { readLaneConfig } from "./lane-config.ts";
+import { bwsFor, laneToken } from "./lane-secrets.ts";
 
 interface Cardd {
   readonly url: string;
@@ -175,7 +176,9 @@ async function main(): Promise<void> {
   const lane = readLaneConfig(home);
   if (lane === undefined) throw new Error(`${home} has no config/lane.json`);
   const token = randomBytes(24).toString("base64url");
-  const viewer = new Viewer({ url: lane.url, token: lane.token }, token);
+  const resolved = await laneToken(lane, bwsFor(lane.bws));
+  if (resolved.value === undefined) throw new Error(`fleet: ${resolved.note}`);
+  const viewer = new Viewer({ url: lane.url, token: resolved.value }, token);
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });

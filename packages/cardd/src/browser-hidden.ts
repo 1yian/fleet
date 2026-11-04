@@ -16,7 +16,13 @@ const REFERENCES: Readonly<Record<string, readonly string[]>> = {
   "'": ["&#39;", "&#x27;", "&apos;"],
 };
 
-const GAP = "\u0000";
+const OPEN = "\u0000";
+const CLOSE = "\u0001";
+const BETWEEN = `[${OPEN}${CLOSE}]*`;
+
+const isMarked = (text: string): boolean => text.includes(OPEN) || text.includes(CLOSE);
+
+const unmarked = (text: string): string => text.replaceAll(OPEN, "").replaceAll(CLOSE, "");
 
 function pieces(text: string): string[] {
   return Array.from(text, (char) => {
@@ -31,7 +37,7 @@ function pieces(text: string): string[] {
 const SCRUBBABLE = new Set(Object.values(REFERENCES).flat());
 
 const TAG = /<!--[\s\S]*?-->|<[/!?]?[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g;
-const REFERENCE = /&(?:#(\d{1,7});?|#[xX]([0-9a-fA-F]{1,6});?|([A-Za-z][A-Za-z0-9]*)(;?))/g;
+const REFERENCE = /&(?:#(\d+);?|#[xX]([0-9a-fA-F]+);?|([A-Za-z][A-Za-z0-9]*)(;?))/g;
 
 function codePoint(code: number): string {
   if (code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return "\ufffd";
@@ -59,18 +65,18 @@ function decoded(
   return named(name ?? "", semicolon ?? "");
 }
 
-function compose(text: string, mark: string): string {
-  return text
-    .replace(TAG, mark)
-    .replace(
-      REFERENCE,
-      (all: string, decimal?: string, hex?: string, name?: string, semicolon?: string) => {
-        const chars = decoded(decimal, hex, name, semicolon);
-        if (chars === undefined) return all;
-        return SCRUBBABLE.has(all.toLowerCase()) ? chars : `${mark}${chars}${mark}`;
-      },
-    );
+function compose(text: string, strip: boolean): string {
+  return (strip ? text.replace(TAG, `${OPEN}${CLOSE}`) : text).replace(
+    REFERENCE,
+    (all: string, decimal?: string, hex?: string, name?: string, semicolon?: string) => {
+      const chars = decoded(decimal, hex, name, semicolon);
+      if (chars === undefined) return all;
+      return SCRUBBABLE.has(all.toLowerCase()) ? chars : `${OPEN}${chars}${CLOSE}`;
+    },
+  );
 }
+
+const viewsOf = (text: string): string[] => [compose(text, true), compose(text, false)];
 
 const jsonInner = (text: string): string => JSON.stringify(text).slice(1, -1);
 
@@ -103,8 +109,8 @@ function patternOf(needles: readonly string[], flags: string): RegExp {
 }
 
 function spanningOf(needles: readonly string[]): RegExp {
-  const alternatives = longestFirst(needles).map((needle) => pieces(needle).join(`${GAP}*`));
-  return new RegExp(`(?=(${alternatives.join("|")}))`, "gi");
+  const alternatives = longestFirst(needles).map((needle) => pieces(needle).join(BETWEEN));
+  return new RegExp(`(?=(${OPEN}*(?:${alternatives.join("|")})${CLOSE}*))`, "gi");
 }
 
 function cleaner(secrets: Iterable<string>): (text: string) => string {
@@ -113,11 +119,11 @@ function cleaner(secrets: Iterable<string>): (text: string) => string {
   const replace = patternOf(needles, "gi");
   const find = patternOf(needles, "i");
   const spanning = spanningOf(needles);
+  const composed = (view: string): boolean =>
+    find.test(unmarked(view)) &&
+    [...view.matchAll(spanning)].some((found) => isMarked(found[1] ?? ""));
   return (text) => {
-    const marked = compose(text, GAP);
-    if (find.test(marked.replaceAll(GAP, "")))
-      for (const found of marked.matchAll(spanning))
-        if (found[1]?.includes(GAP)) throw new Error(REFUSED_OUTPUT);
+    if (viewsOf(text).some(composed)) throw new Error(REFUSED_OUTPUT);
     return text.replace(replace, HIDDEN);
   };
 }
@@ -126,7 +132,7 @@ export function exposure(secrets: Iterable<string>): (text: string) => boolean {
   const needles = needlesOf(secrets);
   if (needles.length === 0) return () => false;
   const find = patternOf(needles, "i");
-  return (text) => find.test(text) || find.test(compose(text, ""));
+  return (text) => find.test(text) || viewsOf(text).some((view) => find.test(unmarked(view)));
 }
 
 export const scrubbed = (text: string, secrets: Iterable<string>): string => cleaner(secrets)(text);

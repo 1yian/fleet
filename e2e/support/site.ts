@@ -22,6 +22,9 @@ const PAGES: Readonly<Record<string, string>> = {
   "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,
   "/composed": `<!doctype html><title>Composed</title><body><div id="who">hun<mark>ter</mark>2</div></body>`,
   "/copy": `<!doctype html><title>Copy</title><body><div id="who">S3cret&copy;2026</div></body>`,
+  "/copy-attribute": `<!doctype html><title>Attribute</title><body><input id="who" value="S3cret&copy;2026"></body>`,
+  "/copy-padded": `<!doctype html><title>Padded</title><body><div id="who">S3cret&#000000169;2026</div></body>`,
+  "/copy-single": `<!doctype html><title>Single</title><body><div id="who">&#26446;</div></body>`,
   "/popup": `<!doctype html><title>Popup</title><body>
     <a id="blank" target="_blank" href="/b" style="position:fixed;left:20px;top:20px">open b</a>
     <p>popup page</p></body>`,

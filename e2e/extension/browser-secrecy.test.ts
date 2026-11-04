@@ -277,6 +277,11 @@ const COPIED = {
   value: JSON.stringify({ username: "copyuser-x91", password: "S3cret\u00a92026" }),
 };
 
+const ENCODED = {
+  key: "encoded.test",
+  value: JSON.stringify({ username: "\u674e", password: "S3cret\u00a92026" }),
+};
+
 const nothingOf = (...secrets: string[]): void => {
   const places = [lab.cardd.output, lab.cardd.errors, vault.invocations().join("\n")];
   for (const place of places)
@@ -316,3 +321,26 @@ test("a password that the page source writes with a named character reference is
   await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
   nothingOf("S3cret", "copyuser-x91");
 });
+
+for (const [name, path, html] of [
+  [
+    "a character reference in an attribute value",
+    "/copy-attribute",
+    '<input id="who" value="[hidden]">',
+  ],
+  ["a numeric reference with leading zeros", "/copy-padded", '<div id="who">[hidden]</div>'],
+  ["a username that is one character reference", "/copy-single", '<div id="who">[hidden]</div>'],
+] as const)
+  test(`${name} in the page source is refused`, async () => {
+    await start([ENCODED]);
+    const worker = await lab.worker("Look at the page");
+    await worker.act({ action: "open", url: lab.site.url(path, "login.example.test") });
+
+    await assert.rejects(
+      worker.act({ action: "eval", expression: "fetch(location.href).then((r) => r.text())" }),
+      OUTPUT_REFUSED,
+    );
+    assert.equal(await worker.act({ action: "read", selector: "#who", html: true }), html);
+    await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+    nothingOf("S3cret", "\u674e");
+  });
