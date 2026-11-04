@@ -302,7 +302,7 @@ A script, such as a guard that runs from cron, wakes the mate with a note:
 <checkout>/bin/fleet wake cleo "Spend is 40% over the cap" --script guard
 ```
 
-It runs on the host of the mate's home, and uses that home's `config/lane.json` for the address and token. From another host, or without the command, `POST /call` with the lane's token does the same: `{"op": "wake", "args": {"note": "...", "script": "guard"}}`. The mate hears `[fleet] script wake guard: Spend is 40% over the cap`. A script wake owes no reply, and `cardd` does not limit it, so a script should wake the mate on a change, not on every run. The token is the lane's token: keep the script's file private.
+It runs on the host of the mate's home, and uses that home's `config/lane.json` for the address and token. When the lane has a `bws` block, the token comes from Bitwarden first, and the command prints its source on stderr ([Secrets from Bitwarden](#secrets-from-bitwarden-bws)). From another host, or without the command, `POST /call` with the lane's token does the same: `{"op": "wake", "args": {"note": "...", "script": "guard"}}`. The mate hears `[fleet] script wake guard: Spend is 40% over the cap`. A script wake owes no reply, and `cardd` does not limit it, so a script should wake the mate on a change, not on every run. The token is the lane's token: keep the script's file private.
 
 Main has no lane card, so it has no plan and no wakes.
 
