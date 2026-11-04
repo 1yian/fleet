@@ -4,10 +4,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { spawnGuarded } from "../support/guarded.ts";
+import { HerdrLab } from "../support/herdr.ts";
+import { records } from "../support/json.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const SIDEBAR = fileURLToPath(new URL("./update-sidebar.test.ts", import.meta.url));
 const ONE_TEST = "/updatefleet orders every host's sidebar when no mate starts anywhere";
+const PROBE = fileURLToPath(new URL("./cardd-probe.test.ts", import.meta.url));
+const PROBE_TEST = "main is told once when cardd refuses new connections";
 const RUN_MS = 240_000;
 
 let live: string;
@@ -32,11 +36,15 @@ function liveMateEnvironment(): Record<string, string> {
   };
 }
 
-async function runFrom(env: Record<string, string>): Promise<{ code: string; output: string }> {
+async function runFrom(
+  env: Record<string, string>,
+  file = SIDEBAR,
+  name = ONE_TEST,
+): Promise<{ code: string; output: string }> {
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => name !== "NODE_TEST_CONTEXT"),
   );
-  const args = ["--test", "--test-concurrency=1", `--test-name-pattern=${ONE_TEST}`, SIDEBAR];
+  const args = ["--test", "--test-concurrency=1", `--test-name-pattern=${name}`, file];
   const child = spawnGuarded("node", args, {
     env: { ...inherited, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -64,4 +72,37 @@ test("an end-to-end run started from a shell that carries a live mate's fleet en
   assert.equal(existsSync(join(live, "config")), false, "the run wrote the live fleet config");
   assert.equal(code, "0", output.split("\n").slice(-80).join("\n"));
   assert.match(output, /✔ \/updatefleet orders every host's sidebar/);
+});
+
+test("an end-to-end run started from a worker's herdr pane leaves that pane's workspace alone", async () => {
+  const lab = await HerdrLab.start({});
+  try {
+    const created = await lab.run([
+      "workspace",
+      "create",
+      "--cwd",
+      live,
+      "--label",
+      "└ fleet-shared-browser",
+      "--no-focus",
+    ]);
+    const workspace = String(records([created["workspace"]])[0]?.["workspace_id"]);
+    const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+    const { code, output } = await runFrom(
+      {
+        HERDR_SOCKET_PATH: await lab.socket(),
+        HERDR_WORKSPACE_ID: workspace,
+        HERDR_PANE_ID: pane,
+      },
+      PROBE,
+      PROBE_TEST,
+    );
+    const label = records((await lab.run(["workspace", "list"]))["workspaces"]).map((each) =>
+      String(each["label"]),
+    );
+    assert.deepEqual(label, ["└ fleet-shared-browser"], "the run renamed the worker's workspace");
+    assert.equal(code, "0", output.split("\n").slice(-80).join("\n"));
+  } finally {
+    await lab.stop();
+  }
 });
