@@ -31,6 +31,16 @@ export class HerdrLab {
     return lab;
   }
 
+  async socket(): Promise<string> {
+    const sessions = (await this.text(["session", "list"])).split("\n");
+    const row = sessions
+      .map((line) => line.trim().split(/\s+/))
+      .find((cells) => cells[0] === this.name);
+    const path = row?.at(-1);
+    if (path === undefined) throw new Error(`no herdr session ${this.name}`);
+    return path;
+  }
+
   async run(args: readonly string[]): Promise<JsonRecord> {
     const text = await this.text(args);
     if (text.trim() === "") return {};

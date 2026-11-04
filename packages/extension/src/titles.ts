@@ -9,9 +9,12 @@ const formerTitle = (lane: string): string => `fleet-${lane}`;
 export const isMateWorkspace = (label: unknown, lane: string): boolean =>
   label === mateTitle(lane) || label === formerTitle(lane);
 
+const holdsTerminal = (): boolean => process.stdin.isTTY && process.stdout.isTTY;
+
 export async function titleMate(pi: ExtensionAPI, lane: string): Promise<void> {
   const title = mateTitle(lane);
   if (pi.getSessionName() !== title) pi.setSessionName(title);
   const workspace = process.env["HERDR_WORKSPACE_ID"];
-  if (workspace !== undefined) await herdr("local", ["workspace", "rename", workspace, title]);
+  if (workspace !== undefined && holdsTerminal())
+    await herdr("local", ["workspace", "rename", workspace, title]);
 }
