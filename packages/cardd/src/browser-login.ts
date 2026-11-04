@@ -48,7 +48,7 @@ export interface LoginContext {
   readonly vault: Vault;
   readonly card: number;
   readonly page: Page;
-  readonly mark: (loader: string) => void;
+  readonly mark: (loader: string, fields: readonly string[]) => void;
 }
 
 async function siteOf(
@@ -92,8 +92,10 @@ export async function login(context: LoginContext, requested: string | undefined
   const hold = (value: string): void => {
     vault.hold([value]);
   };
-  context.mark(doc.loader);
-  return fillLogin(page, doc, creds, logins.totp === true, hold).then(
+  const track = (fields: readonly string[]): void => {
+    context.mark(doc.loader, fields);
+  };
+  return fillLogin(page, doc, creds, logins.totp === true, hold, track).then(
     (text) => ({ text: `filled: ${text} Entry: ${entry.key}.`, notify: [] }),
     (error: unknown) => {
       throw new Error(`login failed: ${error instanceof Error ? error.message : "it failed"}`);

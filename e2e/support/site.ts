@@ -43,6 +43,11 @@ const PAGES: Readonly<Record<string, string>> = {
       <button id="submit" type="submit">Sign in</button>
     </form>
     <p id="u-echo"></p><p id="p-echo"></p></body>`,
+  "/steps": `<!doctype html><title>Steps</title><body>
+    <form id="one" onsubmit="event.preventDefault()">
+      <input name="u" type="text" autocomplete="username">
+      <button id="next" type="button" onclick="document.getElementById('one').replaceWith(Object.assign(document.createElement('p'), { id: 'two', textContent: 'step two' }))">Next</button>
+    </form></body>`,
   "/echo": `<!doctype html><title>Echo</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value">

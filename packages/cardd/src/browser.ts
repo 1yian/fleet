@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { Cdp, parseCdp, type BrowserArgs, type OpResult } from "@fleet/protocol";
 import Type from "typebox";
 import type { BrowserConfig } from "./browser-config.ts";
-import { holdsSecret } from "./browser-fill.ts";
+import { holdsFilled, holdsLogin } from "./browser-fill.ts";
 import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
 import { login } from "./browser-login.ts";
@@ -18,6 +18,7 @@ import {
   typeText,
   type Page,
 } from "./browser-page.ts";
+import { CREDENTIAL_SHOWN } from "./browser-scan.ts";
 import { screenshot } from "./browser-shot.ts";
 import { Vault } from "./browser-vault.ts";
 import {
@@ -59,12 +60,14 @@ const isGone = (error: unknown): boolean =>
   /no target (with given id|found for targetId)/i.test(reason(error));
 const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
 const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
+const EVAL_REFUSED =
+  "nothing was evaluated: a stored credential is in this page's form; click Sign in first, or read the page as text";
 
 export class Browser {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, string>();
   private readonly trusted = new Set<string>();
-  private readonly filled = new Map<string, string>();
+  private readonly filled = new Map<string, { loader: string; fields: readonly string[] }>();
   private readonly turns = new Map<number, Promise<unknown>>();
   private readonly db: DatabaseSync;
   private readonly config: BrowserConfig | undefined;
@@ -170,24 +173,27 @@ export class Browser {
     target: string,
     site: string | undefined,
   ): Promise<Outcome> {
-    const mark = (loader: string): void => {
-      this.filled.set(target, loader);
+    const mark = (loader: string, fields: readonly string[]): void => {
+      const known = this.filled.get(target);
+      const kept = known?.loader === loader ? known.fields : [];
+      this.filled.set(target, { loader, fields: [...kept, ...fields] });
     };
     const done = await login({ db: this.db, vault: this.vault, card, page, mark }, site);
     return { result: { text: done.text }, notify: done.notify };
   }
 
-  private async refuseWhileFilled(page: Page, target: string): Promise<void> {
-    const loader = this.filled.get(target);
-    if (loader === undefined && this.trusted.has(target)) return;
-    if (loader !== undefined && (await documentOf(page)).loader !== loader) {
+  private async refuseWhileFilled(page: Page, target: string, refusal: string): Promise<void> {
+    const mark = this.filled.get(target);
+    if (mark === undefined && this.trusted.has(target)) return;
+    if (mark !== undefined && (await documentOf(page)).loader !== mark.loader) {
       this.filled.delete(target);
       return;
     }
-    if (await holdsSecret(page, this.vault.values))
-      throw new Error(
-        "nothing was evaluated: a stored credential is in this page's form; click Sign in first, or read the page as text",
-      );
+    const held =
+      mark === undefined
+        ? await holdsLogin(page, this.vault.values)
+        : await holdsFilled(page, mark.fields);
+    if (held) throw new Error(refusal);
     this.filled.delete(target);
   }
 
@@ -219,9 +225,10 @@ export class Browser {
       case "press":
         return plain(await pressKey(page, args.key));
       case "eval":
-        await this.refuseWhileFilled(page, target);
+        await this.refuseWhileFilled(page, target, EVAL_REFUSED);
         return plain(await runExpression(page, args.expression, secrets));
       case "screenshot":
+        await this.refuseWhileFilled(page, target, CREDENTIAL_SHOWN);
         return { result: await screenshot(page, args.fullPage === true, secrets), notify: [] };
       case "login":
       case "open":

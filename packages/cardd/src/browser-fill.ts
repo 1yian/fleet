@@ -54,10 +54,20 @@ const TYPE = `function (text) {
 const HeldSchema = Type.Object({ result: Type.Object({ value: Type.Boolean() }) });
 
 const HOLDS = `function (secrets) {
-  return [...this.querySelectorAll("input, textarea")].some((el) => secrets.some((secret) => secret !== "" && el.value.includes(secret)));
+  const found = ${LOCATE};
+  const login = [found.user, found.password, ...this.querySelectorAll("input[type=password]")];
+  const fields = [...this.querySelectorAll("input, textarea")];
+  return (
+    login.some((el) => el !== null && el.value !== "") ||
+    fields.some((el) => secrets.some((secret) => secret !== "" && el.value.includes(secret)))
+  );
 }`;
 
-export async function holdsSecret(page: Page, secrets: readonly string[]): Promise<boolean> {
+const FILLED_FIELD = `function () {
+  return this.isConnected && this.value !== "";
+}`;
+
+export async function holdsLogin(page: Page, secrets: readonly string[]): Promise<boolean> {
   const handle = parseCdp(
     HandleSchema,
     await call(page, "Runtime.evaluate", { expression: "document" }),
@@ -74,6 +84,26 @@ export async function holdsSecret(page: Page, secrets: readonly string[]): Promi
     "the page's fields",
   );
   return held.result.value;
+}
+
+export async function holdsFilled(page: Page, fields: readonly string[]): Promise<boolean> {
+  try {
+    for (const objectId of fields) {
+      const held = parseCdp(
+        HeldSchema,
+        await call(page, "Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: FILLED_FIELD,
+          returnByValue: true,
+        }),
+        "a filled field",
+      );
+      if (held.result.value) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 type Slot = "user" | "password" | "code";
@@ -156,6 +186,7 @@ export async function fillLogin(
   creds: Credentials,
   codesAllowed: boolean,
   hold: (value: string) => void,
+  track: (fields: readonly string[]) => void,
 ): Promise<string> {
   const code = codeFor(creds, codesAllowed, hold);
   const fields = await locate(page);
@@ -165,6 +196,12 @@ export async function fillLogin(
     ["password", "password", creds.password],
     ["code", "one-time code", code],
   ];
+  track(
+    wanted.flatMap(([slot, , text]) => {
+      const objectId = fields.get(slot);
+      return objectId === undefined || text === undefined ? [] : [objectId];
+    }),
+  );
   const filled: string[] = [];
   const failed: string[] = [];
   for (const [slot, name, text] of wanted) {

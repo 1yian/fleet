@@ -280,6 +280,57 @@ test("eval is refused while a login-filled field holds a value, and allowed agai
   assertNoSecretAnywhere();
 });
 
+const edit = async (worker: RawWorker, name: string): Promise<void> => {
+  await worker.act({ action: "click", selector: `input[name=${name}]` });
+  await worker.act({ action: "press", key: "End" });
+  await worker.act({ action: "press", key: "Backspace" });
+};
+
+const empty = async (worker: RawWorker, name: string): Promise<void> => {
+  await worker.act({ action: "type", selector: `input[name=${name}]`, text: "x" });
+  await worker.act({ action: "press", key: "Backspace" });
+};
+
+test("editing a login-filled field by hand does not release eval or screenshots, emptying every field does", async () => {
+  await start();
+  const worker = await signedIn();
+  await edit(worker, "u");
+  await edit(worker, "p");
+  await worker.act({ action: "click", selector: "#reveal" });
+
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), FILLED);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("u")}.value` }), FILLED);
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+
+  await empty(worker, "u");
+  await assert.rejects(worker.act({ action: "eval", expression: "location.pathname" }), FILLED);
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+  await empty(worker, "p");
+  assert.deepEqual(JSON.parse(await worker.act({ action: "eval", expression: ALL_VALUES })), [
+    "",
+    "",
+    "",
+  ]);
+  assert.ok((await worker.shoot()).length > 0);
+  assertNoSecretAnywhere();
+});
+
+test("eval is allowed again once the login-filled field has left the page", async () => {
+  await start();
+  const worker = await lab.worker("Sign in to the portal");
+  await worker.act({ action: "open", url: lab.site.url("/steps", "login.example.test") });
+  assert.match(await worker.act({ action: "login" }), /^filled: Filled the username\./);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("u")}.value` }), FILLED);
+
+  await worker.act({ action: "click", selector: "#next" });
+
+  assert.equal(
+    await worker.act({ action: "eval", expression: 'document.getElementById("two").textContent' }),
+    '"step two"',
+  );
+  assertNoSecretAnywhere();
+});
+
 test("a login that fails halfway leaves nothing readable", async () => {
   await start();
   const worker = await lab.worker("Sign in to the portal");
@@ -343,6 +394,29 @@ test("after cardd restarts with the tab kept, eval and screenshots still refuse 
   ]);
   assert.ok((await worker.shoot()).length > 0);
   assert.equal(vault.invocations().length, 4);
+  assertNoSecretAnywhere();
+});
+
+test("after cardd restarts with the tab kept, a hand-edited login field still refuses eval and screenshots until it is empty", async () => {
+  await start();
+  const before = await signedIn();
+  await lab.cardd.restart();
+  const worker = await lab.reconnect(before);
+  await edit(worker, "u");
+  await edit(worker, "p");
+
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), FILLED);
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+
+  await empty(worker, "u");
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), FILLED);
+  await empty(worker, "p");
+  assert.deepEqual(JSON.parse(await worker.act({ action: "eval", expression: ALL_VALUES })), [
+    "",
+    "",
+    "",
+  ]);
+  assert.ok((await worker.shoot()).length > 0);
   assertNoSecretAnywhere();
 });
 
