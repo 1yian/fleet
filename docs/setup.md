@@ -39,6 +39,8 @@ The check does not test that the cardd host is reachable over Tailscale. Mates r
 
 `lavish-axi` is optional. A host without it starts its mates and runs its workers with no problem reported. Install it (`npm install -g lavish-axi`, 0.1.80 or later) to let workers show review pages, so the fleet waits on the captain's feedback there. 0.1.80 is the first release whose `reply` confirms that the page took the answer. On a host where it is missing or older, a worker's `lavish-axi` command is not found, so the worker writes a plain Markdown report and reports `needs-decision` or `done` with its path.
 
+`bws` is optional too. A host without it, or a lane without a `bws` block in `config/lane.json`, reads every secret from the files and environment it always did. Install it (`bws` 2 or later, the Bitwarden Secrets Manager CLI, https://bitwarden.com/help/secrets-manager-cli/) on each host whose lanes should read from Bitwarden. See [Secrets from Bitwarden](#secrets-from-bitwarden-bws).
+
 Each host that has Lavish runs its own Lavish server, so the captain's browser must reach that host, as it does over Tailscale.
 
 ## 1. A checkout on each host
@@ -300,7 +302,7 @@ A script, such as a guard that runs from cron, wakes the mate with a note:
 <checkout>/bin/fleet wake cleo "Spend is 40% over the cap" --script guard
 ```
 
-It runs on the host of the mate's home, and uses that home's `config/lane.json` for the address and token. From another host, or without the command, `POST /call` with the lane's token does the same: `{"op": "wake", "args": {"note": "...", "script": "guard"}}`. The mate hears `[fleet] script wake guard: Spend is 40% over the cap`. A script wake owes no reply, and `cardd` does not limit it, so a script should wake the mate on a change, not on every run. The token is the lane's token: keep the script's file private.
+It runs on the host of the mate's home, and uses that home's `config/lane.json` for the address and token. When the lane has a `bws` block, the token comes from Bitwarden first, and the command prints its source on stderr ([Secrets from Bitwarden](#secrets-from-bitwarden-bws)). From another host, or without the command, `POST /call` with the lane's token does the same: `{"op": "wake", "args": {"note": "...", "script": "guard"}}`. The mate hears `[fleet] script wake guard: Spend is 40% over the cap`. A script wake owes no reply, and `cardd` does not limit it, so a script should wake the mate on a change, not on every run. The token is the lane's token: keep the script's file private.
 
 Main has no lane card, so it has no plan and no wakes.
 
@@ -320,6 +322,91 @@ To replace a launchd job that messages main at 05:00, main calls:
 ```
 schedule_set(to="main", at="05:00", timezone="America/Chicago", text="<the daily-update message>")
 ```
+
+## Secrets from Bitwarden (bws)
+
+The fleet can read its machine secrets from Bitwarden Secrets Manager, so a secret is made once in Bitwarden and each host needs only its own machine-account token. Nothing changes for a lane until its `config/lane.json` has a `bws` block. Until then every secret comes from the file or the environment it came from before.
+
+### What it reads, and what it does not
+
+- **The lane token.** The token a mate (main or a second mate) uses to join `cardd`, and that `fleet wake` sends. Today it is `token` in `config/lane.json`.
+- **Environment secrets.** `bws.env` maps an environment variable name to a secret, such as `GH_TOKEN` or a provider key. When a mate's Pi starts, the fleet reads each one and sets it in that Pi process, so the mate and every command it runs get it. The mate also hands the same map to each worker it dispatches, as a flag that holds only names, never a value. The worker's Pi reads them in its own process on its own host.
+- **Not moved:** a worker's session token, which `cardd` makes for each attempt and the fleet passes to Pi with `--fleet-token`. It is not stored anywhere, so Bitwarden cannot hold it. Also not moved: `cardd`'s own signing key, which `cardd` makes and keeps in its database, and the `gh` login and Pi's own login files, which the fleet never reads.
+- **A limit.** A secret set this way reaches Pi and the commands Pi runs. It does not reach a `run_long` job: its tab is a new shell from the pane, not a child of Pi, and the fleet writes no secret into the job's file.
+
+### What to create in Bitwarden
+
+The dotfiles' `bws-env` already expects the same projects and machine accounts. If they exist, reuse them and only add the secrets in step 4.
+
+1. **Secrets Manager** is on for the organization.
+2. **Projects.** One project named `Common`, for secrets that every lane may read. One project for each lane, named exactly like the lane: `main`, `cleo`. The lane's project wins over `Common` when both hold the same name. The fleet names a project by its id, never by its name. A project's id is a UUID. Find it in the URL of the project's page in the Bitwarden web vault, or run `bws project list` once by hand. Write down the id of the lane's project and of `Common`.
+3. **Machine accounts.** One for each lane, named `fleet-<lane>`, with **read-only** access to the lane's project and to `Common`, and to nothing else. Make one access token for it. The fleet only reads, so a lane's token can never change a secret.
+4. **Secrets**, under these names. Use the environment variable name as the key, so `bws-env` from the dotfiles loads the same project:
+
+   | Project  | Key                | Value                                                                                  |
+   | -------- | ------------------ | -------------------------------------------------------------------------------------- |
+   | `<lane>` | `FLEET_LANE_TOKEN` | The lane's token: `token` in its `config/lane.json`, or what `cardd lane add` printed. |
+   | `Common` | `GH_TOKEN`         | Optional. A GitHub token for `gh` and `git`, if the lane needs one.                    |
+   | `Common` | `<provider key>`   | Optional. One secret for each provider key a lane's Pi needs, named as Pi reads it.    |
+
+   Put a lane token in without printing it: `jq -r .token ~/Projects/fleet/config/lane.json | pbcopy` (or `wl-copy`), then paste it in the web vault. For a new lane, paste what `cardd lane add` printed, and never copy it into `fleet home add`.
+
+### Where the access token lives
+
+On the host where a lane runs, in `~/.config/bws/<lane>.token`: a file with only that lane's access token, owner-only (`chmod 600`), outside every git checkout. This is the file the dotfiles' `bws-env` reads too. The fleet refuses a token file that group or others can read, and says so in its note. A host that runs three lanes has three token files. Nothing else holds a machine-account token: not `config/lane.json`, not `cardd`, not the environment.
+
+`bws` keeps its own login cache under `~/.config/bws/state` (`bws config state-opt-out true` turns it off). The fleet does not read or write it.
+
+### Turning it on for a lane
+
+Add a `bws` block to the lane's `config/lane.json` and keep the old `token`:
+
+```json
+{
+  "lane": "cleo",
+  "url": "ws://<cardd Tailscale address>:7420/session",
+  "token": "<the old token, kept as the fallback>",
+  "bws": {
+    "tokenFile": "~/.config/bws/cleo.token",
+    "project": "3f2b6c1e-8d4a-4e7b-9a61-2c5d0e7f9b13",
+    "common": "b7a90d24-51c3-4f8e-a2d6-9e1f40c8b5a7",
+    "env": { "GH_TOKEN": "GH_TOKEN" }
+  }
+}
+```
+
+- `tokenFile` and `project` are required. `project` is the id of the lane's project, a UUID. A project name is refused, and the error names the file and the key.
+- `common` is the id of a second project to look in when the lane's project lacks the key. It must be a UUID too.
+- `laneToken` is the key or the secret id of the lane token. It defaults to the key `FLEET_LANE_TOKEN`.
+- `env` maps an environment variable to a key or a secret id. A secret id is a UUID, which `bws secret get` takes. Anything else is a key, looked up in the project `project` names, and then in `common`.
+- A new lane with no old token: `fleet home add cleo --url <url> --bws '<the block>'`.
+
+`bws` runs in the fleet's own process. The machine-account token goes to it in its environment, never in its arguments. Secret values stay in memory: none goes into a command line, a log, a note, `cardd`, or a file the fleet writes.
+
+### Which source was used
+
+Each time the fleet reads a secret from a lane that has a `bws` block, it says where the value came from, and never the value. A mate shows it as a notice when it starts. `fleet wake` prints it on stderr:
+
+```
+fleet: lane token: from bws (key FLEET_LANE_TOKEN in project 3f2b6c1e-8d4a-4e7b-9a61-2c5d0e7f9b13)
+fleet: GH_TOKEN: from the environment (bws failed: bws is not on the PATH)
+fleet: lane token: from config/lane.json (bws failed: the token file ~/.config/bws/cleo.token is missing or unreadable)
+```
+
+When `bws` is not installed, fails, times out (20 seconds), or lacks the secret, the fleet uses the old value: `token` in `config/lane.json`, or the variable the mate already had. When there is no old value either, a lane token stops the mate from starting, and says why. An environment secret is left unset.
+
+### Verify before removing the old files
+
+`fleet secrets` is the verification step. Run it on each host, from its checkout, before you remove anything. It asks Bitwarden for every secret of every lane there and prints one line each. It exits 1 when any lookup failed. `fleet secrets <lane>` checks one lane.
+
+```
+cleo: lane token: bws ok (key FLEET_LANE_TOKEN in project 3f2b6c1e-8d4a-4e7b-9a61-2c5d0e7f9b13), the same as config/lane.json
+cleo: GH_TOKEN: bws ok (key GH_TOKEN in project b7a90d24-51c3-4f8e-a2d6-9e1f40c8b5a7)
+```
+
+1. On every host, `fleet secrets` ends with exit 0 and every lane token line says `the same as config/lane.json`. A line that says `different from` means Bitwarden holds another value than the file. Fix whichever is wrong before going on.
+2. Restart each lane (`fleet restart <lane>`, and for main, close its pane and run `pi -c` in its home) and read its notice: each secret says `from bws`, not `from config/lane.json`.
+3. Only then remove the old values. They are the `token` in each `config/lane.json`, any environment secret that the lane's shell or `.envrc` also exports, and `~/.config/fleet/<lane>.json.migrated`, which still holds the old token. After removing `token`, run `fleet secrets` again. It now says `config/lane.json has no token`, and the lane still starts. To go back, paste the value from Bitwarden into the file.
 
 ## 6. Day to day
 
@@ -352,7 +439,8 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet arrange`                          | Puts this host's herdr sidebar in order (below).                                            |
 | `fleet update [--check]`                 | Updates this host's checkout and lane homes for `/updatefleet` (section 7).                 |
 | `fleet cardd --root R --db D [--check]`  | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).                     |
-| `fleet home add <lane> ...`              | Makes a lane's home.                                                                        |
+| `fleet home add <lane> ...`              | Makes a lane's home. It takes `--token T`, `--bws JSON`, or both.                           |
+| `fleet secrets [lane]`                   | Checks what Bitwarden serves each lane here, before an old file goes (below).               |
 | `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
 | `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
 | `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                 |

@@ -20,7 +20,9 @@ import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs, registerDropJob } from "./jobs.ts";
 import { enableCodemode } from "./codemode.ts";
-import { readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
+import type { Bws, BwsConfig } from "./bws.ts";
+import { bwsConfig, readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
+import { applyEnvSecrets, bwsFor, laneToken } from "./lane-secrets.ts";
 import { Link, type Push } from "./link.ts";
 import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
@@ -43,6 +45,8 @@ interface Config {
   readonly token: string;
   readonly role: "worker" | "mate";
   readonly lane?: string;
+  readonly notes: readonly string[];
+  readonly secrets?: { readonly bws: Bws; readonly env: Readonly<Record<string, string>> };
 }
 
 const EXTENSION = fileURLToPath(import.meta.url);
@@ -54,7 +58,18 @@ function exportHosts(lane: LaneConfig): void {
   process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
 }
 
-function config(pi: ExtensionAPI): Config | undefined {
+function forwardedBws(text: string | undefined): BwsConfig | undefined {
+  if (text === undefined || text === "") return undefined;
+  const parsed: unknown = JSON.parse(text);
+  return bwsConfig("--fleet-bws", parsed);
+}
+
+function secretsOf(settings: BwsConfig | undefined): Config["secrets"] {
+  const bws = bwsFor(settings);
+  return settings === undefined || bws === undefined ? undefined : { bws, env: settings.env };
+}
+
+function suppliedConfig(pi: ExtensionAPI): Config | undefined {
   const value = (flag: string, env: string): string | undefined => {
     const fromFlag = pi.getFlag(flag);
     return typeof fromFlag === "string" && fromFlag !== "" ? fromFlag : process.env[env];
@@ -63,15 +78,53 @@ function config(pi: ExtensionAPI): Config | undefined {
   const token = value("fleet-token", "FLEET_TOKEN");
   const role = value("fleet-role", "FLEET_ROLE");
   const named = process.env["FLEET_LANE"];
-  if (url !== undefined && token !== undefined && (role === "worker" || role === "mate"))
-    return role === "worker" || named === undefined || named === ""
-      ? { url, token, role }
-      : { url, token, role, lane: named };
-  const lane = readLaneConfig(HOME());
-  if (lane === undefined) return undefined;
+  if (url === undefined || token === undefined || (role !== "worker" && role !== "mate"))
+    return undefined;
+  const secrets = secretsOf(forwardedBws(value("fleet-bws", "FLEET_BWS")));
+  return {
+    url,
+    token,
+    role,
+    notes: [],
+    ...(role === "worker" || named === undefined || named === "" ? {} : { lane: named }),
+    ...(secrets === undefined ? {} : { secrets }),
+  };
+}
+
+async function laneConfig(lane: LaneConfig): Promise<Config> {
   exportHosts(lane);
-  process.env["FLEET_PI_ARGS"] ??= JSON.stringify(["-e", EXTENSION, ...workerPiArgs(lane)]);
-  return { url: lane.url, token: lane.token, role: "mate", lane: lane.lane };
+  const forwarded = lane.bws === undefined ? [] : [`--fleet-bws=${JSON.stringify(lane.bws)}`];
+  process.env["FLEET_PI_ARGS"] ??= JSON.stringify([
+    "-e",
+    EXTENSION,
+    ...workerPiArgs(lane),
+    ...forwarded,
+  ]);
+  const secrets = secretsOf(lane.bws);
+  const resolved = await laneToken(lane, secrets?.bws);
+  if (resolved.value === undefined) throw new Error(`fleet: ${resolved.note}`);
+  return {
+    url: lane.url,
+    token: resolved.value,
+    role: "mate",
+    lane: lane.lane,
+    notes: secrets === undefined ? [] : [resolved.note],
+    ...(secrets === undefined ? {} : { secrets }),
+  };
+}
+
+async function config(pi: ExtensionAPI): Promise<Config | undefined> {
+  const supplied = suppliedConfig(pi);
+  if (supplied !== undefined) return supplied;
+  const lane = readLaneConfig(HOME());
+  return lane === undefined ? undefined : laneConfig(lane);
+}
+
+function announce(ctx: ExtensionContext, notes: readonly string[]): void {
+  if (notes.length === 0) return;
+  const lines = notes.map((note) => `fleet: ${note}`);
+  if (ctx.hasUI) ctx.ui.notify(lines.join("\n"), "info");
+  else for (const line of lines) console.error(line);
 }
 
 function charter(): string {
@@ -268,6 +321,10 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
+  pi.registerFlag("fleet-bws", {
+    type: "string",
+    description: "Where to read this session's bws secrets, as JSON without any secret value",
+  });
   let started = false;
   let extensionsLoaded: () => void = () => undefined;
   const extensionsReady = new Promise<void>((resolve) => {
@@ -276,10 +333,15 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.on("resources_discover", () => {
     extensionsLoaded();
   });
-  pi.on("session_start", (_event, ctx) => {
-    const found = config(pi);
+  pi.on("session_start", async (_event, ctx) => {
+    const found = await config(pi);
     if (started || found === undefined) return;
     started = true;
+    const applied =
+      found.secrets === undefined
+        ? []
+        : await applyEnvSecrets(found.secrets.bws, found.secrets.env);
+    announce(ctx, [...found.notes, ...applied]);
     start(
       pi,
       found,
