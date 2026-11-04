@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import type { BwsConfig } from "./bws.ts";
+import { isUuid, type BwsConfig } from "./bws.ts";
 
 export interface CarddConfig {
   readonly host: string;
@@ -73,6 +73,13 @@ const optionalText = (file: string, key: string, value: unknown): string | undef
   return value;
 };
 
+const projectId = (file: string, key: string, value: unknown): string | undefined => {
+  const id = optionalText(file, key, value);
+  if (id !== undefined && !isUuid(id))
+    throw new Error(`${file}: "bws.${key}" must be a project id (a UUID)`);
+  return id;
+};
+
 function bwsEnv(file: string, value: unknown): Record<string, string> {
   if (value === undefined) return {};
   const entries = isRecord(value) ? Object.entries(value) : [];
@@ -89,10 +96,10 @@ export function bwsConfig(file: string, value: unknown): BwsConfig | undefined {
   if (value === undefined) return undefined;
   const settings = isRecord(value) ? value : {};
   const tokenFile = optionalText(file, "tokenFile", settings["tokenFile"]);
-  const project = optionalText(file, "project", settings["project"]);
+  const project = projectId(file, "project", settings["project"]);
   if (tokenFile === undefined || project === undefined)
     throw new Error(`${file}: "bws" needs "tokenFile" and "project"`);
-  const common = optionalText(file, "common", settings["common"]);
+  const common = projectId(file, "common", settings["common"]);
   const laneToken = optionalText(file, "laneToken", settings["laneToken"]);
   return {
     tokenFile,

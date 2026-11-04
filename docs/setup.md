@@ -339,7 +339,7 @@ The fleet can read its machine secrets from Bitwarden Secrets Manager, so a secr
 The dotfiles' `bws-env` already expects the same projects and machine accounts. If they exist, reuse them and only add the secrets in step 4.
 
 1. **Secrets Manager** is on for the organization.
-2. **Projects.** One project named `Common`, for secrets that every lane may read. One project for each lane, named exactly like the lane: `main`, `cleo`. The lane's project wins over `Common` when both hold the same name.
+2. **Projects.** One project named `Common`, for secrets that every lane may read. One project for each lane, named exactly like the lane: `main`, `cleo`. The lane's project wins over `Common` when both hold the same name. The fleet names a project by its id, never by its name. A project's id is a UUID. Find it in the URL of the project's page in the Bitwarden web vault, or run `bws project list` once by hand. Write down the id of the lane's project and of `Common`.
 3. **Machine accounts.** One for each lane, named `fleet-<lane>`, with **read-only** access to the lane's project and to `Common`, and to nothing else. Make one access token for it. The fleet only reads, so a lane's token can never change a secret.
 4. **Secrets**, under these names. Use the environment variable name as the key, so `bws-env` from the dotfiles loads the same project:
 
@@ -368,17 +368,17 @@ Add a `bws` block to the lane's `config/lane.json` and keep the old `token`:
   "token": "<the old token, kept as the fallback>",
   "bws": {
     "tokenFile": "~/.config/bws/cleo.token",
-    "project": "cleo",
-    "common": "Common",
+    "project": "3f2b6c1e-8d4a-4e7b-9a61-2c5d0e7f9b13",
+    "common": "b7a90d24-51c3-4f8e-a2d6-9e1f40c8b5a7",
     "env": { "GH_TOKEN": "GH_TOKEN" }
   }
 }
 ```
 
-- `tokenFile` and `project` are required. `project` is a project name or its id.
-- `common` is a second project to look in when the lane's project lacks the key.
+- `tokenFile` and `project` are required. `project` is the id of the lane's project, a UUID. A project name is refused, and the error names the file and the key.
+- `common` is the id of a second project to look in when the lane's project lacks the key. It must be a UUID too.
 - `laneToken` is the key or the secret id of the lane token. It defaults to the key `FLEET_LANE_TOKEN`.
-- `env` maps an environment variable to a key or a secret id. A secret id is a UUID, which `bws secret get` takes. Anything else is a key, looked up in `project` and then `common`.
+- `env` maps an environment variable to a key or a secret id. A secret id is a UUID, which `bws secret get` takes. Anything else is a key, looked up in the project `project` names, and then in `common`.
 - A new lane with no old token: `fleet home add cleo --url <url> --bws '<the block>'`.
 
 `bws` runs in the fleet's own process. The machine-account token goes to it in its environment, never in its arguments. Secret values stay in memory: none goes into a command line, a log, a note, `cardd`, or a file the fleet writes.
@@ -388,7 +388,7 @@ Add a `bws` block to the lane's `config/lane.json` and keep the old `token`:
 Each time the fleet reads a secret from a lane that has a `bws` block, it says where the value came from, and never the value. A mate shows it as a notice when it starts. `fleet wake` prints it on stderr:
 
 ```
-fleet: lane token: from bws (key FLEET_LANE_TOKEN in project cleo)
+fleet: lane token: from bws (key FLEET_LANE_TOKEN in project 3f2b6c1e-8d4a-4e7b-9a61-2c5d0e7f9b13)
 fleet: GH_TOKEN: from the environment (bws failed: bws is not on the PATH)
 fleet: lane token: from config/lane.json (bws failed: the token file ~/.config/bws/cleo.token is missing or unreadable)
 ```
@@ -397,11 +397,11 @@ When `bws` is not installed, fails, times out (20 seconds), or lacks the secret,
 
 ### Verify before removing the old files
 
-Run `fleet secrets` on each host, from its checkout. It asks Bitwarden for every secret of every lane there and prints one line each. It exits 1 when any lookup failed.
+`fleet secrets` is the verification step. Run it on each host, from its checkout, before you remove anything. It asks Bitwarden for every secret of every lane there and prints one line each. It exits 1 when any lookup failed. `fleet secrets <lane>` checks one lane.
 
 ```
-cleo: lane token: bws ok (key FLEET_LANE_TOKEN in project cleo), the same as config/lane.json
-cleo: GH_TOKEN: bws ok (key GH_TOKEN in project Common)
+cleo: lane token: bws ok (key FLEET_LANE_TOKEN in project 3f2b6c1e-8d4a-4e7b-9a61-2c5d0e7f9b13), the same as config/lane.json
+cleo: GH_TOKEN: bws ok (key GH_TOKEN in project b7a90d24-51c3-4f8e-a2d6-9e1f40c8b5a7)
 ```
 
 1. On every host, `fleet secrets` ends with exit 0 and every lane token line says `the same as config/lane.json`. A line that says `different from` means Bitwarden holds another value than the file. Fix whichever is wrong before going on.

@@ -54,6 +54,12 @@ export class FakeBws {
     this.outage = message;
   }
 
+  projectId(project: string): string {
+    const id = this.projects.find((each) => each.name === project)?.id;
+    if (id === undefined) throw new Error(`no project ${project}`);
+    return id;
+  }
+
   secretId(project: string, key: string): string {
     const id = this.projects
       .find((each) => each.name === project)

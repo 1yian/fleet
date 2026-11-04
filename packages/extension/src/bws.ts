@@ -28,6 +28,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BWS_TIMEOUT_MS = 20_000;
 const WHY_LIMIT = 160;
 
+export const isUuid = (text: string): boolean => UUID.test(text);
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -61,7 +63,6 @@ function describeFailure(
 export class Bws {
   private readonly config: BwsConfig;
   private token: string | undefined;
-  private projects: Promise<unknown> | undefined;
   private readonly lists = new Map<string, Promise<unknown>>();
 
   constructor(config: BwsConfig) {
@@ -121,7 +122,7 @@ export class Bws {
   }
 
   private async find(reference: string): Promise<Lookup> {
-    if (UUID.test(reference)) {
+    if (isUuid(reference)) {
       const value = textOf(await this.run(["secret", "get", reference]), "value");
       return value === undefined
         ? { found: false, why: `secret ${reference} has no value` }
@@ -130,12 +131,7 @@ export class Bws {
     const tried: string[] = [];
     for (const project of [this.config.project, this.config.common]) {
       if (project === undefined) continue;
-      const id = await this.projectId(project);
-      if (id === undefined) {
-        tried.push(`project ${project} is not visible to this token`);
-        continue;
-      }
-      const hit = listOf(await this.secretsOf(id)).find(
+      const hit = listOf(await this.secretsOf(project)).find(
         (each) => textOf(each, "key") === reference,
       );
       const value = textOf(hit, "value");
@@ -144,15 +140,6 @@ export class Bws {
       tried.push(`no key ${reference} in project ${project}`);
     }
     return { found: false, why: tried.join(", ") };
-  }
-
-  private async projectId(project: string): Promise<string | undefined> {
-    if (UUID.test(project)) return project;
-    this.projects ??= this.run(["project", "list"]);
-    return textOf(
-      listOf(await this.projects).find((each) => textOf(each, "name") === project),
-      "id",
-    );
   }
 
   private secretsOf(project: string): Promise<unknown> {

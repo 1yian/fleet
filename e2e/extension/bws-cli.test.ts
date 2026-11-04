@@ -39,8 +39,8 @@ afterEach(async () => {
 
 const settings = (more: Record<string, unknown> = {}): Record<string, unknown> => ({
   tokenFile: bws.tokenFile,
-  project: "ops",
-  common: "Common",
+  project: bws.projectId("ops"),
+  common: bws.projectId("Common"),
   ...more,
 });
 
@@ -92,7 +92,10 @@ test("fleet wake takes the lane token from bws, so a stale token in the file is 
   const run = wake("from bws");
   assert.equal(run.status, 0, run.err);
   assert.match(run.out, /ops: woken/);
-  assert.equal(run.err.trim(), "fleet: lane token: from bws (key FLEET_LANE_TOKEN in project ops)");
+  assert.equal(
+    run.err.trim(),
+    `fleet: lane token: from bws (key FLEET_LANE_TOKEN in project ${bws.projectId("ops")})`,
+  );
   assert.ok(await wakeLanded("from bws"));
   assertNoLeak(laneToken, run.out, run.err);
   assert.ok(!run.err.includes(bws.accessToken) && !run.out.includes(bws.accessToken));
@@ -125,7 +128,12 @@ test("a secret id, and a key found only in the common project, both resolve", ()
   configure(STALE_TOKEN, settings());
   const common = wake("from common");
   assert.equal(common.status, 0, common.err);
-  assert.match(common.err, /lane token: from bws \(key FLEET_LANE_TOKEN in project Common\)/);
+  assert.ok(
+    common.err.includes(
+      `lane token: from bws (key FLEET_LANE_TOKEN in project ${bws.projectId("Common")})`,
+    ),
+    common.err,
+  );
 
   configure(STALE_TOKEN, settings({ laneToken: bws.secretId("Common", KEY) }));
   const byId = wake("by id");
@@ -139,7 +147,7 @@ const outages: {
   name: string;
   setUp: () => Record<string, string>;
   note: RegExp;
-  settings?: () => Record<string, unknown>;
+  block?: () => Record<string, unknown>;
 }[] = [
   {
     name: "bws is not installed",
@@ -163,20 +171,21 @@ const outages: {
       ]);
       return bws.env;
     },
-    note: /\(bws failed: no key FLEET_LANE_TOKEN in project ops, no key FLEET_LANE_TOKEN in project Common\)/,
+    note: /\(bws failed: no key FLEET_LANE_TOKEN in project [0-9a-f-]{36}, no key FLEET_LANE_TOKEN in project [0-9a-f-]{36}\)/,
   },
   {
-    name: "the project is not visible to the machine account",
+    name: "the project is one the machine account cannot read",
     setUp: () => {
       bws = new FakeBws([{ name: "elsewhere", secrets: { [KEY]: "x" } }]);
       return bws.env;
     },
-    note: /\(bws failed: project ops is not visible to this token, project Common is not visible to this token\)/,
+    block: () => ({ tokenFile: bws.tokenFile, project: randomUUID() }),
+    note: /\(bws failed: bws exited with status 1: Error: project not found\)/,
   },
   {
     name: "the token file is missing",
     setUp: () => bws.env,
-    settings: () => ({ tokenFile: join(scratch.parent, "no-such.token") }),
+    block: () => settings({ tokenFile: join(scratch.parent, "no-such.token") }),
     note: /\(bws failed: the token file .*no-such\.token is missing or unreadable\)/,
   },
   {
@@ -198,10 +207,10 @@ const outages: {
   },
 ];
 
-for (const { name, setUp, note, settings: tokenFile } of outages) {
+for (const { name, setUp, note, block } of outages) {
   test(`when ${name}, fleet wake falls back to the lane file and says so`, async () => {
     const env = setUp();
-    configure(laneToken, settings(tokenFile?.()));
+    configure(laneToken, block?.() ?? settings());
     const run = wake(`fallback ${name}`, env);
     assert.equal(run.status, 0, run.err);
     assert.match(run.err, /^fleet: lane token: from config\/lane\.json /);
@@ -227,28 +236,34 @@ test("fleet secrets tells the captain, line by line, what bws serves before the 
   configure(laneToken, settings({ env: { GH_TOKEN: "GH_TOKEN" } }));
   const same = fleet(["secrets"]);
   assert.equal(same.status, 0, same.err);
+  const ops = bws.projectId("ops");
   assert.equal(
     same.out.trim(),
     [
-      "ops: lane token: bws ok (key FLEET_LANE_TOKEN in project ops), the same as config/lane.json",
-      "ops: GH_TOKEN: bws ok (key GH_TOKEN in project ops)",
+      `ops: lane token: bws ok (key FLEET_LANE_TOKEN in project ${ops}), the same as config/lane.json`,
+      `ops: GH_TOKEN: bws ok (key GH_TOKEN in project ${ops})`,
     ].join("\n"),
   );
 
   configure(STALE_TOKEN, settings());
   const different = fleet(["secrets", "ops"]);
   assert.equal(different.status, 0);
-  assert.match(
+  assert.ok(
+    different.out.includes(
+      `bws ok (key FLEET_LANE_TOKEN in project ${bws.projectId("ops")}), different from config/lane.json`,
+    ),
     different.out,
-    /bws ok \(key FLEET_LANE_TOKEN in project ops\), different from config\/lane\.json/,
   );
 
   configure(STALE_TOKEN, settings({ env: { GH_TOKEN: "NO_SUCH_KEY" } }));
   const broken = fleet(["secrets", "ops"]);
   assert.equal(broken.status, 1);
-  assert.match(
+  const common = bws.projectId("Common");
+  assert.ok(
+    broken.out.includes(
+      `ops: GH_TOKEN: bws failed (no key NO_SUCH_KEY in project ${ops}, no key NO_SUCH_KEY in project ${common})`,
+    ),
     broken.out,
-    /ops: GH_TOKEN: bws failed \(no key NO_SUCH_KEY in project ops, no key NO_SUCH_KEY in project Common\)/,
   );
   assertNoLeak(GH_VALUE, same.out, different.out, broken.out, broken.err);
   assertNoLeak(laneToken, same.out, different.out, broken.out);
@@ -275,3 +290,16 @@ test("a bws block that names no project is refused with the file it is in", () =
   assert.notEqual(run.status, 0);
   assert.match(run.err, /lane\.json: "bws" needs "tokenFile" and "project"/);
 });
+
+for (const key of ["project", "common"]) {
+  test(`a bws ${key} named by its name is refused with the file and the key`, () => {
+    configure(laneToken, settings({ [key]: "ops" }));
+    const run = wake("by name");
+    assert.notEqual(run.status, 0);
+    assert.match(
+      run.err,
+      new RegExp(`lane\\.json: "bws\\.${key}" must be a project id \\(a UUID\\)`),
+    );
+    assert.deepEqual(bws.calls(), [], "bws was run with a project name");
+  });
+}

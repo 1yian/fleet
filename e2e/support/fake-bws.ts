@@ -39,13 +39,7 @@ const shaped = (project: Record<string, unknown>, secret: Record<string, unknown
   value: secret["value"],
 });
 
-if (noun === "project" && verb === "list") {
-  console.log(
-    JSON.stringify(
-      projects.map((project) => ({ object: "project", id: project["id"], name: project["name"] })),
-    ),
-  );
-} else if (noun === "secret" && verb === "list") {
+if (noun === "secret" && verb === "list") {
   const project = projects.find((each) => each["id"] === target);
   if (project === undefined) {
     console.error("Error: project not found");

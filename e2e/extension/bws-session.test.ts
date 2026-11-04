@@ -60,8 +60,8 @@ afterEach(async (t) => {
 
 const settings = (project = "ops"): Record<string, unknown> => ({
   tokenFile: bws.tokenFile,
-  project,
-  common: "Common",
+  project: bws.projectId(project),
+  common: bws.projectId("Common"),
   env: { [KEY]: KEY },
 });
 
@@ -147,8 +147,12 @@ test("a mate joins with the lane token from bws and gets its environment secrets
     const text = await screenOf("2ndmate-ops");
     return text.includes(`${KEY}: from bws`) ? text : undefined;
   }, "the mate to say where its secrets came from");
-  assert.match(screen, /fleet: lane token: from bws \(key FLEET_LANE_TOKEN in project ops\)/);
-  assert.match(screen, new RegExp(`fleet: ${KEY}: from bws \\(key ${KEY} in project ops\\)`));
+  const ops = bws.projectId("ops");
+  assert.ok(
+    screen.includes(`fleet: lane token: from bws (key FLEET_LANE_TOKEN in project ${ops})`),
+    screen,
+  );
+  assert.ok(screen.includes(`fleet: ${KEY}: from bws (key ${KEY} in project ${ops})`), screen);
   assertNoLeak(apiKey, screen, result);
   assertNoLeak(opsToken, screen, result);
   assert.ok(!screen.includes(bws.accessToken));
