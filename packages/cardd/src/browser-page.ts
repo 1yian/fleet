@@ -27,11 +27,13 @@ const EvalSchema = Type.Object({
   ),
 });
 const NavigateSchema = Type.Object({ errorText: Type.Optional(Type.String()) });
-const ShotSchema = Type.Object({ data: Type.String() });
+const FrameTreeSchema = Type.Object({
+  frameTree: Type.Object({ frame: Type.Object({ loaderId: Type.String(), url: Type.String() }) }),
+});
 const SummarySchema = Type.Object({ title: Type.String(), url: Type.String() });
 const PointSchema = Type.Object({ x: Type.Number(), y: Type.Number() });
 
-export async function evaluate(page: Page, expression: string): Promise<unknown> {
+async function evaluate(page: Page, expression: string): Promise<unknown> {
   const done = parseCdp(
     EvalSchema,
     await call(page, "Runtime.evaluate", {
@@ -83,7 +85,28 @@ function loaded(page: Page): { done: Promise<boolean>; stop: () => void } {
   return { done, stop };
 }
 
-async function summary(page: Page): Promise<string> {
+export interface Doc {
+  readonly loader: string;
+  readonly host: string;
+}
+
+export async function documentOf(page: Page): Promise<Doc> {
+  const { frameTree } = parseCdp(
+    FrameTreeSchema,
+    await call(page, "Page.getFrameTree"),
+    "the page's frame",
+  );
+  try {
+    return {
+      loader: frameTree.frame.loaderId,
+      host: new URL(frameTree.frame.url).hostname.toLowerCase(),
+    };
+  } catch {
+    return { loader: frameTree.frame.loaderId, host: "" };
+  }
+}
+
+export async function summary(page: Page): Promise<string> {
   const text = await evaluate(
     page,
     "JSON.stringify({ title: document.title, url: location.href })",
@@ -110,7 +133,7 @@ export async function navigate(page: Page, url: string): Promise<string> {
   return `${await summary(page)}${state}`;
 }
 
-const cut = (text: string): string =>
+export const cut = (text: string): string =>
   text.length <= TEXT_LIMIT
     ? text
     : `${text.slice(0, TEXT_LIMIT)}\n[cut: ${String(text.length - TEXT_LIMIT)} more characters. Read a smaller part with a selector]`;
@@ -129,13 +152,13 @@ export async function readPage(page: Page, args: BrowserArgs): Promise<string> {
   );
   if (typeof value !== "string")
     throw new Error(`no element matches ${args.selector ?? "the page"}`);
-  return cut(value);
+  return value;
 }
 
 export async function runExpression(page: Page, expression: string | undefined): Promise<string> {
   if (expression === undefined) throw new Error("eval needs an expression");
   const value = await evaluate(page, expression);
-  return cut(value === undefined ? "undefined" : JSON.stringify(value, null, 2));
+  return value === undefined ? "undefined" : JSON.stringify(value, null, 2);
 }
 
 async function centerOf(page: Page, selector: string): Promise<{ x: number; y: number }> {
@@ -193,19 +216,4 @@ export async function typeText(page: Page, args: BrowserArgs): Promise<string> {
   await call(page, "Input.insertText", { text: args.text });
   if (args.submit === true) await pressKey(page, "Enter");
   return `Typed ${String(args.text.length)} characters${args.submit === true ? " and pressed Enter" : ""}.`;
-}
-
-export async function screenshot(
-  page: Page,
-  fullPage: boolean,
-): Promise<{ text: string; image: { mimeType: string; data: string } }> {
-  const shot = parseCdp(
-    ShotSchema,
-    await call(page, "Page.captureScreenshot", { format: "png", captureBeyondViewport: fullPage }),
-    "a screenshot",
-  );
-  return {
-    text: `Screenshot of ${await summary(page)}.`,
-    image: { mimeType: "image/png", data: shot.data },
-  };
 }

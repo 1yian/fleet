@@ -23,7 +23,7 @@ let first: RawWorker;
 let second: RawWorker;
 
 beforeEach(async () => {
-  lab = await BrowserLab.start();
+  lab = await BrowserLab.start({ proxied: true });
   first = await lab.worker("Users see one scrollbar");
   second = await lab.worker("Users see one footer");
   await first.act({ action: "open", url: lab.site.url("/a") });
@@ -157,4 +157,32 @@ test("the viewer answers only on its own address", async () => {
     probe.end();
   });
   assert.equal(status, 403);
+});
+
+test("when the connection to Chrome drops and returns, the picture follows the page again", async () => {
+  const proxy = lab.proxy;
+  assert.ok(proxy !== undefined);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "setInterval", { value: () => 0 });
+  });
+  await page.goto(url);
+  await until(async () => (await labels()).length === 2, "both cards' tabs to be listed");
+  await select("c-1 users-see-one-scrollbar");
+  const shown = (): Promise<string> =>
+    page.locator("#screen").evaluate((img: HTMLImageElement) => img.src);
+
+  await proxy.stop();
+  await until(
+    async () => (await page.locator("#live").textContent()) === "reconnecting",
+    "the picture to notice that Chrome is gone",
+  );
+  await proxy.listen();
+  await until(
+    async () => (await page.locator("#live").textContent()) === "live",
+    "the picture to come back",
+  );
+
+  const before = await shown();
+  await first.act({ action: "click", selector: "#count" });
+  await until(async () => (await shown()) !== before, "the picture to show the click");
 });

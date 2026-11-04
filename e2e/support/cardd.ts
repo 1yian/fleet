@@ -157,6 +157,15 @@ export class Cardd {
     db.close();
   }
 
+  startAttemptAfterTabs(card: number): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.prepare(
+      `UPDATE attempts SET created_at = (SELECT max(opened_at) + 1 FROM browser_tabs WHERE card = ?)
+       WHERE card = ? AND state IN ('starting', 'active')`,
+    ).run(card, card);
+    db.close();
+  }
+
   setRepo(project: string, repo: string): string {
     const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
     return execFileSync("node", args, {

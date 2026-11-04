@@ -1,6 +1,6 @@
 import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
-import { call, evaluate, type Page } from "./browser-page.ts";
+import { call, documentOf, type Doc, type Page } from "./browser-page.ts";
 import { totpCode } from "./browser-totp.ts";
 
 export interface Credentials {
@@ -35,6 +35,10 @@ const PropertiesSchema = Type.Object({
 });
 const HandleSchema = Type.Object({ result: Type.Object({ objectId: Type.String() }) });
 const LengthSchema = Type.Object({ result: Type.Object({ value: Type.Number() }) });
+const FocusedSchema = Type.Object({ result: Type.Object({ value: Type.Boolean() }) });
+
+const FOCUS =
+  "function () { this.__fleetFilled = true; this.focus(); this.select(); return this.isConnected && document.activeElement === this; }";
 
 type Slot = "user" | "password" | "code";
 
@@ -61,16 +65,51 @@ async function locate(page: Page): Promise<Map<Slot, string>> {
   return found;
 }
 
-async function enter(page: Page, objectId: string, text: string): Promise<boolean> {
-  await call(page, "Runtime.callFunctionOn", {
-    objectId,
-    functionDeclaration: "function () { this.focus(); this.select(); }",
-  });
+function movedTo(now: Doc, doc: Doc): string {
+  if (now.host === "") return "another page";
+  return now.host === doc.host ? "a new page on the same site" : now.host;
+}
+
+async function stillOn(page: Page, doc: Doc): Promise<void> {
+  const now = await documentOf(page);
+  if (now.loader !== doc.loader)
+    throw new Error(
+      `the page changed from ${doc.host} to ${movedTo(now, doc)} while the login was being filled, so nothing was typed into the new page. Open the login page again, then call login again`,
+    );
+}
+
+async function focus(page: Page, doc: Doc, objectId: string, name: string): Promise<void> {
+  let raw: unknown;
+  try {
+    raw = await call(page, "Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: FOCUS,
+      returnByValue: true,
+    });
+  } catch (error) {
+    await stillOn(page, doc);
+    throw error;
+  }
+  if (!parseCdp(FocusedSchema, raw, "a field's focus").result.value)
+    throw new Error(
+      `the ${name} field left the page before it could be filled, so it was not typed`,
+    );
+}
+
+async function enter(
+  page: Page,
+  doc: Doc,
+  field: { objectId: string; name: string },
+  text: string,
+): Promise<boolean> {
+  await stillOn(page, doc);
+  await focus(page, doc, field.objectId, field.name);
+  await stillOn(page, doc);
   await call(page, "Input.insertText", { text });
   const length = parseCdp(
     LengthSchema,
     await call(page, "Runtime.callFunctionOn", {
-      objectId,
+      objectId: field.objectId,
       functionDeclaration: "function () { return this.value.length; }",
       returnByValue: true,
     }),
@@ -79,24 +118,17 @@ async function enter(page: Page, objectId: string, text: string): Promise<boolea
   return length.result.value === text.length;
 }
 
-export async function pageHost(page: Page): Promise<string> {
-  const href = await evaluate(page, "location.href");
-  try {
-    return new URL(String(href)).hostname.toLowerCase();
-  } catch {
-    return "";
-  }
-}
-
 function codeFor(creds: Credentials, allowed: boolean): string | undefined {
   return allowed && creds.totp !== undefined ? totpCode(creds.totp, Date.now()) : undefined;
 }
 
 export async function fillLogin(
   page: Page,
+  doc: Doc,
   creds: Credentials,
   codesAllowed: boolean,
 ): Promise<string> {
+  await stillOn(page, doc);
   const fields = await locate(page);
   const wanted: [Slot, string, string | undefined][] = [
     ["user", "username", creds.username],
@@ -108,7 +140,7 @@ export async function fillLogin(
   for (const [slot, name, text] of wanted) {
     const objectId = fields.get(slot);
     if (objectId === undefined || text === undefined) continue;
-    if (await enter(page, objectId, text)) filled.push(name);
+    if (await enter(page, doc, { objectId, name }, text)) filled.push(name);
     else failed.push(name);
   }
   if (failed.length > 0)

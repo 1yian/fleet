@@ -1,4 +1,5 @@
 import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { Cdp } from "@fleet/protocol";
 import { chromium, type Browser } from "playwright";
 import { isRecord, optionalString } from "./json.ts";
 
@@ -44,6 +45,36 @@ export class StandInChrome {
     return (await this.targets()).filter((target) => target.type === "page");
   }
 
+  async capture(target: string): Promise<string> {
+    const cdp = await Cdp.connect(this.endpoint);
+    try {
+      const sessionId = await attach(cdp, target);
+      const shot = await cdp.send("Page.captureScreenshot", { format: "png" }, { sessionId });
+      const data = isRecord(shot) ? optionalString(shot, "data") : undefined;
+      if (data === undefined) throw new Error("the tab gave no picture");
+      return data;
+    } finally {
+      cdp.close();
+    }
+  }
+
+  async navigate(target: string, url: string): Promise<void> {
+    const cdp = await Cdp.connect(this.endpoint);
+    try {
+      const sessionId = await attach(cdp, target);
+      const loaded = new Promise<void>((resolve) => {
+        cdp.listen((event) => {
+          if (event.sessionId === sessionId && event.method === "Page.loadEventFired") resolve();
+        });
+      });
+      await cdp.send("Page.enable", {}, { sessionId });
+      await cdp.send("Page.navigate", { url }, { sessionId });
+      await loaded;
+    } finally {
+      cdp.close();
+    }
+  }
+
   get port(): number {
     return Number(new URL(this.endpoint).port);
   }
@@ -51,6 +82,13 @@ export class StandInChrome {
   async stop(): Promise<void> {
     await this.browser.close();
   }
+}
+
+async function attach(cdp: Cdp, target: string): Promise<string> {
+  const attached = await cdp.send("Target.attachToTarget", { targetId: target, flatten: true });
+  const sessionId = isRecord(attached) ? optionalString(attached, "sessionId") : undefined;
+  if (sessionId === undefined) throw new Error("the tab did not attach");
+  return sessionId;
 }
 
 export class TcpProxy {

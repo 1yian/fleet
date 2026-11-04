@@ -3,14 +3,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
 import type { LoginsConfig } from "./browser-config.ts";
-import { fillLogin, pageHost, type Credentials } from "./browser-fill.ts";
-import type { Page } from "./browser-page.ts";
+import { fillLogin, type Credentials } from "./browser-fill.ts";
+import { documentOf, type Doc, type Page } from "./browser-page.ts";
 import type { Hosts } from "./pulls.ts";
 import { addEntry, getCard } from "./store.ts";
 
 const BWS_TIMEOUT_MS = 30_000;
 const BWS_OUTPUT_BYTES = 16 * 1024 * 1024;
-const HIDDEN = "[hidden]";
 
 const SecretsSchema = Type.Array(
   Type.Object({ id: Type.String(), key: Type.String(), value: Type.String() }),
@@ -101,12 +100,29 @@ function credentialsOf(entry: Secret): Credentials {
   }
 }
 
-export const scrubbed = (text: string, secrets: readonly (string | undefined)[]): string =>
-  secrets.reduce<string>(
-    (clean, secret) =>
-      secret === undefined || secret === "" ? clean : clean.split(secret).join(HIDDEN),
-    text,
-  );
+const valuesOf = (creds: Credentials): string[] => [
+  creds.username,
+  creds.password,
+  ...(creds.totp === undefined ? [] : [creds.totp]),
+];
+
+export async function valuesCovering(
+  logins: LoginsConfig,
+  hosts: Hosts,
+  host: string,
+): Promise<string[]> {
+  const covering = (await listSecrets(logins, hosts)).filter((secret) => {
+    const entryHost = hostOf(secret.key);
+    return entryHost !== undefined && covers(entryHost, host);
+  });
+  return covering.flatMap((entry) => {
+    try {
+      return valuesOf(credentialsOf(entry));
+    } catch {
+      return [];
+    }
+  });
+}
 
 function requestFor(db: DatabaseSync, card: number, site: string): string[] {
   const asked = db
@@ -131,19 +147,21 @@ export interface LoginContext {
   readonly logins: LoginsConfig | undefined;
   readonly card: number;
   readonly page: Page;
+  readonly hide: (values: readonly string[]) => void;
 }
 
 async function siteOf(
   page: Page,
   requested: string | undefined,
-): Promise<{ site: string; where: string }> {
-  const where = await pageHost(page);
+): Promise<{ site: string; where: string; doc: Doc }> {
+  const doc = await documentOf(page);
+  const where = doc.host;
   if (where === "")
     throw new Error("open the site's login page in your tab first, then call login");
   const site = (requested === undefined ? undefined : hostOf(requested)) ?? where;
   if (!covers(site, where) && !covers(where, site))
     throw new Error(`your tab is on ${where}, not ${site}: open ${site}'s login page first`);
-  return { site, where };
+  return { site, where, doc };
 }
 
 function notFound(context: LoginContext, site: string, where: string): Done {
@@ -151,13 +169,12 @@ function notFound(context: LoginContext, site: string, where: string): Done {
   const said =
     notify.length > 0 ? "I asked your mate to have one added" : "your mate was already asked";
   const text = `not found: the Logins project has no entry for ${where}, and ${said}. Nothing was filled. Wait for the captain to add it (report paused or blocked until then), then call login again.`;
-  return { text, notify, hidden: [] };
+  return { text, notify };
 }
 
 interface Done {
   readonly text: string;
   readonly notify: string[];
-  readonly hidden: string[];
 }
 
 export async function login(context: LoginContext, requested: string | undefined): Promise<Done> {
@@ -166,21 +183,15 @@ export async function login(context: LoginContext, requested: string | undefined
     throw new Error(
       "login is not set up on this fleet: cardd has no Bitwarden Logins project configured (docs/setup.md, The shared browser). Ask your mate",
     );
-  const { site, where } = await siteOf(page, requested);
+  const { site, where, doc } = await siteOf(page, requested);
   const entry = bestEntry(await listSecrets(logins, hosts), where);
   if (entry === undefined) return notFound(context, site, where);
   const creds = credentialsOf(entry);
-  return fillLogin(page, creds, logins.totp === true).then(
-    (text) => ({
-      text: `filled: ${text} Entry: ${entry.key}.`,
-      notify: [],
-      hidden: [creds.username, creds.password],
-    }),
+  context.hide(valuesOf(creds));
+  return fillLogin(page, doc, creds, logins.totp === true).then(
+    (text) => ({ text: `filled: ${text} Entry: ${entry.key}.`, notify: [] }),
     (error: unknown) => {
-      const why = error instanceof Error ? error.message : "it failed";
-      throw new Error(
-        `login failed: ${scrubbed(why, [creds.username, creds.password, creds.totp])}`,
-      );
+      throw new Error(`login failed: ${error instanceof Error ? error.message : "it failed"}`);
     },
   );
 }

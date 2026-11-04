@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +36,24 @@ export class FakeVault {
       ...entry,
     }));
     writeFileSync(join(this.dir, "secrets.json"), JSON.stringify(secrets));
+  }
+
+  revoke(): void {
+    writeFileSync(this.tokenFile, "0.a-token-the-vault-does-not-know\n");
+  }
+
+  restore(): void {
+    writeFileSync(this.tokenFile, `${TOKEN}\n`, { mode: 0o600 });
+  }
+
+  hold(): void {
+    execFileSync("mkfifo", [join(this.dir, "gate")]);
+  }
+
+  async release(): Promise<void> {
+    const gate = join(this.dir, "gate");
+    await writeFile(gate, "go\n");
+    rmSync(gate, { force: true });
   }
 
   get env(): Record<string, string> {

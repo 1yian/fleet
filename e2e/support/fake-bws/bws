@@ -5,6 +5,7 @@ for arg in "$@"; do
   esac
 done
 echo "$*" >> "$FAKE_BWS_DIR/invocations"
+if [ -p "$FAKE_BWS_DIR/gate" ]; then read -r _ < "$FAKE_BWS_DIR/gate"; fi
 if [ "${BWS_ACCESS_TOKEN:-}" != "$(cat "$FAKE_BWS_DIR/token")" ]; then
   echo "Error: the access token is not valid" >&2
   exit 1

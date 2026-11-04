@@ -50,6 +50,7 @@ const SizeSchema = Type.Object({
 interface Viewing {
   readonly session: string;
   readonly listeners: Set<(frame: Frame) => void>;
+  readonly lost: Set<() => void>;
   last: Frame | undefined;
 }
 
@@ -71,7 +72,9 @@ export class Screen {
         cdp.onClose(() => {
           if (this.link === link) this.link = undefined;
           this.sessions.clear();
+          const ended = [...this.viewing.values()];
           this.viewing.clear();
+          for (const each of ended) for (const lost of each.lost) lost();
         });
         cdp.listen((event) => {
           if (event.method === "Page.screencastFrame")
@@ -123,12 +126,16 @@ export class Screen {
       .catch(() => undefined);
   }
 
-  async watch(target: string, listener: (frame: Frame) => void): Promise<() => void> {
+  async watch(
+    target: string,
+    listener: (frame: Frame) => void,
+    lost: () => void,
+  ): Promise<() => void> {
     const cdp = await this.connection();
     const session = await this.session(cdp, target);
     let viewing = this.viewing.get(target);
     if (viewing === undefined) {
-      viewing = { session, listeners: new Set(), last: undefined };
+      viewing = { session, listeners: new Set(), lost: new Set(), last: undefined };
       this.viewing.set(target, viewing);
       await cdp.send("Target.activateTarget", { targetId: target });
       await cdp.send("Page.enable", {}, { sessionId: session });
@@ -138,12 +145,15 @@ export class Screen {
         { sessionId: session },
       );
     }
-    viewing.listeners.add(listener);
     viewing.last ??= await this.still(cdp, session);
+    viewing.listeners.add(listener);
+    viewing.lost.add(lost);
     listener(viewing.last);
     return () => {
       viewing.listeners.delete(listener);
-      if (viewing.listeners.size === 0) this.stop(cdp, target, session);
+      viewing.lost.delete(lost);
+      if (viewing.listeners.size === 0 && this.viewing.get(target) === viewing)
+        this.stop(cdp, target, session);
     };
   }
 

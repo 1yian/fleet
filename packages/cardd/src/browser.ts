@@ -1,21 +1,25 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Cdp, parseCdp, type BrowserArgs, type OpResult } from "@fleet/protocol";
 import Type from "typebox";
-import type { BrowserConfig } from "./browser-config.ts";
+import type { BrowserConfig, LoginsConfig } from "./browser-config.ts";
+import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
-import { login, scrubbed } from "./browser-login.ts";
+import { login, valuesCovering } from "./browser-login.ts";
 import {
   checkedUrl,
   clickPage,
+  cut,
+  documentOf,
   navigate,
   pressKey,
   readPage,
   runExpression,
-  screenshot,
   typeText,
   type Page,
 } from "./browser-page.ts";
+import { screenshot } from "./browser-shot.ts";
 import {
+  attemptStartedAt,
   cardEnded,
   labelOf,
   markClosed,
@@ -47,7 +51,8 @@ const TargetEventSchema = Type.Object({
 const DestroyedSchema = Type.Object({ targetId: Type.String() });
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-const isGone = (error: unknown): boolean => reason(error).includes("No target with given id");
+const isGone = (error: unknown): boolean =>
+  /no target (with given id|found for targetId)/i.test(reason(error));
 const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
 const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
 
@@ -55,6 +60,7 @@ export class Browser {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, string>();
   private readonly hidden = new Map<number, Set<string>>();
+  private readonly retired = new Set<string>();
   private readonly turns = new Map<number, Promise<unknown>>();
   private readonly db: DatabaseSync;
   private readonly config: BrowserConfig | undefined;
@@ -67,6 +73,7 @@ export class Browser {
   }
 
   view(): OpResult<"browser.view"> {
+    this.connection().catch(() => undefined);
     const tabs = openTabs(this.db).map((tab) => ({
       card: tab.card,
       name: getCard(this.db, tab.card).name,
@@ -107,27 +114,59 @@ export class Browser {
   }
 
   private async perform(card: number, args: BrowserArgs): Promise<Outcome> {
-    if (args.action === "close") {
-      const { closed, note } = await this.closeTabs(card);
-      const said = closed > 0 ? "Closed your tab." : "You had no tab open.";
-      return plain(note === null ? said : `${said} ${note}`);
-    }
+    if (args.action === "close") return plain(await this.closeOwn(card));
     const cdp = await this.connection();
     if (args.action === "open")
       return this.guarded(card, this.open(cdp, card, checkedUrl(args.url)).then(plain));
     const page = await this.pageOf(cdp, card);
-    return this.guarded(
-      card,
-      args.action === "login" ? this.signIn(page, card, args) : this.pageAction(page, args),
-    );
+    return this.guarded(card, this.onPage(page, card, args));
   }
 
-  private async signIn(page: Page, card: number, args: BrowserArgs): Promise<Outcome> {
-    const logins = this.config?.logins;
-    const done = await login({ db: this.db, hosts: this.hosts, logins, card, page }, args.site);
+  private async closeOwn(card: number): Promise<string> {
+    const { closed, note } = await this.closeTabs(card);
+    if (note !== null)
+      throw new Error(
+        `Your tab was not closed and stays open. ${note} Call close again when the browser answers.`,
+      );
+    return closed > 0 ? "Closed your tab." : "You had no tab open.";
+  }
+
+  private async onPage(page: Page, card: number, args: BrowserArgs): Promise<Outcome> {
+    if (args.action === "login") return this.signIn(page, card, args.site);
+    await this.known(card, page);
+    return this.pageAction(page, args, [...(this.hidden.get(card) ?? [])]);
+  }
+
+  private hide(card: number, values: readonly string[]): void {
     const known = this.hidden.get(card) ?? new Set<string>();
-    for (const value of done.hidden) known.add(value);
+    for (const value of values) known.add(value);
     this.hidden.set(card, known);
+  }
+
+  private async known(card: number, page: Page): Promise<void> {
+    if (this.hidden.has(card)) return;
+    const logins = this.config?.logins;
+    this.hide(card, logins === undefined ? [] : await this.recalled(logins, page));
+  }
+
+  private async recalled(logins: LoginsConfig, page: Page): Promise<string[]> {
+    const { host } = await documentOf(page);
+    try {
+      return await valuesCovering(logins, this.hosts, host);
+    } catch (error) {
+      throw new Error(
+        `this tab outlived a cardd restart, and the Logins project could not be read to learn which values on it to hide, so nothing was returned: ${reason(error)}. Try again when the vault answers`,
+        { cause: error },
+      );
+    }
+  }
+
+  private async signIn(page: Page, card: number, site: string | undefined): Promise<Outcome> {
+    const logins = this.config?.logins;
+    const hide = (values: readonly string[]): void => {
+      this.hide(card, values);
+    };
+    const done = await login({ db: this.db, hosts: this.hosts, logins, card, page, hide }, site);
     return { result: { text: done.text }, notify: done.notify };
   }
 
@@ -136,7 +175,7 @@ export class Browser {
     return work.then(
       (done) => ({
         notify: done.notify,
-        result: { ...done.result, text: scrubbed(done.result.text, secrets()) },
+        result: { ...done.result, text: cut(scrubbed(done.result.text, secrets())) },
       }),
       (error: unknown) => {
         throw new Error(scrubbed(reason(error), secrets()));
@@ -144,7 +183,11 @@ export class Browser {
     );
   }
 
-  private async pageAction(page: Page, args: BrowserArgs): Promise<Outcome> {
+  private async pageAction(
+    page: Page,
+    args: BrowserArgs,
+    secrets: readonly string[],
+  ): Promise<Outcome> {
     switch (args.action) {
       case "read":
         return plain(await readPage(page, args));
@@ -157,7 +200,7 @@ export class Browser {
       case "eval":
         return plain(await runExpression(page, args.expression));
       case "screenshot":
-        return { result: await screenshot(page, args.fullPage === true), notify: [] };
+        return { result: await screenshot(page, args.fullPage === true, secrets), notify: [] };
       case "login":
       case "open":
       case "close":
@@ -216,34 +259,60 @@ export class Browser {
         cdp.send("Target.closeTarget", { targetId: targetInfo.targetId }).catch(() => undefined);
     } else if (method === "Target.targetDestroyed") {
       const { targetId } = parseCdp(DestroyedSchema, params, "a closed target");
-      markClosed(this.db, targetId);
-      this.sessions.delete(targetId);
+      this.closed(targetId);
     }
+  }
+
+  private retire(tabs: readonly Tab[]): void {
+    for (const tab of tabs) this.retired.add(tab.target);
+  }
+
+  private closed(target: string): void {
+    markClosed(this.db, target);
+    this.sessions.delete(target);
+    this.retired.delete(target);
+  }
+
+  private stale(tab: Tab): boolean {
+    if (this.retired.has(tab.target)) return true;
+    const began = attemptStartedAt(this.db, tab.card);
+    return began !== undefined && tab.openedAt < began;
+  }
+
+  private async discard(cdp: Cdp, tab: Tab): Promise<void> {
+    try {
+      await cdp.send("Target.closeTarget", { targetId: tab.target });
+    } catch (error) {
+      if (!isGone(error)) return;
+    }
+    this.closed(tab.target);
+  }
+
+  private async current(cdp: Cdp, card: number): Promise<Tab | undefined> {
+    for (const tab of tabsOf(this.db, card)) {
+      if (!this.stale(tab)) return tab;
+      await this.discard(cdp, tab);
+    }
+    return undefined;
   }
 
   private async sweep(cdp: Cdp): Promise<void> {
     const listed = parseCdp(TargetsSchema, await cdp.send("Target.getTargets"), "the target list");
     const alive = new Set(listed.targetInfos.map((info) => info.targetId));
     for (const tab of openTabs(this.db)) {
-      if (!alive.has(tab.target)) markClosed(this.db, tab.target);
-      else if (cardEnded(this.db, tab.card))
-        await cdp.send("Target.closeTarget", { targetId: tab.target }).then(
-          () => {
-            markClosed(this.db, tab.target);
-          },
-          () => undefined,
-        );
+      if (!alive.has(tab.target)) this.closed(tab.target);
+      else if (cardEnded(this.db, tab.card) || this.stale(tab)) await this.discard(cdp, tab);
     }
   }
 
   private async open(cdp: Cdp, card: number, url: string): Promise<string> {
-    const own = tabsOf(this.db, card)[0] ?? (await this.create(cdp, card));
+    const own = (await this.current(cdp, card)) ?? (await this.create(cdp, card));
     let page: Page;
     try {
       page = await this.attach(cdp, own);
     } catch (error) {
       if (!isGone(error)) throw error;
-      markClosed(this.db, own.target);
+      this.closed(own.target);
       page = await this.attach(cdp, await this.create(cdp, card));
     }
     return `Opened ${await navigate(page, url)} in your tab ${labelOf(this.db, card)}.`;
@@ -255,8 +324,9 @@ export class Browser {
       await cdp.send("Target.createTarget", { url: "about:blank" }),
       "a new tab",
     );
-    const tab = { target: targetId, card, label: labelOf(this.db, card) };
+    const tab = { target: targetId, card, label: labelOf(this.db, card), openedAt: Date.now() };
     recordTab(this.db, tab);
+    if (!this.hidden.has(card)) this.hidden.set(card, new Set());
     return tab;
   }
 
@@ -281,14 +351,14 @@ export class Browser {
   }
 
   private async pageOf(cdp: Cdp, card: number): Promise<Page> {
-    const own = tabsOf(this.db, card)[0];
+    const own = await this.current(cdp, card);
     if (own === undefined)
       throw new Error("you have no tab yet: call browser with action open first");
     try {
       return await this.attach(cdp, own);
     } catch (error) {
       if (!isGone(error)) throw error;
-      markClosed(this.db, own.target);
+      this.closed(own.target);
       throw new Error("your tab was closed: call browser with action open again", { cause: error });
     }
   }
@@ -300,6 +370,7 @@ export class Browser {
     try {
       cdp = await this.connection();
     } catch (error) {
+      this.retire(tabs);
       return {
         closed: 0,
         note: `${reason(error)}. ${plural(tabs.length)} of c-${String(card)} stay open: cardd closes them when the browser answers again.`,
@@ -314,11 +385,11 @@ export class Browser {
         if (!cdp.open && retry) return this.closeTabs(card, false);
         if (!isGone(error)) {
           stuck.push(reason(error));
+          this.retire([tab]);
           continue;
         }
       }
-      markClosed(this.db, tab.target);
-      this.sessions.delete(tab.target);
+      this.closed(tab.target);
       this.hidden.delete(card);
       closed += 1;
     }

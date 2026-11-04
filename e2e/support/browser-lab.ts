@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BROWSER_OPS, check, type Card } from "@fleet/protocol";
+import { BROWSER_OPS, check, type Card, type OpResult } from "@fleet/protocol";
 import { Cardd, type Session } from "./cardd.ts";
-import { StandInChrome } from "./chrome.ts";
+import { StandInChrome, TcpProxy } from "./chrome.ts";
 import type { FakeVault } from "./fake-vault.ts";
 import { begin, newCard } from "./fleet.ts";
 import { Harness, type Turn } from "./harness.ts";
@@ -13,8 +13,32 @@ const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts",
 
 export interface RawWorker {
   readonly card: Card;
+  readonly token: string;
   readonly session: Session;
   readonly act: (args: Record<string, unknown>) => Promise<string>;
+  readonly shoot: () => Promise<string>;
+}
+
+function rawWorker(card: Card, token: string, session: Session): RawWorker {
+  const call = async (args: Record<string, unknown>): Promise<OpResult<"browser">> =>
+    check(BROWSER_OPS.browser.result, await session.call("browser", args));
+  return {
+    card,
+    token,
+    session,
+    act: async (args) => (await call(args)).text,
+    shoot: async () => {
+      const image = (await call({ action: "screenshot" })).image;
+      if (image === undefined) throw new Error("the screenshot came back without a picture");
+      return image.data;
+    },
+  };
+}
+
+export interface LabOptions {
+  readonly vault?: FakeVault;
+  readonly rules?: string;
+  readonly proxied?: boolean;
 }
 
 export interface Crew {
@@ -24,6 +48,7 @@ export interface Crew {
 
 export class BrowserLab {
   readonly chrome: StandInChrome;
+  readonly proxy: TcpProxy | undefined;
   readonly site: TestSite;
   readonly cardd: Cardd;
   readonly main: Session;
@@ -33,33 +58,35 @@ export class BrowserLab {
 
   private constructor(
     chrome: StandInChrome,
+    proxy: TcpProxy | undefined,
     site: TestSite,
     cardd: Cardd,
     main: Session,
     mainToken: string,
   ) {
     this.chrome = chrome;
+    this.proxy = proxy;
     this.site = site;
     this.cardd = cardd;
     this.main = main;
     this.mainToken = mainToken;
   }
 
-  static async start(
-    vault?: FakeVault,
+  static async start({
+    vault,
     rules = "MAP *.example.test 127.0.0.1, MAP *.nothing.test 127.0.0.1, MAP *.evil.test 127.0.0.1",
-  ): Promise<BrowserLab> {
+    proxied = false,
+  }: LabOptions = {}): Promise<BrowserLab> {
     const chrome = await StandInChrome.start(rules);
+    const proxy = proxied ? await TcpProxy.start(chrome.port) : undefined;
+    const endpoint = proxy?.endpoint ?? chrome.endpoint;
     const site = await TestSite.start();
-    const config =
-      vault === undefined
-        ? JSON.stringify({ cdp: chrome.endpoint })
-        : vault.config(chrome.endpoint);
+    const config = vault === undefined ? JSON.stringify({ cdp: endpoint }) : vault.config(endpoint);
     const cardd = await Cardd.start(vault?.env ?? {}, ["--browser", config]);
     cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
     const mainToken = cardd.addLane("main");
     const main = await cardd.connect(mainToken);
-    return new BrowserLab(chrome, site, cardd, main, mainToken);
+    return new BrowserLab(chrome, proxy, site, cardd, main, mainToken);
   }
 
   async crew(title: string): Promise<Crew> {
@@ -74,14 +101,14 @@ export class BrowserLab {
 
   async worker(title: string): Promise<RawWorker> {
     const card = await newCard(this.main, title);
-    const session = await this.cardd.connect(await begin(this.main, card, "browse"));
+    const token = await begin(this.main, card, "browse");
+    return this.reconnect({ card, token });
+  }
+
+  async reconnect({ card, token }: { card: Card; token: string }): Promise<RawWorker> {
+    const session = await this.cardd.connect(token);
     this.sessions.push(session);
-    return {
-      card,
-      session,
-      act: async (args) =>
-        check(BROWSER_OPS.browser.result, await session.call("browser", args)).text,
-    };
+    return rawWorker(card, token, session);
   }
 
   async stop(): Promise<void> {
@@ -90,6 +117,7 @@ export class BrowserLab {
       ...this.sessions.splice(0).map((session) => session.close()),
       ...this.harnesses.splice(0).map((h) => h.stop()),
       this.cardd.stop(),
+      this.proxy?.stop(),
       this.chrome.stop(),
       this.site.stop(),
     ]);

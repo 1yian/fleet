@@ -95,7 +95,9 @@ class Viewer {
     const send = (frame: Frame): void => {
       response.write(`data: ${JSON.stringify(frame)}\n\n`);
     };
-    const stop = await this.screen.watch(target, send);
+    const stop = await this.screen.watch(target, send, () => {
+      response.end();
+    });
     request.on("close", stop);
   }
 

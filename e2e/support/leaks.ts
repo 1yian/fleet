@@ -18,6 +18,18 @@ function filesUnder(root: string, skip: (name: string) => boolean): string[] {
   return found;
 }
 
+export function formsOf(secret: string): string[] {
+  const escaped = JSON.stringify(secret).slice(1, -1);
+  const encoded = encodeURIComponent(secret);
+  return [
+    secret,
+    escaped,
+    JSON.stringify(escaped).slice(1, -1),
+    encoded,
+    encoded.replaceAll("%20", "+"),
+  ];
+}
+
 export function filesHolding(
   secrets: readonly string[],
   root: string,
@@ -30,6 +42,6 @@ export function filesHolding(
     } catch {
       return false;
     }
-    return secrets.some((secret) => bytes.includes(secret));
+    return secrets.some((secret) => formsOf(secret).some((form) => bytes.includes(form)));
   });
 }

@@ -214,7 +214,15 @@ test("close and release close the card's tab, and a rerun finds nothing left", a
   assert.equal((await viewOf()).tabs.length, 0);
 });
 
-test("a browser that is down does not block release, and its tabs are closed once it is back", async () => {
+const pathsOpen = async (): Promise<string[]> =>
+  (await chrome.pages()).map((page) => new URL(page.url).pathname);
+
+async function closeCard(card: number): Promise<void> {
+  await main.call("close.begin", { card, landed: false });
+  await main.call("close.finish", { card, mode: "dropped", text: "gone", archives: [], left: [] });
+}
+
+test("a browser that is down does not block release, and a viewer poll closes the ended card's tab once it is back", async () => {
   const first = await worker("Users see one scrollbar");
   await act(first, { action: "open", url: site.url("/a") });
   const kept = await worker("Users see one footer");
@@ -225,19 +233,71 @@ test("a browser that is down does not block release, and its tabs are closed onc
   assert.match(down.note ?? "", /the shared browser is unreachable/);
   assert.match(down.note ?? "", /1 tab of c-1 stay open/);
   await assert.rejects(act(kept, { action: "read" }), /the shared browser is unreachable/);
+  await closeCard(first.card.id);
+  assert.equal((await viewOf()).tabs.length, 2);
 
-  await main.call("close.begin", { card: first.card.id, landed: false });
-  await main.call("close.finish", {
-    card: first.card.id,
-    mode: "dropped",
-    text: "gone",
-    archives: [],
-    left: [],
-  });
   await proxy.listen();
-  assert.match(await act(kept, { action: "read" }), /bravo page/);
+  const view = await until(async () => {
+    const polled = await viewOf();
+    return polled.tabs.length === 1 ? polled : undefined;
+  }, "a viewer poll to close the ended card's tab");
   assert.deepEqual(
-    (await chrome.pages()).map((page) => new URL(page.url).pathname),
-    ["/b"],
+    view.tabs.map((tab) => tab.card),
+    [kept.card.id],
   );
+  assert.deepEqual(await pathsOpen(), ["/b"]);
+  assert.match(await act(kept, { action: "read" }), /bravo page/);
+});
+
+test("a card whose tab could not be closed during a restart gets a fresh tab, not the old one", async () => {
+  const restarted = await worker("Users see one scrollbar");
+  await act(restarted, { action: "open", url: site.url("/a") });
+  const old = (await viewOf()).tabs[0]?.target ?? "";
+  await proxy.stop();
+  assert.match((await released(restarted.card.id)).note ?? "", /1 tab of c-1 stay open/);
+  await proxy.listen();
+
+  assert.match(await act(restarted, { action: "open", url: site.url("/b") }), /Bravo/);
+  const view = await viewOf();
+  assert.equal(view.tabs.length, 1);
+  assert.notEqual(view.tabs[0]?.target, old);
+  assert.deepEqual(await pathsOpen(), ["/b"]);
+  assert.equal(
+    await act(restarted, { action: "eval", expression: "document.body.dataset.owner" }),
+    '"b"',
+  );
+});
+
+test("an explicit close while the browser is down says the tab stays open, and works once it is back", async () => {
+  const own = await worker("Users see one scrollbar");
+  await act(own, { action: "open", url: site.url("/a") });
+  await proxy.stop();
+
+  await assert.rejects(
+    act(own, { action: "close" }),
+    /Your tab was not closed and stays open\..*the shared browser is unreachable/,
+  );
+  assert.equal((await viewOf()).tabs.length, 1);
+
+  await proxy.listen();
+  assert.equal(await act(own, { action: "close" }), "Closed your tab.");
+  assert.deepEqual(await pathsOpen(), []);
+  assert.equal((await viewOf()).tabs.length, 0);
+});
+
+test("open and read never reuse a tab that was opened before the card's current attempt began", async () => {
+  const own = await worker("Users see one scrollbar");
+  await act(own, { action: "open", url: site.url("/a") });
+  const old = (await viewOf()).tabs[0]?.target ?? "";
+  cardd.startAttemptAfterTabs(own.card.id);
+
+  await act(own, { action: "open", url: site.url("/b") });
+  const fresh = (await viewOf()).tabs;
+  assert.equal(fresh.length, 1);
+  assert.notEqual(fresh[0]?.target, old);
+  assert.deepEqual(await pathsOpen(), ["/b"]);
+
+  cardd.startAttemptAfterTabs(own.card.id);
+  await assert.rejects(act(own, { action: "read" }), /you have no tab yet/);
+  assert.deepEqual(await pathsOpen(), []);
 });
