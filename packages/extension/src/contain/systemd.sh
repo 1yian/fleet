@@ -18,27 +18,17 @@ cgroup_dir() {
   printf '/sys/fs/cgroup%s' "$path"
 }
 
-start_scope() {
-  set -- $roots
+backend_attach() {
+  if dir=$(cgroup_dir); then
+    for p in "$@"; do
+      echo "$p" >"$dir/cgroup.procs" 2>/dev/null || ! alive "$p" || return 1
+    done
+    return 0
+  fi
+  list=$#
   busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
     org.freedesktop.systemd1.Manager StartTransientUnit "ssa(sv)a(sa(sv))" \
-    "$scope" fail 2 PIDs au "$#" "$@" Description s "fleet worker $unit" 0 >/dev/null
-}
-
-await_cgroup() {
-  tries=0
-  until dir=$(cgroup_dir); do
-    tries=$((tries + 1))
-    [ "$tries" -lt 50 ] || return 1
-    sleep 0.1
-  done
-}
-
-backend_attach() {
-  dir=$(cgroup_dir) || { start_scope && await_cgroup || return 1; }
-  for p in "$@"; do
-    echo "$p" >"$dir/cgroup.procs" 2>/dev/null || ! alive "$p" || return 1
-  done
+    "$scope" fail 2 PIDs au "$list" "$@" Description s "fleet worker $unit" 0 >/dev/null
 }
 
 backend_members() {

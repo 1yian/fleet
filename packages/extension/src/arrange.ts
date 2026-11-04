@@ -1,7 +1,6 @@
 import { createConnection } from "node:net";
 import { field, herdr, isLocal, onFleetRoot, onHost, records } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
-import { mateTitle } from "./titles.ts";
 
 const SOCKET_WAIT_MS = 5000;
 const WORKER_MARK = "└ ";
@@ -191,27 +190,17 @@ export async function claimFollowers(lane: string): Promise<void> {
 
 const WORKTREE_CARD = /\.worktrees\/c-(\d+)-a\d+$/;
 
-interface WorkerCard {
-  readonly lane: string;
-  readonly name: string;
-}
-
-export async function settleWorkers(
+export async function tagUntaggedWorkers(
   host: string,
-  cards: ReadonlyMap<number, WorkerCard>,
+  laneOfCard: ReadonlyMap<number, string>,
 ): Promise<void> {
-  const spaces = new Map((await listed(host)).map((space) => [space.id, space]));
-  const lanes = new Set(["main", ...[...cards.values()].map((card) => card.lane)]);
-  const mateTitles = new Set([...lanes].map(mateTitle));
+  const tagged = new Set((await listed(host)).flatMap((s) => (s.lane === undefined ? [] : [s.id])));
   for (const pane of records((await herdr(host, ["pane", "list"]))["panes"])) {
     const workspace = field(pane, "workspace_id");
     const card = Number(WORKTREE_CARD.exec(field(pane, "cwd") ?? "")?.[1]);
-    const owner = cards.get(card);
-    const space = workspace === undefined ? undefined : spaces.get(workspace);
-    if (owner === undefined || space === undefined) continue;
-    spaces.delete(space.id);
-    if (mateTitles.has(bare(space.label)))
-      await herdr(host, ["workspace", "rename", space.id, owner.name]);
-    if (space.lane === undefined) await tagWorker(host, space.id, { lane: owner.lane, card });
+    const lane = laneOfCard.get(card);
+    if (workspace === undefined || lane === undefined || tagged.has(workspace)) continue;
+    tagged.add(workspace);
+    await tagWorker(host, workspace, { lane, card });
   }
 }
