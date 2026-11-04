@@ -74,9 +74,18 @@ test("main's workspace gets a Browser tab that runs the viewer", async () => {
   const address = await until(
     "the viewer's address",
     async () =>
-      /Fleet browser viewer: (http:\/\/127\.0\.0\.1:\d+\/)/.exec(await lab.history(tab.pane))?.[1],
+      /Fleet browser viewer: (http:\/\/127\.0\.0\.1:\d+\/\?t=[\w-]+)/.exec(
+        await lab.history(tab.pane),
+      )?.[1],
   );
-  const served = await fetch(address);
+  const bare = new URL(address);
+  bare.search = "";
+  assert.equal((await fetch(bare)).status, 403);
+  const entered = await fetch(address, { redirect: "manual" });
+  assert.equal(entered.status, 302);
+  const cookie = entered.headers.get("set-cookie")?.split(";")[0] ?? "";
+  assert.match(cookie, /^fleet_viewer=/);
+  const served = await fetch(bare, { headers: { cookie } });
   assert.equal(served.status, 200);
   assert.match(await served.text(), /<title>Fleet browser<\/title>/);
   assert.deepEqual(

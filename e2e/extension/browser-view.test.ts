@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { afterEach, beforeEach, test } from "node:test";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
+import { isRecord } from "../support/json.ts";
 import { spawnGuarded } from "../support/guarded.ts";
 import { tempDir } from "../support/run-root.ts";
 
@@ -157,6 +158,47 @@ test("the viewer answers only on its own address", async () => {
     probe.end();
   });
   assert.equal(status, 403);
+});
+
+test("every route needs the viewer's token, and the tokened address works", async () => {
+  const tokened = new URL(url);
+  const token = tokened.searchParams.get("t") ?? "";
+  assert.ok(token.length >= 32);
+  const bare = (path: string): URL => new URL(path, tokened.origin);
+  const routes: { path: string; method: string }[] = [
+    { path: "/", method: "GET" },
+    { path: "/api/tabs", method: "GET" },
+    { path: "/api/stream?target=any", method: "GET" },
+    { path: "/api/input", method: "POST" },
+    { path: "/anything", method: "GET" },
+  ];
+  for (const { path, method } of routes) {
+    const refused = await fetch(bare(path), { method, body: method === "POST" ? "{}" : null });
+    assert.equal(refused.status, 403, `${method} ${path} without a token`);
+    const withheld = new URL(bare(path));
+    withheld.searchParams.set("t", `${token}x`);
+    const wrong = await fetch(withheld, { method, body: method === "POST" ? "{}" : null });
+    assert.equal(wrong.status, 403, `${method} ${path} with a wrong token`);
+  }
+
+  const listed = new URL(bare("/api/tabs"));
+  listed.searchParams.set("t", token);
+  const tabs = await fetch(listed);
+  assert.equal(tabs.status, 200);
+  const listing: unknown = await tabs.json();
+  assert.ok(isRecord(listing) && Array.isArray(listing["tabs"]));
+  assert.equal(listing["tabs"].length, 2);
+
+  const entered = await fetch(url, { redirect: "manual" });
+  assert.equal(entered.status, 302);
+  assert.equal(entered.headers.get("location"), "/");
+  const cookie = entered.headers.get("set-cookie") ?? "";
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Strict/);
+  const withCookie = await fetch(bare("/api/tabs"), {
+    headers: { cookie: cookie.split(";")[0] ?? "" },
+  });
+  assert.equal(withCookie.status, 200);
 });
 
 test("when the connection to Chrome drops and returns, the picture follows the page again", async () => {

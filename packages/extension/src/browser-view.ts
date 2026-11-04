@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
@@ -39,6 +40,10 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
+const COOKIE = "fleet_viewer";
+
+const digest = (text: string): Buffer => createHash("sha256").update(text).digest();
+
 const json = (response: ServerResponse, status: number, body: unknown): void => {
   response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 };
@@ -48,9 +53,22 @@ class Viewer {
   private readonly cardd: Cardd;
   readonly screen = new Screen(() => this.endpoint);
   private allowed = new Set<string>();
+  private readonly token: string;
 
-  constructor(cardd: Cardd) {
+  constructor(cardd: Cardd, token: string) {
     this.cardd = cardd;
+    this.token = token;
+  }
+
+  private knows(candidate: string | null | undefined): boolean {
+    if (candidate === null || candidate === undefined) return false;
+    return timingSafeEqual(digest(candidate), digest(this.token));
+  }
+
+  private cookieOf(request: IncomingMessage): string | undefined {
+    const pairs = (request.headers.cookie ?? "").split(";").map((part) => part.trim());
+    const mine = pairs.find((pair) => pair.startsWith(`${COOKIE}=`));
+    return mine?.slice(COOKIE.length + 1);
   }
 
   allow(port: number): void {
@@ -113,13 +131,31 @@ class Viewer {
     } else response.writeHead(404).end();
   }
 
+  private enter(request: IncomingMessage, response: ServerResponse, url: URL): boolean {
+    const offered = url.searchParams.get("t");
+    if (this.knows(offered) && request.method === "GET" && url.pathname === "/") {
+      url.searchParams.delete("t");
+      response
+        .writeHead(302, {
+          location: `${url.pathname}${url.search}`,
+          "set-cookie": `${COOKIE}=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
+        })
+        .end();
+      return false;
+    }
+    if (this.knows(offered) || this.knows(this.cookieOf(request))) return true;
+    response.writeHead(403).end("the viewer needs its own address with its token");
+    return false;
+  }
+
   async answer(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (!this.permits(request)) {
       response.writeHead(403).end("the viewer answers only on its own address");
       return;
     }
     try {
-      await this.route(request, response, new URL(request.url ?? "/", "http://viewer"));
+      const url = new URL(request.url ?? "/", "http://viewer");
+      if (this.enter(request, response, url)) await this.route(request, response, url);
     } catch (error) {
       if (response.headersSent) response.end();
       else json(response, 502, { error: reason(error) });
@@ -138,7 +174,8 @@ async function main(): Promise<void> {
   const [home = process.cwd(), ...flags] = process.argv.slice(2);
   const lane = readLaneConfig(home);
   if (lane === undefined) throw new Error(`${home} has no config/lane.json`);
-  const viewer = new Viewer({ url: lane.url, token: lane.token });
+  const token = randomBytes(24).toString("base64url");
+  const viewer = new Viewer({ url: lane.url, token: lane.token }, token);
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });
@@ -146,7 +183,7 @@ async function main(): Promise<void> {
   const address: AddressInfo | string | null = server.address();
   if (address === null || typeof address === "string") throw new Error("the viewer has no address");
   viewer.allow(address.port);
-  const url = `http://127.0.0.1:${String(address.port)}/`;
+  const url = `http://127.0.0.1:${String(address.port)}/?t=${token}`;
   console.log(`Fleet browser viewer: ${url}`);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") open(url);
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
