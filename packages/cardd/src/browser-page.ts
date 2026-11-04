@@ -27,7 +27,10 @@ const EvalSchema = Type.Object({
     }),
   ),
 });
-const NavigateSchema = Type.Object({ errorText: Type.Optional(Type.String()) });
+const NavigateSchema = Type.Object({
+  errorText: Type.Optional(Type.String()),
+  loaderId: Type.Optional(Type.String()),
+});
 const FrameTreeSchema = Type.Object({
   frameTree: Type.Object({ frame: Type.Object({ loaderId: Type.String(), url: Type.String() }) }),
 });
@@ -116,20 +119,20 @@ export async function summary(page: Page): Promise<string> {
   return `"${found.title}" at ${found.url}`;
 }
 
+async function send(page: Page, url: string): Promise<boolean> {
+  const sent = parseCdp(NavigateSchema, await call(page, "Page.navigate", { url }), "a navigation");
+  if (sent.errorText !== undefined) throw new Error(`could not load ${url}: ${sent.errorText}`);
+  return sent.loaderId !== undefined;
+}
+
 export async function navigate(page: Page, url: string): Promise<string> {
   const wait = loaded(page);
-  try {
-    const sent = parseCdp(
-      NavigateSchema,
-      await call(page, "Page.navigate", { url }),
-      "a navigation",
-    );
-    if (sent.errorText !== undefined) throw new Error(`could not load ${url}: ${sent.errorText}`);
-  } catch (error) {
+  const replaces = await send(page, url).catch((error: unknown) => {
     wait.stop();
     throw error;
-  }
-  const finished = await wait.done;
+  });
+  if (!replaces) wait.stop();
+  const finished = !replaces || (await wait.done);
   const state = finished ? "" : " (still loading after 30 s)";
   return `${await summary(page)}${state}`;
 }

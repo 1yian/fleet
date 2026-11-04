@@ -12,8 +12,8 @@ export const BROKEN = "hunter2-not-json-a8b7c6d5";
 const TRICKY = `Q"u0te\\Back'slash 9&+%~!z7`;
 export const OTHER_USER = "other.captain@nothing.test";
 const OTHER_PASSWORD = "Zx9-other-secret-b7e41c0d";
-export const ALT_USER = "sailor.signin@example.test";
-export const ALT_PASSWORD = "Zq9xk2mwp&7-aligned-moose-4c8d3e1f";
+const ALT_USER = "sailor.signin@example.test";
+const ALT_PASSWORD = "Zq9xk2mwp&7-aligned-moose-4c8d3e1f";
 const SECRETS = [
   PASSWORD,
   USERNAME,
@@ -45,9 +45,12 @@ export const WITH_TRICKY = {
 
 export const REFUSAL =
   /^Error: the Logins project could not be read to learn which values to hide, so nothing was done/;
+export const CREDENTIAL_SHOWN =
+  /^Error: no picture was returned: this page shows a stored credential; read it as text, which hides it, or move past the login form$/;
+export const CLEAR_FIELDS =
+  "[...document.querySelectorAll('input')].forEach((el) => { el.value = ''; })";
 export const FIELD = (name: string): string => `document.querySelector("input[name=${name}]")`;
 export const ALL_VALUES = "[...document.querySelectorAll('input')].map((el) => el.value)";
-export const RETYPE = `document.querySelector("input[name=u]").value = "${ALT_USER}"; document.querySelector("input[name=p]").value = "${ALT_PASSWORD}"`;
 export const retext = (id: string, text: string): string =>
   `document.getElementById("${id}").textContent = "${text}"`;
 export const hidden = (text: string): string => JSON.stringify(text);

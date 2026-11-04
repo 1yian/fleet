@@ -6,15 +6,15 @@ import type { Turn } from "../support/harness.ts";
 import {
   ALL_VALUES,
   ALT,
-  ALT_USER,
   BROKEN,
+  CLEAR_FIELDS,
+  CREDENTIAL_SHOWN,
   FIELD,
   GOOD,
   OTHER,
   OTHER_USER,
   PASSWORD,
   REFUSAL,
-  RETYPE,
   USERNAME,
   WITH_TRICKY,
   assertNoSecretAnywhere as scan,
@@ -203,17 +203,13 @@ test("an entry that is not usable is reported as failed without its content", as
   assertNoSecretAnywhere([heard(worker.h.calls)]);
 });
 
-test("a screenshot after login shows no typed value, also after a show-password toggle", async () => {
+test("a screenshot after login is refused, also after a show-password toggle, and leaves the fields alone", async () => {
   await start([GOOD, ALT]);
   const worker = await signedIn();
   await worker.act({ action: "eval", expression: 'document.getElementById("reveal").click()' });
   assert.equal(await worker.act({ action: "eval", expression: `${FIELD("p")}.type` }), '"text"');
 
-  const covered = await worker.shoot();
-  await worker.act({ action: "eval", expression: RETYPE });
-  assert.equal(await worker.shoot(), covered);
-  assert.notEqual(await lab.chrome.capture(await tabOf(worker)), covered);
-
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
   const styles = await worker.act({
     action: "eval",
     expression: "[...document.querySelectorAll('input')].map((el) => el.style.length)",
@@ -296,7 +292,6 @@ test("login types nothing when the page moves to another host during the vault l
 test("after cardd restarts with the tab kept, eval and screenshots still hide the values", async () => {
   await start([GOOD, ALT]);
   const before = await signedIn();
-  const tab = await tabOf(before);
   await lab.cardd.restart();
   const worker = await lab.reconnect(before);
 
@@ -308,10 +303,9 @@ test("after cardd restarts with the tab kept, eval and screenshots still hide th
     await worker.act({ action: "eval", expression: `${FIELD("u")}.value` }),
     hidden("[hidden]"),
   );
-  const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(tab), covered);
-  await worker.act({ action: "eval", expression: RETYPE });
-  assert.equal(await worker.shoot(), covered);
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  assert.ok((await worker.shoot()).length > 0);
   assert.equal(vault.invocations().length, 3);
   assertNoSecretAnywhere();
 });
@@ -372,9 +366,9 @@ test("a fresh tab of another card never shows a username that a login put in the
     const title = await visitor.act({ action: "eval", expression: "document.title" });
     assert.match(title, /Account of \[hidden\]"$/);
     assert.equal(await visitor.act({ action: "read", selector: "#who" }), "[hidden]");
-    const covered = await visitor.shoot();
-    await visitor.act({ action: "eval", expression: retext("who", ALT_USER) });
-    assert.equal(await visitor.shoot(), covered);
+    await assert.rejects(visitor.shoot(), CREDENTIAL_SHOWN);
+    await visitor.act({ action: "eval", expression: retext("who", "someone") });
+    assert.ok((await visitor.shoot()).length > 0);
     seen.push(opened, title);
   }
   assertNoSecretAnywhere(seen);
@@ -464,6 +458,34 @@ test("with one-time codes on, a tab that outlived a cardd restart is refused unt
     await worker.act({ action: "open", url: lab.site.url("/login", "login.example.test") }),
     /^Opened /,
   );
+  const seen = [
+    await worker.act({ action: "eval", expression: `${FIELD("c")}.value` }),
+    await worker.act({ action: "read", selector: "form" }),
+  ];
+  assert.equal(seen[0], '""');
+  assert.doesNotMatch(seen[1] ?? "", /\d{6}/);
+  assert.ok((await worker.shoot()).length > 0);
+  assertNoSecretAnywhere(seen);
+});
+
+const KEPT =
+  /^Error: this tab was already open when cardd restarted, and the address you gave did not replace its page/;
+
+test("with one-time codes on, an open that only changes the fragment does not clear the refusal", async () => {
+  await start([GOOD], { totp: true });
+  const login = lab.site.url("/login", "login.example.test");
+  const before = await lab.worker("Sign in to the portal");
+  await before.act({ action: "open", url: login });
+  await before.act({ action: "login" });
+  await lab.cardd.restart();
+  const worker = await lab.reconnect(before);
+
+  await assert.rejects(worker.act({ action: "open", url: `${login}#again` }), KEPT);
+  await assert.rejects(worker.act({ action: "read" }), AGAIN);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("c")}.value` }), AGAIN);
+  await assert.rejects(worker.shoot(), AGAIN);
+
+  assert.match(await worker.act({ action: "open", url: `${login}?fresh=1` }), /^Opened /);
   const seen = [
     await worker.act({ action: "eval", expression: `${FIELD("c")}.value` }),
     await worker.act({ action: "read", selector: "form" }),

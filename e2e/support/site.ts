@@ -44,64 +44,67 @@ const PAGES: Readonly<Record<string, string>> = {
     </form></body>`,
   "/landing": `<!doctype html><title>Landing</title><body>
     <input name="q" type="text" autofocus></body>`,
-  "/nest": `<!doctype html><title>Nest</title><body>
+  "/places": `<!doctype html><title>Places</title><body>
+    <style>
+      #attr::before { content: attr(data-account); }
+      #after::after { content: attr(data-tail); }
+    </style>
     <form>
-      <input name="u" type="text" autocomplete="username" oninput="show(this.value, this.value)">
+      <input name="u" type="text" autocomplete="username" oninput="put(this.value)">
       <input name="p" type="password" autocomplete="current-password">
     </form>
-    <div id="shadow"></div>
-    <iframe id="same" style="width:320px;height:60px"></iframe>
-    <iframe id="cross" style="width:320px;height:60px"></iframe>
+    <div id="spot"></div>
     <script>
-      const root = document.getElementById("shadow").attachShadow({ mode: "open" });
-      root.innerHTML = "<p></p><input>";
+      const spot = document.getElementById("spot");
       const loaded = (frame, url) => new Promise((resolve) => { frame.onload = () => resolve(); frame.src = url; });
-      window.show = (text, field) => {
-        root.querySelector("p").textContent = text;
-        root.querySelector("input").value = field;
-        const path = "/account?as=" + encodeURIComponent(text);
-        const other = location.origin.replace("login.example.test", "login.nothing.test");
-        window.framesReady = Promise.all([
-          loaded(document.getElementById("same"), path),
-          loaded(document.getElementById("cross"), other + path),
-        ]);
-        return window.framesReady;
+      const framed = (host) => (text) => {
+        const frame = document.createElement("iframe");
+        spot.replaceChildren(frame);
+        const origin = host === "" ? "" : location.origin.replace("login.example.test", host);
+        return loaded(frame, origin + "/account?as=" + encodeURIComponent(text));
       };
-    </script></body>`,
-  "/split": `<!doctype html><title>Split</title><body>
-    <form>
-      <input name="u" type="text" autocomplete="username" oninput="show(this.value)">
-      <input name="p" type="password" autocomplete="current-password">
-    </form>
-    <p id="who"></p>
-    <script>
-      window.show = (text) => {
-        const first = Math.floor(text.length / 3);
-        const second = Math.floor((text.length * 2) / 3);
-        const strong = document.createElement("strong");
-        strong.textContent = text.slice(first, second);
-        document.getElementById("who").replaceChildren(text.slice(0, first), strong, text.slice(second));
+      const roots = {};
+      const rooted = (mode) => (text) => {
+        roots[mode] ??= (() => {
+          const holder = document.createElement("div");
+          holder.id = mode;
+          document.body.appendChild(holder);
+          const root = holder.attachShadow({ mode });
+          root.innerHTML = "<p></p>";
+          return root;
+        })();
+        roots[mode].querySelector("p").textContent = text;
       };
-    </script></body>`,
-  "/tick": `<!doctype html><title>Tick</title><body>
-    <form>
-      <input name="u" type="text" autocomplete="username">
-      <input name="p" type="password" autocomplete="current-password">
-    </form>
-    <p id="who"></p>
-    <script>
-      let current = "";
-      document.querySelector("[name=u]").addEventListener("input", (event) => { current = event.target.value; });
-      const shown = (text) => new Promise((resolve) => {
-        const check = () => (document.getElementById("who").textContent === text ? resolve("ready") : setTimeout(check, 5));
-        check();
-      });
-      window.shown = shown;
-      window.set = (text) => {
-        current = text;
-        return shown(text);
+      const places = {
+        split: (text) => {
+          const first = Math.floor(text.length / 3);
+          const second = Math.floor((text.length * 2) / 3);
+          const strong = document.createElement("strong");
+          strong.textContent = text.slice(first, second);
+          const line = document.createElement("p");
+          line.replaceChildren(text.slice(0, first), strong, text.slice(second));
+          spot.replaceChildren(line);
+        },
+        same: framed(""),
+        cross: framed("login.nothing.test"),
+        open: rooted("open"),
+        closed: rooted("closed"),
+        attr: (text) => { spot.innerHTML = '<span id="attr"></span>'; spot.firstChild.setAttribute("data-account", text); },
+        after: (text) => {
+          const half = Math.floor(text.length / 2);
+          spot.innerHTML = '<span id="after"></span>';
+          spot.firstChild.textContent = text.slice(0, half);
+          spot.firstChild.setAttribute("data-tail", text.slice(half));
+        },
+        option: (text) => {
+          spot.innerHTML = '<select><option value="1"></option></select>';
+          spot.querySelector("option").setAttribute("label", text);
+        },
+        attribute: (text) => { spot.innerHTML = "<span></span>"; spot.firstChild.setAttribute("aria-label", text); },
       };
-      setInterval(() => { document.getElementById("who").replaceChildren(document.createTextNode(current)); }, 10);
+      const at = new URLSearchParams(location.search).get("at");
+      window.ready = Promise.resolve();
+      window.put = (text) => (window.ready = Promise.resolve(places[at](text)).then(() => "ready"));
     </script></body>`,
   "/tall": `<!doctype html><title>Tall</title><body>
     <form>
@@ -110,31 +113,6 @@ const PAGES: Readonly<Record<string, string>> = {
     </form>
     <div style="height:1400px"></div>
     <p id="who"></p></body>`,
-  "/slide": `<!doctype html><title>Slide</title><body>
-    <style>@keyframes slide { from { margin-left: 0 } to { margin-left: 1000000px } }</style>
-    <form>
-      <input name="u" type="text" autocomplete="username" oninput="const who = document.getElementById('who'); who.textContent = this.value; who.style.animation = 'slide 100s linear forwards'">
-      <input name="p" type="password" autocomplete="current-password">
-    </form>
-    <p id="who"></p></body>`,
-  "/pseudo": `<!doctype html><title>Pseudo</title><body>
-    <style>#who::before { content: attr(data-account); }</style>
-    <form>
-      <input name="u" type="text" autocomplete="username" oninput="document.getElementById('who').setAttribute('data-account', this.value)">
-      <input name="p" type="password" autocomplete="current-password">
-    </form>
-    <span id="who" data-account=""></span></body>`,
-  "/closed": `<!doctype html><title>Closed</title><body>
-    <form>
-      <input name="u" type="text" autocomplete="username" oninput="window.hold(this.value)">
-      <input name="p" type="password" autocomplete="current-password">
-    </form>
-    <div id="host"></div>
-    <script>
-      const root = document.getElementById("host").attachShadow({ mode: "closed" });
-      root.innerHTML = "<p></p>";
-      window.hold = (text) => { root.querySelector("p").textContent = text; };
-    </script></body>`,
   "/fragile": `<!doctype html><title>Fragile</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value; this.form.p.remove()">

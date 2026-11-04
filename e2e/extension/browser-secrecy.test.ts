@@ -5,7 +5,7 @@ import { FakeVault } from "../support/fake-vault.ts";
 import {
   ALL_VALUES,
   ALT,
-  ALT_USER,
+  CREDENTIAL_SHOWN,
   FIELD,
   GOOD,
   OTHER,
@@ -147,9 +147,10 @@ test("a username stays hidden when its entry has no password, also after a cardd
     await worker.act({ action: "read", selector: "#who" }),
     await worker.act({ action: "eval", expression: "document.title" }),
   ];
-  const covered = await worker.shoot();
-  await worker.act({ action: "eval", expression: retext("who", ALT_USER) });
-  assert.equal(await worker.shoot(), covered);
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+  await worker.act({ action: "eval", expression: retext("who", "someone") });
+  assert.ok((await worker.shoot()).length > 0);
+  await worker.act({ action: "eval", expression: retext("who", USERNAME) });
   seen.push(await worker.act({ action: "open", url: account(USERNAME, "login.example.test") }));
 
   assert.equal(seen[0], "[hidden]");

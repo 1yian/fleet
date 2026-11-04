@@ -9,6 +9,7 @@ import {
   checkedUrl,
   clickPage,
   cut,
+  documentOf,
   navigate,
   pressKey,
   readPage,
@@ -131,11 +132,17 @@ export class Browser {
     );
   }
 
+  private mayHoldCode(target: string): boolean {
+    return this.config?.logins?.totp === true && !this.trusted.has(target);
+  }
+
   private mayShowCode(target: string, action: BrowserArgs["action"]): boolean {
-    return (
-      this.config?.logins?.totp === true &&
-      ["read", "eval", "screenshot"].includes(action) &&
-      !this.trusted.has(target)
+    return ["read", "eval", "screenshot"].includes(action) && this.mayHoldCode(target);
+  }
+
+  private kept(): Error {
+    return new Error(
+      "this tab was already open when cardd restarted, and the address you gave did not replace its page (it only changed the part after #, or it was not a page), so a one-time code may still be in it and the tab stays refused: call browser with action open and an address of a different page",
     );
   }
 
@@ -304,7 +311,9 @@ export class Browser {
       tab = await this.create(cdp, card);
       page = await this.attach(cdp, tab);
     }
+    const before = this.mayHoldCode(tab.target) ? (await documentOf(page)).loader : undefined;
     const where = await navigate(page, url);
+    if (before !== undefined && (await documentOf(page)).loader === before) throw this.kept();
     this.trusted.add(tab.target);
     return `Opened ${where} in your tab ${labelOf(this.db, card)}.`;
   }

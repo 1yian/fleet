@@ -3,18 +3,12 @@ import { afterEach, beforeEach, test } from "node:test";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { FakeVault } from "../support/fake-vault.ts";
 import {
-  ALT,
-  ALT_PASSWORD,
-  ALT_USER,
-  FIELD,
+  CLEAR_FIELDS,
+  CREDENTIAL_SHOWN,
   GOOD,
-  RETYPE,
-  USERNAME,
   assertNoSecretAnywhere as scan,
-  hidden,
   retext,
   signedIn as signIn,
-  tabOf as tabIn,
 } from "../support/login-fixtures.ts";
 
 let vault: FakeVault;
@@ -29,158 +23,105 @@ afterEach(async () => {
 });
 
 async function start(isolated = false): Promise<void> {
-  vault.publish([GOOD, ALT]);
+  vault.publish([GOOD]);
   lab = await BrowserLab.start({ vault, isolated });
 }
 
-const assertNoSecretAnywhere = (): void => {
-  scan(lab, vault);
-};
 const signedIn = (path: string): Promise<RawWorker> => signIn(lab, path);
 
-const LAST_CHILD = "document.documentElement.lastElementChild.tagName";
+const PNG = "iVBORw0KGgo";
+const HTML = "document.documentElement.outerHTML";
 
-test("a screenshot shows neither the fields nor the text a page echoes from them", async () => {
+async function refusedThenClean(worker: RawWorker, clean: string): Promise<void> {
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+  await worker.act({ action: "eval", expression: clean });
+  assert.ok((await worker.shoot()).startsWith(PNG));
+}
+
+test("a screenshot of the filled login form is refused, also after a show-password toggle", async () => {
   await start();
-  const worker = await signedIn("/echo");
-  const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
-  assert.equal(await worker.act({ action: "read", selector: "#u-echo" }), "[hidden]");
-  assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
+  const worker = await signedIn("/login");
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
 
-  await worker.act({ action: "eval", expression: RETYPE });
-  await worker.act({
-    action: "eval",
-    expression: `${retext("u-echo", ALT_USER)}; ${retext("p-echo", ALT_PASSWORD)}`,
-  });
-  assert.equal(await worker.shoot(), covered);
-  assertNoSecretAnywhere();
+  await worker.act({ action: "eval", expression: 'document.getElementById("reveal").click()' });
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+
+  await refusedThenClean(worker, CLEAR_FIELDS);
+  scan(lab, vault);
 });
 
-test("a screenshot after a login that failed halfway shows no echoed value either", async () => {
+test("a screenshot is refused when the page echoes the username in a paragraph", async () => {
+  await start();
+  const worker = await signedIn("/echo");
+  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await refusedThenClean(
+    worker,
+    `${retext("u-echo", "someone")}; ${retext("p-echo", "something")}`,
+  );
+  scan(lab, vault);
+});
+
+test("a screenshot is refused when a failed login left the username in the page", async () => {
   await start();
   const worker = await lab.worker("Sign in to the portal");
   await worker.act({ action: "open", url: lab.site.url("/fragile", "login.example.test") });
   await assert.rejects(worker.act({ action: "login" }), /^Error: login failed: /);
-  const covered = await worker.shoot();
+  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await refusedThenClean(worker, retext("u-echo", "someone"));
+  scan(lab, vault);
+});
 
+for (const [place, what] of [
+  ["split", "splits it across inline elements"],
+  ["same", "shows it in an iframe"],
+  ["cross", "shows it in an iframe of another site"],
+  ["open", "shows it in an open shadow root"],
+  ["closed", "shows it in a closed shadow root"],
+  ["attr", "draws it with a pseudo-element from an attribute"],
+  ["after", "joins its text to a generated ::after content"],
+  ["option", "shows it as the label of a select option"],
+  ["attribute", "holds it in an attribute and shows nothing"],
+] as const)
+  test(`a screenshot is refused when the page ${what}`, async () => {
+    await start(place === "cross");
+    const worker = await signedIn(`/places?at=${place}`);
+    await worker.act({ action: "eval", expression: "window.ready" });
+    await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+    await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+
+    await worker.act({ action: "eval", expression: `window.put("someone")` });
+    assert.ok((await worker.shoot()).startsWith(PNG));
+    scan(lab, vault);
+  });
+
+test("a screenshot of a clean signed-in page is returned and changes nothing on the page", async () => {
+  await start();
+  const worker = await signedIn("/login");
+  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await worker.act({ action: "click", selector: "#submit" });
   await worker.act({
     action: "eval",
-    expression: `${FIELD("u")}.value = "${ALT_USER}"; ${retext("u-echo", ALT_USER)}`,
+    expression: `new Promise((resolve) => {
+      const check = () => (document.getElementById("msg").textContent === "" ? setTimeout(check, 20) : resolve("ready"));
+      check();
+    })`,
   });
-  assert.equal(await worker.shoot(), covered);
-  assertNoSecretAnywhere();
+  const before = await worker.act({ action: "eval", expression: HTML });
+
+  const image = await worker.shoot();
+  assert.ok(image.startsWith(PNG));
+  assert.equal(await worker.act({ action: "eval", expression: HTML }), before);
+  scan(lab, vault);
 });
 
-test("a screenshot hides a value that the page splits across inline elements", async () => {
-  await start();
-  const worker = await signedIn("/split");
-  assert.equal(
-    await worker.act({
-      action: "eval",
-      expression: "document.getElementById('who').children.length",
-    }),
-    "1",
-  );
-  const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
-
-  await worker.act({ action: "eval", expression: `window.show("${ALT_USER}")` });
-  assert.equal(await worker.shoot(), covered);
-  assertNoSecretAnywhere();
-});
-
-test("a screenshot hides a value that the page rewrites all the time", async () => {
-  await start();
-  const worker = await signedIn("/tick");
-  await worker.act({ action: "eval", expression: `window.shown("${USERNAME}")` });
-  const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
-
-  await worker.act({ action: "eval", expression: `window.set("${ALT_USER}")` });
-  assert.equal(await worker.shoot(), covered);
-  assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
-  assertNoSecretAnywhere();
-});
-
-test("a screenshot shows no value inside an iframe, a cross-site iframe, or an open shadow root", async () => {
-  await start(true);
-  const worker = await signedIn("/nest");
-  await worker.act({ action: "eval", expression: "window.framesReady.then(() => 'ready')" });
-  const covered = await worker.shoot();
-  assert.equal(
-    await worker.act({
-      action: "eval",
-      expression: `document.getElementById("same").contentDocument.getElementById("who").textContent`,
-    }),
-    hidden("[hidden]"),
-  );
-
-  await worker.act({ action: "eval", expression: RETYPE });
-  await worker.act({
-    action: "eval",
-    expression: `window.show("${ALT_USER}", "${ALT_USER}").then(() => "ready")`,
-  });
-  assert.equal(await worker.shoot(), covered);
-  assertNoSecretAnywhere();
-});
-
-test("a full-page screenshot hides a value below the fold", async () => {
+test("a full-page screenshot refuses a value below the fold and then covers the whole page", async () => {
   await start();
   const worker = await signedIn("/tall");
-  const covered = await worker.shoot(true);
-  assert.ok(Buffer.from(covered, "base64").readUInt32BE(20) > 1400);
+  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await assert.rejects(worker.shoot(true), CREDENTIAL_SHOWN);
 
-  await worker.act({ action: "eval", expression: retext("who", ALT_USER) });
-  assert.equal(await worker.shoot(true), covered);
-  assertNoSecretAnywhere();
-});
-
-test("a screenshot of a page whose value moves by a CSS animation shows it nowhere", async () => {
-  await start();
-  const worker = await signedIn("/slide");
-  const covered = await worker.shoot();
-  assert.notEqual(await lab.chrome.capture(await tabIn(lab, worker)), covered);
-
-  await worker.act({ action: "eval", expression: retext("who", ALT_USER) });
-  assert.equal(await worker.shoot(), covered);
-  assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
-  assertNoSecretAnywhere();
-});
-
-test("a screenshot is refused when a pseudo-element draws a value from an attribute", async () => {
-  await start();
-  const worker = await signedIn("/pseudo");
-
-  await assert.rejects(
-    worker.shoot(),
-    /^Error: no picture was returned: the page draws a hidden value with a CSS pseudo-element/,
-  );
-  assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
-  assert.equal(
-    await worker.act({ action: "eval", expression: "document.querySelectorAll('style').length" }),
-    "2",
-  );
-
-  await worker.act({
-    action: "eval",
-    expression: `document.getElementById("who").setAttribute("data-account", "someone")`,
-  });
-  assert.ok((await worker.shoot()).length > 0);
-  assertNoSecretAnywhere();
-});
-
-test("a screenshot is refused when a closed shadow root shows a value", async () => {
-  await start();
-  const worker = await signedIn("/closed");
-
-  await assert.rejects(
-    worker.shoot(),
-    /^Error: no picture was returned: a closed shadow root on the page shows a hidden value/,
-  );
-  assert.equal(await worker.act({ action: "eval", expression: LAST_CHILD }), hidden("BODY"));
-
-  await worker.act({ action: "eval", expression: `window.hold("someone")` });
-  assert.ok((await worker.shoot()).length > 0);
-  assertNoSecretAnywhere();
+  await worker.act({ action: "eval", expression: retext("who", "someone") });
+  const image = await worker.shoot(true);
+  assert.ok(Buffer.from(image, "base64").readUInt32BE(20) > 1400);
+  scan(lab, vault);
 });
