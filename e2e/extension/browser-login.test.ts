@@ -7,9 +7,10 @@ import {
   ALL_VALUES,
   ALT,
   BROKEN,
-  CLEAR_FIELDS,
   CREDENTIAL_SHOWN,
   FIELD,
+  FILLED,
+  FILLED_NOTE,
   GOOD,
   OTHER,
   OTHER_USER,
@@ -18,6 +19,7 @@ import {
   USERNAME,
   WITH_TRICKY,
   assertNoSecretAnywhere as scan,
+  clearedByHand,
   hidden,
   retext,
   signedIn as signIn,
@@ -51,6 +53,7 @@ const assertNoSecretAnywhere = (spoken: readonly string[] = []): void => {
 };
 const signedIn = (path?: string): Promise<RawWorker> => signIn(lab, path);
 const tabOf = (worker: RawWorker): Promise<string> => tabIn(lab, worker);
+const cleared = (worker: RawWorker): Promise<void> => clearedByHand(lab, worker);
 
 test("login fills the page's username and password without the worker ever seeing them", async () => {
   await start();
@@ -71,9 +74,7 @@ test("login fills the page's username and password without the worker ever seein
     seen[1],
     "filled: Filled the username and password. The entry has a one-time-code seed, which the fleet does not fill yet. Entry: example.test.",
   );
-  assert.equal(seen[2], '""');
-  assert.equal(seen[3], '"[hidden]"');
-  assert.equal(seen[4], '"[hidden]"');
+  assert.deepEqual(seen.slice(2, 5), [FILLED_NOTE, FILLED_NOTE, FILLED_NOTE]);
   assert.equal(seen[6], "Welcome back");
   assert.deepEqual(lab.site.posted, [{ username: USERNAME, password: PASSWORD, code: "" }]);
   assert.equal(vault.invocations().length, 2);
@@ -206,41 +207,77 @@ test("an entry that is not usable is reported as failed without its content", as
 test("a screenshot after login is refused, also after a show-password toggle, and leaves the fields alone", async () => {
   await start([GOOD, ALT]);
   const worker = await signedIn();
-  await worker.act({ action: "eval", expression: 'document.getElementById("reveal").click()' });
-  assert.equal(await worker.act({ action: "eval", expression: `${FIELD("p")}.type` }), '"text"');
+  const tab = await tabOf(worker);
+  await worker.act({ action: "click", selector: "#reveal" });
+  assert.equal(await lab.chrome.evaluate(tab, `${FIELD("p")}.type`), "text");
 
   await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
-  const styles = await worker.act({
-    action: "eval",
-    expression: "[...document.querySelectorAll('input')].map((el) => el.style.length)",
-  });
-  assert.deepEqual(JSON.parse(styles), [0, 0, 0]);
+  const styles = await lab.chrome.evaluate(
+    tab,
+    "[...document.querySelectorAll('input')].map((el) => el.style.length)",
+  );
+  assert.deepEqual(styles, [0, 0, 0]);
   assertNoSecretAnywhere();
 });
 
 test("a password with quotes and backslashes does not come back through eval", async () => {
   await start([WITH_TRICKY]);
-  const worker = await signedIn();
+  const worker = await signedIn("/echo");
+  await cleared(worker);
+  const echoed = 'document.getElementById("p-echo").textContent';
   const seen = [
-    await worker.act({ action: "eval", expression: `${FIELD("p")}.value` }),
+    await worker.act({ action: "eval", expression: echoed }),
     await worker.act({
       action: "eval",
-      expression: `({ p: ${FIELD("p")}.value, all: ${ALL_VALUES} })`,
+      expression: `({ p: ${echoed}, all: ${ALL_VALUES} })`,
     }),
     await worker.act({
       action: "eval",
-      expression: `new URLSearchParams({ p: ${FIELD("p")}.value }).toString()`,
+      expression: `new URLSearchParams({ p: ${echoed} }).toString()`,
     }),
     await worker.act({
       action: "eval",
-      expression: `history.replaceState(null, "", "#" + encodeURIComponent(${FIELD("p")}.value)); location.href`,
+      expression: `history.replaceState(null, "", "#" + encodeURIComponent(${echoed})); location.href`,
     }),
   ];
   assert.equal(seen[0], hidden("[hidden]"));
-  assert.deepEqual(JSON.parse(seen[1] ?? ""), { p: "[hidden]", all: ["[hidden]", "[hidden]", ""] });
+  assert.deepEqual(JSON.parse(seen[1] ?? ""), { p: "[hidden]", all: ["", ""] });
   assert.equal(seen[2], hidden("p=[hidden]"));
-  assert.match(seen[3] ?? "", /\/login#\[hidden\]"$/);
+  assert.match(seen[3] ?? "", /\/echo#\[hidden\]"$/);
   assertNoSecretAnywhere(seen);
+});
+
+test("eval is refused while a login-filled field holds a value, and allowed again once the page moves on", async () => {
+  await start();
+  const worker = await lab.worker("Sign in to the portal");
+  const portal = lab.site.url("/portal", "login.example.test");
+  await worker.act({ action: "open", url: portal });
+  await worker.act({ action: "login" });
+
+  const reverse = `${FIELD("p")}.value.split("").reverse().join("")`;
+  await assert.rejects(worker.act({ action: "eval", expression: reverse }), FILLED);
+  await assert.rejects(worker.act({ action: "eval", expression: "location.pathname" }), FILLED);
+  assert.equal(await worker.act({ action: "read", selector: "#u-echo" }), "[hidden]");
+  assert.match(await worker.act({ action: "open", url: `${portal}#again` }), /^Opened /);
+  await assert.rejects(worker.act({ action: "eval", expression: reverse }), FILLED);
+
+  await worker.act({ action: "click", selector: "#submit" });
+  const moved = await until(
+    () => worker.act({ action: "eval", expression: "location.pathname" }).catch(() => undefined),
+    "the page to move on",
+  );
+  assert.equal(moved, '"/landing"');
+  assert.deepEqual(lab.site.posted, [{ username: USERNAME, password: PASSWORD, code: "" }]);
+
+  await worker.act({ action: "open", url: portal });
+  await worker.act({ action: "login" });
+  await assert.rejects(worker.act({ action: "eval", expression: reverse }), FILLED);
+  await worker.act({ action: "open", url: `${portal}?again=1` });
+  assert.deepEqual(JSON.parse(await worker.act({ action: "eval", expression: ALL_VALUES })), [
+    "",
+    "",
+  ]);
+  assertNoSecretAnywhere();
 });
 
 test("a login that fails halfway leaves nothing readable", async () => {
@@ -251,12 +288,9 @@ test("a login that fails halfway leaves nothing readable", async () => {
     worker.act({ action: "login" }),
     /^Error: login failed: the password field left the page before it could be filled, so it was not typed$/,
   );
-  const seen = [
-    await worker.act({ action: "read", selector: "#u-echo" }),
-    await worker.act({ action: "eval", expression: `${FIELD("u")}.value` }),
-    await worker.act({ action: "eval", expression: `${FIELD("u")}.value.length` }),
-  ];
-  assert.deepEqual(seen, ["[hidden]", hidden("[hidden]"), String(USERNAME.length)]);
+  const seen = [await worker.act({ action: "read", selector: "#u-echo" })];
+  assert.deepEqual(seen, ["[hidden]"]);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("u")}.value` }), FILLED);
   assertNoSecretAnywhere(seen);
 });
 
@@ -289,24 +323,26 @@ test("login types nothing when the page moves to another host during the vault l
   assertNoSecretAnywhere();
 });
 
-test("after cardd restarts with the tab kept, eval and screenshots still hide the values", async () => {
+test("after cardd restarts with the tab kept, eval and screenshots still refuse the values until the fields are empty", async () => {
   await start([GOOD, ALT]);
   const before = await signedIn();
   await lab.cardd.restart();
   const worker = await lab.reconnect(before);
 
-  assert.equal(
-    await worker.act({ action: "eval", expression: `${FIELD("p")}.value` }),
-    hidden("[hidden]"),
-  );
-  assert.equal(
-    await worker.act({ action: "eval", expression: `${FIELD("u")}.value` }),
-    hidden("[hidden]"),
-  );
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), FILLED);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("u")}.value` }), FILLED);
   await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
-  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  const login = lab.site.url("/login", "login.example.test");
+  assert.match(await worker.act({ action: "open", url: `${login}#again` }), /^Opened /);
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), FILLED);
+  await cleared(worker);
+  assert.deepEqual(JSON.parse(await worker.act({ action: "eval", expression: ALL_VALUES })), [
+    "",
+    "",
+    "",
+  ]);
   assert.ok((await worker.shoot()).length > 0);
-  assert.equal(vault.invocations().length, 3);
+  assert.equal(vault.invocations().length, 4);
   assertNoSecretAnywhere();
 });
 
@@ -391,6 +427,7 @@ test("an entry added to the vault after the hidden values were loaded is hidden 
 test("the HTML of a page does not give a value back either", async () => {
   await start();
   const worker = await signedIn("/echo");
+  await cleared(worker);
   const seen = [
     await worker.act({ action: "read", selector: "#p-echo", html: true }),
     await worker.act({ action: "eval", expression: "document.body.outerHTML" }),
@@ -406,9 +443,10 @@ test("the HTML of a page does not give a value back either", async () => {
 test("a value that the page writes into an attribute does not come back through its HTML", async () => {
   await start([WITH_TRICKY]);
   const worker = await signedIn("/echo");
+  await cleared(worker);
   const html = await worker.act({
     action: "eval",
-    expression: `(() => { const el = document.getElementById("p-echo"); el.setAttribute("title", ${FIELD("p")}.value); return [el.outerHTML, el.innerHTML]; })()`,
+    expression: `(() => { const el = document.getElementById("p-echo"); el.setAttribute("title", el.textContent); return [el.outerHTML, el.innerHTML]; })()`,
   });
   assert.deepEqual(JSON.parse(html), ['<p id="p-echo" title="[hidden]">[hidden]</p>', "[hidden]"]);
   assertNoSecretAnywhere([html]);
@@ -422,12 +460,10 @@ test("a one-time code that login generates is hidden like the other values", asy
     await worker.act({ action: "login" }),
     /^filled: Filled the username and password and one-time code\./,
   );
-  const seen = [
-    await worker.act({ action: "eval", expression: `${FIELD("c")}.value` }),
-    await worker.act({ action: "read", selector: "form", html: true }),
-  ];
-  assert.equal(seen[0], hidden("[hidden]"));
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("c")}.value` }), FILLED);
+  const seen = [await worker.act({ action: "read", selector: "form", html: true })];
   assert.doesNotMatch(seen.join("\n"), /\d{6}/);
+  await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
 
   await worker.act({ action: "click", selector: "#submit" });
   await until(() => (lab.site.posted.length === 1 ? true : undefined), "the sign-in to be posted");
@@ -443,10 +479,7 @@ test("with one-time codes on, a tab that outlived a cardd restart is refused unt
   const before = await lab.worker("Sign in to the portal");
   await before.act({ action: "open", url: lab.site.url("/login", "login.example.test") });
   await before.act({ action: "login" });
-  assert.equal(
-    await before.act({ action: "eval", expression: `${FIELD("c")}.value` }),
-    hidden("[hidden]"),
-  );
+  await assert.rejects(before.act({ action: "eval", expression: `${FIELD("c")}.value` }), FILLED);
   await lab.cardd.restart();
   const worker = await lab.reconnect(before);
 

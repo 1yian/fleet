@@ -36,6 +36,13 @@ const PAGES: Readonly<Record<string, string>> = {
       <button id="reveal" type="button" onclick="const p = this.form.p; p.type = p.type === 'password' ? 'text' : 'password'">show</button>
       <button id="submit" type="submit">Sign in</button>
     </form><p id="msg"></p></body>`,
+  "/portal": `<!doctype html><title>Portal</title><body>
+    <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/landing'; })">
+      <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value">
+      <input name="p" type="password" autocomplete="current-password" oninput="document.getElementById('p-echo').textContent = this.value">
+      <button id="submit" type="submit">Sign in</button>
+    </form>
+    <p id="u-echo"></p><p id="p-echo"></p></body>`,
   "/echo": `<!doctype html><title>Echo</title><body>
     <form>
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value">

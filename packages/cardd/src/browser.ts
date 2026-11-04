@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { Cdp, parseCdp, type BrowserArgs, type OpResult } from "@fleet/protocol";
 import Type from "typebox";
 import type { BrowserConfig } from "./browser-config.ts";
+import { holdsSecret } from "./browser-fill.ts";
 import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
 import { login } from "./browser-login.ts";
@@ -63,6 +64,7 @@ export class Browser {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, string>();
   private readonly trusted = new Set<string>();
+  private readonly filled = new Map<string, string>();
   private readonly turns = new Map<number, Promise<unknown>>();
   private readonly db: DatabaseSync;
   private readonly config: BrowserConfig | undefined;
@@ -128,8 +130,8 @@ export class Browser {
     if (this.mayShowCode(target, args.action)) throw this.restarted();
     return this.guarded(
       args.action === "login"
-        ? this.signIn(page, card, args.site)
-        : this.pageAction(page, args, this.vault.values),
+        ? this.signIn(page, card, target, args.site)
+        : this.pageAction(page, target, args, this.vault.values),
     );
   }
 
@@ -162,9 +164,31 @@ export class Browser {
     return closed > 0 ? "Closed your tab." : "You had no tab open.";
   }
 
-  private async signIn(page: Page, card: number, site: string | undefined): Promise<Outcome> {
-    const done = await login({ db: this.db, vault: this.vault, card, page }, site);
+  private async signIn(
+    page: Page,
+    card: number,
+    target: string,
+    site: string | undefined,
+  ): Promise<Outcome> {
+    const mark = (loader: string): void => {
+      this.filled.set(target, loader);
+    };
+    const done = await login({ db: this.db, vault: this.vault, card, page, mark }, site);
     return { result: { text: done.text }, notify: done.notify };
+  }
+
+  private async refuseWhileFilled(page: Page, target: string): Promise<void> {
+    const loader = this.filled.get(target);
+    if (loader === undefined && this.trusted.has(target)) return;
+    if (loader !== undefined && (await documentOf(page)).loader !== loader) {
+      this.filled.delete(target);
+      return;
+    }
+    if (await holdsSecret(page, this.vault.values))
+      throw new Error(
+        "nothing was evaluated: a stored credential is in this page's form; click Sign in first, or read the page as text",
+      );
+    this.filled.delete(target);
   }
 
   private guarded(work: Promise<Outcome>): Promise<Outcome> {
@@ -181,6 +205,7 @@ export class Browser {
 
   private async pageAction(
     page: Page,
+    target: string,
     args: BrowserArgs,
     secrets: readonly string[],
   ): Promise<Outcome> {
@@ -194,6 +219,7 @@ export class Browser {
       case "press":
         return plain(await pressKey(page, args.key));
       case "eval":
+        await this.refuseWhileFilled(page, target);
         return plain(await runExpression(page, args.expression, secrets));
       case "screenshot":
         return { result: await screenshot(page, args.fullPage === true, secrets), notify: [] };
@@ -267,6 +293,7 @@ export class Browser {
     markClosed(this.db, target);
     this.sessions.delete(target);
     this.trusted.delete(target);
+    this.filled.delete(target);
   }
 
   private stale(tab: Tab): boolean {
@@ -316,10 +343,11 @@ export class Browser {
       tab = await this.create(cdp, card);
       page = await this.attach(cdp, tab);
     }
-    const before = this.mayHoldCode(tab.target) ? (await documentOf(page)).loader : undefined;
+    const before = this.trusted.has(tab.target) ? undefined : (await documentOf(page)).loader;
     const where = await navigate(page, url);
-    if (before !== undefined && (await documentOf(page)).loader === before) throw this.kept();
-    this.trusted.add(tab.target);
+    const replaced = before === undefined || (await documentOf(page)).loader !== before;
+    if (!replaced && this.mayHoldCode(tab.target)) throw this.kept();
+    if (replaced) this.trusted.add(tab.target);
     return `Opened ${where} in your tab ${labelOf(this.db, card)}.`;
   }
 

@@ -7,6 +7,7 @@ import {
   ALT,
   CREDENTIAL_SHOWN,
   FIELD,
+  FILLED,
   GOOD,
   OTHER,
   OTHER_USER,
@@ -14,8 +15,10 @@ import {
   USERNAME,
   WITH_TRICKY,
   assertNoSecretAnywhere as scan,
+  clearedByHand,
   retext,
   signedIn as signIn,
+  tabOf as tabIn,
   until,
 } from "../support/login-fixtures.ts";
 
@@ -39,14 +42,19 @@ const assertNoSecretAnywhere = (spoken: readonly string[] = []): void => {
   scan(lab, vault, spoken);
 };
 const signedIn = (path?: string): Promise<RawWorker> => signIn(lab, path);
+const cleared = (worker: RawWorker): Promise<void> => clearedByHand(lab, worker);
+
+const pathOf = (worker: RawWorker): Promise<string> =>
+  worker.act({ action: "eval", expression: "location.pathname" }).catch(() => "");
 
 const account = (who: string, host: string): string =>
   lab.site.url(`/account?as=${encodeURIComponent(who)}`, host);
 
 test("a password the page serialized itself does not come back through eval", async () => {
   await start([WITH_TRICKY]);
-  const worker = await signedIn();
-  const once = `JSON.stringify({ password: ${FIELD("p")}.value })`;
+  const worker = await signedIn("/echo");
+  await cleared(worker);
+  const once = `JSON.stringify({ password: document.getElementById("p-echo").textContent })`;
   const seen = [
     await worker.act({ action: "eval", expression: once }),
     await worker.act({ action: "eval", expression: `JSON.stringify([${once}])` }),
@@ -70,10 +78,7 @@ test("a replacement page never receives a value, even when it commits in the mid
     (error: unknown) => String(error),
   );
   await until(
-    async () =>
-      (await worker.act({ action: "eval", expression: "location.pathname" })) === '"/landing"'
-        ? true
-        : undefined,
+    async () => ((await pathOf(worker)) === '"/landing"' ? true : undefined),
     "the redirect to commit",
   );
 
@@ -224,11 +229,8 @@ const OUTPUT_REFUSED =
 async function splitPage(): Promise<RawWorker> {
   await start();
   const worker = await signedIn("/places?at=split");
+  await cleared(worker);
   await worker.act({ action: "eval", expression: "window.ready" });
-  await worker.act({
-    action: "eval",
-    expression: `[...document.querySelectorAll('input')].forEach((el) => { el.value = ''; })`,
-  });
   return worker;
 }
 
@@ -354,6 +356,7 @@ test("login reports a password field that rewrites what is typed into it as fail
     worker.act({ action: "login" }),
     /^Error: login failed: the page did not keep the password that was typed into it$/,
   );
-  assert.equal(await worker.act({ action: "eval", expression: `${FIELD("p")}.value` }), '""');
+  assert.equal(await lab.chrome.evaluate(await tabIn(lab, worker), `${FIELD("p")}.value`), "");
+  await assert.rejects(worker.act({ action: "eval", expression: `${FIELD("u")}.value` }), FILLED);
   assertNoSecretAnywhere();
 });

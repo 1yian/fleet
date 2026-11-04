@@ -43,12 +43,14 @@ export const WITH_TRICKY = {
   value: JSON.stringify({ username: USERNAME, password: TRICKY }),
 };
 
+export const FILLED_NOTE =
+  "nothing was evaluated: a stored credential is in this page's form; click Sign in first, or read the page as text";
+export const FILLED = new RegExp(`^Error: ${FILLED_NOTE}$`);
 export const REFUSAL =
   /^Error: the Logins project could not be read to learn which values to hide, so nothing was done/;
 export const CREDENTIAL_SHOWN =
   /^Error: no picture was returned: this page shows a stored credential; read it as text, which hides it, or move past the login form$/;
-export const CLEAR_FIELDS =
-  "[...document.querySelectorAll('input')].forEach((el) => { el.value = ''; })";
+const CLEAR_FIELDS = "[...document.querySelectorAll('input')].forEach((el) => { el.value = ''; })";
 export const FIELD = (name: string): string => `document.querySelector("input[name=${name}]")`;
 export const ALL_VALUES = "[...document.querySelectorAll('input')].map((el) => el.value)";
 export const retext = (id: string, text: string): string =>
@@ -75,6 +77,13 @@ export async function tabOf(lab: BrowserLab, worker: RawWorker): Promise<string>
   const target = view.tabs.find((tab) => tab.card === worker.card.id)?.target;
   if (target === undefined) throw new Error("the card has no tab");
   return target;
+}
+
+export async function clearedByHand(lab: BrowserLab, worker: RawWorker): Promise<void> {
+  const label = `c-${String(worker.card.id)} `;
+  const tab = (await lab.chrome.pages()).find((page) => page.title.startsWith(label));
+  if (tab === undefined) throw new Error("the card has no tab");
+  await lab.chrome.evaluate(tab.id, CLEAR_FIELDS);
 }
 
 export async function signedIn(lab: BrowserLab, path = "/login"): Promise<RawWorker> {

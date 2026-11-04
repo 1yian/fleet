@@ -51,6 +51,31 @@ const TYPE = `function (text) {
   return "kept";
 }`;
 
+const HeldSchema = Type.Object({ result: Type.Object({ value: Type.Boolean() }) });
+
+const HOLDS = `function (secrets) {
+  return [...this.querySelectorAll("input, textarea")].some((el) => secrets.some((secret) => secret !== "" && el.value.includes(secret)));
+}`;
+
+export async function holdsSecret(page: Page, secrets: readonly string[]): Promise<boolean> {
+  const handle = parseCdp(
+    HandleSchema,
+    await call(page, "Runtime.evaluate", { expression: "document" }),
+    "the page's document",
+  );
+  const held = parseCdp(
+    HeldSchema,
+    await call(page, "Runtime.callFunctionOn", {
+      objectId: handle.result.objectId,
+      functionDeclaration: HOLDS,
+      arguments: [{ value: secrets }],
+      returnByValue: true,
+    }),
+    "the page's fields",
+  );
+  return held.result.value;
+}
+
 type Slot = "user" | "password" | "code";
 
 async function locate(page: Page): Promise<Map<Slot, string>> {

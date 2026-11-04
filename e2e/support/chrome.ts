@@ -80,6 +80,22 @@ export class StandInChrome {
     }
   }
 
+  async evaluate(target: string, expression: string): Promise<unknown> {
+    const cdp = await Cdp.connect(this.endpoint);
+    try {
+      const sessionId = await attach(cdp, target);
+      const done = await cdp.send(
+        "Runtime.evaluate",
+        { expression, returnByValue: true, awaitPromise: true },
+        { sessionId },
+      );
+      const result = isRecord(done) ? done["result"] : undefined;
+      return isRecord(result) ? result["value"] : undefined;
+    } finally {
+      cdp.close();
+    }
+  }
+
   get port(): number {
     return Number(new URL(this.endpoint).port);
   }

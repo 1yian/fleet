@@ -3,10 +3,10 @@ import { afterEach, beforeEach, test } from "node:test";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { FakeVault } from "../support/fake-vault.ts";
 import {
-  CLEAR_FIELDS,
   CREDENTIAL_SHOWN,
   GOOD,
   assertNoSecretAnywhere as scan,
+  clearedByHand,
   retext,
   signedIn as signIn,
 } from "../support/login-fixtures.ts";
@@ -28,6 +28,7 @@ async function start(isolated = false): Promise<void> {
 }
 
 const signedIn = (path: string): Promise<RawWorker> => signIn(lab, path);
+const cleared = (worker: RawWorker): Promise<void> => clearedByHand(lab, worker);
 
 const PNG = "iVBORw0KGgo";
 const HTML = "document.documentElement.outerHTML";
@@ -43,17 +44,18 @@ test("a screenshot of the filled login form is refused, also after a show-passwo
   const worker = await signedIn("/login");
   await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
 
-  await worker.act({ action: "eval", expression: 'document.getElementById("reveal").click()' });
+  await worker.act({ action: "click", selector: "#reveal" });
   await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
 
-  await refusedThenClean(worker, CLEAR_FIELDS);
+  await cleared(worker);
+  assert.ok((await worker.shoot()).startsWith(PNG));
   scan(lab, vault);
 });
 
 test("a screenshot is refused when the page echoes the username in a paragraph", async () => {
   await start();
   const worker = await signedIn("/echo");
-  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await cleared(worker);
   await refusedThenClean(
     worker,
     `${retext("u-echo", "someone")}; ${retext("p-echo", "something")}`,
@@ -66,7 +68,7 @@ test("a screenshot is refused when a failed login left the username in the page"
   const worker = await lab.worker("Sign in to the portal");
   await worker.act({ action: "open", url: lab.site.url("/fragile", "login.example.test") });
   await assert.rejects(worker.act({ action: "login" }), /^Error: login failed: /);
-  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await cleared(worker);
   await refusedThenClean(worker, retext("u-echo", "someone"));
   scan(lab, vault);
 });
@@ -91,8 +93,8 @@ for (const [place, what] of [
   test(`a screenshot is refused when the page ${what}`, async () => {
     await start(place === "cross");
     const worker = await signedIn(`/places?at=${place}`);
+    await cleared(worker);
     await worker.act({ action: "eval", expression: "window.ready" });
-    await worker.act({ action: "eval", expression: CLEAR_FIELDS });
     await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
 
     await worker.act({ action: "eval", expression: `window.put("someone")` });
@@ -103,7 +105,7 @@ for (const [place, what] of [
 test("a screenshot of a clean signed-in page is returned and changes nothing on the page", async () => {
   await start();
   const worker = await signedIn("/login");
-  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await cleared(worker);
   await worker.act({ action: "click", selector: "#submit" });
   await worker.act({
     action: "eval",
@@ -123,7 +125,7 @@ test("a screenshot of a clean signed-in page is returned and changes nothing on 
 test("a full-page screenshot refuses a value below the fold and then covers the whole page", async () => {
   await start();
   const worker = await signedIn("/tall");
-  await worker.act({ action: "eval", expression: CLEAR_FIELDS });
+  await cleared(worker);
   await assert.rejects(worker.shoot(true), CREDENTIAL_SHOWN);
 
   await worker.act({ action: "eval", expression: retext("who", "someone") });
