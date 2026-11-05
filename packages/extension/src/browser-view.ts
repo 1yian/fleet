@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
+import { openSheprd } from "./browser-place.ts";
 import { InputSchema, Screen } from "./browser-screen.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
 import {
@@ -75,7 +76,6 @@ class Viewer {
     (target) => callFrame(this.cardd, target),
     (target) => this.screenFor(target).size(target),
   );
-  private allowed = new Set<string>();
   private cookie = "";
   private visible = new Map<string, string>();
   private readonly token: string;
@@ -124,15 +124,14 @@ class Viewer {
   }
 
   allow(port: number): void {
-    this.allowed = new Set([`127.0.0.1:${String(port)}`, `localhost:${String(port)}`]);
     this.cookie = `fleet_viewer_${String(port)}`;
   }
 
   private permits(request: IncomingMessage): boolean {
     const host = request.headers.host;
-    if (host === undefined || !this.allowed.has(host)) return false;
+    if (host === undefined || !/^(127\.0\.0\.1|localhost):[0-9]+$/.test(host)) return false;
     const origin = request.headers.origin;
-    return origin === undefined || this.allowed.has(origin.replace(/^http:\/\//, ""));
+    return origin === undefined || origin === `http://${host}`;
   }
 
   private async shows(target: string): Promise<boolean> {
@@ -244,7 +243,9 @@ async function main(): Promise<void> {
   viewer.allow(address.port);
   const url = `http://127.0.0.1:${String(address.port)}/?t=${token}`;
   console.log(`Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`);
-  if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") open(url);
+  if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {
+    if (!captain || !(await openSheprd(url))) open(url);
+  }
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       viewer.close();
