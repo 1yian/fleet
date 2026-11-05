@@ -103,7 +103,7 @@ async function flow() {
   while (pending.length > 0) {
     const next = pending.shift();
     if (typeof next === "function") {
-      next();
+      await next();
       continue;
     }
     try {
@@ -115,9 +115,15 @@ async function flow() {
   flowing = false;
 }
 
-function settled() {
-  return new Promise((resolve) => {
-    pending.push(resolve);
+function ordered(run) {
+  return new Promise((resolve, reject) => {
+    pending.push(async () => {
+      try {
+        resolve(await run());
+      } catch (error) {
+        reject(error);
+      }
+    });
     void flow();
   });
 }
@@ -304,7 +310,7 @@ capture.addEventListener("keydown", (event) => {
   event.preventDefault();
   if (accelerator && !event.altKey && (letter === "c" || letter === "x")) {
     spent.add(event.code);
-    void copy(letter === "x");
+    if (letter === "c") void copy();
     return;
   }
   send(keyboard("down", event));
@@ -337,11 +343,7 @@ capture.addEventListener("paste", (event) => {
 });
 capture.addEventListener("copy", (event) => {
   event.preventDefault();
-  void copy(false);
-});
-capture.addEventListener("cut", (event) => {
-  event.preventDefault();
-  void copy(true);
+  void copy();
 });
 
 let forgetting = 0;
@@ -353,14 +355,15 @@ function say(text, state) {
   forgetting = setTimeout(() => { copied.textContent = ""; copied.title = ""; }, 5000);
 }
 
-async function selection(target) {
-  await settled();
-  const response = await fetch("/api/copy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) });
-  const answer = await response.json();
-  if (!response.ok) throw new Error(answer.error ?? "the viewer could not read the selection");
-  if (answer.text === null) throw new Error(answer.note ?? "nothing was copied");
-  if (answer.text === "") throw Object.assign(new Error("nothing is selected"), { empty: true });
-  return answer.text;
+function selection(target) {
+  return ordered(async () => {
+    const response = await fetch("/api/copy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) });
+    const answer = await response.json();
+    if (!response.ok) throw new Error(answer.error ?? "the viewer could not read the selection");
+    if (answer.text === null) throw new Error(answer.note ?? "nothing was copied");
+    if (answer.text === "") throw Object.assign(new Error("nothing is selected"), { empty: true });
+    return answer.text;
+  });
 }
 
 async function write(read) {
@@ -381,16 +384,11 @@ async function write(read) {
   return text;
 }
 
-async function copy(cut) {
+async function copy() {
   if (selected === null) return;
   try {
     const text = await write(selection(selected));
     say("copied " + Array.from(text).length + " characters", "");
-    if (cut) {
-      const key = { kind: "key", key: "Backspace", code: "Backspace", keyCode: 8, location: 0, repeat: false, modifiers: 0, commands: [] };
-      send({ ...key, action: "down" });
-      send({ ...key, action: "up" });
-    }
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), error.empty === true ? "empty" : "failed");
   }

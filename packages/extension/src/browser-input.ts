@@ -134,22 +134,35 @@ function typedText(key: string, modifiers: number): string | undefined {
   return isSingleCharacter(key) ? key : undefined;
 }
 
-const CLIPBOARD_LETTERS = ["c", "x", "v"];
-const CLIPBOARD_CODES = ["KeyC", "KeyX", "KeyV"];
+interface ClipboardKeys {
+  readonly names: readonly string[];
+  readonly codes: readonly string[];
+  readonly keyCodes: readonly number[];
+}
 
-function touchesClipboard({
-  key,
-  code,
-  modifiers,
-}: Extract<ViewerInput, { kind: "key" }>): boolean {
+const WITH_ACCELERATOR: ClipboardKeys = {
+  names: ["c", "x", "v", "insert"],
+  codes: ["KeyC", "KeyX", "KeyV", "Insert"],
+  keyCodes: [67, 88, 86, 45],
+};
+
+const WITH_SHIFT: ClipboardKeys = {
+  names: ["insert", "delete"],
+  codes: ["Insert", "Delete"],
+  keyCodes: [45, 46],
+};
+
+const isAmong = (
+  { names, codes, keyCodes }: ClipboardKeys,
+  { key, code, keyCode }: Extract<ViewerInput, { kind: "key" }>,
+): boolean =>
+  names.includes(key.toLowerCase()) || codes.includes(code) || keyCodes.includes(keyCode);
+
+function touchesClipboard(event: Extract<ViewerInput, { kind: "key" }>): boolean {
+  const { modifiers } = event;
   if ((modifiers & ALT) !== 0) return false;
-  if ((modifiers & (CTRL | META)) !== 0)
-    return (
-      CLIPBOARD_LETTERS.includes(key.toLowerCase()) ||
-      CLIPBOARD_CODES.includes(code) ||
-      code === "Insert"
-    );
-  return (modifiers & SHIFT) !== 0 && (code === "Insert" || code === "Delete");
+  if ((modifiers & (CTRL | META)) !== 0) return isAmong(WITH_ACCELERATOR, event);
+  return (modifiers & SHIFT) !== 0 && isAmong(WITH_SHIFT, event);
 }
 
 const keyCalls = (event: Extract<ViewerInput, { kind: "key" }>): Call[] => {

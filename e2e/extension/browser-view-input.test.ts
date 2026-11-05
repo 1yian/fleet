@@ -12,7 +12,14 @@ import {
   tabOf,
   USERNAME,
 } from "../support/login-fixtures.ts";
-import { launchViewer, stopViewers, waitFor, type Viewers } from "../support/viewer.ts";
+import {
+  launchViewer,
+  pointInPicture,
+  showTab,
+  stopViewers,
+  waitFor,
+  type Viewers,
+} from "../support/viewer.ts";
 
 let vault: FakeVault;
 let lab: BrowserLab;
@@ -44,18 +51,8 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function show(address: string, label?: string, state = "live"): Promise<void> {
-  await page.goto(address);
-  if (label !== undefined) {
-    const tab = page.locator("#tabs li", { hasText: label });
-    await waitFor(async () => (await tab.count()) > 0, `the tab ${label} to be listed`);
-    await tab.click();
-  }
-  await waitFor(
-    async () => (await page.locator("#live").textContent()) === state,
-    `the picture to be ${state}`,
-  );
-}
+const show = (address: string, label?: string, state?: string): Promise<void> =>
+  showTab(page, address, label, state);
 
 async function inPage(who: RawWorker, expression: string): Promise<unknown> {
   return JSON.parse(await who.act({ action: "eval", expression }));
@@ -82,19 +79,7 @@ async function numbers(who: RawWorker, expression: string): Promise<Record<strin
 
 async function picturePoint(x: number, y: number): Promise<{ x: number; y: number }> {
   const size = await numbers(pad, "({ width: innerWidth, height: innerHeight })");
-  const box = await page.locator("#screen").evaluate((img: HTMLImageElement) => {
-    const outer = img.getBoundingClientRect();
-    return {
-      left: outer.left + img.clientLeft,
-      top: outer.top + img.clientTop,
-      width: img.clientWidth,
-      height: img.clientHeight,
-    };
-  });
-  return {
-    x: box.left + (x / (size["width"] ?? 1)) * box.width,
-    y: box.top + (y / (size["height"] ?? 1)) * box.height,
-  };
+  return pointInPicture(page, { width: size["width"] ?? 1, height: size["height"] ?? 1 }, x, y);
 }
 
 async function clickInPicture(x: number, y: number): Promise<void> {
@@ -337,17 +322,6 @@ test("copy writes the page's selection to the clipboard", async () => {
   assert.equal(await clipboard(), "kept");
 });
 
-test("cut copies the selected text of a field and removes it", async () => {
-  await show(captain);
-  await clickInPicture(FIELD.x, FIELD.y);
-  await page.keyboard.type("cut me");
-  await page.keyboard.press("ControlOrMeta+KeyA");
-  await page.keyboard.press("ControlOrMeta+KeyX");
-  await waitFor(async () => (await clipboard()) === "cut me", "the text to reach the clipboard");
-  await waitFor(async () => (await fieldValue()) === "", "the text to be removed");
-  assert.deepEqual(await clipboardEvents(), []);
-});
-
 test("a gated viewer copies through cardd, and refuses on a tab with a login-filled value", async () => {
   const portal = await signedIn(lab, "/portal");
   const label = `c-${String(portal.card.id)} `;
@@ -427,35 +401,53 @@ test("no key sent to the viewer makes the tab's own Chrome copy, cut or paste", 
         ).status,
       body,
     );
-  const key = (modifiers: number, name: string, code: string, commands: string[] = []): object => ({
+  const key = (
+    modifiers: number,
+    name: string,
+    code: string,
+    keyCode = 0,
+    commands: string[] = [],
+  ): object => ({
     target,
     kind: "key",
     action: "down",
     key: name,
     code,
-    keyCode: 0,
+    keyCode,
     location: 0,
     repeat: false,
     modifiers,
     commands,
   });
-  for (const [modifiers, name, code] of [
-    [2, "c", "KeyC"],
-    [4, "c", "KeyC"],
-    [6, "X", "KeyX"],
-    [2, "v", "KeyV"],
-    [2, "Insert", "Insert"],
-    [8, "Insert", "Insert"],
-    [8, "Delete", "Delete"],
+  for (const [modifiers, name, code, keyCode] of [
+    [2, "c", "KeyC", 0],
+    [4, "c", "KeyC", 0],
+    [6, "X", "KeyX", 0],
+    [2, "v", "KeyV", 0],
+    [2, "Insert", "Insert", 0],
+    [8, "Insert", "Insert", 0],
+    [8, "Delete", "Delete", 0],
+    [2, "q", "KeyQ", 67],
+    [4, "q", "KeyQ", 88],
+    [2, "q", "KeyQ", 86],
+    [4, "q", "KeyQ", 45],
+    [8, "q", "KeyQ", 45],
+    [8, "q", "KeyQ", 46],
+    [2, "Insert", "KeyQ", 0],
+    [8, "Delete", "KeyQ", 0],
   ] as const)
-    assert.equal(await post(key(modifiers, name, code)), 204, `${name} with ${String(modifiers)}`);
+    assert.equal(
+      await post(key(modifiers, name, code, keyCode)),
+      204,
+      `${name} ${code} ${String(keyCode)} with ${String(modifiers)}`,
+    );
   for (const command of ["copy", "cut", "paste"])
-    assert.equal(await post(key(2, "q", "KeyQ", [command])), 502, `the command ${command}`);
-  assert.equal(await post(key(0, "q", "KeyQ")), 204);
-  await sawAll(["keydown key=q code=KeyQ"], "the plain key to arrive after the others");
+    assert.equal(await post(key(2, "q", "KeyQ", 0, [command])), 502, `the command ${command}`);
+  assert.equal(await post(key(0, "z", "KeyZ")), 204);
+  await sawAll(["keydown key=z code=KeyZ"], "the plain key to arrive after the others");
   assert.deepEqual(await clipboardEvents(), []);
   assert.deepEqual(
-    (await seen()).filter((line) => !line.startsWith("keydown key=q")),
+    (await seen()).filter((line) => !line.startsWith("keydown key=z")),
     [],
   );
 });

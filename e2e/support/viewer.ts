@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Page } from "playwright";
 import type { BrowserLab } from "./browser-lab.ts";
 import { WORKER_HOST } from "./fleet.ts";
 import { spawnGuarded } from "./guarded.ts";
@@ -56,4 +57,43 @@ export async function waitFor(check: () => Promise<boolean>, what: string): Prom
     assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+}
+
+export async function showTab(
+  page: Page,
+  address: string,
+  label?: string,
+  state = "live",
+): Promise<void> {
+  await page.goto(address);
+  if (label !== undefined) {
+    const tab = page.locator("#tabs li", { hasText: label });
+    await waitFor(async () => (await tab.count()) > 0, `the tab ${label} to be listed`);
+    await tab.click();
+  }
+  await waitFor(
+    async () => (await page.locator("#live").textContent()) === state,
+    `the picture to be ${state}`,
+  );
+}
+
+export async function pointInPicture(
+  page: Page,
+  size: { readonly width: number; readonly height: number },
+  x: number,
+  y: number,
+): Promise<{ x: number; y: number }> {
+  const box = await page.locator("#screen").evaluate((img: HTMLImageElement) => {
+    const outer = img.getBoundingClientRect();
+    return {
+      left: outer.left + img.clientLeft,
+      top: outer.top + img.clientTop,
+      width: img.clientWidth,
+      height: img.clientHeight,
+    };
+  });
+  return {
+    x: box.left + (x / size.width) * box.width,
+    y: box.top + (y / size.height) * box.height,
+  };
 }

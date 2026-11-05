@@ -35,6 +35,22 @@ const PAGES: Readonly<Record<string, string>> = {
       for (const type of ["copy", "cut", "paste"]) document.addEventListener(type, () => note(type));
       document.getElementById("field").addEventListener("compositionstart", () => note("compositionstart"));
     </script></body>`,
+  "/framed": `<!doctype html><title>Framed</title><body style="margin:0">
+    <iframe id="inner" style="position:fixed;left:20px;top:20px;width:360px;height:120px;border:0"></iframe>
+    <input id="field" style="position:fixed;left:20px;top:160px;width:360px;height:32px;font-size:18px">
+    <script>
+      window.loaded = false;
+      window.seen = [];
+      const inner = document.getElementById("inner");
+      inner.onload = () => { window.loaded = true; };
+      inner.src = location.hash.slice(1);
+      for (const type of ["keydown", "keyup", "copy", "cut", "paste"])
+        document.addEventListener(type, (e) => window.seen.push(type + (e.key === undefined ? "" : " " + e.key)));
+    </script></body>`,
+  "/words": `<!doctype html><title>Words</title><body style="margin:0">
+    <p style="position:fixed;left:0;top:0;margin:0;font-size:28px">selectable</p>
+    <input id="vaulted" type="password" value="inner-password" style="position:fixed;left:0;top:60px;width:200px;height:30px;font-size:18px">
+  </body>`,
   "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,
   "/composed": `<!doctype html><title>Composed</title><body><div id="who">hun<mark>ter</mark>2</div></body>`,
   "/copy": `<!doctype html><title>Copy</title><body><div id="who">S3cret&copy;2026</div></body>`,
