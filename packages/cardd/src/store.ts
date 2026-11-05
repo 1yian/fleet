@@ -30,7 +30,7 @@ const SessionSchema = Type.Object({
 });
 
 const CardRowSchema = Type.Omit(CardSchema, ["status", "updatedAt"]);
-const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', project,
+const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', coalesce(project, historical_project),
   'kind', kind, 'revision', revision, 'pr', pr, 'delivery', delivery, 'intent', intent, 'spec', spec,
   'createdAt', created_at)`;
 const STREAM_KINDS: ReadonlySet<string> = new Set([
@@ -163,6 +163,59 @@ export function setClone(db: DatabaseSync, project: string, host: string, path: 
     .prepare(`UPDATE projects SET clones = json_set(clones, '$."' || ? || '"', ?) WHERE name = ?`)
     .run(host, path, project);
   if (changes === 0) throw new Error(`project ${project} is not in the registry`);
+}
+
+export function removeClone(db: DatabaseSync, project: string, host: string): string {
+  return transaction(db, () => {
+    const registered = listProjects(db).find((each) => each.name === project);
+    if (registered === undefined) throw new Error(`project ${project} is not in the registry`);
+    if (!registered.clones.some((clone) => clone.host === host))
+      throw new Error(`project ${project} has no clone on ${host}`);
+    const attempts = check(
+      Type.Array(Type.String()),
+      json(
+        db,
+        `SELECT json_quote('c-' || c.id) AS j FROM cards c JOIN attempts a ON a.card = c.id
+         WHERE c.project = ? AND a.host = ? AND a.state IN ('starting', 'active') ORDER BY c.id`,
+        project,
+        host,
+      ),
+    );
+    if (attempts.length > 0)
+      throw new Error(`project ${project} has open attempts on ${host}: ${attempts.join(", ")}`);
+    const remaining = registered.clones.filter((clone) => clone.host !== host);
+    if (remaining.length === 0) {
+      const cards = loadOpenCards(db).filter(({ card }) => card.project === project);
+      if (cards.length > 0)
+        throw new Error(
+          `project ${project}: cannot remove its last clone while open cards use it: ${cards.map(({ card }) => `c-${String(card.id)}`).join(", ")}`,
+        );
+    }
+    db.prepare("UPDATE projects SET clones = ? WHERE name = ?").run(
+      JSON.stringify(Object.fromEntries(remaining.map(({ host, path }) => [host, path]))),
+      project,
+    );
+    const last =
+      remaining.length === 0 ? "; last clone removed: no open cards use this project" : "";
+    return `${project}: removed clone on ${host}${last}. Registry only; no files deleted`;
+  });
+}
+
+export function removeProject(db: DatabaseSync, project: string): string {
+  return transaction(db, () => {
+    if (db.prepare("SELECT 1 FROM projects WHERE name = ?").get(project) === undefined)
+      throw new Error(`project ${project} is not in the registry`);
+    const cards = loadOpenCards(db).filter(({ card }) => card.project === project);
+    if (cards.length > 0)
+      throw new Error(
+        `project ${project} has open cards: ${cards.map(({ card }) => `c-${String(card.id)}`).join(", ")}`,
+      );
+    db.prepare(
+      "UPDATE cards SET historical_project = project, project = NULL WHERE project = ?",
+    ).run(project);
+    db.prepare("DELETE FROM projects WHERE name = ?").run(project);
+    return `${project}: removed project and its clones from the registry. Card history kept; no files deleted`;
+  });
 }
 
 export function setYolo(db: DatabaseSync, project: string, yolo: boolean): void {
