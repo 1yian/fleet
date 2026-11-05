@@ -70,7 +70,7 @@ test("Sheprd opens the captain viewer and forwarded loopback ports still need it
     const forwarded = new URL(url);
     forwarded.port = String(address.port);
     const entered = await fetch(forwarded, { redirect: "manual" });
-    assert.equal(entered.status, 302);
+    assert.equal(entered.status, 200);
     const cookie = entered.headers.get("set-cookie")?.split(";")[0];
     assert.ok(cookie !== undefined);
     forwarded.search = "";

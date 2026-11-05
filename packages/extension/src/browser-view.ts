@@ -6,6 +6,7 @@ import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
 import { viewerBuild } from "./browser-build.ts";
 import { FitSchema } from "./browser-fit.ts";
+import { Pacer } from "./browser-pace.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { openSheprd } from "./browser-place.ts";
 import { InputSchema, Screen } from "./browser-screen.ts";
@@ -62,6 +63,9 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
+const enteredPage = (next: string): string =>
+  `<!doctype html><html><head><meta charset="utf-8"><title>Fleet browser</title><noscript><meta http-equiv="refresh" content="0;url=${encodeURI(next)}"></noscript><script>location.replace(${JSON.stringify(next)})</script></head><body></body></html>`;
+
 const digest = (text: string): Buffer => createHash("sha256").update(text).digest();
 
 const json = (response: ServerResponse, status: number, body: unknown): void => {
@@ -73,6 +77,7 @@ class Viewer {
   private readonly transports: Transports;
   private readonly captain: boolean;
   private readonly screens = new Map<string, { endpoint: string; screen: Screen }>();
+  private readonly paced = new Map<string, Pacer>();
   private browsers = new Map<string, string>();
   private own: string | null = null;
   private readonly poll = new Poll(
@@ -157,27 +162,24 @@ class Viewer {
     return view;
   }
 
-  private async stream(response: ServerResponse, target: string): Promise<void> {
+  private async stream(response: ServerResponse, target: string, id: string | null): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
-    let waiting: Shown | undefined;
-    let backedUp = false;
-    const send = (shown: Shown): void => {
-      if (backedUp) {
-        waiting = shown;
-        return;
-      }
-      if (response.write(`data: ${JSON.stringify(shown)}\n\n`)) return;
-      backedUp = true;
-      response.once("drain", () => {
-        backedUp = false;
-        const latest = waiting;
-        waiting = undefined;
-        if (latest !== undefined) send(latest);
-      });
+    const write = (shown: Shown): void => {
+      response.write(`data: ${JSON.stringify(shown)}\n\n`);
     };
+    const pacer = id === null ? undefined : new Pacer(write);
+    if (pacer !== undefined && id !== null) this.paced.set(id, pacer);
+    const send =
+      pacer === undefined
+        ? write
+        : (shown: Shown): void => {
+            pacer.send(shown);
+          };
     const watching: { stop: (() => void) | undefined } = { stop: undefined };
     response.on("close", () => {
       watching.stop?.();
+      pacer?.stop();
+      if (id !== null) this.paced.delete(id);
     });
     watching.stop = this.captain
       ? await this.screenFor(target).watch(target, send, () => {
@@ -193,6 +195,7 @@ class Viewer {
       "GET /": () => this.page(response),
       "GET /api/tabs": () => this.tabs(response),
       "GET /api/stream": () => this.watch(response, url),
+      "POST /api/ack": () => this.acknowledge(response, url),
       "POST /api/fit": () => this.fit(request, response),
       "POST /api/input": () => this.drive(request, response),
     };
@@ -213,8 +216,14 @@ class Viewer {
 
   private async watch(response: ServerResponse, url: URL): Promise<void> {
     const target = url.searchParams.get("target") ?? "";
-    if (await this.shows(target)) await this.stream(response, target);
+    if (await this.shows(target)) await this.stream(response, target, url.searchParams.get("id"));
     else response.writeHead(404).end();
+  }
+
+  private acknowledge(response: ServerResponse, url: URL): Promise<void> {
+    this.paced.get(url.searchParams.get("id") ?? "")?.release();
+    response.writeHead(204).end();
+    return Promise.resolve();
   }
 
   private async fit(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -227,12 +236,16 @@ class Viewer {
   }
 
   private async drive(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const input = check(InputSchema, JSON.parse(await readBody(request)));
-    if (!(await this.shows(input.target))) response.writeHead(404).end();
-    else {
-      await this.screenFor(input.target).input(input);
-      response.writeHead(204).end();
+    const sent: unknown = JSON.parse(await readBody(request));
+    const inputs = (Array.isArray(sent) ? sent : [sent]).map((each) => check(InputSchema, each));
+    for (const input of inputs) {
+      if (!(await this.shows(input.target))) {
+        response.writeHead(404).end();
+        return;
+      }
     }
+    for (const input of inputs) await this.screenFor(input.target).input(input);
+    response.writeHead(204).end();
   }
 
   private enter(request: IncomingMessage, response: ServerResponse, url: URL): boolean {
@@ -240,11 +253,12 @@ class Viewer {
     if (this.knows(offered) && request.method === "GET" && url.pathname === "/") {
       url.searchParams.delete("t");
       response
-        .writeHead(302, {
-          location: `${url.pathname}${url.search}`,
+        .writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
           "set-cookie": `${this.cookie}=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
         })
-        .end();
+        .end(enteredPage(`${url.pathname}${url.search}`));
       return false;
     }
     if (this.knows(offered) || this.knows(this.cookieOf(request))) return true;

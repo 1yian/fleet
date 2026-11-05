@@ -159,7 +159,7 @@ test("phone: the captain signs in by touch, with the keyboard button and the key
   const field = await atRemote(page, "#identifier");
   await page.touchscreen.tap(field.x, field.y);
   await page.locator("#keyboard").tap();
-  assert.equal(await page.evaluate(() => document.activeElement?.id), "capture");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "typer");
   await page.keyboard.insertText(ACCOUNT.identifier);
   await until(async () => (await remoteValue("#identifier")) === ACCOUNT.identifier, "the email");
   await page.locator("#keys [data-key='Enter']").tap();
@@ -194,7 +194,7 @@ test("phone: a swipe scrolls the page in the tab, and a tap then accepts the ter
   const cdp = await context?.newCDPSession(page);
   assert.ok(cdp !== undefined);
   const x = box.x + box.width / 2;
-  for (let swipe = 0; swipe < 6; swipe += 1) {
+  const swipeUp = async (): Promise<void> => {
     const from = box.y + box.height * 0.85;
     const to = box.y + box.height * 0.15;
     await cdp.send("Input.dispatchTouchEvent", {
@@ -207,14 +207,19 @@ test("phone: a swipe scrolls the page in the tab, and a tap then accepts the ter
         touchPoints: [{ x, y: from + ((to - from) * step) / 10 }],
       });
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  }
+  };
+  const atEnd = async (): Promise<boolean> =>
+    (await onRemote("innerHeight + scrollY >= document.body.scrollHeight - 2")) === true;
+  await swipeUp();
   await until(async () => (await scrolled()) > 0, "the swipe to scroll the page");
   await shot(page, "phone-5-terms-scrolled");
-  await until(
-    async () =>
-      (await onRemote("innerHeight + scrollY >= document.body.scrollHeight - 2")) === true,
-    "the end of the terms",
-  );
+  for (let swipes = 0; swipes < 30 && !(await atEnd()); swipes += 1) {
+    const before = await scrolled();
+    await swipeUp();
+    await until(async () => (await scrolled()) > before || (await atEnd()), "the next swipe");
+  }
+  assert.ok(await atEnd(), "swiping reaches the end of the terms");
+  await shot(page, "phone-5-terms-end");
 
   const agree = await atRemote(page, "#agree");
   await page.touchscreen.tap(agree.x, agree.y);
@@ -222,7 +227,31 @@ test("phone: a swipe scrolls the page in the tab, and a tap then accepts the ter
   assert.ok(site.signedIn);
 });
 
-test("phone: the soft keyboard's Backspace deletes in the page", async () => {
+test("phone: the page in the tab is laid out for the phone's width while the captain watches", async () => {
+  await worker.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
+  const desktop = await onRemote("[innerWidth, innerHeight]");
+  assert.ok(
+    Array.isArray(desktop) && Number(desktop[0]) > 700,
+    "the tab starts at the window size",
+  );
+  const page = await viewerPage("phone");
+  await pick(page, true);
+
+  const phone = page.viewportSize();
+  assert.ok(phone !== null);
+  await until(
+    async () => Number((await onRemote("innerWidth")) ?? 0) === phone.width,
+    "the tab to take the phone's width",
+  );
+  await shot(page, "phone-6-fitted");
+  await page.locator("#keyboard").tap();
+  await until(
+    async () => Number(await onRemote("innerHeight")) < phone.height - 150,
+    "the tab to give room to the key bar",
+  );
+});
+
+test("phone: the keyboard's Backspace deletes what was typed, and the key bar reaches the page", async () => {
   await worker.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
   const page = await viewerPage("phone");
   await pick(page, true);
@@ -232,16 +261,32 @@ test("phone: the soft keyboard's Backspace deletes in the page", async () => {
 
   await page.keyboard.insertText("captainx");
   await until(async () => (await remoteValue("#identifier")) === "captainx", "the typed text");
-  await page.evaluate(() => {
-    const capture = document.getElementById("capture");
-    capture?.dispatchEvent(
-      new InputEvent("beforeinput", {
-        inputType: "deleteContentBackward",
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-  });
-
+  await page.keyboard.press("Backspace");
   await until(async () => (await remoteValue("#identifier")) === "captain", "the Backspace");
+
+  await page.locator("#keys [data-key='Backspace']").tap();
+  await until(async () => (await remoteValue("#identifier")) === "captai", "the Backspace button");
+  await page.locator("#keys [data-key='Tab']").tap();
+  await until(
+    async () => (await onRemote("document.activeElement?.id")) === "next",
+    "Tab to move on to the button",
+  );
+});
+
+test("the captain's link opens when it is tapped on another site's page, as in a chat app", async () => {
+  await worker.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
+  context = await client.newContext({ ...IPHONE });
+  const page = await context.newPage();
+  await page.route("http://chat.example.org/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<a id="link" href="${viewer.url}">Open the browser</a>`,
+    }),
+  );
+  await page.goto("http://chat.example.org/");
+
+  await page.locator("#link").tap();
+
+  await page.locator("#tabs li").first().waitFor();
+  assert.equal(await page.locator("#tabs li .card").count(), 1);
 });

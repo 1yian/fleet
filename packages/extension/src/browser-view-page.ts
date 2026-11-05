@@ -1,9 +1,17 @@
+import {
+  PHONE_DOCK,
+  PHONE_HEAD,
+  PHONE_KEYBOARD,
+  PHONE_SCRIPT,
+  PHONE_STYLE,
+} from "./browser-view-phone.ts";
+
 export const VIEWER_PAGE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Fleet browser</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <style>
   :root { color-scheme: dark; --ink: #101014; --mantle: #0c0c10; --row: #16161d; --text: #e6e6ea; --dim: #8b8b99; --signal: #3dffc0; --error: #ff5c7a; }
   * { box-sizing: border-box; }
@@ -33,7 +41,7 @@ export const VIEWER_PAGE = `<!doctype html>
   #note { max-width: 640px; padding: 16px 20px; background: var(--row); color: var(--dim); border: 1px solid #262633; border-radius: 4px; }
   #note[hidden] { display: none; }
   #hint { padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
-</style>
+${PHONE_STYLE}</style>${PHONE_HEAD}
 </head>
 <body>
 <aside>
@@ -45,10 +53,12 @@ export const VIEWER_PAGE = `<!doctype html>
   <header>
     <div id="address"></div>
     <input id="paste" placeholder="Type text, then Enter" autocomplete="off" spellcheck="false" hidden>
+    ${PHONE_KEYBOARD}
     <span id="live" hidden></span>
   </header>
   <div id="stage"><img id="screen" tabindex="0" alt="" hidden draggable="false"><div id="note" hidden></div></div>
   <div id="hint" hidden>Click the picture to focus it. Clicks, keys and scrolling go to the tab.</div>
+  ${PHONE_DOCK}
 </main>
 <script>
 const list = document.getElementById("tabs");
@@ -59,13 +69,36 @@ const live = document.getElementById("live");
 const screen = document.getElementById("screen");
 const note = document.getElementById("note");
 const paste = document.getElementById("paste");
+const stage = document.getElementById("stage");
 let selected = null;
 let source = null;
 let size = { width: 1, height: 1 };
+let acknowledging = () => undefined;
+screen.addEventListener("load", () => acknowledging());
+screen.addEventListener("error", () => acknowledging());
 
-let queue = Promise.resolve();
+const pending = [];
+let flowing = false;
+
+async function flow() {
+  if (flowing) return;
+  flowing = true;
+  while (pending.length > 0) {
+    const batch = pending.splice(0);
+    try {
+      await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
+    } catch {
+      continue;
+    }
+  }
+  flowing = false;
+}
+
 const send = (body) => {
-  queue = queue.then(() => fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).catch(() => undefined);
+  const last = pending[pending.length - 1];
+  if (last !== undefined && last.kind === "scroll" && body.kind === "scroll" && last.target === body.target) last.dy += body.dy;
+  else pending.push(body);
+  void flow();
 };
 
 function point(event) {
@@ -95,7 +128,9 @@ function watch(target) {
   hint.hidden = false;
   live.textContent = "connecting";
   live.className = "";
-  source = new EventSource("/api/stream?target=" + encodeURIComponent(target));
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  acknowledging = () => fetch("/api/ack?id=" + id, { method: "POST", keepalive: true }).catch(() => undefined);
+  source = new EventSource("/api/stream?target=" + encodeURIComponent(target) + "&id=" + id);
   source.onmessage = (message) => {
     const shown = JSON.parse(message.data);
     if (shown.hidden !== undefined) {
@@ -105,6 +140,7 @@ function watch(target) {
       note.textContent = "Hidden: " + shown.hidden + ". The captain's viewer in main's workspace shows this page.";
       live.textContent = "hidden";
       live.className = "";
+      acknowledging();
       return;
     }
     note.hidden = true;
@@ -115,6 +151,7 @@ function watch(target) {
     live.className = "on";
   };
   source.onerror = () => { live.textContent = "reconnecting"; live.className = ""; };
+  refit();
 }
 
 function render(tabs) {
@@ -181,6 +218,10 @@ paste.addEventListener("keydown", (event) => {
   send({ target: selected, kind: "text", text: paste.value });
   paste.value = "";
 });
+function phoneTap(at) { send({ target: selected, kind: "click", x: at.x, y: at.y }); }
+function phoneScroll(at, dx, dy) { send({ target: selected, kind: "scroll", x: at.x, y: at.y, dy }); }
+function phoneKey(key) { send({ target: selected, kind: "key", key }); }
+${PHONE_SCRIPT}
 refresh();
 setInterval(refresh, 2000);
 </script>

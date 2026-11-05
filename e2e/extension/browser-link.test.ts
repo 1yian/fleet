@@ -55,7 +55,7 @@ test(
     const shown = new URL(link);
     assert.equal(shown.hostname, address);
     assert.ok(!shown.hostname.startsWith("127."), "a phone cannot open a loopback address");
-    assert.equal((await fetch(link, { redirect: "manual" })).status, 302);
+    assert.equal((await fetch(link, { redirect: "manual" })).status, 200);
     assert.match(heard, /opens on his phone or his Mac over Tailscale/);
     assert.match(heard, /never write it on the board, in a card, in a report, or in a log/);
 
