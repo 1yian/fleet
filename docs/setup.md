@@ -168,7 +168,7 @@ Exit status: 0 done, 1 error, 2 usage, 3 `login` found no entry for the site (th
 
 What it prints, beyond `result`:
 
-- `click` and `read` add `page`, the title and address of the page when the action ended, so a worker sees whether a click navigated. A `click` that starts a load of the page waits for it (30 seconds at most) before it reads them. `cardd` cleans `page` of stored values as it does `result`.
+- `click` and `read` add `page`, the title and address of the page when the action ended, so a worker sees whether a click navigated. A `click` that starts a load of the page within a moment waits for the load to end (30 seconds at most, and the result then says that the page is still loading) before it reads them. `cardd` cleans `page` of stored values as it does `result`.
 - `eval` prints the value once: a string as the string, and an object or a list as a structure, in TOON or in the JSON object. `cardd` still sends the value as JSON text, cleaned as before, and the program reads it once. A value that is not JSON text (`undefined`, or a result cut at the length limit) is printed as the text.
 - `browser-axi` with no command lists the tab and offers `read`, `screenshot`, and `close` when a tab is open, and `open <url>` when none is.
 - An error that needs a tab says what to run, `browser-axi open <url>`, and carries a `help` line that says it too. `login` on a host that has no `logins` in `--browser` says that logins are not set up on that host and to ask the mate, and its `help` tells the worker to report paused or blocked.
