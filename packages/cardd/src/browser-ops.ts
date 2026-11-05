@@ -43,9 +43,10 @@ function summoned(
   browser: Browser,
   card: number,
   why: string | undefined,
+  declared: string | undefined,
   error: unknown,
 ): Error {
-  if (why === undefined || !browser.hasTab(card))
+  if (why === undefined || !browser.hasTab(card, declared))
     return error instanceof Error ? error : new Error(reason(error));
   const refusal = reason(error).replace(/\.?\s*$/, "");
   return new Summoned(
@@ -94,11 +95,10 @@ async function browse(
   args: BrowserArgs,
 ): Promise<Done> {
   const card = cardOf(db, session, args.card);
-  const done = await browser
-    .run(card, args, declaredHost(session, args.host))
-    .catch((error: unknown) => {
-      throw summoned(db, browser, card, args.captain, error);
-    });
+  const declared = declaredHost(session, args.host);
+  const done = await browser.run(card, args, declared).catch((error: unknown) => {
+    throw summoned(db, browser, card, args.captain, declared, error);
+  });
   const why = args.captain ?? done.captain;
   const asked = why === undefined ? [] : summonCaptain(db, card, why);
   const result = why === undefined ? done.result : { ...done.result, captain: why };

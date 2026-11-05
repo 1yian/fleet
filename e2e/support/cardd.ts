@@ -60,7 +60,7 @@ export class Cardd {
   errors = "";
   private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");
 
-  private readonly args: readonly string[];
+  private args: readonly string[];
 
   private constructor(env: NodeJS.ProcessEnv, args: readonly string[]) {
     this.env = { ...process.env, ...this.gh.env, ...env };
@@ -238,7 +238,8 @@ export class Cardd {
     return session;
   }
 
-  async restart(): Promise<void> {
+  async restart(args?: readonly string[]): Promise<void> {
+    if (args !== undefined) this.args = args;
     await this.stop();
     await this.boot(new URL(this.url.replace(/^ws/, "http")).port);
   }

@@ -75,7 +75,11 @@ export function retiredIn(db: DatabaseSync, host: string, targets: Iterable<stri
   return [...targets].filter((target) => retired.get(host, target) !== undefined);
 }
 
-export const liveTab = (db: DatabaseSync, card: number): Tab | undefined => tabsOf(db, card)[0];
+export function retireTabs(db: DatabaseSync, card: number, host: string): number {
+  const live = tabsOf(db, card, host);
+  for (const tab of live) markClosed(db, tab.target);
+  return live.length;
+}
 
 export function labelOf(db: DatabaseSync, card: number): string {
   const { id, name } = getCard(db, card);

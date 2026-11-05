@@ -11,6 +11,7 @@ import {
   OTHER_PASSWORD,
   OTHER_USER,
   PASSWORD,
+  until,
   USERNAME,
 } from "../support/login-fixtures.ts";
 
@@ -201,11 +202,13 @@ test("a host that hangs while connecting is reported unavailable, and the other 
   const a = await lab.worker("Users see one scrollbar", "alpha");
   await a.act({ action: "open", url: lab.site.url("/a") });
 
+  const began = Date.now();
   const view = check(
     OPS["browser.view"].result,
     await lab.main.call("browser.view", { host: "beta" }),
   );
 
+  assert.ok(Date.now() - began < 8_000, "the listing did not wait for the hung host");
   assert.deepEqual(
     view.tabs.map((tab) => [tab.card, tab.host, tab.live]),
     [[a.card.id, "alpha", true]],
@@ -215,4 +218,33 @@ test("a host that hangs while connecting is reported unavailable, and the other 
     view.browsers.map((browser) => browser.host),
     ["alpha", "beta"],
   );
+});
+
+test("a card that moves to another host retires its tab on a host that is no longer configured, and that old tab is closed when the host is configured again", async () => {
+  lab = await HostLab.start([{ name: "alpha" }, { name: "beta" }]);
+  const card = await newCard(lab.main, "Look at the site");
+  const drive = async (host: string, args: Record<string, unknown>) =>
+    check(OPS.browser.result, await lab.main.call("browser", { card: card.id, host, ...args }));
+  await drive("alpha", { action: "open", url: lab.site.url("/a") });
+
+  await lab.rebrowse(["beta"]);
+  await drive("beta", { action: "open", url: lab.site.url("/b") });
+  const seen = await drive("beta", { action: "read" });
+
+  assert.match(seen.text, /bravo page/);
+  assert.deepEqual(await lab.tabHosts(), [`${String(card.id)}@beta`]);
+  assert.deepEqual(
+    await lab.pathsOn("alpha"),
+    ["/a"],
+    "alpha's Chrome cannot be reached from here",
+  );
+
+  await lab.rebrowse(["alpha", "beta"]);
+  await lab.tabHosts();
+  await until(
+    async () => ((await lab.pathsOn("alpha")).length === 0 ? true : undefined),
+    "the retired tab on alpha to be closed",
+  );
+  assert.deepEqual(await lab.pathsOn("beta"), ["/b"]);
+  assert.match((await drive("beta", { action: "read" })).text, /bravo page/);
 });

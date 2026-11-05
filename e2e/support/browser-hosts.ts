@@ -35,6 +35,11 @@ export const transportFor = (
   ...(vault === undefined ? [] : [`FAKE_BWS_DIR=${vault.dir}`]),
 ];
 
+const serveArgs = (
+  routes: Record<string, string[]>,
+  browser: Record<string, unknown>,
+): string[] => ["--hosts", JSON.stringify(routes), "--browser", JSON.stringify(browser)];
+
 const routeOf = (dir: string, { name, vault, hangs = false }: HostSpec): string[] => [
   ...transportFor(dir, "cardd", name, vault),
   ...(hangs ? ["FAKE_TRANSPORT_HANGS=1"] : []),
@@ -82,7 +87,10 @@ export class HostLab {
   readonly chromes: ReadonlyMap<string, StandInChrome>;
   readonly site: TestSite;
   readonly cardd: Cardd;
-  readonly main: Session;
+  main: Session;
+  private readonly mainToken: string;
+  private readonly routes: Record<string, string[]>;
+  private readonly browser: Record<string, unknown>;
   private readonly sessions: Session[] = [];
 
   private constructor(parts: {
@@ -91,12 +99,18 @@ export class HostLab {
     site: TestSite;
     cardd: Cardd;
     main: Session;
+    mainToken: string;
+    routes: Record<string, string[]>;
+    browser: Record<string, unknown>;
   }) {
     this.dir = parts.dir;
     this.chromes = parts.chromes;
     this.site = parts.site;
     this.cardd = parts.cardd;
     this.main = parts.main;
+    this.mainToken = parts.mainToken;
+    this.routes = parts.routes;
+    this.browser = parts.browser;
   }
 
   static async start(specs: readonly HostSpec[]): Promise<HostLab> {
@@ -119,12 +133,22 @@ export class HostLab {
     const site = await TestSite.start();
     const cardd = await Cardd.start(
       withVault === undefined ? {} : { PATH: withVault.env["PATH"] ?? "" },
-      ["--hosts", JSON.stringify(routes), "--browser", JSON.stringify(browser)],
+      serveArgs(routes, browser),
     );
     const clones = Object.fromEntries(specs.map(({ name }) => [name, "/clones/web"]));
     cardd.addProject("web", clones, "acme/web");
-    const main = await cardd.connect(cardd.addLane("main"));
-    return new HostLab({ dir, chromes, site, cardd, main });
+    const mainToken = cardd.addLane("main");
+    const main = await cardd.connect(mainToken);
+    return new HostLab({ dir, chromes, site, cardd, main, mainToken, routes, browser });
+  }
+
+  async rebrowse(hosts: readonly string[]): Promise<void> {
+    const named = Object.fromEntries(
+      Object.entries(this.browser).filter(([host]) => hosts.includes(host)),
+    );
+    await this.cardd.restart(serveArgs(this.routes, named));
+    this.main = await this.cardd.connect(this.mainToken);
+    this.sessions.length = 0;
   }
 
   chrome(host: string): StandInChrome {

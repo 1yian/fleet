@@ -2,7 +2,15 @@ import type { DatabaseSync } from "node:sqlite";
 import type { BrowserArgs, OpResult } from "@fleet/protocol";
 import type { BrowserConfig } from "./browser-config.ts";
 import { HostBrowser, plural, type Outcome } from "./browser-host.ts";
-import { attemptHost, hostsEverUsed, hostsOfCard, liveTab, openTabs } from "./browser-store.ts";
+import {
+  attemptHost,
+  hostsEverUsed,
+  hostsOfCard,
+  openTabs,
+  retireTabs,
+  tabsOf,
+  type Tab,
+} from "./browser-store.ts";
 import { tabView, type Listed } from "./browser-targets.ts";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
@@ -62,14 +70,19 @@ export class Browser {
     };
   }
 
-  hasTab(card: number): boolean {
-    const tab = liveTab(this.db, card);
+  hasTab(card: number, declared: string | undefined): boolean {
+    const tab = this.liveTab(card, declared);
     if (tab === undefined || !this.configuredOn(tab.host)) return false;
     try {
       return this.site(tab.host).hasTab(card);
     } catch {
       return false;
     }
+  }
+
+  private liveTab(card: number, declared: string | undefined): Tab | undefined {
+    const host = this.hostOf(card, declared);
+    return host === undefined ? undefined : tabsOf(this.db, card, host)[0];
   }
 
   frame(card: number, target: string): Promise<OpResult<"browser.frame">> {
@@ -167,7 +180,7 @@ export class Browser {
   ): Promise<Outcome> {
     if (args.action === "close") return this.closeOwn(card);
     if (args.action === "open") return this.open(card, args, declared);
-    const tab = liveTab(this.db, card);
+    const tab = this.liveTab(card, declared);
     if (tab === undefined)
       throw new Error("you have no tab yet: call browser with action open first");
     return this.site(tab.host).perform(card, args);
@@ -190,17 +203,24 @@ export class Browser {
   }
 
   private async closeOn(host: string, card: number): Promise<OpResult<"browser.release">> {
-    if (!this.configuredOn(host)) {
-      const gone = openTabs(this.db, host).filter((tab) => tab.card === card);
-      return {
-        closed: 0,
-        note:
-          gone.length === 0
-            ? null
-            : `the browser on ${host} is not configured any more, so ${plural(gone.length)} of c-${String(card)} there cannot be closed`,
-      };
+    let site: HostBrowser | undefined;
+    let why = `the browser on ${host} is not configured any more`;
+    if (this.configuredOn(host)) {
+      try {
+        site = this.site(host);
+      } catch (error) {
+        why = reason(error);
+      }
     }
-    return this.site(host).closeTabs(card);
+    if (site !== undefined) return site.closeTabs(card);
+    const left = retireTabs(this.db, card, host);
+    return {
+      closed: 0,
+      note:
+        left === 0
+          ? null
+          : `${why}. ${plural(left)} of c-${String(card)} stay open there: cardd closes them when the browser on ${host} can be reached again.`,
+    };
   }
 
   private async closeEverywhere(card: number): Promise<OpResult<"browser.release">> {
