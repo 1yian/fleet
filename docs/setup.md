@@ -299,6 +299,8 @@ $CARDD lane add cleo --db ~/.fleet/cards.db --home /path/on/its/host --parent ma
 $CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes \
   --clone maverick=/path/to/web --clone p620=/path/on/p620/web
 $CARDD project clone web p620=/new/path/on/p620/web --db ~/.fleet/cards.db
+$CARDD project unclone web maverick --db ~/.fleet/cards.db
+$CARDD project remove web --db ~/.fleet/cards.db
 $CARDD project yolo web on --db ~/.fleet/cards.db
 $CARDD project repo web acme/web --db ~/.fleet/cards.db
 $CARDD project delivery web direct-PR --db ~/.fleet/cards.db
@@ -307,6 +309,8 @@ $CARDD card delivery 125 direct-PR --db ~/.fleet/cards.db
 
 - A project's clone is a normal clone of the repository on that host. Dispatch creates each worker's worktree next to it, in `<clone>.worktrees/`.
 - To move a clone, move it, run `git worktree repair` with the paths of its worktrees, then run `project clone` with its new path. Workers that already run keep their worktrees, and close still finds them.
+- `project unclone <name> <host>` removes a host's clone from the registry only. It never deletes files. The host stops appearing in project hosts, clone refreshes, close sync, and dispatch choices. It refuses an unknown project, a missing clone, or open attempts on that host, naming their cards. Removing the last clone also requires that no open card uses the project. Its output says when the last clone was removed.
+- `project remove <name>` removes a project and all its clones from the registry, never files on a host. It refuses an unknown project or any open card that uses it, naming those cards. Closed cards keep their project name and history.
 - Use the same host names in `--clone` that mates pass to `dispatch`.
 - A project's yolo flag is the captain's standing merge authority: with it on, a mate tells the worker to merge a PR of that project with green checks, without asking the captain. The captain can set it with `project add --yolo` or `project yolo <name> on|off`, or tell main to set or clear it with `project_yolo(project, on)`. Main never changes it on its own initiative or on a second mate's request. Second mates and workers cannot change it. Destructive, irreversible, or security-sensitive merges still need the captain's words with yolo on.
 - `project delivery <name> <mode>` sets the delivery mode (`no-mistakes`, `direct-PR`, or `local-only`) that ship cards created from then on take. Cards that already exist keep the mode they recorded. `card delivery <number> <mode>` changes the recorded mode of one open ship card. It refuses a closed card, a card that is not a ship card, and a card with a live worker, whose task already named its mode. For such a card, a mate dispatches with `delivery=<mode>` and `replace=true`, which starts its worker over with the new mode. No mate tool changes a project's default.

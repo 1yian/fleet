@@ -30,6 +30,8 @@ cardd lane add <name> --db <file> --home <path> [--parent <lane>]
 cardd lane plan <name> --db <file> [--plan <json>]
 cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>]
 cardd project clone <name> <host>=<path> --db <file>
+cardd project unclone <name> <host> --db <file>
+cardd project remove <name> --db <file>
 cardd project yolo <name> on|off --db <file>
 cardd project delivery <name> <mode> --db <file>
 cardd card delivery <number> <mode> --db <file>
@@ -38,6 +40,8 @@ cardd card delivery <number> <mode> --db <file>
 `serve --hosts` and `serve --browser` take JSON, and [setup.md](setup.md) owns their form. `project add` without `--repo` reads the project's GitHub repository from the `origin` remote of a clone on the `cardd` host. `serve` fills in any that are missing at each start.
 
 `project clone` sets one host's clone of a registered project to a new path, so a clone can move. Attempts already begun keep their worktrees where they are: close finds them through the clone's worktree list, not through a stored path.
+
+`project remove` refuses open cards, then moves the closed cards' project names into `cards.historical_project` and clears their registry references before deleting the project. Card reads coalesce the current and historical names, so their public history stays unchanged and foreign keys stay valid. Clone registration lives in the project row, so deleting it removes every refresh and dispatch target without touching files.
 
 `project delivery` sets the delivery mode that new ship cards of a project take: `no-mistakes`, `direct-PR`, or `local-only`. It changes no card: a card records its mode when it is created, and that record is what dispatch tells the worker. `card delivery` changes the recorded mode of one open ship card. It refuses a card that is closed, is not a ship card, or has a live worker, because that worker was told its mode in its task and a changed record would let it go on with a stale one. To change the mode of a card with a live worker, a mate dispatches again with `delivery=<mode>` and `replace=true`, which starts the worker over with the new mode. Setting the mode a card already has changes nothing. Each change is a note on the card.
 

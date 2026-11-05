@@ -9,7 +9,16 @@ import { serve } from "./server.ts";
 import { DELIVERIES } from "@fleet/protocol";
 import { setCardDelivery } from "./attempts.ts";
 import { parsePlan, setNextPlan, showPlans } from "./plans.ts";
-import { addLane, addProject, setClone, setProjectDelivery, setRepo, setYolo } from "./store.ts";
+import {
+  addLane,
+  addProject,
+  removeClone,
+  removeProject,
+  setClone,
+  setProjectDelivery,
+  setRepo,
+  setYolo,
+} from "./store.ts";
 
 if (process.argv[2] === "serve") {
   stampLogLines();
@@ -149,6 +158,15 @@ if (command === "serve") {
   console.log(`${rest[1]}: clone on ${host} is ${path}`);
 } else if (
   command === "project" &&
+  rest[0] === "unclone" &&
+  rest[1] !== undefined &&
+  rest[2] !== undefined
+) {
+  console.log(removeClone(db, rest[1], rest[2]));
+} else if (command === "project" && rest[0] === "remove" && rest[1] !== undefined) {
+  console.log(removeProject(db, rest[1]));
+} else if (
+  command === "project" &&
   rest[0] === "delivery" &&
   rest[1] !== undefined &&
   rest[2] !== undefined
@@ -173,6 +191,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> [--hosts <json>] [--browser <json>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] [--browser <json>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project unclone <name> <host> --db <file> | cardd project remove <name> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
   );
 }
