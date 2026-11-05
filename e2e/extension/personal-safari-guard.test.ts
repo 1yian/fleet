@@ -11,7 +11,16 @@ const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url)
 const CAPTURE = fileURLToPath(new URL("../support/capture-tool.ts", import.meta.url));
 const refusals = (text: string): number =>
   text.match(/refused: Safari on the captain's Mac/g)?.length ?? 0;
-const STUBBED = ["osascript", "open", "ssh", "tailscale", "safaridriver", "sheprd", "xdg-open"];
+const STUBBED = [
+  "osascript",
+  "open",
+  "ssh",
+  "mosh",
+  "tailscale",
+  "safaridriver",
+  "sheprd",
+  "xdg-open",
+];
 
 const SAFARI_TELL = `tell application "Safari" to activate`;
 const NOTIFY = `display notification "done" with title "fleet"`;
@@ -41,6 +50,15 @@ const REFUSED: readonly string[] = [
   `ssh -t frontera "osascript -e 'tell application \\"Safari\\" to activate'"`,
   `ssh -o ConnectTimeout=5 100.64.0.7 'safaridriver --enable'`,
   `tailscale ssh yian@frontera open -a Safari https://example.com`,
+  `ssh -p 22 frontera osascript -e '${SAFARI_TELL}'`,
+  `ssh -l yian -i /tmp/key -o ConnectTimeout=5 frontera "open -a Safari https://example.com"`,
+  `ssh -o ConnectTimeout=5 frontera 'cd /tmp && open -a Safari https://example.com'`,
+  `ssh frontera 'sudo open -a Safari https://example.com'`,
+  String.raw`ssh frontera "bash -c 'osascript -e \"tell application \\\"Safari\\\" to activate\"'"`,
+  `ssh -p 22 frontera safaridriver --enable`,
+  `mosh frontera -- open -a Safari https://example.com`,
+  `mosh --ssh="ssh -p 22" frontera -- osascript -e '${SAFARI_TELL}'`,
+  `tailscale ssh yian@frontera osascript -e '${SAFARI_TELL}'`,
 ];
 
 const ALLOWED: readonly string[] = [
@@ -51,6 +69,12 @@ const ALLOWED: readonly string[] = [
   `sheprd browser open --tab ${TARGET}`,
   `ssh frontera sheprd browser open --tab ${TARGET}`,
   `echo "the guard refuses osascript commands that name Safari"`,
+  `ssh frontera sheprd browser open --tab http://127.0.0.1:41000/?t=Safari`,
+  `ssh -p 22 frontera sheprd browser open --tab https://example.com/Safari`,
+  `ssh frontera 'echo safaridriver'`,
+  `ssh frontera "echo open -a Safari"`,
+  `mosh frontera -- sheprd browser open --tab https://example.com/Safari`,
+  `tailscale ssh yian@frontera sheprd browser open --tab https://example.com/Safari`,
 ];
 
 let fleet: Fleet;
@@ -138,5 +162,11 @@ test("a mate still runs osascript that names no Safari, ssh, text about Safari, 
     `ssh frontera osascript -e ${NOTIFY}`,
     `sheprd browser open --tab ${TARGET}`,
     `ssh frontera sheprd browser open --tab ${TARGET}`,
+    "ssh frontera sheprd browser open --tab http://127.0.0.1:41000/?t=Safari",
+    "ssh -p 22 frontera sheprd browser open --tab https://example.com/Safari",
+    "ssh frontera echo safaridriver",
+    "ssh frontera echo open -a Safari",
+    "mosh frontera -- sheprd browser open --tab https://example.com/Safari",
+    "tailscale ssh yian@frontera sheprd browser open --tab https://example.com/Safari",
   ]);
 });

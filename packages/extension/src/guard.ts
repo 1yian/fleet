@@ -17,16 +17,32 @@ const DAEMON_REASON =
 
 const PREFIXES = "(?:sudo|env|command|exec|nohup|time|nice|caffeinate)\\b(?:\\s+-\\S+)*\\s+";
 const SHELL_C = "(?:\\S*/)?(?:ba|z|da)?sh\\s+(?:-\\S+\\s+)*?-\\w*c\\s+[\"']?";
-const AT_COMMAND = `(?:^|[|;&\\n(\`]|\\$\\()\\s*(?:[A-Za-z_]\\w*=\\S*\\s+|${PREFIXES}|eval\\s+["']?|${SHELL_C})*`;
+const WRAPPERS = `(?:[A-Za-z_]\\w*=\\S*\\s+|${PREFIXES}|eval\\s+["']?|${SHELL_C})*`;
+const AT_COMMAND = `(?:^|[|;&\\n(\`]|\\$\\()\\s*${WRAPPERS}`;
 const NAMED_SAFARI = "(?<![\\w-])safari(?![\\w-]|\\.(?!app\\b))";
-const REMOTE_SHELL = "(?:(?:\\S*/)?(?:ssh|mosh)|(?:\\S*/)?tailscale\\s+ssh)";
+
+const DRIVES_SAFARI = [
+  `(?:\\S*/)?osascript\\b[\\s\\S]*${NAMED_SAFARI}`,
+  `(?:\\S*/)?open(?=\\s)[^|;&\\n]*${NAMED_SAFARI}`,
+  `(?:\\S*/)?safaridriver\\b`,
+].join("|");
+
+const WORD = `(?:"[^"]*"|'[^']*'|\\S+)`;
+const HOST = "[^\\s-]\\S*";
+const SSH_FLAG = "-[46AaCfGgKkMNnqsTtVvXxYy]+(?=\\s)";
+const SSH_VALUE_FLAG = `-[BbcDEeFIiJLlmOopQRSWw]\\s*${WORD}`;
+const MOSH_OPTION = `--ssh(?:=|\\s+)${WORD}|--[a-z][a-z-]*(?:=\\S+)?|-p\\s*\\S+|-[an](?=\\s)`;
+const REMOTE_SHELL = [
+  `(?:\\S*/)?ssh\\s+(?:(?:${SSH_FLAG}|${SSH_VALUE_FLAG})\\s+)*${HOST}`,
+  `(?:\\S*/)?mosh\\s+(?:(?:${MOSH_OPTION})\\s+)*${HOST}`,
+  `(?:\\S*/)?tailscale\\s+ssh\\s+${HOST}`,
+].join("|");
+const REMOTE_COMMAND_START = `(?:["']?|[\\s\\S]*?[|;&\\n])\\s*${WRAPPERS}`;
 
 const PERSONAL_SAFARI: readonly RegExp[] = [
-  new RegExp(`${AT_COMMAND}(?:\\S*/)?osascript\\b[\\s\\S]*${NAMED_SAFARI}`, "i"),
-  new RegExp(`${AT_COMMAND}(?:\\S*/)?open(?=\\s)[^|;&\\n]*${NAMED_SAFARI}`, "i"),
-  new RegExp(`${AT_COMMAND}(?:\\S*/)?safaridriver\\b`, "i"),
+  new RegExp(`${AT_COMMAND}(?:${DRIVES_SAFARI})`, "i"),
   new RegExp(
-    `${AT_COMMAND}${REMOTE_SHELL}\\b[\\s\\S]*?(?:\\b(?:osascript|open)\\b[\\s\\S]*${NAMED_SAFARI}|\\bsafaridriver\\b)`,
+    `${AT_COMMAND}(?:${REMOTE_SHELL})\\s+(?:--\\s+)?${REMOTE_COMMAND_START}(?:${DRIVES_SAFARI})`,
     "i",
   ),
 ];
