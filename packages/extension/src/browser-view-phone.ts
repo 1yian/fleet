@@ -1,6 +1,6 @@
 export const PHONE_STYLE = `
   #keyboard, #dock { display: none; }
-  .phone body { display: flex; flex-direction: column; height: 100dvh; }
+  .phone body { display: flex; flex-direction: column; height: 100dvh; touch-action: manipulation; }
   .phone aside { flex: none; flex-direction: row; align-items: stretch; border-right: 0; border-bottom: 1px solid #1d1d26; overflow-x: auto; overflow-y: hidden; }
   .phone aside h1 { display: none; }
   .phone #problem { flex: none; margin: 6px 10px; }
@@ -24,7 +24,7 @@ export const PHONE_STYLE = `
 
 export const PHONE_HEAD = `
 <script>
-  const phoneQuery = matchMedia("(max-width: 720px), (pointer: coarse)");
+  const phoneQuery = matchMedia("(max-width: 640px), (pointer: coarse)");
   document.documentElement.classList.toggle("phone", phoneQuery.matches);
 </script>`;
 

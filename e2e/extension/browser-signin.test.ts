@@ -104,6 +104,12 @@ async function pick(page: Page, touch: boolean): Promise<void> {
   if ((await page.locator("#live").textContent()) !== "live")
     await (touch ? tab.tap() : tab.click());
   await live(page);
+  const phone = page.viewportSize();
+  if (touch && phone !== null)
+    await until(
+      async () => Number((await onRemote("innerWidth")) ?? 0) === phone.width,
+      "the tab to take the phone's width",
+    );
 }
 
 async function waitForRemote(selector: string): Promise<void> {
@@ -239,10 +245,6 @@ test("phone: the page in the tab is laid out for the phone's width while the cap
 
   const phone = page.viewportSize();
   assert.ok(phone !== null);
-  await until(
-    async () => Number((await onRemote("innerWidth")) ?? 0) === phone.width,
-    "the tab to take the phone's width",
-  );
   await shot(page, "phone-6-fitted");
   await page.locator("#keyboard").tap();
   await until(
