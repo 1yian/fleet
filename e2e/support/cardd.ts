@@ -171,6 +171,14 @@ export class Cardd {
     db.close();
   }
 
+  refuseBrowserTabRetirement(): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.exec(
+      "CREATE TRIGGER refuse_tab_retirement BEFORE UPDATE ON browser_tabs BEGIN SELECT RAISE(ABORT, 'browser_tabs refuses the retirement'); END",
+    );
+    db.close();
+  }
+
   startAttemptAfterTabs(card: number): void {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     db.prepare(

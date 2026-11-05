@@ -227,10 +227,7 @@ export class Browser {
     let closed = 0;
     const notes: string[] = [];
     for (const host of hostsOfCard(this.db, card)) {
-      const done = await this.closeOn(host, card).catch((error: unknown) => ({
-        closed: 0,
-        note: reason(error),
-      }));
+      const done = await this.closeOn(host, card);
       closed += done.closed;
       if (done.note !== null) notes.push(done.note);
     }

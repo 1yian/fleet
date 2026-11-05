@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, OPS } from "@fleet/protocol";
@@ -8,11 +9,21 @@ import { Cardd, type Session } from "./cardd.ts";
 import { StandInChrome } from "./chrome.ts";
 import type { FakeVault } from "./fake-vault.ts";
 import { begin, newCard } from "./fleet.ts";
-import { parseRecord, type JsonRecord } from "./json.ts";
+import { spawnGuarded } from "./guarded.ts";
+import { parseRecord, records, type JsonRecord } from "./json.ts";
 import { tempDir } from "./run-root.ts";
 import { TestSite } from "./site.ts";
 
 const TRANSPORT = fileURLToPath(new URL("./host-transport.ts", import.meta.url));
+const VIEWER = fileURLToPath(
+  new URL("../../packages/extension/src/browser-view.ts", import.meta.url),
+);
+const VIEWER_WAIT_MS = 15_000;
+
+interface BrowserSpec {
+  readonly cdp: string;
+  readonly logins?: Record<string, unknown>;
+}
 
 export interface HostSpec {
   readonly name: string;
@@ -35,9 +46,14 @@ export const transportFor = (
   ...(vault === undefined ? [] : [`FAKE_BWS_DIR=${vault.dir}`]),
 ];
 
+async function cookieFor(address: string): Promise<string> {
+  const entered = await fetch(address, { redirect: "manual" });
+  return entered.headers.get("set-cookie")?.split(";")[0] ?? "";
+}
+
 const serveArgs = (
   routes: Record<string, string[]>,
-  browser: Record<string, unknown>,
+  browser: Record<string, BrowserSpec>,
 ): string[] => ["--hosts", JSON.stringify(routes), "--browser", JSON.stringify(browser)];
 
 const routeOf = (dir: string, { name, vault, hangs = false }: HostSpec): string[] => [
@@ -84,24 +100,25 @@ function hostWorker(base: RawWorker): HostWorker {
 
 export class HostLab {
   readonly dir: string;
-  readonly chromes: ReadonlyMap<string, StandInChrome>;
+  readonly chromes: Map<string, StandInChrome>;
   readonly site: TestSite;
   readonly cardd: Cardd;
   main: Session;
   private readonly mainToken: string;
   private readonly routes: Record<string, string[]>;
-  private readonly browser: Record<string, unknown>;
+  private readonly browser: Record<string, BrowserSpec>;
   private readonly sessions: Session[] = [];
+  private readonly viewers: ReturnType<typeof spawnGuarded>[] = [];
 
   private constructor(parts: {
     dir: string;
-    chromes: ReadonlyMap<string, StandInChrome>;
+    chromes: Map<string, StandInChrome>;
     site: TestSite;
     cardd: Cardd;
     main: Session;
     mainToken: string;
     routes: Record<string, string[]>;
-    browser: Record<string, unknown>;
+    browser: Record<string, BrowserSpec>;
   }) {
     this.dir = parts.dir;
     this.chromes = parts.chromes;
@@ -116,7 +133,7 @@ export class HostLab {
   static async start(specs: readonly HostSpec[]): Promise<HostLab> {
     const dir = tempDir("fleet-hosts-");
     const chromes = new Map<string, StandInChrome>();
-    const browser: Record<string, unknown> = {};
+    const browser: Record<string, BrowserSpec> = {};
     const routes: Record<string, string[]> = {};
     for (const spec of specs) {
       const { name, vault, browser: wanted = true, route = true } = spec;
@@ -149,6 +166,71 @@ export class HostLab {
     await this.cardd.restart(serveArgs(this.routes, named));
     this.main = await this.cardd.connect(this.mainToken);
     this.sessions.length = 0;
+  }
+
+  async moveBrowser(host: string): Promise<void> {
+    const old = this.chrome(host);
+    const fresh = await StandInChrome.start(RULES);
+    this.chromes.set(host, fresh);
+    this.browser[host] = { ...this.browser[host], cdp: fresh.endpoint };
+    await old.stop();
+    await this.cardd.restart(serveArgs(this.routes, this.browser));
+    this.main = await this.cardd.connect(this.mainToken);
+    this.sessions.length = 0;
+  }
+
+  async viewer(host: string): Promise<string> {
+    const access = join(tempDir("fleet-viewer-access-"), "access.json");
+    writeFileSync(access, JSON.stringify({ url: this.cardd.url, token: this.mainToken, host }), {
+      mode: 0o600,
+    });
+    const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--captain"], {
+      stdio: ["ignore", "pipe", "inherit"],
+      env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0" },
+    });
+    this.viewers.push(viewer);
+    let said = "";
+    viewer.stdout?.setEncoding("utf8").on("data", (chunk: string) => (said += chunk));
+    const deadline = Date.now() + VIEWER_WAIT_MS;
+    for (;;) {
+      const found = /Fleet browser viewer \(captain\): (\S+)/.exec(said)?.[1];
+      if (found !== undefined) return found;
+      assert.ok(Date.now() < deadline, "the viewer did not print its address");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  async viewerTargets(address: string): Promise<string[]> {
+    const cookie = await cookieFor(address);
+    const body = await (await fetch(new URL("/api/tabs", address), { headers: { cookie } })).text();
+    const tabs = parseRecord(body)["tabs"];
+    assert.ok(Array.isArray(tabs));
+    return records(tabs).map((tab) => String(tab["target"]));
+  }
+
+  async viewerPicture(address: string, target: string): Promise<number> {
+    const cookie = await cookieFor(address);
+    const abort = new AbortController();
+    const url = new URL(`/api/stream?target=${encodeURIComponent(target)}`, address);
+    const response = await fetch(url, {
+      headers: { cookie },
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(VIEWER_WAIT_MS)]),
+    });
+    try {
+      assert.equal(response.status, 200);
+      const reader = response.body?.getReader();
+      assert.ok(reader !== undefined);
+      const decoder = new TextDecoder();
+      let seen = "";
+      while (!seen.includes('"data":"')) {
+        const { done, value } = await reader.read();
+        assert.ok(!done, "the stream ended before a picture");
+        seen += decoder.decode(value, { stream: true });
+      }
+      return seen.length;
+    } finally {
+      abort.abort();
+    }
   }
 
   chrome(host: string): StandInChrome {
@@ -185,7 +267,13 @@ export class HostLab {
   }
 
   async stop(): Promise<void> {
+    const exits = this.viewers.splice(0).map((viewer) => {
+      const exited = new Promise((resolve) => viewer.once("exit", resolve));
+      viewer.kill("SIGTERM");
+      return exited;
+    });
     const stopped = await Promise.allSettled([
+      ...exits,
       this.main.close(),
       ...this.sessions.splice(0).map((session) => session.close()),
       this.cardd.stop(),

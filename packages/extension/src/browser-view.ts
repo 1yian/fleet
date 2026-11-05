@@ -68,7 +68,7 @@ class Viewer {
   private readonly cardd: Cardd;
   private readonly transports: Transports;
   private readonly captain: boolean;
-  private readonly screens = new Map<string, Screen>();
+  private readonly screens = new Map<string, { endpoint: string; screen: Screen }>();
   private browsers = new Map<string, string>();
   private own: string | null = null;
   private readonly poll = new Poll(
@@ -88,12 +88,12 @@ class Viewer {
   }
 
   close(): void {
-    for (const screen of this.screens.values()) screen.close();
+    for (const { screen } of this.screens.values()) screen.close();
   }
 
   private screenOf(host: string): Screen {
     const known = this.screens.get(host);
-    if (known !== undefined) return known;
+    if (known !== undefined) return known.screen;
     const endpoint = this.browsers.get(host);
     if (endpoint === undefined) throw new Error(`no shared browser is configured on ${host}`);
     const via = host === this.own ? [] : this.transports[host];
@@ -102,7 +102,7 @@ class Viewer {
         `no transport for ${host}: add it to hosts in config/lane.json of this lane, and set host there to this machine's name in the fleet`,
       );
     const made = new Screen(dial(via, endpoint));
-    this.screens.set(host, made);
+    this.screens.set(host, { endpoint, screen: made });
     return made;
   }
 
@@ -144,6 +144,11 @@ class Viewer {
     const view = await callView(this.cardd, this.captain);
     this.own = view.host;
     this.browsers = new Map(view.browsers.map(({ host, endpoint }) => [host, endpoint]));
+    for (const [host, { endpoint, screen }] of this.screens) {
+      if (this.browsers.get(host) === endpoint) continue;
+      screen.close();
+      this.screens.delete(host);
+    }
     this.visible = new Map(view.tabs.map((tab) => [tab.target, tab.host]));
     return view;
   }

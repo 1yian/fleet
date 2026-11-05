@@ -248,3 +248,64 @@ test("a card that moves to another host retires its tab on a host that is no lon
   assert.deepEqual(await lab.pathsOn("beta"), ["/b"]);
   assert.match((await drive("beta", { action: "read" })).text, /bravo page/);
 });
+
+test("a release that cannot record the retirement fails, on a configured host and on one that is no longer configured", async () => {
+  lab = await HostLab.start([{ name: "alpha" }, { name: "beta" }]);
+  const card = await newCard(lab.main, "Look at the site");
+  await lab.main.call("browser", {
+    card: card.id,
+    host: "alpha",
+    action: "open",
+    url: lab.site.url("/a"),
+  });
+  lab.cardd.refuseBrowserTabRetirement();
+
+  await assert.rejects(
+    lab.main.call("browser.release", { card: card.id }),
+    /browser_tabs refuses the retirement/,
+  );
+  assert.deepEqual(await lab.tabHosts(), [`${String(card.id)}@alpha`]);
+
+  await lab.rebrowse(["beta"]);
+  await assert.rejects(
+    lab.main.call("browser.release", { card: card.id }),
+    /browser_tabs refuses the retirement/,
+  );
+  await assert.rejects(
+    lab.main.call("browser", {
+      card: card.id,
+      host: "beta",
+      action: "open",
+      url: lab.site.url("/b"),
+    }),
+    /browser_tabs refuses the retirement/,
+  );
+  assert.deepEqual(await lab.pathsOn("beta"), []);
+});
+
+test("a viewer follows a host whose Chrome endpoint changed: its picture comes from the new Chrome", async () => {
+  lab = await HostLab.start([{ name: "alpha" }]);
+  const card = await newCard(lab.main, "Look at the site");
+  const open = async (path: string) =>
+    lab.main.call("browser", {
+      card: card.id,
+      host: "alpha",
+      action: "open",
+      url: lab.site.url(path),
+    });
+  await open("/a");
+  const address = await lab.viewer("alpha");
+  const [before] = await lab.viewerTargets(address);
+  assert.ok(before !== undefined);
+  assert.ok((await lab.viewerPicture(address, before)) > 0);
+
+  await lab.moveBrowser("alpha");
+  await open("/b");
+
+  const targets = await lab.viewerTargets(address);
+  assert.equal(targets.length, 1);
+  const [after] = targets;
+  assert.ok(after !== undefined && after !== before);
+  assert.deepEqual(await lab.pathsOn("alpha"), ["/b"]);
+  assert.ok((await lab.viewerPicture(address, after)) > 0);
+});
