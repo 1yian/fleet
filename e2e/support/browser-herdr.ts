@@ -4,15 +4,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Card } from "@fleet/protocol";
 import { RULES } from "./browser-lab.ts";
+import { transportFor } from "./browser-hosts.ts";
 import { Cardd } from "./cardd.ts";
 import { StandInChrome } from "./chrome.ts";
 import type { FakeVault } from "./fake-vault.ts";
-import { begin, newCard } from "./fleet.ts";
+import { begin, newCard, WORKER_HOST } from "./fleet.ts";
 import { Harness } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { parseRecord, records, type JsonRecord } from "./json.ts";
 import { TestSite } from "./site.ts";
-import { configureMain, Scratch, startMain } from "./scratch.ts";
+import { configureMain, mateArgs, Scratch, startMain } from "./scratch.ts";
+import { tempDir } from "./run-root.ts";
 
 const WAIT_MS = 60_000;
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -24,13 +26,66 @@ export interface Worker {
   readonly pane: string;
 }
 
+export interface Frame {
+  readonly width: number;
+  readonly height: number;
+  readonly bytes: number;
+}
+
+function frameOf(sent: JsonRecord): Frame {
+  const { data, width, height } = sent;
+  if (typeof data !== "string" || typeof width !== "number" || typeof height !== "number")
+    throw new Error("the stream sent a malformed picture");
+  return { width, height, bytes: data.length };
+}
+
+export interface Mate {
+  readonly lane: string;
+  readonly home: string;
+  readonly workspace: string;
+  readonly worker: Worker;
+}
+
 export interface AxiResult {
   readonly code: number;
   readonly text: string;
 }
 
+export interface Hosts {
+  readonly names: readonly string[];
+  readonly mainHost: string;
+}
+
+async function startCardd(options: {
+  browser: boolean;
+  vault?: FakeVault;
+  hosts?: Hosts;
+  dir: string;
+  names: readonly string[];
+  chromes: ReadonlyMap<string, StandInChrome>;
+}): Promise<Cardd> {
+  const { vault, dir, names, chromes } = options;
+  const config = Object.fromEntries(
+    [...chromes].map(([name, each]) => [
+      name,
+      { cdp: each.endpoint, ...(vault === undefined ? {} : { logins: vault.logins() }) },
+    ]),
+  );
+  const routes = Object.fromEntries(names.map((name) => [name, transportFor(dir, "cardd", name)]));
+  const cardd = await Cardd.start(vault?.env ?? {}, [
+    ...(options.hosts === undefined ? [] : ["--hosts", JSON.stringify(routes)]),
+    ...(options.browser ? ["--browser", JSON.stringify(config)] : []),
+  ]);
+  const clones = Object.fromEntries([WORKER_HOST, ...names].map((name) => [name, "/clones/web"]));
+  cardd.addProject("web", clones, "acme/web");
+  return cardd;
+}
+
 export class BrowserHerdr {
   readonly chrome: StandInChrome;
+  readonly chromes: ReadonlyMap<string, StandInChrome>;
+  readonly dir: string;
+  private readonly hosts: Hosts | undefined;
   readonly cardd: Cardd;
   readonly site: TestSite;
   readonly h: Harness;
@@ -44,6 +99,9 @@ export class BrowserHerdr {
 
   private constructor(parts: {
     chrome: StandInChrome;
+    chromes: ReadonlyMap<string, StandInChrome>;
+    dir: string;
+    hosts: Hosts | undefined;
     cardd: Cardd;
     site: TestSite;
     h: Harness;
@@ -51,6 +109,9 @@ export class BrowserHerdr {
     scratch: Scratch;
   }) {
     this.chrome = parts.chrome;
+    this.chromes = parts.chromes;
+    this.dir = parts.dir;
+    this.hosts = parts.hosts;
     this.cardd = parts.cardd;
     this.site = parts.site;
     this.h = parts.h;
@@ -58,51 +119,114 @@ export class BrowserHerdr {
     this.scratch = parts.scratch;
   }
 
-  static async start(options: { browser: boolean; vault?: FakeVault }): Promise<BrowserHerdr> {
-    const chrome = await StandInChrome.start(RULES);
-    const site = await TestSite.start();
-    const config =
-      options.vault === undefined
-        ? JSON.stringify({ cdp: chrome.endpoint })
-        : options.vault.config(chrome.endpoint);
-    const cardd = await Cardd.start(
-      options.vault?.env ?? {},
-      options.browser ? ["--browser", config] : [],
-    );
-    cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
+  static async start(options: {
+    browser: boolean;
+    vault?: FakeVault;
+    hosts?: Hosts;
+  }): Promise<BrowserHerdr> {
+    const dir = tempDir("fleet-hosts-");
+    const names = options.hosts?.names ?? [WORKER_HOST];
+    const chromes = new Map<string, StandInChrome>();
+    for (const name of names) chromes.set(name, await StandInChrome.start(RULES));
+    const chrome = chromes.get(names[0] ?? WORKER_HOST);
+    if (chrome === undefined) throw new Error("no host to start");
+    const cardd = await startCardd({ ...options, dir, names, chromes });
     const h = await Harness.start();
-    const scratch = new Scratch();
     const lab = await HerdrLab.start({
       ...h.piEnv("mate"),
       PATH: `${join(ROOT, "bin")}:${join(ROOT, "node_modules/.bin")}:${process.env["PATH"] ?? ""}`,
       FLEET_BROWSER_VIEW_OPEN: "0",
     });
-    return new BrowserHerdr({ chrome, cardd, site, h, lab, scratch });
+    return new BrowserHerdr({
+      chrome,
+      chromes,
+      dir,
+      hosts: options.hosts,
+      cardd,
+      site: await TestSite.start(),
+      h,
+      lab,
+      scratch: new Scratch(),
+    });
   }
 
-  async workers(titles: readonly string[]): Promise<Worker[]> {
+  private routesOf(who: string): Record<string, string[]> {
+    return Object.fromEntries(
+      (this.hosts?.names ?? []).map((name) => [name, transportFor(this.dir, who, name)]),
+    );
+  }
+
+  private async workspaceFor(card: Card, token: string): Promise<Worker> {
+    const created = await this.lab.run([
+      "workspace",
+      "create",
+      "--cwd",
+      this.scratch.root,
+      "--label",
+      `worker c-${String(card.id)}`,
+      "--no-focus",
+    ]);
+    const workspace = String(records([created["workspace"]])[0]?.["workspace_id"]);
+    const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+    return { card, token, workspace, pane };
+  }
+
+  async workers(titles: readonly string[], host = WORKER_HOST): Promise<Worker[]> {
     this.mainToken = this.cardd.addLane("main", undefined, this.scratch.root);
-    configureMain(this.scratch, this.cardd.url, this.mainToken);
+    configureMain(this.scratch, this.cardd.url, this.mainToken, {
+      host: this.hosts?.mainHost ?? WORKER_HOST,
+      hosts: this.routesOf("main"),
+    });
     const main = await this.cardd.connect(this.mainToken);
     const made: Worker[] = [];
     for (const title of titles) {
       const card = await newCard(main, title);
-      const token = await begin(main, card, "browse");
-      const created = await this.lab.run([
-        "workspace",
-        "create",
-        "--cwd",
-        this.scratch.root,
-        "--label",
-        `worker c-${String(card.id)}`,
-        "--no-focus",
-      ]);
-      const workspace = String(records([created["workspace"]])[0]?.["workspace_id"]);
-      const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
-      made.push({ card, token, workspace, pane });
+      const token = await begin(main, card, "browse", host);
+      made.push(await this.workspaceFor(card, token));
     }
     await main.close();
     return made;
+  }
+
+  async startMate(lane: string, title: string, host: string): Promise<Mate> {
+    const laneHost = host;
+    const token = this.cardd.addLane(lane, "main");
+    const session = await this.cardd.connect(token);
+    const card = await newCard(session, title);
+    const workerToken = await begin(session, card, "browse", host);
+    await session.close();
+    const home = this.scratch.addLane(lane, {
+      url: this.cardd.url,
+      token,
+      args: mateArgs(this.h),
+      host: laneHost,
+      hosts: this.routesOf(lane),
+    });
+    const created = await this.lab.run([
+      "workspace",
+      "create",
+      "--cwd",
+      home,
+      "--label",
+      lane,
+      "--no-focus",
+    ]);
+    const workspace = String(records([created["workspace"]])[0]?.["workspace_id"]);
+    const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+    const connected = this.h.events.filter((event) => event["type"] === "fleet_connected").length;
+    const probe = fileURLToPath(new URL("./probe.ts", import.meta.url));
+    const command = [...mateArgs(this.h), "-e", probe].map((arg) => `'${arg}'`).join(" ");
+    await this.lab.submit(pane, `cd '${home}' && FLEET_FAKE_AGENT='${lane}' pi ${command}`);
+    await this.h.waitForNth(
+      (event) => event["type"] === "fleet_connected",
+      connected + 1,
+      `${lane} to connect`,
+    );
+    return { lane, home, workspace, worker: await this.workspaceFor(card, workerToken) };
+  }
+
+  async focus(workspace: string): Promise<void> {
+    await this.lab.run(["workspace", "focus", workspace]);
   }
 
   async startMain(): Promise<string> {
@@ -199,6 +323,18 @@ export class BrowserHerdr {
     return response.status;
   }
 
+  async pictureOf(address: string, target: string): Promise<Frame> {
+    const stream = await this.streamOf(address, target);
+    try {
+      return await until("a picture from the stream", () => {
+        const sent = stream.messages.find((message) => typeof message["data"] === "string");
+        return sent === undefined ? undefined : frameOf(sent);
+      });
+    } finally {
+      await stream.stop();
+    }
+  }
+
   async inputStatus(address: string, target: string, at = { x: 5, y: 5 }): Promise<number> {
     const cookie = await this.cookieFor(address);
     const response = await fetch(new URL("/api/input", address), {
@@ -215,7 +351,7 @@ export class BrowserHerdr {
       this.lab.stop(),
       this.h.stop(),
       this.cardd.stop(),
-      this.chrome.stop(),
+      ...[...this.chromes.values()].map((each) => each.stop()),
       this.site.stop(),
     ]);
     this.scratch.dispose();

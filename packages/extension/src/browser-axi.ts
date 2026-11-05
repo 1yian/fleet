@@ -28,7 +28,7 @@ const USAGE = `browser-axi: drive your card's tab in the fleet's shared Chrome
   browser-axi close                    close your tab
 flags for every command:
   --card <n>        a mate names the card whose tab it drives (a worker never needs it)
-  --captain <why>   the captain is needed in this tab (passkey, one-time code, terms, payment): the viewer opens in main's workspace instead of yours
+  --captain <why>   the captain is needed in this tab (passkey, one-time code, terms, payment): the viewer opens in your lane's workspace if the captain is there, and in main's if he is not
   --json            print one JSON object instead of TOON
 exit status: 0 done, 1 error, 2 usage, 3 login found no entry (the mate was asked), 4 this fleet has no shared browser`;
 
@@ -133,10 +133,11 @@ async function call(
   op: "browser" | "browser.view",
   args: object,
 ): Promise<unknown> {
+  const named = access.host === undefined ? {} : { host: access.host };
   const response = await fetch(callUrl(access.url), {
     method: "POST",
     headers: { authorization: `Bearer ${access.token}`, "content-type": "application/json" },
-    body: JSON.stringify({ op, args }),
+    body: JSON.stringify({ op, args: { ...args, ...named } }),
     signal: AbortSignal.timeout(120_000),
   }).catch((error: unknown) => {
     throw new Error(`cardd is unreachable (${reason(error)})`);
@@ -159,7 +160,7 @@ function saveImage(image: { mimeType: string; data: string }, out: string | unde
 
 async function place(source: Source, why: string | undefined): Promise<string> {
   if (why !== undefined)
-    return `the captain is needed (${why}): the Browser tab opens in main's workspace`;
+    return `the captain is needed (${why}): the Browser tab opens in your lane's workspace if the captain is there, and otherwise in main's workspace`;
   const workspace = process.env["HERDR_WORKSPACE_ID"];
   if (workspace === undefined)
     return "no herdr workspace in this shell, so no viewer tab was opened";
@@ -248,13 +249,21 @@ async function state({ access }: Caller, values: Values): Promise<Printed> {
     OPS["browser.view"].result,
     await call(access, "browser.view", card === undefined ? {} : { card }),
   );
-  if (view.endpoint === null)
+  if (view.browsers.length === 0)
     throw new Error(
       "this fleet has no shared browser configured: cardd was started without --browser",
     );
+  if (view.host !== null && !view.browsers.some(({ host }) => host === view.host))
+    throw new Error(
+      `this fleet has no shared browser configured on host ${view.host}: cardd's --browser names ${view.browsers.map(({ host }) => host).join(", ")}`,
+    );
   const tabs = view.tabs.map((tab) => tab.label);
   return {
-    record: { browser: "configured", tabs: tabs.length === 0 ? "none open" : tabs },
+    record: {
+      browser: "configured",
+      ...(view.host === null ? {} : { host: view.host }),
+      tabs: tabs.length === 0 ? "none open" : tabs,
+    },
     help: ["Run `browser-axi open <url>` to open your tab", MORE],
     code: EXIT.ok,
   };

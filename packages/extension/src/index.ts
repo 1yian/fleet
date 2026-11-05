@@ -7,7 +7,7 @@ import type { Entry } from "@fleet/protocol";
 import { showBoardLink } from "./board-link.ts";
 import { registerBranch } from "./branch.ts";
 import { exportBrowserSource } from "./browser-access.ts";
-import { isSummon, openForCaptain } from "./browser-place.ts";
+import { answerSummon } from "./browser-place.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
@@ -271,10 +271,7 @@ function start(
       if (entry.fields["recovery"] !== undefined) worker?.checkingHealth();
       else worker?.reset();
     };
-    if (lane === "main" && isSummon(entry))
-      void openForCaptain(source, HOME()).catch((error: unknown) => {
-        console.error(`browser view: ${String(error)}`);
-      });
+    if (role === "mate") answerSummon(link, entry, { main: lane === "main", source, home: HOME() });
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
     else if (entry.kind === "job-result" && jobs !== undefined)
       deliverAfterSync(jobs, seen, entry.id, deliver);

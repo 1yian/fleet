@@ -2,7 +2,7 @@ import { parseCdp, type Cdp, type OpResult } from "@fleet/protocol";
 import Type from "typebox";
 import type { DatabaseSync } from "node:sqlite";
 import { scrubbedOrHidden } from "./browser-hidden.ts";
-import { openTabs } from "./browser-store.ts";
+import type { Tab } from "./browser-store.ts";
 import type { Vault } from "./browser-vault.ts";
 import { getCard } from "./store.ts";
 
@@ -29,24 +29,21 @@ export function hiderOf(vault: Vault, captain: boolean): (text: string) => strin
   return (text) => scrubbedOrHidden(text, secrets);
 }
 
-export function tabsView(
+export function tabView(
   db: DatabaseSync,
-  wants: (card: number) => boolean,
+  tab: Tab,
   targets: ReadonlyMap<string, Listed>,
   hide: (text: string) => string,
-): OpResult<"browser.view">["tabs"] {
-  return openTabs(db)
-    .filter((tab) => wants(tab.card))
-    .map((tab) => {
-      const here = targets.get(tab.target);
-      return {
-        card: tab.card,
-        name: getCard(db, tab.card).name,
-        label: tab.label,
-        target: tab.target,
-        live: here !== undefined,
-        title: hide((here?.title ?? "").replace(`${tab.label} - `, "").replace(tab.label, "")),
-        url: hide(here?.url ?? ""),
-      };
-    });
+): OpResult<"browser.view">["tabs"][number] {
+  const here = targets.get(tab.target);
+  return {
+    card: tab.card,
+    name: getCard(db, tab.card).name,
+    label: tab.label,
+    target: tab.target,
+    host: tab.host,
+    live: here !== undefined,
+    title: hide((here?.title ?? "").replace(`${tab.label} - `, "").replace(tab.label, "")),
+    url: hide(here?.url ?? ""),
+  };
 }

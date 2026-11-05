@@ -50,7 +50,14 @@ export const BrowserArgsSchema = Type.Object({
   captain: Type.Optional(
     Type.String({
       description:
-        "Why the captain is needed in this tab (a passkey, a one-time code, terms, a payment). The fleet then opens the Browser tab in main's workspace instead of the caller's own",
+        "Why the captain is needed in this tab (a passkey, a one-time code, terms, a payment). The fleet then opens the Browser tab in the lane's workspace when the captain is there, and in main's workspace when he is not",
+    }),
+  ),
+  host: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        "A mate's own host name, for a card that has no worker (browser-axi fills it from the lane). A worker never gives it: its tab is in the browser of the host that its worker runs on",
     }),
   ),
 });
@@ -78,9 +85,11 @@ export const BROWSER_OPS = {
     args: Type.Object({
       card: Type.Optional(Type.Integer()),
       captain: Type.Optional(Type.Boolean()),
+      host: Type.Optional(Type.String({ minLength: 1 })),
     }),
     result: Type.Object({
-      endpoint: Nullable(Type.String()),
+      host: Nullable(Type.String()),
+      browsers: Type.Array(Type.Object({ host: Type.String(), endpoint: Type.String() })),
       problem: Nullable(Type.String()),
       tabs: Type.Array(
         Type.Object({
@@ -88,6 +97,7 @@ export const BROWSER_OPS = {
           name: Type.String(),
           label: Type.String(),
           target: Type.String(),
+          host: Type.String(),
           live: Type.Boolean(),
           title: Type.String(),
           url: Type.String(),
@@ -102,5 +112,10 @@ export const BROWSER_OPS = {
       image: Nullable(Type.Object({ mimeType: Type.String(), data: Type.String() })),
       note: Nullable(Type.String()),
     }),
+  },
+  "browser.summon": {
+    roles: ["mate"],
+    args: Type.Object({ card: Type.Integer(), why: Type.String({ minLength: 1 }) }),
+    result: Type.Object({ told: Type.Boolean() }),
   },
 } as const;

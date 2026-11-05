@@ -39,7 +39,7 @@ CREATE TABLE browser_tabs (
   label TEXT NOT NULL,
   opened_at INTEGER NOT NULL,
   closed_at INTEGER
-) STRICT;
+, host TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TABLE card_blockers (
   card INTEGER NOT NULL REFERENCES cards (id),

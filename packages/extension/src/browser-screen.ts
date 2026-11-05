@@ -1,4 +1,5 @@
-import { Cdp, keyPresses, parseCdp } from "@fleet/protocol";
+import { keyPresses, parseCdp, type Cdp } from "@fleet/protocol";
+import type { Dial } from "@fleet/protocol/tunnel";
 import Type, { type Static } from "typebox";
 
 export const InputSchema = Type.Union([
@@ -48,17 +49,15 @@ export class Screen {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, Promise<string>>();
   private readonly viewing = new Map<string, Viewing>();
-  private readonly endpoint: () => string | undefined;
+  private readonly dial: Dial;
 
-  constructor(endpoint: () => string | undefined) {
-    this.endpoint = endpoint;
+  constructor(dial: Dial) {
+    this.dial = dial;
   }
 
   private connection(): Promise<Cdp> {
-    const endpoint = this.endpoint();
-    if (endpoint === undefined) return Promise.reject(new Error("no shared browser is configured"));
     if (this.link === undefined) {
-      const link: Promise<Cdp> = Cdp.connect(endpoint).then((cdp) => {
+      const link: Promise<Cdp> = this.dial.connect().then((cdp) => {
         cdp.onClose(() => {
           if (this.link === link) this.link = undefined;
           this.sessions.clear();
@@ -218,5 +217,6 @@ export class Screen {
       },
       () => undefined,
     );
+    this.dial.close();
   }
 }

@@ -7,6 +7,7 @@ import { BROWSER_OPS, check } from "@fleet/protocol";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { afterEach, beforeEach, test } from "node:test";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
+import { WORKER_HOST } from "../support/fleet.ts";
 import { isRecord } from "../support/json.ts";
 import { spawnGuarded } from "../support/guarded.ts";
 import { tabOf } from "../support/login-fixtures.ts";
@@ -27,9 +28,11 @@ let second: RawWorker;
 
 async function launch(flags: string[]): Promise<string> {
   const access = join(tempDir("fleet-viewer-access-"), "access.json");
-  writeFileSync(access, JSON.stringify({ url: lab.cardd.url, token: lab.mainToken }), {
-    mode: 0o600,
-  });
+  writeFileSync(
+    access,
+    JSON.stringify({ url: lab.cardd.url, token: lab.mainToken, host: WORKER_HOST }),
+    { mode: 0o600 },
+  );
   const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open", ...flags], {
     stdio: ["ignore", "pipe", "inherit"],
     env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0" },

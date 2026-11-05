@@ -11,7 +11,7 @@ export interface Access {
   readonly token: string;
 }
 
-interface AxiRun {
+export interface AxiRun {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
@@ -68,7 +68,7 @@ export function axiArgs(args: Record<string, unknown>, json = true): string[] {
   return [action, ...common, ...flags, ...(json ? ["--json"] : []), ...rest];
 }
 
-function runAxi(
+export function runAxi(
   args: readonly string[],
   access: Access | undefined,
   env: Record<string, string> = {},
@@ -103,7 +103,7 @@ function runAxi(
   });
 }
 
-function recordOf(run: AxiRun): JsonRecord {
+export function recordOf(run: AxiRun): JsonRecord {
   return parseRecord(run.stdout);
 }
 

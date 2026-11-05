@@ -22,8 +22,15 @@ export async function newCard(
   return check(CardSchema, await mate.call("card.new", { title, kind, project: "web" }));
 }
 
-export async function begin(mate: Session, card: Card, task = "the task"): Promise<string> {
-  const value = await mate.call("attempt.begin", { card: card.id, host: "maverick", task });
+export const WORKER_HOST = "maverick";
+
+export async function begin(
+  mate: Session,
+  card: Card,
+  task = "the task",
+  host = WORKER_HOST,
+): Promise<string> {
+  const value = await mate.call("attempt.begin", { card: card.id, host, task });
   return check(OPS["attempt.begin"].result, value).token;
 }
 

@@ -9,6 +9,11 @@ const FAKE_BWS = fileURLToPath(new URL("./fake-bws", import.meta.url));
 const PROJECT_ID = "6c1f5a43-0b6e-4c53-9d58-2f0d6a1f7e11";
 const TOKEN = "0.fake-machine-account-token.not-a-real-token";
 
+export interface VaultIdentity {
+  readonly token: string;
+  readonly project: string;
+}
+
 export interface VaultEntry {
   readonly key: string;
   readonly value: string;
@@ -17,14 +22,19 @@ export interface VaultEntry {
 export class FakeVault {
   readonly dir: string;
   readonly tokenFile: string;
+  readonly identity: VaultIdentity;
 
-  constructor(entries: readonly VaultEntry[]) {
+  constructor(
+    entries: readonly VaultEntry[],
+    identity: VaultIdentity = { token: TOKEN, project: PROJECT_ID },
+  ) {
+    this.identity = identity;
     this.dir = mkdtempSync("/tmp/fleet-fake-vault-");
     this.tokenFile = join(this.dir, "browser-logins.token");
     mkdirSync(this.dir, { recursive: true });
-    writeFileSync(join(this.dir, "token"), TOKEN);
-    writeFileSync(this.tokenFile, `${TOKEN}\n`, { mode: 0o600 });
-    writeFileSync(join(this.dir, "project"), PROJECT_ID);
+    writeFileSync(join(this.dir, "token"), identity.token);
+    writeFileSync(this.tokenFile, `${identity.token}\n`, { mode: 0o600 });
+    writeFileSync(join(this.dir, "project"), identity.project);
     writeFileSync(join(this.dir, "invocations"), "");
     this.publish(entries);
   }
@@ -32,7 +42,7 @@ export class FakeVault {
   publish(entries: readonly VaultEntry[]): void {
     const secrets = entries.map((entry, index) => ({
       id: `00000000-0000-0000-0000-${String(index).padStart(12, "0")}`,
-      projectId: PROJECT_ID,
+      projectId: this.identity.project,
       ...entry,
     }));
     writeFileSync(join(this.dir, "secrets.json"), JSON.stringify(secrets));
@@ -43,7 +53,7 @@ export class FakeVault {
   }
 
   restore(): void {
-    writeFileSync(this.tokenFile, `${TOKEN}\n`, { mode: 0o600 });
+    writeFileSync(this.tokenFile, `${this.identity.token}\n`, { mode: 0o600 });
   }
 
   hold(): void {
@@ -63,11 +73,12 @@ export class FakeVault {
     };
   }
 
-  config(cdp: string, extra: Record<string, unknown> = {}): string {
-    return JSON.stringify({
-      cdp,
-      logins: { host: "p620", tokenFile: this.tokenFile, project: PROJECT_ID, ...extra },
-    });
+  logins(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return { tokenFile: this.tokenFile, project: this.identity.project, ...extra };
+  }
+
+  config(host: string, cdp: string, extra: Record<string, unknown> = {}): string {
+    return JSON.stringify({ [host]: { cdp, logins: this.logins(extra) } });
   }
 
   invocations(): string[] {

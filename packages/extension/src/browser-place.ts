@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { Entry } from "@fleet/protocol";
 import { viewerArguments, type Source } from "./browser-access.ts";
 import { field, herdr, paneText, quote, records, rootPane, shellIdle } from "./host.ts";
+import type { Link } from "./link.ts";
 
 const VIEWER = fileURLToPath(new URL("./browser-view.ts", import.meta.url));
 const BROWSER_TAB = "Browser";
@@ -110,20 +111,54 @@ export async function placeViewer(placement: Placement): Promise<Placed> {
   return started ? "opened" : "running";
 }
 
-export const isSummon = (entry: Entry): boolean =>
-  entry.author === "browser" && typeof entry.fields["summon"] === "string";
+const isSummon = (entry: Entry, main: boolean): boolean =>
+  entry.author === "browser" &&
+  typeof entry.fields["summon"] === "string" &&
+  (main || entry.fields["place"] === "lane");
 
 let placing: Promise<unknown> = Promise.resolve();
 
-export function openForCaptain(source: Source, home: string): Promise<void> {
-  const workspace = process.env["HERDR_WORKSPACE_ID"];
-  if (workspace === undefined) return Promise.resolve();
+function inOrder(placement: Placement): Promise<void> {
   const next = placing
     .catch(() => undefined)
-    .then(() =>
-      placeViewer({ workspace, cwd: home, source, open: true, focus: true, captain: true }),
-    )
+    .then(() => placeViewer(placement))
     .then(() => undefined);
   placing = next;
   return next;
+}
+
+async function captainIsIn(workspace: string): Promise<boolean> {
+  const listed = records((await herdr("local", ["workspace", "list"]))["workspaces"]);
+  return listed.some((each) => each["workspace_id"] === workspace && each["focused"] === true);
+}
+
+export interface Summoned {
+  readonly main: boolean;
+  readonly source: Source;
+  readonly home: string;
+}
+
+async function answer(link: Link, entry: Entry, who: Summoned): Promise<void> {
+  const workspace = process.env["HERDR_WORKSPACE_ID"];
+  const here = workspace !== undefined && (who.main || (await captainIsIn(workspace)));
+  if (here) {
+    await inOrder({
+      workspace,
+      cwd: who.home,
+      source: who.source,
+      open: true,
+      focus: true,
+      captain: who.main,
+    });
+    return;
+  }
+  if (who.main) return;
+  await link.call("browser.summon", { card: entry.card, why: String(entry.fields["summon"]) });
+}
+
+export function answerSummon(link: Link, entry: Entry, who: Summoned): void {
+  if (!isSummon(entry, who.main)) return;
+  answer(link, entry, who).catch((error: unknown) => {
+    console.error(`browser view: ${String(error)}`);
+  });
 }
