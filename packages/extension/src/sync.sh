@@ -6,8 +6,8 @@
 # refresh_clone fetches origin with pruning, deletes local branches whose remote
 # branch is gone, and fast-forwards a clean base branch to origin's. It never forces,
 # stashes, or discards. A clone that needs attention is left alone and printed as a
-# STUCK line: on another branch, detached with its own commits, diverged, or behind
-# with uncommitted changes that block the fast-forward. A base branch that is level
+# STUCK line: on another branch, detached with its own commits, diverged, or holding
+# uncommitted changes while not level with the remote. A base branch that is level
 # with the remote needs nothing, so its uncommitted files are left alone and the line
 # says so. The one safe drift is healed: a clean detached HEAD with no commits of its
 # own is put back on the base branch. Each line it prints starts with the label.
