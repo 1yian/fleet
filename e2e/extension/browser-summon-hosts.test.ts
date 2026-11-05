@@ -16,6 +16,14 @@ const HOSTS = { names: ["alpha", "beta"], mainHost: "alpha" };
 const relayedFor = (who: string, host: string): number[] =>
   relayPorts(transportLog(fleet.dir, who, host));
 
+const mainHeard = (summon: RegExp): Promise<string> =>
+  until(`main to hear ${String(summon)}`, () =>
+    fleet.h
+      .callsOf("mate")
+      .flatMap((turns) => turns.filter((turn) => turn.role === "user").map((turn) => turn.text))
+      .find((text) => summon.test(text)),
+  );
+
 test("the captain is summoned to a worker on another host: main's workspace shows that host's Chrome over main's transport", async () => {
   fleet = await BrowserHerdr.start({ browser: true, hosts: HOSTS });
   const [worker] = await fleet.workers(["Pay the invoice"], "beta");
@@ -56,11 +64,7 @@ test("the captain is summoned to a worker on another host: main's workspace show
   );
   assert.equal(relayedFor("main", "beta").includes(alpha.port), false);
   assert.deepEqual(relayedFor("main", "alpha"), [], "main's own host needs no route");
-  const heard = await fleet.h.waitForCall(0, "mate");
-  assert.match(
-    heard.map((turn) => turn.text).join("\n"),
-    /needs the captain in its browser tab: the bank asks for a passkey/,
-  );
+  await mainHeard(/needs the captain in its browser tab: the bank asks for a passkey/);
 });
 
 test("a lane's worker summons the captain: the lane's workspace when he is in it, otherwise main's, from the lane's host", async () => {
@@ -90,8 +94,7 @@ test("a lane's worker summons the captain: the lane's workspace when he is in it
   const mainView = await fleet.viewerOf(main, "captain");
   assert.ok((await fleet.pictureOf(mainView, target)).bytes > 0);
   assert.ok(relayedFor("main", "beta").includes(beta.port));
-  const heard = await fleet.h.waitForCall(0, "mate");
-  assert.match(heard.map((turn) => turn.text).join("\n"), /cnp/);
+  await mainHeard(/\(lane cnp\) needs the captain in its browser tab: the vendor wants a passkey/);
 
   await fleet.focus(mate.workspace);
   const here = await fleet.axi(mate.worker, `read --captain 'now the vendor wants a code'`);
