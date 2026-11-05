@@ -42,7 +42,7 @@ const cardFor = (turns: Turn[]): number =>
     /\[fleet\] \w+ on c-(\d)/.exec(turns.find((turn) => turn.role === "user")?.text ?? "")?.[1],
   );
 
-function scriptMate(workers: number, react: Handler): void {
+function scriptMate(workers: number, react: Handler, model?: string): void {
   const { h } = parts;
   for (let card = 1; card <= workers; card += 1)
     h.onModel(() => ({ tool: "board", args: {} }), "mate");
@@ -58,6 +58,7 @@ function scriptMate(workers: number, react: Handler): void {
           intent: "Fix the scrollbar",
           host: "local",
           task: "fix the scrollbar",
+          ...(card === 1 && model !== undefined ? { model } : {}),
         },
       }),
       "mate",
@@ -80,19 +81,23 @@ test("a worker with a stale module is replaced on its own conversation and work,
     tool: "restart_card",
     args: { card: 1, ...incident, mode: "replace", key: "same" },
   });
-  scriptMate(2, async (turns) => {
-    if (turns.at(-1)?.role === "toolResult" && !repeated) {
-      repeated = true;
-      started = await readyWorkerGroup(lab, "c-1-a1");
+  scriptMate(
+    2,
+    async (turns) => {
+      if (turns.at(-1)?.role === "toolResult" && !repeated) {
+        repeated = true;
+        started = await readyWorkerGroup(lab, "c-1-a1");
+        return replace();
+      }
+      if (turns.at(-1)?.role !== "user" || !(lastUser(turns) ?? "").includes("runtime failure"))
+        return { text: "noted" };
+      incident = incidentIn(turns);
+      before = await readyWorkerGroup(lab, "c-1-a1");
+      beside = await readyWorkerGroup(lab, "c-2-a1");
       return replace();
-    }
-    if (turns.at(-1)?.role !== "user" || !(lastUser(turns) ?? "").includes("runtime failure"))
-      return { text: "noted" };
-    incident = incidentIn(turns);
-    before = await readyWorkerGroup(lab, "c-1-a1");
-    beside = await readyWorkerGroup(lab, "c-2-a1");
-    return replace();
-  });
+    },
+    "openai-codex/gpt-fixture",
+  );
   for (let call = 0; call < 12; call += 1)
     h.onModel((turns) => {
       const card = cardFor(turns);
@@ -149,6 +154,12 @@ test("a worker with a stale module is replaced on its own conversation and work,
   ]);
   assert.equal(readFileSync(join(tree, "dirty.txt"), "utf8"), "uncommitted work\n");
   assert.equal(branchOfTree(tree), "c-1-a1");
+  assertRecoveredConversation(h, incident.incident);
+  assert.equal(entries.filter((entry) => entry.fields["status"] === "note").length, 1);
+  assert.ok(existsSync(tree));
+});
+
+function assertRecoveredConversation(h: Harness, incident: number): void {
   const fresh = h.callsOf("worker").findLast((turns) => cardFor(turns) === 1) ?? [];
   assert.ok(
     fresh.some((turn) => turn.text.includes("fix the scrollbar")),
@@ -157,12 +168,12 @@ test("a worker with a stale module is replaced on its own conversation and work,
   assert.match(
     lastUser(fresh) ?? "",
     new RegExp(
-      `recovery check ${String(incident.incident)} from main: this is a health check, not new work`,
+      `recovery check ${String(incident)} from main: this is a health check, not new work`,
     ),
   );
-  assert.equal(entries.filter((entry) => entry.fields["status"] === "note").length, 1);
-  assert.ok(existsSync(tree));
-});
+  for (const [index, turns] of h.callsOf("worker").entries())
+    if (cardFor(turns) === 1) assert.equal(h.modelsOf("worker")[index], "openai-codex/gpt-fixture");
+}
 
 async function readyWorkerGroup(lab: DispatchLab["lab"], attempt: string): Promise<number> {
   const group = await waitFor(

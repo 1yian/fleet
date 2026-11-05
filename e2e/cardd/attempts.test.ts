@@ -51,6 +51,29 @@ test("a dispatch retry finds the attempt that already started, with one task mes
   });
 });
 
+test("an explicit worker model survives retry and resume without changing the attempt", async () => {
+  const request = {
+    card: card.id,
+    host: "maverick",
+    task: "Review Spanish copy",
+    model: "openai-codex/gpt-fixture",
+  };
+  const first = check(OPS["attempt.begin"].result, await fleet.main.call("attempt.begin", request));
+  const retry = await begin("maverick");
+  const resumed = check(
+    OPS["attempt.resume"].result,
+    await fleet.main.call("attempt.resume", { card: card.id }),
+  );
+  assert.equal(first.model, request.model);
+  assert.equal(retry.model, request.model);
+  assert.equal(resumed.model, request.model);
+  assert.equal(resumed.session, first.session);
+  await assert.rejects(
+    fleet.main.call("attempt.begin", { ...request, model: "tier/quick" }),
+    /a running attempt keeps its model/,
+  );
+});
+
 test("dispatch only starts new work: another host is refused while the worker lives, and its token keeps working", async () => {
   const first = await begin("p620");
   const worker = await fleet.cardd.connect(first.token);

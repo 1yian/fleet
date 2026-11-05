@@ -25,6 +25,13 @@ const DispatchParams = Type.Object({
     description:
       "The task message: the captain's intent and the spec. Dispatch adds the Delivery line from the card",
   }),
+  model: Type.Optional(
+    Type.String({
+      ...OPS["attempt.begin"].args.properties.model,
+      description:
+        "Explicit provider/model for this worker, kept through restarts. For writing or reviewing non-English text, choose the newest suitable GPT from the model catalog via openai-codex. Omit for the lane's normal worker selection",
+    }),
+  ),
   delivery: Type.Optional(
     Type.Enum(DELIVERIES, {
       description:
@@ -249,7 +256,7 @@ export function registerMate(
       "Creates a new work card and starts its worker in its own worktree on a host. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment.",
     parameters: DispatchParams,
     execute: async (_id, params) => {
-      const { title, name, kind, project, intent, host, task, delivery } = params;
+      const { title, name, kind, project, intent, host, task, delivery, model } = params;
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>
@@ -261,7 +268,7 @@ export function registerMate(
           each.status !== "dropped",
       );
       const card = same ?? (await link.call("card.new", { title, name, kind, project, intent }));
-      return reply(await dispatch(link, launch, { card: card.id, host, task, delivery }));
+      return reply(await dispatch(link, launch, { card: card.id, host, task, delivery, model }));
     },
   });
 }

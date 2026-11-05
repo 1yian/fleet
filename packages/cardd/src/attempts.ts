@@ -147,6 +147,7 @@ export interface Begun {
   readonly name: string;
   readonly lane: string;
   readonly delivery: Delivery | null;
+  readonly model?: string;
 }
 
 function placeOf(
@@ -232,7 +233,12 @@ function connected(db: DatabaseSync, session: string): boolean {
 export function beginAttempt(
   db: DatabaseSync,
   card: Card,
-  request: { host: string; task: string; delivery?: Delivery | undefined },
+  request: {
+    host: string;
+    task: string;
+    delivery?: Delivery | undefined;
+    model?: string | undefined;
+  },
 ): Begun {
   const live = liveAttempt(db, card.id);
   if (live !== undefined) {
@@ -240,7 +246,10 @@ export function beginAttempt(
       throw new Error(`c-${String(card.id)} already has work on ${live.host}: use restart_card`);
     if (request.delivery !== undefined && request.delivery !== card.delivery)
       throw new Error("a running card keeps its delivery mode");
-    return resumeAttempt(db, card);
+    const plan = resumeAttempt(db, card);
+    if (request.model !== undefined && request.model !== plan.model)
+      throw new Error("a running attempt keeps its model");
+    return plan;
   }
   const delivery = deliveryOf(db, card, request.delivery);
   const now = Date.now();
@@ -266,10 +275,33 @@ export function beginAttempt(
     author: `mate:${card.lane}`,
     kind: "comment",
     body,
-    fields: { task: true },
+    fields: { task: true, ...(request.model === undefined ? {} : { model: request.model }) },
   };
   addEntry(db, task, [session]);
-  return { session, token, resumed: false, active: false, connected: false, ...place, delivery };
+  return {
+    session,
+    token,
+    resumed: false,
+    active: false,
+    connected: false,
+    ...place,
+    delivery,
+    ...attemptModel(db, session),
+  };
+}
+
+function attemptModel(db: DatabaseSync, session: string): { model?: string } {
+  const row = db
+    .prepare(
+      `SELECT json_extract(e.fields, '$.model') AS model
+       FROM entries e JOIN deliveries d ON d.entry = e.id
+       WHERE d.session = ? AND json_extract(e.fields, '$.task') = 1 ORDER BY e.id LIMIT 1`,
+    )
+    .get(session);
+  const model = row?.["model"];
+  if (model === undefined || model === null) return {};
+  if (typeof model !== "string") throw new Error("bad attempt model");
+  return { model };
 }
 
 export function resumeAttempt(db: DatabaseSync, card: Card): Begun {
@@ -286,6 +318,7 @@ export function resumeAttempt(db: DatabaseSync, card: Card): Begun {
     ...place,
     branch: recordedBranch(db, card.id, live.n) ?? place.branch,
     delivery: card.delivery,
+    ...attemptModel(db, session),
   };
 }
 

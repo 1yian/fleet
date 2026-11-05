@@ -47,7 +47,9 @@ const systemOf = (turns: Turn[]): string =>
   turns.find((turn) => turn.role === "system")?.text ?? "";
 const isWorker = (turns: Turn[]): boolean => systemOf(turns).includes("# Worker role contract");
 
-async function dispatchWorker(): Promise<{ main: string; worker: string }> {
+async function dispatchWorker(
+  model?: string,
+): Promise<{ main: string; worker: string; pane: string }> {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(() => {
     return {
@@ -59,11 +61,12 @@ async function dispatchWorker(): Promise<{ main: string; worker: string }> {
         project: "fleet",
         intent: "Fix the scrollbar",
         host: "local",
-        task: "fix the scrollbar",
+        task: model === undefined ? "fix the scrollbar" : "Review the Spanish product copy",
+        ...(model === undefined ? {} : { model }),
       },
     };
   }, "mate");
-  await startMain(lab, scratch, h, false, settingsArgs(h));
+  const pane = await startMain(lab, scratch, h, false, settingsArgs(h));
   const asked: unknown = await cleo.call("card.new", { title: "Ship the fix", kind: "scout" });
   await cleo.call("hold", {
     card: Number(Reflect.get(Object(asked), "id")),
@@ -73,7 +76,7 @@ async function dispatchWorker(): Promise<{ main: string; worker: string }> {
   for (let index = 2; ; index += 1) {
     const turns = await h.waitForCall(index, "mate", WAIT_MS);
     if (isWorker(turns))
-      return { main: h.modelsOf("mate")[0] ?? "", worker: h.modelsOf("mate")[index] ?? "" };
+      return { main: h.modelsOf("mate")[0] ?? "", worker: h.modelsOf("mate")[index] ?? "", pane };
   }
 }
 
@@ -94,3 +97,48 @@ test("a model in the lane's workerArgs is the model its workers start on", async
   assert.equal(models.main, "tier/orchestrator");
   assert.equal(models.worker, "tier/quick");
 });
+
+test("an explicit GPT worker keeps its model after an ordinary restart", async () => {
+  configureMain(scratch, cardd.url, mainToken, {
+    workerArgs: [...workerBase(), "--model", "tier/quick"],
+  });
+  const first = await dispatchWorker("openai-codex/gpt-fixture");
+  const card = (await cardd.board()).cards.find((each) => each.name === "one-scrollbar");
+  assert.ok(card);
+  let requested = false;
+  for (let call = 0; call < 12; call += 1)
+    h.onModel((turns) => {
+      if (isWorker(turns))
+        return turns.at(-1)?.role === "toolResult"
+          ? { text: "continuing" }
+          : { tool: "report", args: { status: "working", text: "reviewing copy" } };
+      if (requested) return { text: "restarted" };
+      requested = true;
+      return { tool: "restart_card", args: { card: card.id, key: "gpt-restart" } };
+    }, "mate");
+  const before = h.callsOf("mate").length;
+  await lab.run(["pane", "send-text", first.pane, "restart the copy worker"]);
+  await lab.run(["pane", "send-keys", first.pane, "enter"]);
+  for (let index = before; ; index += 1) {
+    const turns = await h.waitForCall(index, "mate", WAIT_MS);
+    if (!isWorker(turns) || !turns.some((turn) => turn.text.includes("session was restarted")))
+      continue;
+    assert.equal(h.modelsOf("mate")[index], "openai-codex/gpt-fixture");
+    assert.ok(requested);
+    break;
+  }
+});
+
+for (const flags of [
+  ["--provider", "tier", "--model", "quick"],
+  ["--provider=tier", "--model=tier/quick"],
+]) {
+  test(`an explicit GPT dispatch overrides lane model flags ${flags.join(" ")}`, async () => {
+    configureMain(scratch, cardd.url, mainToken, {
+      workerArgs: [...workerBase(), ...flags],
+    });
+    const models = await dispatchWorker("openai-codex/gpt-fixture");
+    assert.equal(models.main, "tier/orchestrator");
+    assert.equal(models.worker, "openai-codex/gpt-fixture");
+  });
+}
