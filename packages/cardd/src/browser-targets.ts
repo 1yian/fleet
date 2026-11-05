@@ -12,6 +12,15 @@ const TargetsSchema = Type.Object({
   ),
 });
 
+export const TargetEventSchema = Type.Object({
+  targetInfo: Type.Object({
+    targetId: Type.String(),
+    type: Type.String(),
+    openerId: Type.Optional(Type.String()),
+  }),
+});
+export const DestroyedSchema = Type.Object({ targetId: Type.String() });
+
 export interface Listed {
   readonly title: string;
   readonly url: string;

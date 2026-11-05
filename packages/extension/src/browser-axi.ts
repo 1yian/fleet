@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -11,7 +11,7 @@ import {
   type Access,
   type Source,
 } from "./browser-access.ts";
-import { placeViewer } from "./browser-place.ts";
+import { placeViewer, removeViewer } from "./browser-place.ts";
 
 const EXIT = { ok: 0, error: 1, usage: 2, notFound: 3, noBrowser: 4 } as const;
 
@@ -90,12 +90,20 @@ const BUILDERS: Record<string, Builder> = {
     ...withOnly("selector", values.selector),
     ...(values.html === true ? { html: true } : {}),
   }),
-  click: (_, values) => ({
-    action: "click",
-    ...withOnly("selector", values.selector),
-    ...withOnly("x", count(values.x, "x")),
-    ...withOnly("y", count(values.y, "y")),
-  }),
+  click: (_, values) => {
+    const x = count(values.x, "x");
+    const y = count(values.y, "y");
+    if (values.selector === undefined && (x === undefined || y === undefined))
+      throw new Usage(
+        "click wants --selector <css>, or --x <n> --y <n>: browser-axi click --selector a",
+      );
+    return {
+      action: "click",
+      ...withOnly("selector", values.selector),
+      ...withOnly("x", x),
+      ...withOnly("y", y),
+    };
+  },
   type: ([first], values) => ({
     action: "type",
     text: wanted(values.text ?? first, "type wants --text <text>"),
@@ -147,12 +155,32 @@ async function call(
   return outcome.value;
 }
 
+const SHOT_DIR = "fleet-shot-";
+const SHOT_KEEP_MS = 24 * 60 * 60 * 1000;
+
+function sweepOldShots(): void {
+  try {
+    const root = tmpdir();
+    const oldest = Date.now() - SHOT_KEEP_MS;
+    for (const name of readdirSync(root).filter((each) => each.startsWith(SHOT_DIR))) {
+      const path = join(root, name);
+      const found = lstatSync(path);
+      if (found.isDirectory() && found.uid === process.getuid?.() && found.mtimeMs < oldest)
+        rmSync(path, { recursive: true, force: true });
+    }
+  } catch {
+    return;
+  }
+}
+
+function shotDirectory(): string {
+  sweepOldShots();
+  return mkdtempSync(join(tmpdir(), SHOT_DIR));
+}
+
 function saveImage(image: { mimeType: string; data: string }, out: string | undefined): string {
   const extension = image.mimeType.includes("jpeg") ? "jpg" : "png";
-  const file =
-    out === undefined
-      ? join(mkdtempSync(join(tmpdir(), "fleet-shot-")), `screenshot.${extension}`)
-      : resolve(out);
+  const file = out === undefined ? join(shotDirectory(), `screenshot.${extension}`) : resolve(out);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, Buffer.from(image.data, "base64"), { mode: 0o600 });
   return file;
@@ -181,6 +209,26 @@ async function place(source: Source, why: string | undefined): Promise<string> {
   }
 }
 
+function valueOf(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function unplace(access: Access): Promise<string | undefined> {
+  const workspace = process.env["HERDR_WORKSPACE_ID"];
+  if (workspace === undefined) return undefined;
+  try {
+    const view = check(OPS["browser.view"].result, await call(access, "browser.view", {}));
+    if (view.tabs.length > 0 || !(await removeViewer(workspace))) return undefined;
+    return "the Browser tab in your own workspace is closed, since no tab is left to show";
+  } catch (error) {
+    return `the Browser tab in your own workspace was not closed (${reason(error)})`;
+  }
+}
+
 const HELP: Record<string, readonly string[]> = {
   open: [
     "Run `browser-axi read` for the page's text, `browser-axi screenshot` for a picture, `browser-axi click --selector <css>` to act",
@@ -195,6 +243,14 @@ const HELP: Record<string, readonly string[]> = {
 };
 
 const MORE = "Run `browser-axi --help` for every command";
+const OPEN_URL = "Run `browser-axi open <url>` to load a page in your tab";
+const OPEN_TAB = "Run `browser-axi open <url>` to open your tab";
+const USE_TAB =
+  "Run `browser-axi read` for the page's text, `browser-axi screenshot` for a picture, or `browser-axi close` when you are done with your tab";
+const NO_LOGINS = [
+  "Tell your mate that logins are not set up on this host, and report paused or blocked until they are",
+  "Never ask for, type, store, or report a password, a code, or a token",
+];
 
 const NOT_FOUND = [
   "The fleet asked your mate to have the login added. Wait for the captain (report paused or blocked until it is), then run `browser-axi login` again",
@@ -235,6 +291,10 @@ function failure(error: unknown): Printed {
       help: NO_BROWSER,
       code: EXIT.noBrowser,
     };
+  if (message.includes("`browser-axi open <url>`"))
+    return { record: { error: message }, help: [OPEN_URL, MORE], code: EXIT.error };
+  if (message.startsWith("logins are not set up on "))
+    return { record: { error: message }, help: NO_LOGINS, code: EXIT.error };
   return { record: { error: message }, help: [], code: EXIT.error };
 }
 
@@ -264,13 +324,22 @@ async function state({ access }: Caller, values: Values): Promise<Printed> {
       ...(view.host === null ? {} : { host: view.host }),
       tabs: tabs.length === 0 ? "none open" : tabs,
     },
-    help: ["Run `browser-axi open <url>` to open your tab", MORE],
+    help: [tabs.length === 0 ? OPEN_TAB : USE_TAB, MORE],
     code: EXIT.ok,
   };
 }
 
-async function act(
+async function viewerNote(
   { source, access }: Caller,
+  command: string,
+  captain: string | undefined,
+): Promise<string | undefined> {
+  if (captain !== undefined || command === "open") return place(source, captain);
+  return command === "close" ? unplace(access) : undefined;
+}
+
+async function act(
+  caller: Caller,
   command: string,
   rest: readonly string[],
   values: Values,
@@ -278,12 +347,14 @@ async function act(
   const args = argsFor(command, rest, values);
   const result: OpResult<"browser"> = check(
     OPS.browser.result,
-    await call(access, "browser", args),
+    await call(caller.access, "browser", args),
   );
-  const record: Record<string, unknown> = { action: command, result: result.text };
+  const record: Record<string, unknown> = { action: command };
+  if (result.page !== undefined) record["page"] = result.page;
+  record["result"] = command === "eval" ? valueOf(result.text) : result.text;
   if (result.image !== undefined) record["image"] = saveImage(result.image, values.out);
-  if (result.captain !== undefined || command === "open")
-    record["view"] = await place(source, result.captain);
+  const view = await viewerNote(caller, command, result.captain);
+  if (view !== undefined) record["view"] = view;
   const notFound = result.text.startsWith("not found:");
   return {
     record,

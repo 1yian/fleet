@@ -16,11 +16,17 @@ const WAIT_MS = 15_000;
 
 export type Viewers = ReturnType<typeof spawnGuarded>[];
 
-export async function launchViewer(
+export interface Started {
+  readonly url: string;
+  readonly said: () => string;
+}
+
+export async function startViewer(
   lab: BrowserLab,
   viewers: Viewers,
   flags: string[],
-): Promise<string> {
+  env: Record<string, string> = {},
+): Promise<Started> {
   const access = join(tempDir("fleet-viewer-access-"), "access.json");
   writeFileSync(
     access,
@@ -29,7 +35,7 @@ export async function launchViewer(
   );
   const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open", ...flags], {
     stdio: ["ignore", "pipe", "inherit"],
-    env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0" },
+    env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0", ...env },
   });
   viewers.push(viewer);
   let said = "";
@@ -37,10 +43,18 @@ export async function launchViewer(
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
     const found = /Fleet browser viewer \((?:captain|gated)\): (\S+)/.exec(said)?.[1];
-    if (found !== undefined) return found;
+    if (found !== undefined) return { url: found, said: () => said };
     assert.ok(Date.now() < deadline, "the viewer did not print its address");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+}
+
+export async function launchViewer(
+  lab: BrowserLab,
+  viewers: Viewers,
+  flags: string[],
+): Promise<string> {
+  return (await startViewer(lab, viewers, flags)).url;
 }
 
 export function stopViewers(viewers: Viewers): Promise<unknown>[] {

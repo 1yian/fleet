@@ -53,6 +53,7 @@ const PAGES: Readonly<Record<string, string>> = {
     <input id="vaulted" type="password" value="inner-password" style="position:fixed;left:0;top:60px;width:200px;height:30px;font-size:18px">
   </body>`,
   "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,
+  "/links": `<!doctype html><title>Links</title><body><a id="next" href="/b" style="position:fixed;left:20px;top:20px">to bravo</a><button id="stay" style="position:fixed;left:20px;top:80px">stay</button><a id="fragment" href="#section" style="position:fixed;left:20px;top:140px">to section</a><button id="push" style="position:fixed;left:20px;top:200px" onclick="history.pushState({}, '', '/pushed')">push</button></body>`,
   "/composed": `<!doctype html><title>Composed</title><body><div id="who">hun<mark>ter</mark>2</div></body>`,
   "/copy": `<!doctype html><title>Copy</title><body><div id="who">S3cret&copy;2026</div></body>`,
   "/copy-attribute": `<!doctype html><title>Attribute</title><body><input id="who" value="S3cret&copy;2026"></body>`,

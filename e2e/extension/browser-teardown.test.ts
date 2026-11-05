@@ -10,6 +10,7 @@ import {
   WORKER_WAIT_MS,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
+import { records } from "../support/json.ts";
 import { TestSite } from "../support/site.ts";
 
 let chrome: StandInChrome;
@@ -62,6 +63,47 @@ test("close closes the tab the worker opened and says so", async () => {
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.match(results.at(-1) ?? "", /^c-1 is done\..* Closed 1 browser tab\.$/);
   assert.equal((await chrome.pages()).length, 0);
+});
+
+test("close also ends the worker's Browser viewer tab", async () => {
+  const { h, mate, lab } = parts;
+  const viewerOf = async (): Promise<string | undefined> => {
+    const tabs = records((await lab.run(["tab", "list"]))["tabs"]);
+    const tab = tabs.find((each) => each["label"] === "Browser");
+    if (tab === undefined) return undefined;
+    const panes = records((await lab.run(["pane", "list"]))["panes"]);
+    const pane = panes.find((each) => each["tab_id"] === tab["tab_id"]);
+    const printed = /Fleet browser viewer \(gated\): (http:\/\/127\.0\.0\.1:\d+\/\?t=[\w-]+)/;
+    return printed.exec(await lab.history(String(pane?.["pane_id"])))?.[1];
+  };
+  let viewer: string | undefined;
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => browserStep({ action: "open", url: site.url("/a") }), "worker");
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "looked" } }), "worker");
+  h.onModel(async () => {
+    const deadline = Date.now() + WORKER_WAIT_MS;
+    while (viewer === undefined && Date.now() < deadline) {
+      viewer = await viewerOf();
+      if (viewer === undefined) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return { tool: "close", args: { card: 1, summary: "Done." } };
+  }, "mate");
+  await connected(h);
+  mate.prompt("look at the site");
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.match(results.at(-1) ?? "", /^c-1 is done\./);
+  assert.notEqual(viewer, undefined);
+  assert.equal(await viewerOf(), undefined);
+  await eventually(
+    async () =>
+      await fetch(String(viewer)).then(
+        () => false,
+        () => true,
+      ),
+    "the worker's viewer to stop",
+  );
 });
 
 test("restarting a worker closes the tab it had open", async () => {

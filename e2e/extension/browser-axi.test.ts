@@ -156,3 +156,49 @@ test("a fleet with no shared browser: browser-axi says so, exits nonzero, and po
   assert.deepEqual(await fleet.chrome.pages(), []);
   assert.equal((await fleet.tabLabels(worker.workspace)).includes(BROWSER), false);
 });
+
+test("closing the tab also closes the worker's own Browser viewer tab, and leaves another worker's viewer alone", async () => {
+  fleet = await BrowserHerdr.start({ browser: true });
+  const [worker, other] = await fleet.workers(["Users see one scrollbar", "Users see one footer"]);
+  assert.ok(worker !== undefined && other !== undefined);
+  for (const each of [worker, other]) {
+    const opened = await fleet.axi(each, `open ${fleet.site.url("/a")}`);
+    assert.equal(opened.code, 0, opened.text);
+    await until("the Browser tab", async () =>
+      (await fleet.tabLabels(each.workspace)).includes(BROWSER) ? true : undefined,
+    );
+  }
+  const address = await fleet.viewerOf(worker.workspace);
+  const theirs = await fleet.viewerOf(other.workspace);
+
+  const closed = await fleet.axi(worker, "close");
+
+  assert.equal(closed.code, 0, closed.text);
+  const record = parseRecord(closed.text.split("\n")[0] ?? "");
+  assert.equal(record["result"], "Closed your tab.");
+  assert.match(String(record["view"]), /^the Browser tab in your own workspace is closed/);
+  await until("the worker's Browser tab to close", async () =>
+    (await fleet.tabLabels(worker.workspace)).includes(BROWSER) ? undefined : true,
+  );
+  await until("the worker's viewer to stop", async () =>
+    (await fetch(address).then(
+      () => false,
+      () => true,
+    ))
+      ? true
+      : undefined,
+  );
+  assert.equal((await fleet.tabLabels(other.workspace)).includes(BROWSER), true);
+  assert.equal((await fleet.tabsSeenBy(theirs)).length, 1);
+
+  const again = await fleet.axi(worker, "close");
+  assert.equal(again.code, 0, again.text);
+  assert.equal(parseRecord(again.text.split("\n")[0] ?? "")["result"], "You had no tab open.");
+
+  const reopened = await fleet.axi(worker, `open ${fleet.site.url("/b")}`);
+  assert.equal(reopened.code, 0, reopened.text);
+  await until("a new Browser tab", async () =>
+    (await fleet.tabLabels(worker.workspace)).includes(BROWSER) ? true : undefined,
+  );
+  assert.equal((await fleet.tabsSeenBy(await fleet.viewerOf(worker.workspace))).length, 1);
+});

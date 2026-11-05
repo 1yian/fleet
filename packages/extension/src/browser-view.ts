@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
@@ -8,6 +8,7 @@ import { InputSchema } from "./browser-input.ts";
 import { openSheprd } from "./browser-place.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { Screen } from "./browser-screen.ts";
+import { tailnetOf, type Reach } from "./browser-tailnet.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
 import {
   callUrl,
@@ -81,6 +82,7 @@ class Viewer {
     (target) => callFrame(this.cardd, target),
     (target) => this.screenFor(target).size(target),
   );
+  private accepts: (host: string) => boolean = () => false;
   private cookie = "";
   private visible = new Map<string, string>();
   private readonly token: string;
@@ -128,13 +130,14 @@ class Viewer {
     return mine?.slice(this.cookie.length + 1);
   }
 
-  allow(port: number): void {
+  allow(port: number, accepts: (host: string) => boolean): void {
+    this.accepts = accepts;
     this.cookie = `fleet_viewer_${String(port)}`;
   }
 
   private permits(request: IncomingMessage): boolean {
     const host = request.headers.host;
-    if (host === undefined || !/^(127\.0\.0\.1|localhost):[0-9]+$/.test(host)) return false;
+    if (host === undefined || !this.accepts(host)) return false;
     const origin = request.headers.origin;
     return origin === undefined || origin === `http://${host}`;
   }
@@ -254,6 +257,53 @@ function open(url: string): void {
   child.unref();
 }
 
+function bind(server: Server, host: string): Promise<AddressInfo> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, host, () => {
+      server.off("error", reject);
+      const address: AddressInfo | string | null = server.address();
+      if (address === null || typeof address === "string")
+        reject(new Error("the viewer has no address"));
+      else resolve(address);
+    });
+  });
+}
+
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost):[0-9]+$/;
+
+async function listen(
+  server: Server,
+  captain: boolean,
+): Promise<{ address: AddressInfo; reach: Reach | undefined }> {
+  let reach = captain ? await tailnetOf(process.env) : undefined;
+  if (reach?.found === true) {
+    try {
+      return { address: await bind(server, reach.address), reach };
+    } catch (error) {
+      reach = { found: false, why: `it could not listen on ${reach.address}: ${reason(error)}` };
+    }
+  }
+  return { address: await bind(server, "127.0.0.1"), reach };
+}
+
+function hostTest(reach: Reach | undefined, port: number): (host: string) => boolean {
+  if (reach?.found !== true) return (host) => LOOPBACK_HOST.test(host);
+  const names = [reach.address, ...(reach.name === undefined ? [] : [reach.name])];
+  const allowed = new Set(names.map((name) => `${name}:${String(port)}`));
+  return (host) => allowed.has(host);
+}
+
+const shownHost = (reach: Reach | undefined): string =>
+  reach?.found === true ? (reach.name ?? reach.address) : "127.0.0.1";
+
+function reachLine(reach: Reach | undefined): string | undefined {
+  if (reach === undefined) return undefined;
+  return reach.found
+    ? `It listens on the tailnet address ${reach.address} only, never on a public interface. Anyone on the tailnet who has this link can see and drive the tab, so treat it like a password.`
+    : `No tailnet address was found (${reach.why}), so this viewer listens on this machine only. Open the link here: another machine cannot reach it.`;
+}
+
 async function main(): Promise<void> {
   const flags = process.argv.slice(2);
   const token = randomBytes(24).toString("base64url");
@@ -263,12 +313,12 @@ async function main(): Promise<void> {
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address: AddressInfo | string | null = server.address();
-  if (address === null || typeof address === "string") throw new Error("the viewer has no address");
-  viewer.allow(address.port);
-  const url = `http://127.0.0.1:${String(address.port)}/?t=${token}`;
+  const { address, reach } = await listen(server, captain);
+  viewer.allow(address.port, hostTest(reach, address.port));
+  const url = `http://${shownHost(reach)}:${String(address.port)}/?t=${token}`;
   console.log(`Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`);
+  const line = reachLine(reach);
+  if (line !== undefined) console.log(line);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {
     if (!captain || !(await openSheprd(url))) open(url);
   }

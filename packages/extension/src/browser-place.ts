@@ -107,13 +107,26 @@ async function create(placement: Placement): Promise<void> {
   await herdr("local", ["pane", "run", rootPane(created), commandFor(placement)]);
 }
 
-export async function placeViewer(placement: Placement): Promise<Placed> {
-  const { workspace, focus } = placement;
+async function viewerTab(workspace: string): Promise<string | undefined> {
   const tabs = records((await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"]);
-  const existing = field(
+  return field(
     tabs.find((each) => each["label"] === BROWSER_TAB),
     "tab_id",
   );
+}
+
+export async function removeViewer(workspace: string): Promise<boolean> {
+  const tab = await viewerTab(workspace);
+  const pane = tab === undefined ? undefined : await paneOf(workspace, tab);
+  if (tab === undefined || pane === undefined || (await printedMode(pane)) !== "gated")
+    return false;
+  await herdr("local", ["tab", "close", tab]);
+  return true;
+}
+
+export async function placeViewer(placement: Placement): Promise<Placed> {
+  const { workspace, focus } = placement;
+  const existing = await viewerTab(workspace);
   if (existing === undefined) {
     await create(placement);
     return "opened";

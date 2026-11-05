@@ -9,8 +9,9 @@ import {
 import { dial, type Dial } from "@fleet/protocol/tunnel";
 import Type from "typebox";
 import type { HostBrowserConfig } from "./browser-config.ts";
+import { copyAnswer } from "./browser-copy.ts";
 import { holdsFilled, holdsLogin } from "./browser-fill.ts";
-import { scrubbed, scrubbedOrHidden } from "./browser-hidden.ts";
+import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
 import { login } from "./browser-login.ts";
 import {
@@ -22,14 +23,29 @@ import {
   pressKey,
   readPage,
   runExpression,
+  summary,
   typeText,
   type Page,
 } from "./browser-page.ts";
-import { COPY_REFUSED, EVAL_REFUSED, KEPT, RESTARTED } from "./browser-refusals.ts";
+import {
+  COPY_REFUSED,
+  EVAL_REFUSED,
+  KEPT,
+  NO_TAB,
+  RESTARTED,
+  TAB_CLOSED,
+} from "./browser-refusals.ts";
 import { CREDENTIAL_SHOWN } from "./browser-scan.ts";
 import { screenshot } from "./browser-shot.ts";
-import { hiderOf, targetsOf, type Listed } from "./browser-targets.ts";
+import {
+  DestroyedSchema,
+  hiderOf,
+  TargetEventSchema,
+  targetsOf,
+  type Listed,
+} from "./browser-targets.ts";
 import { Vault } from "./browser-vault.ts";
+import { within } from "./browser-wait.ts";
 import {
   attemptStartedAt,
   labelOf,
@@ -51,14 +67,6 @@ export interface Outcome {
 
 const AttachedSchema = Type.Object({ sessionId: Type.String() });
 const CreatedSchema = Type.Object({ targetId: Type.String() });
-const TargetEventSchema = Type.Object({
-  targetInfo: Type.Object({
-    targetId: Type.String(),
-    type: Type.String(),
-    openerId: Type.Optional(Type.String()),
-  }),
-});
-const DestroyedSchema = Type.Object({ targetId: Type.String() });
 
 const TOUCH_BACKOFF_MS = 5_000;
 const LISTING_MS = 3_000;
@@ -69,16 +77,9 @@ const isGone = (error: unknown): boolean =>
 export const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
 const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
 
-function within<T>(ms: number, work: Promise<T>, late: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(late));
-    }, ms);
-  });
-  return Promise.race([work, expired]).finally(() => {
-    clearTimeout(timer);
-  });
+async function atPage(page: Page, text: string): Promise<Outcome> {
+  const where = await summary(page).catch(() => undefined);
+  return { result: { text, ...(where === undefined ? {} : { page: where }) }, notify: [] };
 }
 
 export class HostBrowser {
@@ -143,13 +144,7 @@ export class HostBrowser {
   }
 
   copy(card: number, target: string): Promise<OpResult<"browser.copy">> {
-    return this.copied(card, target).then(
-      (text) => ({ text, note: null }),
-      (error: unknown) => ({
-        text: null,
-        note: scrubbedOrHidden(reason(error), this.vault.values),
-      }),
-    );
+    return copyAnswer(this.copied(card, target), this.vault.values);
   }
 
   private async copied(card: number, target: string): Promise<string> {
@@ -235,7 +230,13 @@ export class HostBrowser {
       (done) => ({
         notify: done.notify,
         ...(done.captain === undefined ? {} : { captain: done.captain }),
-        result: { ...done.result, text: cut(scrubbed(done.result.text, this.vault.values)) },
+        result: {
+          ...done.result,
+          text: cut(scrubbed(done.result.text, this.vault.values)),
+          ...(done.result.page === undefined
+            ? {}
+            : { page: scrubbed(done.result.page, this.vault.values) }),
+        },
       }),
       (error: unknown) => {
         throw new Error(scrubbed(reason(error), this.vault.values));
@@ -251,9 +252,9 @@ export class HostBrowser {
   ): Promise<Outcome> {
     switch (args.action) {
       case "read":
-        return plain(await readPage(page, args));
+        return atPage(page, await readPage(page, args));
       case "click":
-        return plain(await clickPage(page, args));
+        return atPage(page, await clickPage(page, args));
       case "type":
         return plain(await typeText(page, args));
       case "press":
@@ -431,14 +432,13 @@ export class HostBrowser {
 
   private async pageOf(cdp: Cdp, card: number): Promise<{ page: Page; target: string }> {
     const own = await this.current(cdp, card);
-    if (own === undefined)
-      throw new Error("you have no tab yet: call browser with action open first");
+    if (own === undefined) throw new Error(NO_TAB);
     try {
       return { page: await this.attach(cdp, own), target: own.target };
     } catch (error) {
       if (!isGone(error)) throw error;
       this.closed(own.target);
-      throw new Error("your tab was closed: call browser with action open again", { cause: error });
+      throw new Error(TAB_CLOSED, { cause: error });
     }
   }
 
