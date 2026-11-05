@@ -32,6 +32,7 @@ const PAGES: Readonly<Record<string, string>> = {
         box.addEventListener(type, (e) => note(type, "button=" + e.button, "detail=" + e.detail, flags(e)));
       for (const type of ["keydown", "keyup"])
         document.addEventListener(type, (e) => note(type, "key=" + e.key, "code=" + e.code, flags(e)));
+      for (const type of ["copy", "cut", "paste"]) document.addEventListener(type, () => note(type));
       document.getElementById("field").addEventListener("compositionstart", () => note("compositionstart"));
     </script></body>`,
   "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,

@@ -134,7 +134,26 @@ function typedText(key: string, modifiers: number): string | undefined {
   return isSingleCharacter(key) ? key : undefined;
 }
 
+const CLIPBOARD_LETTERS = ["c", "x", "v"];
+const CLIPBOARD_CODES = ["KeyC", "KeyX", "KeyV"];
+
+function touchesClipboard({
+  key,
+  code,
+  modifiers,
+}: Extract<ViewerInput, { kind: "key" }>): boolean {
+  if ((modifiers & ALT) !== 0) return false;
+  if ((modifiers & (CTRL | META)) !== 0)
+    return (
+      CLIPBOARD_LETTERS.includes(key.toLowerCase()) ||
+      CLIPBOARD_CODES.includes(code) ||
+      code === "Insert"
+    );
+  return (modifiers & SHIFT) !== 0 && (code === "Insert" || code === "Delete");
+}
+
 const keyCalls = (event: Extract<ViewerInput, { kind: "key" }>): Call[] => {
+  if (touchesClipboard(event)) return [];
   const { key, code, keyCode, location, modifiers, commands } = event;
   const text = event.action === "down" ? typedText(key, modifiers) : undefined;
   const type = event.action === "up" ? "keyUp" : text === undefined ? "rawKeyDown" : "keyDown";

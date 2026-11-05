@@ -9,6 +9,7 @@ import {
   clearedByHand,
   GOOD,
   signedIn,
+  tabOf,
   USERNAME,
 } from "../support/login-fixtures.ts";
 import { launchViewer, stopViewers, waitFor, type Viewers } from "../support/viewer.ts";
@@ -123,6 +124,9 @@ async function dragOver(from: number, to: number): Promise<void> {
   await page.mouse.move(end.x, end.y, { steps: 8 });
   await page.mouse.up();
 }
+
+const clipboardEvents = async (): Promise<string[]> =>
+  (await seen()).filter((line) => ["copy", "cut", "paste"].includes(line));
 
 const selected = (): Promise<unknown> => inPage(pad, "getSelection().toString()");
 const clipboard = (): Promise<string> => page.evaluate(() => navigator.clipboard.readText());
@@ -320,6 +324,7 @@ test("copy writes the page's selection to the clipboard", async () => {
   await page.keyboard.press("ControlOrMeta+KeyC");
   await waitFor(async () => (await clipboard()) === "3456", "the selection to reach the clipboard");
   assert.equal(await page.locator("#copied").textContent(), "copied 4 characters");
+  assert.deepEqual(await clipboardEvents(), []);
 
   await setClipboard("kept");
   await clickInPicture(FIELD.x, FIELD.y);
@@ -340,6 +345,7 @@ test("cut copies the selected text of a field and removes it", async () => {
   await page.keyboard.press("ControlOrMeta+KeyX");
   await waitFor(async () => (await clipboard()) === "cut me", "the text to reach the clipboard");
   await waitFor(async () => (await fieldValue()) === "", "the text to be removed");
+  assert.deepEqual(await clipboardEvents(), []);
 });
 
 test("a gated viewer copies through cardd, and refuses on a tab with a login-filled value", async () => {
@@ -402,4 +408,54 @@ test("a gated copy hides a stored value that the page shows once its form is emp
   await waitFor(async () => (await clipboard()) === "[hidden]", "the cleaned text to be copied");
   assert.equal(await page.locator("#copied").textContent(), "copied 8 characters");
   scan(lab, vault);
+});
+
+test("no key sent to the viewer makes the tab's own Chrome copy, cut or paste", async () => {
+  await show(captain);
+  const target = await tabOf(lab, pad);
+  await dragOver(3, 7);
+  await waitFor(async () => (await selected()) === "3456", "the dragged text to be selected");
+  const post = (body: object): Promise<number> =>
+    page.evaluate(
+      async (payload) =>
+        (
+          await fetch("/api/input", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          })
+        ).status,
+      body,
+    );
+  const key = (modifiers: number, name: string, code: string, commands: string[] = []): object => ({
+    target,
+    kind: "key",
+    action: "down",
+    key: name,
+    code,
+    keyCode: 0,
+    location: 0,
+    repeat: false,
+    modifiers,
+    commands,
+  });
+  for (const [modifiers, name, code] of [
+    [2, "c", "KeyC"],
+    [4, "c", "KeyC"],
+    [6, "X", "KeyX"],
+    [2, "v", "KeyV"],
+    [2, "Insert", "Insert"],
+    [8, "Insert", "Insert"],
+    [8, "Delete", "Delete"],
+  ] as const)
+    assert.equal(await post(key(modifiers, name, code)), 204, `${name} with ${String(modifiers)}`);
+  for (const command of ["copy", "cut", "paste"])
+    assert.equal(await post(key(2, "q", "KeyQ", [command])), 502, `the command ${command}`);
+  assert.equal(await post(key(0, "q", "KeyQ")), 204);
+  await sawAll(["keydown key=q code=KeyQ"], "the plain key to arrive after the others");
+  assert.deepEqual(await clipboardEvents(), []);
+  assert.deepEqual(
+    (await seen()).filter((line) => !line.startsWith("keydown key=q")),
+    [],
+  );
 });
