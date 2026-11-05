@@ -12,6 +12,7 @@ export const call = (page: Page, method: string, params: unknown = {}): Promise<
 
 const TEXT_LIMIT = 30_000;
 const LOAD_MS = 30_000;
+const NAVIGATION_START_MS = 400;
 
 const EvalSchema = Type.Object({
   result: Type.Object({
@@ -32,8 +33,11 @@ const NavigateSchema = Type.Object({
   loaderId: Type.Optional(Type.String()),
 });
 const FrameTreeSchema = Type.Object({
-  frameTree: Type.Object({ frame: Type.Object({ loaderId: Type.String(), url: Type.String() }) }),
+  frameTree: Type.Object({
+    frame: Type.Object({ id: Type.String(), loaderId: Type.String(), url: Type.String() }),
+  }),
 });
+const FrameEventSchema = Type.Object({ frameId: Type.Optional(Type.String()) });
 const SummarySchema = Type.Object({ title: Type.String(), url: Type.String() });
 const PointSchema = Type.Object({ x: Type.Number(), y: Type.Number() });
 
@@ -90,6 +94,7 @@ function loaded(page: Page): { done: Promise<boolean>; stop: () => void } {
 }
 
 export interface Doc {
+  readonly frame: string;
   readonly loader: string;
   readonly host: string;
 }
@@ -100,13 +105,11 @@ export async function documentOf(page: Page): Promise<Doc> {
     await call(page, "Page.getFrameTree"),
     "the page's frame",
   );
+  const { id, loaderId, url } = frameTree.frame;
   try {
-    return {
-      loader: frameTree.frame.loaderId,
-      host: new URL(frameTree.frame.url).hostname.toLowerCase(),
-    };
+    return { frame: id, loader: loaderId, host: new URL(url).hostname.toLowerCase() };
   } catch {
-    return { loader: frameTree.frame.loaderId, host: "" };
+    return { frame: id, loader: loaderId, host: "" };
   }
 }
 
@@ -184,6 +187,55 @@ async function centerOf(page: Page, selector: string): Promise<{ x: number; y: n
   return parseCdp(PointSchema, found, "an element position");
 }
 
+interface Load {
+  readonly began: Promise<void>;
+  readonly ended: Promise<void>;
+  stop: () => void;
+}
+
+function watchLoad(page: Page, frame: string): Load {
+  let begin = (): void => undefined;
+  let end = (): void => undefined;
+  const began = new Promise<void>((resolve) => {
+    begin = resolve;
+  });
+  const ended = new Promise<void>((resolve) => {
+    end = resolve;
+  });
+  let started = false;
+  const stop = page.cdp.listen((event) => {
+    if (event.sessionId !== page.session) return;
+    if (event.method === "Page.frameStartedLoading") {
+      const { frameId } = parseCdp(FrameEventSchema, event.params, "a load event");
+      if (frameId !== frame) return;
+      started = true;
+      begin();
+    } else if (event.method === "Page.loadEventFired" && started) end();
+  });
+  return { began, ended, stop };
+}
+
+async function within(ms: number, event: Promise<void>): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<false>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(false);
+    }, ms);
+  });
+  try {
+    return await Promise.race([event.then(() => true), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function dispatchClick(page: Page, x: number, y: number): Promise<void> {
+  const mouse = { x, y, button: "left", clickCount: 1 };
+  await call(page, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+  await call(page, "Input.dispatchMouseEvent", { type: "mousePressed", ...mouse });
+  await call(page, "Input.dispatchMouseEvent", { type: "mouseReleased", ...mouse });
+}
+
 export async function clickPage(page: Page, args: BrowserArgs): Promise<string> {
   if (args.selector === undefined && (args.x === undefined || args.y === undefined))
     throw new Error("click needs a selector, or x and y");
@@ -191,11 +243,16 @@ export async function clickPage(page: Page, args: BrowserArgs): Promise<string> 
     args.selector === undefined
       ? { x: args.x ?? 0, y: args.y ?? 0 }
       : await centerOf(page, args.selector);
-  const mouse = { x, y, button: "left", clickCount: 1 };
-  await call(page, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-  await call(page, "Input.dispatchMouseEvent", { type: "mousePressed", ...mouse });
-  await call(page, "Input.dispatchMouseEvent", { type: "mouseReleased", ...mouse });
-  return `Clicked ${args.selector ?? `${String(x)},${String(y)}`}.`;
+  const load = watchLoad(page, (await documentOf(page)).frame);
+  try {
+    await dispatchClick(page, x, y);
+    const navigating = await within(NAVIGATION_START_MS, load.began);
+    const finished = !navigating || (await within(LOAD_MS, load.ended));
+    const state = finished ? "" : " The page is still loading after 30 s.";
+    return `Clicked ${args.selector ?? `${String(x)},${String(y)}`}.${state}`;
+  } finally {
+    load.stop();
+  }
 }
 
 export async function pressKey(page: Page, key: string | undefined): Promise<string> {

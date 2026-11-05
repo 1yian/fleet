@@ -18,7 +18,6 @@ export const VIEWER_PAGE = `<!doctype html>
   li .host { color: var(--dim); font-size: 12px; }
   li .page { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   li.gone .card { color: var(--dim); text-decoration: line-through; }
-  .empty { padding: 16px; color: var(--dim); }
   #problem { margin: 0 16px 12px; padding: 8px 10px; background: #2a1219; color: var(--error); border-radius: 4px; font-size: 12px; }
   #problem[hidden] { display: none; }
   main { display: flex; flex-direction: column; min-width: 0; }
@@ -41,20 +40,19 @@ export const VIEWER_PAGE = `<!doctype html>
   <h1>Browser</h1>
   <div id="problem" hidden></div>
   <ul id="tabs"></ul>
-  <div id="none" class="empty" hidden>No tabs open. Each card gets its own tab when its worker opens a page.</div>
 </aside>
 <main>
   <header>
-    <div id="address">Pick a tab</div>
+    <div id="address"></div>
     <input id="paste" placeholder="Type text, then Enter" autocomplete="off" spellcheck="false" hidden>
-    <span id="live">idle</span>
+    <span id="live" hidden></span>
   </header>
   <div id="stage"><img id="screen" tabindex="0" alt="" hidden draggable="false"><div id="note" hidden></div></div>
-  <div id="hint">Click the picture to focus it. Clicks, keys and scrolling go to the tab.</div>
+  <div id="hint" hidden>Click the picture to focus it. Clicks, keys and scrolling go to the tab.</div>
 </main>
 <script>
 const list = document.getElementById("tabs");
-const none = document.getElementById("none");
+const hint = document.getElementById("hint");
 const problem = document.getElementById("problem");
 const address = document.getElementById("address");
 const live = document.getElementById("live");
@@ -75,15 +73,28 @@ function point(event) {
   return { x: ((event.clientX - box.left) / box.width) * size.width, y: ((event.clientY - box.top) / box.height) * size.height };
 }
 
+function idle(message) {
+  screen.removeAttribute("src");
+  screen.hidden = true;
+  paste.hidden = true;
+  live.hidden = true;
+  hint.hidden = true;
+  address.textContent = "";
+  note.hidden = false;
+  note.textContent = message;
+}
+
 function watch(target) {
   if (source !== null) source.close();
   selected = target;
-  screen.hidden = target === null;
-  note.hidden = true;
-  paste.hidden = target === null;
-  live.textContent = "idle";
-  live.className = "";
   if (target === null) return;
+  screen.hidden = false;
+  note.hidden = true;
+  paste.hidden = false;
+  live.hidden = false;
+  hint.hidden = false;
+  live.textContent = "connecting";
+  live.className = "";
   source = new EventSource("/api/stream?target=" + encodeURIComponent(target));
   source.onmessage = (message) => {
     const shown = JSON.parse(message.data);
@@ -108,7 +119,6 @@ function watch(target) {
 
 function render(tabs) {
   list.replaceChildren();
-  none.hidden = tabs.length > 0;
   for (const tab of tabs) {
     const item = document.createElement("li");
     item.dataset.target = tab.target;
@@ -139,6 +149,11 @@ function render(tabs) {
     address.textContent = shown[0].url;
     watch(shown[0].target);
     render(tabs);
+  }
+  if (selected === null) {
+    idle(shown.length === 0
+      ? "No tabs open. Each card gets its own tab when its worker opens a page."
+      : "Pick a tab on the left.");
   }
 }
 

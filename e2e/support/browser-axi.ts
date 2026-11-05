@@ -107,6 +107,13 @@ export function recordOf(run: AxiRun): JsonRecord {
   return parseRecord(run.stdout);
 }
 
+export function resultText(record: JsonRecord): string | undefined {
+  const result = record["result"];
+  if (result === undefined) return undefined;
+  if (record["action"] === "eval") return JSON.stringify(result, null, 2);
+  return typeof result === "string" ? result : JSON.stringify(result);
+}
+
 class AxiError extends Error {
   readonly code: number;
   constructor(message: string, code: number) {
@@ -128,7 +135,7 @@ async function axiRecord(
 }
 
 export async function axiAct(access: Access, args: Record<string, unknown>): Promise<string> {
-  return String((await axiRecord(access, args))["result"]);
+  return String(resultText(await axiRecord(access, args)));
 }
 
 export async function axiShot(access: Access, fullPage = false): Promise<string> {

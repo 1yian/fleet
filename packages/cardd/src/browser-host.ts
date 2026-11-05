@@ -16,6 +16,7 @@ import {
   pressKey,
   readPage,
   runExpression,
+  summary,
   typeText,
   type Page,
 } from "./browser-page.ts";
@@ -61,6 +62,13 @@ const isGone = (error: unknown): boolean =>
   /no target (with given id|found for targetId)/i.test(reason(error));
 export const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
 const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
+export const NO_TAB = "you have no tab yet: run `browser-axi open <url>` first";
+const TAB_CLOSED = "your tab was closed: run `browser-axi open <url>` again";
+
+async function atPage(page: Page, text: string): Promise<Outcome> {
+  const where = await summary(page).catch(() => undefined);
+  return { result: { text, ...(where === undefined ? {} : { page: where }) }, notify: [] };
+}
 
 function within<T>(ms: number, work: Promise<T>, late: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -171,13 +179,13 @@ export class HostBrowser {
 
   private kept(): Error {
     return new Error(
-      "this tab was already open when cardd restarted, and the address you gave did not replace its page (it only changed the part after #, or it was not a page), so a one-time code may still be in it and the tab stays refused: call browser with action open and an address of a different page",
+      "this tab was already open when cardd restarted, and the address you gave did not replace its page (it only changed the part after #, or it was not a page), so a one-time code may still be in it and the tab stays refused: run `browser-axi open <url>` with the address of a different page",
     );
   }
 
   private restarted(): Error {
     return new Error(
-      "this tab was already open when cardd restarted, and it may show a one-time code that cardd can no longer hide, so nothing was returned: call browser with action open to load a fresh page, then try again",
+      "this tab was already open when cardd restarted, and it may show a one-time code that cardd can no longer hide, so nothing was returned: run `browser-axi open <url>` to load a fresh page, then try again",
     );
   }
 
@@ -218,7 +226,13 @@ export class HostBrowser {
       (done) => ({
         notify: done.notify,
         ...(done.captain === undefined ? {} : { captain: done.captain }),
-        result: { ...done.result, text: cut(scrubbed(done.result.text, this.vault.values)) },
+        result: {
+          ...done.result,
+          text: cut(scrubbed(done.result.text, this.vault.values)),
+          ...(done.result.page === undefined
+            ? {}
+            : { page: scrubbed(done.result.page, this.vault.values) }),
+        },
       }),
       (error: unknown) => {
         throw new Error(scrubbed(reason(error), this.vault.values));
@@ -234,9 +248,9 @@ export class HostBrowser {
   ): Promise<Outcome> {
     switch (args.action) {
       case "read":
-        return plain(await readPage(page, args));
+        return atPage(page, await readPage(page, args));
       case "click":
-        return plain(await clickPage(page, args));
+        return atPage(page, await clickPage(page, args));
       case "type":
         return plain(await typeText(page, args));
       case "press":
@@ -414,14 +428,13 @@ export class HostBrowser {
 
   private async pageOf(cdp: Cdp, card: number): Promise<{ page: Page; target: string }> {
     const own = await this.current(cdp, card);
-    if (own === undefined)
-      throw new Error("you have no tab yet: call browser with action open first");
+    if (own === undefined) throw new Error(NO_TAB);
     try {
       return { page: await this.attach(cdp, own), target: own.target };
     } catch (error) {
       if (!isGone(error)) throw error;
       this.closed(own.target);
-      throw new Error("your tab was closed: call browser with action open again", { cause: error });
+      throw new Error(TAB_CLOSED, { cause: error });
     }
   }
 
