@@ -1,4 +1,9 @@
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { Entry } from "@fleet/protocol";
 import { viewerArguments, type Source } from "./browser-access.ts";
 import { field, herdr, paneText, quote, records, rootPane, shellIdle } from "./host.ts";
@@ -21,6 +26,18 @@ export interface Placement {
 }
 
 export type Placed = "opened" | "running";
+
+export async function openSheprd(url: string): Promise<boolean> {
+  const bin = join(homedir(), ".local/state/herdr/gpui/bin");
+  const shim = ["sheprd", "herdr-gpui"].map((name) => join(bin, name)).find(existsSync);
+  if (shim === undefined) return false;
+  try {
+    await promisify(execFile)(shim, ["browser", "open", "--tab", url], { timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function paneOf(workspace: string, tab: string): Promise<string | undefined> {
   const panes = records(
