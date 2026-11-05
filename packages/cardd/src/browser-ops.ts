@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { BROWSER_OPS, check, OPS, type BrowserArgs, type OpName } from "@fleet/protocol";
 import type { Browser } from "./browser.ts";
-import { openTabs } from "./browser-store.ts";
+import { openTabs, type Tab } from "./browser-store.ts";
 import { summonCaptain, summonMain } from "./browser-summon.ts";
 import { getCard, mainLane, type Session } from "./store.ts";
 
@@ -76,6 +76,13 @@ function sees(
     own !== null ? card === own : named === undefined ? mine(card) : card === named && mine(card);
 }
 
+function visibleTab(db: DatabaseSync, session: Session, target: string): Tab {
+  const wants = sees(db, session, undefined);
+  const tab = openTabs(db).find((each) => each.target === target && wants(each.card));
+  if (tab === undefined) throw new Error("that tab is not open, or it is not yours to see");
+  return tab;
+}
+
 function declaredHost(session: Session, named: string | undefined): string | undefined {
   if (session.card === null) return named;
   if (named !== undefined)
@@ -144,10 +151,13 @@ export async function performBrowserOp(
     }
     case "browser.frame": {
       const { target } = check(OPS["browser.frame"].args, raw);
-      const wants = sees(db, session, undefined);
-      const tab = openTabs(db).find((each) => each.target === target && wants(each.card));
-      if (tab === undefined) throw new Error("that tab is not open, or it is not yours to see");
+      const tab = visibleTab(db, session, target);
       return { value: await browser.frame(tab.card, tab.target), notify: [] };
+    }
+    case "browser.copy": {
+      const { target } = check(OPS["browser.copy"].args, raw);
+      const tab = visibleTab(db, session, target);
+      return { value: await browser.copy(tab.card, tab.target), notify: [] };
     }
   }
 }

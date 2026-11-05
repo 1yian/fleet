@@ -1,3 +1,5 @@
+import { EDITING_COMMANDS } from "./browser-input.ts";
+
 export const VIEWER_PAGE = `<!doctype html>
 <html lang="en">
 <head>
@@ -26,11 +28,13 @@ export const VIEWER_PAGE = `<!doctype html>
   #address { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #live { color: var(--dim); font-size: 12px; }
   #live.on { color: var(--signal); }
-  #paste { width: 220px; padding: 6px 8px; background: var(--row); color: var(--text); border: 1px solid #262633; border-radius: 4px; font: inherit; }
-  #paste:focus { outline: 1px solid var(--signal); }
-  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; }
-  #screen { max-width: 100%; max-height: 100%; outline: none; border: 1px solid #262633; border-radius: 4px; cursor: default; background: #fff; }
-  #screen:focus { border-color: var(--signal); }
+  #copied { max-width: 420px; color: var(--signal); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #copied.failed { color: var(--error); }
+  #copied.empty { color: var(--dim); }
+  #stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #screen { max-width: 100%; max-height: 100%; outline: none; border: 1px solid #262633; border-radius: 4px; cursor: default; background: #fff; user-select: none; -webkit-user-select: none; touch-action: none; }
+  #stage:focus-within #screen { border-color: var(--signal); }
+  #capture { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; font-size: 16px; caret-color: transparent; }
   #note { max-width: 640px; padding: 16px 20px; background: var(--row); color: var(--dim); border: 1px solid #262633; border-radius: 4px; }
   #note[hidden] { display: none; }
   #hint { padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
@@ -46,11 +50,15 @@ export const VIEWER_PAGE = `<!doctype html>
 <main>
   <header>
     <div id="address">Pick a tab</div>
-    <input id="paste" placeholder="Type text, then Enter" autocomplete="off" spellcheck="false" hidden>
+    <span id="copied" role="status"></span>
     <span id="live">idle</span>
   </header>
-  <div id="stage"><img id="screen" tabindex="0" alt="" hidden draggable="false"><div id="note" hidden></div></div>
-  <div id="hint">Click the picture to focus it. Clicks, keys and scrolling go to the tab.</div>
+  <div id="stage">
+    <img id="screen" alt="" hidden draggable="false">
+    <textarea id="capture" aria-label="Keyboard input for the page" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" tabindex="-1"></textarea>
+    <div id="note" hidden></div>
+  </div>
+  <div id="hint">Click the picture to focus it. Mouse and keys act on the tab. Cmd or Ctrl+C copies, Cmd or Ctrl+V pastes. Reload, zoom and tab keys stay here.</div>
 </main>
 <script>
 const list = document.getElementById("tabs");
@@ -60,19 +68,74 @@ const address = document.getElementById("address");
 const live = document.getElementById("live");
 const screen = document.getElementById("screen");
 const note = document.getElementById("note");
-const paste = document.getElementById("paste");
+const capture = document.getElementById("capture");
+const stage = document.getElementById("stage");
+const copied = document.getElementById("copied");
 let selected = null;
 let source = null;
 let size = { width: 1, height: 1 };
 
-let queue = Promise.resolve();
-const send = (body) => {
-  queue = queue.then(() => fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).catch(() => undefined);
-};
+const EDITING = ${JSON.stringify(EDITING_COMMANDS)};
+const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+const editing = mac ? EDITING.mac : EDITING.other;
+
+const pending = [];
+let flowing = false;
+
+function enqueue(body) {
+  const last = pending[pending.length - 1];
+  if (last !== undefined && last.target === body.target) {
+    if (last.kind === "mouse" && body.kind === "mouse" && last.action === "move" && body.action === "move") {
+      pending[pending.length - 1] = body;
+      return;
+    }
+    if (last.kind === "scroll" && body.kind === "scroll" && last.modifiers === body.modifiers) {
+      pending[pending.length - 1] = { ...body, dx: last.dx + body.dx, dy: last.dy + body.dy };
+      return;
+    }
+  }
+  pending.push(body);
+}
+
+async function flow() {
+  if (flowing) return;
+  flowing = true;
+  while (pending.length > 0) {
+    const next = pending.shift();
+    if (typeof next === "function") {
+      next();
+      continue;
+    }
+    try {
+      await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
+    } catch {
+      continue;
+    }
+  }
+  flowing = false;
+}
+
+function settled() {
+  return new Promise((resolve) => {
+    pending.push(resolve);
+    void flow();
+  });
+}
+
+function send(body) {
+  if (selected === null) return;
+  enqueue({ target: selected, ...body });
+  void flow();
+}
+
+const modifiersOf = (event) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
 
 function point(event) {
   const box = screen.getBoundingClientRect();
-  return { x: ((event.clientX - box.left) / box.width) * size.width, y: ((event.clientY - box.top) / box.height) * size.height };
+  return {
+    x: ((event.clientX - box.left - screen.clientLeft) / screen.clientWidth) * size.width,
+    y: ((event.clientY - box.top - screen.clientTop) / screen.clientHeight) * size.height,
+  };
 }
 
 function watch(target) {
@@ -80,7 +143,6 @@ function watch(target) {
   selected = target;
   screen.hidden = target === null;
   note.hidden = true;
-  paste.hidden = target === null;
   live.textContent = "idle";
   live.className = "";
   if (target === null) return;
@@ -128,7 +190,7 @@ function render(tabs) {
       address.textContent = tab.url;
       watch(tab.target);
       render(tabs);
-      screen.focus();
+      capture.focus();
     };
     list.append(item);
     if (tab.target === selected) address.textContent = tab.live ? tab.url : "tab is gone";
@@ -154,18 +216,185 @@ async function refresh() {
   }
 }
 
-screen.addEventListener("click", (event) => { screen.focus(); send({ target: selected, kind: "click", ...point(event) }); });
-screen.addEventListener("wheel", (event) => { event.preventDefault(); send({ target: selected, kind: "scroll", ...point(event), dy: event.deltaY }); }, { passive: false });
-screen.addEventListener("keydown", (event) => {
-  if (event.metaKey || event.ctrlKey || event.altKey || event.key.length > 1 && !event.key.startsWith("Arrow") && !["Enter", "Tab", "Escape", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown"].includes(event.key)) return;
+const BUTTONS = ["left", "middle", "right", "back", "forward"];
+const heldButton = (buttons) => (buttons & 1 ? "left" : buttons & 4 ? "middle" : buttons & 2 ? "right" : buttons & 8 ? "back" : buttons & 16 ? "forward" : "none");
+let pressed = false;
+let ctrlClick = false;
+let downButton = "left";
+
+function mouse(action, event, lost) {
+  const buttons = ctrlClick ? (event.buttons === 0 ? 0 : 2) : event.buttons;
+  const named = ctrlClick ? "right" : BUTTONS[event.button] ?? "left";
+  const button = action === "move" ? heldButton(buttons) : lost ? downButton : named;
+  const modifiers = modifiersOf(event) & (ctrlClick ? ~2 : 15);
+  send({ kind: "mouse", action, ...point(event), button, buttons, clickCount: Math.min(3, Math.max(1, event.detail)), modifiers });
+}
+
+function release(event, lost) {
+  mouse("up", event, lost);
+  pressed = event.buttons !== 0;
+  if (!pressed) ctrlClick = false;
+}
+
+screen.addEventListener("mousedown", (event) => {
   event.preventDefault();
-  send({ target: selected, kind: "key", key: event.key });
+  const box = stage.getBoundingClientRect();
+  capture.style.left = event.clientX - box.left + "px";
+  capture.style.top = event.clientY - box.top + "px";
+  capture.focus({ preventScroll: true });
+  ctrlClick = mac && event.ctrlKey && event.button === 0;
+  downButton = ctrlClick ? "right" : BUTTONS[event.button] ?? "left";
+  pressed = true;
+  mouse("down", event, false);
 });
-paste.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" || paste.value === "") return;
-  send({ target: selected, kind: "text", text: paste.value });
-  paste.value = "";
+window.addEventListener("mousemove", (event) => {
+  if (pressed && event.buttons === 0) release(event, true);
+  else if (pressed || event.target === screen) mouse("move", event, false);
 });
+window.addEventListener("mouseup", (event) => {
+  if (pressed) release(event, false);
+});
+screen.addEventListener("contextmenu", (event) => event.preventDefault());
+screen.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const unit = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? screen.clientHeight : 1;
+  send({ kind: "scroll", ...point(event), dx: event.deltaX * unit, dy: event.deltaY * unit, modifiers: modifiersOf(event) });
+}, { passive: false });
+
+const HOST_ZOOM = ["+", "=", "-", "0"];
+const HOST_WINDOW = ["r", "l", "t", "w", "n", "q"];
+const HOST_TOOLS = ["KeyI", "KeyJ", "KeyC"];
+
+function keepsForHost(event) {
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  if (["F5", "F11", "F12"].includes(key)) return true;
+  if (event.ctrlKey && ["Tab", "PageUp", "PageDown"].includes(key)) return true;
+  if (mac && event.ctrlKey && event.metaKey) return key === "f";
+  const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!accelerator) return false;
+  if (mac && event.altKey) return HOST_TOOLS.includes(event.code);
+  if (!mac && event.shiftKey && HOST_TOOLS.includes(event.code)) return true;
+  return HOST_WINDOW.includes(key) || HOST_ZOOM.includes(key) || /^[1-9]$/.test(key) || (mac && (key === "h" || key === "m"));
+}
+
+let composing = false;
+const spent = new Set();
+
+function keyboard(action, event) {
+  const typing = mac && event.altKey && !event.metaKey && !event.ctrlKey && Array.from(event.key).length === 1;
+  const modifiers = modifiersOf(event) & (typing ? ~1 : 15);
+  const command = action === "down" ? editing[modifiers + ":" + event.key.toLowerCase()] : undefined;
+  return { kind: "key", action, key: event.key, code: event.code, keyCode: event.keyCode, location: event.location, repeat: event.repeat, modifiers, commands: command === undefined ? [] : [command] };
+}
+
+const unreadable = (event) => composing || event.isComposing || event.keyCode === 229 || ["Dead", "Process", "Unidentified"].includes(event.key);
+
+capture.addEventListener("keydown", (event) => {
+  if (selected === null) return;
+  if (keepsForHost(event) || unreadable(event)) {
+    spent.add(event.code);
+    return;
+  }
+  const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  const letter = event.key.toLowerCase();
+  if (accelerator && !event.altKey && letter === "v") {
+    spent.add(event.code);
+    return;
+  }
+  event.preventDefault();
+  if (accelerator && !event.altKey && (letter === "c" || letter === "x")) {
+    spent.add(event.code);
+    void copy(letter === "x");
+    return;
+  }
+  send(keyboard("down", event));
+  if (mac && event.metaKey && event.key !== "Meta") {
+    spent.add(event.code);
+    send(keyboard("up", event));
+  }
+});
+capture.addEventListener("keyup", (event) => {
+  if (selected === null || spent.delete(event.code) || unreadable(event)) return;
+  event.preventDefault();
+  send(keyboard("up", event));
+});
+
+capture.addEventListener("compositionstart", () => { composing = true; });
+capture.addEventListener("compositionend", (event) => {
+  composing = false;
+  if (event.data) send({ kind: "text", text: event.data });
+  capture.value = "";
+});
+capture.addEventListener("input", (event) => {
+  if (composing || event.isComposing) return;
+  if (event.inputType === "insertText" && event.data) send({ kind: "text", text: event.data });
+  capture.value = "";
+});
+capture.addEventListener("paste", (event) => {
+  event.preventDefault();
+  const text = event.clipboardData?.getData("text/plain") ?? "";
+  if (text !== "") send({ kind: "text", text });
+});
+capture.addEventListener("copy", (event) => {
+  event.preventDefault();
+  void copy(false);
+});
+capture.addEventListener("cut", (event) => {
+  event.preventDefault();
+  void copy(true);
+});
+
+let forgetting = 0;
+function say(text, state) {
+  copied.textContent = text;
+  copied.title = text;
+  copied.className = state;
+  clearTimeout(forgetting);
+  forgetting = setTimeout(() => { copied.textContent = ""; copied.title = ""; }, 5000);
+}
+
+async function selection(target) {
+  await settled();
+  const response = await fetch("/api/copy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) });
+  const answer = await response.json();
+  if (!response.ok) throw new Error(answer.error ?? "the viewer could not read the selection");
+  if (answer.text === null) throw new Error(answer.note ?? "nothing was copied");
+  if (answer.text === "") throw Object.assign(new Error("nothing is selected"), { empty: true });
+  return answer.text;
+}
+
+async function write(read) {
+  if (navigator.clipboard === undefined) throw new Error("this browser does not allow the viewer to write to the clipboard");
+  if (typeof ClipboardItem === "undefined") {
+    const text = await read;
+    await navigator.clipboard.writeText(text);
+    return text;
+  }
+  let text = "";
+  const blob = read.then((value) => { text = value; return new Blob([value], { type: "text/plain" }); });
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+  } catch (error) {
+    await read;
+    throw error;
+  }
+  return text;
+}
+
+async function copy(cut) {
+  if (selected === null) return;
+  try {
+    const text = await write(selection(selected));
+    say("copied " + Array.from(text).length + " characters", "");
+    if (cut) {
+      const key = { kind: "key", key: "Backspace", code: "Backspace", keyCode: 8, location: 0, repeat: false, modifiers: 0, commands: [] };
+      send({ ...key, action: "down" });
+      send({ ...key, action: "up" });
+    }
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), error.empty === true ? "empty" : "failed");
+  }
+}
 refresh();
 setInterval(refresh, 2000);
 </script>

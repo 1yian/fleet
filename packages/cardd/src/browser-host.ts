@@ -1,10 +1,16 @@
 import type { DatabaseSync } from "node:sqlite";
-import { parseCdp, type BrowserArgs, type Cdp, type OpResult } from "@fleet/protocol";
+import {
+  parseCdp,
+  readSelection,
+  type BrowserArgs,
+  type Cdp,
+  type OpResult,
+} from "@fleet/protocol";
 import { dial, type Dial } from "@fleet/protocol/tunnel";
 import Type from "typebox";
 import type { HostBrowserConfig } from "./browser-config.ts";
 import { holdsFilled, holdsLogin } from "./browser-fill.ts";
-import { scrubbed } from "./browser-hidden.ts";
+import { scrubbed, scrubbedOrHidden } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
 import { login } from "./browser-login.ts";
 import {
@@ -19,6 +25,7 @@ import {
   typeText,
   type Page,
 } from "./browser-page.ts";
+import { COPY_REFUSED, EVAL_REFUSED, KEPT, RESTARTED } from "./browser-refusals.ts";
 import { CREDENTIAL_SHOWN } from "./browser-scan.ts";
 import { screenshot } from "./browser-shot.ts";
 import { hiderOf, targetsOf, type Listed } from "./browser-targets.ts";
@@ -73,8 +80,6 @@ function within<T>(ms: number, work: Promise<T>, late: string): Promise<T> {
     clearTimeout(timer);
   });
 }
-const EVAL_REFUSED =
-  "nothing was evaluated: a stored credential is in this page's form; click Sign in first, or read the page as text";
 
 export class HostBrowser {
   private link: Promise<Cdp> | undefined;
@@ -121,12 +126,36 @@ export class HostBrowser {
     );
   }
 
-  private async framed(card: number, target: string): Promise<Outcome> {
+  private async ownPage(
+    card: number,
+    target: string,
+    action: "read" | "screenshot",
+  ): Promise<Page> {
     await this.vault.ready();
     const own = await this.pageOf(await this.connection(), card);
     if (own.target !== target) throw new Error("that tab is not open");
-    if (this.mayShowCode(target, "screenshot")) throw this.restarted();
-    return this.pictureOf(own.page, target, false, true);
+    if (this.mayShowCode(target, action)) throw new Error(RESTARTED);
+    return own.page;
+  }
+
+  private async framed(card: number, target: string): Promise<Outcome> {
+    return this.pictureOf(await this.ownPage(card, target, "screenshot"), target, false, true);
+  }
+
+  copy(card: number, target: string): Promise<OpResult<"browser.copy">> {
+    return this.copied(card, target).then(
+      (text) => ({ text, note: null }),
+      (error: unknown) => ({
+        text: null,
+        note: scrubbedOrHidden(reason(error), this.vault.values),
+      }),
+    );
+  }
+
+  private async copied(card: number, target: string): Promise<string> {
+    const page = await this.ownPage(card, target, "read");
+    await this.refuseWhileFilled(page, target, COPY_REFUSED);
+    return scrubbed(await readSelection(page.cdp, page.session), this.vault.values);
   }
 
   private async pictureOf(
@@ -153,7 +182,7 @@ export class HostBrowser {
     }
     if (args.action !== "login") await this.vault.ready();
     const { page, target } = await this.pageOf(await this.connection(), card);
-    if (this.mayShowCode(target, args.action)) throw this.restarted();
+    if (this.mayShowCode(target, args.action)) throw new Error(RESTARTED);
     return this.guarded(
       args.action === "login"
         ? this.signIn(page, card, target, args.site)
@@ -167,18 +196,6 @@ export class HostBrowser {
 
   private mayShowCode(target: string, action: BrowserArgs["action"]): boolean {
     return ["read", "eval", "screenshot"].includes(action) && this.mayHoldCode(target);
-  }
-
-  private kept(): Error {
-    return new Error(
-      "this tab was already open when cardd restarted, and the address you gave did not replace its page (it only changed the part after #, or it was not a page), so a one-time code may still be in it and the tab stays refused: call browser with action open and an address of a different page",
-    );
-  }
-
-  private restarted(): Error {
-    return new Error(
-      "this tab was already open when cardd restarted, and it may show a one-time code that cardd can no longer hide, so nothing was returned: call browser with action open to load a fresh page, then try again",
-    );
   }
 
   private async signIn(
@@ -369,7 +386,7 @@ export class HostBrowser {
     const before = this.trusted.has(tab.target) ? undefined : (await documentOf(page)).loader;
     const where = await navigate(page, url);
     const replaced = before === undefined || (await documentOf(page)).loader !== before;
-    if (!replaced && this.mayHoldCode(tab.target)) throw this.kept();
+    if (!replaced && this.mayHoldCode(tab.target)) throw new Error(KEPT);
     if (replaced) this.trusted.add(tab.target);
     return `Opened ${where} in your tab ${labelOf(this.db, card)}.`;
   }

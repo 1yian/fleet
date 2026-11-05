@@ -19,6 +19,21 @@ const PAGES: Readonly<Record<string, string>> = {
     <span id="n" style="position:fixed;left:20px;top:160px">0</span>
     <input id="q" style="position:fixed;left:20px;top:200px;width:200px;height:30px">
   </body>`,
+  "/pad": `<!doctype html><title>Pad</title><body style="margin:0">
+    <p id="line" style="position:fixed;left:20px;top:20px;margin:0;font-size:28px;white-space:pre">0123456789</p>
+    <input id="field" style="position:fixed;left:20px;top:80px;width:360px;height:32px;font-size:18px">
+    <div id="box" style="position:fixed;left:20px;top:140px;width:240px;height:80px;background:#9cf">box</div>
+    <script>
+      window.seen = [];
+      const flags = (e) => [e.ctrlKey ? "ctrl" : "", e.shiftKey ? "shift" : "", e.altKey ? "alt" : "", e.metaKey ? "meta" : ""].filter(Boolean).join("+");
+      const note = (...parts) => window.seen.push(parts.filter(Boolean).join(" "));
+      const box = document.getElementById("box");
+      for (const type of ["mouseover", "mousedown", "mouseup", "click", "auxclick", "dblclick", "contextmenu"])
+        box.addEventListener(type, (e) => note(type, "button=" + e.button, "detail=" + e.detail, flags(e)));
+      for (const type of ["keydown", "keyup"])
+        document.addEventListener(type, (e) => note(type, "key=" + e.key, "code=" + e.code, flags(e)));
+      document.getElementById("field").addEventListener("compositionstart", () => note("compositionstart"));
+    </script></body>`,
   "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,
   "/composed": `<!doctype html><title>Composed</title><body><div id="who">hun<mark>ter</mark>2</div></body>`,
   "/copy": `<!doctype html><title>Copy</title><body><div id="who">S3cret&copy;2026</div></body>`,

@@ -97,6 +97,18 @@ export class Browser {
     });
   }
 
+  copy(card: number, target: string): Promise<OpResult<"browser.copy">> {
+    return this.inTurn(card, async () => {
+      try {
+        const tab = openTabs(this.db).find((each) => each.card === card && each.target === target);
+        if (tab === undefined) throw new Error("that tab is not open");
+        return await this.site(tab.host).copy(card, target);
+      } catch (error) {
+        return { text: null, note: reason(error) };
+      }
+    });
+  }
+
   private async listingOf(
     host: string,
     captain: boolean,

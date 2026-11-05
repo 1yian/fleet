@@ -4,9 +4,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
-import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
+import { InputSchema } from "./browser-input.ts";
 import { openSheprd } from "./browser-place.ts";
-import { InputSchema, Screen } from "./browser-screen.ts";
+import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
+import { Screen } from "./browser-screen.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
 import {
   callUrl,
@@ -20,6 +21,7 @@ type Cardd = Access;
 type Transports = Readonly<Record<string, readonly string[]>>;
 
 type View = OpResult<"browser.view">;
+type Copied = OpResult<"browser.copy">;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -43,6 +45,9 @@ const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
       ...(cardd.host === undefined ? {} : { host: cardd.host }),
     }),
   );
+
+const callCopy = async (cardd: Cardd, target: string): Promise<Copied> =>
+  check(OPS["browser.copy"].result, await post(cardd, "browser.copy", { target }));
 
 const callFrame = async (cardd: Cardd, target: string): Promise<Pulled> =>
   check(OPS["browser.frame"].result, await post(cardd, "browser.frame", { target }));
@@ -152,6 +157,15 @@ class Viewer {
     return view;
   }
 
+  private async copied(target: string): Promise<Copied> {
+    if (!this.captain) return callCopy(this.cardd, target);
+    try {
+      return { text: await this.screenFor(target).selection(target), note: null };
+    } catch (error) {
+      return { text: null, note: reason(error) };
+    }
+  }
+
   private async stream(response: ServerResponse, target: string): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
     const send = (shown: Shown): void => {
@@ -180,13 +194,25 @@ class Viewer {
       if (await this.shows(target)) await this.stream(response, target);
       else response.writeHead(404).end();
     } else if (url.pathname === "/api/input" && request.method === "POST") {
-      const input = check(InputSchema, JSON.parse(await readBody(request)));
-      if (!(await this.shows(input.target))) response.writeHead(404).end();
-      else {
-        await this.screenFor(input.target).input(input);
-        response.writeHead(204).end();
-      }
+      await this.drive(request, response);
+    } else if (url.pathname === "/api/copy" && request.method === "POST") {
+      await this.copy(request, response);
     } else response.writeHead(404).end();
+  }
+
+  private async drive(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const input = check(InputSchema, JSON.parse(await readBody(request)));
+    if (!(await this.shows(input.target))) response.writeHead(404).end();
+    else {
+      await this.screenFor(input.target).input(input);
+      response.writeHead(204).end();
+    }
+  }
+
+  private async copy(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const { target } = check(OPS["browser.copy"].args, JSON.parse(await readBody(request)));
+    if (!(await this.shows(target))) response.writeHead(404).end();
+    else json(response, 200, await this.copied(target));
   }
 
   private enter(request: IncomingMessage, response: ServerResponse, url: URL): boolean {
