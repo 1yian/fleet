@@ -109,6 +109,44 @@ test("editing a login-filled field by hand does not release eval or screenshots,
   assertNoSecretAnywhere();
 });
 
+const onPath = async (worker: RawWorker, path: string): Promise<void> => {
+  const label = `c-${String(worker.card.id)} `;
+  await until(async () => {
+    const tab = (await lab.chrome.pages()).find((page) => page.title.startsWith(label));
+    if (tab === undefined) return undefined;
+    const where = await lab.chrome.evaluate(tab.id, "location.pathname").catch(() => undefined);
+    return where === path ? true : undefined;
+  }, `the tab to be on ${path}`);
+};
+
+const at = (path: string): string => lab.site.url(path, "login.example.test");
+
+const leaving: [string, (worker: RawWorker) => Promise<unknown>][] = [
+  ["the form is submitted", (worker) => worker.act({ action: "click", selector: "#submit" })],
+  ["open replaces the page", (worker) => worker.act({ action: "open", url: at("/landing") })],
+];
+
+for (const [how, leave] of leaving)
+  test(`eval stays refused when history restores the login form after ${how}`, async () => {
+    await start();
+    const worker = await signedIn("/portal");
+    await leave(worker);
+    await onPath(worker, "/landing");
+    await worker.act({ action: "eval", expression: "history.back()" });
+    await onPath(worker, "/portal");
+
+    const reverse = `${FIELD("u")}.value.split("").reverse().join("")`;
+    await assert.rejects(worker.act({ action: "eval", expression: reverse }), FILLED);
+    await assert.rejects(worker.shoot(), CREDENTIAL_SHOWN);
+
+    await worker.act({ action: "open", url: at("/portal?again=1") });
+    assert.deepEqual(JSON.parse(await worker.act({ action: "eval", expression: ALL_VALUES })), [
+      "",
+      "",
+    ]);
+    assertNoSecretAnywhere();
+  });
+
 test("eval is allowed again once the login-filled field has left the page", async () => {
   await start();
   const worker = await lab.worker("Sign in to the portal");
