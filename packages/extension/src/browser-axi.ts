@@ -201,7 +201,7 @@ async function place(source: Source, why: string | undefined): Promise<string> {
       focus: false,
       captain: false,
     });
-    return placed === "opened"
+    return placed.started
       ? "a Browser tab in your own workspace shows your tab live"
       : "the Browser tab in your own workspace already shows your tab";
   } catch (error) {

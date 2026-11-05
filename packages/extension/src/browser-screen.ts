@@ -1,6 +1,7 @@
 import { keyPresses, parseCdp, type Cdp } from "@fleet/protocol";
 import type { Dial } from "@fleet/protocol/tunnel";
 import Type, { type Static } from "typebox";
+import type { Fit } from "./browser-fit.ts";
 
 export const InputSchema = Type.Union([
   Type.Object({
@@ -49,6 +50,7 @@ export class Screen {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, Promise<string>>();
   private readonly viewing = new Map<string, Viewing>();
+  private readonly fitted = new Set<string>();
   private readonly dial: Dial;
 
   constructor(dial: Dial) {
@@ -184,6 +186,26 @@ export class Screen {
   private stop(cdp: Cdp, target: string, session: string): void {
     this.viewing.delete(target);
     cdp.send("Page.stopScreencast", {}, { sessionId: session }).catch(() => undefined);
+    if (this.fitted.delete(target))
+      cdp
+        .send("Emulation.clearDeviceMetricsOverride", {}, { sessionId: session })
+        .catch(() => undefined);
+  }
+
+  async fit(event: Fit): Promise<void> {
+    const cdp = await this.connection();
+    const sessionId = await this.session(cdp, event.target);
+    if ("clear" in event) {
+      this.fitted.delete(event.target);
+      await cdp.send("Emulation.clearDeviceMetricsOverride", {}, { sessionId });
+      return;
+    }
+    this.fitted.add(event.target);
+    await cdp.send(
+      "Emulation.setDeviceMetricsOverride",
+      { width: event.width, height: event.height, deviceScaleFactor: event.scale, mobile: false },
+      { sessionId },
+    );
   }
 
   async input(event: ViewerInput): Promise<void> {

@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
+import { viewerBuild } from "./browser-build.ts";
+import { FitSchema } from "./browser-fit.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { openSheprd } from "./browser-place.ts";
 import { InputSchema, Screen } from "./browser-screen.ts";
@@ -157,8 +159,21 @@ class Viewer {
 
   private async stream(response: ServerResponse, target: string): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    let waiting: Shown | undefined;
+    let backedUp = false;
     const send = (shown: Shown): void => {
-      response.write(`data: ${JSON.stringify(shown)}\n\n`);
+      if (backedUp) {
+        waiting = shown;
+        return;
+      }
+      if (response.write(`data: ${JSON.stringify(shown)}\n\n`)) return;
+      backedUp = true;
+      response.once("drain", () => {
+        backedUp = false;
+        const latest = waiting;
+        waiting = undefined;
+        if (latest !== undefined) send(latest);
+      });
     };
     const watching: { stop: (() => void) | undefined } = { stop: undefined };
     response.on("close", () => {
@@ -173,23 +188,51 @@ class Viewer {
   }
 
   private async route(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
-    if (url.pathname === "/") {
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(VIEWER_PAGE);
-    } else if (url.pathname === "/api/tabs") {
-      const { tabs, problem } = await this.listing();
-      json(response, 200, { tabs, problem });
-    } else if (url.pathname === "/api/stream") {
-      const target = url.searchParams.get("target") ?? "";
-      if (await this.shows(target)) await this.stream(response, target);
-      else response.writeHead(404).end();
-    } else if (url.pathname === "/api/input" && request.method === "POST") {
-      const input = check(InputSchema, JSON.parse(await readBody(request)));
-      if (!(await this.shows(input.target))) response.writeHead(404).end();
-      else {
-        await this.screenFor(input.target).input(input);
-        response.writeHead(204).end();
-      }
-    } else response.writeHead(404).end();
+    const key = `${request.method ?? "GET"} ${url.pathname}`;
+    const handlers: Record<string, () => Promise<void>> = {
+      "GET /": () => this.page(response),
+      "GET /api/tabs": () => this.tabs(response),
+      "GET /api/stream": () => this.watch(response, url),
+      "POST /api/fit": () => this.fit(request, response),
+      "POST /api/input": () => this.drive(request, response),
+    };
+    const handler = Object.hasOwn(handlers, key) ? handlers[key] : undefined;
+    if (handler === undefined) response.writeHead(404).end();
+    else await handler();
+  }
+
+  private page(response: ServerResponse): Promise<void> {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(VIEWER_PAGE);
+    return Promise.resolve();
+  }
+
+  private async tabs(response: ServerResponse): Promise<void> {
+    const { tabs, problem } = await this.listing();
+    json(response, 200, { tabs, problem });
+  }
+
+  private async watch(response: ServerResponse, url: URL): Promise<void> {
+    const target = url.searchParams.get("target") ?? "";
+    if (await this.shows(target)) await this.stream(response, target);
+    else response.writeHead(404).end();
+  }
+
+  private async fit(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const fit = check(FitSchema, JSON.parse(await readBody(request)));
+    if (!this.captain || !(await this.shows(fit.target))) response.writeHead(404).end();
+    else {
+      await this.screenFor(fit.target).fit(fit);
+      response.writeHead(204).end();
+    }
+  }
+
+  private async drive(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const input = check(InputSchema, JSON.parse(await readBody(request)));
+    if (!(await this.shows(input.target))) response.writeHead(404).end();
+    else {
+      await this.screenFor(input.target).input(input);
+      response.writeHead(204).end();
+    }
   }
 
   private enter(request: IncomingMessage, response: ServerResponse, url: URL): boolean {
@@ -291,6 +334,7 @@ async function main(): Promise<void> {
   viewer.allow(address.port, hostTest(reach, address.port));
   const url = `http://${shownHost(reach)}:${String(address.port)}/?t=${token}`;
   console.log(`Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`);
+  console.log(`Viewer build: ${viewerBuild()}`);
   const line = reachLine(reach);
   if (line !== undefined) console.log(line);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {

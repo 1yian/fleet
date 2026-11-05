@@ -7,7 +7,7 @@ import type { Entry } from "@fleet/protocol";
 import { showBoardLink } from "./board-link.ts";
 import { registerBranch } from "./branch.ts";
 import { exportBrowserSource } from "./browser-access.ts";
-import { answerSummon } from "./browser-place.ts";
+import { answerSummon, type Summoned } from "./browser-place.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
@@ -177,6 +177,11 @@ function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: 
   return jobs;
 }
 
+function afterEntry(link: Link, entry: Entry, who: Summoned): Promise<string> | undefined {
+  if (isMergedReport(entry)) return closeMerged(link, entry);
+  return answerSummon(link, entry, who);
+}
+
 function sendEntry(
   pi: ExtensionAPI,
   entry: Entry,
@@ -271,8 +276,11 @@ function start(
       if (entry.fields["recovery"] !== undefined) worker?.checkingHealth();
       else worker?.reset();
     };
-    if (role === "mate") answerSummon(link, entry, { main: lane === "main", source, home: HOME() });
-    if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
+    const mateWork =
+      role === "mate"
+        ? afterEntry(link, entry, { main: lane === "main", source, home: HOME() })
+        : undefined;
+    if (mateWork !== undefined) void mateWork.then(deliver);
     else if (entry.kind === "job-result" && jobs !== undefined)
       deliverAfterSync(jobs, seen, entry.id, deliver);
     else deliver("");

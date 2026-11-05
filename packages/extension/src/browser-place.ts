@@ -6,14 +6,18 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Entry } from "@fleet/protocol";
 import { viewerArguments, type Source } from "./browser-access.ts";
+import { viewerBuild } from "./browser-build.ts";
 import { field, herdr, paneText, quote, records, rootPane, shellIdle } from "./host.ts";
 import type { Link } from "./link.ts";
 
 const VIEWER = fileURLToPath(new URL("./browser-view.ts", import.meta.url));
 const BROWSER_TAB = "Browser";
-const MODE_LINE = /Fleet browser viewer \((captain|gated)\)/g;
+const VIEWER_LINE = /Fleet browser viewer \((captain|gated)\): (\S+)/g;
+const BUILD_LINE = /^Viewer build: (\w+)$/m;
 const MODE_WAIT_MS = 5_000;
 const STOP_WAIT_MS = 15_000;
+const LINK_WAIT_MS = 15_000;
+const SUMMON_WAIT_MS = 45_000;
 const POLL_MS = 100;
 
 export interface Placement {
@@ -25,7 +29,10 @@ export interface Placement {
   readonly captain: boolean;
 }
 
-export type Placed = "opened" | "running";
+export interface Placed {
+  readonly started: boolean;
+  readonly link: string | undefined;
+}
 
 export async function openSheprd(url: string): Promise<boolean> {
   const bin = join(homedir(), ".local/state/herdr/gpui/bin");
@@ -60,17 +67,31 @@ async function until(done: () => Promise<boolean>, waitMs: number): Promise<bool
   return true;
 }
 
-async function printedMode(pane: string): Promise<string | undefined> {
-  return [...(await paneText("local", pane)).matchAll(MODE_LINE)].at(-1)?.[1];
+interface Printed {
+  readonly mode: "captain" | "gated";
+  readonly link: string;
+  readonly build: string | undefined;
 }
 
-async function runningMode(pane: string): Promise<string | undefined> {
-  let mode: string | undefined;
+async function printedViewer(pane: string): Promise<Printed | undefined> {
+  const text = await paneText("local", pane);
+  const last = [...text.matchAll(VIEWER_LINE)].at(-1);
+  if (last === undefined) return undefined;
+  const after = text.slice(last.index + last[0].length);
+  return {
+    mode: last[1] === "captain" ? "captain" : "gated",
+    link: last[2] ?? "",
+    build: BUILD_LINE.exec(after)?.[1],
+  };
+}
+
+async function runningViewer(pane: string): Promise<Printed | undefined> {
+  let printed: Printed | undefined;
   await until(async () => {
-    mode = await printedMode(pane);
-    return mode !== undefined || (await shellIdle("local", pane));
+    printed = await printedViewer(pane);
+    return printed !== undefined || (await shellIdle("local", pane));
   }, MODE_WAIT_MS);
-  return mode;
+  return printed;
 }
 
 async function stop(pane: string): Promise<void> {
@@ -83,15 +104,33 @@ async function stop(pane: string): Promise<void> {
 
 async function startable(placement: Placement, pane: string): Promise<boolean> {
   if (await shellIdle("local", pane)) return true;
-  if (!placement.captain || (await runningMode(pane)) !== "gated") return false;
+  const running = await runningViewer(pane);
+  if (running === undefined) return false;
+  const stale = running.build !== viewerBuild();
+  const replace = placement.captain
+    ? running.mode === "gated" || stale
+    : running.mode === "gated" && stale;
+  if (!replace) return false;
   await stop(pane);
   return true;
+}
+
+async function linkOf(placement: Placement, pane: string | undefined): Promise<string | undefined> {
+  if (!placement.captain || pane === undefined) return undefined;
+  let link: string | undefined;
+  await until(async () => {
+    const printed = await printedViewer(pane);
+    link =
+      printed?.mode === "captain" && printed.build === viewerBuild() ? printed.link : undefined;
+    return link !== undefined;
+  }, LINK_WAIT_MS);
+  return link;
 }
 
 const commandFor = ({ source, open, captain }: Placement): string =>
   `node ${quote(VIEWER)} ${viewerArguments(source).map(quote).join(" ")}${open ? " --open" : ""}${captain ? " --captain" : ""}`;
 
-async function create(placement: Placement): Promise<void> {
+async function create(placement: Placement): Promise<string> {
   const { workspace, cwd, focus } = placement;
   const created = await herdr("local", [
     "tab",
@@ -104,7 +143,9 @@ async function create(placement: Placement): Promise<void> {
     BROWSER_TAB,
     ...(focus ? [] : ["--no-focus"]),
   ]);
-  await herdr("local", ["pane", "run", rootPane(created), commandFor(placement)]);
+  const pane = rootPane(created);
+  await herdr("local", ["pane", "run", pane, commandFor(placement)]);
+  return pane;
 }
 
 async function viewerTab(workspace: string): Promise<string | undefined> {
@@ -118,7 +159,7 @@ async function viewerTab(workspace: string): Promise<string | undefined> {
 export async function removeViewer(workspace: string): Promise<boolean> {
   const tab = await viewerTab(workspace);
   const pane = tab === undefined ? undefined : await paneOf(workspace, tab);
-  if (tab === undefined || pane === undefined || (await printedMode(pane)) !== "gated")
+  if (tab === undefined || pane === undefined || (await printedViewer(pane))?.mode !== "gated")
     return false;
   await herdr("local", ["tab", "close", tab]);
   return true;
@@ -128,8 +169,8 @@ export async function placeViewer(placement: Placement): Promise<Placed> {
   const { workspace, focus } = placement;
   const existing = await viewerTab(workspace);
   if (existing === undefined) {
-    await create(placement);
-    return "opened";
+    const pane = await create(placement);
+    return { started: true, link: await linkOf(placement, pane) };
   }
   const pane = await paneOf(workspace, existing);
   let started = false;
@@ -138,7 +179,7 @@ export async function placeViewer(placement: Placement): Promise<Placed> {
     started = true;
   }
   if (focus) await herdr("local", ["tab", "focus", existing]);
-  return started ? "opened" : "running";
+  return { started, link: await linkOf(placement, pane) };
 }
 
 const isSummon = (entry: Entry, main: boolean): boolean =>
@@ -148,11 +189,8 @@ const isSummon = (entry: Entry, main: boolean): boolean =>
 
 let placing: Promise<unknown> = Promise.resolve();
 
-function inOrder(placement: Placement): Promise<void> {
-  const next = placing
-    .catch(() => undefined)
-    .then(() => placeViewer(placement))
-    .then(() => undefined);
+function inOrder(placement: Placement): Promise<Placed> {
+  const next = placing.catch(() => undefined).then(() => placeViewer(placement));
   placing = next;
   return next;
 }
@@ -168,11 +206,27 @@ export interface Summoned {
   readonly home: string;
 }
 
-async function answer(link: Link, entry: Entry, who: Summoned): Promise<void> {
+const KEEP_PRIVATE =
+  "It is a password for that tab: send it only to the captain, in a message of its own, and never write it on the board, in a card, in a report, or in a log.";
+
+const onThisMachineOnly = (link: string): boolean => {
+  const { hostname } = new URL(link);
+  return hostname === "127.0.0.1" || hostname === "localhost";
+};
+
+function linkNote(link: string | undefined): string {
+  if (link === undefined)
+    return " The captain's viewer is running in your Browser tab, but its address could not be read from there yet: read it from that tab. It is a password for the tab, so keep it to the captain.";
+  if (onThisMachineOnly(link))
+    return ` The captain's viewer listens on this machine only, because no Tailscale address was found, so his phone or another machine cannot open it. The address here is ${link} . Tell him so, and ask main's host to bring Tailscale up. ${KEEP_PRIVATE}`;
+  return ` The captain's link, which opens on his phone or his Mac over Tailscale: ${link} . ${KEEP_PRIVATE}`;
+}
+
+async function answer(link: Link, entry: Entry, who: Summoned): Promise<string> {
   const workspace = process.env["HERDR_WORKSPACE_ID"];
   const here = workspace !== undefined && (who.main || (await captainIsIn(workspace)));
   if (here) {
-    await inOrder({
+    const placed = await inOrder({
       workspace,
       cwd: who.home,
       source: who.source,
@@ -180,15 +234,31 @@ async function answer(link: Link, entry: Entry, who: Summoned): Promise<void> {
       focus: true,
       captain: who.main,
     });
-    return;
+    return who.main ? linkNote(placed.link) : "";
   }
-  if (who.main) return;
+  if (who.main) return "";
   await link.call("browser.summon", { card: entry.card, why: String(entry.fields["summon"]) });
+  return "";
 }
 
-export function answerSummon(link: Link, entry: Entry, who: Summoned): void {
-  if (!isSummon(entry, who.main)) return;
-  answer(link, entry, who).catch((error: unknown) => {
+const NOT_YET =
+  " The captain's viewer is still starting in your Browser tab: read its address from that tab when it appears.";
+
+export function answerSummon(link: Link, entry: Entry, who: Summoned): Promise<string> | undefined {
+  if (!isSummon(entry, who.main)) return undefined;
+  const placed = answer(link, entry, who).catch((error: unknown) => {
     console.error(`browser view: ${String(error)}`);
+    return who.main
+      ? ` The captain's viewer could not be started (${error instanceof Error ? error.message : "unknown error"}): open the Browser tab of your workspace and start it from there.`
+      : "";
+  });
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<string>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(who.main ? NOT_YET : "");
+    }, SUMMON_WAIT_MS);
+  });
+  return Promise.race([placed, late]).finally(() => {
+    clearTimeout(timer);
   });
 }
