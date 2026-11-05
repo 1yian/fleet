@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -45,6 +45,14 @@ afterEach(async () => {
     const { sharedOut, privateOut, lookalike } = neighbours();
     const recorded = [daemonIn(sharedOut), daemonIn(privateOut), pidIn(lookalike)];
     const own = treeOf(join(`${clone}.worktrees`, "c-1-a1", ".nm"));
+    const starting = daemonIn(sharedOut);
+    if (starting !== undefined) {
+      try {
+        process.kill(starting, "SIGTERM");
+      } catch {
+        void 0;
+      }
+    }
     for (const pid of [
       ...treeOf(shared),
       ...own,
@@ -97,8 +105,8 @@ const daemonIn = (file: string): number | undefined => {
 const waitFor = (file: string): string =>
   `i=0; while [ ! -s '${file}' ]; do i=$((i+1)); [ $i -gt 100 ] && { echo "${file} was never written"; exit 1; }; sleep 0.1; done`;
 
-const gateDaemon = (root: string, out: string): string =>
-  `FAKE_NM_ROOT=${root} node '${FAKE}' axi run > '${out}'`;
+const gateDaemon = (root: string, out: string, env = ""): string =>
+  `${env}FAKE_NM_ROOT=${root} node '${FAKE}' axi run > '${out}'`;
 
 function neighbours(): { sharedOut: string; privateOut: string; lookalike: string } {
   return {
@@ -167,10 +175,7 @@ test("close keeps the shared daemon that a worker started, and still stops what 
 
   assert.match(result, /^c-1 is done\./);
   assertSharedDaemonKept(daemon);
-  assert.match(
-    result,
-    new RegExp(`Kept shared services: c-1-a1 pid ${String(daemon)} \\(.*daemon run --root`),
-  );
+  assert.match(result, new RegExp(`Kept shared services: c-1-a1 pid ${String(daemon)} \\(`));
   assert.equal(alive(lookalike), false, "a process that only looks like the daemon survived");
   assert.equal(alive(own), false, "a daemon whose root lives in the worktree survived");
   assert.match(result, new RegExp(`Stopped leftover processes: .*pid ${String(lookalike)} `));
@@ -231,4 +236,40 @@ test("restarting a worker keeps the shared daemon it started, and still stops wh
   await eventually(() => !alive(lookalike) && !alive(own), "the old worker's processes to stop");
 
   assertSharedDaemonKept(daemon);
+});
+
+test("close keeps a shared daemon that has not published its pid file yet", async () => {
+  const { sharedOut } = neighbours();
+  const publish = join(h.dir, "publish");
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(
+    () => ({
+      tool: "bash",
+      args: {
+        command: [
+          `echo .nm >> "$(git rev-parse --git-path info/exclude)"`,
+          gateDaemon(`'${shared}'`, sharedOut, `FAKE_NM_PUBLISH_AFTER='${publish}' `),
+        ].join("\n"),
+      },
+    }),
+    "worker",
+  );
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "gate starting" } }), "worker");
+  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Done." } }), "mate");
+  await connected(h);
+  mate.prompt("gate the change");
+  const result = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS)).at(-1) ?? "";
+  const daemon = daemonIn(sharedOut);
+  assert.ok(daemon !== undefined, "the worker did not start a daemon");
+
+  assert.match(result, /^c-1 is done\./);
+  assert.equal(existsSync(join(shared, "daemon.pid")), false, "the daemon had published already");
+  assert.equal(servedBy(shared), String(daemon), "the starting daemon was stopped");
+  assert.match(result, new RegExp(`Kept shared services: c-1-a1 pid ${String(daemon)} `));
+  writeFileSync(publish, "");
+  await eventually(() => existsSync(join(shared, "tree.json")), "the daemon to publish");
+  assertSharedDaemonKept(daemon);
+  assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
 });

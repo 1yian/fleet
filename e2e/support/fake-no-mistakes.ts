@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +60,13 @@ async function ensureDaemon(root: string): Promise<void> {
   throw new Error(`no daemon answered on ${root}`);
 }
 
+async function published(): Promise<void> {
+  const gate = process.env["FAKE_NM_PUBLISH_AFTER"];
+  while (gate !== undefined && !existsSync(gate)) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 function serve(root: string): void {
   retitle("daemon", "run", "--root", root);
   mkdirSync(root, { recursive: true });
@@ -69,12 +76,14 @@ function serve(root: string): void {
     socket.end(`daemon ${String(process.pid)}\n`);
   });
   server.listen(join(root, "socket"), () => {
-    const record = { pid: process.pid, started_at: new Date().toISOString() };
-    writeFileSync(
-      join(root, "tree.json"),
-      JSON.stringify({ daemon: process.pid, sink, step: step.pid }),
-    );
-    writeFileSync(join(root, "daemon.pid"), JSON.stringify(record));
+    void published().then(() => {
+      const record = { pid: process.pid, started_at: new Date().toISOString() };
+      writeFileSync(
+        join(root, "tree.json"),
+        JSON.stringify({ daemon: process.pid, sink, step: step.pid }),
+      );
+      writeFileSync(join(root, "daemon.pid"), JSON.stringify(record));
+    });
   });
   process.on("SIGTERM", () => {
     for (const pid of [sink, Number(step.pid)]) {
