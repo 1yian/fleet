@@ -6,6 +6,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Entry } from "@fleet/protocol";
 import { showBoardLink } from "./board-link.ts";
 import { registerBranch } from "./branch.ts";
+import { exportBrowserSource } from "./browser-access.ts";
+import { isSummon, openForCaptain } from "./browser-place.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
@@ -45,6 +47,7 @@ interface Config {
   readonly token: string;
   readonly role: "worker" | "mate";
   readonly lane?: string;
+  readonly home?: string;
   readonly notes: readonly string[];
   readonly secrets?: { readonly bws: Bws; readonly env: Readonly<Record<string, string>> };
 }
@@ -108,6 +111,7 @@ async function laneConfig(lane: LaneConfig): Promise<Config> {
     token: resolved.value,
     role: "mate",
     lane: lane.lane,
+    home: HOME(),
     notes: secrets === undefined ? [] : [resolved.note],
     ...(secrets === undefined ? {} : { secrets }),
   };
@@ -211,13 +215,15 @@ function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["ro
 
 function start(
   pi: ExtensionAPI,
-  { url, token, role, lane }: Config,
+  { url, token, role, lane, home }: Config,
   sessionFile: string | undefined,
   compact: () => void,
   ctx: ExtensionContext,
   extensionsReady: Promise<void>,
 ): void {
   enableCodemode(pi);
+  const source = home === undefined ? { url, token } : { home };
+  exportBrowserSource(source);
   const runInProgress = trackRun(pi);
   const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = new Set<number>();
@@ -265,6 +271,10 @@ function start(
       if (entry.fields["recovery"] !== undefined) worker?.checkingHealth();
       else worker?.reset();
     };
+    if (lane === "main" && isSummon(entry))
+      void openForCaptain(source, HOME()).catch((error: unknown) => {
+        console.error(`browser view: ${String(error)}`);
+      });
     if (role === "mate" && isMergedReport(entry)) void closeMerged(link, entry).then(deliver);
     else if (entry.kind === "job-result" && jobs !== undefined)
       deliverAfterSync(jobs, seen, entry.id, deliver);

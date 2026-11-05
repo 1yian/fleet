@@ -21,6 +21,8 @@ import {
   touchJob,
 } from "./attempts.ts";
 import { boardView, cardView } from "./board.ts";
+import type { Browser } from "./browser.ts";
+import { isBrowserOp, performBrowserOp, type BrowserOpName } from "./browser-ops.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
@@ -132,7 +134,7 @@ function rework(
   return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
-const HANDLERS: Record<OpName, Handler> = {
+const HANDLERS: Record<Exclude<OpName, BrowserOpName>, Handler> = {
   "maintenance.request": (db, session, raw, timing) =>
     requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
   "maintenance.status": (db, _session, raw) => ({
@@ -374,9 +376,25 @@ export async function performOp(
   args: unknown,
   timing: Timings,
   hosts: Hosts,
+  browser: Browser,
 ): Promise<Done> {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
+  if (isBrowserOp(op)) return performBrowserOp(db, browser, session, op, args);
+  const done = await performStored(db, session, op, args, timing, hosts);
+  if (op === "report" && session.card !== null && check(OPS.report.args, args).status === "stopped")
+    await browser.release(session.card);
+  return done;
+}
+
+async function performStored(
+  db: DatabaseSync,
+  session: Session,
+  op: Exclude<OpName, BrowserOpName>,
+  args: unknown,
+  timing: Timings,
+  hosts: Hosts,
+): Promise<Done> {
   const report =
     op === "report" && session.card !== null
       ? await normalizeReport(db, hosts, session.card, args)

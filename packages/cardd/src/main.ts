@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
+import { parseBrowserConfig } from "./browser-config.ts";
 import { openDatabase } from "./db.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { stampLogLines } from "./log.ts";
@@ -33,6 +34,7 @@ const { values, positionals } = parseArgs({
     yolo: { type: "boolean", default: false },
     repo: { type: "string" },
     hosts: { type: "string", default: "{}" },
+    browser: { type: "string" },
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
@@ -100,6 +102,7 @@ if (command === "serve") {
     files: values.board,
     hostnames: values.hostname,
     hosts,
+    browser: values.browser === undefined ? undefined : parseBrowserConfig(values.browser),
   });
   console.log(`cardd listening on ${url}`);
 } else if (
@@ -170,6 +173,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> [--hosts <json>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] [--browser <json>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
   );
 }

@@ -11,11 +11,14 @@ import {
   type ServerMessage,
 } from "@fleet/protocol";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import { Browser } from "./browser.ts";
+import type { BrowserConfig } from "./browser-config.ts";
 import { MISSED_HEARTBEATS, runCheck } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
 import { adoptProcess } from "./incidents.ts";
+import { Summoned } from "./browser-ops.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
@@ -59,12 +62,19 @@ class Hub {
   private readonly db: DatabaseSync;
   private readonly timing: Timings;
   private readonly hosts: Hosts;
+  private readonly browser: Browser;
   private readonly reading = new Set<string>();
   readonly web: Web;
   readonly health: LoopHealth;
   open = 0;
 
-  constructor(db: DatabaseSync, timing: Timings, files: string | undefined, hosts: Hosts) {
+  constructor(
+    db: DatabaseSync,
+    timing: Timings,
+    files: string | undefined,
+    hosts: Hosts,
+    browser: BrowserConfig | undefined,
+  ) {
     this.health = new LoopHealth(
       { sockets: () => this.open, sessions: () => this.bySession.size },
       version(db).commit,
@@ -72,6 +82,7 @@ class Hub {
     this.db = db;
     this.timing = timing;
     this.hosts = hosts;
+    this.browser = new Browser(db, browser, hosts);
     this.web = new Web(
       db,
       (session) => {
@@ -119,11 +130,23 @@ class Hub {
   async perform(session: Session, op: string, args: unknown): Promise<HttpOutcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
-      const done = await performOp(this.db, session, op, args, this.timing, this.hosts);
+      const done = await performOp(
+        this.db,
+        session,
+        op,
+        args,
+        this.timing,
+        this.hosts,
+        this.browser,
+      );
       for (const recipient of done.notify) this.flush(recipient, false);
       this.web.changed();
       return { ok: true, value: done.value };
     } catch (error) {
+      if (error instanceof Summoned) {
+        for (const recipient of error.notify) this.flush(recipient, false);
+        this.web.changed();
+      }
       return { ok: false, error: reason(error) };
     }
   }
@@ -258,12 +281,18 @@ export async function serve(
     files,
     hostnames,
     hosts,
-  }: { files?: string | undefined; hostnames: readonly string[]; hosts: Hosts },
+    browser,
+  }: {
+    files?: string | undefined;
+    hostnames: readonly string[];
+    hosts: Hosts;
+    browser?: BrowserConfig | undefined;
+  },
 ): Promise<string> {
   db.prepare(
     "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state IN ('idle', 'running', 'waiting')",
   ).run(Date.now());
-  const hub = new Hub(db, timing, files, hosts);
+  const hub = new Hub(db, timing, files, hosts, browser);
   hub.fillRepos();
   setInterval(() => {
     hub.check();

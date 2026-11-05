@@ -1,0 +1,17 @@
+#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    --access-token*) echo "fake bws: the token must come from the environment, never argv" >&2; exit 2 ;;
+  esac
+done
+echo "$*" >> "$FAKE_BWS_DIR/invocations"
+if [ -p "$FAKE_BWS_DIR/gate" ]; then read -r _ < "$FAKE_BWS_DIR/gate"; fi
+if [ "${BWS_ACCESS_TOKEN:-}" != "$(cat "$FAKE_BWS_DIR/token")" ]; then
+  echo "Error: the access token is not valid" >&2
+  exit 1
+fi
+if [ "$1 $2" != "secret list" ] || [ "$3" != "$(cat "$FAKE_BWS_DIR/project")" ]; then
+  echo "Error: the machine account cannot read that project" >&2
+  exit 1
+fi
+cat "$FAKE_BWS_DIR/secrets.json"

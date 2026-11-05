@@ -26,6 +26,8 @@
       "entry": [
         "src/index.ts",
         "src/job.ts",
+        "src/browser-view.ts",
+        "src/browser-axi.ts",
         "src/launch.ts",
         "src/relaunch.ts",
         "src/calm/index.ts",
@@ -39,5 +41,5 @@
       "ignore": ["src/vendor/**"]
     }
   },
-  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "pgrep"]
+  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "mkfifo", "pgrep"]
 }

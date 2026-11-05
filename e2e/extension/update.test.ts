@@ -231,7 +231,7 @@ test("update_fleet stops before any change when a lane home has uncommitted chan
 });
 
 const schemaOf = (db: string): number => {
-  const open = new DatabaseSync(db, { readOnly: true });
+  const open = new DatabaseSync(db, { readOnly: true, timeout: 5000 });
   try {
     return Number(open.prepare("PRAGMA user_version").get()?.["user_version"]);
   } finally {
@@ -245,7 +245,7 @@ const backups = (): string[] =>
     .map((name) => join(dirname(cardd.db), name));
 
 const liveMates = (): string[] => {
-  const open = new DatabaseSync(cardd.db, { readOnly: true });
+  const open = new DatabaseSync(cardd.db, { readOnly: true, timeout: 5000 });
   try {
     return open
       .prepare(

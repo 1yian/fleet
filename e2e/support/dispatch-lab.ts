@@ -31,9 +31,11 @@ export const avoidSeenOf = (h: Harness): string => join(h.dir, "worker-avoid");
 
 export interface LabOptions {
   readonly cardd?: Record<string, string>;
+  readonly carddArgs?: readonly string[];
   readonly mate?: Record<string, string>;
   readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
+  readonly workerShell?: boolean;
   readonly remote?: boolean;
   readonly delivery?: string;
   readonly repo?: boolean;
@@ -79,13 +81,15 @@ function addSite(
 
 export async function startDispatchLab({
   cardd: carddEnv,
+  carddArgs = [],
   mate: mateEnv,
   dashTokens = [],
   workerArgs = [],
+  workerShell = false,
   extension = EXTENSION,
   ...site
 }: LabOptions = {}): Promise<DispatchLab> {
-  const cardd = await Cardd.start(carddEnv);
+  const cardd = await Cardd.start(carddEnv, carddArgs);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = tempDir("fleet-home-");
   const mainToken = cardd.addLane("main", undefined, home);
@@ -107,7 +111,7 @@ export async function startDispatchLab({
       HERDR_SESSION: lab.name,
       ...env,
       ...mateEnv,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", extension, ...workerArgs]),
+      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(workerShell), "-e", extension, ...workerArgs]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],
         far: ["node", SWITCH, join(h.dir, "far-down")],

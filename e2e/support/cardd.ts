@@ -57,6 +57,7 @@ export class Cardd {
   private supervised = false;
   private readonly env: NodeJS.ProcessEnv;
   output = "";
+  errors = "";
   private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");
 
   private readonly args: readonly string[];
@@ -156,6 +157,29 @@ export class Cardd {
     db.close();
   }
 
+  commitStoppedReport(card: number): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, 'report', 'stopped from the pane', ?, ?)",
+    ).run(card, `worker:c-${String(card)}-a1`, JSON.stringify({ status: "stopped" }), Date.now());
+    db.close();
+  }
+
+  breakBrowserTabs(): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.exec("DROP TABLE browser_tabs");
+    db.close();
+  }
+
+  startAttemptAfterTabs(card: number): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.prepare(
+      `UPDATE attempts SET created_at = (SELECT max(opened_at) + 1 FROM browser_tabs WHERE card = ?)
+       WHERE card = ? AND state IN ('starting', 'active')`,
+    ).run(card, card);
+    db.close();
+  }
+
   setRepo(project: string, repo: string): string {
     const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
     return execFileSync("node", args, {
@@ -251,13 +275,18 @@ export class Cardd {
       "node",
       [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`, ...this.args],
       {
-        stdio: ["ignore", "pipe", "inherit"],
+        stdio: ["ignore", "pipe", "pipe"],
         env: this.env,
       },
     );
     this.child = child;
     this.output = "";
+    this.errors = "";
     child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (this.output += chunk));
+    child.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
+      this.errors += chunk;
+      process.stderr.write(chunk);
+    });
     this.url = await until(() => /listening on (\S+)/.exec(this.output)?.[1], "cardd to listen");
   }
 

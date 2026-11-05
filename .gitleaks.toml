@@ -5,3 +5,9 @@ useDefault = true
 [[allowlists]]
 description = "The sample Sec-WebSocket-Key from RFC 6455, used by the board socket tests"
 regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+
+[[allowlists]]
+description = "A made-up password that the e2e login fixtures type into a test page, in the commit history"
+condition = "AND"
+paths = ['''^e2e/support/login-fixtures\.ts$''']
+regexes = ['''^Zx9-other-secret-b7e41c0d$''']

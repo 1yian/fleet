@@ -106,6 +106,13 @@ async function herdrOnce(
   args: readonly string[],
   probe: boolean,
 ): Promise<Record<string, unknown>> {
+  return resultOf(await herdrText(host, args, probe), host, args[0] ?? "");
+}
+
+export const paneText = (host: string, pane: string): Promise<string> =>
+  herdrText(host, ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", "200"], false);
+
+async function herdrText(host: string, args: readonly string[], probe: boolean): Promise<string> {
   const session = process.env["HERDR_SESSION"];
   const split = args.includes("--") ? args.indexOf("--") : args.length;
   const select = session === undefined ? [] : ["--session", session];
@@ -113,7 +120,7 @@ async function herdrOnce(
   const via = transport(host);
   const [file = "herdr", ...rest] =
     via.length === 0 ? command : [...via, command.map(quote).join(" ")];
-  const stdout = await new Promise<string>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     execFile(
       file,
       rest,
@@ -126,7 +133,6 @@ async function herdrOnce(
       },
     );
   });
-  return resultOf(stdout, host, args[0] ?? "");
 }
 
 function resultOf(stdout: string, host: string, name: string): Record<string, unknown> {

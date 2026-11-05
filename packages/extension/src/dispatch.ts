@@ -1,4 +1,5 @@
 import type { Delivery, OpResult } from "@fleet/protocol";
+import { releaseBrowser } from "./browser-release.ts";
 import { SYNC_FUNCTIONS } from "./clones.ts";
 import { contain, releaseAll } from "./containment.ts";
 import { fleetArgs } from "./fleet-args.ts";
@@ -197,6 +198,7 @@ export async function replaceWorker(
   if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
   await closeWorkspace(recovery.host, plan.clone, plan.session);
   await releaseAll(recovery.host, old.path);
+  const browser = await releaseBrowser(link, recovery.card);
   const { pane, path } = await worktreePane(recovery.host, plan, recovery.card);
   await contain(recovery.host, pane, path);
   await startAgent(
@@ -220,5 +222,5 @@ export async function replaceWorker(
     ].flat(),
   );
   await contain(recovery.host, pane, path);
-  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
+  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.${browser}`;
 }
