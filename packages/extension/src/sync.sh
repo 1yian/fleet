@@ -5,10 +5,12 @@
 #
 # refresh_clone fetches origin with pruning, deletes local branches whose remote
 # branch is gone, and fast-forwards a clean base branch to origin's. It never forces,
-# stashes, or discards. A clone that is dirty, on another branch, detached with its
-# own commits, or diverged is left alone and printed as a STUCK line. The one safe
-# drift is healed: a clean detached HEAD with no commits of its own is put back on
-# the base branch. Each line it prints starts with the label.
+# stashes, or discards. A clone that needs attention is left alone and printed as a
+# STUCK line: on another branch, detached with its own commits, diverged, or behind
+# with uncommitted changes that block the fast-forward. A base branch that is level
+# with the remote needs nothing, so its uncommitted files are left alone and the line
+# says so. The one safe drift is healed: a clean detached HEAD with no commits of its
+# own is put back on the base branch. Each line it prints starts with the label.
 
 # git_net <clone> <git args>: runs git in the clone's own direnv environment, so a
 # remote that needs the login or credential settings from an .envrc (found in the
@@ -160,7 +162,11 @@ refresh_clone() {
     git -C "$clone" checkout -q "$base" 2>/dev/null || { stuck "$clone" "$label" "detached HEAD"; return 0; }
     recovered="recovered: re-attached $base, "
   elif [ -n "$dirty" ]; then
-    stuck "$clone" "$label" "branch $base$dirty"
+    if [ "$(git -C "$clone" rev-parse HEAD)" = "$(git -C "$clone" rev-parse "$remote")" ]; then
+      echo "$label: up to date, uncommitted files left alone"
+    else
+      stuck "$clone" "$label" "branch $base$dirty"
+    fi
     return 0
   fi
   before=$(git -C "$clone" rev-parse --short HEAD)

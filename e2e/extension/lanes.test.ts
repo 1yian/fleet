@@ -215,6 +215,34 @@ test("main refreshes every project clone when it starts: a clean one fast-forwar
   assert.equal(readFileSync(join(app.clone, "README"), "utf8"), "the captain's edit\n");
 });
 
+test("main hears that a clone level with origin is up to date, with its uncommitted files left alone, and is not woken for it", async () => {
+  const site = cloneWithRemote(here.parent, "site");
+  writeFileSync(join(site.clone, "README"), "the captain's edit\n");
+  writeFileSync(join(site.clone, "notes.txt"), "scratch\n");
+  const before = tip(site.clone);
+  cardd.addProject("site", { local: site.clone });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  const pane = await startMain(lab, here, h);
+
+  const screen = await until(async () => {
+    const shown = await lab.screen(pane);
+    return shown.includes("clones: site on local: ") ? shown : undefined;
+  }, "main to show the clone report");
+  assert.match(screen, /clones: site on local: up to date, uncommitted files left alone/);
+  assert.equal(h.callsOf("mate").length, 0);
+  await wakeMain("Drop the old banner");
+  const turns = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(
+    users(turns),
+    /\[fleet\] clones: site on local: up to date, uncommitted files left alone$/m,
+  );
+  assert.match(users(turns), /\(hold\): Drop the old banner\?/);
+  assert.doesNotMatch(users(turns), /STUCK/);
+  assert.equal(tip(site.clone), before);
+  assert.equal(readFileSync(join(site.clone, "README"), "utf8"), "the captain's edit\n");
+  assert.equal(readFileSync(join(site.clone, "notes.txt"), "utf8"), "scratch\n");
+});
+
 test("main tells the captain when a host cannot be reached, and when it is back", async () => {
   h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, here, h);

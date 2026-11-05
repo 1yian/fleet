@@ -140,6 +140,53 @@ test("close leaves a dirty clone alone and reports it", async () => {
   assert.equal(readFileSync(join(clone, "README"), "utf8"), "the captain's edit\n");
 });
 
+test("close leaves a clone level with origin and holding uncommitted files alone, and does not call it stuck", async () => {
+  const level = tip(clone);
+  scriptCard(() => {
+    writeFileSync(join(clone, "README"), "the captain's edit\n");
+    writeFileSync(join(clone, "notes.txt"), "scratch\n");
+  });
+  const result = await closeResult();
+
+  assert.equal(
+    result,
+    "c-1 is done. Clones: site on local: up to date, uncommitted files left alone.",
+  );
+  assert.equal(tip(clone), level);
+  assert.equal(readFileSync(join(clone, "README"), "utf8"), "the captain's edit\n");
+  assert.equal(readFileSync(join(clone, "notes.txt"), "utf8"), "scratch\n");
+  assert.equal(git(clone, "status", "--porcelain"), "M README\n?? notes.txt");
+});
+
+test("close still calls a dirty clone stuck when origin's change would overwrite its uncommitted edit", async () => {
+  const stale = tip(clone);
+  scriptCard(() => {
+    landOn(remote, "merged-pr", "README", "origin's readme\n");
+    writeFileSync(join(clone, "README"), "the captain's edit\n");
+  });
+  const result = await closeResult();
+
+  assert.equal(
+    result,
+    "c-1 is done. Clones: site on local: STUCK: on branch main with uncommitted changes, 1 commits behind origin/main - needs attention.",
+  );
+  assert.equal(tip(clone), stale);
+  assert.equal(readFileSync(join(clone, "README"), "utf8"), "the captain's edit\n");
+});
+
+test("close still calls a clone on another branch stuck", async () => {
+  const level = tip(clone);
+  scriptCard(() => git(clone, "checkout", "-q", "-b", "wip"));
+  const result = await closeResult();
+
+  assert.equal(
+    result,
+    "c-1 is done. Clones: site on local: STUCK: on branch wip, 0 commits behind origin/main - needs attention.",
+  );
+  assert.equal(git(clone, "branch", "--show-current"), "wip");
+  assert.equal(tip(clone, "wip"), level);
+});
+
 test("dispatch waits out a stale packed-refs.lock left by a killed git, removes it, and fetches", async () => {
   pushedBranch("old-fix");
   deleteOnRemote("old-fix");
