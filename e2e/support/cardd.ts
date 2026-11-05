@@ -60,7 +60,7 @@ export class Cardd {
   errors = "";
   private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");
 
-  private readonly args: readonly string[];
+  private args: readonly string[];
 
   private constructor(env: NodeJS.ProcessEnv, args: readonly string[]) {
     this.env = { ...process.env, ...this.gh.env, ...env };
@@ -171,6 +171,14 @@ export class Cardd {
     db.close();
   }
 
+  refuseBrowserTabRetirement(): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.exec(
+      "CREATE TRIGGER refuse_tab_retirement BEFORE UPDATE ON browser_tabs BEGIN SELECT RAISE(ABORT, 'browser_tabs refuses the retirement'); END",
+    );
+    db.close();
+  }
+
   startAttemptAfterTabs(card: number): void {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     db.prepare(
@@ -238,7 +246,8 @@ export class Cardd {
     return session;
   }
 
-  async restart(): Promise<void> {
+  async restart(args?: readonly string[]): Promise<void> {
+    if (args !== undefined) this.args = args;
     await this.stop();
     await this.boot(new URL(this.url.replace(/^ws/, "http")).port);
   }

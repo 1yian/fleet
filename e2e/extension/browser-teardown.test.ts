@@ -20,7 +20,7 @@ beforeEach(async () => {
   chrome = await StandInChrome.start();
   site = await TestSite.start();
   parts = await startDispatchLab({
-    carddArgs: ["--browser", JSON.stringify({ cdp: chrome.endpoint })],
+    carddArgs: ["--browser", JSON.stringify({ local: { cdp: chrome.endpoint } })],
     workerShell: true,
   });
   parts.cardd.yolo("site");

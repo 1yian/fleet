@@ -166,7 +166,7 @@ test("a vault that refuses the machine account stops the browser before anything
   const seen = results(await worker.h.waitForCall(2));
   assert.equal(
     seen[0],
-    "the Logins project could not be read to learn which values to hide, so nothing was done: bws could not read the Logins project on p620: Error: the access token is not valid. Try again when the vault answers",
+    "the Logins project could not be read to learn which values to hide, so nothing was done: bws could not read the Logins project on maverick: Error: the access token is not valid. Try again when the vault answers",
   );
   assert.deepEqual(await lab.chrome.pages(), []);
   assert.deepEqual(lab.site.posted, []);
@@ -184,7 +184,7 @@ test("a vault that fails while login reads it is reported as failed with its rea
   const seen = results(await worker.h.waitForCall(3));
   assert.equal(
     seen[1],
-    "bws could not read the Logins project on p620: Error: the access token is not valid",
+    "bws could not read the Logins project on maverick: Error: the access token is not valid",
   );
   assert.deepEqual(lab.site.posted, []);
 });

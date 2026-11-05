@@ -1,21 +1,26 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import Type from "typebox";
 import { check } from "@fleet/protocol";
-import { readLaneConfig } from "./lane-config.ts";
+import { readLaneConfig, strings, type LaneConfig } from "./lane-config.ts";
 import { bwsFor, laneToken } from "./lane-secrets.ts";
 
 const URL_VARIABLE = "FLEET_BROWSER_URL";
 const TOKEN_VARIABLE = "FLEET_BROWSER_TOKEN";
 const HOME_VARIABLE = "FLEET_BROWSER_HOME";
 
-const AccessSchema = Type.Object({ url: Type.String(), token: Type.String() });
+const AccessSchema = Type.Object({
+  url: Type.String(),
+  token: Type.String(),
+  host: Type.Optional(Type.String()),
+});
 
 export interface Access {
   readonly url: string;
   readonly token: string;
+  readonly host?: string;
 }
 
 export interface LaneHome {
@@ -45,13 +50,30 @@ export function sourceFromEnv(env: NodeJS.ProcessEnv): Source | undefined {
     : { url, token };
 }
 
-export async function resolveSource(source: Source): Promise<Access> {
-  if (!isLaneHome(source)) return source;
+const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
+
+function laneAt(source: LaneHome): LaneConfig {
   const lane = readLaneConfig(source.home);
   if (lane === undefined) throw new Error(`${source.home} has no config/lane.json`);
+  return lane;
+}
+
+export async function resolveSource(source: Source): Promise<Access> {
+  if (!isLaneHome(source)) return source;
+  const lane = laneAt(source);
   const resolved = await laneToken(lane, bwsFor(lane.bws));
   if (resolved.value === undefined) throw new Error(`fleet: ${resolved.note}`);
-  return { url: lane.url, token: resolved.value };
+  return { url: lane.url, token: resolved.value, host: lane.host ?? firstLabel(hostname()) };
+}
+
+export function transportsOf(source: Source): Record<string, readonly string[]> {
+  if (!isLaneHome(source)) return {};
+  const { hosts } = laneAt(source);
+  return Object.fromEntries(
+    Object.entries(hosts)
+      .map(([host, argv]) => [host, strings(argv)] as const)
+      .filter(([, argv]) => argv.length > 0),
+  );
 }
 
 export const callUrl = (sessionUrl: string): string =>

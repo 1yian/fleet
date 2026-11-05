@@ -20,7 +20,7 @@ export interface RawWorker {
   readonly shoot: (fullPage?: boolean) => Promise<string>;
 }
 
-function rawWorker(card: Card, token: string, session: Session, url: string): RawWorker {
+export function rawWorker(card: Card, token: string, session: Session, url: string): RawWorker {
   const access = { url, token };
   return {
     card,
@@ -83,8 +83,8 @@ export class BrowserLab {
     const site = await TestSite.start();
     const config =
       vault === undefined
-        ? JSON.stringify({ cdp: endpoint })
-        : vault.config(endpoint, options.logins);
+        ? JSON.stringify({ maverick: { cdp: endpoint } })
+        : vault.config("maverick", endpoint, options.logins);
     const cardd = await Cardd.start(vault?.env ?? {}, ["--browser", config]);
     cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
     const mainToken = cardd.addLane("main");

@@ -26,17 +26,18 @@ function bestEntry(secrets: readonly Secret[], pageHost: string): Secret | undef
   return matching[0]?.secret;
 }
 
-const missingEntry = (site: string): string => `a missing login entry for ${site}`;
+const missingEntry = (site: string, host: string): string =>
+  `a missing login entry for ${site} on ${host}`;
 
-function requestFor(db: DatabaseSync, card: number, site: string): string[] {
+function requestFor(db: DatabaseSync, card: number, site: string, host: string): string[] {
   const asked = db
     .prepare(
-      "SELECT 1 FROM entries WHERE card = ? AND author = 'browser' AND json_extract(fields, '$.loginFor') = ?",
+      "SELECT 1 FROM entries WHERE card = ? AND author = 'browser' AND json_extract(fields, '$.loginFor') = ? AND json_extract(fields, '$.loginOn') = ?",
     )
-    .get(card, site);
+    .get(card, site, host);
   if (asked !== undefined) return [];
   const { lane } = getCard(db, card);
-  const body = `c-${String(card)} needs a Bitwarden login for ${site}. Ask the captain to add one secret to the fleet's Logins project in Bitwarden Secrets Manager: key ${site}, value {"username": "...", "password": "..."}. Do not ask for the password in chat and do not paste it anywhere. When it is added, tell the worker to call login again.`;
+  const body = `c-${String(card)} needs a Bitwarden login for ${site}. Ask the captain to add one secret to the Logins project that ${host} reads in Bitwarden Secrets Manager: key ${site}, value {"username": "...", "password": "..."}. Do not ask for the password in chat and do not paste it anywhere. When it is added, tell the worker to call login again.`;
   addEntry(
     db,
     {
@@ -47,7 +48,8 @@ function requestFor(db: DatabaseSync, card: number, site: string): string[] {
       fields: {
         for: "mate",
         loginFor: site,
-        ...(lane === mainLane(db) ? { summon: missingEntry(site) } : {}),
+        loginOn: host,
+        ...(lane === mainLane(db) ? { summon: missingEntry(site, host) } : {}),
       },
     },
     [lane],
@@ -78,11 +80,12 @@ async function siteOf(
 }
 
 function notFound(context: LoginContext, site: string, where: string): Done {
-  const notify = requestFor(context.db, context.card, site);
+  const { host } = context.vault;
+  const notify = requestFor(context.db, context.card, site, host);
   const said =
     notify.length > 0 ? "I asked your mate to have one added" : "your mate was already asked";
   const text = `not found: the Logins project has no entry for ${where}, and ${said}. Nothing was filled. Wait for the captain to add it (report paused or blocked until then), then call login again.`;
-  return { text, notify, captain: missingEntry(site) };
+  return { text, notify, captain: missingEntry(site, host) };
 }
 
 interface Done {
@@ -96,7 +99,7 @@ export async function login(context: LoginContext, requested: string | undefined
   const { logins } = vault;
   if (logins === undefined)
     throw new Error(
-      "login is not set up on this fleet: cardd has no Bitwarden Logins project configured (docs/setup.md, The shared browser). Ask your mate",
+      `login is not set up on ${vault.host}: --browser gives that host no Bitwarden Logins project (docs/setup.md, The browser of each host). Ask your mate`,
     );
   const { site, where, doc } = await siteOf(page, requested);
   const entry = bestEntry(await vault.refresh(), where);

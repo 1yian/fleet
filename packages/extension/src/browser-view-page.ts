@@ -15,6 +15,7 @@ export const VIEWER_PAGE = `<!doctype html>
   li:hover { background: var(--row); }
   li.selected { background: var(--row); border-left-color: var(--signal); }
   li .card { font-weight: 600; }
+  li .host { color: var(--dim); font-size: 12px; }
   li .page { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   li.gone .card { color: var(--dim); text-decoration: line-through; }
   .empty { padding: 16px; color: var(--dim); }
@@ -115,10 +116,13 @@ function render(tabs) {
     const card = document.createElement("div");
     card.className = "card";
     card.textContent = tab.label;
+    const where = document.createElement("div");
+    where.className = "host";
+    where.textContent = tab.host;
     const page = document.createElement("div");
     page.className = "page";
     page.textContent = tab.live ? tab.title || tab.url : "tab is gone";
-    item.append(card, page);
+    item.append(card, where, page);
     item.onclick = () => {
       if (!tab.live) return;
       address.textContent = tab.url;

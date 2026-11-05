@@ -3,15 +3,20 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
+import { dial } from "@fleet/protocol/tunnel";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { InputSchema, Screen } from "./browser-screen.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
-import { callUrl, resolveSource, sourceFromViewerArguments } from "./browser-access.ts";
+import {
+  callUrl,
+  resolveSource,
+  sourceFromViewerArguments,
+  transportsOf,
+  type Access,
+} from "./browser-access.ts";
 
-interface Cardd {
-  readonly url: string;
-  readonly token: string;
-}
+type Cardd = Access;
+type Transports = Readonly<Record<string, readonly string[]>>;
 
 type View = OpResult<"browser.view">;
 
@@ -30,7 +35,13 @@ async function post(cardd: Cardd, op: string, args: object): Promise<unknown> {
 }
 
 const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
-  check(OPS["browser.view"].result, await post(cardd, "browser.view", captain ? { captain } : {}));
+  check(
+    OPS["browser.view"].result,
+    await post(cardd, "browser.view", {
+      ...(captain ? { captain } : {}),
+      ...(cardd.host === undefined ? {} : { host: cardd.host }),
+    }),
+  );
 
 const callFrame = async (cardd: Cardd, target: string): Promise<Pulled> =>
   check(OPS["browser.frame"].result, await post(cardd, "browser.frame", { target }));
@@ -54,23 +65,51 @@ const json = (response: ServerResponse, status: number, body: unknown): void => 
 };
 
 class Viewer {
-  private endpoint: string | undefined;
   private readonly cardd: Cardd;
+  private readonly transports: Transports;
   private readonly captain: boolean;
-  readonly screen = new Screen(() => this.endpoint);
+  private readonly screens = new Map<string, { endpoint: string; screen: Screen }>();
+  private browsers = new Map<string, string>();
+  private own: string | null = null;
   private readonly poll = new Poll(
     (target) => callFrame(this.cardd, target),
-    (target) => this.screen.size(target),
+    (target) => this.screenFor(target).size(target),
   );
   private allowed = new Set<string>();
   private cookie = "";
-  private visible = new Set<string>();
+  private visible = new Map<string, string>();
   private readonly token: string;
 
-  constructor(cardd: Cardd, token: string, captain: boolean) {
+  constructor(cardd: Cardd, transports: Transports, token: string, captain: boolean) {
     this.cardd = cardd;
+    this.transports = transports;
     this.token = token;
     this.captain = captain;
+  }
+
+  close(): void {
+    for (const { screen } of this.screens.values()) screen.close();
+  }
+
+  private screenOf(host: string): Screen {
+    const known = this.screens.get(host);
+    if (known !== undefined) return known.screen;
+    const endpoint = this.browsers.get(host);
+    if (endpoint === undefined) throw new Error(`no shared browser is configured on ${host}`);
+    const via = host === this.own ? [] : this.transports[host];
+    if (via === undefined)
+      throw new Error(
+        `no transport for ${host}: add it to hosts in config/lane.json of this lane, and set host there to this machine's name in the fleet`,
+      );
+    const made = new Screen(dial(via, endpoint));
+    this.screens.set(host, { endpoint, screen: made });
+    return made;
+  }
+
+  private screenFor(target: string): Screen {
+    const host = this.visible.get(target);
+    if (host === undefined) throw new Error("that tab is not listed for this viewer");
+    return this.screenOf(host);
   }
 
   private knows(candidate: string | null | undefined): boolean {
@@ -103,8 +142,14 @@ class Viewer {
 
   private async listing(): Promise<View> {
     const view = await callView(this.cardd, this.captain);
-    this.endpoint = view.endpoint ?? undefined;
-    this.visible = new Set(view.tabs.map((tab) => tab.target));
+    this.own = view.host;
+    this.browsers = new Map(view.browsers.map(({ host, endpoint }) => [host, endpoint]));
+    for (const [host, { endpoint, screen }] of this.screens) {
+      if (this.browsers.get(host) === endpoint) continue;
+      screen.close();
+      this.screens.delete(host);
+    }
+    this.visible = new Map(view.tabs.map((tab) => [tab.target, tab.host]));
     return view;
   }
 
@@ -118,7 +163,7 @@ class Viewer {
       watching.stop?.();
     });
     watching.stop = this.captain
-      ? await this.screen.watch(target, send, () => {
+      ? await this.screenFor(target).watch(target, send, () => {
           response.end();
         })
       : this.poll.watch(target, send);
@@ -139,7 +184,7 @@ class Viewer {
       const input = check(InputSchema, JSON.parse(await readBody(request)));
       if (!(await this.shows(input.target))) response.writeHead(404).end();
       else {
-        await this.screen.input(input);
+        await this.screenFor(input.target).input(input);
         response.writeHead(204).end();
       }
     } else response.writeHead(404).end();
@@ -188,7 +233,8 @@ async function main(): Promise<void> {
   const flags = process.argv.slice(2);
   const token = randomBytes(24).toString("base64url");
   const captain = flags.includes("--captain");
-  const viewer = new Viewer(await resolveSource(sourceFromViewerArguments(flags)), token, captain);
+  const source = sourceFromViewerArguments(flags);
+  const viewer = new Viewer(await resolveSource(source), transportsOf(source), token, captain);
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });
@@ -201,7 +247,7 @@ async function main(): Promise<void> {
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") open(url);
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
-      viewer.screen.close();
+      viewer.close();
       server.close();
       process.exit(0);
     });

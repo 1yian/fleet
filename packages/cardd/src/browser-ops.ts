@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { BROWSER_OPS, check, OPS, type BrowserArgs, type OpName } from "@fleet/protocol";
 import type { Browser } from "./browser.ts";
 import { openTabs } from "./browser-store.ts";
-import { summonCaptain } from "./browser-summon.ts";
+import { summonCaptain, summonMain } from "./browser-summon.ts";
 import { getCard, mainLane, type Session } from "./store.ts";
 
 export type BrowserOpName = keyof typeof BROWSER_OPS;
@@ -43,9 +43,10 @@ function summoned(
   browser: Browser,
   card: number,
   why: string | undefined,
+  declared: string | undefined,
   error: unknown,
 ): Error {
-  if (why === undefined || !browser.hasTab(card))
+  if (why === undefined || !browser.hasTab(card, declared))
     return error instanceof Error ? error : new Error(reason(error));
   const refusal = reason(error).replace(/\.?\s*$/, "");
   return new Summoned(
@@ -75,6 +76,18 @@ function sees(
     own !== null ? card === own : named === undefined ? mine(card) : card === named && mine(card);
 }
 
+function declaredHost(session: Session, named: string | undefined): string | undefined {
+  if (session.card === null) return named;
+  if (named !== undefined)
+    throw new Error("your browser is on the host that your worker runs on: do not name a host");
+  return undefined;
+}
+
+function laneOnly(db: DatabaseSync, session: Session, card: number): void {
+  if (session.lane !== mainLane(db) && getCard(db, card).lane !== session.lane)
+    throw new Error(`c-${String(card)} is in another lane; ask main`);
+}
+
 async function browse(
   db: DatabaseSync,
   browser: Browser,
@@ -82,8 +95,9 @@ async function browse(
   args: BrowserArgs,
 ): Promise<Done> {
   const card = cardOf(db, session, args.card);
-  const done = await browser.run(card, args).catch((error: unknown) => {
-    throw summoned(db, browser, card, args.captain, error);
+  const declared = declaredHost(session, args.host);
+  const done = await browser.run(card, args, declared).catch((error: unknown) => {
+    throw summoned(db, browser, card, args.captain, declared, error);
   });
   const why = args.captain ?? done.captain;
   const asked = why === undefined ? [] : summonCaptain(db, card, why);
@@ -103,15 +117,28 @@ export async function performBrowserOp(
       return browse(db, browser, session, check(OPS.browser.args, raw));
     case "browser.release": {
       const { card } = check(OPS["browser.release"].args, raw);
-      if (session.lane !== mainLane(db) && getCard(db, card).lane !== session.lane)
-        throw new Error(`c-${String(card)} is in another lane; ask main`);
+      laneOnly(db, session, card);
       return { value: await browser.release(card), notify: [] };
     }
+    case "browser.summon": {
+      const { card, why } = check(OPS["browser.summon"].args, raw);
+      laneOnly(db, session, card);
+      const told = summonMain(db, card, why);
+      return { value: { told: told.length > 0 }, notify: told };
+    }
     case "browser.view": {
-      const { card: named, captain } = check(OPS["browser.view"].args, raw);
+      const { card: named, captain, host: declared } = check(OPS["browser.view"].args, raw);
       if (captain === true) captainOnly(db, session);
+      const asked = declaredHost(session, declared);
+      const own = session.card;
+      const where =
+        own !== null
+          ? browser.hostOf(own, undefined)
+          : named === undefined
+            ? asked
+            : browser.hostOf(named, asked);
       return {
-        value: await browser.view(sees(db, session, named), captain === true),
+        value: await browser.view(sees(db, session, named), captain === true, where),
         notify: [],
       };
     }

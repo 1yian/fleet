@@ -4,7 +4,6 @@ import Type from "typebox";
 import type { LoginsConfig } from "./browser-config.ts";
 import type { Credentials } from "./browser-fill.ts";
 import { isRecord } from "./browser-hidden.ts";
-import type { Hosts } from "./pulls.ts";
 
 const BWS_TIMEOUT_MS = 30_000;
 const BWS_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -32,8 +31,11 @@ const shellPath = (path: string): string =>
 const bwsScript = (logins: LoginsConfig): string =>
   `BWS_ACCESS_TOKEN="$(cat ${shellPath(logins.tokenFile)})" && export BWS_ACCESS_TOKEN && exec bws secret list ${quote(logins.project)} --output json`;
 
-function listSecrets(logins: LoginsConfig, hosts: Hosts): Promise<Secret[]> {
-  const via = hosts[logins.host] ?? [];
+function listSecrets(
+  logins: LoginsConfig,
+  host: string,
+  via: readonly string[],
+): Promise<Secret[]> {
   const script = bwsScript(logins);
   const argv: string[] = via.length === 0 ? ["sh", "-c", script] : [...via, script];
   const [file = "sh", ...args] = argv;
@@ -52,7 +54,7 @@ function listSecrets(logins: LoginsConfig, hosts: Hosts): Promise<Secret[]> {
             .slice(0, 200);
           reject(
             new Error(
-              `bws could not read the Logins project on ${logins.host}: ${why === "" ? "it failed" : why}`,
+              `bws could not read the Logins project on ${host}: ${why === "" ? "it failed" : why}`,
             ),
           );
           return;
@@ -60,7 +62,7 @@ function listSecrets(logins: LoginsConfig, hosts: Hosts): Promise<Secret[]> {
         try {
           resolve(parseCdp(SecretsSchema, JSON.parse(out), "bws's list"));
         } catch {
-          reject(new Error(`bws on ${logins.host} did not answer with a list of secrets`));
+          reject(new Error(`bws on ${host} did not answer with a list of secrets`));
         }
       },
     );
@@ -111,14 +113,16 @@ const reason = (error: unknown): string => (error instanceof Error ? error.messa
 
 export class Vault {
   readonly logins: LoginsConfig | undefined;
-  private readonly hosts: Hosts;
+  readonly host: string;
+  private readonly via: readonly string[];
   private readonly held = new Set<string>();
   private readonly opened = new Map<string, number>();
   private loaded = false;
 
-  constructor(logins: LoginsConfig | undefined, hosts: Hosts) {
+  constructor(logins: LoginsConfig | undefined, host: string, via: readonly string[]) {
     this.logins = logins;
-    this.hosts = hosts;
+    this.host = host;
+    this.via = via;
   }
 
   get values(): string[] {
@@ -136,7 +140,7 @@ export class Vault {
   async refresh(): Promise<Secret[]> {
     if (this.logins === undefined) return [];
     this.loaded = false;
-    const secrets = await listSecrets(this.logins, this.hosts);
+    const secrets = await listSecrets(this.logins, this.host, this.via);
     const unknown: string[] = [];
     for (const secret of secrets) {
       const { values, known } = protectedIn(secret);

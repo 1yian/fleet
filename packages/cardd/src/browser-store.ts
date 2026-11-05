@@ -2,50 +2,63 @@ import type { DatabaseSync } from "node:sqlite";
 import { getCard } from "./store.ts";
 
 export interface Tab {
+  readonly host: string;
   readonly target: string;
   readonly card: number;
   readonly label: string;
   readonly openedAt: number;
 }
 
+const COLUMNS = "host, target, card, label, opened_at";
+
 const rowToTab = (row: Record<string, unknown>): Tab => ({
+  host: String(row["host"]),
   target: String(row["target"]),
   card: Number(row["card"]),
   label: String(row["label"]),
   openedAt: Number(row["opened_at"]),
 });
 
-export const openTabs = (db: DatabaseSync): Tab[] =>
+export const openTabs = (db: DatabaseSync, host?: string): Tab[] =>
   db
     .prepare(
-      "SELECT target, card, label, opened_at FROM browser_tabs WHERE closed_at IS NULL ORDER BY card",
+      `SELECT ${COLUMNS} FROM browser_tabs WHERE closed_at IS NULL AND (?1 IS NULL OR host = ?1) ORDER BY card`,
     )
-    .all()
+    .all(host ?? null)
     .map(rowToTab);
 
-export const tabsOf = (db: DatabaseSync, card: number): Tab[] =>
+export const tabsOf = (db: DatabaseSync, card: number, host?: string): Tab[] =>
   db
     .prepare(
-      "SELECT target, card, label, opened_at FROM browser_tabs WHERE card = ? AND closed_at IS NULL ORDER BY opened_at",
+      `SELECT ${COLUMNS} FROM browser_tabs WHERE card = ?1 AND closed_at IS NULL AND (?2 IS NULL OR host = ?2) ORDER BY opened_at`,
     )
-    .all(card)
+    .all(card, host ?? null)
     .map(rowToTab);
 
-export const retiredOf = (db: DatabaseSync, card: number): string[] =>
+export const retiredOf = (db: DatabaseSync, card: number, host: string): string[] =>
   db
     .prepare(
-      "SELECT target FROM browser_tabs WHERE card = ? AND closed_at IS NOT NULL ORDER BY opened_at",
+      "SELECT target FROM browser_tabs WHERE card = ? AND host = ? AND closed_at IS NOT NULL ORDER BY opened_at",
     )
-    .all(card)
+    .all(card, host)
     .map((row) => String(row["target"]));
 
+export const hostsOfCard = (db: DatabaseSync, card: number): string[] =>
+  db
+    .prepare("SELECT DISTINCT host FROM browser_tabs WHERE card = ? ORDER BY host")
+    .all(card)
+    .map((row) => String(row["host"]));
+
+export const hostsEverUsed = (db: DatabaseSync): string[] =>
+  db
+    .prepare("SELECT DISTINCT host FROM browser_tabs ORDER BY host")
+    .all()
+    .map((row) => String(row["host"]));
+
 export function recordTab(db: DatabaseSync, tab: Tab): void {
-  db.prepare("INSERT INTO browser_tabs (target, card, label, opened_at) VALUES (?, ?, ?, ?)").run(
-    tab.target,
-    tab.card,
-    tab.label,
-    tab.openedAt,
-  );
+  db.prepare(
+    "INSERT INTO browser_tabs (host, target, card, label, opened_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(tab.host, tab.target, tab.card, tab.label, tab.openedAt);
 }
 
 export function markClosed(db: DatabaseSync, target: string): void {
@@ -55,11 +68,17 @@ export function markClosed(db: DatabaseSync, target: string): void {
   );
 }
 
-export function retiredIn(db: DatabaseSync, targets: Iterable<string>): string[] {
+export function retiredIn(db: DatabaseSync, host: string, targets: Iterable<string>): string[] {
   const retired = db.prepare(
-    "SELECT 1 FROM browser_tabs WHERE target = ? AND closed_at IS NOT NULL",
+    "SELECT 1 FROM browser_tabs WHERE host = ? AND target = ? AND closed_at IS NOT NULL",
   );
-  return [...targets].filter((target) => retired.get(target) !== undefined);
+  return [...targets].filter((target) => retired.get(host, target) !== undefined);
+}
+
+export function retireTabs(db: DatabaseSync, card: number, host: string): number {
+  const live = tabsOf(db, card, host);
+  for (const tab of live) markClosed(db, tab.target);
+  return live.length;
 }
 
 export function labelOf(db: DatabaseSync, card: number): string {
@@ -75,6 +94,14 @@ export function attemptStartedAt(db: DatabaseSync, card: number): number | undef
     .get(card);
   const at = row?.["at"];
   return typeof at === "number" ? at : undefined;
+}
+
+export function attemptHost(db: DatabaseSync, card: number): string | undefined {
+  const row = db
+    .prepare("SELECT host FROM attempts WHERE card = ? AND state IN ('starting', 'active')")
+    .get(card);
+  const host = row?.["host"];
+  return typeof host === "string" ? host : undefined;
 }
 
 const ENDED = ["done", "dropped"];

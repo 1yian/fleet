@@ -26,7 +26,10 @@ beforeEach(async () => {
   chrome = await StandInChrome.start();
   proxy = await TcpProxy.start(chrome.port);
   site = await TestSite.start();
-  cardd = await Cardd.start({}, ["--browser", JSON.stringify({ cdp: proxy.endpoint })]);
+  cardd = await Cardd.start({}, [
+    "--browser",
+    JSON.stringify({ maverick: { cdp: proxy.endpoint } }),
+  ]);
   mainToken = cardd.addLane("main");
   cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
   main = await cardd.connect(mainToken);
@@ -93,7 +96,7 @@ test("two cards each get their own labelled tab", async () => {
     "c-2 users-see-one-footer - Bravo",
   ]);
   const view = await viewOf();
-  assert.equal(view.endpoint, proxy.endpoint);
+  assert.deepEqual(view.browsers, [{ host: "maverick", endpoint: proxy.endpoint }]);
   assert.deepEqual(
     view.tabs.map(({ card, label }) => `${String(card)} ${label}`),
     ["1 c-1 users-see-one-scrollbar", "2 c-2 users-see-one-footer"],
@@ -258,9 +261,9 @@ test("a browser that is down does not block release, and a viewer poll closes th
   await proxy.stop();
   const down = await released(first.card.id);
   assert.equal(down.closed, 0);
-  assert.match(down.note ?? "", /the shared browser is unreachable/);
+  assert.match(down.note ?? "", /the browser on maverick is unreachable/);
   assert.match(down.note ?? "", /1 tab of c-1 stay open/);
-  await assert.rejects(act(kept, { action: "read" }), /the shared browser is unreachable/);
+  await assert.rejects(act(kept, { action: "read" }), /the browser on maverick is unreachable/);
   await closeCard(first.card.id);
   assert.deepEqual((await pathsOpen()).sort(), ["/a", "/b"]);
 
@@ -303,7 +306,7 @@ test("an explicit close while the browser is down says the tab stays open, and w
 
   await assert.rejects(
     act(own, { action: "close" }),
-    /Your tab was not closed and stays open\..*the shared browser is unreachable/,
+    /Your tab was not closed and stays open\..*the browser on maverick is unreachable/,
   );
   assert.deepEqual(await pathsOpen(), ["/a"]);
 
