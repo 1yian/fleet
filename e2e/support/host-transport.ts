@@ -11,15 +11,22 @@ const settings = Object.fromEntries(
 
 appendFileSync(log, `${JSON.stringify({ host, command })}\n`);
 
-const child = spawn("sh", ["-c", command], {
-  stdio: "inherit",
-  env: { ...process.env, ...settings },
-});
-child.on("exit", (code, signal) => {
-  process.exit(code ?? (signal === null ? 1 : 143));
-});
-for (const signal of ["SIGTERM", "SIGINT"] as const) {
-  process.on(signal, () => {
-    child.kill(signal);
+if (settings["FAKE_TRANSPORT_HANGS"] === "1") {
+  process.stdin.on("end", () => {
+    process.exit(255);
   });
+  process.stdin.resume();
+} else {
+  const child = spawn("sh", ["-c", command], {
+    stdio: "inherit",
+    env: { ...process.env, ...settings },
+  });
+  child.on("exit", (code, signal) => {
+    process.exit(code ?? (signal === null ? 1 : 143));
+  });
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      child.kill(signal);
+    });
+  }
 }

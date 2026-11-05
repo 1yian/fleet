@@ -19,6 +19,7 @@ export interface HostSpec {
   readonly vault?: FakeVault;
   readonly browser?: boolean;
   readonly route?: boolean;
+  readonly hangs?: boolean;
 }
 
 export const transportFor = (
@@ -32,6 +33,11 @@ export const transportFor = (
   host,
   join(dir, `${who}-${host}.log`),
   ...(vault === undefined ? [] : [`FAKE_BWS_DIR=${vault.dir}`]),
+];
+
+const routeOf = (dir: string, { name, vault, hangs = false }: HostSpec): string[] => [
+  ...transportFor(dir, "cardd", name, vault),
+  ...(hangs ? ["FAKE_TRANSPORT_HANGS=1"] : []),
 ];
 
 export function transportLog(dir: string, who: string, host: string): string[] {
@@ -98,8 +104,9 @@ export class HostLab {
     const chromes = new Map<string, StandInChrome>();
     const browser: Record<string, unknown> = {};
     const routes: Record<string, string[]> = {};
-    for (const { name, vault, browser: wanted = true, route = true } of specs) {
-      if (route) routes[name] = transportFor(dir, "cardd", name, vault);
+    for (const spec of specs) {
+      const { name, vault, browser: wanted = true, route = true } = spec;
+      if (route) routes[name] = routeOf(dir, spec);
       if (!wanted) continue;
       const chrome = await StandInChrome.start(RULES);
       chromes.set(name, chrome);
@@ -136,6 +143,12 @@ export class HostLab {
     const session = await this.cardd.connect(token);
     this.sessions.push(session);
     return hostWorker(rawWorker(card, token, session, this.cardd.url));
+  }
+
+  async lane(name: string): Promise<Session> {
+    const session = await this.cardd.connect(this.cardd.addLane(name, "main"));
+    this.sessions.push(session);
+    return session;
   }
 
   async tabHosts(): Promise<string[]> {

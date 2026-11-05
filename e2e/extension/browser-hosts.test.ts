@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
 import { HostLab, relayPorts } from "../support/browser-hosts.ts";
 import { FakeVault } from "../support/fake-vault.ts";
+import { newCard } from "../support/fleet.ts";
 import {
   FIELD,
   GOOD,
@@ -149,4 +150,69 @@ test("each host reads only its own vault: a login never uses another host's entr
     cnp.identity.token,
   ])
     assert.equal(everything.includes(secret), false, "a secret reached a host's transport");
+});
+
+test("a login request belongs to one host's vault: a card that moves to another host is asked for again, naming that host", async () => {
+  const alphaVault = new FakeVault([]);
+  const betaVault = new FakeVault([], {
+    token: "0.fake-cnp-machine-account-token.not-a-real-token",
+    project: "6c1f5a43-0b6e-4c53-9d58-2f0d6a1f7e22",
+  });
+  vaults.push(alphaVault, betaVault);
+  lab = await HostLab.start([
+    { name: "alpha", vault: alphaVault },
+    { name: "beta", vault: betaVault },
+  ]);
+  const cnp = await lab.lane("cnp");
+  const card = await newCard(cnp, "Sign in to the vendor");
+  const page = lab.site.url("/login", "login.example.test");
+  const drive = async (host: string, args: Record<string, unknown>) =>
+    check(OPS.browser.result, await lab.main.call("browser", { card: card.id, host, ...args }));
+
+  await drive("alpha", { action: "open", url: page });
+  const onAlpha = await drive("alpha", { action: "login" });
+  await drive("beta", { action: "open", url: page });
+  const onBeta = await drive("beta", { action: "login" });
+  const again = await drive("beta", { action: "login" });
+  await cnp.waitForEntry(
+    (entry) => entry.fields["summon"] === "a missing login entry for login.example.test on beta",
+    "the summon for the login that beta's vault lacks",
+  );
+
+  assert.match(onAlpha.text, /I asked your mate to have one added/);
+  assert.match(onBeta.text, /I asked your mate to have one added/);
+  assert.match(again.text, /your mate was already asked/);
+  const filed = cnp.entries.map(({ entry }) => entry).filter((entry) => entry.author === "browser");
+  const requests = filed.filter((entry) => entry.fields["loginFor"] !== undefined);
+  assert.equal(requests.length, 2);
+  assert.match(requests[0]?.body ?? "", /Logins project that alpha reads/);
+  assert.match(requests[1]?.body ?? "", /Logins project that beta reads/);
+  assert.deepEqual(
+    filed.map((entry) => entry.fields["summon"]).filter((why) => why !== undefined),
+    [
+      "a missing login entry for login.example.test on alpha",
+      "a missing login entry for login.example.test on beta",
+    ],
+  );
+});
+
+test("a host that hangs while connecting is reported unavailable, and the other hosts are still listed", async () => {
+  lab = await HostLab.start([{ name: "alpha" }, { name: "beta", hangs: true }]);
+  const a = await lab.worker("Users see one scrollbar", "alpha");
+  await a.act({ action: "open", url: lab.site.url("/a") });
+
+  const view = check(
+    OPS["browser.view"].result,
+    await lab.main.call("browser.view", { host: "beta" }),
+  );
+
+  assert.deepEqual(
+    view.tabs.map((tab) => [tab.card, tab.host, tab.live]),
+    [[a.card.id, "alpha", true]],
+  );
+  assert.match(view.problem ?? "", /^the browser on beta is unavailable: it did not answer within/);
+  assert.deepEqual(
+    view.browsers.map((browser) => browser.host),
+    ["alpha", "beta"],
+  );
 });

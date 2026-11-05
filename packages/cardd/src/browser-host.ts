@@ -54,12 +54,25 @@ const TargetEventSchema = Type.Object({
 const DestroyedSchema = Type.Object({ targetId: Type.String() });
 
 const TOUCH_BACKOFF_MS = 5_000;
+const LISTING_MS = 3_000;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const isGone = (error: unknown): boolean =>
   /no target (with given id|found for targetId)/i.test(reason(error));
 export const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
 const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
+
+function within<T>(ms: number, work: Promise<T>, late: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(late));
+    }, ms);
+  });
+  return Promise.race([work, expired]).finally(() => {
+    clearTimeout(timer);
+  });
+}
 const EVAL_REFUSED =
   "nothing was evaluated: a stored credential is in this page's form; click Sign in first, or read the page as text";
 
@@ -92,8 +105,10 @@ export class HostBrowser {
   }
 
   async listing(): Promise<{ targets: Map<string, Listed>; problem: string | null }> {
+    const late = `the browser on ${this.host} is unavailable: it did not answer within ${String(LISTING_MS / 1000)} s (it may still be connecting)`;
     try {
-      return { targets: await targetsOf(await this.connection()), problem: null };
+      const listed = this.connection().then(targetsOf);
+      return { targets: await within(LISTING_MS, listed, late), problem: null };
     } catch (error) {
       return { targets: new Map(), problem: reason(error) };
     }
