@@ -304,6 +304,11 @@ function attemptModel(db: DatabaseSync, session: string): { model?: string } {
   return { model };
 }
 
+export function liveAttemptModel(db: DatabaseSync, card: number): string | undefined {
+  const live = liveAttempt(db, card);
+  return live === undefined ? undefined : attemptModel(db, name(card, live.n)).model;
+}
+
 export function resumeAttempt(db: DatabaseSync, card: Card): Begun {
   const live = liveAttempt(db, card.id);
   if (live === undefined) throw new Error(`c-${String(card.id)} has no live attempt to restart`);

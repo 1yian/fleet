@@ -74,6 +74,27 @@ test("an explicit worker model survives retry and resume without changing the at
   );
 });
 
+test("a restart cannot avoid the provider of the worker's explicit model, and refusing it records nothing", async () => {
+  await fleet.main.call("attempt.begin", {
+    card: card.id,
+    host: "maverick",
+    task: "Review Spanish copy",
+    model: "openai-codex/gpt-fixture",
+  });
+  const restart = (avoid?: string[]) =>
+    fleet.main.call("card.restart", {
+      card: card.id,
+      mode: "replace",
+      key: "gpt-restart",
+      ...(avoid === undefined ? {} : { avoid }),
+    });
+  await assert.rejects(restart(["claude-max", "openai-codex"]), /cannot avoid openai-codex/);
+  const other = check(OPS["card.restart"].result, await restart(["claude-max"]));
+  assert.equal(other.repeat, false);
+  const plain = check(OPS["card.restart"].result, await restart());
+  assert.equal(plain.repeat, true);
+});
+
 test("dispatch only starts new work: another host is refused while the worker lives, and its token keeps working", async () => {
   const first = await begin("p620");
   const worker = await fleet.cardd.connect(first.token);
