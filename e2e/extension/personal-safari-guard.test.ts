@@ -8,9 +8,10 @@ import { Harness, type Pi } from "../support/harness.ts";
 import { Scratch } from "../support/scratch.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
+const CAPTURE = fileURLToPath(new URL("../support/capture-tool.ts", import.meta.url));
 const refusals = (text: string): number =>
   text.match(/refused: Safari on the captain's Mac/g)?.length ?? 0;
-const COMMANDS = ["osascript", "open", "ssh", "safaridriver", "sheprd", "xdg-open"];
+const STUBBED = ["osascript", "open", "ssh", "tailscale", "safaridriver", "sheprd", "xdg-open"];
 
 const SAFARI_TELL = `tell application "Safari" to activate`;
 const NOTIFY = `display notification "done" with title "fleet"`;
@@ -56,22 +57,14 @@ let fleet: Fleet;
 let h: Harness;
 let scratch: Scratch;
 let ran: string;
+let captured: string;
 
 beforeEach(async () => {
   scratch = new Scratch();
   fleet = await startFleet({});
   h = await Harness.start();
-  const bin = join(h.dir, "bin");
   ran = join(h.dir, "ran");
-  mkdirSync(bin);
-  for (const name of COMMANDS) {
-    const file = join(bin, name);
-    writeFileSync(
-      file,
-      `#!/bin/sh\n{ printf '%s' '${name}'; for a in "$@"; do printf ' %s' "$a"; done; echo; } >> '${ran}'\n`,
-    );
-    chmodSync(file, 0o755);
-  }
+  captured = join(h.dir, "captured");
 });
 afterEach(async () => {
   const stopped = await Promise.allSettled([h.stop(), fleet.cardd.stop()]);
@@ -80,36 +73,63 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-function startMate(): Pi {
+function stubPrograms(): string {
+  const bin = join(h.dir, "bin");
+  mkdirSync(bin);
+  for (const name of STUBBED) {
+    const file = join(bin, name);
+    writeFileSync(
+      file,
+      `#!/bin/sh\n{ printf '%s' '${name}'; for a in "$@"; do printf ' %s' "$a"; done; echo; } >> '${ran}'\n`,
+    );
+    chmodSync(file, 0o755);
+  }
+  return bin;
+}
+
+function startMate(tool: string, env: Record<string, string>): Pi {
   return h.startPi(
     "main-mate",
     {
       FLEET_URL: fleet.cardd.url,
       FLEET_TOKEN: fleet.mainToken,
       FLEET_ROLE: "mate",
-      PATH: `${join(h.dir, "bin")}:${process.env["PATH"] ?? ""}`,
+      ...env,
     },
-    [join(scratch.root, "packages/extension/src/index.ts"), SHELL],
+    [join(scratch.root, "packages/extension/src/index.ts"), tool],
   );
 }
 
-async function runAll(commands: readonly string[]): Promise<string> {
+async function runAll(
+  commands: readonly string[],
+  tool: string,
+  env: Record<string, string>,
+): Promise<string> {
   for (const command of commands) h.onModel(() => ({ tool: "bash", args: { command } }));
   h.onModel(() => ({ text: "done" }));
-  const mate = startMate();
+  const mate = startMate(tool, env);
   await h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
   mate.prompt("run the commands");
-  return JSON.stringify(await h.waitForCall(commands.length, "default", 60_000));
+  const turns = await h.waitForCall(commands.length, "default", 60_000);
+  return turns
+    .filter((turn) => turn.role === "toolResult")
+    .map((turn) => turn.text)
+    .join("\n");
 }
 
 test("a mate is refused every recognizable command that drives Safari on the captain's Mac", async () => {
-  const told = await runAll(REFUSED);
+  const told = await runAll(REFUSED, CAPTURE, { FLEET_CAPTURE_FILE: captured });
   assert.equal(refusals(told), REFUSED.length, told);
-  assert.equal(existsSync(ran), false, existsSync(ran) ? readFileSync(ran, "utf8") : "");
+  assert.equal(
+    existsSync(captured),
+    false,
+    existsSync(captured) ? readFileSync(captured, "utf8") : "",
+  );
 });
 
 test("a mate still runs osascript that names no Safari, ssh, text about Safari, and the Sheprd browser path", async () => {
-  const told = await runAll(ALLOWED);
+  const bin = stubPrograms();
+  const told = await runAll(ALLOWED, SHELL, { PATH: `${bin}:${process.env["PATH"] ?? ""}` });
   assert.equal(refusals(told), 0, told);
   assert.deepEqual(readFileSync(ran, "utf8").trim().split("\n"), [
     `osascript -e ${NOTIFY}`,
