@@ -1,12 +1,12 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BROWSER_OPS, check, type Card, type OpResult } from "@fleet/protocol";
+import type { Card } from "@fleet/protocol";
+import { axiAct, axiArgs, axiShot, type Access } from "./browser-axi.ts";
 import { Cardd, type Session } from "./cardd.ts";
 import { StandInChrome, TcpProxy } from "./chrome.ts";
 import type { FakeVault } from "./fake-vault.ts";
 import { begin, newCard } from "./fleet.ts";
 import { Harness, type Pi, type Turn } from "./harness.ts";
-import { isRecord, parseRecord } from "./json.ts";
+import { parseRecord, type JsonRecord } from "./json.ts";
 import { TestSite } from "./site.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
@@ -15,27 +15,24 @@ export interface RawWorker {
   readonly card: Card;
   readonly token: string;
   readonly session: Session;
+  readonly access: Access;
   readonly act: (args: Record<string, unknown>) => Promise<string>;
   readonly shoot: (fullPage?: boolean) => Promise<string>;
 }
 
-function rawWorker(card: Card, token: string, session: Session): RawWorker {
-  const call = async (args: Record<string, unknown>): Promise<OpResult<"browser">> =>
-    check(BROWSER_OPS.browser.result, await session.call("browser", args));
+function rawWorker(card: Card, token: string, session: Session, url: string): RawWorker {
+  const access = { url, token };
   return {
     card,
     token,
     session,
-    act: async (args) => (await call(args)).text,
-    shoot: async (fullPage = false) => {
-      const image = (await call({ action: "screenshot", fullPage })).image;
-      if (image === undefined) throw new Error("the screenshot came back without a picture");
-      return image.data;
-    },
+    access,
+    act: (args) => axiAct(access, args),
+    shoot: (fullPage = false) => axiShot(access, fullPage),
   };
 }
 
-const RULES =
+export const RULES =
   "MAP *.example.test 127.0.0.1, MAP *.nothing.test 127.0.0.1, MAP *.evil.test 127.0.0.1";
 
 export interface LabOptions {
@@ -101,7 +98,7 @@ export class BrowserLab {
     const card = await newCard(this.main, title);
     const token = await begin(this.main, card, "browse");
     const env = { FLEET_URL: this.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
-    const pi = h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
+    const pi = h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION], [], true);
     return { card, h, pi };
   }
 
@@ -114,7 +111,7 @@ export class BrowserLab {
   async reconnect({ card, token }: { card: Card; token: string }): Promise<RawWorker> {
     const session = await this.cardd.connect(token);
     this.sessions.push(session);
-    return rawWorker(card, token, session);
+    return rawWorker(card, token, session, this.cardd.url);
   }
 
   async stop(): Promise<void> {
@@ -132,22 +129,41 @@ export class BrowserLab {
   }
 }
 
-export const results = (turns: Turn[]): string[] =>
-  turns.filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
-
-export function browse(h: Harness, args: Record<string, string | boolean>): void {
-  h.onModel(() => ({ tool: "browser", args }));
+function said(text: string): string {
+  const first = text.split("\n")[0] ?? "";
+  try {
+    const record = parseRecord(first);
+    const value = record["error"] ?? record["result"];
+    return typeof value === "string" ? value : text;
+  } catch {
+    return text;
+  }
 }
 
-export async function toolImages(h: Harness): Promise<string[]> {
-  const file = (await h.waitFor((e) => e["type"] === "session", "session start"))["file"];
-  const lines = readFileSync(String(file), "utf8").split("\n").filter(Boolean).map(parseRecord);
-  return lines.flatMap((line) => {
-    const message = isRecord(line["message"]) ? line["message"] : {};
-    const content = Array.isArray(message["content"]) ? message["content"] : [];
-    if (message["role"] !== "toolResult") return [];
-    return content
-      .filter(isRecord)
-      .flatMap((block) => (block["type"] === "image" ? [String(block["mimeType"])] : []));
-  });
+export const results = (turns: Turn[]): string[] =>
+  turns.filter((turn) => turn.role === "toolResult").map((turn) => said(turn.text));
+
+export const recordsOf = (turns: Turn[]): JsonRecord[] =>
+  turns
+    .filter((turn) => turn.role === "toolResult")
+    .flatMap((turn) => {
+      try {
+        return [parseRecord(turn.text.split("\n")[0] ?? "")];
+      } catch {
+        return [];
+      }
+    });
+
+const quote = (text: string): string => `'${text.replaceAll("'", `'\\''`)}'`;
+
+export function browserStep(args: Record<string, string | boolean>): {
+  tool: string;
+  args: { command: string };
+} {
+  const command = `browser-axi ${axiArgs(args).map(quote).join(" ")}`;
+  return { tool: "bash", args: { command } };
+}
+
+export function browse(h: Harness, args: Record<string, string | boolean>): void {
+  h.onModel(() => browserStep(args));
 }

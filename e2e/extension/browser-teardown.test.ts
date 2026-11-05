@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
+import { browserStep } from "../support/browser-lab.ts";
 import { StandInChrome } from "../support/chrome.ts";
 import {
   mateConnected as connected,
@@ -20,6 +21,7 @@ beforeEach(async () => {
   site = await TestSite.start();
   parts = await startDispatchLab({
     carddArgs: ["--browser", JSON.stringify({ cdp: chrome.endpoint })],
+    workerShell: true,
   });
   parts.cardd.yolo("site");
 });
@@ -52,7 +54,7 @@ test("close closes the tab the worker opened and says so", async () => {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(() => ({ tool: "browser", args: { action: "open", url: site.url("/a") } }), "worker");
+  h.onModel(() => browserStep({ action: "open", url: site.url("/a") }), "worker");
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "looked" } }), "worker");
   h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Done." } }), "mate");
   await connected(h);
@@ -69,7 +71,7 @@ test("restarting a worker closes the tab it had open", async () => {
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(() => ({ tool: "restart_card", args: { card: 1, key: "again" } }), "mate");
   h.onModel(() => ({ text: "restarted" }), "mate");
-  h.onModel(() => ({ tool: "browser", args: { action: "open", url: site.url("/a") } }), "worker");
+  h.onModel(() => browserStep({ action: "open", url: site.url("/a") }), "worker");
   h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
   h.onModel(() => ({ text: "waiting for the job" }), "worker");
   h.onModel(() => ({ text: "started again" }), "worker");
@@ -88,7 +90,7 @@ test("close does not finish when cardd cannot record that the tab was released",
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(() => ({ tool: "browser", args: { action: "open", url: site.url("/a") } }), "worker");
+  h.onModel(() => browserStep({ action: "open", url: site.url("/a") }), "worker");
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "looked" } }), "worker");
   h.onModel(() => {
     cardd.breakBrowserTabs();
@@ -114,7 +116,7 @@ test("restarting a worker does not start the replacement when cardd cannot recor
     return { tool: "restart_card", args: { card: 1, key: "again" } };
   }, "mate");
   h.onModel(() => ({ text: "restart failed" }), "mate");
-  h.onModel(() => ({ tool: "browser", args: { action: "open", url: site.url("/a") } }), "worker");
+  h.onModel(() => browserStep({ action: "open", url: site.url("/a") }), "worker");
   h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
   h.onModel(() => ({ text: "waiting for the job" }), "worker");
   await connected(h);

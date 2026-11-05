@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type Browser as Client, type Page } from "playwright";
@@ -29,11 +29,11 @@ beforeEach(async () => {
   second = await lab.worker("Users see one footer");
   await first.act({ action: "open", url: lab.site.url("/a") });
   await second.act({ action: "open", url: lab.site.url("/b") });
-  const home = tempDir("fleet-viewer-home-");
-  mkdirSync(join(home, "config"));
-  const lane = { lane: "main", url: lab.cardd.url, token: lab.mainToken };
-  writeFileSync(join(home, "config", "lane.json"), JSON.stringify(lane));
-  viewer = spawnGuarded("node", [VIEWER, home, "--open"], {
+  const access = join(tempDir("fleet-viewer-access-"), "access.json");
+  writeFileSync(access, JSON.stringify({ url: lab.cardd.url, token: lab.mainToken }), {
+    mode: 0o600,
+  });
+  viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open"], {
     stdio: ["ignore", "pipe", "inherit"],
     env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0" },
   });

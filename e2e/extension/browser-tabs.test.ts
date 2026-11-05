@@ -108,7 +108,7 @@ test("a card cannot read, drive or close another card's tab", async () => {
   const theirs = (await viewOf()).tabs.find((tab) => tab.card === second.card.id)?.target ?? "";
   assert.notEqual(theirs, "");
 
-  const aimed = { target: theirs, tab: theirs, card: second.card.id };
+  const aimed = { target: theirs, tab: theirs };
   assert.equal(
     await act(first, { action: "eval", expression: "document.body.dataset.owner", ...aimed }),
     '"a"',
@@ -125,24 +125,41 @@ test("a card cannot read, drive or close another card's tab", async () => {
   );
   assert.match(await act(second, { action: "read" }), /bravo page/);
   await assert.rejects(act(first, { action: "read" }), /you have no tab yet/);
+  await assert.rejects(
+    act(second, { action: "close", card: first.card.id }),
+    new RegExp(`your tab is c-${String(second.card.id)}'s: do not name another card`),
+  );
+  assert.match(await act(second, { action: "read" }), /bravo page/);
 
   await assert.rejects(
     first.session.call("browser.release", { card: second.card.id }),
     /worker sessions cannot call browser.release/,
   );
-  await assert.rejects(
-    first.session.call("browser.view", {}),
-    /worker sessions cannot call browser.view/,
+  const theirView = check(
+    BROWSER_OPS["browser.view"].result,
+    await second.session.call("browser.view", {}),
+  );
+  assert.deepEqual(
+    theirView.tabs.map(({ card }) => card),
+    [second.card.id],
   );
   assert.equal((await chrome.pages()).length, 1);
 });
 
-test("a second mate can neither view the browser nor release another lane's card", async () => {
+test("a second mate sees no tab of another lane's card and cannot release it", async () => {
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   try {
     const own = await worker("Users see one scrollbar");
     await act(own, { action: "open", url: site.url("/a") });
-    await assert.rejects(cleo.call("browser.view", {}), /only main can view the shared browser/);
+    const seen = check(BROWSER_OPS["browser.view"].result, await cleo.call("browser.view", {}));
+    assert.deepEqual(seen.tabs, []);
+    assert.deepEqual(
+      check(
+        BROWSER_OPS["browser.view"].result,
+        await cleo.call("browser.view", { card: own.card.id }),
+      ).tabs,
+      [],
+    );
     await assert.rejects(
       cleo.call("browser.release", { card: own.card.id }),
       new RegExp(`c-${String(own.card.id)} is in another lane; ask main`),

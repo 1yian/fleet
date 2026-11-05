@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { BrowserLab, browse, results, toolImages } from "../support/browser-lab.ts";
+import { readFileSync } from "node:fs";
+import { BrowserLab, browse, recordsOf, results } from "../support/browser-lab.ts";
 
 let lab: BrowserLab;
 beforeEach(async () => {
@@ -10,7 +11,7 @@ afterEach(async () => {
   await lab.stop();
 });
 
-test("a worker drives its own tab with the browser tool, and its screenshot comes back as an image", async () => {
+test("a worker drives its own tab with browser-axi, and its screenshot is saved as a picture file", async () => {
   const first = await lab.crew("Users see one scrollbar");
   const second = await lab.crew("Users see one footer");
   const { site } = lab;
@@ -37,7 +38,9 @@ test("a worker drives its own tab with the browser tool, and its screenshot come
   assert.equal(mine[3], '"hello"');
   assert.equal(mine[4], "1");
   assert.match(mine[5] ?? "", /^Screenshot of "c-\d+ users-see-one-scrollbar - Alpha"/);
-  assert.deepEqual(await toolImages(first.h), ["image/png"]);
+  const picture = recordsOf(await first.h.waitForCall(6)).at(-1)?.["image"];
+  assert.equal(typeof picture, "string");
+  assert.equal(readFileSync(String(picture)).subarray(1, 4).toString(), "PNG");
   assert.equal(theirs[1], "bravo page");
   assert.equal((await lab.chrome.pages()).length, 2);
 });

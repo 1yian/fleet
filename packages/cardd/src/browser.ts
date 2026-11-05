@@ -34,11 +34,12 @@ import {
   type Tab,
 } from "./browser-store.ts";
 import type { Hosts } from "./pulls.ts";
-import { getCard, type Session } from "./store.ts";
+import { getCard } from "./store.ts";
 
 export interface Outcome {
   readonly result: OpResult<"browser">;
   readonly notify: readonly string[];
+  readonly captain?: string;
 }
 
 const AttachedSchema = Type.Object({ sessionId: Type.String() });
@@ -79,25 +80,24 @@ export class Browser {
     this.vault = new Vault(config?.logins, hosts);
   }
 
-  view(): OpResult<"browser.view"> {
+  view(wants: (card: number) => boolean): OpResult<"browser.view"> {
     this.connection().catch(() => undefined);
-    const tabs = openTabs(this.db).map((tab) => ({
-      card: tab.card,
-      name: getCard(this.db, tab.card).name,
-      label: tab.label,
-      target: tab.target,
-    }));
+    const tabs = openTabs(this.db)
+      .filter((tab) => wants(tab.card))
+      .map((tab) => ({
+        card: tab.card,
+        name: getCard(this.db, tab.card).name,
+        label: tab.label,
+        target: tab.target,
+      }));
     return { endpoint: this.config?.cdp ?? null, tabs };
   }
 
-  run(session: Session, args: BrowserArgs): Promise<Outcome> {
-    const card = session.card;
-    if (card === null)
-      return Promise.reject(new Error("only a worker on a card can use the browser"));
+  run(card: number, args: BrowserArgs): Promise<Outcome> {
     if (this.config === undefined)
       return Promise.reject(
         new Error(
-          "this fleet has no shared browser configured, so the browser tool is not available",
+          "this fleet has no shared browser configured: cardd was started without --browser, so the browser is not available",
         ),
       );
     return this.inTurn(card, () => this.perform(card, args));
@@ -179,7 +179,11 @@ export class Browser {
       this.filled.set(target, { loader, fields: [...kept, ...fields] });
     };
     const done = await login({ db: this.db, vault: this.vault, card, page, mark }, site);
-    return { result: { text: done.text }, notify: done.notify };
+    return {
+      result: { text: done.text },
+      notify: done.notify,
+      ...(done.captain === undefined ? {} : { captain: done.captain }),
+    };
   }
 
   private async refuseWhileFilled(page: Page, target: string, refusal: string): Promise<void> {
@@ -201,6 +205,7 @@ export class Browser {
     return work.then(
       (done) => ({
         notify: done.notify,
+        ...(done.captain === undefined ? {} : { captain: done.captain }),
         result: { ...done.result, text: cut(scrubbed(done.result.text, this.vault.values)) },
       }),
       (error: unknown) => {

@@ -115,6 +115,12 @@ function render(tabs) {
     if (tab.target === selected) address.textContent = tab.live ? tab.url : "tab is gone";
   }
   if (selected !== null && !tabs.some((tab) => tab.target === selected && tab.live)) watch(null);
+  const shown = tabs.filter((tab) => tab.live);
+  if (selected === null && tabs.length === 1 && shown.length === 1) {
+    address.textContent = shown[0].url;
+    watch(shown[0].target);
+    render(tabs);
+  }
 }
 
 async function refresh() {

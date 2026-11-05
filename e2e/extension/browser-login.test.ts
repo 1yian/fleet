@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { BrowserLab, browse, results } from "../support/browser-lab.ts";
+import { BrowserLab, browse, browserStep, results } from "../support/browser-lab.ts";
 import { FakeVault } from "../support/fake-vault.ts";
 import type { Turn } from "../support/harness.ts";
 import {
@@ -178,7 +178,7 @@ test("a vault that fails while login reads it is reported as failed with its rea
   browse(worker.h, { action: "open", url: lab.site.url("/login", "login.example.test") });
   worker.h.onModel(() => {
     vault.revoke();
-    return { tool: "browser", args: { action: "login" } };
+    return browserStep({ action: "login" });
   });
   worker.h.onModel(() => ({ tool: "report", args: { status: "blocked", text: "no vault" } }));
   const seen = results(await worker.h.waitForCall(3));
@@ -269,7 +269,7 @@ test("login types nothing when the page moves to another host during the vault l
     (text) => text,
     (error: unknown) => String(error),
   );
-  await until(() => (vault.invocations().length === 1 ? true : undefined), "the vault lookup");
+  await until(() => (vault.invocations().length === 2 ? true : undefined), "the vault lookup");
   await lab.chrome.navigate(await tabOf(worker), lab.site.url("/echo", "login.evil.test"));
   await vault.release();
 

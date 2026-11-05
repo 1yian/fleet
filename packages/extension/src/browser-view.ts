@@ -5,8 +5,7 @@ import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { InputSchema, Screen, type Frame } from "./browser-screen.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
-import { readLaneConfig } from "./lane-config.ts";
-import { bwsFor, laneToken } from "./lane-secrets.ts";
+import { callUrl, resolveSource, sourceFromViewerArguments } from "./browser-access.ts";
 
 interface Cardd {
   readonly url: string;
@@ -18,7 +17,7 @@ type View = OpResult<"browser.view">;
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 async function callView(cardd: Cardd): Promise<View> {
-  const response = await fetch(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call"), {
+  const response = await fetch(callUrl(cardd.url), {
     method: "POST",
     headers: { authorization: `Bearer ${cardd.token}`, "content-type": "application/json" },
     body: JSON.stringify({ op: "browser.view", args: {} }),
@@ -54,6 +53,7 @@ class Viewer {
   private readonly cardd: Cardd;
   readonly screen = new Screen(() => this.endpoint);
   private allowed = new Set<string>();
+  private visible = new Set<string>();
   private readonly token: string;
 
   constructor(cardd: Cardd, token: string) {
@@ -83,9 +83,20 @@ class Viewer {
     return origin === undefined || this.allowed.has(origin.replace(/^http:\/\//, ""));
   }
 
-  private async tabs(): Promise<{ tabs: unknown[]; problem: string | null }> {
+  private async shows(target: string): Promise<boolean> {
+    if (!this.visible.has(target)) await this.listing();
+    return this.visible.has(target);
+  }
+
+  private async listing(): Promise<View> {
     const view = await callView(this.cardd);
     this.endpoint = view.endpoint ?? undefined;
+    this.visible = new Set(view.tabs.map((tab) => tab.target));
+    return view;
+  }
+
+  private async tabs(): Promise<{ tabs: unknown[]; problem: string | null }> {
+    const view = await this.listing();
     const known = await this.screen.live().then(
       (found) => ({ found, problem: null }),
       (error: unknown) => ({
@@ -124,11 +135,17 @@ class Viewer {
     if (url.pathname === "/") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(VIEWER_PAGE);
     } else if (url.pathname === "/api/tabs") json(response, 200, await this.tabs());
-    else if (url.pathname === "/api/stream")
-      await this.stream(response, url.searchParams.get("target") ?? "");
-    else if (url.pathname === "/api/input" && request.method === "POST") {
-      await this.screen.input(check(InputSchema, JSON.parse(await readBody(request))));
-      response.writeHead(204).end();
+    else if (url.pathname === "/api/stream") {
+      const target = url.searchParams.get("target") ?? "";
+      if (await this.shows(target)) await this.stream(response, target);
+      else response.writeHead(404).end();
+    } else if (url.pathname === "/api/input" && request.method === "POST") {
+      const input = check(InputSchema, JSON.parse(await readBody(request)));
+      if (!(await this.shows(input.target))) response.writeHead(404).end();
+      else {
+        await this.screen.input(input);
+        response.writeHead(204).end();
+      }
     } else response.writeHead(404).end();
   }
 
@@ -172,13 +189,9 @@ function open(url: string): void {
 }
 
 async function main(): Promise<void> {
-  const [home = process.cwd(), ...flags] = process.argv.slice(2);
-  const lane = readLaneConfig(home);
-  if (lane === undefined) throw new Error(`${home} has no config/lane.json`);
+  const flags = process.argv.slice(2);
   const token = randomBytes(24).toString("base64url");
-  const resolved = await laneToken(lane, bwsFor(lane.bws));
-  if (resolved.value === undefined) throw new Error(`fleet: ${resolved.note}`);
-  const viewer = new Viewer({ url: lane.url, token: resolved.value }, token);
+  const viewer = new Viewer(await resolveSource(sourceFromViewerArguments(flags)), token);
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });

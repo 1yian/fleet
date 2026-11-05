@@ -41,6 +41,18 @@ export const BrowserArgsSchema = Type.Object({
         "login: the site to log in to, such as github.com. Omit it to use the site your tab is on. The tab must already show that site's login page",
     }),
   ),
+  card: Type.Optional(
+    Type.Integer({
+      description:
+        "A mate names the card whose tab it drives, a card of its lane (main: any card). A worker never gives it: its tab is its own card's",
+    }),
+  ),
+  captain: Type.Optional(
+    Type.String({
+      description:
+        "Why the captain is needed in this tab (a passkey, a one-time code, terms, a payment). The fleet then opens the Browser tab in main's workspace instead of the caller's own",
+    }),
+  ),
 });
 export type BrowserArgs = Static<typeof BrowserArgsSchema>;
 
@@ -48,11 +60,12 @@ const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null
 
 export const BROWSER_OPS = {
   browser: {
-    roles: ["worker"],
+    roles: ["worker", "mate"],
     args: BrowserArgsSchema,
     result: Type.Object({
       text: Type.String(),
       image: Type.Optional(Type.Object({ mimeType: Type.String(), data: Type.String() })),
+      captain: Type.Optional(Type.String()),
     }),
   },
   "browser.release": {
@@ -61,8 +74,8 @@ export const BROWSER_OPS = {
     result: Type.Object({ closed: Type.Integer(), note: Nullable(Type.String()) }),
   },
   "browser.view": {
-    roles: ["mate"],
-    args: Type.Object({}),
+    roles: ["worker", "mate"],
+    args: Type.Object({ card: Type.Optional(Type.Integer()) }),
     result: Type.Object({
       endpoint: Nullable(Type.String()),
       tabs: Type.Array(

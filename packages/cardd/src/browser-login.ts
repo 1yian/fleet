@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { fillLogin } from "./browser-fill.ts";
 import { documentOf, type Doc, type Page } from "./browser-page.ts";
 import { credentialsOf, type Secret, type Vault } from "./browser-vault.ts";
-import { addEntry, getCard } from "./store.ts";
+import { addEntry, getCard, mainLane } from "./store.ts";
 
 function hostOf(text: string): string | undefined {
   const bare = text.trim().toLowerCase();
@@ -26,6 +26,8 @@ function bestEntry(secrets: readonly Secret[], pageHost: string): Secret | undef
   return matching[0]?.secret;
 }
 
+const missingEntry = (site: string): string => `a missing login entry for ${site}`;
+
 function requestFor(db: DatabaseSync, card: number, site: string): string[] {
   const asked = db
     .prepare(
@@ -37,7 +39,17 @@ function requestFor(db: DatabaseSync, card: number, site: string): string[] {
   const body = `c-${String(card)} needs a Bitwarden login for ${site}. Ask the captain to add one secret to the fleet's Logins project in Bitwarden Secrets Manager: key ${site}, value {"username": "...", "password": "..."}. Do not ask for the password in chat and do not paste it anywhere. When it is added, tell the worker to call login again.`;
   addEntry(
     db,
-    { card, author: "browser", kind: "comment", body, fields: { for: "mate", loginFor: site } },
+    {
+      card,
+      author: "browser",
+      kind: "comment",
+      body,
+      fields: {
+        for: "mate",
+        loginFor: site,
+        ...(lane === mainLane(db) ? { summon: missingEntry(site) } : {}),
+      },
+    },
     [lane],
   );
   return [lane];
@@ -70,12 +82,13 @@ function notFound(context: LoginContext, site: string, where: string): Done {
   const said =
     notify.length > 0 ? "I asked your mate to have one added" : "your mate was already asked";
   const text = `not found: the Logins project has no entry for ${where}, and ${said}. Nothing was filled. Wait for the captain to add it (report paused or blocked until then), then call login again.`;
-  return { text, notify };
+  return { text, notify, captain: missingEntry(site) };
 }
 
 interface Done {
   readonly text: string;
   readonly notify: string[];
+  readonly captain?: string;
 }
 
 export async function login(context: LoginContext, requested: string | undefined): Promise<Done> {

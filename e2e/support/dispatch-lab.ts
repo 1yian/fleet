@@ -35,6 +35,7 @@ export interface LabOptions {
   readonly mate?: Record<string, string>;
   readonly dashTokens?: readonly string[];
   readonly workerArgs?: readonly string[];
+  readonly workerShell?: boolean;
   readonly remote?: boolean;
   readonly delivery?: string;
   readonly repo?: boolean;
@@ -84,6 +85,7 @@ export async function startDispatchLab({
   mate: mateEnv,
   dashTokens = [],
   workerArgs = [],
+  workerShell = false,
   extension = EXTENSION,
   ...site
 }: LabOptions = {}): Promise<DispatchLab> {
@@ -109,7 +111,7 @@ export async function startDispatchLab({
       HERDR_SESSION: lab.name,
       ...env,
       ...mateEnv,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", extension, ...workerArgs]),
+      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(workerShell), "-e", extension, ...workerArgs]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],
         far: ["node", SWITCH, join(h.dir, "far-down")],
