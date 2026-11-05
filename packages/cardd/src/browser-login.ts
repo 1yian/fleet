@@ -99,7 +99,7 @@ export async function login(context: LoginContext, requested: string | undefined
   const { logins } = vault;
   if (logins === undefined)
     throw new Error(
-      `login is not set up on ${vault.host}: --browser gives that host no Bitwarden Logins project (docs/setup.md, The browser of each host). Ask your mate`,
+      `logins are not set up on ${vault.host}. Ask your mate to set them up for this host`,
     );
   const { site, where, doc } = await siteOf(page, requested);
   const entry = bestEntry(await vault.refresh(), where);

@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { BrowserArgs, OpResult } from "@fleet/protocol";
 import type { BrowserConfig } from "./browser-config.ts";
-import { HostBrowser, plural, type Outcome } from "./browser-host.ts";
+import { HostBrowser, NO_TAB, plural, type Outcome } from "./browser-host.ts";
 import {
   attemptHost,
   hostsEverUsed,
@@ -181,8 +181,7 @@ export class Browser {
     if (args.action === "close") return this.closeOwn(card);
     if (args.action === "open") return this.open(card, args, declared);
     const tab = this.liveTab(card, declared);
-    if (tab === undefined)
-      throw new Error("you have no tab yet: call browser with action open first");
+    if (tab === undefined) throw new Error(NO_TAB);
     return this.site(tab.host).perform(card, args);
   }
 

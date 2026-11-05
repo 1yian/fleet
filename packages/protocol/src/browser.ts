@@ -71,6 +71,7 @@ export const BROWSER_OPS = {
     args: BrowserArgsSchema,
     result: Type.Object({
       text: Type.String(),
+      page: Type.Optional(Type.String()),
       image: Type.Optional(Type.Object({ mimeType: Type.String(), data: Type.String() })),
       captain: Type.Optional(Type.String()),
     }),

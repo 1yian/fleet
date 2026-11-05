@@ -25,6 +25,21 @@ const UNAVAILABLE = "the viewer could not get a picture of this page";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+function onChange(send: (shown: Shown) => void): (shown: Shown) => void {
+  let last: string | undefined;
+  return (shown) => {
+    if ("hidden" in shown) {
+      last = undefined;
+      send(shown);
+      return;
+    }
+    const key = `${String(shown.width)}x${String(shown.height)}:${shown.data}`;
+    if (key === last) return;
+    last = key;
+    send(shown);
+  };
+}
+
 export class Poll {
   private readonly pulling = new Map<string, Pulling>();
   private readonly pull: (target: string) => Promise<Pulled>;
@@ -38,7 +53,8 @@ export class Poll {
     this.measure = measure;
   }
 
-  watch(target: string, listener: (shown: Shown) => void): () => void {
+  watch(target: string, send: (shown: Shown) => void): () => void {
+    const listener = onChange(send);
     let pulling = this.pulling.get(target);
     if (pulling === undefined) {
       const fresh: Pulling = { listeners: new Set() };

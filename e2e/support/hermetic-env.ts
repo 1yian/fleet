@@ -20,3 +20,5 @@ const LIVE_ENVIRONMENT = [
 ];
 
 for (const name of LIVE_ENVIRONMENT) Reflect.deleteProperty(process.env, name);
+
+process.env["FLEET_TAILSCALE"] = "false";

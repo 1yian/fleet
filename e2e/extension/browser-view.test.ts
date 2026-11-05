@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { writeFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BROWSER_OPS, check } from "@fleet/protocol";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { afterEach, beforeEach, test } from "node:test";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
+import { Stream } from "../support/browser-herdr.ts";
 import { WORKER_HOST } from "../support/fleet.ts";
 import { isRecord } from "../support/json.ts";
 import { spawnGuarded } from "../support/guarded.ts";
@@ -26,7 +28,12 @@ let url: string;
 let first: RawWorker;
 let second: RawWorker;
 
-async function launch(flags: string[]): Promise<string> {
+interface Started {
+  readonly url: string;
+  readonly said: () => string;
+}
+
+async function start(flags: string[], env: Record<string, string> = {}): Promise<Started> {
   const access = join(tempDir("fleet-viewer-access-"), "access.json");
   writeFileSync(
     access,
@@ -35,7 +42,7 @@ async function launch(flags: string[]): Promise<string> {
   );
   const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open", ...flags], {
     stdio: ["ignore", "pipe", "inherit"],
-    env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0" },
+    env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0", ...env },
   });
   viewers.push(viewer);
   let said = "";
@@ -43,11 +50,13 @@ async function launch(flags: string[]): Promise<string> {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
     const found = /Fleet browser viewer \((?:captain|gated)\): (\S+)/.exec(said)?.[1];
-    if (found !== undefined) return found;
+    if (found !== undefined) return { url: found, said: () => said };
     assert.ok(Date.now() < deadline, "the viewer did not print its address");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
+
+const launch = async (flags: string[]): Promise<string> => (await start(flags)).url;
 
 beforeEach(async () => {
   lab = await BrowserLab.start({ proxied: true });
@@ -334,4 +343,139 @@ test("only main's own session may ask for the captain's view of a tab, and a fra
   } finally {
     await cleo.close();
   }
+});
+
+test("with no tab the viewer shows one empty state, and with tabs but none picked it only asks for a pick", async () => {
+  await page.goto(url);
+  await until(async () => (await labels()).length === 2, "both cards' tabs to be listed");
+  const note = page.locator("#note");
+  await until(
+    async () => (await note.textContent()) === "Pick a tab on the left.",
+    "the pick note",
+  );
+  for (const quiet of ["#live", "#hint", "#paste", "#screen"])
+    assert.equal(await page.locator(quiet).isHidden(), true, `${quiet} while nothing is picked`);
+
+  await first.act({ action: "close" });
+  await second.act({ action: "close" });
+  await until(async () => (await labels()).length === 0, "the closed tabs to leave the list");
+  await until(
+    async () => ((await note.textContent()) ?? "").startsWith("No tabs open."),
+    "the empty note",
+  );
+
+  const shown = await page.locator("body").innerText();
+  assert.equal(shown.match(/No tabs open/g)?.length, 1);
+  assert.doesNotMatch(shown, /Pick a tab|idle|Click the picture/);
+  for (const quiet of ["#live", "#hint", "#paste", "#screen"])
+    assert.equal(await page.locator(quiet).isHidden(), true, `${quiet} with no tab`);
+  assert.equal(await page.locator("#address").textContent(), "");
+  assert.equal(await note.isVisible(), true);
+});
+
+async function watched(address: string, target: string): Promise<Stream> {
+  const entered = await fetch(address, { redirect: "manual" });
+  const cookie = entered.headers.get("set-cookie")?.split(";")[0] ?? "";
+  const abort = new AbortController();
+  const stream = new URL(`/api/stream?target=${encodeURIComponent(target)}`, address);
+  const response = await fetch(stream, { headers: { cookie }, signal: abort.signal });
+  assert.equal(response.status, 200);
+  return new Stream(response, abort);
+}
+
+test("a gated viewer sends a picture again only when the page changed", async () => {
+  const gated = await launch([]);
+  const stream = await watched(gated, await tabOf(lab, first));
+  try {
+    await until(() => Promise.resolve(stream.messages.length >= 1), "the first picture");
+    for (const beat of ["1", "2", "3"])
+      await first.act({ action: "eval", expression: `document.body.dataset.beat = ${beat}` });
+    assert.equal(stream.messages.length, 1);
+
+    await first.act({
+      action: "eval",
+      expression: "document.getElementById('n').textContent = '7'",
+    });
+    await until(() => Promise.resolve(stream.messages.length >= 2), "the picture of the change");
+    const [before, after] = stream.messages;
+    assert.notEqual(before?.["data"], after?.["data"]);
+    assert.equal(stream.messages.length, 2);
+  } finally {
+    await stream.stop();
+  }
+});
+
+const lanAddress = (): string | undefined =>
+  Object.values(networkInterfaces())
+    .flat()
+    .find((each) => each?.family === "IPv4" && !each.internal)?.address;
+
+function tailscaleSaying(status: object): string {
+  const file = join(tempDir("fleet-tailnet-"), "tailscale");
+  writeFileSync(file, `#!/bin/sh\necho '${JSON.stringify(status)}'\n`, { mode: 0o755 });
+  return file;
+}
+
+const tailnet = (address: string, name: string): { FLEET_TAILSCALE: string } => ({
+  FLEET_TAILSCALE: tailscaleSaying({
+    BackendState: "Running",
+    Self: { DNSName: name, TailscaleIPs: [address] },
+  }),
+});
+
+function statusOf(address: string, port: string, host: string, path: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = request({ host: address, port, path, headers: { host } }, (response) => {
+      response.resume();
+      resolve(response.statusCode ?? 0);
+    });
+    probe.on("error", reject);
+    probe.end();
+  });
+}
+
+test("the captain's viewer prints the machine's tailnet address, still refuses a request with no token, and a worker's viewer stays on loopback", async (t) => {
+  const address = lanAddress();
+  if (address === undefined) {
+    t.skip("this machine has no non-loopback IPv4 address to stand in for a tailnet address");
+    return;
+  }
+
+  const bare = await start(["--captain"], tailnet(address, ""));
+  const shown = new URL(bare.url);
+  assert.equal(shown.hostname, address);
+  assert.ok(!shown.hostname.startsWith("127.") && shown.hostname !== "0.0.0.0");
+  const token = shown.searchParams.get("t") ?? "";
+  assert.ok(token.length >= 32);
+  assert.match(bare.said(), /listens on the tailnet address .* only, never on a public interface/);
+  const denied = [
+    new URL("/", shown.origin),
+    new URL("/api/tabs", shown.origin),
+    new URL(`/?t=${token}x`, shown.origin),
+  ];
+  for (const refused of denied) assert.equal((await fetch(refused)).status, 403, refused.href);
+  assert.equal((await fetch(bare.url, { redirect: "manual" })).status, 302);
+  await assert.rejects(fetch(`http://127.0.0.1:${shown.port}/`), "the viewer is not on loopback");
+
+  const named = await start(["--captain"], tailnet(address, "Maverick.tail-test.ts.net."));
+  const byName = new URL(named.url);
+  assert.equal(byName.hostname, "maverick.tail-test.ts.net");
+  const path = `/?t=${byName.searchParams.get("t") ?? ""}`;
+  assert.equal(await statusOf(address, byName.port, byName.host, path), 302);
+  assert.equal(await statusOf(address, byName.port, `${address}:${byName.port}`, path), 302);
+  assert.equal(await statusOf(address, byName.port, `evil.example:${byName.port}`, path), 403);
+
+  const worker = await start([], tailnet(address, "Maverick.tail-test.ts.net."));
+  assert.equal(new URL(worker.url).hostname, "127.0.0.1");
+});
+
+test("a captain's viewer with no tailnet address falls back to loopback and says so in the tab", async () => {
+  const alone = await start(["--captain"]);
+
+  assert.equal(new URL(alone.url).hostname, "127.0.0.1");
+  assert.match(
+    alone.said(),
+    /No tailnet address was found \(.+\), so this viewer listens on this machine only\. Open the link here: another machine cannot reach it\./,
+  );
+  assert.equal((await fetch(alone.url, { redirect: "manual" })).status, 302);
 });

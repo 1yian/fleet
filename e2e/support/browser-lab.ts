@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { Card } from "@fleet/protocol";
-import { axiAct, axiArgs, axiShot, type Access } from "./browser-axi.ts";
+import { axiAct, axiArgs, axiShot, resultText, type Access } from "./browser-axi.ts";
 import { Cardd, type Session } from "./cardd.ts";
 import { StandInChrome, TcpProxy } from "./chrome.ts";
 import type { FakeVault } from "./fake-vault.ts";
@@ -133,7 +133,7 @@ function said(text: string): string {
   const first = text.split("\n")[0] ?? "";
   try {
     const record = parseRecord(first);
-    const value = record["error"] ?? record["result"];
+    const value = record["error"] ?? resultText(record);
     return typeof value === "string" ? value : text;
   } catch {
     return text;
