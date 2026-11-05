@@ -168,16 +168,26 @@ for (const isolated of [false, true]) {
       );
       assert.equal(await clipboard(), "selectable");
 
-      await setClipboard("kept");
-      const secret = await pointOnPage(IN_FRAME.x + 30, IN_FRAME.y + 75);
-      await page.mouse.click(secret.x, secret.y);
-      await page.keyboard.press("ControlOrMeta+KeyA");
-      await page.keyboard.press("ControlOrMeta+KeyC");
-      await waitFor(
-        async () => (await page.locator("#copied").textContent()) === "nothing is selected",
-        "a selected password in the frame to give nothing",
-      );
-      assert.equal(await clipboard(), "kept");
+      for (const spot of [
+        { x: 300, y: 100, all: false },
+        { x: 30, y: 75, all: true },
+      ]) {
+        await inPage("(getSelection().selectAllChildren(document.getElementById('parent')), true)");
+        const at = await pointOnPage(IN_FRAME.x + spot.x, IN_FRAME.y + spot.y);
+        await page.mouse.click(at.x, at.y);
+        if (spot.all) await page.keyboard.press("ControlOrMeta+KeyA");
+        assert.equal(await inPage("getSelection().toString()"), "parent words");
+        await setClipboard("kept");
+        await page.locator("#copied").evaluate((status) => {
+          status.textContent = "";
+        });
+        await page.keyboard.press("ControlOrMeta+KeyC");
+        await waitFor(
+          async () => (await page.locator("#copied").textContent()) === "nothing is selected",
+          "an empty or password selection in the frame to give nothing",
+        );
+        assert.equal(await clipboard(), "kept");
+      }
     }
   });
 }

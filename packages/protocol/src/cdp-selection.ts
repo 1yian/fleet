@@ -31,18 +31,15 @@ const WALK = `
 `;
 
 const SELECTION = `(() => {${WALK}
-  for (const doc of docs.reverse()) {
-    const field = focused(doc);
-    try {
-      if (field !== null && field.tagName === "INPUT" && field.type === "password" && field.selectionStart !== field.selectionEnd)
-        return "";
-    } catch {
+  const doc = docs[docs.length - 1];
+  const field = focused(doc);
+  try {
+    if (field !== null && field.tagName === "INPUT" && field.type === "password" && field.selectionStart !== field.selectionEnd)
       return "";
-    }
-    const text = doc.getSelection().toString();
-    if (text !== "") return text;
+  } catch {
+    return "";
   }
-  return "";
+  return doc.getSelection().toString();
 })()`;
 
 const UNREACHABLE_FRAME = `(() => {${WALK}
@@ -53,9 +50,7 @@ const SelectionSchema = Type.Object({ result: Type.Object({ value: Type.String()
 const HandleSchema = Type.Object({
   result: Type.Object({ objectId: Type.Optional(Type.String()) }),
 });
-const FrameOwnerSchema = Type.Object({
-  node: Type.Object({ frameId: Type.Optional(Type.String()) }),
-});
+const FrameOwnerSchema = Type.Object({ node: Type.Object({ frameId: Type.String() }) });
 const TargetsSchema = Type.Object({
   targetInfos: Type.Array(Type.Object({ targetId: Type.String() })),
 });
@@ -133,15 +128,14 @@ async function selectionInFrame(cdp: Cdp, place: Place, frameId: string): Promis
 }
 
 async function selectionIn(cdp: Cdp, place: Place): Promise<string> {
+  const frameId = await unreachableFrame(cdp, place);
+  if (frameId !== undefined) return selectionInFrame(cdp, place, frameId);
   const { result } = parseCdp(
     SelectionSchema,
     await evaluate(cdp, place, SELECTION, true),
     "the page's selection",
   );
-  const frameId = await unreachableFrame(cdp, place);
-  if (frameId === undefined) return result.value;
-  const inner = await selectionInFrame(cdp, place, frameId);
-  return inner === "" ? result.value : inner;
+  return result.value;
 }
 
 export async function readSelection(cdp: Cdp, sessionId: string): Promise<string> {

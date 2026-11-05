@@ -38,6 +38,7 @@ const PAGES: Readonly<Record<string, string>> = {
   "/framed": `<!doctype html><title>Framed</title><body style="margin:0">
     <iframe id="inner" style="position:fixed;left:20px;top:20px;width:360px;height:120px;border:0"></iframe>
     <input id="field" style="position:fixed;left:20px;top:160px;width:360px;height:32px;font-size:18px">
+    <p id="parent" style="position:fixed;left:20px;top:210px;margin:0;font-size:18px">parent words</p>
     <script>
       window.loaded = false;
       window.seen = [];
