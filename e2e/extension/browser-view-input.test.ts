@@ -8,6 +8,7 @@ import {
   assertNoSecretAnywhere as scan,
   clearedByHand,
   GOOD,
+  PASSWORD,
   signedIn,
   tabOf,
   USERNAME,
@@ -77,8 +78,12 @@ async function numbers(who: RawWorker, expression: string): Promise<Record<strin
   return Object.fromEntries(Object.entries(found).map(([name, value]) => [name, Number(value)]));
 }
 
-async function picturePoint(x: number, y: number): Promise<{ x: number; y: number }> {
-  const size = await numbers(pad, "({ width: innerWidth, height: innerHeight })");
+async function picturePoint(
+  x: number,
+  y: number,
+  who: RawWorker = pad,
+): Promise<{ x: number; y: number }> {
+  const size = await numbers(who, "({ width: innerWidth, height: innerHeight })");
   return pointInPicture(page, { width: size["width"] ?? 1, height: size["height"] ?? 1 }, x, y);
 }
 
@@ -423,6 +428,40 @@ test("a gated copy hides a stored value that the page shows once its form is emp
   await page.keyboard.press("ControlOrMeta+KeyC");
   await waitFor(async () => (await clipboard()) === "[hidden]", "the cleaned text to be copied");
   assert.equal(await page.locator("#copied").textContent(), "copied 8 characters");
+  scan(lab, vault);
+});
+
+test("a gated viewer's middle click pastes nothing, so a login-filled value cannot be carried into a page", async () => {
+  const worker = await signedIn(lab, "/portal");
+  const label = `c-${String(worker.card.id)} `;
+  const portalTab = (await lab.chrome.pages()).find((tab) => tab.title.startsWith(label));
+  assert.ok(portalTab !== undefined);
+  const gated = await launchViewer(lab, viewers, []);
+
+  await show(gated, label, "hidden");
+  await page.keyboard.press("ControlOrMeta+KeyA");
+  await waitFor(
+    async () =>
+      (await lab.chrome.evaluate(portalTab.id, "getSelection().toString().length")) ===
+      PASSWORD.length,
+    "the stored password to be selected in its field",
+  );
+
+  await worker.act({ action: "open", url: lab.site.url("/pad") });
+  await show(gated, label);
+  const field = await picturePoint(FIELD.x, FIELD.y, worker);
+  await page.mouse.click(field.x, field.y, { button: "middle" });
+  await page.mouse.click(field.x, field.y);
+  await page.keyboard.type("q");
+  await waitFor(
+    async () => (await seen(worker)).includes("keyup key=q code=KeyQ"),
+    "the later key to arrive after the middle click",
+  );
+  assert.equal(await inPage(worker, "document.getElementById('field').value.length"), 1);
+  assert.deepEqual(
+    (await seen(worker)).filter((line) => line === "paste"),
+    [],
+  );
   scan(lab, vault);
 });
 

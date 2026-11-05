@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
-import { InputSchema } from "./browser-input.ts";
+import { InputSchema, pastesSelection } from "./browser-input.ts";
 import { openSheprd } from "./browser-place.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { Screen } from "./browser-screen.ts";
@@ -207,7 +207,7 @@ class Viewer {
     const input = check(InputSchema, JSON.parse(await readBody(request)));
     if (!(await this.shows(input.target))) response.writeHead(404).end();
     else {
-      await this.screenFor(input.target).input(input);
+      if (this.captain || !pastesSelection(input)) await this.screenFor(input.target).input(input);
       response.writeHead(204).end();
     }
   }
