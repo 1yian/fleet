@@ -1,4 +1,4 @@
-import type { OpResult } from "@fleet/protocol";
+import { parseCdp, type Cdp, type OpResult } from "@fleet/protocol";
 import Type from "typebox";
 import type { DatabaseSync } from "node:sqlite";
 import { scrubbedOrHidden } from "./browser-hidden.ts";
@@ -6,7 +6,7 @@ import { openTabs } from "./browser-store.ts";
 import type { Vault } from "./browser-vault.ts";
 import { getCard } from "./store.ts";
 
-export const TargetsSchema = Type.Object({
+const TargetsSchema = Type.Object({
   targetInfos: Type.Array(
     Type.Object({ targetId: Type.String(), title: Type.String(), url: Type.String() }),
   ),
@@ -15,6 +15,11 @@ export const TargetsSchema = Type.Object({
 export interface Listed {
   readonly title: string;
   readonly url: string;
+}
+
+export async function targetsOf(cdp: Cdp): Promise<Map<string, Listed>> {
+  const listed = parseCdp(TargetsSchema, await cdp.send("Target.getTargets"), "the target list");
+  return new Map(listed.targetInfos.map(({ targetId, title, url }) => [targetId, { title, url }]));
 }
 
 export function hiderOf(vault: Vault, captain: boolean): (text: string) => string {

@@ -43,6 +43,15 @@ const PAGES: Readonly<Record<string, string>> = {
       <button id="submit" type="submit">Sign in</button>
     </form>
     <p id="u-echo"></p><p id="p-echo"></p></body>`,
+  "/tint-portal": `<!doctype html><title>Tinted portal</title><body style="margin:0;height:100vh;background:#e00000">
+    <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/tint-landing'; })">
+      <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value">
+      <input name="p" type="password" autocomplete="current-password" oninput="document.getElementById('p-echo').textContent = this.value">
+      <button id="submit" type="submit">Sign in</button>
+    </form>
+    <p id="u-echo"></p><p id="p-echo"></p></body>`,
+  "/tint-landing": `<!doctype html><title>Tinted landing</title><body style="margin:0;height:100vh;background:#0000e0"><p>landed</p></body>`,
+  "/tint-other": `<!doctype html><title>Tinted other</title><body style="margin:0;height:100vh;background:#00b000"><p>other</p></body>`,
   "/steps": `<!doctype html><title>Steps</title><body>
     <form id="one" onsubmit="event.preventDefault()">
       <input name="u" type="text" autocomplete="username">

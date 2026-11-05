@@ -3,7 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
-import type { Clearance, Shown } from "./browser-gate.ts";
+import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { InputSchema, Screen } from "./browser-screen.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
 import { callUrl, resolveSource, sourceFromViewerArguments } from "./browser-access.ts";
@@ -32,11 +32,8 @@ async function post(cardd: Cardd, op: string, args: object): Promise<unknown> {
 const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
   check(OPS["browser.view"].result, await post(cardd, "browser.view", captain ? { captain } : {}));
 
-const callClear = async (cardd: Cardd, target: string, captain: boolean): Promise<Clearance> =>
-  check(
-    OPS["browser.clear"].result,
-    await post(cardd, "browser.clear", captain ? { target, captain } : { target }),
-  );
+const callFrame = async (cardd: Cardd, target: string): Promise<Pulled> =>
+  check(OPS["browser.frame"].result, await post(cardd, "browser.frame", { target }));
 
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -62,9 +59,10 @@ class Viewer {
   private endpoint: string | undefined;
   private readonly cardd: Cardd;
   private readonly captain: boolean;
-  readonly screen = new Screen(
-    () => this.endpoint,
-    (target) => callClear(this.cardd, target, this.captain),
+  readonly screen = new Screen(() => this.endpoint);
+  private readonly poll = new Poll(
+    (target) => callFrame(this.cardd, target),
+    (target) => this.screen.size(target),
   );
   private allowed = new Set<string>();
   private visible = new Set<string>();
@@ -119,9 +117,11 @@ class Viewer {
     response.on("close", () => {
       watching.stop?.();
     });
-    watching.stop = await this.screen.watch(target, send, () => {
-      response.end();
-    });
+    watching.stop = this.captain
+      ? await this.screen.watch(target, send, () => {
+          response.end();
+        })
+      : this.poll.watch(target, send);
     if (response.destroyed) watching.stop();
   }
 
@@ -187,11 +187,8 @@ function open(url: string): void {
 async function main(): Promise<void> {
   const flags = process.argv.slice(2);
   const token = randomBytes(24).toString("base64url");
-  const viewer = new Viewer(
-    await resolveSource(sourceFromViewerArguments(flags)),
-    token,
-    flags.includes("--captain"),
-  );
+  const captain = flags.includes("--captain");
+  const viewer = new Viewer(await resolveSource(sourceFromViewerArguments(flags)), token, captain);
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });
@@ -200,7 +197,7 @@ async function main(): Promise<void> {
   if (address === null || typeof address === "string") throw new Error("the viewer has no address");
   viewer.allow(address.port);
   const url = `http://127.0.0.1:${String(address.port)}/?t=${token}`;
-  console.log(`Fleet browser viewer: ${url}`);
+  console.log(`Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") open(url);
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {

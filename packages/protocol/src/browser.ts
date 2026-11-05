@@ -95,9 +95,12 @@ export const BROWSER_OPS = {
       ),
     }),
   },
-  "browser.clear": {
+  "browser.frame": {
     roles: ["worker", "mate"],
-    args: Type.Object({ target: Type.String(), captain: Type.Optional(Type.Boolean()) }),
-    result: Type.Object({ clear: Type.Boolean(), note: Nullable(Type.String()) }),
+    args: Type.Object({ target: Type.String() }),
+    result: Type.Object({
+      image: Nullable(Type.Object({ mimeType: Type.String(), data: Type.String() })),
+      note: Nullable(Type.String()),
+    }),
   },
 } as const;

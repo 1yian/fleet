@@ -1,6 +1,5 @@
 import { Cdp, keyPresses, parseCdp } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
-import { Gate, type Clearance, type Frame, type Shown } from "./browser-gate.ts";
 
 export const InputSchema = Type.Union([
   Type.Object({
@@ -21,6 +20,12 @@ export const InputSchema = Type.Union([
 ]);
 export type ViewerInput = Static<typeof InputSchema>;
 
+export interface Frame {
+  readonly data: string;
+  readonly width: number;
+  readonly height: number;
+}
+
 const AttachedSchema = Type.Object({ sessionId: Type.String() });
 const FrameEventSchema = Type.Object({
   data: Type.String(),
@@ -34,10 +39,9 @@ const SizeSchema = Type.Object({
 
 interface Viewing {
   readonly session: string;
-  readonly gate: Gate;
-  readonly listeners: Set<(shown: Shown) => void>;
+  readonly listeners: Set<(frame: Frame) => void>;
   readonly lost: Set<() => void>;
-  last: Shown | undefined;
+  last: Frame | undefined;
 }
 
 export class Screen {
@@ -45,11 +49,9 @@ export class Screen {
   private readonly sessions = new Map<string, Promise<string>>();
   private readonly viewing = new Map<string, Viewing>();
   private readonly endpoint: () => string | undefined;
-  private readonly clear: (target: string) => Promise<Clearance>;
 
-  constructor(endpoint: () => string | undefined, clear: (target: string) => Promise<Clearance>) {
+  constructor(endpoint: () => string | undefined) {
     this.endpoint = endpoint;
-    this.clear = clear;
   }
 
   private connection(): Promise<Cdp> {
@@ -94,11 +96,13 @@ export class Screen {
     const event = parseCdp(FrameEventSchema, params, "a screencast frame");
     const owner = [...this.viewing.values()].find((each) => each.session === session);
     if (owner === undefined) return;
-    owner.gate.offer({
+    const frame = {
       data: event.data,
       width: event.metadata.deviceWidth,
       height: event.metadata.deviceHeight,
-    });
+    };
+    owner.last = frame;
+    for (const listener of owner.listeners) listener(frame);
     cdp
       .send("Page.screencastFrameAck", { sessionId: event.sessionId }, { sessionId: session })
       .catch(() => undefined);
@@ -106,7 +110,7 @@ export class Screen {
 
   async watch(
     target: string,
-    listener: (shown: Shown) => void,
+    listener: (frame: Frame) => void,
     lost: () => void,
   ): Promise<() => void> {
     const cdp = await this.connection();
@@ -114,7 +118,7 @@ export class Screen {
     let viewing = this.viewing.get(target);
     try {
       viewing ??= await this.begin(cdp, target, session);
-      if (viewing.last === undefined) viewing.gate.offer(await this.still(cdp, session));
+      viewing.last ??= await this.still(cdp, session);
     } catch (error) {
       const held = this.viewing.get(target);
       if (held?.session === session && held.listeners.size === 0) this.stop(cdp, target, session);
@@ -122,7 +126,7 @@ export class Screen {
     }
     viewing.listeners.add(listener);
     viewing.lost.add(lost);
-    if (viewing.last !== undefined) listener(viewing.last);
+    listener(viewing.last);
     return () => {
       viewing.listeners.delete(listener);
       viewing.lost.delete(lost);
@@ -132,19 +136,7 @@ export class Screen {
   }
 
   private async begin(cdp: Cdp, target: string, session: string): Promise<Viewing> {
-    const viewing: Viewing = {
-      session,
-      gate: new Gate(
-        () => this.clear(target),
-        (shown) => {
-          viewing.last = shown;
-          for (const listener of viewing.listeners) listener(shown);
-        },
-      ),
-      listeners: new Set(),
-      lost: new Set(),
-      last: undefined,
-    };
+    const viewing: Viewing = { session, listeners: new Set(), lost: new Set(), last: undefined };
     this.viewing.set(target, viewing);
     await cdp.send("Target.activateTarget", { targetId: target });
     await cdp.send("Page.enable", {}, { sessionId: session });
@@ -156,16 +148,7 @@ export class Screen {
     return viewing;
   }
 
-  private async still(cdp: Cdp, session: string): Promise<Frame> {
-    const shot = parseCdp(
-      ShotSchema,
-      await cdp.send(
-        "Page.captureScreenshot",
-        { format: "jpeg", quality: 70 },
-        { sessionId: session },
-      ),
-      "a screenshot",
-    );
+  private async measured(cdp: Cdp, session: string): Promise<{ width: number; height: number }> {
     const size = parseCdp(
       SizeSchema,
       await cdp.send(
@@ -178,7 +161,25 @@ export class Screen {
       ),
       "the page size",
     );
-    return { data: shot.data, width: size.result.value.w, height: size.result.value.h };
+    return { width: size.result.value.w, height: size.result.value.h };
+  }
+
+  async size(target: string): Promise<{ width: number; height: number }> {
+    const cdp = await this.connection();
+    return this.measured(cdp, await this.session(cdp, target));
+  }
+
+  private async still(cdp: Cdp, session: string): Promise<Frame> {
+    const shot = parseCdp(
+      ShotSchema,
+      await cdp.send(
+        "Page.captureScreenshot",
+        { format: "jpeg", quality: 70 },
+        { sessionId: session },
+      ),
+      "a screenshot",
+    );
+    return { data: shot.data, ...(await this.measured(cdp, session)) };
   }
 
   private stop(cdp: Cdp, target: string, session: string): void {

@@ -115,16 +115,12 @@ export async function performBrowserOp(
         notify: [],
       };
     }
-    case "browser.clear": {
-      const { target, captain } = check(OPS["browser.clear"].args, raw);
-      if (captain === true) {
-        captainOnly(db, session);
-        return { value: { clear: true, note: null }, notify: [] };
-      }
+    case "browser.frame": {
+      const { target } = check(OPS["browser.frame"].args, raw);
       const wants = sees(db, session, undefined);
       const tab = openTabs(db).find((each) => each.target === target && wants(each.card));
       if (tab === undefined) throw new Error("that tab is not open, or it is not yours to see");
-      return { value: await browser.clear(tab.card, tab.target), notify: [] };
+      return { value: await browser.frame(tab.card, tab.target), notify: [] };
     }
   }
 }

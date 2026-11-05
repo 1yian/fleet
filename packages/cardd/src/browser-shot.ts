@@ -9,8 +9,10 @@ const LayoutSchema = Type.Object({
 });
 
 const MAX_HEIGHT = 16_384;
+const JPEG_QUALITY = 70;
 
-async function params(page: Page, fullPage: boolean): Promise<object> {
+async function params(page: Page, fullPage: boolean, jpeg: boolean): Promise<object> {
+  if (jpeg) return { format: "jpeg", quality: JPEG_QUALITY };
   if (!fullPage) return { format: "png" };
   const { cssContentSize } = parseCdp(
     LayoutSchema,
@@ -34,15 +36,16 @@ export async function screenshot(
   page: Page,
   fullPage: boolean,
   secrets: readonly string[],
+  jpeg = false,
 ): Promise<{ text: string; image: { mimeType: string; data: string } }> {
   if (await showsCredential(page, secrets)) throw new Error(CREDENTIAL_SHOWN);
   const shot = parseCdp(
     ShotSchema,
-    await call(page, "Page.captureScreenshot", await params(page, fullPage)),
+    await call(page, "Page.captureScreenshot", await params(page, fullPage, jpeg)),
     "a screenshot",
   );
   return {
-    text: `Screenshot of ${await summary(page)}.`,
-    image: { mimeType: "image/png", data: shot.data },
+    text: jpeg ? "" : `Screenshot of ${await summary(page)}.`,
+    image: { mimeType: jpeg ? "image/jpeg" : "image/png", data: shot.data },
   };
 }

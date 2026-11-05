@@ -18,9 +18,9 @@ import {
   typeText,
   type Page,
 } from "./browser-page.ts";
-import { CREDENTIAL_SHOWN, showsCredential } from "./browser-scan.ts";
+import { CREDENTIAL_SHOWN } from "./browser-scan.ts";
 import { screenshot } from "./browser-shot.ts";
-import { hiderOf, tabsView, TargetsSchema, type Listed } from "./browser-targets.ts";
+import { hiderOf, tabsView, targetsOf, type Listed } from "./browser-targets.ts";
 import { Vault } from "./browser-vault.ts";
 import {
   attemptStartedAt,
@@ -91,11 +91,11 @@ export class Browser {
     return this.config !== undefined && tabsOf(this.db, card).some((tab) => !this.stale(tab));
   }
 
-  clear(card: number, target: string): Promise<OpResult<"browser.clear">> {
+  frame(card: number, target: string): Promise<OpResult<"browser.frame">> {
     return this.inTurn(card, () =>
-      this.guarded(this.screened(card, target).then(() => plain(""))).then(
-        () => ({ clear: true, note: null }),
-        (error: unknown) => ({ clear: false, note: reason(error) }),
+      this.guarded(this.framed(card, target)).then(
+        ({ result }) => ({ image: result.image ?? null, note: null }),
+        (error: unknown) => ({ image: null, note: reason(error) }),
       ),
     );
   }
@@ -117,19 +117,28 @@ export class Browser {
   private async listing(): Promise<{ targets: Map<string, Listed>; problem: string | null }> {
     if (this.config === undefined) return { targets: new Map(), problem: null };
     try {
-      return { targets: await this.targets(await this.connection()), problem: null };
+      return { targets: await targetsOf(await this.connection()), problem: null };
     } catch (error) {
       return { targets: new Map(), problem: reason(error) };
     }
   }
 
-  private async screened(card: number, target: string): Promise<void> {
+  private async framed(card: number, target: string): Promise<Outcome> {
     await this.vault.ready();
     const own = await this.pageOf(await this.connection(), card);
     if (own.target !== target) throw new Error("that tab is not open");
     if (this.mayShowCode(target, "screenshot")) throw this.restarted();
-    await this.refuseWhileFilled(own.page, target, CREDENTIAL_SHOWN);
-    if (await showsCredential(own.page, this.vault.values)) throw new Error(CREDENTIAL_SHOWN);
+    return this.pictureOf(own.page, target, false, true);
+  }
+
+  private async pictureOf(
+    page: Page,
+    target: string,
+    fullPage: boolean,
+    jpeg: boolean,
+  ): Promise<Outcome> {
+    await this.refuseWhileFilled(page, target, CREDENTIAL_SHOWN);
+    return { result: await screenshot(page, fullPage, this.vault.values, jpeg), notify: [] };
   }
 
   private inTurn<T>(card: number, work: () => Promise<T>): Promise<T> {
@@ -258,8 +267,7 @@ export class Browser {
         await this.refuseWhileFilled(page, target, EVAL_REFUSED);
         return plain(await runExpression(page, args.expression, secrets));
       case "screenshot":
-        await this.refuseWhileFilled(page, target, CREDENTIAL_SHOWN);
-        return { result: await screenshot(page, args.fullPage === true, secrets), notify: [] };
+        return this.pictureOf(page, target, args.fullPage === true, false);
       case "login":
       case "open":
       case "close":
@@ -351,15 +359,8 @@ export class Browser {
     return undefined;
   }
 
-  private async targets(cdp: Cdp): Promise<Map<string, Listed>> {
-    const listed = parseCdp(TargetsSchema, await cdp.send("Target.getTargets"), "the target list");
-    return new Map(
-      listed.targetInfos.map(({ targetId, title, url }) => [targetId, { title, url }]),
-    );
-  }
-
   private async alive(cdp: Cdp): Promise<Set<string>> {
-    return new Set((await this.targets(cdp)).keys());
+    return new Set((await targetsOf(cdp)).keys());
   }
 
   private async sweep(cdp: Cdp): Promise<void> {

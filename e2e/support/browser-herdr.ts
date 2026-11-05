@@ -150,18 +150,18 @@ export class BrowserHerdr {
     return String(panes.find((each) => each["tab_id"] === tab?.["tab_id"])?.["pane_id"]);
   }
 
-  async viewerOf(workspace: string): Promise<string> {
+  async viewerOf(workspace: string, mode?: "captain" | "gated"): Promise<string> {
     const tabs = records((await this.lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
     const panes = records(
       (await this.lab.run(["pane", "list", "--workspace", workspace]))["panes"],
     );
     const tab = tabs.find((each) => each["label"] === "Browser");
     const pane = String(panes.find((each) => each["tab_id"] === tab?.["tab_id"])?.["pane_id"]);
+    const printed =
+      /Fleet browser viewer \((captain|gated)\): (http:\/\/127\.0\.0\.1:\d+\/\?t=[\w-]+)/g;
     return until("the viewer's address", async () => {
-      const found = /Fleet browser viewer: (http:\/\/127\.0\.0\.1:\d+\/\?t=[\w-]+)/.exec(
-        await this.lab.history(pane),
-      );
-      return found?.[1];
+      const last = [...(await this.lab.history(pane)).matchAll(printed)].at(-1);
+      return last !== undefined && (mode === undefined || last[1] === mode) ? last[2] : undefined;
     });
   }
 
@@ -199,12 +199,12 @@ export class BrowserHerdr {
     return response.status;
   }
 
-  async inputStatus(address: string, target: string): Promise<number> {
+  async inputStatus(address: string, target: string, at = { x: 5, y: 5 }): Promise<number> {
     const cookie = await this.cookieFor(address);
     const response = await fetch(new URL("/api/input", address), {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ target, kind: "click", x: 5, y: 5 }),
+      body: JSON.stringify({ target, kind: "click", ...at }),
     });
     return response.status;
   }
@@ -226,8 +226,10 @@ export class BrowserHerdr {
 
 export class Stream {
   raw = "";
+  readonly messages: JsonRecord[] = [];
   private readonly abort: AbortController;
   private readonly reading: Promise<void>;
+  private pending = "";
 
   constructor(response: Response, abort: AbortController) {
     this.abort = abort;
@@ -242,18 +244,20 @@ export class Stream {
       for (;;) {
         const chunk = await reader.read();
         if (chunk.done) return;
-        this.raw += decoder.decode(chunk.value, { stream: true });
+        this.take(decoder.decode(chunk.value, { stream: true }));
       }
     } catch {
       return;
     }
   }
 
-  get messages(): JsonRecord[] {
-    return this.raw
-      .split("\n\n")
-      .slice(0, -1)
-      .map((part) => parseRecord(part.replace(/^data: /, "")));
+  private take(text: string): void {
+    this.raw += text;
+    this.pending += text;
+    for (let end = this.pending.indexOf("\n\n"); end >= 0; end = this.pending.indexOf("\n\n")) {
+      this.messages.push(parseRecord(this.pending.slice(0, end).replace(/^data: /, "")));
+      this.pending = this.pending.slice(end + 2);
+    }
   }
 
   async stop(): Promise<void> {

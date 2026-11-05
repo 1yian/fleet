@@ -19,11 +19,32 @@ const WAIT_MS = 15_000;
 
 let lab: BrowserLab;
 let client: Client;
-let viewer: ReturnType<typeof spawnGuarded>;
+const viewers: ReturnType<typeof spawnGuarded>[] = [];
 let page: Page;
 let url: string;
 let first: RawWorker;
 let second: RawWorker;
+
+async function launch(flags: string[]): Promise<string> {
+  const access = join(tempDir("fleet-viewer-access-"), "access.json");
+  writeFileSync(access, JSON.stringify({ url: lab.cardd.url, token: lab.mainToken }), {
+    mode: 0o600,
+  });
+  const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open", ...flags], {
+    stdio: ["ignore", "pipe", "inherit"],
+    env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0" },
+  });
+  viewers.push(viewer);
+  let said = "";
+  viewer.stdout?.setEncoding("utf8").on("data", (chunk: string) => (said += chunk));
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    const found = /Fleet browser viewer \((?:captain|gated)\): (\S+)/.exec(said)?.[1];
+    if (found !== undefined) return found;
+    assert.ok(Date.now() < deadline, "the viewer did not print its address");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
 
 beforeEach(async () => {
   lab = await BrowserLab.start({ proxied: true });
@@ -31,33 +52,17 @@ beforeEach(async () => {
   second = await lab.worker("Users see one footer");
   await first.act({ action: "open", url: lab.site.url("/a") });
   await second.act({ action: "open", url: lab.site.url("/b") });
-  const access = join(tempDir("fleet-viewer-access-"), "access.json");
-  writeFileSync(access, JSON.stringify({ url: lab.cardd.url, token: lab.mainToken }), {
-    mode: 0o600,
-  });
-  viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open"], {
-    stdio: ["ignore", "pipe", "inherit"],
-    env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0" },
-  });
-  let said = "";
-  viewer.stdout?.setEncoding("utf8").on("data", (chunk: string) => (said += chunk));
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    const found = /Fleet browser viewer: (\S+)/.exec(said)?.[1];
-    if (found !== undefined) {
-      url = found;
-      break;
-    }
-    assert.ok(Date.now() < deadline, "the viewer did not print its address");
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
+  url = await launch(["--captain"]);
   client = await chromium.launch();
   page = await client.newPage({ viewport: { width: 1400, height: 900 } });
 });
 afterEach(async () => {
-  const exited = new Promise((resolve) => viewer.once("exit", resolve));
-  viewer.kill("SIGTERM");
-  const stopped = await Promise.allSettled([exited, client.close(), lab.stop()]);
+  const exits = viewers.splice(0).map((viewer) => {
+    const exited = new Promise((resolve) => viewer.once("exit", resolve));
+    viewer.kill("SIGTERM");
+    return exited;
+  });
+  const stopped = await Promise.allSettled([...exits, client.close(), lab.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -231,28 +236,70 @@ test("when the connection to Chrome drops and returns, the picture follows the p
   await until(async () => (await shown()) !== before, "the picture to show the click");
 });
 
-test("only main's own session may ask for the captain's view of a tab", async () => {
+test("a gated viewer draws a picture that cardd took, and shows a note instead when cardd cannot get one", async () => {
+  const proxy = lab.proxy;
+  assert.ok(proxy !== undefined);
+  const gated = await launch([]);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "setInterval", { value: () => 0 });
+  });
+  await page.goto(gated);
+  await until(async () => (await labels()).length === 2, "both cards' tabs to be listed");
+  await select("c-1 users-see-one-scrollbar");
+  assert.equal(await page.locator("#note").isHidden(), true);
+
+  await proxy.stop();
+  await until(
+    async () => (await page.locator("#live").textContent()) === "hidden",
+    "the viewer to hide the picture while cardd cannot reach Chrome",
+  );
+  assert.match(await page.locator("#note").innerText(), /^Hidden: /);
+  assert.equal(await page.locator("#screen").isHidden(), true);
+  await proxy.listen();
+  await until(
+    async () => (await page.locator("#live").textContent()) === "live",
+    "the picture to come back",
+  );
+  assert.equal(await page.locator("#note").isHidden(), true);
+
+  const before = await page.locator("#screen").evaluate((img: HTMLImageElement) => img.src);
+  await first.act({ action: "click", selector: "#count" });
+  await until(
+    async () =>
+      (await page.locator("#screen").evaluate((img: HTMLImageElement) => img.src)) !== before,
+    "the picture to show the click",
+  );
+});
+
+test("only main's own session may ask for the captain's view of a tab, and a frame is only of a tab the caller may see", async () => {
   const cleo = await lab.cardd.connect(lab.cardd.addLane("cleo", "main"));
   try {
     const target = await tabOf(lab, first);
     const foreign = await tabOf(lab, second);
-    const asked = { target, captain: true };
     const refused = /only main's own session may ask for the captain's view of a tab/;
-    await assert.rejects(first.session.call("browser.clear", asked), refused);
     await assert.rejects(first.session.call("browser.view", { captain: true }), refused);
-    await assert.rejects(cleo.call("browser.clear", asked), refused);
     await assert.rejects(cleo.call("browser.view", { captain: true }), refused);
+    const raw = check(
+      BROWSER_OPS["browser.view"].result,
+      await lab.main.call("browser.view", { captain: true }),
+    );
+    assert.equal(raw.tabs.length, 2);
 
-    const result = BROWSER_OPS["browser.clear"].result;
-    const clear = { clear: true, note: null };
-    assert.deepEqual(check(result, await lab.main.call("browser.clear", asked)), clear);
-    assert.deepEqual(check(result, await first.session.call("browser.clear", { target })), clear);
+    const frame = BROWSER_OPS["browser.frame"].result;
+    const own = check(frame, await first.session.call("browser.frame", { target }));
+    assert.equal(own.note, null);
+    assert.equal(own.image?.mimeType, "image/jpeg");
+    assert.ok(own.image.data.length > 0);
+    assert.equal(
+      check(frame, await lab.main.call("browser.frame", { target: foreign })).note,
+      null,
+    );
     await assert.rejects(
-      first.session.call("browser.clear", { target: foreign }),
+      first.session.call("browser.frame", { target: foreign }),
       /that tab is not open, or it is not yours to see/,
     );
     await assert.rejects(
-      cleo.call("browser.clear", { target }),
+      cleo.call("browser.frame", { target }),
       /that tab is not open, or it is not yours to see/,
     );
   } finally {
