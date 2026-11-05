@@ -40,7 +40,7 @@ test("the captain is summoned to a worker on another host: main's workspace show
     (await fleet.tabLabels(main)).includes(BROWSER) ? true : undefined,
   );
   assert.equal((await fleet.tabLabels(worker.workspace)).includes(BROWSER), false);
-  const address = await fleet.viewerOf(main);
+  const address = await fleet.viewerOf(main, "captain");
   const seen = await fleet.tabsSeenBy(address);
   assert.equal(seen.length, 1);
   assert.match(seen[0] ?? "", new RegExp(`^c-${String(worker.card.id)} pay-the-invoice`));
@@ -87,7 +87,7 @@ test("a lane's worker summons the captain: the lane's workspace when he is in it
   assert.equal((await fleet.tabLabels(mate.workspace)).includes(BROWSER), false);
   const target = (await beta.pages())[0]?.id;
   assert.ok(target !== undefined);
-  const mainView = await fleet.viewerOf(main);
+  const mainView = await fleet.viewerOf(main, "captain");
   assert.ok((await fleet.pictureOf(mainView, target)).bytes > 0);
   assert.ok(relayedFor("main", "beta").includes(beta.port));
   const heard = await fleet.h.waitForCall(0, "mate");
@@ -99,7 +99,7 @@ test("a lane's worker summons the captain: the lane's workspace when he is in it
   await until("the Browser tab in the lane's workspace", async () =>
     (await fleet.tabLabels(mate.workspace)).includes(BROWSER) ? true : undefined,
   );
-  const laneView = await fleet.viewerOf(mate.workspace);
+  const laneView = await fleet.viewerOf(mate.workspace, "gated");
   assert.ok((await fleet.pictureOf(laneView, target)).bytes > 0);
   assert.deepEqual(relayedFor("cnp", "beta"), [], "the lane's own host needs no route");
   assert.deepEqual(relayedFor("cnp", "alpha"), []);
