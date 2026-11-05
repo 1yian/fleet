@@ -19,7 +19,7 @@ let client: Client | undefined;
 let proxy: DelayProxy | undefined;
 
 beforeEach(async () => {
-  lab = await BrowserLab.start({ proxied: true });
+  lab = await BrowserLab.start({ gated: true });
   worker = await lab.worker("Sign in on a slow link");
   await worker.act({ action: "open", url: lab.site.url("/a") });
   viewer = await startViewer(lab, ["--captain"]);
@@ -103,12 +103,15 @@ async function enter(): Promise<Session> {
   return { cookie, origin, target: String(records(listing["tabs"])[0]?.["target"]) };
 }
 
+const connect = (session: Session, id: string, abort: AbortController): Promise<Response> =>
+  fetch(`${session.origin}/api/stream?target=${encodeURIComponent(session.target)}&id=${id}`, {
+    headers: { cookie: session.cookie },
+    signal: abort.signal,
+  });
+
 async function open(session: Session, id: string): Promise<Stream> {
   const abort = new AbortController();
-  const response = await fetch(
-    `${session.origin}/api/stream?target=${encodeURIComponent(session.target)}&id=${id}`,
-    { headers: { cookie: session.cookie }, signal: abort.signal },
-  );
+  const response = await connect(session, id, abort);
   assert.equal(response.status, 200);
   return new Stream(response, abort);
 }
@@ -261,6 +264,41 @@ test("a stream that names the id of a live stream takes its place, and an acknow
     assert.equal(old.messages.length, 1, "nothing is written to the old stream");
   } finally {
     await Promise.all([old.stop(), fresh.stop(), quick.stop()]);
+  }
+});
+
+test("a stream that joins a tab while another stream is still starting on it keeps its pictures when the first one ends", async () => {
+  const gate = lab.gate;
+  assert.ok(gate !== undefined);
+  const session = await enter();
+  gate.hold("Page.startScreencast", 1);
+  gate.hold("Page.captureScreenshot", 1);
+  const early = new AbortController();
+  const late = new AbortController();
+  const earlyOpened = connect(session, "earlyviewer", early).catch(() => undefined);
+  await until(() => gate.holding() === 1, "the first stream to start the tab's pictures");
+  const lateOpened = connect(session, "lateviewer", late).catch(() => undefined);
+  await until(() => gate.holding() === 2, "the second stream to ask Chrome for a picture");
+
+  const stops = gate.count("Page.stopScreencast");
+  early.abort();
+  gate.release();
+  await until(
+    () => gate.count("Page.stopScreencast") > stops,
+    "the first stream to let go of the tab",
+  );
+  gate.release();
+
+  const response = await lateOpened;
+  assert.ok(response !== undefined && response.status === 200, "the second stream opened");
+  const stream = new Stream(response, late);
+  const showing = showsEach(session, "lateviewer", stream);
+  try {
+    await until(() => stream.messages.length >= 1, "a first picture");
+    assert.equal((await resize(session, 333)).status, 204);
+    await until(() => showing(333), "the second stream to show the change");
+  } finally {
+    await Promise.all([stream.stop(), earlyOpened]);
   }
 });
 

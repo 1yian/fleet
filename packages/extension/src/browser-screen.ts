@@ -116,15 +116,18 @@ export class Screen {
   ): Promise<() => void> {
     const cdp = await this.connection();
     const session = await this.session(cdp, target);
-    let viewing = this.viewing.get(target);
-    try {
-      viewing ??= await this.begin(cdp, target, session);
-      viewing.last ??= await this.still(cdp, session);
-    } catch (error) {
-      const held = this.viewing.get(target);
-      if (held?.session === session && held.listeners.size === 0) this.stop(cdp, target, session);
-      throw error;
-    }
+    let viewing: Viewing | undefined;
+    do {
+      viewing = this.viewing.get(target);
+      try {
+        viewing ??= await this.begin(cdp, target, session);
+        viewing.last ??= await this.still(cdp, session);
+      } catch (error) {
+        const held = this.viewing.get(target);
+        if (held?.session === session && held.listeners.size === 0) this.stop(cdp, target, session);
+        throw error;
+      }
+    } while (this.viewing.get(target) !== viewing);
     viewing.listeners.add(listener);
     viewing.lost.add(lost);
     listener(viewing.last);
