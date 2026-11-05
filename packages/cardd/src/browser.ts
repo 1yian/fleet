@@ -223,10 +223,8 @@ export class Browser {
   private async refuseWhileFilled(page: Page, target: string, refusal: string): Promise<void> {
     const mark = this.filled.get(target);
     if (mark === undefined && this.trusted.has(target)) return;
-    const fields =
-      mark !== undefined && (await documentOf(page)).loader === mark.loader
-        ? mark.fields
-        : undefined;
+    const current = mark === undefined ? undefined : (await documentOf(page)).loader;
+    const fields = mark !== undefined && current === mark.loader ? mark.fields : undefined;
     const held =
       fields === undefined
         ? await holdsLogin(page, this.vault.values, mark !== undefined)
