@@ -128,10 +128,17 @@ function ordered(run) {
   });
 }
 
-function send(body) {
-  if (selected === null) return;
-  enqueue({ target: selected, ...body });
+function send(body, target = selected) {
+  if (target === null) return;
+  enqueue({ target, ...body });
   void flow();
+}
+
+const held = new Map();
+
+function releaseKeys() {
+  for (const { target, up } of held.values()) send(up, target);
+  held.clear();
 }
 
 const modifiersOf = (event) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
@@ -145,6 +152,7 @@ function point(event) {
 }
 
 function watch(target) {
+  releaseKeys();
   if (source !== null) source.close();
   selected = target;
   screen.hidden = target === null;
@@ -284,7 +292,6 @@ function keepsForHost(event) {
 }
 
 let composing = false;
-const spent = new Set();
 
 function keyboard(action, event) {
   const typing = mac && event.altKey && !event.metaKey && !event.ctrlKey && Array.from(event.key).length === 1;
@@ -297,33 +304,25 @@ const unreadable = (event) => composing || event.isComposing || event.keyCode ==
 
 capture.addEventListener("keydown", (event) => {
   if (selected === null) return;
-  if (keepsForHost(event) || unreadable(event)) {
-    spent.add(event.code);
-    return;
-  }
+  if (keepsForHost(event) || unreadable(event)) return;
   const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   const letter = event.key.toLowerCase();
-  if (accelerator && !event.altKey && letter === "v") {
-    spent.add(event.code);
-    return;
-  }
+  if (accelerator && !event.altKey && letter === "v") return;
   event.preventDefault();
   if (accelerator && !event.altKey && (letter === "c" || letter === "x")) {
-    spent.add(event.code);
     if (letter === "c") void copy();
     return;
   }
   send(keyboard("down", event));
-  if (mac && event.metaKey && event.key !== "Meta") {
-    spent.add(event.code);
-    send(keyboard("up", event));
-  }
+  if (mac && event.metaKey && event.key !== "Meta") send(keyboard("up", event));
+  else held.set(event.code, { target: selected, up: keyboard("up", event) });
 });
 capture.addEventListener("keyup", (event) => {
-  if (selected === null || spent.delete(event.code) || unreadable(event)) return;
+  if (!held.delete(event.code)) return;
   event.preventDefault();
   send(keyboard("up", event));
 });
+capture.addEventListener("blur", releaseKeys);
 
 capture.addEventListener("compositionstart", () => { composing = true; });
 capture.addEventListener("compositionend", (event) => {

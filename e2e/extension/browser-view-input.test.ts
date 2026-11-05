@@ -58,8 +58,8 @@ async function inPage(who: RawWorker, expression: string): Promise<unknown> {
   return JSON.parse(await who.act({ action: "eval", expression }));
 }
 
-const seen = async (): Promise<string[]> => {
-  const lines = await inPage(pad, "window.seen");
+const seen = async (who: RawWorker = pad): Promise<string[]> => {
+  const lines = await inPage(who, "window.seen");
   assert.ok(Array.isArray(lines) && lines.every((line) => typeof line === "string"));
   return lines.map(String);
 };
@@ -265,6 +265,32 @@ test("reload, zoom, tab and developer tools shortcuts are left to the browser th
     ),
     [`keydown key=k code=KeyK ${accelerator}`, "keydown key=z code=KeyZ"],
   );
+});
+
+test("a key held on one tab is released there when the viewer moves to another tab", async () => {
+  const other = await lab.worker("Second pad");
+  await other.act({ action: "open", url: lab.site.url("/pad") });
+  await show(captain, `c-${String(pad.card.id)} `);
+  await page.keyboard.down("KeyZ");
+  await sawAll(["keydown key=z code=KeyZ"], "the held key to arrive");
+
+  await page.locator("#tabs li", { hasText: `c-${String(other.card.id)} ` }).click();
+  await sawAll(["keyup key=z code=KeyZ"], "the first tab to get the release");
+  await waitFor(
+    async () => (await page.locator("#live").textContent()) === "live",
+    "the second tab to be shown",
+  );
+  await page.keyboard.up("KeyZ");
+  await page.keyboard.type("q");
+  await waitFor(
+    async () => (await seen(other)).includes("keyup key=q code=KeyQ"),
+    "the second tab to get a later key",
+  );
+  assert.deepEqual(
+    (await seen(other)).filter((line) => line.startsWith("key") && line.includes("key=z")),
+    [],
+  );
+  assert.equal((await seen()).filter((line) => line.startsWith("keyup key=z")).length, 1);
 });
 
 test("composed text lands once it is committed, and no key is sent while composing", async () => {
