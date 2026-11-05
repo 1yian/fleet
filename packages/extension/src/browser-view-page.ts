@@ -74,6 +74,7 @@ let selected = null;
 let source = null;
 let size = { width: 1, height: 1 };
 let acknowledging = () => undefined;
+let newest = 0;
 screen.addEventListener("load", () => acknowledging());
 screen.addEventListener("error", () => acknowledging());
 
@@ -125,16 +126,17 @@ let lastReset = 0;
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function acknowledge(mine, id, target) {
+async function acknowledge(mine, id, seq, target) {
+  const unreleased = () => source === mine && newest === seq;
   for (let attempt = 0; attempt < ACK_TRIES; attempt += 1) {
     if (attempt > 0) await pause(ACK_BACKOFF_MS * attempt);
-    if (source !== mine) return;
-    const status = await fetch("/api/ack?id=" + id, { method: "POST", keepalive: true, signal: AbortSignal.timeout(ACK_TIMEOUT_MS) })
+    if (!unreleased()) return;
+    const status = await fetch("/api/ack?id=" + id + "&seq=" + seq, { method: "POST", keepalive: true, signal: AbortSignal.timeout(ACK_TIMEOUT_MS) })
       .then((response) => response.status, () => 0);
     if (status === 204) return;
     if (status === 404) break;
   }
-  if (source === mine) reset(mine, target);
+  if (unreleased()) reset(mine, target);
 }
 
 function reset(mine, target) {
@@ -155,10 +157,13 @@ function connect(target) {
   const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const mine = new EventSource("/api/stream?target=" + encodeURIComponent(target) + "&id=" + id);
   source = mine;
-  acknowledging = () => acknowledge(mine, id, target);
+  newest = 0;
+  acknowledging = () => undefined;
   mine.onopen = refit;
   mine.onmessage = (message) => {
     const shown = JSON.parse(message.data);
+    newest = shown.seq;
+    acknowledging = () => acknowledge(mine, id, shown.seq, target);
     if (shown.hidden !== undefined) {
       screen.removeAttribute("src");
       screen.hidden = true;
@@ -180,6 +185,7 @@ function connect(target) {
 }
 
 function watch(target) {
+  if (target !== selected) resetTyper();
   selected = target;
   if (target === null) {
     closeStream();

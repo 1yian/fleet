@@ -164,8 +164,8 @@ class Viewer {
 
   private async stream(response: ServerResponse, target: string, id: string | null): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
-    const write = (shown: Shown): void => {
-      response.write(`data: ${JSON.stringify(shown)}\n\n`);
+    const write = (shown: Shown, seq?: number): void => {
+      response.write(`data: ${JSON.stringify(seq === undefined ? shown : { ...shown, seq })}\n\n`);
     };
     const pacer = id === null ? undefined : new Pacer(write);
     if (pacer !== undefined && id !== null) {
@@ -223,10 +223,12 @@ class Viewer {
   }
 
   private acknowledge(response: ServerResponse, url: URL): Promise<void> {
+    const seq = url.searchParams.get("seq") ?? "";
     const stream = this.paced.get(url.searchParams.get("id") ?? "");
-    if (stream === undefined) response.writeHead(404).end();
+    if (!/^[0-9]+$/.test(seq)) response.writeHead(400).end();
+    else if (stream === undefined) response.writeHead(404).end();
     else {
-      stream.pacer.release();
+      stream.pacer.release(Number(seq));
       response.writeHead(204).end();
     }
     return Promise.resolve();

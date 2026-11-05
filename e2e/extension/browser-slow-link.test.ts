@@ -113,11 +113,36 @@ async function open(session: Session, id: string): Promise<Stream> {
   return new Stream(response, abort);
 }
 
-const acknowledge = (session: Session, id: string): Promise<Response> =>
-  fetch(`${session.origin}/api/ack?id=${id}`, {
+const acknowledge = (session: Session, id: string, seq?: number | string): Promise<Response> =>
+  fetch(`${session.origin}/api/ack?id=${id}${seq === undefined ? "" : `&seq=${String(seq)}`}`, {
     method: "POST",
     headers: { cookie: session.cookie },
   });
+
+const seqOf = (stream: Stream, index: number): number | undefined => {
+  const seq = stream.messages[index]?.["seq"];
+  return typeof seq === "number" ? seq : undefined;
+};
+
+const settled = async (session: Session): Promise<void> => {
+  assert.equal(
+    (await fetch(`${session.origin}/api/tabs`, { headers: { cookie: session.cookie } })).status,
+    200,
+  );
+};
+
+function showsEach(
+  session: Session,
+  id: string,
+  stream: Stream,
+): (width: number) => Promise<boolean> {
+  let done = 0;
+  return async (width) => {
+    for (; done < stream.messages.length; done += 1)
+      assert.equal((await acknowledge(session, id, seqOf(stream, done))).status, 204);
+    return stream.messages.at(-1)?.["width"] === width;
+  };
+}
 
 const resize = (session: Session, width: number): Promise<Response> =>
   fetch(`${session.origin}/api/fit`, {
@@ -130,12 +155,7 @@ test("a viewer that has not shown its last picture gets nothing while the page k
   const session = await enter();
   const slow = await open(session, "slowviewer");
   const quick = await open(session, "quickviewer");
-  let acknowledged = 0;
-  const showing = async (width: number): Promise<boolean> => {
-    for (; acknowledged < quick.messages.length; acknowledged += 1)
-      assert.equal((await acknowledge(session, "quickviewer")).status, 204);
-    return quick.messages.at(-1)?.["width"] === width;
-  };
+  const showing = showsEach(session, "quickviewer", quick);
   try {
     await until(() => slow.messages.length >= 1 && quick.messages.length >= 1, "a first picture");
     const began = Date.now();
@@ -155,7 +175,7 @@ test("a viewer that has not shown its last picture gets nothing while the page k
       `no picture is sent while the last one is not shown, got ${String(slow.messages.length)}`,
     );
 
-    assert.equal((await acknowledge(session, "slowviewer")).status, 204);
+    assert.equal((await acknowledge(session, "slowviewer", seqOf(slow, 0))).status, 204);
     await until(() => slow.messages.at(-1)?.["width"] === width, "the newest picture");
     assert.equal(slow.messages.length, 2, "the pictures in between are never sent");
   } finally {
@@ -163,38 +183,84 @@ test("a viewer that has not shown its last picture gets nothing while the page k
   }
 });
 
-test("an acknowledgement answers 204 for a stream the viewer has and 404 for one it does not", async () => {
+test("an acknowledgement answers 204 for a stream the viewer has, 404 for one it does not, and 400 with no picture number", async () => {
   const session = await enter();
   const stream = await open(session, "knownviewer");
   try {
     await until(() => stream.messages.length >= 1, "a first picture");
-    assert.equal((await acknowledge(session, "knownviewer")).status, 204);
-    assert.equal((await acknowledge(session, "nobodyviewer")).status, 404);
+    const seq = seqOf(stream, 0);
+    assert.equal((await acknowledge(session, "knownviewer", seq)).status, 204);
+    assert.equal((await acknowledge(session, "nobodyviewer", seq)).status, 404);
+    assert.equal((await acknowledge(session, "knownviewer")).status, 400);
+    assert.equal((await acknowledge(session, "knownviewer", "later")).status, 400);
   } finally {
     await stream.stop();
   }
   await until(
-    async () => (await acknowledge(session, "knownviewer")).status === 404,
+    async () => (await acknowledge(session, "knownviewer", 1)).status === 404,
     "the viewer to forget the closed stream",
   );
 });
 
-test("a stream that names the id of a live stream takes its place, and the old response ends", async () => {
+test("an acknowledgement that arrives twice, as a retry after a lost answer does, releases one picture and not the next", async () => {
+  const session = await enter();
+  const slow = await open(session, "retryviewer");
+  const quick = await open(session, "controlviewer");
+  const showing = showsEach(session, "controlviewer", quick);
+  try {
+    await until(() => slow.messages.length >= 1 && quick.messages.length >= 1, "a first picture");
+    assert.equal((await resize(session, 300)).status, 204);
+    await until(() => showing(300), "the first change on the viewer that shows each picture");
+    assert.equal((await acknowledge(session, "retryviewer", seqOf(slow, 0))).status, 204);
+    await until(() => slow.messages.at(-1)?.["width"] === 300, "the second picture");
+    assert.equal(slow.messages.length, 2);
+
+    for (const width of [320, 340, 360]) assert.equal((await resize(session, width)).status, 204);
+    await until(() => showing(360), "the last picture on the viewer that shows each picture");
+    assert.equal((await acknowledge(session, "retryviewer", seqOf(slow, 0))).status, 204);
+    await settled(session);
+    assert.equal(slow.messages.length, 2, "the repeated acknowledgement released nothing");
+
+    assert.equal((await acknowledge(session, "retryviewer", seqOf(slow, 1))).status, 204);
+    await until(() => slow.messages.at(-1)?.["width"] === 360, "the newest picture");
+    assert.equal(slow.messages.length, 3);
+  } finally {
+    await Promise.all([slow.stop(), quick.stop()]);
+  }
+});
+
+test("a stream that names the id of a live stream takes its place, and an acknowledgement of the old stream's picture releases nothing", async () => {
   const session = await enter();
   const old = await open(session, "sameviewer");
   await until(() => old.messages.length >= 1, "a first picture");
   const fresh = await open(session, "sameviewer");
+  const quick = await open(session, "controlviewer");
+  const showing = showsEach(session, "controlviewer", quick);
   try {
-    await until(() => old.ended && fresh.messages.length >= 1, "the old stream to end");
-    assert.equal((await acknowledge(session, "sameviewer")).status, 204);
+    await until(
+      () => old.ended && fresh.messages.length >= 1 && quick.messages.length >= 1,
+      "the old stream to end",
+    );
+    assert.notEqual(
+      seqOf(old, 0),
+      seqOf(fresh, 0),
+      "each stream's pictures have numbers of their own",
+    );
+
+    assert.equal((await acknowledge(session, "sameviewer", seqOf(old, 0))).status, 204);
     assert.equal((await resize(session, 333)).status, 204);
+    await until(() => showing(333), "the page change on the viewer that shows each picture");
+    await settled(session);
+    assert.equal(fresh.messages.length, 1, "the old stream's acknowledgement released nothing");
+
+    assert.equal((await acknowledge(session, "sameviewer", seqOf(fresh, 0))).status, 204);
     await until(
       () => fresh.messages.at(-1)?.["width"] === 333,
       "the new stream to show the change",
     );
     assert.equal(old.messages.length, 1, "nothing is written to the old stream");
   } finally {
-    await Promise.all([old.stop(), fresh.stop()]);
+    await Promise.all([old.stop(), fresh.stop(), quick.stop()]);
   }
 });
 

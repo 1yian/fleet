@@ -315,6 +315,63 @@ test("phone: the keyboard's Backspace deletes what was typed, and the key bar re
   );
 });
 
+test("phone: the keyboard's text starts empty for the tab that is picked, so nothing typed for one tab edits another", async () => {
+  const other = await lab.worker("Sign in to the other account");
+  await worker.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
+  await other.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
+  const page = await viewerPage("phone");
+  await page.locator("#tabs li").nth(1).waitFor();
+  const phone = page.viewportSize();
+  assert.ok(phone !== null);
+  const valueOn = async (who: RawWorker): Promise<string> =>
+    String(
+      JSON.parse(
+        await who.act({
+          action: "eval",
+          expression: "document.getElementById('identifier').value",
+        }),
+      ),
+    );
+  const choose = async (who: RawWorker): Promise<void> => {
+    const label = new RegExp(`^c-${String(who.card.id)}( |$)`);
+    await page
+      .locator("#tabs li")
+      .filter({ has: page.getByText(label) })
+      .tap();
+    await live(page);
+    await until(
+      async () =>
+        Number(JSON.parse(await who.act({ action: "eval", expression: "innerWidth" }))) ===
+        phone.width,
+      "the tab to take the phone's width",
+    );
+  };
+
+  await choose(worker);
+  const field = await atRemote(page, "#identifier");
+  await page.touchscreen.tap(field.x, field.y);
+  await page.locator("#keyboard").tap();
+  await page.keyboard.insertText("alpha");
+  await until(async () => (await valueOn(worker)) === "alpha", "the text in the first tab");
+
+  await choose(other);
+  assert.equal(await page.locator("#typer").inputValue(), "", "the field starts empty again");
+  await other.act({
+    action: "eval",
+    expression:
+      "(() => { const f = document.getElementById('identifier'); f.value = 'bravo'; f.focus(); })()",
+  });
+  await page.locator("#typer").tap();
+  await page.keyboard.press("Backspace");
+  await until(async () => (await valueOn(other)) === "brav", "the Backspace in the second tab");
+  await page.locator("#typer").fill("beta");
+  await until(
+    async () => (await valueOn(other)) === "bravbeta",
+    "exactly the typed text in the second tab",
+  );
+  assert.equal(await valueOn(worker), "alpha", "the first tab is as it was");
+});
+
 test("the captain's link opens when it is tapped on another site's page, as in a chat app", async () => {
   await worker.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
   context = await client.newContext({ ...IPHONE });
