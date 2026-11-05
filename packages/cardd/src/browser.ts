@@ -18,8 +18,9 @@ import {
   typeText,
   type Page,
 } from "./browser-page.ts";
-import { CREDENTIAL_SHOWN } from "./browser-scan.ts";
+import { CREDENTIAL_SHOWN, showsCredential } from "./browser-scan.ts";
 import { screenshot } from "./browser-shot.ts";
+import { hiderOf, tabsView, TargetsSchema, type Listed } from "./browser-targets.ts";
 import { Vault } from "./browser-vault.ts";
 import {
   attemptStartedAt,
@@ -34,7 +35,6 @@ import {
   type Tab,
 } from "./browser-store.ts";
 import type { Hosts } from "./pulls.ts";
-import { getCard } from "./store.ts";
 
 export interface Outcome {
   readonly result: OpResult<"browser">;
@@ -44,9 +44,6 @@ export interface Outcome {
 
 const AttachedSchema = Type.Object({ sessionId: Type.String() });
 const CreatedSchema = Type.Object({ targetId: Type.String() });
-const TargetsSchema = Type.Object({
-  targetInfos: Type.Array(Type.Object({ targetId: Type.String() })),
-});
 const TargetEventSchema = Type.Object({
   targetInfo: Type.Object({
     targetId: Type.String(),
@@ -80,17 +77,27 @@ export class Browser {
     this.vault = new Vault(config?.logins, hosts);
   }
 
-  view(wants: (card: number) => boolean): OpResult<"browser.view"> {
-    this.connection().catch(() => undefined);
-    const tabs = openTabs(this.db)
-      .filter((tab) => wants(tab.card))
-      .map((tab) => ({
-        card: tab.card,
-        name: getCard(this.db, tab.card).name,
-        label: tab.label,
-        target: tab.target,
-      }));
-    return { endpoint: this.config?.cdp ?? null, tabs };
+  async view(
+    wants: (card: number) => boolean,
+    captain: boolean,
+  ): Promise<OpResult<"browser.view">> {
+    const chrome = await this.listing();
+    const hide = hiderOf(this.vault, captain);
+    const tabs = tabsView(this.db, wants, chrome.targets, hide);
+    return { endpoint: this.config?.cdp ?? null, problem: chrome.problem, tabs };
+  }
+
+  hasTab(card: number): boolean {
+    return this.config !== undefined && tabsOf(this.db, card).some((tab) => !this.stale(tab));
+  }
+
+  clear(card: number, target: string): Promise<OpResult<"browser.clear">> {
+    return this.inTurn(card, () =>
+      this.guarded(this.screened(card, target).then(() => plain(""))).then(
+        () => ({ clear: true, note: null }),
+        (error: unknown) => ({ clear: false, note: reason(error) }),
+      ),
+    );
   }
 
   run(card: number, args: BrowserArgs): Promise<Outcome> {
@@ -105,6 +112,24 @@ export class Browser {
 
   release(card: number): Promise<OpResult<"browser.release">> {
     return this.inTurn(card, () => this.closeTabs(card));
+  }
+
+  private async listing(): Promise<{ targets: Map<string, Listed>; problem: string | null }> {
+    if (this.config === undefined) return { targets: new Map(), problem: null };
+    try {
+      return { targets: await this.targets(await this.connection()), problem: null };
+    } catch (error) {
+      return { targets: new Map(), problem: reason(error) };
+    }
+  }
+
+  private async screened(card: number, target: string): Promise<void> {
+    await this.vault.ready();
+    const own = await this.pageOf(await this.connection(), card);
+    if (own.target !== target) throw new Error("that tab is not open");
+    if (this.mayShowCode(target, "screenshot")) throw this.restarted();
+    await this.refuseWhileFilled(own.page, target, CREDENTIAL_SHOWN);
+    if (await showsCredential(own.page, this.vault.values)) throw new Error(CREDENTIAL_SHOWN);
   }
 
   private inTurn<T>(card: number, work: () => Promise<T>): Promise<T> {
@@ -326,9 +351,15 @@ export class Browser {
     return undefined;
   }
 
-  private async alive(cdp: Cdp): Promise<Set<string>> {
+  private async targets(cdp: Cdp): Promise<Map<string, Listed>> {
     const listed = parseCdp(TargetsSchema, await cdp.send("Target.getTargets"), "the target list");
-    return new Set(listed.targetInfos.map((info) => info.targetId));
+    return new Map(
+      listed.targetInfos.map(({ targetId, title, url }) => [targetId, { title, url }]),
+    );
+  }
+
+  private async alive(cdp: Cdp): Promise<Set<string>> {
+    return new Set((await this.targets(cdp)).keys());
   }
 
   private async sweep(cdp: Cdp): Promise<void> {

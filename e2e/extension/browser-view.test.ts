@@ -3,11 +3,13 @@ import { request } from "node:http";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BROWSER_OPS, check } from "@fleet/protocol";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { afterEach, beforeEach, test } from "node:test";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { isRecord } from "../support/json.ts";
 import { spawnGuarded } from "../support/guarded.ts";
+import { tabOf } from "../support/login-fixtures.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const VIEWER = fileURLToPath(
@@ -227,4 +229,33 @@ test("when the connection to Chrome drops and returns, the picture follows the p
   const before = await shown();
   await first.act({ action: "click", selector: "#count" });
   await until(async () => (await shown()) !== before, "the picture to show the click");
+});
+
+test("only main's own session may ask for the captain's view of a tab", async () => {
+  const cleo = await lab.cardd.connect(lab.cardd.addLane("cleo", "main"));
+  try {
+    const target = await tabOf(lab, first);
+    const foreign = await tabOf(lab, second);
+    const asked = { target, captain: true };
+    const refused = /only main's own session may ask for the captain's view of a tab/;
+    await assert.rejects(first.session.call("browser.clear", asked), refused);
+    await assert.rejects(first.session.call("browser.view", { captain: true }), refused);
+    await assert.rejects(cleo.call("browser.clear", asked), refused);
+    await assert.rejects(cleo.call("browser.view", { captain: true }), refused);
+
+    const result = BROWSER_OPS["browser.clear"].result;
+    const clear = { clear: true, note: null };
+    assert.deepEqual(check(result, await lab.main.call("browser.clear", asked)), clear);
+    assert.deepEqual(check(result, await first.session.call("browser.clear", { target })), clear);
+    await assert.rejects(
+      first.session.call("browser.clear", { target: foreign }),
+      /that tab is not open, or it is not yours to see/,
+    );
+    await assert.rejects(
+      cleo.call("browser.clear", { target }),
+      /that tab is not open, or it is not yours to see/,
+    );
+  } finally {
+    await cleo.close();
+  }
 });

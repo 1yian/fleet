@@ -18,6 +18,7 @@ import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
 import { adoptProcess } from "./incidents.ts";
+import { Summoned } from "./browser-ops.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
@@ -142,6 +143,10 @@ class Hub {
       this.web.changed();
       return { ok: true, value: done.value };
     } catch (error) {
+      if (error instanceof Summoned) {
+        for (const recipient of error.notify) this.flush(recipient, false);
+        this.web.changed();
+      }
       return { ok: false, error: reason(error) };
     }
   }

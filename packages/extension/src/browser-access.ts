@@ -81,6 +81,6 @@ export function sourceFromViewerArguments(flags: readonly string[]): Source {
   if (home !== undefined) return { home };
   const file = at("--access");
   if (file === undefined)
-    throw new Error("usage: browser-view.ts --home <dir> | --access <file> [--open]");
+    throw new Error("usage: browser-view.ts --home <dir> | --access <file> [--open] [--captain]");
   return takeAccessFile(file);
 }

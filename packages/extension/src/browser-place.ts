@@ -12,6 +12,7 @@ export interface Placement {
   readonly source: Source;
   readonly open: boolean;
   readonly focus: boolean;
+  readonly captain: boolean;
 }
 
 export type Placed = "opened" | "running";
@@ -26,8 +27,8 @@ async function paneOf(workspace: string, tab: string): Promise<string | undefine
   );
 }
 
-const commandFor = ({ source, open }: Placement): string =>
-  `node ${quote(VIEWER)} ${viewerArguments(source).map(quote).join(" ")}${open ? " --open" : ""}`;
+const commandFor = ({ source, open, captain }: Placement): string =>
+  `node ${quote(VIEWER)} ${viewerArguments(source).map(quote).join(" ")}${open ? " --open" : ""}${captain ? " --captain" : ""}`;
 
 async function create(placement: Placement): Promise<void> {
   const { workspace, cwd, focus } = placement;
@@ -69,5 +70,5 @@ export const isSummon = (entry: Entry): boolean =>
 export async function openForCaptain(source: Source, home: string): Promise<void> {
   const workspace = process.env["HERDR_WORKSPACE_ID"];
   if (workspace === undefined) return;
-  await placeViewer({ workspace, cwd: home, source, open: true, focus: true });
+  await placeViewer({ workspace, cwd: home, source, open: true, focus: true, captain: true });
 }

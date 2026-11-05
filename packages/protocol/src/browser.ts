@@ -75,17 +75,29 @@ export const BROWSER_OPS = {
   },
   "browser.view": {
     roles: ["worker", "mate"],
-    args: Type.Object({ card: Type.Optional(Type.Integer()) }),
+    args: Type.Object({
+      card: Type.Optional(Type.Integer()),
+      captain: Type.Optional(Type.Boolean()),
+    }),
     result: Type.Object({
       endpoint: Nullable(Type.String()),
+      problem: Nullable(Type.String()),
       tabs: Type.Array(
         Type.Object({
           card: Type.Integer(),
           name: Type.String(),
           label: Type.String(),
           target: Type.String(),
+          live: Type.Boolean(),
+          title: Type.String(),
+          url: Type.String(),
         }),
       ),
     }),
+  },
+  "browser.clear": {
+    roles: ["worker", "mate"],
+    args: Type.Object({ target: Type.String(), captain: Type.Optional(Type.Boolean()) }),
+    result: Type.Object({ clear: Type.Boolean(), note: Nullable(Type.String()) }),
   },
 } as const;

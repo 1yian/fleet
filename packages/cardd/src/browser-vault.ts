@@ -125,6 +125,10 @@ export class Vault {
     return [...this.held];
   }
 
+  get settled(): boolean {
+    return this.logins === undefined || this.loaded;
+  }
+
   hold(values: readonly string[]): void {
     for (const value of values) this.held.add(value);
   }

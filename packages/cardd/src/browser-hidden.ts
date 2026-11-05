@@ -137,6 +137,14 @@ export function exposure(secrets: Iterable<string>): (text: string) => boolean {
 
 export const scrubbed = (text: string, secrets: Iterable<string>): string => cleaner(secrets)(text);
 
+export function scrubbedOrHidden(text: string, secrets: Iterable<string>): string {
+  try {
+    return scrubbed(text, secrets);
+  } catch {
+    return HIDDEN;
+  }
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

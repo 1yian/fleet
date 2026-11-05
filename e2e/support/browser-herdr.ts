@@ -10,7 +10,7 @@ import type { FakeVault } from "./fake-vault.ts";
 import { begin, newCard } from "./fleet.ts";
 import { Harness } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
-import { parseRecord, records } from "./json.ts";
+import { parseRecord, records, type JsonRecord } from "./json.ts";
 import { TestSite } from "./site.ts";
 import { configureMain, Scratch, startMain } from "./scratch.ts";
 
@@ -165,18 +165,30 @@ export class BrowserHerdr {
     });
   }
 
-  async tabsSeenBy(address: string): Promise<string[]> {
-    const entered = await fetch(address, { redirect: "manual" });
-    const cookie = entered.headers.get("set-cookie")?.split(";")[0] ?? "";
+  async listingOf(address: string): Promise<{ body: string; tabs: JsonRecord[] }> {
+    const cookie = await this.cookieFor(address);
     const body = await (await fetch(new URL("/api/tabs", address), { headers: { cookie } })).text();
     const tabs = parseRecord(body)["tabs"];
     assert.ok(Array.isArray(tabs));
-    return records(tabs).map((tab) => String(tab["label"]));
+    return { body, tabs: records(tabs) };
+  }
+
+  async tabsSeenBy(address: string): Promise<string[]> {
+    return (await this.listingOf(address)).tabs.map((tab) => String(tab["label"]));
   }
 
   private async cookieFor(address: string): Promise<string> {
     const entered = await fetch(address, { redirect: "manual" });
     return entered.headers.get("set-cookie")?.split(";")[0] ?? "";
+  }
+
+  async streamOf(address: string, target: string): Promise<Stream> {
+    const cookie = await this.cookieFor(address);
+    const abort = new AbortController();
+    const url = new URL(`/api/stream?target=${encodeURIComponent(target)}`, address);
+    const response = await fetch(url, { headers: { cookie }, signal: abort.signal });
+    assert.equal(response.status, 200);
+    return new Stream(response, abort);
   }
 
   async streamStatus(address: string, target: string): Promise<number> {
@@ -209,6 +221,44 @@ export class BrowserHerdr {
     this.scratch.dispose();
     const failed = stopped.find((result) => result.status === "rejected");
     if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
+  }
+}
+
+export class Stream {
+  raw = "";
+  private readonly abort: AbortController;
+  private readonly reading: Promise<void>;
+
+  constructor(response: Response, abort: AbortController) {
+    this.abort = abort;
+    this.reading = this.read(response);
+  }
+
+  private async read(response: Response): Promise<void> {
+    const reader = response.body?.getReader();
+    if (reader === undefined) return;
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) return;
+        this.raw += decoder.decode(chunk.value, { stream: true });
+      }
+    } catch {
+      return;
+    }
+  }
+
+  get messages(): JsonRecord[] {
+    return this.raw
+      .split("\n\n")
+      .slice(0, -1)
+      .map((part) => parseRecord(part.replace(/^data: /, "")));
+  }
+
+  async stop(): Promise<void> {
+    this.abort.abort();
+    await this.reading;
   }
 }
 

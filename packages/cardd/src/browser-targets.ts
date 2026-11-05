@@ -1,0 +1,47 @@
+import type { OpResult } from "@fleet/protocol";
+import Type from "typebox";
+import type { DatabaseSync } from "node:sqlite";
+import { scrubbedOrHidden } from "./browser-hidden.ts";
+import { openTabs } from "./browser-store.ts";
+import type { Vault } from "./browser-vault.ts";
+import { getCard } from "./store.ts";
+
+export const TargetsSchema = Type.Object({
+  targetInfos: Type.Array(
+    Type.Object({ targetId: Type.String(), title: Type.String(), url: Type.String() }),
+  ),
+});
+
+export interface Listed {
+  readonly title: string;
+  readonly url: string;
+}
+
+export function hiderOf(vault: Vault, captain: boolean): (text: string) => string {
+  if (captain) return (text) => text;
+  if (!vault.settled) return () => "";
+  const secrets = vault.values;
+  return (text) => scrubbedOrHidden(text, secrets);
+}
+
+export function tabsView(
+  db: DatabaseSync,
+  wants: (card: number) => boolean,
+  targets: ReadonlyMap<string, Listed>,
+  hide: (text: string) => string,
+): OpResult<"browser.view">["tabs"] {
+  return openTabs(db)
+    .filter((tab) => wants(tab.card))
+    .map((tab) => {
+      const here = targets.get(tab.target);
+      return {
+        card: tab.card,
+        name: getCard(db, tab.card).name,
+        label: tab.label,
+        target: tab.target,
+        live: here !== undefined,
+        title: hide((here?.title ?? "").replace(`${tab.label} - `, "").replace(tab.label, "")),
+        url: hide(here?.url ?? ""),
+      };
+    });
+}

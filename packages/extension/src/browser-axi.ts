@@ -170,6 +170,7 @@ async function place(source: Source, why: string | undefined): Promise<string> {
       source,
       open: false,
       focus: false,
+      captain: false,
     });
     return placed === "opened"
       ? "a Browser tab in your own workspace shows your tab live"

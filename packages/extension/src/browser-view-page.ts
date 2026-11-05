@@ -30,6 +30,8 @@ export const VIEWER_PAGE = `<!doctype html>
   #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; }
   #screen { max-width: 100%; max-height: 100%; outline: none; border: 1px solid #262633; border-radius: 4px; cursor: default; background: #fff; }
   #screen:focus { border-color: var(--signal); }
+  #note { max-width: 640px; padding: 16px 20px; background: var(--row); color: var(--dim); border: 1px solid #262633; border-radius: 4px; }
+  #note[hidden] { display: none; }
   #hint { padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
 </style>
 </head>
@@ -46,7 +48,7 @@ export const VIEWER_PAGE = `<!doctype html>
     <input id="paste" placeholder="Type text, then Enter" autocomplete="off" spellcheck="false" hidden>
     <span id="live">idle</span>
   </header>
-  <div id="stage"><img id="screen" tabindex="0" alt="" hidden draggable="false"></div>
+  <div id="stage"><img id="screen" tabindex="0" alt="" hidden draggable="false"><div id="note" hidden></div></div>
   <div id="hint">Click the picture to focus it. Clicks, keys and scrolling go to the tab.</div>
 </main>
 <script>
@@ -56,6 +58,7 @@ const problem = document.getElementById("problem");
 const address = document.getElementById("address");
 const live = document.getElementById("live");
 const screen = document.getElementById("screen");
+const note = document.getElementById("note");
 const paste = document.getElementById("paste");
 let selected = null;
 let source = null;
@@ -75,15 +78,27 @@ function watch(target) {
   if (source !== null) source.close();
   selected = target;
   screen.hidden = target === null;
+  note.hidden = true;
   paste.hidden = target === null;
   live.textContent = "idle";
   live.className = "";
   if (target === null) return;
   source = new EventSource("/api/stream?target=" + encodeURIComponent(target));
   source.onmessage = (message) => {
-    const frame = JSON.parse(message.data);
-    size = { width: frame.width, height: frame.height };
-    screen.src = "data:image/jpeg;base64," + frame.data;
+    const shown = JSON.parse(message.data);
+    if (shown.hidden !== undefined) {
+      screen.removeAttribute("src");
+      screen.hidden = true;
+      note.hidden = false;
+      note.textContent = "Hidden: " + shown.hidden + ". The captain's viewer in main's workspace shows this page.";
+      live.textContent = "hidden";
+      live.className = "";
+      return;
+    }
+    note.hidden = true;
+    screen.hidden = false;
+    size = { width: shown.width, height: shown.height };
+    screen.src = "data:image/jpeg;base64," + shown.data;
     live.textContent = "live";
     live.className = "on";
   };

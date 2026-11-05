@@ -3,7 +3,8 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
-import { InputSchema, Screen, type Frame } from "./browser-screen.ts";
+import type { Clearance, Shown } from "./browser-gate.ts";
+import { InputSchema, Screen } from "./browser-screen.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
 import { callUrl, resolveSource, sourceFromViewerArguments } from "./browser-access.ts";
 
@@ -16,17 +17,26 @@ type View = OpResult<"browser.view">;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-async function callView(cardd: Cardd): Promise<View> {
+async function post(cardd: Cardd, op: string, args: object): Promise<unknown> {
   const response = await fetch(callUrl(cardd.url), {
     method: "POST",
     headers: { authorization: `Bearer ${cardd.token}`, "content-type": "application/json" },
-    body: JSON.stringify({ op: "browser.view", args: {} }),
+    body: JSON.stringify({ op, args }),
     signal: AbortSignal.timeout(15_000),
   });
   const outcome = check(HttpOutcomeSchema, await response.json());
   if (!outcome.ok) throw new Error(outcome.error);
-  return check(OPS["browser.view"].result, outcome.value);
+  return outcome.value;
 }
+
+const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
+  check(OPS["browser.view"].result, await post(cardd, "browser.view", captain ? { captain } : {}));
+
+const callClear = async (cardd: Cardd, target: string, captain: boolean): Promise<Clearance> =>
+  check(
+    OPS["browser.clear"].result,
+    await post(cardd, "browser.clear", captain ? { target, captain } : { target }),
+  );
 
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -51,14 +61,19 @@ const json = (response: ServerResponse, status: number, body: unknown): void => 
 class Viewer {
   private endpoint: string | undefined;
   private readonly cardd: Cardd;
-  readonly screen = new Screen(() => this.endpoint);
+  private readonly captain: boolean;
+  readonly screen = new Screen(
+    () => this.endpoint,
+    (target) => callClear(this.cardd, target, this.captain),
+  );
   private allowed = new Set<string>();
   private visible = new Set<string>();
   private readonly token: string;
 
-  constructor(cardd: Cardd, token: string) {
+  constructor(cardd: Cardd, token: string, captain: boolean) {
     this.cardd = cardd;
     this.token = token;
+    this.captain = captain;
   }
 
   private knows(candidate: string | null | undefined): boolean {
@@ -89,37 +104,16 @@ class Viewer {
   }
 
   private async listing(): Promise<View> {
-    const view = await callView(this.cardd);
+    const view = await callView(this.cardd, this.captain);
     this.endpoint = view.endpoint ?? undefined;
     this.visible = new Set(view.tabs.map((tab) => tab.target));
     return view;
   }
 
-  private async tabs(): Promise<{ tabs: unknown[]; problem: string | null }> {
-    const view = await this.listing();
-    const known = await this.screen.live().then(
-      (found) => ({ found, problem: null }),
-      (error: unknown) => ({
-        found: undefined,
-        problem: `The shared browser is unreachable: ${reason(error)}`,
-      }),
-    );
-    const tabs = view.tabs.map((tab) => {
-      const here = known.found?.get(tab.target);
-      return {
-        ...tab,
-        live: here !== undefined,
-        title: (here?.title ?? "").replace(`${tab.label} - `, "").replace(tab.label, ""),
-        url: here?.url ?? "",
-      };
-    });
-    return { tabs, problem: known.problem };
-  }
-
   private async stream(response: ServerResponse, target: string): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
-    const send = (frame: Frame): void => {
-      response.write(`data: ${JSON.stringify(frame)}\n\n`);
+    const send = (shown: Shown): void => {
+      response.write(`data: ${JSON.stringify(shown)}\n\n`);
     };
     const watching: { stop: (() => void) | undefined } = { stop: undefined };
     response.on("close", () => {
@@ -134,8 +128,10 @@ class Viewer {
   private async route(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     if (url.pathname === "/") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(VIEWER_PAGE);
-    } else if (url.pathname === "/api/tabs") json(response, 200, await this.tabs());
-    else if (url.pathname === "/api/stream") {
+    } else if (url.pathname === "/api/tabs") {
+      const { tabs, problem } = await this.listing();
+      json(response, 200, { tabs, problem });
+    } else if (url.pathname === "/api/stream") {
       const target = url.searchParams.get("target") ?? "";
       if (await this.shows(target)) await this.stream(response, target);
       else response.writeHead(404).end();
@@ -191,7 +187,11 @@ function open(url: string): void {
 async function main(): Promise<void> {
   const flags = process.argv.slice(2);
   const token = randomBytes(24).toString("base64url");
-  const viewer = new Viewer(await resolveSource(sourceFromViewerArguments(flags)), token);
+  const viewer = new Viewer(
+    await resolveSource(sourceFromViewerArguments(flags)),
+    token,
+    flags.includes("--captain"),
+  );
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });

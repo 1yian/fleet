@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { BROWSER_OPS, check, OPS, type BrowserArgs, type OpName } from "@fleet/protocol";
 import type { Browser } from "./browser.ts";
+import { openTabs } from "./browser-store.ts";
 import { summonCaptain } from "./browser-summon.ts";
 import { getCard, mainLane, type Session } from "./store.ts";
 
@@ -26,6 +27,54 @@ function cardOf(db: DatabaseSync, session: Session, named: number | undefined): 
   return named;
 }
 
+export class Summoned extends Error {
+  readonly notify: readonly string[];
+
+  constructor(message: string, notify: readonly string[], cause: unknown) {
+    super(message, { cause });
+    this.notify = notify;
+  }
+}
+
+const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+function summoned(
+  db: DatabaseSync,
+  browser: Browser,
+  card: number,
+  why: string | undefined,
+  error: unknown,
+): Error {
+  if (why === undefined || !browser.hasTab(card))
+    return error instanceof Error ? error : new Error(reason(error));
+  const refusal = reason(error).replace(/\.?\s*$/, "");
+  return new Summoned(
+    `${refusal}. The captain was asked to open the tab: ${why}.`,
+    summonCaptain(db, card, why),
+    error,
+  );
+}
+
+const isMainItself = (db: DatabaseSync, session: Session): boolean =>
+  session.card === null && session.lane === mainLane(db);
+
+function captainOnly(db: DatabaseSync, session: Session): void {
+  if (!isMainItself(db, session))
+    throw new Error("only main's own session may ask for the captain's view of a tab");
+}
+
+function sees(
+  db: DatabaseSync,
+  session: Session,
+  named: number | undefined,
+): (card: number) => boolean {
+  const own = session.card;
+  const everything = isMainItself(db, session);
+  const mine = (card: number): boolean => everything || getCard(db, card).lane === session.lane;
+  return (card) =>
+    own !== null ? card === own : named === undefined ? mine(card) : card === named && mine(card);
+}
+
 async function browse(
   db: DatabaseSync,
   browser: Browser,
@@ -33,7 +82,9 @@ async function browse(
   args: BrowserArgs,
 ): Promise<Done> {
   const card = cardOf(db, session, args.card);
-  const done = await browser.run(card, args);
+  const done = await browser.run(card, args).catch((error: unknown) => {
+    throw summoned(db, browser, card, args.captain, error);
+  });
   const why = args.captain ?? done.captain;
   const asked = why === undefined ? [] : summonCaptain(db, card, why);
   const result = why === undefined ? done.result : { ...done.result, captain: why };
@@ -57,17 +108,23 @@ export async function performBrowserOp(
       return { value: await browser.release(card), notify: [] };
     }
     case "browser.view": {
-      const { card: named } = check(OPS["browser.view"].args, raw);
-      const own = session.card;
-      const everything = own === null && session.lane === mainLane(db);
-      const mine = (card: number): boolean => everything || getCard(db, card).lane === session.lane;
-      const wants = (card: number): boolean =>
-        own !== null
-          ? card === own
-          : named === undefined
-            ? mine(card)
-            : card === named && mine(card);
-      return { value: browser.view(wants), notify: [] };
+      const { card: named, captain } = check(OPS["browser.view"].args, raw);
+      if (captain === true) captainOnly(db, session);
+      return {
+        value: await browser.view(sees(db, session, named), captain === true),
+        notify: [],
+      };
+    }
+    case "browser.clear": {
+      const { target, captain } = check(OPS["browser.clear"].args, raw);
+      if (captain === true) {
+        captainOnly(db, session);
+        return { value: { clear: true, note: null }, notify: [] };
+      }
+      const wants = sees(db, session, undefined);
+      const tab = openTabs(db).find((each) => each.target === target && wants(each.card));
+      if (tab === undefined) throw new Error("that tab is not open, or it is not yours to see");
+      return { value: await browser.clear(tab.card, tab.target), notify: [] };
     }
   }
 }
