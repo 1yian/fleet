@@ -15,6 +15,25 @@ const DAEMON_ADMIN: readonly RegExp[] = [
 const DAEMON_REASON =
   "refused: the no-mistakes daemon is shared by everything on this host, and a stop or restart disrupts work of other cards. Fleet never starts, stops, or restarts it. If the daemon is down, report blocked and say so: your first mate hears of it.";
 
+const PREFIXES = "(?:sudo|env|command|exec|nohup|time|nice|caffeinate)\\b(?:\\s+-\\S+)*\\s+";
+const SHELL_C = "(?:\\S*/)?(?:ba|z|da)?sh\\s+(?:-\\S+\\s+)*?-\\w*c\\s+[\"']?";
+const AT_COMMAND = `(?:^|[|;&\\n(\`]|\\$\\()\\s*(?:[A-Za-z_]\\w*=\\S*\\s+|${PREFIXES}|eval\\s+["']?|${SHELL_C})*`;
+const NAMED_SAFARI = "(?<![\\w-])safari(?![\\w-]|\\.(?!app\\b))";
+const REMOTE_SHELL = "(?:(?:\\S*/)?(?:ssh|mosh)|(?:\\S*/)?tailscale\\s+ssh)";
+
+const PERSONAL_SAFARI: readonly RegExp[] = [
+  new RegExp(`${AT_COMMAND}(?:\\S*/)?osascript\\b[\\s\\S]*${NAMED_SAFARI}`, "i"),
+  new RegExp(`${AT_COMMAND}(?:\\S*/)?open(?=\\s)[^|;&\\n]*${NAMED_SAFARI}`, "i"),
+  new RegExp(`${AT_COMMAND}(?:\\S*/)?safaridriver\\b`, "i"),
+  new RegExp(
+    `${AT_COMMAND}${REMOTE_SHELL}\\b[\\s\\S]*?(?:\\b(?:osascript|open)\\b[\\s\\S]*${NAMED_SAFARI}|\\bsafaridriver\\b)`,
+    "i",
+  ),
+];
+
+const SAFARI_REASON =
+  "refused: Safari on the captain's Mac (frontera) is his personal browser, and no agent drives it. Use the fleet's shared Chrome with browser-axi, or a browser of your own with its own profile. This guard stops the recognizable commands: osascript or open -a naming Safari, safaridriver, and those run over ssh. If the task cannot be done without his own Safari session, report blocked and say why: your first mate asks him.";
+
 const LISTER = "(\\S*/)?(pgrep|pidof|ps)\\b";
 const KILL_FED_BY_LISTER: readonly RegExp[] = [
   new RegExp(`\\bkill\\b[^|;&\\n]*(\\$\\(|\`)\\s*${LISTER}`),
@@ -25,6 +44,7 @@ const KILL_FED_BY_LISTER: readonly RegExp[] = [
 
 function guardReason(command: string): string | undefined {
   if (DAEMON_ADMIN.some((pattern) => pattern.test(command))) return DAEMON_REASON;
+  if (PERSONAL_SAFARI.some((pattern) => pattern.test(command))) return SAFARI_REASON;
   if (KILL_FED_BY_LISTER.some((pattern) => pattern.test(command))) return PATTERN_KILL_REASON;
   return undefined;
 }
