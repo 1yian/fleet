@@ -108,15 +108,27 @@ test("a dispatch to a host whose checkout has no extension refuses before it cre
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
 });
 
+async function mateHeard(h: DispatchLab["h"], pattern: RegExp): Promise<string> {
+  const deadline = Date.now() + WORKER_WAIT_MS;
+  for (;;) {
+    const turns = h.callsOf("mate").flat();
+    const found = turns.find((turn) => pattern.test(turn.text));
+    if (found !== undefined) return found.text;
+    if (Date.now() > deadline) throw new Error(`the mate never heard ${String(pattern)}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 test("a worker whose extension fails to load on the host is reported with the last lines of its pane, and never its token", async () => {
   const root = checkoutWithExtension('throw new Error("boom from the destination extension");\n');
   const { h, lab, mate } = await maverick(root);
+  h.onModel(() => ({ text: "noted" }), "mate");
   mate.prompt("ship the scrollbar fix");
 
-  const result = toolResults(await h.waitForCall(2, "mate", WORKER_WAIT_MS)).at(-1) ?? "";
+  const result = await mateHeard(h, /Pi is not running in pane/);
   assert.match(
     result,
-    /^Pi is not running in pane \S+ on maverick after c-1-a1 was started in it, so the worker never connected\./,
+    /Pi is not running in pane \S+ on maverick after c-1-a1 was started in it, so the worker never connected\./,
   );
   assert.match(result, /boom from the destination extension/);
   const launched = readFileSync(launchArgsOf(h), "utf8").split("\n");

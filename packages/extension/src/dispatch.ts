@@ -8,6 +8,7 @@ import {
   field,
   herdr,
   onHost,
+  paneMissing,
   paneText,
   piPids,
   piRunning,
@@ -23,6 +24,7 @@ export interface Launch {
   readonly url: string;
   readonly piArgs: readonly string[];
   readonly extension: string;
+  readonly lost: (text: string) => void;
 }
 
 type Plan = OpResult<"attempt.begin">;
@@ -146,8 +148,10 @@ async function confirmStays(
 ): Promise<void> {
   const deadline = Date.now() + STAY_MS;
   while (Date.now() < deadline) {
-    if (!(await piRunning(host, pane).catch(() => true)))
+    if (!(await piRunning(host, pane).catch(() => true))) {
+      if (await paneMissing(host, pane).catch(() => true)) return;
       throw new Error(await exitedMessage(host, pane, worker));
+    }
     await sleep(POLL_MS);
   }
 }
@@ -157,6 +161,7 @@ async function startAgent(
   pane: string,
   args: string[],
   worker: { session: string; token: string },
+  lost: (text: string) => void,
 ): Promise<void> {
   try {
     await launchAgent(host, pane, args);
@@ -164,7 +169,9 @@ async function startAgent(
     if (await piRunning(host, pane).catch(() => true)) throw error;
     throw new Error(await exitedMessage(host, pane, worker), { cause: error });
   }
-  await confirmStays(host, pane, worker);
+  confirmStays(host, pane, worker).catch((error: unknown) => {
+    lost(error instanceof Error ? error.message : String(error));
+  });
 }
 
 async function launchAgent(host: string, pane: string, args: string[]): Promise<void> {
@@ -220,6 +227,7 @@ export async function dispatch(
       ["--session-id", plan.session, "-e", extension, ...launch.piArgs],
     ].flat(),
     plan,
+    launch.lost,
   );
   await contain(request.host, pane, path);
   return `Dispatched ${where}, branch ${plan.branch}.`;
@@ -283,6 +291,7 @@ export async function replaceWorker(
       ["--session-id", plan.session, "-e", extension, ...launch.piArgs],
     ].flat(),
     plan,
+    launch.lost,
   );
   await contain(recovery.host, pane, path);
   return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.${browser}`;

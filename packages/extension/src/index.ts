@@ -154,6 +154,15 @@ function piArgs(): string[] {
   return Array.isArray(parsed) ? parsed.filter((arg) => typeof arg === "string") : [];
 }
 
+function tellLaunchLost(pi: ExtensionAPI): (text: string) => void {
+  return (text) => {
+    pi.sendMessage(
+      { customType: "fleet-launch", content: `[fleet] launch: ${text}`, display: true },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+  };
+}
+
 function tellUnreadable(pi: ExtensionAPI, error: string): void {
   pi.sendMessage(
     {
@@ -284,7 +293,7 @@ function start(
   appendRolePrompt(pi, role);
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
-    const launch = { url, piArgs: piArgs(), extension: EXTENSION };
+    const launch = { url, piArgs: piArgs(), extension: EXTENSION, lost: tellLaunchLost(pi) };
     registerMate(pi, link, launch, lanes, lane === "main");
     registerRestart(pi, link, launch, lane === "main" ? HOME() : undefined);
     stow = registerStow(pi, HOME(), lane, link);
