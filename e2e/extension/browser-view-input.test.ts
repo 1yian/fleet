@@ -267,30 +267,35 @@ test("reload, zoom, tab and developer tools shortcuts are left to the browser th
   );
 });
 
-test("a key held on one tab is released there when the viewer moves to another tab", async () => {
+test("keys held on one tab are released there, last first, when the viewer moves to another tab", async () => {
   const other = await lab.worker("Second pad");
   await other.act({ action: "open", url: lab.site.url("/pad") });
   await show(captain, `c-${String(pad.card.id)} `);
+  await page.keyboard.down("Shift");
   await page.keyboard.down("KeyZ");
-  await sawAll(["keydown key=z code=KeyZ"], "the held key to arrive");
+  await sawAll(["keydown key=Z code=KeyZ shift"], "the held keys to arrive");
 
   await page.locator("#tabs li", { hasText: `c-${String(other.card.id)} ` }).click();
-  await sawAll(["keyup key=z code=KeyZ"], "the first tab to get the release");
+  await sawAll(["keyup key=Shift code=ShiftLeft"], "the first tab to get the releases");
   await waitFor(
     async () => (await page.locator("#live").textContent()) === "live",
     "the second tab to be shown",
   );
   await page.keyboard.up("KeyZ");
+  await page.keyboard.up("Shift");
   await page.keyboard.type("q");
   await waitFor(
     async () => (await seen(other)).includes("keyup key=q code=KeyQ"),
     "the second tab to get a later key",
   );
   assert.deepEqual(
-    (await seen(other)).filter((line) => line.startsWith("key") && line.includes("key=z")),
+    (await seen(other)).filter((line) => /key=(Z|z|Shift)\b/.test(line)),
     [],
   );
-  assert.equal((await seen()).filter((line) => line.startsWith("keyup key=z")).length, 1);
+  assert.deepEqual(
+    (await seen()).filter((line) => line.startsWith("keyup")),
+    ["keyup key=Z code=KeyZ shift", "keyup key=Shift code=ShiftLeft"],
+  );
 });
 
 test("composed text lands once it is committed, and no key is sent while composing", async () => {

@@ -135,10 +135,14 @@ function send(body, target = selected) {
 }
 
 const held = new Map();
+const MODIFIER_KEYS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+const heldModifiers = () => [...held.values()].reduce((bits, { key }) => bits | (MODIFIER_KEYS[key] ?? 0), 0);
 
 function releaseKeys() {
-  for (const { target, up } of held.values()) send(up, target);
-  held.clear();
+  for (const { target, ...key } of [...held.values()].reverse()) {
+    held.delete(key.code);
+    send({ kind: "key", action: "up", ...key, repeat: false, modifiers: heldModifiers(), commands: [] }, target);
+  }
 }
 
 const modifiersOf = (event) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
@@ -315,7 +319,7 @@ capture.addEventListener("keydown", (event) => {
   }
   send(keyboard("down", event));
   if (mac && event.metaKey && event.key !== "Meta") send(keyboard("up", event));
-  else held.set(event.code, { target: selected, up: keyboard("up", event) });
+  else held.set(event.code, { target: selected, key: event.key, code: event.code, keyCode: event.keyCode, location: event.location });
 });
 capture.addEventListener("keyup", (event) => {
   if (!held.delete(event.code)) return;
