@@ -1,14 +1,16 @@
 # Stops every process that lives inside one worktree: its cwd is the worktree or below,
 # or its command line names a path inside it. Whole path components only, so c-71-a1
-# never matches c-71-a10. Never touches this script, its ancestors, or its children. Sends TERM, waits
-# up to 5 seconds, then KILL for what remains. Prints one line per process:
+# never matches c-71-a10. Never touches this script, its ancestors, or its children, nor a host-shared
+# no-mistakes daemon and the processes under it (contain/service.sh says what that is). Sends TERM,
+# waits up to 5 seconds, then KILL for what remains. Prints one line per process:
 # <pid> <TAB> TERM|KILL|ALIVE <TAB> <command>.
-# Usage: sh -c "$(cat stop-procs.sh)" stop <worktree>
+# Usage: sh -c "$(cat contain/service.sh stop-procs.sh)" stop <worktree>
 set -u
 root=${1%/}
 [ -n "$root" ] || exit 0
 
 snapshot() {
+  spare=$(service_tree $(shared_daemons "$root") | tr '\n' ' ')
   {
     if [ -d /proc/self ]; then
       for d in /proc/[0-9]*; do
@@ -21,8 +23,13 @@ snapshot() {
         /^n/ { print "C", pid, substr($0, 2) }'
     fi
     ps -axo pid=,ppid=,stat=,args= | sed 's/^ */P /'
-  } | ROOT=$root SELF=$$ awk '
-    BEGIN { ROOT = ENVIRON["ROOT"]; SELF = ENVIRON["SELF"] }
+  } | ROOT=$root SELF=$$ SPARE=$spare awk '
+    BEGIN {
+      ROOT = ENVIRON["ROOT"]
+      SELF = ENVIRON["SELF"]
+      listed = split(ENVIRON["SPARE"], spared, " ")
+      for (i = 1; i <= listed; i++) keep[spared[i]] = 1
+    }
     function startsPath(c) { return c == "" || c ~ /^[ \t"\x27=:,(]$/ }
     function endsPath(c) { return c == "" || c ~ /^[ \t"\x27\/:,]$/ }
     function below(pid,   p, n) {
@@ -57,7 +64,7 @@ snapshot() {
     END {
       for (p = SELF; p != "" && p != 0; p = parent[p]) skip[p] = 1
       for (pid in cmd) {
-        if (skip[pid] || state[pid] ~ /^Z/ || below(pid)) continue
+        if (skip[pid] || keep[pid] || state[pid] ~ /^Z/ || below(pid)) continue
         if (cwd[pid] || names(cmd[pid])) print pid "\t" substr(cmd[pid], 1, 100)
       }
     }'

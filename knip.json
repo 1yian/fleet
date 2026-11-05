@@ -19,6 +19,7 @@
         "support/orphan-runner.ts",
         "support/leak-fixture.ts",
         "support/reaper.ts",
+        "support/fake-no-mistakes.ts",
         "trial/*.ts"
       ]
     },
