@@ -229,7 +229,7 @@ export class Browser {
         : undefined;
     const held =
       fields === undefined
-        ? await holdsLogin(page, this.vault.values)
+        ? await holdsLogin(page, this.vault.values, mark !== undefined)
         : await holdsFilled(page, fields);
     if (held) throw new Error(refusal);
     if (fields !== undefined) this.filled.delete(target);

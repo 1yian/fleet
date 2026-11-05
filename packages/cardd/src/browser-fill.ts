@@ -53,7 +53,8 @@ const TYPE = `function (text) {
 
 const HeldSchema = Type.Object({ result: Type.Object({ value: Type.Boolean() }) });
 
-const HOLDS = `function (secrets) {
+const HOLDS = `function (secrets, restoredOnly) {
+  if (restoredOnly && performance.getEntriesByType("navigation")[0]?.type === "navigate") return false;
   const found = ${LOCATE};
   const login = [found.user, found.password, ...this.querySelectorAll("input[type=password]")];
   const fields = [...this.querySelectorAll("input, textarea")];
@@ -67,7 +68,11 @@ const FILLED_FIELD = `function () {
   return this.isConnected && this.value !== "";
 }`;
 
-export async function holdsLogin(page: Page, secrets: readonly string[]): Promise<boolean> {
+export async function holdsLogin(
+  page: Page,
+  secrets: readonly string[],
+  restoredOnly: boolean,
+): Promise<boolean> {
   const handle = parseCdp(
     HandleSchema,
     await call(page, "Runtime.evaluate", { expression: "document" }),
@@ -78,7 +83,7 @@ export async function holdsLogin(page: Page, secrets: readonly string[]): Promis
     await call(page, "Runtime.callFunctionOn", {
       objectId: handle.result.objectId,
       functionDeclaration: HOLDS,
-      arguments: [{ value: secrets }],
+      arguments: [{ value: secrets }, { value: restoredOnly }],
       returnByValue: true,
     }),
     "the page's fields",

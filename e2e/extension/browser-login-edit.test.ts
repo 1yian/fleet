@@ -147,6 +147,22 @@ for (const [how, leave] of leaving)
     assertNoSecretAnywhere();
   });
 
+for (const [how, leave] of leaving)
+  test(`the worker's own text in a later page's field does not refuse eval or screenshots after ${how}`, async () => {
+    await start();
+    const worker = await signedIn("/portal");
+    await leave(worker);
+    await onPath(worker, "/landing");
+    await worker.act({ action: "type", selector: "input[name=q]", text: "weather in paris" });
+
+    assert.equal(
+      await worker.act({ action: "eval", expression: FIELD("q") + ".value" }),
+      '"weather in paris"',
+    );
+    assert.ok((await worker.shoot()).length > 0);
+    assertNoSecretAnywhere();
+  });
+
 test("eval is allowed again once the login-filled field has left the page", async () => {
   await start();
   const worker = await lab.worker("Sign in to the portal");
