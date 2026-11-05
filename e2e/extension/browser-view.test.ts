@@ -271,6 +271,32 @@ test("a gated viewer draws a picture that cardd took, and shows a note instead w
   );
 });
 
+test("two viewers in one browser profile each keep their own session", async () => {
+  const target = await tabOf(lab, first);
+  const gated = await launch([]);
+  const context = await client.newContext({ viewport: { width: 1400, height: 900 } });
+  const captainPage = await context.newPage();
+  await captainPage.goto(url);
+  const gatedPage = await context.newPage();
+  await gatedPage.goto(gated);
+  const statuses = (from: Page): Promise<number[]> =>
+    from.evaluate(async (id) => {
+      const tabs = await fetch("/api/tabs");
+      const stream = await fetch(`/api/stream?target=${encodeURIComponent(id)}`);
+      await stream.body?.cancel();
+      const input = await fetch("/api/input", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: id, kind: "click", x: 5, y: 5 }),
+      });
+      return [tabs.status, stream.status, input.status];
+    }, target);
+
+  assert.deepEqual(await statuses(captainPage), [200, 200, 204]);
+  assert.deepEqual(await statuses(gatedPage), [200, 200, 204]);
+  assert.equal((await context.cookies()).length, 2);
+});
+
 test("only main's own session may ask for the captain's view of a tab, and a frame is only of a tab the caller may see", async () => {
   const cleo = await lab.cardd.connect(lab.cardd.addLane("cleo", "main"));
   try {

@@ -47,8 +47,6 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
-const COOKIE = "fleet_viewer";
-
 const digest = (text: string): Buffer => createHash("sha256").update(text).digest();
 
 const json = (response: ServerResponse, status: number, body: unknown): void => {
@@ -65,6 +63,7 @@ class Viewer {
     (target) => this.screen.size(target),
   );
   private allowed = new Set<string>();
+  private cookie = "";
   private visible = new Set<string>();
   private readonly token: string;
 
@@ -81,12 +80,13 @@ class Viewer {
 
   private cookieOf(request: IncomingMessage): string | undefined {
     const pairs = (request.headers.cookie ?? "").split(";").map((part) => part.trim());
-    const mine = pairs.find((pair) => pair.startsWith(`${COOKIE}=`));
-    return mine?.slice(COOKIE.length + 1);
+    const mine = pairs.find((pair) => pair.startsWith(`${this.cookie}=`));
+    return mine?.slice(this.cookie.length + 1);
   }
 
   allow(port: number): void {
     this.allowed = new Set([`127.0.0.1:${String(port)}`, `localhost:${String(port)}`]);
+    this.cookie = `fleet_viewer_${String(port)}`;
   }
 
   private permits(request: IncomingMessage): boolean {
@@ -152,7 +152,7 @@ class Viewer {
       response
         .writeHead(302, {
           location: `${url.pathname}${url.search}`,
-          "set-cookie": `${COOKIE}=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
+          "set-cookie": `${this.cookie}=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
         })
         .end();
       return false;
