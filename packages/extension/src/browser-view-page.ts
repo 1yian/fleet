@@ -251,6 +251,7 @@ async function refresh() {
 const BUTTONS = ["left", "middle", "right", "back", "forward"];
 const heldButton = (buttons) => (buttons & 1 ? "left" : buttons & 4 ? "middle" : buttons & 2 ? "right" : buttons & 8 ? "back" : buttons & 16 ? "forward" : "none");
 let pressed = false;
+let over = false;
 let ctrlClick = false;
 let downButton = "left";
 
@@ -260,6 +261,12 @@ function mouse(action, event, lost) {
   const button = action === "move" ? heldButton(buttons) : lost ? downButton : named;
   const modifiers = modifiersOf(event) & (ctrlClick ? ~2 : 15);
   send({ kind: "mouse", action, ...point(event), button, buttons, clickCount: Math.min(3, Math.max(1, event.detail)), modifiers });
+}
+
+function leave(event) {
+  if (!over || pressed) return;
+  over = false;
+  mouse("move", event, false);
 }
 
 function release(event, lost) {
@@ -277,12 +284,17 @@ screen.addEventListener("mousedown", (event) => {
   ctrlClick = mac && event.ctrlKey && event.button === 0;
   downButton = ctrlClick ? "right" : BUTTONS[event.button] ?? "left";
   pressed = true;
+  over = true;
   mouse("down", event, false);
 });
 window.addEventListener("mousemove", (event) => {
   if (pressed && event.buttons === 0) release(event, true);
-  else if (pressed || event.target === screen) mouse("move", event, false);
+  else if (pressed || event.target === screen) {
+    over = event.target === screen;
+    mouse("move", event, false);
+  } else leave(event);
 });
+screen.addEventListener("mouseleave", leave);
 window.addEventListener("mouseup", (event) => {
   if (pressed) release(event, false);
 });

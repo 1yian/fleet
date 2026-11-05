@@ -153,6 +153,17 @@ test("hovering, right, middle, double and modified clicks reach the page as they
   );
 });
 
+test("moving the pointer off the picture ends the page's hover", async () => {
+  await show(captain);
+  const over = async (): Promise<boolean> =>
+    (await inPage(pad, "document.getElementById('box').matches(':hover')")) === true;
+  const at = await picturePoint(140, 180);
+  await page.mouse.move(at.x, at.y);
+  await waitFor(over, "the page to see the pointer over the box");
+  await page.mouse.move(100, 400);
+  await waitFor(async () => !(await over()), "the page to see the pointer leave the box");
+});
+
 test("keys with modifiers arrive with their key, code and modifiers", async () => {
   await show(captain);
   await clickInPicture(FIELD.x, FIELD.y);
