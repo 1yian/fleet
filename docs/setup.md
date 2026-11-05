@@ -164,7 +164,7 @@ How it reaches `cardd`: it uses the caller's own credentials, and `cardd` treats
 
 Exit status: 0 done, 1 error, 2 usage, 3 `login` found no entry for the site (the mate was asked), 4 this fleet has no shared browser.
 
-A fleet without `--browser`: `browser-axi` in any form says `no shared browser: this fleet has no shared browser configured: cardd was started without --browser` and exits 4. It names no other browser and does not point an agent to one. The worker prompt (rule 12) tells a worker to run `browser-axi` once on a task that needs a web page, to use it when the fleet has a browser, and to carry on exactly as before when it exits 4: Safari and osascript guidance is unchanged for such a fleet.
+A fleet without `--browser`: `browser-axi` in any form says `no shared browser: this fleet has no shared browser configured: cardd was started without --browser` (an action adds `, so the browser is not available`) and exits 4. It names no other browser and does not point an agent to one. The worker prompt (rule 12) tells a worker to run `browser-axi` once on a task that needs a web page, to use it when the fleet has a browser, and to carry on exactly as before when it exits 4: Safari and osascript guidance is unchanged for such a fleet.
 
 ### Where the viewer opens
 
