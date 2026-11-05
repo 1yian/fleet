@@ -150,6 +150,21 @@ test("click and read say the page's title and address, so a worker sees whether 
   assert.equal(read["page"], `"${label} - Bravo" at ${lab.site.url("/b")}`);
 });
 
+test("a click that only changes the address within the page returns at once, with the new address", async () => {
+  const worker = await lab.worker("Follow the link");
+  const start = lab.site.url("/links");
+  await worker.act({ action: "open", url: start });
+  const label = `c-${String(worker.card.id)} follow-the-link - Links`;
+
+  const fragment = recordOf(await axi(worker, "click", "--selector", "#fragment"));
+  assert.equal(fragment["result"], "Clicked #fragment.");
+  assert.equal(fragment["page"], `"${label}" at ${start}#section`);
+
+  const pushed = recordOf(await axi(worker, "click", "--selector", "#push"));
+  assert.equal(pushed["result"], "Clicked #push.");
+  assert.equal(pushed["page"], `"${label}" at ${lab.site.url("/pushed")}`);
+});
+
 test("eval prints a string and an object once, not as JSON inside JSON", async () => {
   const worker = await lab.worker("Look at the page");
   await worker.act({ action: "open", url: lab.site.url("/a") });

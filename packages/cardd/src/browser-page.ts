@@ -205,12 +205,14 @@ function watchLoad(page: Page, frame: string): Load {
   let started = false;
   const stop = page.cdp.listen((event) => {
     if (event.sessionId !== page.session) return;
+    if (event.method !== "Page.frameStartedLoading" && event.method !== "Page.frameStoppedLoading")
+      return;
+    const { frameId } = parseCdp(FrameEventSchema, event.params, "a load event");
+    if (frameId !== frame) return;
     if (event.method === "Page.frameStartedLoading") {
-      const { frameId } = parseCdp(FrameEventSchema, event.params, "a load event");
-      if (frameId !== frame) return;
       started = true;
       begin();
-    } else if (event.method === "Page.loadEventFired" && started) end();
+    } else if (started) end();
   });
   return { began, ended, stop };
 }
