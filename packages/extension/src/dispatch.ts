@@ -2,14 +2,27 @@ import type { Delivery, OpResult } from "@fleet/protocol";
 import { releaseBrowser } from "./browser-release.ts";
 import { SYNC_FUNCTIONS } from "./clones.ts";
 import { contain, releaseAll } from "./containment.ts";
+import { extensionOn } from "./extension-path.ts";
 import { fleetArgs } from "./fleet-args.ts";
-import { field, herdr, onHost, piPids, piRunning, records, shellIdle, worktreeOf } from "./host.ts";
+import {
+  field,
+  herdr,
+  onHost,
+  paneText,
+  piPids,
+  piRunning,
+  records,
+  scrub,
+  shellIdle,
+  worktreeOf,
+} from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
 import type { Link } from "./link.ts";
 
 export interface Launch {
   readonly url: string;
   readonly piArgs: readonly string[];
+  readonly extension: string;
 }
 
 type Plan = OpResult<"attempt.begin">;
@@ -108,7 +121,53 @@ async function launchOnce(host: string, pane: string, args: string[]): Promise<E
   }
 }
 
-async function startAgent(host: string, pane: string, args: string[]): Promise<void> {
+const STAY_MS = 3000;
+
+const EXIT_LINES = 20;
+
+async function exitedMessage(
+  host: string,
+  pane: string,
+  worker: { session: string; token: string },
+): Promise<string> {
+  const text = await paneText(host, pane).catch(() => "");
+  const lines = scrub(text, [worker.token])
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line !== "");
+  const shown = lines.slice(-EXIT_LINES).join("\n");
+  return `Pi is not running in pane ${pane} on ${host} after ${worker.session} was started in it, so the worker never connected. The pane is still open. Last lines of the pane:\n${shown}`;
+}
+
+async function confirmStays(
+  host: string,
+  pane: string,
+  worker: { session: string; token: string },
+): Promise<void> {
+  const deadline = Date.now() + STAY_MS;
+  while (Date.now() < deadline) {
+    if (!(await piRunning(host, pane).catch(() => true)))
+      throw new Error(await exitedMessage(host, pane, worker));
+    await sleep(POLL_MS);
+  }
+}
+
+async function startAgent(
+  host: string,
+  pane: string,
+  args: string[],
+  worker: { session: string; token: string },
+): Promise<void> {
+  try {
+    await launchAgent(host, pane, args);
+  } catch (error) {
+    if (await piRunning(host, pane).catch(() => true)) throw error;
+    throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+  }
+  await confirmStays(host, pane, worker);
+}
+
+async function launchAgent(host: string, pane: string, args: string[]): Promise<void> {
   const deadline = Date.now() + SHELL_WAIT_MS;
   for (let tries = 1; ;) {
     const error = await launchOnce(host, pane, args);
@@ -133,6 +192,7 @@ export async function dispatch(
     delivery?: Delivery | undefined;
   },
 ): Promise<string> {
+  const extension = await extensionOn(request.host, launch.extension);
   const plan = await link.call("attempt.begin", request);
   const where = `${plan.session} on ${request.host}`;
   const { pane, path } = await worktreePane(request.host, plan, request.card);
@@ -157,8 +217,9 @@ export async function dispatch(
         "--",
       ],
       fleetArgs({ url: launch.url, token: plan.token, role: "worker" }),
-      ["--session-id", plan.session, ...launch.piArgs],
+      ["--session-id", plan.session, "-e", extension, ...launch.piArgs],
     ].flat(),
+    plan,
   );
   await contain(request.host, pane, path);
   return `Dispatched ${where}, branch ${plan.branch}.`;
@@ -194,6 +255,7 @@ export async function replaceWorker(
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
   if (recovery.repeat)
     return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
+  const extension = await extensionOn(recovery.host, launch.extension);
   const old = await worktreePane(recovery.host, plan, recovery.card);
   if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
   await closeWorkspace(recovery.host, plan.clone, plan.session);
@@ -218,8 +280,9 @@ export async function replaceWorker(
         "--",
       ],
       fleetArgs({ url: launch.url, token: plan.token, role: "worker", avoid }),
-      ["--session-id", plan.session, ...launch.piArgs],
+      ["--session-id", plan.session, "-e", extension, ...launch.piArgs],
     ].flat(),
+    plan,
   );
   await contain(recovery.host, pane, path);
   return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.${browser}`;

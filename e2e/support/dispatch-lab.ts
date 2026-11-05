@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "./cardd.ts";
 import { Harness, type Pi, type Turn } from "./harness.ts";
@@ -41,6 +41,8 @@ export interface LabOptions {
   readonly repo?: boolean;
   readonly gate?: "allowed" | "blocked";
   readonly extension?: string;
+  readonly hosts?: Record<string, readonly string[]>;
+  readonly roots?: Record<string, string>;
 }
 
 function gateRemote(
@@ -62,7 +64,13 @@ function gateRemote(
 
 function addSite(
   cardd: Cardd,
-  { remote: withRemote = false, delivery = "no-mistakes", repo = true, gate }: LabOptions,
+  {
+    remote: withRemote = false,
+    delivery = "no-mistakes",
+    repo = true,
+    gate,
+    hosts = {},
+  }: LabOptions,
 ): { clone: string; remote: string | undefined; env: Record<string, string> } {
   const clone = join(tempDir("fleet-clone-"), "site");
   const git = "git -c user.name=t -c user.email=t@t";
@@ -72,7 +80,14 @@ function addSite(
   const env = gate === undefined || remote === undefined ? {} : gateRemote(clone, remote, gate);
   cardd.addProject(
     "site",
-    remote === undefined ? { local: clone, flaky: clone, far: clone } : { local: clone },
+    remote === undefined
+      ? {
+          local: clone,
+          flaky: clone,
+          far: clone,
+          ...Object.fromEntries(Object.keys(hosts).map((host) => [host, clone])),
+        }
+      : { local: clone },
     repo ? "acme/site" : undefined,
     delivery,
   );
@@ -87,8 +102,10 @@ export async function startDispatchLab({
   workerArgs = [],
   workerShell = false,
   extension = EXTENSION,
+  roots = {},
   ...site
 }: LabOptions = {}): Promise<DispatchLab> {
+  const checkout = resolve(dirname(extension), "..", "..", "..");
   const cardd = await Cardd.start(carddEnv, carddArgs);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = tempDir("fleet-home-");
@@ -111,11 +128,13 @@ export async function startDispatchLab({
       HERDR_SESSION: lab.name,
       ...env,
       ...mateEnv,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(workerShell), "-e", extension, ...workerArgs]),
+      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(workerShell), ...workerArgs]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],
         far: ["node", SWITCH, join(h.dir, "far-down")],
+        ...site.hosts,
       }),
+      FLEET_ROOTS: JSON.stringify({ flaky: checkout, far: checkout, ...roots }),
     },
     [extension],
   );

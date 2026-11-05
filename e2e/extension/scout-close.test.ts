@@ -48,7 +48,7 @@ beforeEach(async () => {
       FLEET_ROLE: "mate",
       FLEET_FAKE_AGENT: "mate",
       HERDR_SESSION: lab.name,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", EXTENSION]),
+      FLEET_PI_ARGS: JSON.stringify(h.piArgs()),
     },
     [EXTENSION],
   );

@@ -97,12 +97,7 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
 async function laneConfig(lane: LaneConfig): Promise<Config> {
   exportHosts(lane);
   const forwarded = lane.bws === undefined ? [] : [`--fleet-bws=${JSON.stringify(lane.bws)}`];
-  process.env["FLEET_PI_ARGS"] ??= JSON.stringify([
-    "-e",
-    EXTENSION,
-    ...workerPiArgs(lane),
-    ...forwarded,
-  ]);
+  process.env["FLEET_PI_ARGS"] ??= JSON.stringify([...workerPiArgs(lane), ...forwarded]);
   const secrets = secretsOf(lane.bws);
   const resolved = await laneToken(lane, secrets?.bws);
   if (resolved.value === undefined) throw new Error(`fleet: ${resolved.note}`);
@@ -289,8 +284,9 @@ function start(
   appendRolePrompt(pi, role);
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
-    registerMate(pi, link, { url, piArgs: piArgs() }, lanes, lane === "main");
-    registerRestart(pi, link, { url, piArgs: piArgs() }, lane === "main" ? HOME() : undefined);
+    const launch = { url, piArgs: piArgs(), extension: EXTENSION };
+    registerMate(pi, link, launch, lanes, lane === "main");
+    registerRestart(pi, link, launch, lane === "main" ? HOME() : undefined);
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
     showBoardLink(ctx, url);

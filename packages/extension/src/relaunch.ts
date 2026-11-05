@@ -1,4 +1,5 @@
-import { herdr, quote, shellIdle } from "./host.ts";
+import { quote } from "@fleet/protocol/route";
+import { herdr, shellIdle } from "./host.ts";
 import { readLaneConfig } from "./lane-config.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 

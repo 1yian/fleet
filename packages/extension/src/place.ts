@@ -1,6 +1,5 @@
 import { arrangeOn, tagWorker } from "./arrange.ts";
-import { field, herdr, records, rootPane } from "./host.ts";
-import { isRecord } from "./lane-config.ts";
+import { field, herdr, records, rootOf, rootPane } from "./host.ts";
 
 export async function openWorkerWorkspace(
   host: string,
@@ -22,10 +21,4 @@ export async function openWorkerWorkspace(
     await arrangeOn(host, rootOf(host)).catch(() => undefined);
   }
   return rootPane(created);
-}
-
-function rootOf(host: string): string | undefined {
-  const roots: unknown = JSON.parse(process.env["FLEET_ROOTS"] ?? "{}");
-  const root = isRecord(roots) ? roots[host] : undefined;
-  return typeof root === "string" ? root : undefined;
 }

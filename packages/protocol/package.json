@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./route": "./src/route.ts",
     "./tunnel": "./src/tunnel.ts"
   },
   "dependencies": {
