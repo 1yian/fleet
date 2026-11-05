@@ -47,10 +47,12 @@ async function start(flags: string[], env: Record<string, string> = {}): Promise
   viewers.push(viewer);
   let said = "";
   viewer.stdout?.setEncoding("utf8").on("data", (chunk: string) => (said += chunk));
+  const record = flags.includes("--captain") ? 3 : 2;
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
     const found = /Fleet browser viewer \((?:captain|gated)\): (\S+)/.exec(said)?.[1];
-    if (found !== undefined) return { url: found, said: () => said };
+    if (found !== undefined && said.split("\n").length > record)
+      return { url: found, said: () => said };
     assert.ok(Date.now() < deadline, "the viewer did not print its address");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

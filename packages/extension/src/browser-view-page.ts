@@ -117,21 +117,47 @@ function idle(message) {
   note.textContent = message;
 }
 
-function watch(target) {
+const ACK_TIMEOUT_MS = 3000;
+const ACK_TRIES = 3;
+const ACK_BACKOFF_MS = 250;
+const RESET_GAP_MS = 5000;
+let lastReset = 0;
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function acknowledge(mine, id, target) {
+  for (let attempt = 0; attempt < ACK_TRIES; attempt += 1) {
+    if (attempt > 0) await pause(ACK_BACKOFF_MS * attempt);
+    if (source !== mine) return;
+    const status = await fetch("/api/ack?id=" + id, { method: "POST", keepalive: true, signal: AbortSignal.timeout(ACK_TIMEOUT_MS) })
+      .then((response) => response.status, () => 0);
+    if (status === 204) return;
+    if (status === 404) break;
+  }
+  if (source === mine) reset(mine, target);
+}
+
+function reset(mine, target) {
+  const wait = Math.max(0, lastReset + RESET_GAP_MS - Date.now());
+  lastReset = Date.now() + wait;
+  setTimeout(() => { if (source === mine) connect(target); }, wait);
+}
+
+function closeStream() {
   if (source !== null) source.close();
-  selected = target;
-  if (target === null) return;
-  screen.hidden = false;
-  note.hidden = true;
-  paste.hidden = false;
-  live.hidden = false;
-  hint.hidden = false;
+  source = null;
+}
+
+function connect(target) {
+  closeStream();
   live.textContent = "connecting";
   live.className = "";
   const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  acknowledging = () => fetch("/api/ack?id=" + id, { method: "POST", keepalive: true }).catch(() => undefined);
-  source = new EventSource("/api/stream?target=" + encodeURIComponent(target) + "&id=" + id);
-  source.onmessage = (message) => {
+  const mine = new EventSource("/api/stream?target=" + encodeURIComponent(target) + "&id=" + id);
+  source = mine;
+  acknowledging = () => acknowledge(mine, id, target);
+  mine.onopen = refit;
+  mine.onmessage = (message) => {
     const shown = JSON.parse(message.data);
     if (shown.hidden !== undefined) {
       screen.removeAttribute("src");
@@ -150,8 +176,21 @@ function watch(target) {
     live.textContent = "live";
     live.className = "on";
   };
-  source.onerror = () => { live.textContent = "reconnecting"; live.className = ""; };
-  refit();
+  mine.onerror = () => { live.textContent = "reconnecting"; live.className = ""; };
+}
+
+function watch(target) {
+  selected = target;
+  if (target === null) {
+    closeStream();
+    return;
+  }
+  screen.hidden = false;
+  note.hidden = true;
+  paste.hidden = false;
+  live.hidden = false;
+  hint.hidden = false;
+  connect(target);
 }
 
 function render(tabs) {

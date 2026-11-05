@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ const VIEWER = fileURLToPath(new URL("./browser-view.ts", import.meta.url));
 const BROWSER_TAB = "Browser";
 const VIEWER_LINE = /Fleet browser viewer \((captain|gated)\): (\S+)/g;
 const BUILD_LINE = /^Viewer build: (\w+)$/m;
+const LAUNCH_LINE = /^Viewer launch: (\w+)$/m;
 const MODE_WAIT_MS = 5_000;
 const STOP_WAIT_MS = 15_000;
 const LINK_WAIT_MS = 15_000;
@@ -71,6 +73,7 @@ interface Printed {
   readonly mode: "captain" | "gated";
   readonly link: string;
   readonly build: string | undefined;
+  readonly launch: string | undefined;
 }
 
 async function printedViewer(pane: string): Promise<Printed | undefined> {
@@ -82,6 +85,7 @@ async function printedViewer(pane: string): Promise<Printed | undefined> {
     mode: last[1] === "captain" ? "captain" : "gated",
     link: last[2] ?? "",
     build: BUILD_LINE.exec(after)?.[1],
+    launch: LAUNCH_LINE.exec(after)?.[1],
   };
 }
 
@@ -104,31 +108,39 @@ async function stop(pane: string): Promise<void> {
 
 async function startable(placement: Placement, pane: string): Promise<boolean> {
   if (await shellIdle("local", pane)) return true;
+  if (!placement.captain) return false;
   const running = await runningViewer(pane);
   if (running === undefined) return false;
-  const stale = running.build !== viewerBuild();
-  const replace = placement.captain
-    ? running.mode === "gated" || stale
-    : running.mode === "gated" && stale;
-  if (!replace) return false;
+  if (running.mode === "captain" && running.build === viewerBuild()) return false;
   await stop(pane);
   return true;
 }
 
-async function linkOf(placement: Placement, pane: string | undefined): Promise<string | undefined> {
+async function linkOf(
+  placement: Placement,
+  pane: string | undefined,
+  launched: string | undefined,
+): Promise<string | undefined> {
   if (!placement.captain || pane === undefined) return undefined;
   let link: string | undefined;
   await until(async () => {
     const printed = await printedViewer(pane);
-    link =
-      printed?.mode === "captain" && printed.build === viewerBuild() ? printed.link : undefined;
+    const mine =
+      launched === undefined ? printed?.build === viewerBuild() : printed?.launch === launched;
+    link = printed?.mode === "captain" && mine ? printed.link : undefined;
     return link !== undefined;
   }, LINK_WAIT_MS);
   return link;
 }
 
-const commandFor = ({ source, open, captain }: Placement): string =>
-  `node ${quote(VIEWER)} ${viewerArguments(source).map(quote).join(" ")}${open ? " --open" : ""}${captain ? " --captain" : ""}`;
+const commandFor = ({ source, open, captain }: Placement, marker: string): string =>
+  `node ${quote(VIEWER)} ${viewerArguments(source).map(quote).join(" ")}${open ? " --open" : ""}${captain ? " --captain" : ""} --launch ${marker}`;
+
+async function launch(placement: Placement, pane: string): Promise<string> {
+  const marker = randomBytes(8).toString("hex");
+  await herdr("local", ["pane", "run", pane, commandFor(placement, marker)]);
+  return marker;
+}
 
 async function create(placement: Placement): Promise<string> {
   const { workspace, cwd, focus } = placement;
@@ -143,9 +155,7 @@ async function create(placement: Placement): Promise<string> {
     BROWSER_TAB,
     ...(focus ? [] : ["--no-focus"]),
   ]);
-  const pane = rootPane(created);
-  await herdr("local", ["pane", "run", pane, commandFor(placement)]);
-  return pane;
+  return rootPane(created);
 }
 
 async function viewerTab(workspace: string): Promise<string | undefined> {
@@ -170,16 +180,16 @@ export async function placeViewer(placement: Placement): Promise<Placed> {
   const existing = await viewerTab(workspace);
   if (existing === undefined) {
     const pane = await create(placement);
-    return { started: true, link: await linkOf(placement, pane) };
+    const launched = await launch(placement, pane);
+    return { started: true, link: await linkOf(placement, pane, launched) };
   }
   const pane = await paneOf(workspace, existing);
-  let started = false;
-  if (pane !== undefined && (await startable(placement, pane))) {
-    await herdr("local", ["pane", "run", pane, commandFor(placement)]);
-    started = true;
-  }
+  const launched =
+    pane !== undefined && (await startable(placement, pane))
+      ? await launch(placement, pane)
+      : undefined;
   if (focus) await herdr("local", ["tab", "focus", existing]);
-  return { started, link: await linkOf(placement, pane) };
+  return { started: launched !== undefined, link: await linkOf(placement, pane, launched) };
 }
 
 const isSummon = (entry: Entry, main: boolean): boolean =>

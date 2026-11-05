@@ -11,6 +11,7 @@ import {
 } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { startViewer, type CaptainViewer } from "../support/captain-viewer.ts";
+import { DelayProxy } from "../support/delay-proxy.ts";
 import { ACCOUNT, SignInSite } from "../support/signin-site.ts";
 
 const WAIT_MS = 20_000;
@@ -23,6 +24,7 @@ let worker: RawWorker;
 let viewer: CaptainViewer;
 let client: Client;
 let context: BrowserContext | undefined;
+let proxy: DelayProxy | undefined;
 
 beforeEach(async () => {
   lab = await BrowserLab.start({ proxied: true, isolated: true });
@@ -37,10 +39,12 @@ afterEach(async () => {
   context = undefined;
   const stopped = await Promise.allSettled([
     client.close(),
+    proxy?.stop(),
     viewer.stop(),
     site.stop(),
     lab.stop(),
   ]);
+  proxy = undefined;
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -251,6 +255,42 @@ test("phone: the page in the tab is laid out for the phone's width while the cap
     async () => Number(await onRemote("innerHeight")) < phone.height - 150,
     "the tab to give room to the key bar",
   );
+});
+
+const COUNT_OPENS = `
+  window.__opens = 0;
+  const Native = window.EventSource;
+  window.EventSource = class extends Native {
+    constructor(url, init) {
+      super(url, init);
+      this.addEventListener("open", () => { window.__opens += 1; });
+    }
+  };
+`;
+
+test("phone: the tab is fitted to the phone again when the connection drops and comes back", async () => {
+  await worker.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
+  const shown = new URL(viewer.url);
+  proxy = await DelayProxy.start(Number(shown.port), 0);
+  context = await client.newContext({ ...IPHONE });
+  const page = await context.newPage();
+  await page.addInitScript(COUNT_OPENS);
+  await page.goto(`http://127.0.0.1:${String(proxy.port)}/${shown.search}`);
+  await page.locator("#tabs li").first().waitFor();
+  await pick(page, true);
+  const phone = page.viewportSize();
+  assert.ok(phone !== null);
+  const opened = async (): Promise<number> => Number(await page.evaluate("window.__opens"));
+  assert.equal(await opened(), 1);
+
+  proxy.drop();
+  await until(async () => (await opened()) >= 2, "the page to connect again");
+
+  await until(
+    async () => Number(await onRemote("innerWidth")) === phone.width,
+    "the tab to be fitted to the phone again",
+  );
+  await live(page);
 });
 
 test("phone: the keyboard's Backspace deletes what was typed, and the key bar reaches the page", async () => {

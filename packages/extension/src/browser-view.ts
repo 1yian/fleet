@@ -77,7 +77,7 @@ class Viewer {
   private readonly transports: Transports;
   private readonly captain: boolean;
   private readonly screens = new Map<string, { endpoint: string; screen: Screen }>();
-  private readonly paced = new Map<string, Pacer>();
+  private readonly paced = new Map<string, { pacer: Pacer; response: ServerResponse }>();
   private browsers = new Map<string, string>();
   private own: string | null = null;
   private readonly poll = new Poll(
@@ -168,7 +168,10 @@ class Viewer {
       response.write(`data: ${JSON.stringify(shown)}\n\n`);
     };
     const pacer = id === null ? undefined : new Pacer(write);
-    if (pacer !== undefined && id !== null) this.paced.set(id, pacer);
+    if (pacer !== undefined && id !== null) {
+      this.paced.get(id)?.response.end();
+      this.paced.set(id, { pacer, response });
+    }
     const send =
       pacer === undefined
         ? write
@@ -178,8 +181,7 @@ class Viewer {
     const watching: { stop: (() => void) | undefined } = { stop: undefined };
     response.on("close", () => {
       watching.stop?.();
-      pacer?.stop();
-      if (id !== null) this.paced.delete(id);
+      if (id !== null && this.paced.get(id)?.response === response) this.paced.delete(id);
     });
     watching.stop = this.captain
       ? await this.screenFor(target).watch(target, send, () => {
@@ -221,8 +223,12 @@ class Viewer {
   }
 
   private acknowledge(response: ServerResponse, url: URL): Promise<void> {
-    this.paced.get(url.searchParams.get("id") ?? "")?.release();
-    response.writeHead(204).end();
+    const stream = this.paced.get(url.searchParams.get("id") ?? "");
+    if (stream === undefined) response.writeHead(404).end();
+    else {
+      stream.pacer.release();
+      response.writeHead(204).end();
+    }
     return Promise.resolve();
   }
 
@@ -335,6 +341,11 @@ function reachLine(reach: Reach | undefined): string | undefined {
     : `No tailnet address was found (${reach.why}), so this viewer listens on this machine only. Open the link here: another machine cannot reach it.`;
 }
 
+function launchOf(flags: readonly string[]): string | undefined {
+  const at = flags.indexOf("--launch");
+  return at < 0 ? undefined : flags[at + 1];
+}
+
 async function main(): Promise<void> {
   const flags = process.argv.slice(2);
   const token = randomBytes(24).toString("base64url");
@@ -349,6 +360,8 @@ async function main(): Promise<void> {
   const url = `http://${shownHost(reach)}:${String(address.port)}/?t=${token}`;
   console.log(`Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`);
   console.log(`Viewer build: ${viewerBuild()}`);
+  const launch = launchOf(flags);
+  if (launch !== undefined) console.log(`Viewer launch: ${launch}`);
   const line = reachLine(reach);
   if (line !== undefined) console.log(line);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {

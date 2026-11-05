@@ -384,6 +384,7 @@ export class BrowserHerdr {
 
 export class Stream {
   raw = "";
+  ended = false;
   readonly messages: JsonRecord[] = [];
   private readonly abort: AbortController;
   private readonly reading: Promise<void>;
@@ -406,6 +407,8 @@ export class Stream {
       }
     } catch {
       return;
+    } finally {
+      this.ended = true;
     }
   }
 

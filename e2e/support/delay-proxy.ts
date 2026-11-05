@@ -40,8 +40,12 @@ export class DelayProxy {
     return proxy;
   }
 
-  async stop(): Promise<void> {
+  drop(): void {
     for (const socket of this.sockets) socket.destroy();
+  }
+
+  async stop(): Promise<void> {
+    this.drop();
     await new Promise((resolve) => this.server.close(resolve));
   }
 }

@@ -119,6 +119,43 @@ test(
 );
 
 test(
+  "a captain's viewer that was stopped and is summoned again carries its new link, not the old one in the pane",
+  { skip: NO_ADDRESS },
+  async () => {
+    assert.ok(address !== undefined);
+    fleet = await BrowserHerdr.start({ browser: true, tailnet: address });
+    const [first, second] = await fleet.workers(["Sign in to Google", "Pay the invoice"]);
+    assert.ok(first !== undefined && second !== undefined);
+    fleet.h.onModel(() => ({ text: "sent the captain his link" }), "mate");
+    await fleet.startMain();
+    const main = await fleet.mainWorkspace();
+    await fleet.axi(
+      first,
+      `open ${fleet.site.url("/a")} --captain 'Google asks for a second factor'`,
+    );
+    const oldLink = LINK.exec(await heardAbout(/Google asks for a second factor/))?.[0];
+    assert.ok(oldLink !== undefined);
+    const pane = await fleet.viewerPane(main);
+    await fleet.lab.press(pane, "ctrl+c");
+    await until("the old viewer to stop answering", async () =>
+      (await fetch(oldLink).then(
+        () => false,
+        () => true,
+      ))
+        ? true
+        : undefined,
+    );
+    assert.ok((await fleet.history(pane)).includes(oldLink), "the old link is still in the pane");
+
+    await fleet.axi(second, `open ${fleet.site.url("/b")} --captain 'the bank asks for a code'`);
+
+    const newLink = LINK.exec(await heardAbout(/the bank asks for a code/))?.[0];
+    assert.ok(newLink !== undefined && newLink !== oldLink, "the link is the new viewer's");
+    assert.equal((await fetch(newLink, { redirect: "manual" })).status, 200);
+  },
+);
+
+test(
   "a captain's viewer that is current is reused, and a second summon carries the same link",
   { skip: NO_ADDRESS },
   async () => {
