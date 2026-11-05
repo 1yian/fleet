@@ -34,6 +34,13 @@ export function rootOf(host: string): string | undefined {
   return typeof root === "string" ? root : undefined;
 }
 
+const JSON_STRING = String.raw`"(?:[^"\\]|\\.)*"`;
+const JSON_FLAT_OBJECT = String.raw`\{(?:${JSON_STRING}|[^"{}])*\}`;
+const BWS_ARGUMENT = new RegExp(
+  String.raw`--fleet-bws=\{(?:${JSON_STRING}|[^"{}]|${JSON_FLAT_OBJECT})*\}`,
+  "g",
+);
+
 export const scrub = (text: string, secrets: readonly string[] = []): string =>
   secrets
     .filter((secret) => secret !== "")
@@ -41,7 +48,7 @@ export const scrub = (text: string, secrets: readonly string[] = []): string =>
       (out, secret) => out.replaceAll(secret, "[hidden]"),
       text
         .replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]")
-        .replace(/--fleet-bws=\S+/g, "--fleet-bws=[hidden]"),
+        .replace(BWS_ARGUMENT, "--fleet-bws=[hidden]"),
     );
 
 const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 60_000;

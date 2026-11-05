@@ -41,10 +41,11 @@ afterEach(async (t) => {
   scratch.dispose();
 });
 
-async function maverick(root: string): Promise<DispatchLab> {
+async function maverick(root: string, workerArgs: readonly string[] = []): Promise<DispatchLab> {
   const host = launchdLikeHost();
   parts = await startDispatchLab({
     extension: matesOwnExtension,
+    workerArgs,
     hosts: { maverick: ["node", LAUNCHD_TRANSPORT, host.system] },
     roots: { maverick: root },
     mate: { FLEET_TOOL_DIRS: host.homebrew },
@@ -119,9 +120,15 @@ async function mateHeard(h: DispatchLab["h"], pattern: RegExp): Promise<string> 
   }
 }
 
-test("a worker whose extension fails to load on the host is reported with the last lines of its pane, and never its token", async () => {
+const LANE_BWS = {
+  tokenFile: "/Users/ci/Fleet Secrets/bws token",
+  project: "0a1b2c3d-1111-4222-8333-444455556666",
+  env: { GH_TOKEN: "deploy key for github" },
+};
+
+test("a worker whose extension fails to load on the host is reported with the last lines of its pane, and never its token or its bws settings", async () => {
   const root = checkoutWithExtension('throw new Error("boom from the destination extension");\n');
-  const { h, lab, mate } = await maverick(root);
+  const { h, lab, mate } = await maverick(root, [`--fleet-bws=${JSON.stringify(LANE_BWS)}`]);
   h.onModel(() => ({ text: "noted" }), "mate");
   mate.prompt("ship the scrollbar fix");
 
@@ -137,7 +144,9 @@ test("a worker whose extension fails to load on the host is reported with the la
     ?.slice("--fleet-token=".length);
   assert.ok(token !== undefined && token !== "", "the worker was launched without a token");
   assert.ok(!result.includes(token), "the report carries the worker token");
-  assert.ok(!result.includes("--fleet-bws="), "the report carries the bws settings");
+  for (const secret of ["Secrets", "bws token", LANE_BWS.project, "deploy key", "GH_TOKEN"])
+    assert.ok(!result.includes(secret), `the report carries the bws setting ${secret}`);
+  assert.ok(result.includes("--fleet-bws=[hidden]"), "the report does not show the bws argument");
   assert.deepEqual(await workersOf(lab), []);
 });
 
