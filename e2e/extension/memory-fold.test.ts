@@ -144,8 +144,12 @@ async function chatAfterGap(gapMs: number, model?: string): Promise<Turn[][]> {
       await h.waitForNth((event) => event["type"] === "settled", n, `main's turn ${String(n)}`);
     else
       await h.waitForWire(
-        () => h.callsOf("mate").some((turns) => turns.some((t) => t.text.includes("Message 3."))),
-        "a model call that carries message 3",
+        () =>
+          h
+            .callsOf("mate")
+            .filter(isMains)
+            .some((turns) => turns.some((t) => t.text.includes("Message 3."))),
+        "main's model call that carries message 3",
       );
   }
   return h.callsOf("mate").filter(isMains);
