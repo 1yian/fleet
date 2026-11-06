@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
 import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import { routed } from "@fleet/protocol/route";
+import { runOnTransport } from "@fleet/protocol/transport";
 import type { Hosts } from "./pulls.ts";
 import { getCard, listProjects } from "./store.ts";
 import { cardEntries } from "./store.ts";
@@ -52,7 +52,7 @@ async function mergedOn(
   const route = routeFor(hosts, place.host);
   const [file = "direnv", ...args] = routed(route, command);
   const out = await new Promise<string>((resolve, reject) => {
-    execFile(file, args, { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) => {
+    runOnTransport(file, args, { timeout: 60_000 }, (error, stdout, stderr) => {
       if (error !== null) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });

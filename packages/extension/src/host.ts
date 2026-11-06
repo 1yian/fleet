@@ -1,6 +1,7 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { hostname } from "node:os";
 import { routed } from "@fleet/protocol/route";
+import { runOnTransport } from "@fleet/protocol/transport";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -139,10 +140,10 @@ async function herdrText(host: string, args: readonly string[], probe: boolean):
   const via = transport(host);
   const [file = "herdr", ...rest] = routed(via, command);
   return new Promise<string>((resolve, reject) => {
-    execFile(
+    runOnTransport(
       file,
       rest,
-      { encoding: "utf8", timeout: probe ? PROBE_TIMEOUT_MS : 120_000 },
+      { timeout: probe ? PROBE_TIMEOUT_MS : 120_000 },
       (error, out, err) => {
         if (error !== null && out.trim() === "") {
           const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
@@ -169,18 +170,13 @@ export async function onHost(
   const via = transport(host);
   const [file = "", ...rest] = routed(via, argv);
   return new Promise((resolve, reject) => {
-    execFile(
-      file,
-      rest,
-      { encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 },
-      (error, out, err) => {
-        if (error === null) resolve(out);
-        else {
-          const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
-          reject(failure(via, error, scrub(message), false));
-        }
-      },
-    );
+    runOnTransport(file, rest, { timeout, maxBuffer: 16 * 1024 * 1024 }, (error, out, err) => {
+      if (error === null) resolve(out);
+      else {
+        const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
+        reject(failure(via, error, scrub(message), false));
+      }
+    });
   });
 }
 

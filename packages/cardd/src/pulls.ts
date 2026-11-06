@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { routed } from "@fleet/protocol/route";
+import { runOnTransport } from "@fleet/protocol/transport";
 
 const GITHUB_REMOTE = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/;
 
@@ -30,7 +30,7 @@ function originOn(hosts: Hosts, host: string, clone: string): Promise<string | u
   const via = hosts[host] ?? [];
   const [file = "git", ...args] = routed(via, argv);
   return new Promise((resolve) => {
-    execFile(file, args, { encoding: "utf8", timeout: ORIGIN_TIMEOUT_MS }, (error, out) => {
+    runOnTransport(file, args, { timeout: ORIGIN_TIMEOUT_MS }, (error, out) => {
       resolve(error === null ? repoOfRemote(out) : undefined);
     });
   });

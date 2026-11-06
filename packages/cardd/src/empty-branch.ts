@@ -1,7 +1,7 @@
-import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS } from "@fleet/protocol";
 import { routed } from "@fleet/protocol/route";
+import { runOnTransport } from "@fleet/protocol/transport";
 import { localLanding } from "./attempts.ts";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
@@ -20,7 +20,7 @@ function run(hosts: Hosts, host: string, argv: readonly string[]): Promise<boole
   const route = routeFor(hosts, host);
   const [file = "sh", ...args] = routed(route, argv);
   return new Promise((resolve) => {
-    execFile(file, args, { timeout: CHECK_TIMEOUT_MS }, (error) => {
+    runOnTransport(file, args, { timeout: CHECK_TIMEOUT_MS }, (error) => {
       resolve(error === null);
     });
   });
