@@ -180,7 +180,7 @@ What it prints, beyond `result`:
 - An error that needs a tab says what to run, `browser-axi open <url>`, and carries a `help` line that says it too. `login` on a host that has no `logins` in `--browser` says that logins are not set up on that host and to ask the mate, and its `help` tells the worker to report paused or blocked.
 - A default `screenshot` (no `--out`) writes into a new `fleet-shot-*` folder of the temporary directory, and first removes the ones of that name that the same user owns and that are older than a day.
 
-A fleet without `--browser`: `browser-axi` in any form says `no shared browser: this fleet has no shared browser configured: cardd was started without --browser` (an action adds `, so the browser is not available`) and exits 4. It names no other browser and does not point an agent to one. The worker prompt (rule 12) tells a worker to run `browser-axi` once on a task that needs a web page, to use it when the fleet has a browser, and to carry on exactly as before when it exits 4: Safari and osascript guidance is unchanged for such a fleet.
+A fleet without `--browser`: `browser-axi` in any form says `no shared browser: this fleet has no shared browser configured: cardd was started without --browser` (an action adds `, so the browser is not available`) and exits 4. It names no other browser and does not point an agent to one. The worker prompt (rule 12) tells a worker to run `browser-axi` once on a task that needs a web page, to use it when the fleet has a browser, and to carry on without it when it exits 4.
 
 ### Where the viewer opens
 
