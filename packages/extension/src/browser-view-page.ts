@@ -116,8 +116,8 @@ async function flow() {
       await pending.shift()();
       continue;
     }
-    const batch = [];
-    while (pending.length > 0 && typeof pending[0] !== "function") batch.push(pending.shift());
+    const batch = [pending.shift()];
+    while (pending.length > 0 && typeof pending[0] !== "function" && pending[0].target === batch[0].target) batch.push(pending.shift());
     try {
       await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
     } catch {

@@ -374,3 +374,47 @@ for (const [loss, lose] of LOSSES) {
     assert.notEqual(seen[0].url, seen[1]?.url, "the new stream has an id of its own");
   });
 }
+
+test("input that waited behind a slow request for a tab that then closed is dropped alone, and what is typed for the next tab arrives", async () => {
+  const other = await lab.worker("Second tab on a slow link");
+  await other.act({ action: "open", url: lab.site.url("/a") });
+  client = await chromium.launch();
+  const page = await client.newPage({ viewport: { width: 1400, height: 900 } });
+  const held: { route: Route | undefined } = { route: undefined };
+  await page.route("**/api/input", async (route) => {
+    if (held.route === undefined) held.route = route;
+    else await route.continue();
+  });
+  await page.goto(viewer.url);
+  await page.locator("#tabs li").nth(1).waitFor();
+  await page
+    .locator("#tabs li")
+    .filter({ has: page.getByText(new RegExp(`^c-${String(worker.card.id)}( |$)`)) })
+    .click();
+  await until(async () => (await page.locator("#live").textContent()) === "live", "a live picture");
+
+  const box = await page.locator("#screen").boundingBox();
+  assert.ok(box !== null);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await until(() => held.route !== undefined, "the first request for input to be held");
+  await page.keyboard.type("alpha");
+
+  await worker.act({ action: "close" });
+  await until(
+    async () => (await page.locator("#tabs li").count()) === 1,
+    "the closed tab to leave the list",
+  );
+  await until(async () => (await page.locator("#live").textContent()) === "live", "a live picture");
+  await other.act({ action: "eval", expression: "document.getElementById('q').focus()" });
+  await page.keyboard.type("bravo");
+
+  assert.ok(held.route !== undefined);
+  await held.route.continue();
+  await until(
+    async () =>
+      JSON.parse(
+        await other.act({ action: "eval", expression: "document.getElementById('q').value" }),
+      ) === "bravo",
+    "exactly the text typed for the second tab to reach it",
+  );
+});
