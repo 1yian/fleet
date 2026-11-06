@@ -393,7 +393,7 @@ async function main(): Promise<void> {
   const launch = launchOf(flags);
   if (launch !== undefined) console.log(`Viewer launch: ${launch}`);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {
-    if (!captain || !(await openSheprd(url))) open(url);
+    if (!(await openSheprd(url))) open(url);
   }
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {

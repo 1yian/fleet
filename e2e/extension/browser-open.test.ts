@@ -78,11 +78,11 @@ for (const captain of [true, false]) {
       const flags = captain ? ["--captain", "--open"] : ["--open"];
       const run = await viewer(scratch, home, flags, asked);
       try {
-        const sheprd = captain && shim === "installed";
+        const sheprd = shim === "installed";
         await until("the browser open request", () =>
           Promise.resolve(existsSync(sheprd ? record : asked) ? true : undefined),
         );
-        if (captain && shim !== "absent") {
+        if (shim !== "absent") {
           assert.deepEqual(readFileSync(record, "utf8").trim().split("\n"), [
             "browser",
             "open",
