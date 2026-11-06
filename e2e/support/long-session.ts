@@ -1,8 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 
+export const PROMPT = "FIRST-QUESTION-OF-THE-LONG-CONVERSATION";
 export const OLDEST = "OLDEST-WORDS-OF-THE-LONG-CONVERSATION";
 export const NEWEST = "NEWEST-WORDS-OF-THE-LONG-CONVERSATION";
+
+export const TURN_WORDS = "Checked the board, turn ";
 
 const ZERO_USAGE = {
   input: 0,
@@ -34,14 +37,16 @@ export function writeLongSession(file: string, cwd: string, turns: number): void
     );
     parent = id;
   };
+  append(
+    {
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: PROMPT }], timestamp: at },
+    },
+    at,
+  );
   for (let turn = 0; turn < turns; turn++) {
-    const when = at + turn * 1000;
-    const words =
-      turn === 0
-        ? OLDEST
-        : turn === turns - 1
-          ? NEWEST
-          : `Checked the board, turn ${String(turn)}.`;
+    const when = at + (turn + 1) * 1000;
+    const words = turn === 0 ? OLDEST : `${TURN_WORDS}${String(turn)}.`;
     const call = `call-${String(turn)}`;
     append(
       {
@@ -78,5 +83,22 @@ export function writeLongSession(file: string, cwd: string, turns: number): void
       when,
     );
   }
+  const end = at + (turns + 1) * 1000;
+  append(
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: NEWEST }],
+        api: "fake",
+        provider: "fake",
+        model: "scripted",
+        usage: ZERO_USAGE,
+        stopReason: "stop",
+        timestamp: end,
+      },
+    },
+    end,
+  );
   writeFileSync(file, `${lines.join("\n")}\n`);
 }

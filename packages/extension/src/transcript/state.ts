@@ -4,6 +4,7 @@ const KEY = Symbol.for("fleet:transcript-state");
 
 export interface TranscriptState {
   theme: Theme | undefined;
+  mode: object | undefined;
 }
 
 function isState(value: unknown): value is TranscriptState {
@@ -13,7 +14,7 @@ function isState(value: unknown): value is TranscriptState {
 export function transcriptState(): TranscriptState {
   const found: unknown = Reflect.get(globalThis, KEY);
   if (isState(found)) return found;
-  const created: TranscriptState = { theme: undefined };
+  const created: TranscriptState = { theme: undefined, mode: undefined };
   Reflect.set(globalThis, KEY, created);
   return created;
 }

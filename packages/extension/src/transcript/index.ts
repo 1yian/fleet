@@ -3,7 +3,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { installPresentation } from "../patch.ts";
 import { FLEET_ROW_TYPES, setConversationApart } from "./layout.ts";
 import { transcriptState } from "./state.ts";
-import { limitDrawnHistory } from "./window.ts";
+import { limitDrawnHistory, trimDrawnHistory } from "./window.ts";
 
 export default function transcript(pi: ExtensionAPI): void {
   installPresentation("Transcript", "message rule", setConversationApart);
@@ -23,5 +23,9 @@ export default function transcript(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     if (ctx.hasUI) transcriptState().theme = ctx.ui.theme;
+  });
+
+  pi.on("agent_settled", () => {
+    trimDrawnHistory();
   });
 }
