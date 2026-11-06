@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import {
@@ -18,6 +18,8 @@ import { parseRecord } from "../support/json.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 const FAKE = fileURLToPath(new URL("../support/fake-no-mistakes.ts", import.meta.url));
+const NO_MISTAKES = join(dirname(FAKE), "no-mistakes");
+const TEARDOWN_MS = 5_000;
 const DETECT = fileURLToPath(
   new URL("../../packages/extension/src/contain/detect.sh", import.meta.url),
 );
@@ -45,32 +47,71 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   try {
-    const { sharedOut, privateOut, lookalike } = neighbours();
-    const recorded = [daemonIn(sharedOut), daemonIn(privateOut), pidIn(lookalike)];
-    const own = treeOf(join(`${clone}.worktrees`, "c-1-a1", ".nm"));
-    const starting = daemonIn(sharedOut);
-    if (starting !== undefined) {
-      try {
-        process.kill(starting, "SIGTERM");
-      } catch {
-        void 0;
-      }
-    }
-    for (const pid of [
-      ...treeOf(shared),
-      ...own,
-      ...recorded.filter((each) => each !== undefined),
-    ]) {
+    const doomed = leftovers(processTable());
+    for (const pid of doomed) {
       try {
         process.kill(pid, "SIGKILL");
       } catch {
         void 0;
       }
     }
+    for (
+      const deadline = Date.now() + TEARDOWN_MS;
+      Date.now() < deadline && running(processTable(), doomed);
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   } finally {
     await stopDispatchLab(parts);
   }
 });
+
+interface Row {
+  pid: number;
+  ppid: number;
+  stat: string;
+  args: string;
+}
+
+function processTable(): Row[] {
+  return execFileSync("ps", ["-axo", "pid=,ppid=,stat=,args="], { encoding: "utf8" })
+    .split("\n")
+    .flatMap((line) => {
+      const found = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+      if (found === null) return [];
+      const [, pid = "", ppid = "", stat = "", args = ""] = found;
+      return [{ pid: Number(pid), ppid: Number(ppid), stat, args }];
+    });
+}
+
+function leftovers(table: readonly Row[]): Set<number> {
+  const { sharedOut, privateOut, lookalike } = neighbours();
+  const roots = [shared, join(`${clone}.worktrees`, "c-1-a1", ".nm")];
+  const named = roots.flatMap((root) => [
+    `${NO_MISTAKES} daemon run --root ${root}`,
+    `${NO_MISTAKES} daemon log-sink --root ${root}`,
+  ]);
+  const doomed = new Set<number>([
+    ...[daemonIn(sharedOut), daemonIn(privateOut), pidIn(lookalike)].filter(
+      (each) => each !== undefined,
+    ),
+    ...roots.flatMap(treeOf),
+    ...table.filter((row) => named.includes(row.args.trim())).map((row) => row.pid),
+  ]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const row of table) {
+      if (doomed.has(row.ppid) && !doomed.has(row.pid)) {
+        doomed.add(row.pid);
+        grew = true;
+      }
+    }
+  }
+  return doomed;
+}
+
+const running = (table: readonly Row[], pids: ReadonlySet<number>): boolean =>
+  table.some((row) => pids.has(row.pid) && !row.stat.startsWith("Z"));
 
 const alive = (pid: number): boolean => {
   try {
