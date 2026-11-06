@@ -12,7 +12,7 @@ let worker: RawWorker;
 const viewers: CaptainViewer[] = [];
 
 beforeEach(async () => {
-  lab = await BrowserLab.start({ proxied: true });
+  lab = await BrowserLab.start({ gated: true });
   worker = await lab.worker("Sign in on a phone");
   await worker.act({ action: "open", url: lab.site.url("/a") });
 });
@@ -118,4 +118,28 @@ test("fitting is only for the captain's viewer, and the captain can give the win
   const refused = await fit(gatedSession, { width: 390, height: 640, scale: 2 });
   assert.equal(refused.status, 404);
   assert.equal(await remoteSize(), window);
+});
+
+test("a fit that reaches Chrome after the viewer stopped watching the tab does not leave the tab at the phone's size", async () => {
+  const gate = lab.gate;
+  assert.ok(gate !== undefined);
+  const captain = await startViewer(lab, viewers, ["--captain"]);
+  const session = await enter(captain.url);
+  const window = await remoteSize();
+  const stream = await watching(session);
+  await until(() => stream.messages.length > 0, "the first picture");
+
+  gate.hold("Emulation.setDeviceMetricsOverride", 1);
+  const fitting = fit(session, { width: 390, height: 640, scale: 2 });
+  await until(() => gate.holding() === 1, "the fit to be held on its way to Chrome");
+  const stops = gate.count("Page.stopScreencast");
+  await stream.stop();
+  await until(
+    () => gate.count("Page.stopScreencast") > stops,
+    "the viewer to stop watching the tab",
+  );
+
+  gate.release();
+  await fitting;
+  await until(async () => (await remoteSize()) === window, "the tab to get its window back");
 });

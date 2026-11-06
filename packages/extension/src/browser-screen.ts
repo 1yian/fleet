@@ -171,10 +171,11 @@ export class Screen {
   private stop(cdp: Cdp, target: string, session: string): void {
     this.viewing.delete(target);
     cdp.send("Page.stopScreencast", {}, { sessionId: session }).catch(() => undefined);
-    if (this.fitted.delete(target))
-      cdp
-        .send("Emulation.clearDeviceMetricsOverride", {}, { sessionId: session })
-        .catch(() => undefined);
+    if (this.fitted.delete(target)) this.unfit(cdp, session).catch(() => undefined);
+  }
+
+  private unfit(cdp: Cdp, session: string): Promise<unknown> {
+    return cdp.send("Emulation.clearDeviceMetricsOverride", {}, { sessionId: session });
   }
 
   async fit(event: Fit): Promise<void> {
@@ -182,15 +183,17 @@ export class Screen {
     const sessionId = await this.session(cdp, event.target);
     if ("clear" in event) {
       this.fitted.delete(event.target);
-      await cdp.send("Emulation.clearDeviceMetricsOverride", {}, { sessionId });
+      await this.unfit(cdp, sessionId);
       return;
     }
-    this.fitted.add(event.target);
+    if (!this.viewing.has(event.target)) return;
     await cdp.send(
       "Emulation.setDeviceMetricsOverride",
       { width: event.width, height: event.height, deviceScaleFactor: event.scale, mobile: false },
       { sessionId },
     );
+    if (this.viewing.has(event.target)) this.fitted.add(event.target);
+    else await this.unfit(cdp, sessionId);
   }
 
   async input(event: ViewerInput): Promise<void> {

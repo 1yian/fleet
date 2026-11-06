@@ -8,6 +8,7 @@ import {
   type Browser as Client,
   type BrowserContext,
   type Page,
+  type Route,
 } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { startViewer, type CaptainViewer } from "../support/captain-viewer.ts";
@@ -49,7 +50,7 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function until(check: () => Promise<boolean>, what: string): Promise<void> {
+async function until(check: () => Promise<boolean> | boolean, what: string): Promise<void> {
   const deadline = Date.now() + WAIT_MS;
   while (!(await check())) {
     assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
@@ -388,4 +389,51 @@ test("the captain's link opens when it is tapped on another site's page, as in a
 
   await page.locator("#tabs li").first().waitFor();
   assert.equal(await page.locator("#tabs li .card").count(), 1);
+});
+
+test("phone: a fit that the viewer refused for a tab that has gone does not stop the next tab from being fitted", async () => {
+  const other = await lab.worker("Sign in to the other account");
+  await worker.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
+  await other.act({ action: "open", url: site.url("/signin", ACCOUNTS) });
+  context = await client.newContext({ ...IPHONE });
+  const page = await context.newPage();
+  const held: { route: Route | undefined } = { route: undefined };
+  await page.route("**/api/fit", async (route) => {
+    if (held.route === undefined) held.route = route;
+    else await route.continue();
+  });
+  await page.goto(viewer.url);
+  await page.locator("#tabs li").nth(1).waitFor();
+  const phone = page.viewportSize();
+  assert.ok(phone !== null);
+  const sizeOf = async (expression: string): Promise<number> =>
+    Number(JSON.parse(await other.act({ action: "eval", expression })));
+
+  await page
+    .locator("#tabs li")
+    .filter({ has: page.getByText(new RegExp(`^c-${String(worker.card.id)}( |$)`)) })
+    .tap();
+  await until(() => held.route !== undefined, "the first tab's fit to be held");
+  await worker.act({ action: "close" });
+  await until(
+    async () => (await page.locator("#tabs li").count()) === 1,
+    "the first tab to leave the list",
+  );
+  await until(
+    async () => (await sizeOf("innerWidth")) === phone.width,
+    "the second tab to be fitted to the phone",
+  );
+
+  const refused = page.waitForResponse(
+    (response) => response.url().endsWith("/api/fit") && response.status() === 404,
+  );
+  assert.ok(held.route !== undefined);
+  await held.route.continue();
+  await refused;
+
+  await page.locator("#keyboard").tap();
+  await until(
+    async () => (await sizeOf("innerHeight")) < phone.height - 150,
+    "the second tab to be fitted again, with room for the key bar",
+  );
 });

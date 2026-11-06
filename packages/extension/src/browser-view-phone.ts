@@ -57,10 +57,10 @@ const TOUCH_QUIET_MS = 800;
 let lastTouch = 0;
 let fitted = "";
 let fitTimer = 0;
-let fitRefused = false;
+let refused = null;
 
 function fitNow() {
-  if (!isPhone() || selected === null || fitRefused) return;
+  if (!isPhone() || selected === null || refused === selected) return;
   const box = stage.getBoundingClientRect();
   const width = Math.floor(box.width);
   const height = Math.floor(box.height);
@@ -69,9 +69,10 @@ function fitNow() {
   const key = [selected, width, height, scale].join(":");
   if (key === fitted) return;
   fitted = key;
-  postFit({ target: selected, width, height, scale })
-    .then((response) => { if (response.status === 404) fitRefused = true; })
-    .catch(() => { fitted = ""; });
+  const target = selected;
+  postFit({ target, width, height, scale })
+    .then((response) => { if (response.status === 404) refused = target; })
+    .catch(() => { if (fitted === key) fitted = ""; });
 }
 
 function postFit(body) {
