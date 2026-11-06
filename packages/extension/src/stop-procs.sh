@@ -10,7 +10,7 @@ root=${1%/}
 [ -n "$root" ] || exit 0
 
 snapshot() {
-  spare=$(service_tree $(shared_daemons "$root") | tr '\n' ' ')
+  daemons=$(shared_daemons "$root" | tr '\n' ' ')
   {
     if [ -d /proc/self ]; then
       for d in /proc/[0-9]*; do
@@ -23,18 +23,25 @@ snapshot() {
         /^n/ { print "C", pid, substr($0, 2) }'
     fi
     ps -axo pid=,ppid=,stat=,args= | sed 's/^ */P /'
-  } | ROOT=$root SELF=$$ SPARE=$spare awk '
+  } | ROOT=$root SELF=$$ DAEMONS=$daemons awk '
     BEGIN {
       ROOT = ENVIRON["ROOT"]
       SELF = ENVIRON["SELF"]
-      listed = split(ENVIRON["SPARE"], spared, " ")
-      for (i = 1; i <= listed; i++) keep[spared[i]] = 1
+      listed = split(ENVIRON["DAEMONS"], found, " ")
+      for (i = 1; i <= listed; i++) daemon[found[i]] = 1
     }
     function startsPath(c) { return c == "" || c ~ /^[ \t"\x27=:,(]$/ }
     function endsPath(c) { return c == "" || c ~ /^[ \t"\x27\/:,]$/ }
     function below(pid,   p, n) {
       for (p = pid; p != "" && p != 0 && n < 64; p = parent[p]) {
         if (p == SELF) return 1
+        n++
+      }
+      return 0
+    }
+    function under(pid,   p, n) {
+      for (p = pid; p != "" && p != 0 && n < 64; p = parent[p]) {
+        if (p in daemon) return 1
         n++
       }
       return 0
@@ -64,7 +71,7 @@ snapshot() {
     END {
       for (p = SELF; p != "" && p != 0; p = parent[p]) skip[p] = 1
       for (pid in cmd) {
-        if (skip[pid] || keep[pid] || state[pid] ~ /^Z/ || below(pid)) continue
+        if (skip[pid] || under(pid) || state[pid] ~ /^Z/ || below(pid)) continue
         if (cwd[pid] || names(cmd[pid])) print pid "\t" substr(cmd[pid], 1, 100)
       }
     }'
