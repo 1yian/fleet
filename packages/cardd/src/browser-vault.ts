@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
 import { parseCdp } from "@fleet/protocol";
 import { quote, routed } from "@fleet/protocol/route";
+import { runOnTransport } from "@fleet/protocol/transport";
 import Type from "typebox";
 import type { LoginsConfig } from "./browser-config.ts";
 import type { Credentials } from "./browser-fill.ts";
@@ -38,10 +38,10 @@ function listSecrets(
   const script = bwsScript(logins);
   const [file = "sh", ...args] = routed(via, ["sh", "-c", script]);
   return new Promise((resolve, reject) => {
-    execFile(
+    runOnTransport(
       file,
       args,
-      { encoding: "utf8", timeout: BWS_TIMEOUT_MS, maxBuffer: BWS_OUTPUT_BYTES },
+      { timeout: BWS_TIMEOUT_MS, maxBuffer: BWS_OUTPUT_BYTES },
       (error, out, err) => {
         if (error !== null) {
           const why = err
