@@ -15,16 +15,20 @@ const DAEMON_ADMIN: readonly RegExp[] = [
 const DAEMON_REASON =
   "refused: the no-mistakes daemon is shared by everything on this host, and a stop or restart disrupts work of other cards. Fleet never starts, stops, or restarts it. If the daemon is down, report blocked and say so: your first mate hears of it.";
 
+const MENTIONS_SAFARI = /safari/i;
+const PATH_PREFIX = "(?:[^\\s|;&(`]*/)?";
+
+const ASSIGNMENT = "[A-Za-z_]\\w*=[^\\s|;&`]*\\s+";
 const PREFIXES = "(?:sudo|env|command|exec|nohup|time|nice|caffeinate)\\b(?:\\s+-\\S+)*\\s+";
-const SHELL_C = "(?:\\S*/)?(?:ba|z|da)?sh\\s+(?:-\\S+\\s+)*?-\\w*c\\s+[\"']?";
-const WRAPPERS = `(?:[A-Za-z_]\\w*=\\S*\\s+|${PREFIXES}|eval\\s+["']?|${SHELL_C})*`;
+const SHELL_C = `${PATH_PREFIX}(?:ba|z|da)?sh\\s+(?:-\\S+\\s+)*?-\\w*c\\s+["']?`;
+const WRAPPERS = `(?:${ASSIGNMENT}|${PREFIXES}|eval\\s+["']?|${SHELL_C})*`;
 const AT_COMMAND = `(?:^|[|;&\\n(\`]|\\$\\()\\s*${WRAPPERS}`;
 const NAMED_SAFARI = "(?<![\\w-])safari(?![\\w-]|\\.(?!app\\b))";
 
 const DRIVES_SAFARI = [
-  `(?:\\S*/)?osascript\\b[\\s\\S]*${NAMED_SAFARI}`,
-  `(?:\\S*/)?open(?=\\s)[^|;&\\n]*${NAMED_SAFARI}`,
-  `(?:\\S*/)?safaridriver\\b`,
+  `${PATH_PREFIX}osascript\\b[\\s\\S]*${NAMED_SAFARI}`,
+  `${PATH_PREFIX}open(?=\\s)[^|;&\\n]*${NAMED_SAFARI}`,
+  `${PATH_PREFIX}safaridriver\\b`,
 ].join("|");
 
 const WORD = `(?:"[^"]*"|'[^']*'|\\S+)`;
@@ -33,9 +37,9 @@ const SSH_FLAG = "-[46AaCfGgKkMNnqsTtVvXxYy]+(?=\\s)";
 const SSH_VALUE_FLAG = `-[BbcDEeFIiJLlmOopQRSWw]\\s*${WORD}`;
 const MOSH_OPTION = `--ssh(?:=|\\s+)${WORD}|--[a-z][a-z-]*(?:=\\S+)?|-p\\s*\\S+|-[an](?=\\s)`;
 const REMOTE_SHELL = [
-  `(?:\\S*/)?ssh\\s+(?:(?:${SSH_FLAG}|${SSH_VALUE_FLAG})\\s+)*${HOST}`,
-  `(?:\\S*/)?mosh\\s+(?:(?:${MOSH_OPTION})\\s+)*${HOST}`,
-  `(?:\\S*/)?tailscale\\s+ssh\\s+${HOST}`,
+  `${PATH_PREFIX}ssh\\s+(?:(?:${SSH_FLAG}|${SSH_VALUE_FLAG})\\s+)*${HOST}`,
+  `${PATH_PREFIX}mosh\\s+(?:(?:${MOSH_OPTION})\\s+)*${HOST}`,
+  `${PATH_PREFIX}tailscale\\s+ssh\\s+${HOST}`,
 ].join("|");
 const REMOTE_COMMAND_START = `(?:["']?|[\\s\\S]*?[|;&\\n])\\s*${WRAPPERS}`;
 
@@ -60,7 +64,8 @@ const KILL_FED_BY_LISTER: readonly RegExp[] = [
 
 function guardReason(command: string): string | undefined {
   if (DAEMON_ADMIN.some((pattern) => pattern.test(command))) return DAEMON_REASON;
-  if (PERSONAL_SAFARI.some((pattern) => pattern.test(command))) return SAFARI_REASON;
+  if (MENTIONS_SAFARI.test(command) && PERSONAL_SAFARI.some((pattern) => pattern.test(command)))
+    return SAFARI_REASON;
   if (KILL_FED_BY_LISTER.some((pattern) => pattern.test(command))) return PATTERN_KILL_REASON;
   return undefined;
 }

@@ -25,6 +25,7 @@ const STUBBED = [
 const SAFARI_TELL = `tell application "Safari" to activate`;
 const NOTIFY = `display notification "done" with title "fleet"`;
 const TARGET = "http://127.0.0.1:41000/?t=token";
+const LONG_TEXT = ":;".repeat(50_000);
 
 const REFUSED: readonly string[] = [
   `osascript -e '${SAFARI_TELL}'`,
@@ -59,6 +60,7 @@ const REFUSED: readonly string[] = [
   `mosh frontera -- open -a Safari https://example.com`,
   `mosh --ssh="ssh -p 22" frontera -- osascript -e '${SAFARI_TELL}'`,
   `tailscale ssh yian@frontera osascript -e '${SAFARI_TELL}'`,
+  `${LONG_TEXT}; open -a Safari https://example.com`,
 ];
 
 const ALLOWED: readonly string[] = [
@@ -169,4 +171,10 @@ test("a mate still runs osascript that names no Safari, ssh, text about Safari, 
     "mosh frontera -- sheprd browser open --tab https://example.com/Safari",
     "tailscale ssh yian@frontera sheprd browser open --tab https://example.com/Safari",
   ]);
+});
+
+test("a mate still runs a 100 KB command that names no Safari", async () => {
+  const told = await runAll([`${LONG_TEXT}echo done`], SHELL, {});
+  assert.equal(refusals(told), 0, told);
+  assert.equal(told, "done\nexit 0");
 });
