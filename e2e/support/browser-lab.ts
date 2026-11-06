@@ -51,6 +51,15 @@ export interface Crew {
   readonly pi: Pi;
 }
 
+async function frontsOf(
+  options: LabOptions,
+  port: number,
+): Promise<{ proxy: TcpProxy | undefined; gate: CdpGate | undefined }> {
+  const proxy = options.proxied === true ? await TcpProxy.start(port) : undefined;
+  const gate = options.gated === true ? await CdpGate.start(port) : undefined;
+  return { proxy, gate };
+}
+
 export class BrowserLab {
   readonly chrome: StandInChrome;
   readonly proxy: TcpProxy | undefined;
@@ -83,8 +92,7 @@ export class BrowserLab {
   static async start(options: LabOptions = {}): Promise<BrowserLab> {
     const { vault, isolated } = options;
     const chrome = await StandInChrome.start(options.rules ?? RULES, undefined, isolated);
-    const proxy = options.proxied === true ? await TcpProxy.start(chrome.port) : undefined;
-    const gate = options.gated === true ? await CdpGate.start(chrome.port) : undefined;
+    const { proxy, gate } = await frontsOf(options, chrome.port);
     const endpoint = gate?.endpoint ?? proxy?.endpoint ?? chrome.endpoint;
     const site = await TestSite.start();
     const config =

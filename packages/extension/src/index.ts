@@ -220,6 +220,7 @@ function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["ro
   applyContextPolicy(role);
   applyCompactionBackoff();
   applyCompactionPolicy();
+  if (role === "mate") appendMateContract(pi);
 }
 
 function start(
@@ -315,7 +316,6 @@ function start(
   }
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);
   applyPolicies(pi, ctx, role);
-  if (role === "mate") appendMateContract(pi);
   pi.on("session_shutdown", () => {
     link.stop();
   });

@@ -10,7 +10,7 @@ export const PHONE_STYLE = `
   .phone li .host { display: none; }
   .phone main { flex: 1; min-height: 0; }
   .phone header { gap: 8px; padding: 6px 10px; min-height: 40px; }
-  .phone #paste, .phone #hint { display: none; }
+  .phone #copied, .phone #hint { display: none; }
   .phone #stage { padding: 0; align-items: stretch; }
   .phone #screen { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; border: 0; border-radius: 0; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .phone #keyboard { display: inline-block; min-height: 32px; padding: 0 12px; color: var(--text); background: var(--row); border: 1px solid #262633; border-radius: 6px; font: inherit; }
@@ -46,6 +46,29 @@ export const PHONE_DOCK = `
   </div>`;
 
 export const PHONE_SCRIPT = `
+const NAMED_KEYS = { Escape: 27, Tab: 9, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Backspace: 8, Enter: 13 };
+
+function phoneTap(at) {
+  const touch = { x: at.x, y: at.y, button: "left", clickCount: 1, modifiers: 0 };
+  send({ kind: "mouse", action: "down", ...touch, buttons: 1 });
+  send({ kind: "mouse", action: "up", ...touch, buttons: 0 });
+}
+
+function phoneScroll(at, dx, dy) {
+  send({ kind: "scroll", x: at.x, y: at.y, dx, dy, modifiers: 0 });
+}
+
+function phoneKey(key) {
+  const keyCode = NAMED_KEYS[key];
+  if (keyCode === undefined) {
+    send({ kind: "text", text: key });
+    return;
+  }
+  const base = { kind: "key", key, code: key, keyCode, location: 0, repeat: false, modifiers: 0, commands: [] };
+  send({ ...base, action: "down" });
+  send({ ...base, action: "up" });
+}
+
 const dock = document.getElementById("dock");
 const typer = document.getElementById("typer");
 const keyboardButton = document.getElementById("keyboard");

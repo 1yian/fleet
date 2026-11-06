@@ -11,7 +11,7 @@ import {
   type Route,
 } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
-import { startViewer, type CaptainViewer } from "../support/captain-viewer.ts";
+import { startViewer, stopViewers, type Started, type Viewers } from "../support/viewer.ts";
 import { DelayProxy } from "../support/delay-proxy.ts";
 import { ACCOUNT, SignInSite } from "../support/signin-site.ts";
 
@@ -22,7 +22,8 @@ const MY_ACCOUNT = "myaccount.nothing.test";
 let lab: BrowserLab;
 let site: SignInSite;
 let worker: RawWorker;
-let viewer: CaptainViewer;
+let viewer: Started;
+const viewers: Viewers = [];
 let client: Client;
 let context: BrowserContext | undefined;
 let proxy: DelayProxy | undefined;
@@ -31,7 +32,7 @@ beforeEach(async () => {
   lab = await BrowserLab.start({ proxied: true, isolated: true });
   site = await SignInSite.start(MY_ACCOUNT);
   worker = await lab.worker("Sign in to My Account");
-  viewer = await startViewer(lab, ["--captain"]);
+  viewer = await startViewer(lab, viewers, ["--captain"]);
   client = await chromium.launch();
 });
 
@@ -41,7 +42,7 @@ afterEach(async () => {
   const stopped = await Promise.allSettled([
     client.close(),
     proxy?.stop(),
-    viewer.stop(),
+    ...stopViewers(viewers),
     site.stop(),
     lab.stop(),
   ]);

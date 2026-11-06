@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { chromium, type Browser as Client, type Page, type Route } from "playwright";
 import { Stream } from "../support/browser-herdr.ts";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
-import { startViewer, type CaptainViewer } from "../support/captain-viewer.ts";
+import { startViewer, stopViewers, type Started, type Viewers } from "../support/viewer.ts";
 import { DelayProxy } from "../support/delay-proxy.ts";
 import { parseRecord, records } from "../support/json.ts";
 
@@ -14,7 +14,8 @@ const TYPED = "captain@example.test";
 
 let lab: BrowserLab;
 let worker: RawWorker;
-let viewer: CaptainViewer;
+let viewer: Started;
+const viewers: Viewers = [];
 let client: Client | undefined;
 let proxy: DelayProxy | undefined;
 
@@ -22,14 +23,14 @@ beforeEach(async () => {
   lab = await BrowserLab.start({ gated: true });
   worker = await lab.worker("Sign in on a slow link");
   await worker.act({ action: "open", url: lab.site.url("/a") });
-  viewer = await startViewer(lab, ["--captain"]);
+  viewer = await startViewer(lab, viewers, ["--captain"]);
 });
 
 afterEach(async () => {
   const stopped = await Promise.allSettled([
     client?.close(),
     proxy?.stop(),
-    viewer.stop(),
+    ...stopViewers(viewers),
     lab.stop(),
   ]);
   client = undefined;
@@ -290,7 +291,7 @@ test("a stream that joins a tab while another stream is still starting on it kee
   gate.release();
 
   const response = await lateOpened;
-  assert.ok(response !== undefined && response.status === 200, "the second stream opened");
+  assert.ok(response?.status === 200, "the second stream opened");
   const stream = new Stream(response, late);
   const showing = showsEach(session, "lateviewer", stream);
   try {
