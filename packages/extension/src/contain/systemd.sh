@@ -22,7 +22,7 @@ start_scope() {
   set -- $roots
   busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
     org.freedesktop.systemd1.Manager StartTransientUnit "ssa(sv)a(sa(sv))" \
-    "$scope" fail 3 PIDs au "$#" "$@" Description s "fleet worker $unit" Delegate b true 0 >/dev/null
+    "$scope" fail 3 PIDs au "$#" "$@" Description s "fleet ${scope%.scope}" Delegate b true 0 >/dev/null
 }
 
 attach_pid() {
@@ -47,6 +47,15 @@ backend_attach() {
   for p in "$@"; do
     attach_pid "$p" || return 1
   done
+}
+
+backend_adopt() {
+  (
+    scope=$host_unit.scope
+    roots=$1
+    systemctl --user reset-failed "$scope" 2>/dev/null || true
+    backend_attach "$@"
+  )
 }
 
 backend_members() {

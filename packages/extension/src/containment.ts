@@ -11,8 +11,10 @@ type Backend = (typeof BACKENDS)[number];
 
 const DETECT = script("detect");
 
+export const SERVICE_SCRIPT = script("service");
+
 const scriptFor = (backend: Backend): string =>
-  [script("lib"), script(backend), script("main")].join("\n");
+  [script("lib"), SERVICE_SCRIPT, script(backend), script("main")].join("\n");
 
 const known = new Map<string, Promise<Backend>>();
 
