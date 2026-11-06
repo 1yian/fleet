@@ -419,10 +419,6 @@ test("phone: a fit that the viewer refused for a tab that has gone does not stop
     async () => (await page.locator("#tabs li").count()) === 1,
     "the first tab to leave the list",
   );
-  await until(
-    async () => (await sizeOf("innerWidth")) === phone.width,
-    "the second tab to be fitted to the phone",
-  );
 
   const refused = page.waitForResponse(
     (response) => response.url().endsWith("/api/fit") && response.status() === 404,
@@ -430,6 +426,10 @@ test("phone: a fit that the viewer refused for a tab that has gone does not stop
   assert.ok(held.route !== undefined);
   await held.route.continue();
   await refused;
+  await until(
+    async () => (await sizeOf("innerWidth")) === phone.width,
+    "the second tab to be fitted to the phone",
+  );
 
   await page.locator("#keyboard").tap();
   await until(

@@ -245,7 +245,7 @@ function connect(target) {
 
 function watch(target) {
   releaseKeys();
-  if (target !== selected) resetTyper();
+  if (target !== selected) phoneTargetChanged();
   selected = target;
   if (target === null) {
     closeStream();

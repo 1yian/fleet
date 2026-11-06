@@ -69,14 +69,31 @@ function fitNow() {
   const key = [selected, width, height, scale].join(":");
   if (key === fitted) return;
   fitted = key;
-  const target = selected;
-  postFit({ target, width, height, scale })
-    .then((response) => { if (response.status === 404) refused = target; })
-    .catch(() => { if (fitted === key) fitted = ""; });
+  void postFit({ target: selected, width, height, scale });
 }
 
-function postFit(body) {
-  return fetch("/api/fit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+let fitting = false;
+let wanted = null;
+
+async function postFit(body) {
+  wanted = body;
+  if (fitting) return;
+  fitting = true;
+  while (wanted !== null) {
+    const sending = wanted;
+    wanted = null;
+    const status = await fetch("/api/fit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sending) })
+      .then((response) => response.status, () => 0);
+    if (sending.clear === true) continue;
+    if (status === 404) refused = sending.target;
+    else if (status !== 204 && wanted === null) fitted = "";
+  }
+  fitting = false;
+}
+
+function phoneTargetChanged() {
+  resetTyper();
+  refused = null;
 }
 
 function scheduleFit() {
@@ -217,7 +234,10 @@ keyboardButton.addEventListener("click", toggleKeyboard);
 phoneQuery.addEventListener("change", () => {
   document.documentElement.classList.toggle("phone", phoneQuery.matches);
   if (phoneQuery.matches) refit();
-  else if (selected !== null) postFit({ target: selected, clear: true }).catch(() => undefined);
+  else if (selected !== null) {
+    fitted = "";
+    void postFit({ target: selected, clear: true });
+  }
 });
 
 if (window.visualViewport !== null && window.visualViewport !== undefined) {

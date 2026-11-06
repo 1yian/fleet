@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
+import { chromium, devices, type Browser as Client, type Route } from "playwright";
 import { Stream } from "../support/browser-herdr.ts";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
-import { startViewer, type CaptainViewer } from "../support/captain-viewer.ts";
 import { parseRecord, records } from "../support/json.ts";
+import { startViewer, stopViewers, type Viewers } from "../support/viewer.ts";
 
 const WAIT_MS = 15_000;
 
 let lab: BrowserLab;
 let worker: RawWorker;
-const viewers: CaptainViewer[] = [];
+const viewers: Viewers = [];
+let client: Client | undefined;
 
 beforeEach(async () => {
   lab = await BrowserLab.start({ gated: true });
@@ -18,10 +20,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  const stopped = await Promise.allSettled([
-    ...viewers.splice(0).map((viewer) => viewer.stop()),
-    lab.stop(),
-  ]);
+  const stopped = await Promise.allSettled([client?.close(), ...stopViewers(viewers), lab.stop()]);
+  client = undefined;
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -76,8 +76,7 @@ async function watching(session: Session): Promise<Stream> {
 }
 
 test("a captain's viewer on a phone shrinks the tab to the phone's screen while it watches, and gives the window back when it leaves", async () => {
-  const captain = await startViewer(lab, ["--captain"]);
-  viewers.push(captain);
+  const captain = await startViewer(lab, viewers, ["--captain"]);
   const session = await enter(captain.url);
   const window = await remoteSize();
   const stream = await watching(session);
@@ -98,9 +97,8 @@ test("a captain's viewer on a phone shrinks the tab to the phone's screen while 
 });
 
 test("fitting is only for the captain's viewer, and the captain can give the window back at once", async () => {
-  const captain = await startViewer(lab, ["--captain"]);
-  const gated = await startViewer(lab, []);
-  viewers.push(captain, gated);
+  const captain = await startViewer(lab, viewers, ["--captain"]);
+  const gated = await startViewer(lab, viewers, []);
   const session = await enter(captain.url);
   const window = await remoteSize();
   const stream = await watching(session);
@@ -142,4 +140,50 @@ test("a fit that reaches Chrome after the viewer stopped watching the tab does n
   gate.release();
   await fitting;
   await until(async () => (await remoteSize()) === window, "the tab to get its window back");
+});
+
+test("phone: a shorter fit that is slow to arrive cannot overwrite the full-height fit that was asked for after it", async () => {
+  const gate = lab.gate;
+  assert.ok(gate !== undefined);
+  const captain = await startViewer(lab, viewers, ["--captain"]);
+  client = await chromium.launch();
+  const context = await client.newContext({ ...devices["iPhone 13"] });
+  const page = await context.newPage();
+  await page.goto(captain.url);
+  await page.locator("#tabs li").first().waitFor();
+  await until(async () => (await page.locator("#live").textContent()) === "live", "a live picture");
+  const phone = page.viewportSize();
+  assert.ok(phone !== null);
+  const full = { size: "", height: 0 };
+  await until(async () => {
+    const box = await page.locator("#stage").boundingBox();
+    assert.ok(box !== null);
+    full.height = Math.floor(box.height);
+    full.size = JSON.stringify([phone.width, full.height]);
+    return (await remoteSize()) === full.size;
+  }, "the tab to take the phone's size");
+
+  const held: { route: Route | undefined } = { route: undefined };
+  await page.route("**/api/fit", async (route) => {
+    const height = Number(parseRecord(route.request().postData() ?? "{}")["height"]);
+    if (held.route === undefined && height < full.height - 50) held.route = route;
+    else await route.continue();
+  });
+  const applied = gate.count("Emulation.setDeviceMetricsOverride");
+  await page.locator("#keyboard").tap();
+  await until(() => held.route !== undefined, "the shorter fit to be held on its way");
+  const wanted = await page.evaluate("fitted");
+  await page.locator("#keyboard").tap();
+  await until(
+    async () => (await page.evaluate("fitted")) !== wanted,
+    "the full size to be asked for",
+  );
+
+  assert.ok(held.route !== undefined);
+  await held.route.continue();
+  await until(
+    () => gate.count("Emulation.setDeviceMetricsOverride") >= applied + 2,
+    "both fits to reach Chrome",
+  );
+  await until(async () => (await remoteSize()) === full.size, "the tab to end at its full height");
 });
