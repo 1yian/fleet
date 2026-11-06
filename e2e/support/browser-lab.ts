@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { Card } from "@fleet/protocol";
 import { axiAct, axiArgs, axiShot, resultText, type Access } from "./browser-axi.ts";
 import { Cardd, type Session } from "./cardd.ts";
+import { CdpGate } from "./cdp-gate.ts";
 import { StandInChrome, TcpProxy } from "./chrome.ts";
 import type { FakeVault } from "./fake-vault.ts";
 import { begin, newCard } from "./fleet.ts";
@@ -39,6 +40,7 @@ export interface LabOptions {
   readonly vault?: FakeVault;
   readonly rules?: string;
   readonly proxied?: boolean;
+  readonly gated?: boolean;
   readonly isolated?: boolean;
   readonly logins?: Record<string, unknown>;
 }
@@ -49,9 +51,19 @@ export interface Crew {
   readonly pi: Pi;
 }
 
+async function frontsOf(
+  options: LabOptions,
+  port: number,
+): Promise<{ proxy: TcpProxy | undefined; gate: CdpGate | undefined }> {
+  const proxy = options.proxied === true ? await TcpProxy.start(port) : undefined;
+  const gate = options.gated === true ? await CdpGate.start(port) : undefined;
+  return { proxy, gate };
+}
+
 export class BrowserLab {
   readonly chrome: StandInChrome;
   readonly proxy: TcpProxy | undefined;
+  readonly gate: CdpGate | undefined;
   readonly site: TestSite;
   readonly cardd: Cardd;
   readonly main: Session;
@@ -62,6 +74,7 @@ export class BrowserLab {
   private constructor(
     chrome: StandInChrome,
     proxy: TcpProxy | undefined,
+    gate: CdpGate | undefined,
     site: TestSite,
     cardd: Cardd,
     main: Session,
@@ -69,6 +82,7 @@ export class BrowserLab {
   ) {
     this.chrome = chrome;
     this.proxy = proxy;
+    this.gate = gate;
     this.site = site;
     this.cardd = cardd;
     this.main = main;
@@ -78,8 +92,8 @@ export class BrowserLab {
   static async start(options: LabOptions = {}): Promise<BrowserLab> {
     const { vault, isolated } = options;
     const chrome = await StandInChrome.start(options.rules ?? RULES, undefined, isolated);
-    const proxy = options.proxied === true ? await TcpProxy.start(chrome.port) : undefined;
-    const endpoint = proxy?.endpoint ?? chrome.endpoint;
+    const { proxy, gate } = await frontsOf(options, chrome.port);
+    const endpoint = gate?.endpoint ?? proxy?.endpoint ?? chrome.endpoint;
     const site = await TestSite.start();
     const config =
       vault === undefined
@@ -89,7 +103,7 @@ export class BrowserLab {
     cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
     const mainToken = cardd.addLane("main");
     const main = await cardd.connect(mainToken);
-    return new BrowserLab(chrome, proxy, site, cardd, main, mainToken);
+    return new BrowserLab(chrome, proxy, gate, site, cardd, main, mainToken);
   }
 
   async crew(title: string): Promise<Crew> {
@@ -121,6 +135,7 @@ export class BrowserLab {
       ...this.harnesses.splice(0).map((h) => h.stop()),
       this.cardd.stop(),
       this.proxy?.stop(),
+      this.gate?.stop(),
       this.chrome.stop(),
       this.site.stop(),
     ]);

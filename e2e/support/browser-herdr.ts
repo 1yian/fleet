@@ -15,6 +15,7 @@ import { parseRecord, records, type JsonRecord } from "./json.ts";
 import { TestSite } from "./site.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "./scratch.ts";
 import { tempDir } from "./run-root.ts";
+import { tailnetCommand } from "./tailnet.ts";
 
 const WAIT_MS = 60_000;
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -123,6 +124,7 @@ export class BrowserHerdr {
     browser: boolean;
     vault?: FakeVault;
     hosts?: Hosts;
+    tailnet?: string;
   }): Promise<BrowserHerdr> {
     const dir = tempDir("fleet-hosts-");
     const names = options.hosts?.names ?? [WORKER_HOST];
@@ -136,6 +138,7 @@ export class BrowserHerdr {
       ...h.piEnv("mate"),
       PATH: `${join(ROOT, "bin")}:${join(ROOT, "node_modules/.bin")}:${process.env["PATH"] ?? ""}`,
       FLEET_BROWSER_VIEW_OPEN: "0",
+      ...(options.tailnet === undefined ? {} : tailnetCommand(options.tailnet)),
     });
     return new BrowserHerdr({
       chrome,
@@ -265,6 +268,21 @@ export class BrowserHerdr {
     return tabs.map((tab) => String(tab["label"]));
   }
 
+  async browserTab(workspace: string): Promise<string> {
+    const created = await this.lab.run([
+      "tab",
+      "create",
+      "--workspace",
+      workspace,
+      "--cwd",
+      this.scratch.root,
+      "--label",
+      "Browser",
+      "--no-focus",
+    ]);
+    return String(records([created["root_pane"]])[0]?.["pane_id"]);
+  }
+
   async viewerPane(workspace: string): Promise<string> {
     const tabs = records((await this.lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
     const panes = records(
@@ -272,6 +290,10 @@ export class BrowserHerdr {
     );
     const tab = tabs.find((each) => each["label"] === "Browser");
     return String(panes.find((each) => each["tab_id"] === tab?.["tab_id"])?.["pane_id"]);
+  }
+
+  async history(pane: string): Promise<string> {
+    return this.lab.history(pane);
   }
 
   async viewerOf(workspace: string, mode?: "captain" | "gated"): Promise<string> {
@@ -375,6 +397,7 @@ export class BrowserHerdr {
 
 export class Stream {
   raw = "";
+  ended = false;
   readonly messages: JsonRecord[] = [];
   private readonly abort: AbortController;
   private readonly reading: Promise<void>;
@@ -397,6 +420,8 @@ export class Stream {
       }
     } catch {
       return;
+    } finally {
+      this.ended = true;
     }
   }
 

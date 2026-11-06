@@ -1,6 +1,7 @@
 import { parseCdp, readSelection, type Cdp } from "@fleet/protocol";
 import type { Dial } from "@fleet/protocol/tunnel";
 import { inputCalls, type ViewerInput } from "./browser-input.ts";
+import type { Fit } from "./browser-fit.ts";
 import Type from "typebox";
 
 export interface Frame {
@@ -31,6 +32,7 @@ export class Screen {
   private link: Promise<Cdp> | undefined;
   private readonly sessions = new Map<string, Promise<string>>();
   private readonly viewing = new Map<string, Viewing>();
+  private readonly fitted = new Set<string>();
   private readonly dial: Dial;
 
   constructor(dial: Dial) {
@@ -96,15 +98,18 @@ export class Screen {
   ): Promise<() => void> {
     const cdp = await this.connection();
     const session = await this.session(cdp, target);
-    let viewing = this.viewing.get(target);
-    try {
-      viewing ??= await this.begin(cdp, target, session);
-      viewing.last ??= await this.still(cdp, session);
-    } catch (error) {
-      const held = this.viewing.get(target);
-      if (held?.session === session && held.listeners.size === 0) this.stop(cdp, target, session);
-      throw error;
-    }
+    let viewing: Viewing | undefined;
+    do {
+      viewing = this.viewing.get(target);
+      try {
+        viewing ??= await this.begin(cdp, target, session);
+        viewing.last ??= await this.still(cdp, session);
+      } catch (error) {
+        const held = this.viewing.get(target);
+        if (held?.session === session && held.listeners.size === 0) this.stop(cdp, target, session);
+        throw error;
+      }
+    } while (this.viewing.get(target) !== viewing);
     viewing.listeners.add(listener);
     viewing.lost.add(lost);
     listener(viewing.last);
@@ -166,6 +171,29 @@ export class Screen {
   private stop(cdp: Cdp, target: string, session: string): void {
     this.viewing.delete(target);
     cdp.send("Page.stopScreencast", {}, { sessionId: session }).catch(() => undefined);
+    if (this.fitted.delete(target)) this.unfit(cdp, session).catch(() => undefined);
+  }
+
+  private unfit(cdp: Cdp, session: string): Promise<unknown> {
+    return cdp.send("Emulation.clearDeviceMetricsOverride", {}, { sessionId: session });
+  }
+
+  async fit(event: Fit): Promise<void> {
+    const cdp = await this.connection();
+    const sessionId = await this.session(cdp, event.target);
+    if ("clear" in event) {
+      this.fitted.delete(event.target);
+      await this.unfit(cdp, sessionId);
+      return;
+    }
+    if (!this.viewing.has(event.target)) return;
+    await cdp.send(
+      "Emulation.setDeviceMetricsOverride",
+      { width: event.width, height: event.height, deviceScaleFactor: event.scale, mobile: false },
+      { sessionId },
+    );
+    if (this.viewing.has(event.target)) this.fitted.add(event.target);
+    else await this.unfit(cdp, sessionId);
   }
 
   async input(event: ViewerInput): Promise<void> {

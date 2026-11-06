@@ -169,8 +169,8 @@ test("every route needs the viewer's token, and the tokened address works", asyn
   assert.equal(listing["tabs"].length, 2);
 
   const entered = await fetch(url, { redirect: "manual" });
-  assert.equal(entered.status, 302);
-  assert.equal(entered.headers.get("location"), "/");
+  assert.equal(entered.status, 200);
+  assert.match(await entered.text(), /location\.replace\("\/"\)/);
   const cookie = entered.headers.get("set-cookie") ?? "";
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Strict/);
@@ -439,15 +439,15 @@ test("the captain's viewer prints the machine's tailnet address, still refuses a
     new URL(`/?t=${token}x`, shown.origin),
   ];
   for (const refused of denied) assert.equal((await fetch(refused)).status, 403, refused.href);
-  assert.equal((await fetch(bare.url, { redirect: "manual" })).status, 302);
+  assert.equal((await fetch(bare.url, { redirect: "manual" })).status, 200);
   await assert.rejects(fetch(`http://127.0.0.1:${shown.port}/`), "the viewer is not on loopback");
 
   const named = await start(["--captain"], tailnet(address, "Maverick.tail-test.ts.net."));
   const byName = new URL(named.url);
   assert.equal(byName.hostname, "maverick.tail-test.ts.net");
   const path = `/?t=${byName.searchParams.get("t") ?? ""}`;
-  assert.equal(await statusOf(address, byName.port, byName.host, path), 302);
-  assert.equal(await statusOf(address, byName.port, `${address}:${byName.port}`, path), 302);
+  assert.equal(await statusOf(address, byName.port, byName.host, path), 200);
+  assert.equal(await statusOf(address, byName.port, `${address}:${byName.port}`, path), 200);
   assert.equal(await statusOf(address, byName.port, `evil.example:${byName.port}`, path), 403);
 
   const worker = await start([], tailnet(address, "Maverick.tail-test.ts.net."));
@@ -462,5 +462,5 @@ test("a captain's viewer with no tailnet address falls back to loopback and says
     alone.said(),
     /No tailnet address was found \(.+\), so this viewer listens on this machine only\. Open the link here: another machine cannot reach it\./,
   );
-  assert.equal((await fetch(alone.url, { redirect: "manual" })).status, 302);
+  assert.equal((await fetch(alone.url, { redirect: "manual" })).status, 200);
 });

@@ -117,8 +117,9 @@ test("copy reads the selection as it was when it was asked for, before the keys 
     if (path === "/api/copy") sent.push("copy");
     if (path !== "/api/input") return;
     const body: unknown = JSON.parse(request.postData() ?? "null");
-    if (isRecord(body))
-      sent.push([body["kind"], body["action"], body["key"]].filter(Boolean).join(" "));
+    for (const each of Array.isArray(body) ? body : [body])
+      if (isRecord(each))
+        sent.push([each["kind"], each["action"], each["key"]].filter(Boolean).join(" "));
   });
   let release = (): void => undefined;
   const gate = new Promise<void>((resolve) => {

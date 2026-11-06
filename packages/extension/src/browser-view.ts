@@ -3,9 +3,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
+import { viewerBuild } from "./browser-build.ts";
+import { FitSchema } from "./browser-fit.ts";
 import { InputSchema, pastesSelection } from "./browser-input.ts";
-import { openSheprd } from "./browser-place.ts";
+import { Pacer } from "./browser-pace.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
+import { openSheprd } from "./browser-place.ts";
 import { Screen } from "./browser-screen.ts";
 import { tailnetOf, type Reach } from "./browser-tailnet.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
@@ -64,6 +67,9 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
+const enteredPage = (next: string): string =>
+  `<!doctype html><html><head><meta charset="utf-8"><title>Fleet browser</title><noscript><meta http-equiv="refresh" content="0;url=${encodeURI(next)}"></noscript><script>location.replace(${JSON.stringify(next)})</script></head><body></body></html>`;
+
 const digest = (text: string): Buffer => createHash("sha256").update(text).digest();
 
 const json = (response: ServerResponse, status: number, body: unknown): void => {
@@ -75,6 +81,7 @@ class Viewer {
   private readonly transports: Transports;
   private readonly captain: boolean;
   private readonly screens = new Map<string, { endpoint: string; screen: Screen }>();
+  private readonly paced = new Map<string, { pacer: Pacer; response: ServerResponse }>();
   private browsers = new Map<string, string>();
   private own: string | null = null;
   private readonly poll = new Poll(
@@ -168,14 +175,26 @@ class Viewer {
     }
   }
 
-  private async stream(response: ServerResponse, target: string): Promise<void> {
+  private async stream(response: ServerResponse, target: string, id: string | null): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
-    const send = (shown: Shown): void => {
-      response.write(`data: ${JSON.stringify(shown)}\n\n`);
+    const write = (shown: Shown, seq?: number): void => {
+      response.write(`data: ${JSON.stringify(seq === undefined ? shown : { ...shown, seq })}\n\n`);
     };
+    const pacer = id === null ? undefined : new Pacer(write);
+    if (pacer !== undefined && id !== null) {
+      this.paced.get(id)?.response.end();
+      this.paced.set(id, { pacer, response });
+    }
+    const send =
+      pacer === undefined
+        ? write
+        : (shown: Shown): void => {
+            pacer.send(shown);
+          };
     const watching: { stop: (() => void) | undefined } = { stop: undefined };
     response.on("close", () => {
       watching.stop?.();
+      if (id !== null && this.paced.get(id)?.response === response) this.paced.delete(id);
     });
     watching.stop = this.captain
       ? await this.screenFor(target).watch(target, send, () => {
@@ -186,29 +205,70 @@ class Viewer {
   }
 
   private async route(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
-    if (url.pathname === "/") {
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(VIEWER_PAGE);
-    } else if (url.pathname === "/api/tabs") {
-      const { tabs, problem } = await this.listing();
-      json(response, 200, { tabs, problem });
-    } else if (url.pathname === "/api/stream") {
-      const target = url.searchParams.get("target") ?? "";
-      if (await this.shows(target)) await this.stream(response, target);
-      else response.writeHead(404).end();
-    } else if (url.pathname === "/api/input" && request.method === "POST") {
-      await this.drive(request, response);
-    } else if (url.pathname === "/api/copy" && request.method === "POST") {
-      await this.copy(request, response);
-    } else response.writeHead(404).end();
+    const key = `${request.method ?? "GET"} ${url.pathname}`;
+    const handlers: Record<string, () => Promise<void>> = {
+      "GET /": () => this.page(response),
+      "GET /api/tabs": () => this.tabs(response),
+      "GET /api/stream": () => this.watch(response, url),
+      "POST /api/ack": () => this.acknowledge(response, url),
+      "POST /api/fit": () => this.fit(request, response),
+      "POST /api/input": () => this.drive(request, response),
+      "POST /api/copy": () => this.copy(request, response),
+    };
+    const handler = Object.hasOwn(handlers, key) ? handlers[key] : undefined;
+    if (handler === undefined) response.writeHead(404).end();
+    else await handler();
+  }
+
+  private page(response: ServerResponse): Promise<void> {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(VIEWER_PAGE);
+    return Promise.resolve();
+  }
+
+  private async tabs(response: ServerResponse): Promise<void> {
+    const { tabs, problem } = await this.listing();
+    json(response, 200, { tabs, problem });
+  }
+
+  private async watch(response: ServerResponse, url: URL): Promise<void> {
+    const target = url.searchParams.get("target") ?? "";
+    if (await this.shows(target)) await this.stream(response, target, url.searchParams.get("id"));
+    else response.writeHead(404).end();
+  }
+
+  private acknowledge(response: ServerResponse, url: URL): Promise<void> {
+    const seq = url.searchParams.get("seq") ?? "";
+    const stream = this.paced.get(url.searchParams.get("id") ?? "");
+    if (!/^[0-9]+$/.test(seq)) response.writeHead(400).end();
+    else if (stream === undefined) response.writeHead(404).end();
+    else {
+      stream.pacer.release(Number(seq));
+      response.writeHead(204).end();
+    }
+    return Promise.resolve();
+  }
+
+  private async fit(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const fit = check(FitSchema, JSON.parse(await readBody(request)));
+    if (!this.captain || !(await this.shows(fit.target))) response.writeHead(404).end();
+    else {
+      await this.screenFor(fit.target).fit(fit);
+      response.writeHead(204).end();
+    }
   }
 
   private async drive(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const input = check(InputSchema, JSON.parse(await readBody(request)));
-    if (!(await this.shows(input.target))) response.writeHead(404).end();
-    else {
-      if (this.captain || !pastesSelection(input)) await this.screenFor(input.target).input(input);
-      response.writeHead(204).end();
+    const sent: unknown = JSON.parse(await readBody(request));
+    const inputs = (Array.isArray(sent) ? sent : [sent]).map((each) => check(InputSchema, each));
+    for (const input of inputs) {
+      if (!(await this.shows(input.target))) {
+        response.writeHead(404).end();
+        return;
+      }
     }
+    for (const input of inputs)
+      if (this.captain || !pastesSelection(input)) await this.screenFor(input.target).input(input);
+    response.writeHead(204).end();
   }
 
   private async copy(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -222,11 +282,12 @@ class Viewer {
     if (this.knows(offered) && request.method === "GET" && url.pathname === "/") {
       url.searchParams.delete("t");
       response
-        .writeHead(302, {
-          location: `${url.pathname}${url.search}`,
+        .writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
           "set-cookie": `${this.cookie}=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
         })
-        .end();
+        .end(enteredPage(`${url.pathname}${url.search}`));
       return false;
     }
     if (this.knows(offered) || this.knows(this.cookieOf(request))) return true;
@@ -299,6 +360,11 @@ function reachLine(reach: Reach | undefined): string | undefined {
     : `No tailnet address was found (${reach.why}), so this viewer listens on this machine only. Open the link here: another machine cannot reach it.`;
 }
 
+function launchOf(flags: readonly string[]): string | undefined {
+  const at = flags.indexOf("--launch");
+  return at < 0 ? undefined : flags[at + 1];
+}
+
 async function main(): Promise<void> {
   const flags = process.argv.slice(2);
   const token = randomBytes(24).toString("base64url");
@@ -311,9 +377,16 @@ async function main(): Promise<void> {
   const { address, reach } = await listen(server, captain);
   viewer.allow(address.port, hostTest(reach, address.port));
   const url = `http://${shownHost(reach)}:${String(address.port)}/?t=${token}`;
-  console.log(`Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`);
   const line = reachLine(reach);
-  if (line !== undefined) console.log(line);
+  console.log(
+    [
+      `Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`,
+      ...(line === undefined ? [] : [line]),
+    ].join("\n"),
+  );
+  console.log(`Viewer build: ${viewerBuild()}`);
+  const launch = launchOf(flags);
+  if (launch !== undefined) console.log(`Viewer launch: ${launch}`);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {
     if (!(await openSheprd(url))) console.log(NOT_OPENED);
   }

@@ -1,11 +1,18 @@
 import { EDITING_COMMANDS } from "./browser-input.ts";
+import {
+  PHONE_DOCK,
+  PHONE_HEAD,
+  PHONE_KEYBOARD,
+  PHONE_SCRIPT,
+  PHONE_STYLE,
+} from "./browser-view-phone.ts";
 
 export const VIEWER_PAGE = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Fleet browser</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <style>
   :root { color-scheme: dark; --ink: #101014; --mantle: #0c0c10; --row: #16161d; --text: #e6e6ea; --dim: #8b8b99; --signal: #3dffc0; --error: #ff5c7a; }
   * { box-sizing: border-box; }
@@ -37,7 +44,7 @@ export const VIEWER_PAGE = `<!doctype html>
   #note { max-width: 640px; padding: 16px 20px; background: var(--row); color: var(--dim); border: 1px solid #262633; border-radius: 4px; }
   #note[hidden] { display: none; }
   #hint { padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
-</style>
+${PHONE_STYLE}</style>${PHONE_HEAD}
 </head>
 <body>
 <aside>
@@ -49,6 +56,7 @@ export const VIEWER_PAGE = `<!doctype html>
   <header>
     <div id="address"></div>
     <span id="copied" role="status"></span>
+    ${PHONE_KEYBOARD}
     <span id="live" hidden></span>
   </header>
   <div id="stage">
@@ -57,6 +65,7 @@ export const VIEWER_PAGE = `<!doctype html>
     <div id="note" hidden></div>
   </div>
   <div id="hint" hidden>Click the picture to focus it. Mouse and keys act on the tab. Cmd or Ctrl+C copies, Cmd or Ctrl+V pastes. Reload, zoom and tab keys stay here.</div>
+  ${PHONE_DOCK}
 </main>
 <script>
 const list = document.getElementById("tabs");
@@ -72,6 +81,10 @@ const copied = document.getElementById("copied");
 let selected = null;
 let source = null;
 let size = { width: 1, height: 1 };
+let acknowledging = () => undefined;
+let newest = 0;
+screen.addEventListener("load", () => acknowledging());
+screen.addEventListener("error", () => acknowledging());
 
 const EDITING = ${JSON.stringify(EDITING_COMMANDS)};
 const mac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -99,13 +112,14 @@ async function flow() {
   if (flowing) return;
   flowing = true;
   while (pending.length > 0) {
-    const next = pending.shift();
-    if (typeof next === "function") {
-      await next();
+    if (typeof pending[0] === "function") {
+      await pending.shift()();
       continue;
     }
+    const batch = [pending.shift()];
+    while (pending.length > 0 && typeof pending[0] !== "function" && pending[0].target === batch[0].target) batch.push(pending.shift());
     try {
-      await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
+      await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
     } catch {
       continue;
     }
@@ -163,20 +177,52 @@ function idle(message) {
   note.textContent = message;
 }
 
-function watch(target) {
-  releaseKeys();
+const ACK_TIMEOUT_MS = 3000;
+const ACK_TRIES = 3;
+const ACK_BACKOFF_MS = 250;
+const RESET_GAP_MS = 5000;
+let lastReset = 0;
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function acknowledge(mine, id, seq, target) {
+  const unreleased = () => source === mine && newest === seq;
+  for (let attempt = 0; attempt < ACK_TRIES; attempt += 1) {
+    if (attempt > 0) await pause(ACK_BACKOFF_MS * attempt);
+    if (!unreleased()) return;
+    const status = await fetch("/api/ack?id=" + id + "&seq=" + seq, { method: "POST", keepalive: true, signal: AbortSignal.timeout(ACK_TIMEOUT_MS) })
+      .then((response) => response.status, () => 0);
+    if (status === 204) return;
+    if (status === 404) break;
+  }
+  if (unreleased()) reset(mine, target);
+}
+
+function reset(mine, target) {
+  const wait = Math.max(0, lastReset + RESET_GAP_MS - Date.now());
+  lastReset = Date.now() + wait;
+  setTimeout(() => { if (source === mine) connect(target); }, wait);
+}
+
+function closeStream() {
   if (source !== null) source.close();
-  selected = target;
-  if (target === null) return;
-  screen.hidden = false;
-  note.hidden = true;
-  live.hidden = false;
-  hint.hidden = false;
+  source = null;
+}
+
+function connect(target) {
+  closeStream();
   live.textContent = "connecting";
   live.className = "";
-  source = new EventSource("/api/stream?target=" + encodeURIComponent(target));
-  source.onmessage = (message) => {
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const mine = new EventSource("/api/stream?target=" + encodeURIComponent(target) + "&id=" + id);
+  source = mine;
+  newest = 0;
+  acknowledging = () => undefined;
+  mine.onopen = refit;
+  mine.onmessage = (message) => {
     const shown = JSON.parse(message.data);
+    newest = shown.seq;
+    acknowledging = () => acknowledge(mine, id, shown.seq, target);
     if (shown.hidden !== undefined) {
       screen.removeAttribute("src");
       screen.hidden = true;
@@ -184,6 +230,7 @@ function watch(target) {
       note.textContent = "Hidden: " + shown.hidden + ". The captain's viewer in main's workspace shows this page.";
       live.textContent = "hidden";
       live.className = "";
+      acknowledging();
       return;
     }
     note.hidden = true;
@@ -193,7 +240,22 @@ function watch(target) {
     live.textContent = "live";
     live.className = "on";
   };
-  source.onerror = () => { live.textContent = "reconnecting"; live.className = ""; };
+  mine.onerror = () => { live.textContent = "reconnecting"; live.className = ""; };
+}
+
+function watch(target) {
+  releaseKeys();
+  if (target !== selected) phoneTargetChanged();
+  selected = target;
+  if (target === null) {
+    closeStream();
+    return;
+  }
+  screen.hidden = false;
+  note.hidden = true;
+  live.hidden = false;
+  hint.hidden = false;
+  connect(target);
 }
 
 function render(tabs) {
@@ -217,7 +279,7 @@ function render(tabs) {
       address.textContent = tab.url;
       watch(tab.target);
       render(tabs);
-      capture.focus();
+      if (!isPhone()) capture.focus();
     };
     list.append(item);
     if (tab.target === selected) address.textContent = tab.live ? tab.url : "tab is gone";
@@ -422,6 +484,7 @@ async function copy() {
     say(error instanceof Error ? error.message : String(error), error.empty === true ? "empty" : "failed");
   }
 }
+${PHONE_SCRIPT}
 refresh();
 setInterval(refresh, 2000);
 </script>
