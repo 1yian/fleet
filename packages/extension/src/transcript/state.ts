@@ -1,10 +1,13 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 
 const KEY = Symbol.for("fleet:transcript-state");
 
 export interface TranscriptState {
   theme: Theme | undefined;
   mode: object | undefined;
+  hidden: number;
+  notice: Component | undefined;
 }
 
 function isState(value: unknown): value is TranscriptState {
@@ -14,7 +17,12 @@ function isState(value: unknown): value is TranscriptState {
 export function transcriptState(): TranscriptState {
   const found: unknown = Reflect.get(globalThis, KEY);
   if (isState(found)) return found;
-  const created: TranscriptState = { theme: undefined, mode: undefined };
+  const created: TranscriptState = {
+    theme: undefined,
+    mode: undefined,
+    hidden: 0,
+    notice: undefined,
+  };
   Reflect.set(globalThis, KEY, created);
   return created;
 }

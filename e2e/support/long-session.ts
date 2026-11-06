@@ -16,8 +16,6 @@ const ZERO_USAGE = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-const entryId = (): string => randomBytes(4).toString("hex");
-
 export function writeLongSession(file: string, cwd: string, turns: number): void {
   const at = Date.parse("2026-10-20T16:49:00.000Z");
   const lines: string[] = [
@@ -30,8 +28,9 @@ export function writeLongSession(file: string, cwd: string, turns: number): void
     }),
   ];
   let parent: string | null = null;
+  let entries = 0;
   const append = (entry: Record<string, unknown>, when: number): void => {
-    const id = entryId();
+    const id = (entries++).toString(16).padStart(8, "0");
     lines.push(
       JSON.stringify({ ...entry, id, parentId: parent, timestamp: new Date(when).toISOString() }),
     );

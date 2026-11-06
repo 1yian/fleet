@@ -6,16 +6,18 @@ import { transcriptState } from "./state.ts";
 const DRAWN_ENTRIES = 500;
 const TRIM_AT_ROWS = 2 * DRAWN_ENTRIES;
 
-function earlierNotice(hidden: number): Component {
-  const text = `${String(hidden)} earlier entries are not drawn in this pane. The session file and memory keep them.`;
-  return {
+function earlierNotice(): Component {
+  const state = transcriptState();
+  state.notice ??= {
     render: (width) => {
+      const { hidden, theme } = transcriptState();
+      const text = `${String(hidden)} earlier entries are not drawn in this pane. The session file and memory keep them.`;
       const line = truncateToWidth(text, Math.max(width - 2, 0), "");
-      const theme = transcriptState().theme;
       return [` ${theme === undefined ? line : theme.fg("muted", line)}`];
     },
     invalidate: () => undefined,
   };
+  return state.notice;
 }
 
 function field(value: unknown, key: string): unknown {
@@ -81,7 +83,8 @@ export function limitDrawnHistory(): void {
       InteractiveMode.prototype,
       "renderSessionEntries",
       function (this: object, entries: unknown, ...rest: unknown[]): unknown {
-        transcriptState().mode = this;
+        const state = transcriptState();
+        state.mode = this;
         if (!Array.isArray(entries) || entries.length <= DRAWN_ENTRIES)
           return render(this, entries, ...rest);
         const drawn = withoutOrphanResults(entries.slice(-DRAWN_ENTRIES));
@@ -90,7 +93,8 @@ export function limitDrawnHistory(): void {
         const children = childrenOf(this);
         const start = children?.length ?? 0;
         const result = render(this, drawn, ...rest);
-        children?.splice(start, 0, earlierNotice(entries.length - drawn.length));
+        state.hidden = entries.length - drawn.length;
+        children?.splice(start, 0, earlierNotice());
         return result;
       },
     );
