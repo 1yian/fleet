@@ -22,8 +22,8 @@ Every fleet mate sets its messages apart in the terminal. Each message has one m
 - There is one rule for each Pi message, not for each paragraph or text block. A reply with several paragraphs, several text blocks, or thinking before the text has one rule.
 - A reply with nothing to show has no rule. That covers an empty reply and a reply that only calls tools. Calm hides short working notes, and a message it empties has no rule either.
 
-- The pane draws the last 500 entries of the session. When the session has more, one muted row above the first drawn entry says how many earlier entries are not drawn, and that the session file and memory keep them. A mate's conversation never compacts, so without the limit a long-lived mate would draw tens of thousands of entries at every frame.
-- The limit holds while the mate works. When a run settles and the pane holds more than 1,000 rows, the pane is drawn again from the last 500 entries, and the notice count rises. It waits while the captain is scrolled up in the fullscreen pane, and the next run that settles with the pane following the end does it.
+- At start and on rebuild, the pane draws from the last 500 entries of the session. When earlier entries are left out, one muted row above the first drawn entry says how many are not drawn, and that the session file and memory keep them.
+- New rows accumulate while the mate works. When a run settles and the pane holds more than 1,000 rows, the pane is drawn again from the last 500 entries, and the notice count is updated. It waits while the captain is scrolled up in the fullscreen pane. A later run that settles with the pane following the end trims if it is still over the threshold. Outside fullscreen, trimming does not wait for the scroll position.
 - A tool result is drawn only with its call. If the limit would cut a call from its result, both are left out and the notice counts both.
 - The Up arrow still brings back every prompt the captain sent, including the ones above the notice.
 
