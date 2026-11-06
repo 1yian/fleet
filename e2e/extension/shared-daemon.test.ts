@@ -18,6 +18,9 @@ import { parseRecord } from "../support/json.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 const FAKE = fileURLToPath(new URL("../support/fake-no-mistakes.ts", import.meta.url));
+const DETECT = fileURLToPath(
+  new URL("../../packages/extension/src/contain/detect.sh", import.meta.url),
+);
 
 const dispatchStep = {
   title: "Gate the change",
@@ -150,6 +153,15 @@ async function eventually(check: () => boolean, what: string): Promise<void> {
   }
 }
 
+const movesDaemons = (): boolean =>
+  execFileSync("sh", [DETECT], { encoding: "utf8" }).trim() !== "sweep";
+
+function assertKeptReported(result: string, daemon: number): void {
+  if (movesDaemons())
+    assert.match(result, new RegExp(`Kept shared services: c-1-a1 pid ${String(daemon)} `));
+  else assert.doesNotMatch(result, /Kept shared services/);
+}
+
 function assertSharedDaemonKept(daemon: number): void {
   const tree = parseRecord(readFileSync(join(shared, "tree.json"), "utf8"));
   assert.equal(servedBy(shared), String(daemon), "the shared daemon no longer answers");
@@ -175,7 +187,7 @@ test("close keeps the shared daemon that a worker started, and still stops what 
 
   assert.match(result, /^c-1 is done\./);
   assertSharedDaemonKept(daemon);
-  assert.match(result, new RegExp(`Kept shared services: c-1-a1 pid ${String(daemon)} \\(`));
+  assertKeptReported(result, daemon);
   assert.equal(alive(lookalike), false, "a process that only looks like the daemon survived");
   assert.equal(alive(own), false, "a daemon whose root lives in the worktree survived");
   assert.match(result, new RegExp(`Stopped leftover processes: .*pid ${String(lookalike)} `));
@@ -233,7 +245,8 @@ test("restarting a worker keeps the shared daemon it started, and still stops wh
   const { daemon, lookalike, own } = started();
   mate.prompt("restart it");
   await h.waitForCall(4, "mate", WORKER_WAIT_MS);
-  await eventually(() => !alive(lookalike) && !alive(own), "the old worker's processes to stop");
+  if (movesDaemons())
+    await eventually(() => !alive(lookalike) && !alive(own), "the old worker's processes to stop");
 
   assertSharedDaemonKept(daemon);
 });
@@ -267,7 +280,7 @@ test("close keeps a shared daemon that has not published its pid file yet", asyn
   assert.match(result, /^c-1 is done\./);
   assert.equal(existsSync(join(shared, "daemon.pid")), false, "the daemon had published already");
   assert.equal(servedBy(shared), String(daemon), "the starting daemon was stopped");
-  assert.match(result, new RegExp(`Kept shared services: c-1-a1 pid ${String(daemon)} `));
+  assertKeptReported(result, daemon);
   writeFileSync(publish, "");
   await eventually(() => existsSync(join(shared, "tree.json")), "the daemon to publish");
   assertSharedDaemonKept(daemon);
