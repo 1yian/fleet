@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { BrowserArgs, OpResult } from "@fleet/protocol";
 import type { BrowserConfig } from "./browser-config.ts";
-import { HostBrowser, NO_TAB, plural, type Outcome } from "./browser-host.ts";
+import { HostBrowser, plural, type Outcome } from "./browser-host.ts";
+import { NO_TAB } from "./browser-refusals.ts";
 import {
   attemptHost,
   hostsEverUsed,
@@ -93,6 +94,18 @@ export class Browser {
         return await this.site(tab.host).frame(card, target);
       } catch (error) {
         return { image: null, note: reason(error) };
+      }
+    });
+  }
+
+  copy(card: number, target: string): Promise<OpResult<"browser.copy">> {
+    return this.inTurn(card, async () => {
+      try {
+        const tab = openTabs(this.db).find((each) => each.card === card && each.target === target);
+        if (tab === undefined) throw new Error("that tab is not open");
+        return await this.site(tab.host).copy(card, target);
+      } catch (error) {
+        return { text: null, note: reason(error) };
       }
     });
   }

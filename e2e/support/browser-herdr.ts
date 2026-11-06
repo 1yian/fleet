@@ -337,12 +337,25 @@ export class BrowserHerdr {
 
   async inputStatus(address: string, target: string, at = { x: 5, y: 5 }): Promise<number> {
     const cookie = await this.cookieFor(address);
-    const response = await fetch(new URL("/api/input", address), {
-      method: "POST",
-      headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ target, kind: "click", ...at }),
-    });
-    return response.status;
+    let status = 204;
+    for (const action of ["down", "up"]) {
+      const response = await fetch(new URL("/api/input", address), {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          target,
+          kind: "mouse",
+          action,
+          ...at,
+          button: "left",
+          buttons: action === "down" ? 1 : 0,
+          clickCount: 1,
+          modifiers: 0,
+        }),
+      });
+      if (response.status !== 204) status = response.status;
+    }
+    return status;
   }
 
   async stop(t: object): Promise<void> {

@@ -1,8 +1,15 @@
 import type { DatabaseSync } from "node:sqlite";
-import { parseCdp, type BrowserArgs, type Cdp, type OpResult } from "@fleet/protocol";
+import {
+  parseCdp,
+  readSelection,
+  type BrowserArgs,
+  type Cdp,
+  type OpResult,
+} from "@fleet/protocol";
 import { dial, type Dial } from "@fleet/protocol/tunnel";
 import Type from "typebox";
 import type { HostBrowserConfig } from "./browser-config.ts";
+import { copyAnswer } from "./browser-copy.ts";
 import { holdsFilled, holdsLogin } from "./browser-fill.ts";
 import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
@@ -20,10 +27,25 @@ import {
   typeText,
   type Page,
 } from "./browser-page.ts";
+import {
+  COPY_REFUSED,
+  EVAL_REFUSED,
+  KEPT,
+  NO_TAB,
+  RESTARTED,
+  TAB_CLOSED,
+} from "./browser-refusals.ts";
 import { CREDENTIAL_SHOWN } from "./browser-scan.ts";
 import { screenshot } from "./browser-shot.ts";
-import { hiderOf, targetsOf, type Listed } from "./browser-targets.ts";
+import {
+  DestroyedSchema,
+  hiderOf,
+  TargetEventSchema,
+  targetsOf,
+  type Listed,
+} from "./browser-targets.ts";
 import { Vault } from "./browser-vault.ts";
+import { within } from "./browser-wait.ts";
 import {
   attemptStartedAt,
   labelOf,
@@ -45,14 +67,6 @@ export interface Outcome {
 
 const AttachedSchema = Type.Object({ sessionId: Type.String() });
 const CreatedSchema = Type.Object({ targetId: Type.String() });
-const TargetEventSchema = Type.Object({
-  targetInfo: Type.Object({
-    targetId: Type.String(),
-    type: Type.String(),
-    openerId: Type.Optional(Type.String()),
-  }),
-});
-const DestroyedSchema = Type.Object({ targetId: Type.String() });
 
 const TOUCH_BACKOFF_MS = 5_000;
 const LISTING_MS = 3_000;
@@ -62,27 +76,11 @@ const isGone = (error: unknown): boolean =>
   /no target (with given id|found for targetId)/i.test(reason(error));
 export const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
 const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
-export const NO_TAB = "you have no tab yet: run `browser-axi open <url>` first";
-const TAB_CLOSED = "your tab was closed: run `browser-axi open <url>` again";
 
 async function atPage(page: Page, text: string): Promise<Outcome> {
   const where = await summary(page).catch(() => undefined);
   return { result: { text, ...(where === undefined ? {} : { page: where }) }, notify: [] };
 }
-
-function within<T>(ms: number, work: Promise<T>, late: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(late));
-    }, ms);
-  });
-  return Promise.race([work, expired]).finally(() => {
-    clearTimeout(timer);
-  });
-}
-const EVAL_REFUSED =
-  "nothing was evaluated: a stored credential is in this page's form; click Sign in first, or read the page as text";
 
 export class HostBrowser {
   private link: Promise<Cdp> | undefined;
@@ -129,12 +127,30 @@ export class HostBrowser {
     );
   }
 
-  private async framed(card: number, target: string): Promise<Outcome> {
+  private async ownPage(
+    card: number,
+    target: string,
+    action: "read" | "screenshot",
+  ): Promise<Page> {
     await this.vault.ready();
     const own = await this.pageOf(await this.connection(), card);
     if (own.target !== target) throw new Error("that tab is not open");
-    if (this.mayShowCode(target, "screenshot")) throw this.restarted();
-    return this.pictureOf(own.page, target, false, true);
+    if (this.mayShowCode(target, action)) throw new Error(RESTARTED);
+    return own.page;
+  }
+
+  private async framed(card: number, target: string): Promise<Outcome> {
+    return this.pictureOf(await this.ownPage(card, target, "screenshot"), target, false, true);
+  }
+
+  copy(card: number, target: string): Promise<OpResult<"browser.copy">> {
+    return copyAnswer(this.copied(card, target), this.vault.values);
+  }
+
+  private async copied(card: number, target: string): Promise<string> {
+    const page = await this.ownPage(card, target, "read");
+    await this.refuseWhileFilled(page, target, COPY_REFUSED);
+    return scrubbed(await readSelection(page.cdp, page.session), this.vault.values);
   }
 
   private async pictureOf(
@@ -161,7 +177,7 @@ export class HostBrowser {
     }
     if (args.action !== "login") await this.vault.ready();
     const { page, target } = await this.pageOf(await this.connection(), card);
-    if (this.mayShowCode(target, args.action)) throw this.restarted();
+    if (this.mayShowCode(target, args.action)) throw new Error(RESTARTED);
     return this.guarded(
       args.action === "login"
         ? this.signIn(page, card, target, args.site)
@@ -175,18 +191,6 @@ export class HostBrowser {
 
   private mayShowCode(target: string, action: BrowserArgs["action"]): boolean {
     return ["read", "eval", "screenshot"].includes(action) && this.mayHoldCode(target);
-  }
-
-  private kept(): Error {
-    return new Error(
-      "this tab was already open when cardd restarted, and the address you gave did not replace its page (it only changed the part after #, or it was not a page), so a one-time code may still be in it and the tab stays refused: run `browser-axi open <url>` with the address of a different page",
-    );
-  }
-
-  private restarted(): Error {
-    return new Error(
-      "this tab was already open when cardd restarted, and it may show a one-time code that cardd can no longer hide, so nothing was returned: run `browser-axi open <url>` to load a fresh page, then try again",
-    );
   }
 
   private async signIn(
@@ -383,7 +387,7 @@ export class HostBrowser {
     const before = this.trusted.has(tab.target) ? undefined : (await documentOf(page)).loader;
     const where = await navigate(page, url);
     const replaced = before === undefined || (await documentOf(page)).loader !== before;
-    if (!replaced && this.mayHoldCode(tab.target)) throw this.kept();
+    if (!replaced && this.mayHoldCode(tab.target)) throw new Error(KEPT);
     if (replaced) this.trusted.add(tab.target);
     return `Opened ${where} in your tab ${labelOf(this.db, card)}.`;
   }

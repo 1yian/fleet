@@ -19,6 +19,39 @@ const PAGES: Readonly<Record<string, string>> = {
     <span id="n" style="position:fixed;left:20px;top:160px">0</span>
     <input id="q" style="position:fixed;left:20px;top:200px;width:200px;height:30px">
   </body>`,
+  "/pad": `<!doctype html><title>Pad</title><body style="margin:0">
+    <p id="line" style="position:fixed;left:20px;top:20px;margin:0;font-size:28px;white-space:pre">0123456789</p>
+    <input id="field" style="position:fixed;left:20px;top:80px;width:360px;height:32px;font-size:18px">
+    <div id="box" style="position:fixed;left:20px;top:140px;width:240px;height:80px;background:#9cf">box</div>
+    <script>
+      window.seen = [];
+      const flags = (e) => [e.ctrlKey ? "ctrl" : "", e.shiftKey ? "shift" : "", e.altKey ? "alt" : "", e.metaKey ? "meta" : ""].filter(Boolean).join("+");
+      const note = (...parts) => window.seen.push(parts.filter(Boolean).join(" "));
+      const box = document.getElementById("box");
+      for (const type of ["mouseover", "mousedown", "mouseup", "click", "auxclick", "dblclick", "contextmenu"])
+        box.addEventListener(type, (e) => note(type, "button=" + e.button, "detail=" + e.detail, flags(e)));
+      for (const type of ["keydown", "keyup"])
+        document.addEventListener(type, (e) => note(type, "key=" + e.key, "code=" + e.code, flags(e)));
+      for (const type of ["copy", "cut", "paste"]) document.addEventListener(type, () => note(type));
+      document.getElementById("field").addEventListener("compositionstart", () => note("compositionstart"));
+    </script></body>`,
+  "/framed": `<!doctype html><title>Framed</title><body style="margin:0">
+    <iframe id="inner" style="position:fixed;left:20px;top:20px;width:360px;height:120px;border:0"></iframe>
+    <input id="field" style="position:fixed;left:20px;top:160px;width:360px;height:32px;font-size:18px">
+    <p id="parent" style="position:fixed;left:20px;top:210px;margin:0;font-size:18px">parent words</p>
+    <script>
+      window.loaded = false;
+      window.seen = [];
+      const inner = document.getElementById("inner");
+      inner.onload = () => { window.loaded = true; };
+      inner.src = location.hash.slice(1);
+      for (const type of ["keydown", "keyup", "copy", "cut", "paste"])
+        document.addEventListener(type, (e) => window.seen.push(type + (e.key === undefined ? "" : " " + e.key)));
+    </script></body>`,
+  "/words": `<!doctype html><title>Words</title><body style="margin:0">
+    <p style="position:fixed;left:0;top:0;margin:0;font-size:28px">selectable</p>
+    <input id="vaulted" type="password" value="inner-password" style="position:fixed;left:0;top:60px;width:200px;height:30px;font-size:18px">
+  </body>`,
   "/b": `<!doctype html><title>Bravo</title><body data-owner="b"><p>bravo page</p></body>`,
   "/links": `<!doctype html><title>Links</title><body><a id="next" href="/b" style="position:fixed;left:20px;top:20px">to bravo</a><button id="stay" style="position:fixed;left:20px;top:80px">stay</button><a id="fragment" href="#section" style="position:fixed;left:20px;top:140px">to section</a><button id="push" style="position:fixed;left:20px;top:200px" onclick="history.pushState({}, '', '/pushed')">push</button></body>`,
   "/composed": `<!doctype html><title>Composed</title><body><div id="who">hun<mark>ter</mark>2</div></body>`,

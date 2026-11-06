@@ -12,6 +12,7 @@ import { PlanSchema } from "./wakes.ts";
 export * from "./branch.ts";
 export * from "./browser.ts";
 export * from "./cdp.ts";
+export { readSelection } from "./cdp-selection.ts";
 export * from "./health.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";

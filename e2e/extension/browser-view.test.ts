@@ -3,58 +3,32 @@ import { request } from "node:http";
 import { writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { BROWSER_OPS, check } from "@fleet/protocol";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { afterEach, beforeEach, test } from "node:test";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { Stream } from "../support/browser-herdr.ts";
-import { WORKER_HOST } from "../support/fleet.ts";
 import { isRecord } from "../support/json.ts";
-import { spawnGuarded } from "../support/guarded.ts";
 import { tabOf } from "../support/login-fixtures.ts";
 import { tempDir } from "../support/run-root.ts";
-
-const VIEWER = fileURLToPath(
-  new URL("../../packages/extension/src/browser-view.ts", import.meta.url),
-);
-const WAIT_MS = 15_000;
+import {
+  startViewer,
+  stopViewers,
+  waitFor as until,
+  type Started,
+  type Viewers,
+} from "../support/viewer.ts";
 
 let lab: BrowserLab;
 let client: Client;
-const viewers: ReturnType<typeof spawnGuarded>[] = [];
+const viewers: Viewers = [];
 let page: Page;
 let url: string;
 let first: RawWorker;
 let second: RawWorker;
 
-interface Started {
-  readonly url: string;
-  readonly said: () => string;
-}
-
-async function start(flags: string[], env: Record<string, string> = {}): Promise<Started> {
-  const access = join(tempDir("fleet-viewer-access-"), "access.json");
-  writeFileSync(
-    access,
-    JSON.stringify({ url: lab.cardd.url, token: lab.mainToken, host: WORKER_HOST }),
-    { mode: 0o600 },
-  );
-  const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open", ...flags], {
-    stdio: ["ignore", "pipe", "inherit"],
-    env: { ...process.env, FLEET_BROWSER_VIEW_OPEN: "0", ...env },
-  });
-  viewers.push(viewer);
-  let said = "";
-  viewer.stdout?.setEncoding("utf8").on("data", (chunk: string) => (said += chunk));
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    const found = /Fleet browser viewer \((?:captain|gated)\): (\S+)/.exec(said)?.[1];
-    if (found !== undefined) return { url: found, said: () => said };
-    assert.ok(Date.now() < deadline, "the viewer did not print its address");
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
+const start = (flags: string[], env: Record<string, string> = {}): Promise<Started> =>
+  startViewer(lab, viewers, flags, env);
 
 const launch = async (flags: string[]): Promise<string> => (await start(flags)).url;
 
@@ -69,23 +43,10 @@ beforeEach(async () => {
   page = await client.newPage({ viewport: { width: 1400, height: 900 } });
 });
 afterEach(async () => {
-  const exits = viewers.splice(0).map((viewer) => {
-    const exited = new Promise((resolve) => viewer.once("exit", resolve));
-    viewer.kill("SIGTERM");
-    return exited;
-  });
-  const stopped = await Promise.allSettled([...exits, client.close(), lab.stop()]);
+  const stopped = await Promise.allSettled([...stopViewers(viewers), client.close(), lab.stop()]);
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
-
-async function until(check: () => Promise<boolean>, what: string): Promise<void> {
-  const deadline = Date.now() + WAIT_MS;
-  while (!(await check())) {
-    assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
 
 const labels = (): Promise<string[]> => page.locator("#tabs li .card").allTextContents();
 
@@ -146,9 +107,7 @@ test("a click and keys in the picture reach the tab, so the captain can step in"
   );
 
   await clickAt(first, 120, 215);
-  await page.keyboard.type("hi!");
-  await page.locator("#paste").fill("123456");
-  await page.locator("#paste").press("Enter");
+  await page.keyboard.type("hi!123456");
   await until(
     async () =>
       (await first.act({ action: "eval", expression: "document.getElementById('q').value" })) ===
@@ -189,6 +148,7 @@ test("every route needs the viewer's token, and the tokened address works", asyn
     { path: "/api/tabs", method: "GET" },
     { path: "/api/stream?target=any", method: "GET" },
     { path: "/api/input", method: "POST" },
+    { path: "/api/copy", method: "POST" },
     { path: "/anything", method: "GET" },
   ];
   for (const { path, method } of routes) {
@@ -299,7 +259,17 @@ test("two viewers in one browser profile each keep their own session", async () 
       const input = await fetch("/api/input", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ target: id, kind: "click", x: 5, y: 5 }),
+        body: JSON.stringify({
+          target: id,
+          kind: "mouse",
+          action: "move",
+          x: 5,
+          y: 5,
+          button: "none",
+          buttons: 0,
+          clickCount: 1,
+          modifiers: 0,
+        }),
       });
       return [tabs.status, stream.status, input.status];
     }, target);
@@ -340,6 +310,21 @@ test("only main's own session may ask for the captain's view of a tab, and a fra
       cleo.call("browser.frame", { target }),
       /that tab is not open, or it is not yours to see/,
     );
+
+    const copy = BROWSER_OPS["browser.copy"].result;
+    assert.deepEqual(check(copy, await first.session.call("browser.copy", { target })), {
+      text: "",
+      note: null,
+    });
+    assert.equal(check(copy, await lab.main.call("browser.copy", { target: foreign })).note, null);
+    await assert.rejects(
+      first.session.call("browser.copy", { target: foreign }),
+      /that tab is not open, or it is not yours to see/,
+    );
+    await assert.rejects(
+      cleo.call("browser.copy", { target }),
+      /that tab is not open, or it is not yours to see/,
+    );
   } finally {
     await cleo.close();
   }
@@ -353,7 +338,7 @@ test("with no tab the viewer shows one empty state, and with tabs but none picke
     async () => (await note.textContent()) === "Pick a tab on the left.",
     "the pick note",
   );
-  for (const quiet of ["#live", "#hint", "#paste", "#screen"])
+  for (const quiet of ["#live", "#hint", "#copied", "#screen"])
     assert.equal(await page.locator(quiet).isHidden(), true, `${quiet} while nothing is picked`);
 
   await first.act({ action: "close" });
@@ -367,7 +352,7 @@ test("with no tab the viewer shows one empty state, and with tabs but none picke
   const shown = await page.locator("body").innerText();
   assert.equal(shown.match(/No tabs open/g)?.length, 1);
   assert.doesNotMatch(shown, /Pick a tab|idle|Click the picture/);
-  for (const quiet of ["#live", "#hint", "#paste", "#screen"])
+  for (const quiet of ["#live", "#hint", "#copied", "#screen"])
     assert.equal(await page.locator(quiet).isHidden(), true, `${quiet} with no tab`);
   assert.equal(await page.locator("#address").textContent(), "");
   assert.equal(await note.isVisible(), true);

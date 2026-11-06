@@ -42,12 +42,14 @@ async function metronome(ticks: number): Promise<void> {
   await reach(fleet.main, card, "worker-never-connected", ticks);
 }
 
-function heartbeat(worker: Session, progress: boolean): void {
+function heartbeat(worker: Session, progress: boolean): NodeJS.Timeout {
   const send = (): void => {
     worker.send({ t: "activity", state: "running", ...(progress ? { progress } : {}) });
   };
   send();
-  beats.push(setInterval(send, 40));
+  const beat = setInterval(send, 40);
+  beats.push(beat);
+  return beat;
 }
 
 async function idle(token: string): Promise<Session> {
@@ -148,12 +150,11 @@ test("a worker that answers every nudge with a short turn and no report is still
 
 test("a paused worker is neither nudged nor reported", async () => {
   const card = await newCard(fleet.main, "paused");
-  const worker = await idle(await begin(fleet.main, card));
-  await worker.call("report", {
-    status: "paused",
-    text: "waiting for the API team",
-    until: Date.now() + 3_600_000,
-  });
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  const turn = heartbeat(worker, false);
+  await worker.call("report", { status: "paused", text: "waiting", until: Date.now() + 3_600_000 });
+  clearInterval(turn);
+  worker.send({ t: "activity", state: "idle" });
   await metronome(3);
   assert.deepEqual(await findings(card), []);
   assert.equal(await status(fleet.main, card), "paused");
