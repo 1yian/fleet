@@ -20,8 +20,9 @@ const PATH_PREFIX = "(?:[^\\s|;&(`]*/)?";
 
 const ASSIGNMENT = "[A-Za-z_]\\w*=[^\\s|;&`]*\\s+";
 const PREFIXES = "(?:sudo|env|command|exec|nohup|time|nice|caffeinate)\\b(?:\\s+-\\S+)*\\s+";
+const KEYWORDS = "(?:(?:if|then|do|else|elif|while|until)\\b|[{!])\\s+";
 const SHELL_C = `${PATH_PREFIX}(?:ba|z|da)?sh\\s+(?:-\\S+\\s+)*?-\\w*c\\s+["']?`;
-const WRAPPERS = `(?:${ASSIGNMENT}|${PREFIXES}|eval\\s+["']?|${SHELL_C})*`;
+const WRAPPERS = `(?:${ASSIGNMENT}|${PREFIXES}|${KEYWORDS}|eval\\s+["']?|${SHELL_C})*`;
 const AT_COMMAND = `(?:^|[|;&\\n(\`]|\\$\\()\\s*${WRAPPERS}`;
 const NAMED_SAFARI = "(?<![\\w-])safari(?![\\w-]|\\.(?!app\\b))";
 

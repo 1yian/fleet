@@ -60,6 +60,19 @@ const REFUSED: readonly string[] = [
   `mosh frontera -- open -a Safari https://example.com`,
   `mosh --ssh="ssh -p 22" frontera -- osascript -e '${SAFARI_TELL}'`,
   `tailscale ssh yian@frontera osascript -e '${SAFARI_TELL}'`,
+  `for u in a b; do open -a Safari https://example.com; done`,
+  `while read u; do open -a Safari "$u"; done`,
+  `until false; do open -a Safari https://example.com; done`,
+  `if true; then osascript -e '${SAFARI_TELL}'; fi`,
+  `if open -a Safari https://example.com; then echo ok; fi`,
+  `if false; then echo no; elif true; then open -a Safari https://example.com; fi`,
+  `if false; then echo no; else open -a Safari https://example.com; fi`,
+  `if true; then safaridriver --enable; fi`,
+  `{ open -a Safari https://example.com; }`,
+  `! open -a Safari https://example.com`,
+  `ssh frontera 'for u in a b; do open -a Safari https://example.com; done'`,
+  `ssh frontera 'if true; then safaridriver --enable; fi'`,
+  `ssh frontera '{ open -a Safari https://example.com; }'`,
   `${LONG_TEXT}; open -a Safari https://example.com`,
 ];
 
@@ -77,6 +90,9 @@ const ALLOWED: readonly string[] = [
   `ssh frontera "echo open -a Safari"`,
   `mosh frontera -- sheprd browser open --tab https://example.com/Safari`,
   `tailscale ssh yian@frontera sheprd browser open --tab https://example.com/Safari`,
+  `if true; then osascript -e '${NOTIFY}'; fi`,
+  `for u in a b; do echo open -a Safari; done`,
+  `ssh frontera 'if true; then echo safaridriver; fi'`,
 ];
 
 let fleet: Fleet;
@@ -170,6 +186,8 @@ test("a mate still runs osascript that names no Safari, ssh, text about Safari, 
     "ssh frontera echo open -a Safari",
     "mosh frontera -- sheprd browser open --tab https://example.com/Safari",
     "tailscale ssh yian@frontera sheprd browser open --tab https://example.com/Safari",
+    `osascript -e ${NOTIFY}`,
+    "ssh frontera if true; then echo safaridriver; fi",
   ]);
 });
 
