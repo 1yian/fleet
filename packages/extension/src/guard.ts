@@ -15,6 +15,46 @@ const DAEMON_ADMIN: readonly RegExp[] = [
 const DAEMON_REASON =
   "refused: the no-mistakes daemon is shared by everything on this host, and a stop or restart disrupts work of other cards. Fleet never starts, stops, or restarts it. If the daemon is down, report blocked and say so: your first mate hears of it.";
 
+const MENTIONS_SAFARI = /safari/i;
+const PATH_PREFIX = "(?:[^\\s|;&(`]*/)?";
+
+const ASSIGNMENT = "[A-Za-z_]\\w*=[^\\s|;&`]*\\s+";
+const PREFIXES = "(?:sudo|env|command|exec|nohup|time|nice|caffeinate)\\b(?:\\s+-\\S+)*\\s+";
+const KEYWORDS = "(?:(?:if|then|do|else|elif|while|until)\\b|[{!])\\s+";
+const SHELL_C = `${PATH_PREFIX}(?:ba|z|da)?sh\\s+(?:-\\S+\\s+)*?-\\w*c\\s+["']?`;
+const WRAPPERS = `(?:${ASSIGNMENT}|${PREFIXES}|${KEYWORDS}|eval\\s+["']?|${SHELL_C})*`;
+const AT_COMMAND = `(?:^|[|;&\\n(\`]|\\$\\()\\s*${WRAPPERS}`;
+const NAMED_SAFARI = "(?<![\\w-])safari(?![\\w-]|\\.(?!app\\b))";
+
+const DRIVES_SAFARI = [
+  `${PATH_PREFIX}osascript\\b[\\s\\S]*${NAMED_SAFARI}`,
+  `${PATH_PREFIX}open(?=\\s)[^|;&\\n]*${NAMED_SAFARI}`,
+  `${PATH_PREFIX}safaridriver\\b`,
+].join("|");
+
+const WORD = `(?:"[^"]*"|'[^']*'|\\S+)`;
+const HOST = "[^\\s-]\\S*";
+const SSH_FLAG = "-[46AaCfGgKkMNnqsTtVvXxYy]+(?=\\s)";
+const SSH_VALUE_FLAG = `-[BbcDEeFIiJLlmOopQRSWw]\\s*${WORD}`;
+const MOSH_OPTION = `--ssh(?:=|\\s+)${WORD}|--[a-z][a-z-]*(?:=\\S+)?|-p\\s*\\S+|-[an](?=\\s)`;
+const REMOTE_SHELL = [
+  `${PATH_PREFIX}ssh\\s+(?:(?:${SSH_FLAG}|${SSH_VALUE_FLAG})\\s+)*${HOST}`,
+  `${PATH_PREFIX}mosh\\s+(?:(?:${MOSH_OPTION})\\s+)*${HOST}`,
+  `${PATH_PREFIX}tailscale\\s+ssh\\s+${HOST}`,
+].join("|");
+const REMOTE_COMMAND_START = `(?:["']?|[\\s\\S]*?[|;&\\n])\\s*${WRAPPERS}`;
+
+const PERSONAL_SAFARI: readonly RegExp[] = [
+  new RegExp(`${AT_COMMAND}(?:${DRIVES_SAFARI})`, "i"),
+  new RegExp(
+    `${AT_COMMAND}(?:${REMOTE_SHELL})\\s+(?:--\\s+)?${REMOTE_COMMAND_START}(?:${DRIVES_SAFARI})`,
+    "i",
+  ),
+];
+
+const SAFARI_REASON =
+  "refused: Safari on the captain's Mac (frontera) is his personal browser, and no agent drives it. Use the fleet's shared Chrome with browser-axi, or a browser of your own with its own profile. This guard stops the recognizable commands: osascript or open -a naming Safari, safaridriver, and those run over ssh. If the task cannot be done without his own Safari session, report blocked and say why: your first mate asks him.";
+
 const LISTER = "(\\S*/)?(pgrep|pidof|ps)\\b";
 const KILL_FED_BY_LISTER: readonly RegExp[] = [
   new RegExp(`\\bkill\\b[^|;&\\n]*(\\$\\(|\`)\\s*${LISTER}`),
@@ -25,6 +65,8 @@ const KILL_FED_BY_LISTER: readonly RegExp[] = [
 
 function guardReason(command: string): string | undefined {
   if (DAEMON_ADMIN.some((pattern) => pattern.test(command))) return DAEMON_REASON;
+  if (MENTIONS_SAFARI.test(command) && PERSONAL_SAFARI.some((pattern) => pattern.test(command)))
+    return SAFARI_REASON;
   if (KILL_FED_BY_LISTER.some((pattern) => pattern.test(command))) return PATTERN_KILL_REASON;
   return undefined;
 }
