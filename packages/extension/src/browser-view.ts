@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -310,6 +311,13 @@ class Viewer {
   }
 }
 
+function open(url: string): void {
+  const opener = process.platform === "darwin" ? "open" : "xdg-open";
+  const child = spawn(opener, [url], { stdio: "ignore", detached: true });
+  child.on("error", () => undefined);
+  child.unref();
+}
+
 function bind(server: Server, host: string): Promise<AddressInfo> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -322,9 +330,6 @@ function bind(server: Server, host: string): Promise<AddressInfo> {
     });
   });
 }
-
-const NOT_OPENED =
-  "No browser was opened: Sheprd is not available here, and fleet never opens the host's default browser. Open the address above yourself.";
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost):[0-9]+$/;
 
@@ -388,7 +393,7 @@ async function main(): Promise<void> {
   const launch = launchOf(flags);
   if (launch !== undefined) console.log(`Viewer launch: ${launch}`);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {
-    if (!(await openSheprd(url))) console.log(NOT_OPENED);
+    if (!captain || !(await openSheprd(url))) open(url);
   }
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {

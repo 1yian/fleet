@@ -1,33 +1,19 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { startFleet, type Fleet } from "../support/fleet.ts";
-import { Harness, type Pi } from "../support/harness.ts";
+import { Harness } from "../support/harness.ts";
 import { Scratch } from "../support/scratch.ts";
 
-const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 const CAPTURE = fileURLToPath(new URL("../support/capture-tool.ts", import.meta.url));
-const refusals = (text: string): number =>
-  text.match(/refused: Safari on the captain's Mac/g)?.length ?? 0;
-const STUBBED = [
-  "osascript",
-  "open",
-  "ssh",
-  "mosh",
-  "tailscale",
-  "safaridriver",
-  "sheprd",
-  "xdg-open",
-];
-
 const SAFARI_TELL = `tell application "Safari" to activate`;
 const NOTIFY = `display notification "done" with title "fleet"`;
 const TARGET = "http://127.0.0.1:41000/?t=token";
 const LONG_TEXT = ":;".repeat(50_000);
 
-const REFUSED: readonly string[] = [
+const SAFARI_COMMANDS: readonly string[] = [
   `osascript -e '${SAFARI_TELL}'`,
   `osascript -e 'tell application "Safari"' -e 'open location "https://example.com"' -e 'end tell'`,
   `osascript -e 'tell application id "com.apple.Safari" to activate'`,
@@ -98,15 +84,11 @@ const ALLOWED: readonly string[] = [
 let fleet: Fleet;
 let h: Harness;
 let scratch: Scratch;
-let ran: string;
-let captured: string;
 
 beforeEach(async () => {
   scratch = new Scratch();
   fleet = await startFleet({});
   h = await Harness.start();
-  ran = join(h.dir, "ran");
-  captured = join(h.dir, "captured");
 });
 afterEach(async () => {
   const stopped = await Promise.allSettled([h.stop(), fleet.cardd.stop()]);
@@ -115,84 +97,28 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-function stubPrograms(): string {
-  const bin = join(h.dir, "bin");
-  mkdirSync(bin);
-  for (const name of STUBBED) {
-    const file = join(bin, name);
-    writeFileSync(
-      file,
-      `#!/bin/sh\n{ printf '%s' '${name}'; for a in "$@"; do printf ' %s' "$a"; done; echo; } >> '${ran}'\n`,
+for (const tool of ["bash", "run_long"]) {
+  test(`a mate passes Safari commands, including remote paths, through ${tool}`, async () => {
+    const captured = join(h.dir, "captured");
+    const commands = [...SAFARI_COMMANDS, ...ALLOWED, `${LONG_TEXT}echo done`];
+    for (const command of commands) h.onModel(() => ({ tool, args: { command } }));
+    h.onModel(() => ({ text: "done" }));
+    const mate = h.startPi(
+      "main-mate",
+      {
+        FLEET_URL: fleet.cardd.url,
+        FLEET_TOKEN: fleet.mainToken,
+        FLEET_ROLE: "mate",
+        FLEET_CAPTURE_FILE: captured,
+      },
+      [join(scratch.root, "packages/extension/src/index.ts"), CAPTURE],
     );
-    chmodSync(file, 0o755);
-  }
-  return bin;
+    await h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
+    mate.prompt("run the commands");
+    await h.waitForCall(commands.length, "default", 60_000);
+    assert.equal(
+      readFileSync(captured, "utf8"),
+      commands.map((command) => `${JSON.stringify(command)}\n`).join(""),
+    );
+  });
 }
-
-function startMate(tool: string, env: Record<string, string>): Pi {
-  return h.startPi(
-    "main-mate",
-    {
-      FLEET_URL: fleet.cardd.url,
-      FLEET_TOKEN: fleet.mainToken,
-      FLEET_ROLE: "mate",
-      ...env,
-    },
-    [join(scratch.root, "packages/extension/src/index.ts"), tool],
-  );
-}
-
-async function runAll(
-  commands: readonly string[],
-  tool: string,
-  env: Record<string, string>,
-): Promise<string> {
-  for (const command of commands) h.onModel(() => ({ tool: "bash", args: { command } }));
-  h.onModel(() => ({ text: "done" }));
-  const mate = startMate(tool, env);
-  await h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
-  mate.prompt("run the commands");
-  const turns = await h.waitForCall(commands.length, "default", 60_000);
-  return turns
-    .filter((turn) => turn.role === "toolResult")
-    .map((turn) => turn.text)
-    .join("\n");
-}
-
-test("a mate is refused every recognizable command that drives Safari on the captain's Mac", async () => {
-  const told = await runAll(REFUSED, CAPTURE, { FLEET_CAPTURE_FILE: captured });
-  assert.equal(refusals(told), REFUSED.length, told);
-  assert.equal(
-    existsSync(captured),
-    false,
-    existsSync(captured) ? readFileSync(captured, "utf8") : "",
-  );
-});
-
-test("a mate still runs osascript that names no Safari, ssh, text about Safari, and the Sheprd browser path", async () => {
-  const bin = stubPrograms();
-  const told = await runAll(ALLOWED, SHELL, { PATH: `${bin}:${process.env["PATH"] ?? ""}` });
-  assert.equal(refusals(told), 0, told);
-  assert.deepEqual(readFileSync(ran, "utf8").trim().split("\n"), [
-    `osascript -e ${NOTIFY}`,
-    "osascript",
-    "ssh frontera uptime",
-    `ssh frontera osascript -e ${NOTIFY}`,
-    `sheprd browser open --tab ${TARGET}`,
-    `ssh frontera sheprd browser open --tab ${TARGET}`,
-    "ssh frontera sheprd browser open --tab http://127.0.0.1:41000/?t=Safari",
-    "ssh -p 22 frontera sheprd browser open --tab https://example.com/Safari",
-    "ssh frontera echo safaridriver",
-    "ssh frontera echo open -a Safari",
-    "mosh frontera -- sheprd browser open --tab https://example.com/Safari",
-    "tailscale ssh yian@frontera sheprd browser open --tab https://example.com/Safari",
-    `osascript -e ${NOTIFY}`,
-    "ssh frontera if true; then echo safaridriver; fi",
-  ]);
-});
-
-test("a mate still runs a 100 KB command that names no Safari", async () => {
-  const told = await runAll([`${LONG_TEXT}echo done`], SHELL, {});
-  assert.equal(refusals(told), 0, told);
-  assert.equal(told, "done\nexit 0");
-});
