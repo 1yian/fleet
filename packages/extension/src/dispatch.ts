@@ -19,6 +19,7 @@ import {
 } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
 import type { Link } from "./link.ts";
+import { workerModelArgs } from "./lane-config.ts";
 
 export interface Launch {
   readonly url: string;
@@ -197,6 +198,7 @@ export async function dispatch(
     host: string;
     task: string;
     delivery?: Delivery | undefined;
+    model?: string | undefined;
   },
 ): Promise<string> {
   const extension = await extensionOn(request.host, launch.extension);
@@ -224,7 +226,13 @@ export async function dispatch(
         "--",
       ],
       fleetArgs({ url: launch.url, token: plan.token, role: "worker" }),
-      ["--session-id", plan.session, "-e", extension, ...launch.piArgs],
+      [
+        "--session-id",
+        plan.session,
+        "-e",
+        extension,
+        ...workerModelArgs(launch.piArgs, plan.model),
+      ],
     ].flat(),
     plan,
     launch.lost,
@@ -288,7 +296,13 @@ export async function replaceWorker(
         "--",
       ],
       fleetArgs({ url: launch.url, token: plan.token, role: "worker", avoid }),
-      ["--session-id", plan.session, "-e", extension, ...launch.piArgs],
+      [
+        "--session-id",
+        plan.session,
+        "-e",
+        extension,
+        ...workerModelArgs(launch.piArgs, plan.model),
+      ],
     ].flat(),
     plan,
     launch.lost,

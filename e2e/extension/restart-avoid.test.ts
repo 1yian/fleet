@@ -82,3 +82,61 @@ test("a restart with avoid starts the worker's Pi with PI_TIERS_AVOID, and a pla
   mate.prompt("restart it again");
   assert.deepEqual(await seenCount(3), ["(unset)", "claude-max,openai", "(unset)"]);
 });
+
+test("a restart cannot avoid the provider of the worker's explicit GPT model, leaves the worker running, and a permitted restart keeps the model", async () => {
+  const { h, mate } = parts;
+  const model = "openai-codex/gpt-fixture";
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(
+    () => ({
+      tool: "dispatch",
+      args: {
+        title: "Users see Spanish copy",
+        name: "spanish-copy",
+        kind: "ship",
+        project: "site",
+        intent: "Review the Spanish copy",
+        host: "local",
+        task: "review the Spanish product copy",
+        model,
+      },
+    }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(
+    () => ({
+      tool: "restart_card",
+      args: { card: 1, key: "a", avoid: ["claude-max", "openai-codex"] },
+    }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "refused" }), "mate");
+  h.onModel(
+    () => ({ tool: "restart_card", args: { card: 1, key: "b", avoid: ["claude-max"] } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "restarted avoiding claude-max" }), "mate");
+  for (let turn = 0; turn < 3; turn += 1) {
+    h.onModel(
+      () => ({ tool: "run_long", args: { label: `wait${String(turn)}`, command: "sleep 600" } }),
+      "worker",
+    );
+    h.onModel(() => ({ text: "waiting for the job" }), "worker");
+  }
+  await connected(h);
+  mate.prompt("ship the Spanish copy review");
+  assert.deepEqual(await seenCount(1), ["(unset)"]);
+
+  await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+  mate.prompt("restart it, avoiding claude-max and openai-codex");
+  const refusal = await h.waitForCall(4, "mate", WORKER_WAIT_MS);
+  assert.match(refusal.at(-1)?.text ?? "", /cannot avoid openai-codex/);
+  assert.deepEqual(seen(), ["(unset)"]);
+
+  mate.prompt("restart it, avoiding only claude-max");
+  assert.deepEqual(await seenCount(2), ["(unset)", "claude-max"]);
+  await h.waitForCall(1, "worker", WORKER_WAIT_MS);
+  assert.ok(h.modelsOf("worker").length >= 2);
+  for (const each of h.modelsOf("worker")) assert.equal(each, model);
+});
