@@ -3,9 +3,11 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { installPresentation } from "../patch.ts";
 import { FLEET_ROW_TYPES, setConversationApart } from "./layout.ts";
 import { transcriptState } from "./state.ts";
+import { limitDrawnHistory } from "./window.ts";
 
 export default function transcript(pi: ExtensionAPI): void {
   installPresentation("Transcript", "message rule", setConversationApart);
+  installPresentation("Transcript", "history window", limitDrawnHistory);
 
   for (const type of FLEET_ROW_TYPES) {
     pi.registerMessageRenderer(type, (message, options, theme) => {

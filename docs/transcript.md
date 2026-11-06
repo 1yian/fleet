@@ -22,6 +22,8 @@ Every fleet mate sets its messages apart in the terminal. Each message has one m
 - There is one rule for each Pi message, not for each paragraph or text block. A reply with several paragraphs, several text blocks, or thinking before the text has one rule.
 - A reply with nothing to show has no rule. That covers an empty reply and a reply that only calls tools. Calm hides short working notes, and a message it empties has no rule either.
 
+- The pane draws the last 500 entries of the session. When the session has more, one muted row above the first drawn entry says how many earlier entries are not drawn, and that the session file and memory keep them. A mate's conversation never compacts, so without the limit a long-lived mate would draw tens of thousands of entries at every frame.
+
 Only the screen changes. The session file, the model's context, and `/export` are the same as without it.
 
 ## How a home gets it
@@ -32,4 +34,4 @@ The rule is the fleet repo's own. It does not depend on a dotfiles extension, an
 
 ## Evidence
 
-`e2e/extension/transcript.test.ts` starts a real mate in herdr with the scripted model. It covers a reply that is still pending, a reply of several text blocks with thinking, a silent reply, a resize of the live terminal, a fleet row, and a restart that replays the history. Set `TRANSCRIPT_EVIDENCE_DIR` to keep each screen it reads, as plain text and with colors.
+`e2e/extension/transcript.test.ts` starts a real mate in herdr with the scripted model. It covers a reply that is still pending, a reply of several text blocks with thinking, a silent reply, a resize of the live terminal, a fleet row, and a restart that replays the history. `e2e/extension/history-window.test.ts` starts a mate on a session of 24,000 entries and checks that the notice names the entries left out and that the mate's event loop stays free while it works. Set `TRANSCRIPT_EVIDENCE_DIR` to keep each screen it reads, as plain text and with colors.
