@@ -55,6 +55,24 @@ test("a merged report is verified on a host whose ssh master refuses file descri
   assert.equal(ssh.calls()[0]?.command, ssh.calls()[1]?.command);
 });
 
+test("a merged report is not replayed when ssh fell back to a direct connection by itself and the connection then dropped", async () => {
+  const pr = "https://github.com/cnp/site/pull/3";
+  cardd.gh.setPr(pr, "MERGED");
+  ssh.mode = "fell-back-then-dropped";
+
+  const { report } = await mergedReport(pr);
+
+  assert.equal(report.fields["status"], "done");
+  assert.match(
+    String(report.fields["prNote"]),
+    /^PR unknown: .*master hello exchange failed.*counts as done$/,
+  );
+  assert.deepEqual(
+    ssh.calls().map((call) => call.direct),
+    [false],
+  );
+});
+
 test("a merged report on a host that cannot be reached still counts as done with the PR unknown, and names the retry's reason", async () => {
   const pr = "https://github.com/cnp/site/pull/2";
   cardd.gh.setPr(pr, "MERGED");

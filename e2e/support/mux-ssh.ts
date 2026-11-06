@@ -5,7 +5,7 @@ import { tempDir } from "./run-root.ts";
 
 const FAKE = fileURLToPath(new URL("./fake-ssh.ts", import.meta.url));
 
-type Mode = "healthy" | "wedged" | "down" | "wedged-down";
+type Mode = "healthy" | "wedged" | "down" | "wedged-down" | "fell-back-then-dropped";
 
 export interface SshCall {
   readonly host: string;

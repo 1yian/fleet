@@ -16,6 +16,8 @@ const mode = existsSync(modeFile) ? readFileSync(modeFile, "utf8").trim() : "hea
 
 appendFileSync(join(dir, "calls.jsonl"), `${JSON.stringify({ host, direct, command })}\n`);
 
+const dropsAfterTheCommand = mode === "fell-back-then-dropped";
+
 const refuses = (): void => {
   process.stderr.write(
     "mm_send_fd: sendmsg(0): Message too long\nmux_client_request_session: send fds failed\n",
@@ -30,7 +32,11 @@ const timesOut = (): void => {
 if (mode === "down" || (mode === "wedged-down" && direct)) timesOut();
 if ((mode === "wedged" || mode === "wedged-down") && !direct) refuses();
 
+if (dropsAfterTheCommand && !direct) {
+  process.stderr.write("muxclient: master hello exchange failed\n");
+}
+
 const child = spawn("sh", ["-c", command], { stdio: "inherit" });
 child.on("exit", (code, signal) => {
-  process.exit(code ?? (signal === null ? 1 : 143));
+  process.exit(dropsAfterTheCommand ? 255 : (code ?? (signal === null ? 1 : 143)));
 });
