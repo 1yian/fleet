@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { hostname } from "node:os";
+import { routed } from "@fleet/protocol/route";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -27,10 +28,28 @@ function transport(host: string): string[] {
   throw new NoTransport(`no transport for ${host}`);
 }
 
-export const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
+export function rootOf(host: string): string | undefined {
+  const roots: unknown = JSON.parse(process.env["FLEET_ROOTS"] ?? "{}");
+  const root = isRecord(roots) ? roots[host] : undefined;
+  return typeof root === "string" ? root : undefined;
+}
 
-const scrub = (message: string): string =>
-  message.replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]");
+const JSON_STRING = String.raw`"(?:[^"\\]|\\.)*"`;
+const JSON_FLAT_OBJECT = String.raw`\{(?:${JSON_STRING}|[^"{}])*\}`;
+const BWS_ARGUMENT = new RegExp(
+  String.raw`--fleet-bws=\{(?:${JSON_STRING}|[^"{}]|${JSON_FLAT_OBJECT})*\}`,
+  "g",
+);
+
+export const scrub = (text: string, secrets: readonly string[] = []): string =>
+  secrets
+    .filter((secret) => secret !== "")
+    .reduce(
+      (out, secret) => out.replaceAll(secret, "[hidden]"),
+      text
+        .replace(/--fleet-token\W+[^\s'"]+/g, "--fleet-token [hidden]")
+        .replace(BWS_ARGUMENT, "--fleet-bws=[hidden]"),
+    );
 
 const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 60_000;
 
@@ -118,8 +137,7 @@ async function herdrText(host: string, args: readonly string[], probe: boolean):
   const select = session === undefined ? [] : ["--session", session];
   const command = ["herdr", ...args.slice(0, split), ...select, ...args.slice(split)];
   const via = transport(host);
-  const [file = "herdr", ...rest] =
-    via.length === 0 ? command : [...via, command.map(quote).join(" ")];
+  const [file = "herdr", ...rest] = routed(via, command);
   return new Promise<string>((resolve, reject) => {
     execFile(
       file,
@@ -149,7 +167,7 @@ export async function onHost(
   timeout = 600_000,
 ): Promise<string> {
   const via = transport(host);
-  const [file = "", ...rest] = via.length === 0 ? argv : [...via, argv.map(quote).join(" ")];
+  const [file = "", ...rest] = routed(via, argv);
   return new Promise((resolve, reject) => {
     execFile(
       file,

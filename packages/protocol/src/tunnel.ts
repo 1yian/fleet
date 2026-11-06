@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createServer, type Socket } from "node:net";
 import { Cdp } from "./cdp.ts";
+import { routed } from "./route.ts";
 
 const TUNNEL_CONNECT_MS = 45_000;
 const FAILURE_CHARS = 300;
@@ -13,8 +14,6 @@ const RELAY = [
   'upstream.on("error", (error) => { process.stderr.write(error.message); process.exitCode = 1; process.stdin.destroy(); });',
   'upstream.on("close", () => { process.stdin.destroy(); });',
 ].join("\n");
-
-const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -57,13 +56,13 @@ function wire(socket: Socket, run: readonly string[], note: (failure: string) =>
 }
 
 async function openTunnel(route: readonly string[], target: Target): Promise<Tunnel> {
-  const command = ["node", "-e", RELAY, target.host, String(target.port)].map(quote).join(" ");
+  const relay = ["node", "-e", RELAY, target.host, String(target.port)];
   const sockets = new Set<Socket>();
   const state: { failure: string | undefined } = { failure: undefined };
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
-    wire(socket, [...route, command], (failure) => {
+    wire(socket, routed(route, relay), (failure) => {
       state.failure = failure;
     });
   });

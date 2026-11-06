@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { parseCdp } from "@fleet/protocol";
+import { quote, routed } from "@fleet/protocol/route";
 import Type from "typebox";
 import type { LoginsConfig } from "./browser-config.ts";
 import type { Credentials } from "./browser-fill.ts";
@@ -23,8 +24,6 @@ export interface Secret {
   readonly value: string;
 }
 
-const quote = (text: string): string => `'${text.replaceAll("'", `'\\''`)}'`;
-
 const shellPath = (path: string): string =>
   path.startsWith("~/") ? `"$HOME"${quote(path.slice(1))}` : quote(path);
 
@@ -37,8 +36,7 @@ function listSecrets(
   via: readonly string[],
 ): Promise<Secret[]> {
   const script = bwsScript(logins);
-  const argv: string[] = via.length === 0 ? ["sh", "-c", script] : [...via, script];
-  const [file = "sh", ...args] = argv;
+  const [file = "sh", ...args] = routed(via, ["sh", "-c", script]);
   return new Promise((resolve, reject) => {
     execFile(
       file,

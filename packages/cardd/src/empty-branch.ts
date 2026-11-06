@@ -1,14 +1,13 @@
 import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS } from "@fleet/protocol";
+import { routed } from "@fleet/protocol/route";
 import { localLanding } from "./attempts.ts";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
 import { getCard, listProjects } from "./store.ts";
 
 const CHECK_TIMEOUT_MS = 30_000;
-
-const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 const EMPTY_SCRIPT = `set -eu
 wt=$1 base=$2
@@ -19,8 +18,7 @@ dirty=$(git -C "$wt" status --porcelain | wc -l | tr -d ' ')
 
 function run(hosts: Hosts, host: string, argv: readonly string[]): Promise<boolean> {
   const route = routeFor(hosts, host);
-  const [file = "sh", ...args] =
-    route.length === 0 ? [...argv] : [...route, argv.map(quote).join(" ")];
+  const [file = "sh", ...args] = routed(route, argv);
   return new Promise((resolve) => {
     execFile(file, args, { timeout: CHECK_TIMEOUT_MS }, (error) => {
       resolve(error === null);

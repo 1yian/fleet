@@ -2,12 +2,11 @@ import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
 import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
+import { routed } from "@fleet/protocol/route";
 import type { Hosts } from "./pulls.ts";
 import { getCard, listProjects } from "./store.ts";
 import { cardEntries } from "./store.ts";
 import { finishFrom } from "./status.ts";
-
-const quote = (arg: string): string => `'${arg.replaceAll("'", `'\\''`)}'`;
 
 export function routeFor(hosts: Hosts, host: string): readonly string[] {
   const configured = hosts[host];
@@ -51,8 +50,7 @@ async function mergedOn(
     "url,state",
   ];
   const route = routeFor(hosts, place.host);
-  const [file = "direnv", ...args] =
-    route.length === 0 ? command : [...route, command.map(quote).join(" ")];
+  const [file = "direnv", ...args] = routed(route, command);
   const out = await new Promise<string>((resolve, reject) => {
     execFile(file, args, { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) => {
       if (error !== null) reject(new Error(stderr.trim() || error.message));
