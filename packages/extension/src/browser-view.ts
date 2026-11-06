@@ -377,12 +377,16 @@ async function main(): Promise<void> {
   const { address, reach } = await listen(server, captain);
   viewer.allow(address.port, hostTest(reach, address.port));
   const url = `http://${shownHost(reach)}:${String(address.port)}/?t=${token}`;
-  console.log(`Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`);
+  const line = reachLine(reach);
+  console.log(
+    [
+      `Fleet browser viewer (${captain ? "captain" : "gated"}): ${url}`,
+      ...(line === undefined ? [] : [line]),
+    ].join("\n"),
+  );
   console.log(`Viewer build: ${viewerBuild()}`);
   const launch = launchOf(flags);
   if (launch !== undefined) console.log(`Viewer launch: ${launch}`);
-  const line = reachLine(reach);
-  if (line !== undefined) console.log(line);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {
     if (!(await openSheprd(url))) console.log(NOT_OPENED);
   }
