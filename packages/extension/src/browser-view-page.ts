@@ -1,3 +1,4 @@
+import { EDITING_COMMANDS } from "./browser-input.ts";
 import {
   PHONE_DOCK,
   PHONE_HEAD,
@@ -33,11 +34,13 @@ export const VIEWER_PAGE = `<!doctype html>
   #address { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #live { color: var(--dim); font-size: 12px; }
   #live.on { color: var(--signal); }
-  #paste { width: 220px; padding: 6px 8px; background: var(--row); color: var(--text); border: 1px solid #262633; border-radius: 4px; font: inherit; }
-  #paste:focus { outline: 1px solid var(--signal); }
-  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; }
-  #screen { max-width: 100%; max-height: 100%; outline: none; border: 1px solid #262633; border-radius: 4px; cursor: default; background: #fff; }
-  #screen:focus { border-color: var(--signal); }
+  #copied { max-width: 420px; color: var(--signal); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #copied.failed { color: var(--error); }
+  #copied.empty { color: var(--dim); }
+  #stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #screen { max-width: 100%; max-height: 100%; outline: none; border: 1px solid #262633; border-radius: 4px; cursor: default; background: #fff; user-select: none; -webkit-user-select: none; touch-action: none; }
+  #stage:focus-within #screen { border-color: var(--signal); }
+  #capture { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; font-size: 16px; caret-color: transparent; }
   #note { max-width: 640px; padding: 16px 20px; background: var(--row); color: var(--dim); border: 1px solid #262633; border-radius: 4px; }
   #note[hidden] { display: none; }
   #hint { padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
@@ -52,12 +55,16 @@ ${PHONE_STYLE}</style>${PHONE_HEAD}
 <main>
   <header>
     <div id="address"></div>
-    <input id="paste" placeholder="Type text, then Enter" autocomplete="off" spellcheck="false" hidden>
+    <span id="copied" role="status"></span>
     ${PHONE_KEYBOARD}
     <span id="live" hidden></span>
   </header>
-  <div id="stage"><img id="screen" tabindex="0" alt="" hidden draggable="false"><div id="note" hidden></div></div>
-  <div id="hint" hidden>Click the picture to focus it. Clicks, keys and scrolling go to the tab.</div>
+  <div id="stage">
+    <img id="screen" alt="" hidden draggable="false">
+    <textarea id="capture" aria-label="Keyboard input for the page" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" tabindex="-1"></textarea>
+    <div id="note" hidden></div>
+  </div>
+  <div id="hint" hidden>Click the picture to focus it. Mouse and keys act on the tab. Cmd or Ctrl+C copies, Cmd or Ctrl+V pastes. Reload, zoom and tab keys stay here.</div>
   ${PHONE_DOCK}
 </main>
 <script>
@@ -68,8 +75,9 @@ const address = document.getElementById("address");
 const live = document.getElementById("live");
 const screen = document.getElementById("screen");
 const note = document.getElementById("note");
-const paste = document.getElementById("paste");
+const capture = document.getElementById("capture");
 const stage = document.getElementById("stage");
+const copied = document.getElementById("copied");
 let selected = null;
 let source = null;
 let size = { width: 1, height: 1 };
@@ -78,14 +86,38 @@ let newest = 0;
 screen.addEventListener("load", () => acknowledging());
 screen.addEventListener("error", () => acknowledging());
 
+const EDITING = ${JSON.stringify(EDITING_COMMANDS)};
+const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+const editing = mac ? EDITING.mac : EDITING.other;
+
 const pending = [];
 let flowing = false;
+
+function enqueue(body) {
+  const last = pending[pending.length - 1];
+  if (last !== undefined && last.target === body.target) {
+    if (last.kind === "mouse" && body.kind === "mouse" && last.action === "move" && body.action === "move") {
+      pending[pending.length - 1] = body;
+      return;
+    }
+    if (last.kind === "scroll" && body.kind === "scroll" && last.modifiers === body.modifiers) {
+      pending[pending.length - 1] = { ...body, dx: last.dx + body.dx, dy: last.dy + body.dy };
+      return;
+    }
+  }
+  pending.push(body);
+}
 
 async function flow() {
   if (flowing) return;
   flowing = true;
   while (pending.length > 0) {
-    const batch = pending.splice(0);
+    if (typeof pending[0] === "function") {
+      await pending.shift()();
+      continue;
+    }
+    const batch = [];
+    while (pending.length > 0 && typeof pending[0] !== "function") batch.push(pending.shift());
     try {
       await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
     } catch {
@@ -95,22 +127,49 @@ async function flow() {
   flowing = false;
 }
 
-const send = (body) => {
-  const last = pending[pending.length - 1];
-  if (last !== undefined && last.kind === "scroll" && body.kind === "scroll" && last.target === body.target) last.dy += body.dy;
-  else pending.push(body);
+function ordered(run) {
+  return new Promise((resolve, reject) => {
+    pending.push(async () => {
+      try {
+        resolve(await run());
+      } catch (error) {
+        reject(error);
+      }
+    });
+    void flow();
+  });
+}
+
+function send(body, target = selected) {
+  if (target === null) return;
+  enqueue({ target, ...body });
   void flow();
-};
+}
+
+const held = new Map();
+const MODIFIER_KEYS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+const heldModifiers = () => [...held.values()].reduce((bits, { key }) => bits | (MODIFIER_KEYS[key] ?? 0), 0);
+
+function releaseKeys() {
+  for (const { target, ...key } of [...held.values()].reverse()) {
+    held.delete(key.code);
+    send({ kind: "key", action: "up", ...key, repeat: false, modifiers: heldModifiers(), commands: [] }, target);
+  }
+}
+
+const modifiersOf = (event) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
 
 function point(event) {
   const box = screen.getBoundingClientRect();
-  return { x: ((event.clientX - box.left) / box.width) * size.width, y: ((event.clientY - box.top) / box.height) * size.height };
+  return {
+    x: ((event.clientX - box.left - screen.clientLeft) / screen.clientWidth) * size.width,
+    y: ((event.clientY - box.top - screen.clientTop) / screen.clientHeight) * size.height,
+  };
 }
 
 function idle(message) {
   screen.removeAttribute("src");
   screen.hidden = true;
-  paste.hidden = true;
   live.hidden = true;
   hint.hidden = true;
   address.textContent = "";
@@ -185,6 +244,7 @@ function connect(target) {
 }
 
 function watch(target) {
+  releaseKeys();
   if (target !== selected) resetTyper();
   selected = target;
   if (target === null) {
@@ -193,7 +253,6 @@ function watch(target) {
   }
   screen.hidden = false;
   note.hidden = true;
-  paste.hidden = false;
   live.hidden = false;
   hint.hidden = false;
   connect(target);
@@ -220,7 +279,7 @@ function render(tabs) {
       address.textContent = tab.url;
       watch(tab.target);
       render(tabs);
-      screen.focus();
+      if (!isPhone()) capture.focus();
     };
     list.append(item);
     if (tab.target === selected) address.textContent = tab.live ? tab.url : "tab is gone";
@@ -251,21 +310,180 @@ async function refresh() {
   }
 }
 
-screen.addEventListener("click", (event) => { screen.focus(); send({ target: selected, kind: "click", ...point(event) }); });
-screen.addEventListener("wheel", (event) => { event.preventDefault(); send({ target: selected, kind: "scroll", ...point(event), dy: event.deltaY }); }, { passive: false });
-screen.addEventListener("keydown", (event) => {
-  if (event.metaKey || event.ctrlKey || event.altKey || event.key.length > 1 && !event.key.startsWith("Arrow") && !["Enter", "Tab", "Escape", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown"].includes(event.key)) return;
+const BUTTONS = ["left", "middle", "right", "back", "forward"];
+const heldButton = (buttons) => (buttons & 1 ? "left" : buttons & 4 ? "middle" : buttons & 2 ? "right" : buttons & 8 ? "back" : buttons & 16 ? "forward" : "none");
+let pressed = false;
+let over = false;
+let ctrlClick = false;
+let downButton = "left";
+
+function mouse(action, event, lost) {
+  const buttons = ctrlClick ? (event.buttons === 0 ? 0 : 2) : event.buttons;
+  const named = ctrlClick ? "right" : BUTTONS[event.button] ?? "left";
+  const button = action === "move" ? heldButton(buttons) : lost ? downButton : named;
+  const modifiers = modifiersOf(event) & (ctrlClick ? ~2 : 15);
+  send({ kind: "mouse", action, ...point(event), button, buttons, clickCount: Math.min(3, Math.max(1, event.detail)), modifiers });
+}
+
+function leave(event) {
+  if (!over || pressed) return;
+  over = false;
+  mouse("move", event, false);
+}
+
+function release(event, lost) {
+  mouse("up", event, lost);
+  pressed = event.buttons !== 0;
+  if (!pressed) ctrlClick = false;
+}
+
+screen.addEventListener("mousedown", (event) => {
   event.preventDefault();
-  send({ target: selected, kind: "key", key: event.key });
+  const box = stage.getBoundingClientRect();
+  capture.style.left = event.clientX - box.left + "px";
+  capture.style.top = event.clientY - box.top + "px";
+  capture.focus({ preventScroll: true });
+  ctrlClick = mac && event.ctrlKey && event.button === 0;
+  downButton = ctrlClick ? "right" : BUTTONS[event.button] ?? "left";
+  pressed = true;
+  over = true;
+  mouse("down", event, false);
 });
-paste.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" || paste.value === "") return;
-  send({ target: selected, kind: "text", text: paste.value });
-  paste.value = "";
+window.addEventListener("mousemove", (event) => {
+  if (pressed && event.buttons === 0) release(event, true);
+  else if (pressed || event.target === screen) {
+    over = event.target === screen;
+    mouse("move", event, false);
+  } else leave(event);
 });
-function phoneTap(at) { send({ target: selected, kind: "click", x: at.x, y: at.y }); }
-function phoneScroll(at, dx, dy) { send({ target: selected, kind: "scroll", x: at.x, y: at.y, dy }); }
-function phoneKey(key) { send({ target: selected, kind: "key", key }); }
+screen.addEventListener("mouseleave", leave);
+window.addEventListener("mouseup", (event) => {
+  if (pressed) release(event, false);
+});
+screen.addEventListener("contextmenu", (event) => event.preventDefault());
+screen.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const unit = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? screen.clientHeight : 1;
+  send({ kind: "scroll", ...point(event), dx: event.deltaX * unit, dy: event.deltaY * unit, modifiers: modifiersOf(event) });
+}, { passive: false });
+
+const HOST_ZOOM = ["+", "=", "-", "0"];
+const HOST_WINDOW = ["r", "l", "t", "w", "n", "q"];
+const HOST_TOOLS = ["KeyI", "KeyJ", "KeyC"];
+
+function keepsForHost(event) {
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  if (["F5", "F11", "F12"].includes(key)) return true;
+  if (event.ctrlKey && ["Tab", "PageUp", "PageDown"].includes(key)) return true;
+  if (mac && event.ctrlKey && event.metaKey) return key === "f";
+  const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!accelerator) return false;
+  if (mac && event.altKey) return HOST_TOOLS.includes(event.code);
+  if (!mac && event.shiftKey && HOST_TOOLS.includes(event.code)) return true;
+  return HOST_WINDOW.includes(key) || HOST_ZOOM.includes(key) || /^[1-9]$/.test(key) || (mac && (key === "h" || key === "m"));
+}
+
+let composing = false;
+
+function keyboard(action, event) {
+  const typing = mac && event.altKey && !event.metaKey && !event.ctrlKey && Array.from(event.key).length === 1;
+  const modifiers = modifiersOf(event) & (typing ? ~1 : 15);
+  const command = action === "down" ? editing[modifiers + ":" + event.key.toLowerCase()] : undefined;
+  return { kind: "key", action, key: event.key, code: event.code, keyCode: event.keyCode, location: event.location, repeat: event.repeat, modifiers, commands: command === undefined ? [] : [command] };
+}
+
+const unreadable = (event) => composing || event.isComposing || event.keyCode === 229 || ["Dead", "Process", "Unidentified"].includes(event.key);
+
+capture.addEventListener("keydown", (event) => {
+  if (selected === null) return;
+  if (keepsForHost(event) || unreadable(event)) return;
+  const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  const letter = event.key.toLowerCase();
+  if (accelerator && !event.altKey && letter === "v") return;
+  event.preventDefault();
+  if (accelerator && !event.altKey && (letter === "c" || letter === "x")) {
+    if (letter === "c") void copy();
+    return;
+  }
+  send(keyboard("down", event));
+  if (mac && event.metaKey && event.key !== "Meta") send(keyboard("up", event));
+  else held.set(event.code, { target: selected, key: event.key, code: event.code, keyCode: event.keyCode, location: event.location });
+});
+capture.addEventListener("keyup", (event) => {
+  if (!held.delete(event.code)) return;
+  event.preventDefault();
+  send(keyboard("up", event));
+});
+capture.addEventListener("blur", releaseKeys);
+
+capture.addEventListener("compositionstart", () => { composing = true; });
+capture.addEventListener("compositionend", (event) => {
+  composing = false;
+  if (event.data) send({ kind: "text", text: event.data });
+  capture.value = "";
+});
+capture.addEventListener("input", (event) => {
+  if (composing || event.isComposing) return;
+  if (event.inputType === "insertText" && event.data) send({ kind: "text", text: event.data });
+  capture.value = "";
+});
+capture.addEventListener("paste", (event) => {
+  event.preventDefault();
+  const text = event.clipboardData?.getData("text/plain") ?? "";
+  if (text !== "") send({ kind: "text", text });
+});
+capture.addEventListener("copy", (event) => {
+  event.preventDefault();
+  void copy();
+});
+
+let forgetting = 0;
+function say(text, state) {
+  copied.textContent = text;
+  copied.title = text;
+  copied.className = state;
+  clearTimeout(forgetting);
+  forgetting = setTimeout(() => { copied.textContent = ""; copied.title = ""; }, 5000);
+}
+
+function selection(target) {
+  return ordered(async () => {
+    const response = await fetch("/api/copy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) });
+    const answer = await response.json();
+    if (!response.ok) throw new Error(answer.error ?? "the viewer could not read the selection");
+    if (answer.text === null) throw new Error(answer.note ?? "nothing was copied");
+    if (answer.text === "") throw Object.assign(new Error("nothing is selected"), { empty: true });
+    return answer.text;
+  });
+}
+
+async function write(read) {
+  if (navigator.clipboard === undefined) throw new Error("this browser does not allow the viewer to write to the clipboard");
+  if (typeof ClipboardItem === "undefined") {
+    const text = await read;
+    await navigator.clipboard.writeText(text);
+    return text;
+  }
+  let text = "";
+  const blob = read.then((value) => { text = value; return new Blob([value], { type: "text/plain" }); });
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+  } catch (error) {
+    await read;
+    throw error;
+  }
+  return text;
+}
+
+async function copy() {
+  if (selected === null) return;
+  try {
+    const text = await write(selection(selected));
+    say("copied " + Array.from(text).length + " characters", "");
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), error.empty === true ? "empty" : "failed");
+  }
+}
 ${PHONE_SCRIPT}
 refresh();
 setInterval(refresh, 2000);

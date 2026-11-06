@@ -6,9 +6,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Entry } from "@fleet/protocol";
+import { quote } from "@fleet/protocol/route";
 import { viewerArguments, type Source } from "./browser-access.ts";
 import { viewerBuild } from "./browser-build.ts";
-import { field, herdr, paneText, quote, records, rootPane, shellIdle } from "./host.ts";
+import { field, herdr, paneText, records, rootPane, shellIdle } from "./host.ts";
 import type { Link } from "./link.ts";
 
 const VIEWER = fileURLToPath(new URL("./browser-view.ts", import.meta.url));

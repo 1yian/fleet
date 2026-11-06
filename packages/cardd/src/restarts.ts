@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
+import { liveAttemptModel } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { generationOf, incidentById } from "./incident-store.ts";
 import { intentOf, recover } from "./incidents.ts";
@@ -45,6 +46,16 @@ function alreadyRequested(db: DatabaseSync, card: number, key: string): boolean 
     )
     .get(card, key);
   return row !== undefined;
+}
+
+function refuseAvoidedModel(db: DatabaseSync, card: number, avoid: readonly string[]): void {
+  const model = liveAttemptModel(db, card);
+  if (model === undefined) return;
+  const provider = model.slice(0, model.indexOf("/"));
+  if (avoid.includes(provider))
+    throw new Error(
+      `c-${String(card)} was dispatched on ${model} and a restart keeps that model, so it cannot avoid ${provider}: restart without avoid, or start new work on another model`,
+    );
 }
 
 function ordinaryRestart(
@@ -98,6 +109,7 @@ export function restartCard(
     throw new Error(
       "avoid applies only when a worker's process is replaced: retry and a second mate's restart start no new worker process",
     );
+  if (args.avoid !== undefined) refuseAvoidedModel(db, card.id, args.avoid);
   if (incident === undefined) {
     if (args.mode === "retry")
       throw new Error("retry needs an incident: name the incident and its generation");

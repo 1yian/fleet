@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -6,10 +5,11 @@ import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
 import { viewerBuild } from "./browser-build.ts";
 import { FitSchema } from "./browser-fit.ts";
+import { InputSchema, pastesSelection } from "./browser-input.ts";
 import { Pacer } from "./browser-pace.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { openSheprd } from "./browser-place.ts";
-import { InputSchema, Screen } from "./browser-screen.ts";
+import { Screen } from "./browser-screen.ts";
 import { tailnetOf, type Reach } from "./browser-tailnet.ts";
 import { VIEWER_PAGE } from "./browser-view-page.ts";
 import {
@@ -24,6 +24,7 @@ type Cardd = Access;
 type Transports = Readonly<Record<string, readonly string[]>>;
 
 type View = OpResult<"browser.view">;
+type Copied = OpResult<"browser.copy">;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -47,6 +48,9 @@ const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
       ...(cardd.host === undefined ? {} : { host: cardd.host }),
     }),
   );
+
+const callCopy = async (cardd: Cardd, target: string): Promise<Copied> =>
+  check(OPS["browser.copy"].result, await post(cardd, "browser.copy", { target }));
 
 const callFrame = async (cardd: Cardd, target: string): Promise<Pulled> =>
   check(OPS["browser.frame"].result, await post(cardd, "browser.frame", { target }));
@@ -162,6 +166,15 @@ class Viewer {
     return view;
   }
 
+  private async copied(target: string): Promise<Copied> {
+    if (!this.captain) return callCopy(this.cardd, target);
+    try {
+      return { text: await this.screenFor(target).selection(target), note: null };
+    } catch (error) {
+      return { text: null, note: reason(error) };
+    }
+  }
+
   private async stream(response: ServerResponse, target: string, id: string | null): Promise<void> {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
     const write = (shown: Shown, seq?: number): void => {
@@ -200,6 +213,7 @@ class Viewer {
       "POST /api/ack": () => this.acknowledge(response, url),
       "POST /api/fit": () => this.fit(request, response),
       "POST /api/input": () => this.drive(request, response),
+      "POST /api/copy": () => this.copy(request, response),
     };
     const handler = Object.hasOwn(handlers, key) ? handlers[key] : undefined;
     if (handler === undefined) response.writeHead(404).end();
@@ -252,8 +266,15 @@ class Viewer {
         return;
       }
     }
-    for (const input of inputs) await this.screenFor(input.target).input(input);
+    for (const input of inputs)
+      if (this.captain || !pastesSelection(input)) await this.screenFor(input.target).input(input);
     response.writeHead(204).end();
+  }
+
+  private async copy(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const { target } = check(OPS["browser.copy"].args, JSON.parse(await readBody(request)));
+    if (!(await this.shows(target))) response.writeHead(404).end();
+    else json(response, 200, await this.copied(target));
   }
 
   private enter(request: IncomingMessage, response: ServerResponse, url: URL): boolean {
@@ -289,13 +310,6 @@ class Viewer {
   }
 }
 
-function open(url: string): void {
-  const opener = process.platform === "darwin" ? "open" : "xdg-open";
-  const child = spawn(opener, [url], { stdio: "ignore", detached: true });
-  child.on("error", () => undefined);
-  child.unref();
-}
-
 function bind(server: Server, host: string): Promise<AddressInfo> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -308,6 +322,9 @@ function bind(server: Server, host: string): Promise<AddressInfo> {
     });
   });
 }
+
+const NOT_OPENED =
+  "No browser was opened: Sheprd is not available here, and fleet never opens the host's default browser. Open the address above yourself.";
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost):[0-9]+$/;
 
@@ -367,7 +384,7 @@ async function main(): Promise<void> {
   const line = reachLine(reach);
   if (line !== undefined) console.log(line);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {
-    if (!captain || !(await openSheprd(url))) open(url);
+    if (!(await openSheprd(url))) console.log(NOT_OPENED);
   }
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {

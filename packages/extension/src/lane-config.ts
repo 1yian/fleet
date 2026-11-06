@@ -200,6 +200,10 @@ export function mateRelaunchArgs(running: readonly string[], lane: LaneConfig): 
   return [...(configured.length > 0 ? configured : ["--model", lane.tier ?? MATE_MODEL]), ...rest];
 }
 
+export function workerModelArgs(args: readonly string[], model: string | undefined): string[] {
+  return model === undefined ? [...args] : [...splitModel(args).rest, "--model", model];
+}
+
 export function workerPiArgs(lane: LaneConfig): string[] {
   const own = lane.workerArgs;
   if (own.some((arg) => arg === "--model" || arg.startsWith("--model="))) return [...own];

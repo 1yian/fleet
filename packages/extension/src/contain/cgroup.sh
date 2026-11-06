@@ -8,6 +8,13 @@ backend_attach() {
   done
 }
 
+backend_adopt() {
+  (
+    dir=/sys/fs/cgroup${own%/}/$host_unit
+    backend_attach "$@"
+  )
+}
+
 backend_members() {
   [ -d "$dir" ] || return 0
   cat "$dir/cgroup.procs"

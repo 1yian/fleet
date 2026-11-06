@@ -85,6 +85,7 @@ export default function fakeModel(pi: ExtensionAPI): void {
     });
   const providers = [
     fauxProvider({ provider: "fake", models: [{ id: "scripted" }] }),
+    fauxProvider({ provider: "openai-codex", models: [{ id: "gpt-fixture" }] }),
     fauxProvider({
       provider: "google-vertex",
       models: present("google-vertex", [{ id: "gemini-2.5-pro" }, { id: "gemini-3.8-flash" }]),

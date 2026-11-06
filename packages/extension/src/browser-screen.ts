@@ -1,26 +1,8 @@
-import { keyPresses, parseCdp, type Cdp } from "@fleet/protocol";
+import { parseCdp, readSelection, type Cdp } from "@fleet/protocol";
 import type { Dial } from "@fleet/protocol/tunnel";
-import Type, { type Static } from "typebox";
+import { inputCalls, type ViewerInput } from "./browser-input.ts";
 import type { Fit } from "./browser-fit.ts";
-
-export const InputSchema = Type.Union([
-  Type.Object({
-    target: Type.String(),
-    kind: Type.Literal("click"),
-    x: Type.Number(),
-    y: Type.Number(),
-  }),
-  Type.Object({
-    target: Type.String(),
-    kind: Type.Literal("scroll"),
-    x: Type.Number(),
-    y: Type.Number(),
-    dy: Type.Number(),
-  }),
-  Type.Object({ target: Type.String(), kind: Type.Literal("key"), key: Type.String() }),
-  Type.Object({ target: Type.String(), kind: Type.Literal("text"), text: Type.String() }),
-]);
-export type ViewerInput = Static<typeof InputSchema>;
+import Type from "typebox";
 
 export interface Frame {
   readonly data: string;
@@ -214,25 +196,13 @@ export class Screen {
   async input(event: ViewerInput): Promise<void> {
     const cdp = await this.connection();
     const sessionId = await this.session(cdp, event.target);
-    const send = (method: string, params: unknown): Promise<unknown> =>
-      cdp.send(method, params, { sessionId });
-    if (event.kind === "click") {
-      const point = { x: event.x, y: event.y };
-      await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
-      const press = { ...point, button: "left", clickCount: 1 };
-      await send("Input.dispatchMouseEvent", { type: "mousePressed", ...press });
-      await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...press });
-    } else if (event.kind === "scroll") {
-      await send("Input.dispatchMouseEvent", {
-        type: "mouseWheel",
-        x: event.x,
-        y: event.y,
-        deltaX: 0,
-        deltaY: event.dy,
-      });
-    } else if (event.kind === "key") {
-      for (const press of keyPresses(event.key)) await send("Input.dispatchKeyEvent", press);
-    } else await send("Input.insertText", { text: event.text });
+    for (const { method, params } of inputCalls(event))
+      await cdp.send(method, params, { sessionId });
+  }
+
+  async selection(target: string): Promise<string> {
+    const cdp = await this.connection();
+    return readSelection(cdp, await this.session(cdp, target));
   }
 
   close(): void {

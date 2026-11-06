@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
-import { field, herdr, quote, records, rootPane } from "./host.ts";
+import { field, herdr, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));

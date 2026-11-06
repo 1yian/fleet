@@ -10,16 +10,9 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { quote } from "@fleet/protocol/route";
 import { arrangeHere, claimFollowers } from "./arrange.ts";
-import {
-  field,
-  herdr as herdrOn,
-  paneMissing,
-  piRunning,
-  quote,
-  records,
-  shellIdle,
-} from "./host.ts";
+import { field, herdr as herdrOn, paneMissing, piRunning, records, shellIdle } from "./host.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
   isRecord,

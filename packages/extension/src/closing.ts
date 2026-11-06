@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { OpResult } from "@fleet/protocol";
 import { releaseBrowser } from "./browser-release.ts";
-import { releaseAll } from "./containment.ts";
+import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
@@ -12,10 +12,10 @@ const ARCHIVE_SCRIPT = readFileSync(
   "utf8",
 );
 
-const STOP_PROCS_SCRIPT = readFileSync(
-  fileURLToPath(new URL("./stop-procs.sh", import.meta.url)),
-  "utf8",
-);
+const STOP_PROCS_SCRIPT = [
+  SERVICE_SCRIPT,
+  readFileSync(fileURLToPath(new URL("./stop-procs.sh", import.meta.url)), "utf8"),
+].join("\n");
 
 type Attempt = OpResult<"close.begin">["attempts"][number];
 
@@ -186,18 +186,22 @@ async function unlandedWarning(
 interface Retired {
   archive: string | null;
   stopped: string[];
+  spared: string[];
 }
 
-function stoppedBy(session: string, out: string): string[] {
-  return out
-    .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => {
-      const [pid = "", how = "", ...command] = line.split("\t");
-      const result =
-        how === "TERM" ? "stopped by TERM" : how === "KILL" ? "needed KILL" : "still running";
-      return `${session} pid ${pid} (${command.join(" ").trim()}) ${result}`;
-    });
+function processesOf(session: string, out: string): { stopped: string[]; spared: string[] } {
+  const stopped: string[] = [];
+  const spared: string[] = [];
+  for (const line of out.split("\n").filter((each) => each !== "")) {
+    const [pid = "", how = "", ...command] = line.split("\t");
+    const named = `${session} pid ${pid} (${command.join(" ").trim()})`;
+    if (how === "ADOPTED") spared.push(named);
+    else
+      stopped.push(
+        `${named} ${how === "TERM" ? "stopped by TERM" : how === "KILL" ? "needed KILL" : "still running"}`,
+      );
+  }
+  return { stopped, spared };
 }
 
 async function retire(attempt: Attempt): Promise<Retired> {
@@ -207,13 +211,13 @@ async function retire(attempt: Attempt): Promise<Retired> {
   const tree = worktreeOf(listed, session);
   const own = field(tree, "branch");
   const drop = own === undefined || own === branch ? [branch] : [branch, own];
-  let stopped: string[] = [];
+  let processes: { stopped: string[]; spared: string[] } = { stopped: [], spared: [] };
   if (tree !== undefined) {
     const workspace = field(tree, "open_workspace_id");
     if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
     const path = field(tree, "path") ?? "";
     const found = await onHost(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
-    stopped = stoppedBy(session, found + (await releaseAll(host, path)));
+    processes = processesOf(session, found + (await releaseAll(host, path)));
     await onHost(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
@@ -233,7 +237,7 @@ async function retire(attempt: Attempt): Promise<Retired> {
       ])
     ).trim();
   }
-  return { archive: archive === "" ? null : archive, stopped };
+  return { archive: archive === "" ? null : archive, ...processes };
 }
 
 export async function close(
@@ -255,12 +259,14 @@ export async function close(
   if (warning !== undefined) return warning;
   const archives: string[] = [];
   const stopped: string[] = [];
+  const spared: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
   for (const attempt of plan.attempts) {
     try {
       const retired = await retire(attempt);
       if (retired.archive !== null) archives.push(`${attempt.host}:${retired.archive}`);
       stopped.push(...retired.stopped);
+      spared.push(...retired.spared);
     } catch (error) {
       if (attempt.live || !(error instanceof HostUnreachable)) throw error;
       left.push({ session: attempt.session, host: attempt.host, reason: error.message });
@@ -274,21 +280,22 @@ export async function close(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
   const landing = moved === "" ? "" : ` ${moved}`;
-  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, stopped)}${browser}`;
+  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, { stopped, spared })}${browser}`;
 }
 
 function outcome(
   archives: readonly string[],
   left: readonly { session: string; host: string; reason: string }[],
   clones: readonly string[],
-  stopped: readonly string[],
+  { stopped, spared }: { stopped: readonly string[]; spared: readonly string[] },
 ): string {
   const ended = stopped.length === 0 ? "" : ` Stopped leftover processes: ${stopped.join("; ")}.`;
+  const shared = spared.length === 0 ? "" : ` Kept shared services: ${spared.join("; ")}.`;
   const kept = archives.length === 0 ? "" : ` Unlanded work is archived in ${archives.join(", ")}.`;
   const stayed =
     left.length === 0
       ? ""
       : ` Left in place: ${left.map((each) => `${each.host} ${each.session} (${each.reason})`).join("; ")}.`;
   const found = clones.length === 0 ? "" : ` Clones: ${clones.join("; ")}.`;
-  return `${ended}${kept}${stayed}${found}`;
+  return `${ended}${shared}${kept}${stayed}${found}`;
 }

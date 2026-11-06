@@ -213,6 +213,7 @@ const HANDLERS: Record<Exclude<OpName, BrowserOpName>, Handler> = {
       host: args.host,
       task: args.task,
       delivery: args.delivery,
+      model: args.model,
     });
     return { value: begun, notify: [] };
   },

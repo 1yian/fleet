@@ -12,6 +12,7 @@ import { PlanSchema } from "./wakes.ts";
 export * from "./branch.ts";
 export * from "./browser.ts";
 export * from "./cdp.ts";
+export { readSelection } from "./cdp-selection.ts";
 export * from "./health.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
@@ -164,6 +165,7 @@ const AttemptPlan = Type.Object({
   name: Type.String(),
   lane: Type.String(),
   delivery: Nullable(Delivery),
+  model: Type.Optional(Type.String({ pattern: "^[^/\\s]+/[^\\s]+$" })),
 });
 
 export const OPS = {
@@ -318,6 +320,7 @@ export const OPS = {
       host: Type.String({ minLength: 1 }),
       task: Type.String({ minLength: 1 }),
       delivery: Type.Optional(Delivery),
+      model: AttemptPlan.properties.model,
     }),
     result: AttemptPlan,
   },

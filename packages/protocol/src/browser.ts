@@ -114,6 +114,11 @@ export const BROWSER_OPS = {
       note: Nullable(Type.String()),
     }),
   },
+  "browser.copy": {
+    roles: ["worker", "mate"],
+    args: Type.Object({ target: Type.String() }),
+    result: Type.Object({ text: Nullable(Type.String()), note: Nullable(Type.String()) }),
+  },
   "browser.summon": {
     roles: ["mate"],
     args: Type.Object({ card: Type.Integer(), why: Type.String({ minLength: 1 }) }),
