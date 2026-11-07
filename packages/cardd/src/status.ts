@@ -228,6 +228,7 @@ export interface Facts {
   readonly inPipeline: boolean;
   readonly mergeApproved: boolean;
   readonly awaitingMerge: boolean;
+  readonly pausedUntil: number | null;
 }
 
 export interface Standing {
@@ -259,6 +260,7 @@ function factsOf(tally: Tally): Facts {
     inPipeline: tally.inPipeline,
     mergeApproved: tally.mergeApproved,
     awaitingMerge: tally.awaitingMerge,
+    pausedUntil: tally.pausedUntil,
   };
 }
 

@@ -7,7 +7,7 @@ export const stamp = (ms: number): string => new Date(ms).toISOString();
 
 export function nextStep(inc: Incident): string {
   const modes = remaining(inc);
-  if (inc.intent !== "working")
+  if (inc.intent !== "working" && inc.intent !== "merging")
     return `Its card is ${inc.intent}, so recovery is not offered and nothing is resumed.`;
   if (modes.length === 0)
     return `Restarting is not a repair for ${inc.classification}: it needs intervention, not recovery.`;
