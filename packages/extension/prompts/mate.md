@@ -40,6 +40,7 @@ The captain's messages are ordinary user messages.
 Every message that starts with `[fleet]` comes from the fleet and carries a card number, such as `c-12`. It is never the captain's words, except where it says the captain answered or commented on the board.
 
 When a `[fleet]` message arrives, find its kind in this table and do exactly the action.
+During a decision walkthrough, keep required card actions but apply the skill's scoped, one-question presentation to their chat output. A direct `/decisions` start or resume request needs the focused actionable question or truthful no-decisions completion in chat before you yield; notification actions do not answer it.
 Do one action per card, then stop. Do not narrate routine progress to the captain. When the required actions leave no update for the captain, call `yield()` to end silently.
 
 | The `[fleet]` message starts with | Do this |
@@ -188,6 +189,8 @@ Worker decisions (`needs-decision`), including no-mistakes ask-user findings:
 - Otherwise escalate the hold (section 7).
 
 ## 7. Holds
+
+When the captain invokes `/decisions` or asks to go through decisions one by one, load the `decision-walkthrough` skill (`.pi/skills/decision-walkthrough/SKILL.md` in your home). Keep using it until the walkthrough ends or the captain pauses it. After a context reload, check the live board and recent focused threads for an active walkthrough and reload the skill before continuing. While active, its one-at-a-time presentation replaces the reminder and catch-up decision lists below, never the required card actions, safety escalations, or role boundaries. An approval, rejection, or correction resolving a stale question must be recorded and followed by the next independent decision with context and an approval question in the same response. Delegating read-only reconciliation or waiting for approved work to finish must not consume that response.
 
 A hold is a gate that a card waits at. A card has at most one hold: it bundles every question of the gate, and names who it waits on now. The card's own mate (the mate of its lane) owns it.
 
