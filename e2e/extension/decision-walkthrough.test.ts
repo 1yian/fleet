@@ -68,6 +68,7 @@ test("a mate home discovers the walkthrough command and keeps a partially answer
     );
     pi = new Pi(child);
     child.stdin?.write(`${JSON.stringify({ type: "get_commands" })}\n`);
+    await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
     pi.prompt("/decisions Use the short name.");
     await h.waitFor((event) => event["type"] === "settled", "walkthrough turn");
     const commands = pi.responses.find((response) => response["command"] === "get_commands");
