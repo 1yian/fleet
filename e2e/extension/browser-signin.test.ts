@@ -107,7 +107,7 @@ async function live(page: Page): Promise<void> {
 
 async function pick(page: Page, touch: boolean): Promise<void> {
   const tab = page.locator("#tabs li").first();
-  if ((await page.locator("#live").textContent()) !== "live")
+  if ((await page.locator("#tabs li.selected").count()) === 0)
     await (touch ? tab.tap() : tab.click());
   await live(page);
   const phone = page.viewportSize();

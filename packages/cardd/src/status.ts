@@ -228,6 +228,7 @@ export interface Facts {
   readonly inPipeline: boolean;
   readonly mergeApproved: boolean;
   readonly awaitingMerge: boolean;
+  readonly pausedUntil: number | null;
 }
 
 export interface Standing {
@@ -259,6 +260,7 @@ function factsOf(tally: Tally): Facts {
     inPipeline: tally.inPipeline,
     mergeApproved: tally.mergeApproved,
     awaitingMerge: tally.awaitingMerge,
+    pausedUntil: tally.pausedUntil,
   };
 }
 
@@ -334,6 +336,7 @@ export function finishFrom(entries: readonly Entry[]): Finish {
     const status = text(entry, "status");
     if (isMerge(entry)) {
       finish.merged = true;
+      finish.workerDone = true;
       finish.at = entry.createdAt;
     } else if (entry.kind === "comment" && toWorker(entry)) {
       finish.workerDone = false;

@@ -40,11 +40,11 @@ interface Done {
 
 export function intentOf(db: DatabaseSync, card: number, role: "mate" | "worker"): string {
   if (role === "mate") return "working";
-  const { card: own, entries } = loadCard(db, card);
+  const { card: own, entries, standing } = loadCard(db, card);
   if (own.status === "done" || own.status === "dropped") return "closed";
-  if (own.status === "paused") return "paused";
+  if (own.status === "paused" || (standing.facts.pausedUntil ?? 0) > Date.now()) return "paused";
   if (finishFrom(entries).workerDone) return "completed";
-  return own.status === "working" || own.status === "in-review" ? "working" : own.status;
+  return ["working", "in-review", "merging"].includes(own.status) ? "working" : own.status;
 }
 
 function cardOfActor(db: DatabaseSync, session: Session, error: string): number {
@@ -286,6 +286,13 @@ const repeats = (inc: Incident, args: RecoveryRequest): boolean =>
   inc.recoveryKey === args.key &&
   inc.recoveryMode === args.mode;
 
+function requireWorking(db: DatabaseSync, inc: Incident): void {
+  const current = intentOf(db, inc.card, roleOf(db, inc.actor));
+  if (current !== "working") throw new Error(`the card is ${current}: recovery never resumes it`);
+  if (inc.intent !== "working" && inc.intent !== "merging")
+    throw new Error(`the card was ${inc.intent}: recovery never resumes it`);
+}
+
 function requireRecoverable(
   db: DatabaseSync,
   inc: Incident,
@@ -297,8 +304,7 @@ function requireRecoverable(
     throw new Error(
       `incident ${String(inc.id)} is about process generation ${String(inc.generation)}, but the actor is on ${String(current)} and you named ${String(args.generation)}: read the card again`,
     );
-  if (inc.intent !== "working")
-    throw new Error(`the card is ${inc.intent}: recovery never resumes it`);
+  requireWorking(db, inc);
   if (!remaining(inc).includes(args.mode))
     throw new Error(
       `${args.mode} is not available for incident ${String(inc.id)} (${inc.classification}, ${inc.phase}). Available: ${remaining(inc).join(", ") || "none"}`,
@@ -447,7 +453,7 @@ export function reconcileIncidents(db: DatabaseSync, now: number, t: Timings): s
     const inc = incidentFrom(row);
     db.prepare("UPDATE incidents SET due_told = 1 WHERE id = ?").run(inc.id);
     const modes = remaining(inc);
-    if (modes.length === 0 || inc.intent !== "working") continue;
+    if (modes.length === 0 || (inc.intent !== "working" && inc.intent !== "merging")) continue;
     const body = `incident ${String(inc.id)} is eligible for recovery now: restart_card(card=${String(inc.card)}, incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")}).`;
     notify.push(...tell(db, inc, roleOf(db, inc.actor), body));
   }
