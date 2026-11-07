@@ -135,7 +135,12 @@ for (const merged of [false, true]) {
         reported = true;
         return {
           tool: "report",
-          args: { status: "done", text: "Ready for authorized continuation", pr },
+          args: {
+            status: "done",
+            text: "Ready for authorized continuation",
+            pr,
+            ...(merged ? { merged: true } : {}),
+          },
         };
       }, "worker");
     await mateConnected(h);
@@ -173,18 +178,21 @@ for (const merged of [false, true]) {
   });
 }
 
-for (const state of ["paused", "done"] as const) {
+for (const state of ["paused", "done", "merged"] as const) {
   test(`${state} work remains protected from incident and ordinary replacement`, async () => {
     const p = await start();
-    if (state === "done") p.cardd.yolo("site");
+    if (state !== "paused") p.cardd.yolo("site");
+    const pr = "https://github.com/acme/site/pull/12";
+    p.cardd.gh.setPr(pr, "MERGED");
     dispatch(p);
     for (let call = 0; call < 6; call += 1) p.h.onModel(() => ({ text: "noted" }), "mate");
     p.h.onModel(
       () => ({
         tool: "report",
         args: {
-          status: state,
+          status: state === "merged" ? "done" : state,
           text: "Do not resume",
+          ...(state === "merged" ? { pr, merged: true } : {}),
           ...(state === "paused" ? { until: new Date(Date.now() + 3_600_000).toISOString() } : {}),
         },
       }),
@@ -199,7 +207,7 @@ for (const state of ["paused", "done"] as const) {
     const failure = await waitEntry(p, "Classified stale-module");
     assert.match(
       failure.body,
-      new RegExp(`Its card is ${state === "done" ? "completed" : "paused"}`),
+      new RegExp(`Its card is ${state === "paused" ? "paused" : "completed"}`),
     );
     for (const incident of [false, true]) {
       const refused = await p.cardd.post(p.mainToken, "card.restart", {

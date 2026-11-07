@@ -336,6 +336,7 @@ export function finishFrom(entries: readonly Entry[]): Finish {
     const status = text(entry, "status");
     if (isMerge(entry)) {
       finish.merged = true;
+      finish.workerDone = true;
       finish.at = entry.createdAt;
     } else if (entry.kind === "comment" && toWorker(entry)) {
       finish.workerDone = false;
