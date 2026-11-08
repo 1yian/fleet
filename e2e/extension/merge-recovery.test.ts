@@ -92,7 +92,7 @@ for (const merged of [false, true]) {
         if (user.includes("runtime failure") && !requested) {
           requested = true;
           const incident = incidentOf(user);
-          const db = new DatabaseSync(cardd.db);
+          const db = new DatabaseSync(cardd.db, { timeout: 5000 });
           db.prepare("UPDATE incidents SET intent = 'merging' WHERE id = ?").run(incident.incident);
           db.close();
           return {
