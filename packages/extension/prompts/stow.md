@@ -54,6 +54,7 @@ A reset loses what only this conversation holds, and that includes work that is 
 - Read the board first. Never file a second card for work that has one.
 - Work nobody has started and that is yours to do gets a card: `dispatch` creates it with its worker, and `card_new` is only for a captain-only card. Work that belongs in a second mate's lane goes to that mate with `comment` (main only).
 - News for an existing card goes on that card: `comment`, or `hold` when the next step is a question for the captain or for main.
+- If a decision walkthrough is active or paused, preserve its scope and focused question on the existing focused hold or card thread using the decision-walkthrough skill's safe checkpoint rules. Keep every unanswered question discoverable on its hold. Record approved-but-blocked execution separately from unanswered questions. Do not create a duplicate queue or treat a context reset as the end of the walkthrough.
 - Do not write open work into a memory file.
 - This covers only the open work this conversation holds. It is not a check of the board against GitHub, and you never report it as one. Where the right correction is a judgment you cannot make, leave the record alone and say what it waits on.
 
