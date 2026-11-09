@@ -194,6 +194,72 @@ test("a password that the captain types is kept from the worker's eval, screensh
   assert.ok((await worker.shoot()).length > 0);
 });
 
+test("a captain's middle-button paste protects a fresh form before any viewer keys", async () => {
+  await begin(["--captain"]);
+  await worker.act({ action: "type", selector: "input[name=u]", text: "alice" });
+  await worker.act({
+    action: "eval",
+    expression: `(() => {
+      const field = document.querySelector("input[name=p]");
+      for (const name of ["mousedown", "mouseup", "auxclick"]) {
+        field.addEventListener(name, (event) => {
+          if (event.button !== 1) return;
+          event.preventDefault();
+          if (event.type !== "auxclick") return;
+          field.focus();
+          document.execCommand("insertText", false, ${JSON.stringify(TYPED)});
+        });
+      }
+    })()`,
+  });
+  assert.equal(await worker.act({ action: "eval", expression: PASSWORD_VALUE }), '""');
+  const point = await pointInPicture(page, size, PASSWORD_FIELD.x, PASSWORD_FIELD.y);
+  await page.mouse.click(point.x, point.y, { button: "middle" });
+  await fieldIs("p", TYPED);
+  await fieldIs("u", "alice");
+
+  await assert.rejects(worker.act({ action: "eval", expression: PASSWORD_VALUE }), ENTERED);
+  await assert.rejects(worker.shoot(), ENTERED);
+  await assert.rejects(worker.shoot(true), ENTERED);
+  await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
+  const target = await tabOf(lab, worker);
+  const copied = check(
+    BROWSER_OPS["browser.copy"].result,
+    await worker.session.call("browser.copy", { target }),
+  );
+  assert.equal(copied.text, null);
+  assert.match(copied.note ?? "", ENTERED);
+  const framed = check(
+    BROWSER_OPS["browser.frame"].result,
+    await worker.session.call("browser.frame", { target }),
+  );
+  assert.equal(framed.image, null);
+  assert.match(framed.note ?? "", ENTERED);
+  await worker.act({ action: "open", url: lab.site.url("/a") });
+  assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
+});
+
+test("a gated middle click neither pastes nor marks a worker-filled password", async () => {
+  await begin([]);
+  await worker.act({ action: "type", selector: "input[name=p]", text: "worker-known" });
+  const target = await tabOf(lab, worker);
+  const response = await page.request.post(new URL("/api/input", page.url()).href, {
+    data: ["down", "up"].map((action) => ({
+      target,
+      kind: "mouse",
+      action,
+      ...PASSWORD_FIELD,
+      button: "middle",
+      buttons: action === "down" ? 4 : 0,
+      clickCount: 1,
+      modifiers: 0,
+    })),
+  });
+  assert.equal(response.status(), 204);
+  assert.equal(await worker.act({ action: "eval", expression: PASSWORD_VALUE }), '"worker-known"');
+  assert.ok((await worker.shoot()).length > 0);
+});
+
 test("a password that the worker typed itself, or that the captain has not touched, does not restrict it", async () => {
   await begin(["--captain"]);
   await worker.act({ action: "type", selector: "input[name=p]", text: "worker-typed" });

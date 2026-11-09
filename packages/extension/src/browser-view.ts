@@ -295,9 +295,9 @@ class Viewer {
         return;
       }
     }
-    await this.declare(inputs);
-    for (const input of inputs)
-      if (this.captain || !pastesSelection(input)) await this.screenFor(input.target).input(input);
+    const permitted = inputs.filter((input) => this.captain || !pastesSelection(input));
+    await this.declare(permitted);
+    for (const input of permitted) await this.screenFor(input.target).input(input);
     response.writeHead(204).end();
   }
 
