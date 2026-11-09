@@ -265,6 +265,29 @@ for (const [who, flags, workerOwned] of MODES) {
   });
 }
 
+test("input queued during a slow worker load reaches its form without a timeout", { timeout: 60_000 }, async () => {
+  await begin(["--captain"]);
+  await worker.act({ action: "open", url: lab.site.url("/landing") });
+  await show();
+  await page.locator("#capture").focus();
+  const opening = worker.act({ action: "open", url: lab.site.url("/slow-input") });
+  await waitFor(() => Promise.resolve(lab.site.holding() === 1), "the image to hold the page's load event");
+  const delivered = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/input",
+    { timeout: 45_000 },
+  );
+  await page.keyboard.type("queued");
+  assert.match(await opening, /still loading after 30 s/);
+  lab.site.release();
+  assert.equal((await delivered).status(), 204);
+  await waitFor(
+    async () => (await worker.act({ action: "eval", expression: 'document.getElementById("field").value' })) === '"queued"',
+    "all queued text to reach the new form",
+  );
+  assert.equal(await page.getByRole("alert").isVisible(), false);
+  assert.equal(await pathOf(), "/slow-input");
+});
+
 test("viewer input waits for a queued Back and reaches the restored form", async () => {
   await begin(["--captain"]);
   await worker.act({ action: "open", url: lab.site.url("/a") });

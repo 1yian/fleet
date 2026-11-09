@@ -364,6 +364,11 @@ test("a reveal click is not dispatched when provenance cannot be established", a
   });
   await clickField(REVEAL);
   assert.equal((await refused).status(), 502);
+  await until(
+    async () => (await page.getByRole("alert").isVisible()) &&
+      ((await page.getByRole("alert").textContent()) ?? "").startsWith("Input failed:") ? true : undefined,
+    "a visible input failure instead of a silently discarded click",
+  );
   assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "password");
 });
 

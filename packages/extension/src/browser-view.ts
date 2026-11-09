@@ -72,7 +72,10 @@ const callBrowser = async (
   );
 
 const callEntered = async (cardd: Cardd, target: string): Promise<void> => {
-  check(OPS["browser.entered"].result, await post(cardd, "browser.entered", { target }));
+  check(
+    OPS["browser.entered"].result,
+    await post(cardd, "browser.entered", { target }, NAVIGATION_MS),
+  );
 };
 
 const callCopy = async (cardd: Cardd, target: string): Promise<Copied> =>

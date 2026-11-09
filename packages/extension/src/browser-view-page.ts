@@ -119,9 +119,10 @@ async function flow() {
     const batch = [pending.shift()];
     while (pending.length > 0 && typeof pending[0] !== "function" && pending[0].target === batch[0].target) batch.push(pending.shift());
     try {
-      await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
-    } catch {
-      continue;
+      const response = await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
+      if (!response.ok) throw new Error((await response.json()).error ?? "the tab did not accept input");
+    } catch (error) {
+      noteNav("Input failed: " + (error instanceof Error ? error.message : String(error)));
     }
   }
   flowing = false;

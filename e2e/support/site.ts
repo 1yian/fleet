@@ -35,6 +35,10 @@ const PAGES: Readonly<Record<string, string>> = {
       for (const type of ["copy", "cut", "paste"]) document.addEventListener(type, () => note(type));
       document.getElementById("field").addEventListener("compositionstart", () => note("compositionstart"));
     </script></body>`,
+  "/slow-input": `<!doctype html><title>Slow input</title><body>
+    <input id="field" autofocus style="position:fixed;left:20px;top:80px;width:360px;height:32px">
+    <img src="/held" alt="">
+  </body>`,
   "/framed": `<!doctype html><title>Framed</title><body style="margin:0">
     <iframe id="inner" style="position:fixed;left:20px;top:20px;width:360px;height:120px;border:0"></iframe>
     <input id="field" style="position:fixed;left:20px;top:160px;width:360px;height:32px;font-size:18px">
