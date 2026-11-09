@@ -1,5 +1,5 @@
-import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { optionalString, type JsonRecord } from "./json.ts";
 
 export function probeEdits(

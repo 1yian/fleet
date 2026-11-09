@@ -1,5 +1,5 @@
-import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 const SLOW_START_MS = 1500;
 
