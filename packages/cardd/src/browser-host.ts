@@ -89,6 +89,7 @@ export class HostBrowser {
     this.config = config;
     this.dial = dial(via, config.cdp);
     this.vault = new Vault(config.logins, host, via);
+    for (const tab of openTabs(db, host)) this.entered.add(tab.target);
   }
 
   hasTab(card: number): boolean {
@@ -214,17 +215,18 @@ export class HostBrowser {
   }
 
   private async refuseWhileFilled(page: Page, target: string, refusal: Refusal): Promise<void> {
-    await this.refuseWhileEntered(page, target, refusal.entered);
     const mark = this.filled.get(target);
-    if (mark === undefined && this.trusted.has(target)) return;
-    const current = mark === undefined ? undefined : (await documentOf(page)).loader;
-    const fields = mark !== undefined && current === mark.loader ? mark.fields : undefined;
-    const held =
-      fields === undefined
-        ? await holdsLogin(page, this.vault.values, mark !== undefined)
-        : await holdsFilled(page, fields);
-    if (held) throw new Error(refusal.stored);
-    if (fields !== undefined) this.filled.delete(target);
+    if (mark !== undefined || !this.trusted.has(target)) {
+      const current = mark === undefined ? undefined : (await documentOf(page)).loader;
+      const fields = mark !== undefined && current === mark.loader ? mark.fields : undefined;
+      const held =
+        fields === undefined
+          ? await holdsLogin(page, this.vault.values, mark !== undefined)
+          : await holdsFilled(page, fields);
+      if (held) throw new Error(refusal.stored);
+      if (fields !== undefined) this.filled.delete(target);
+    }
+    await this.refuseWhileEntered(page, target, refusal.entered);
   }
 
   private guarded(work: Promise<Outcome>): Promise<Outcome> {

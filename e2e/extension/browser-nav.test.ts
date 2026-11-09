@@ -262,6 +262,41 @@ for (const [who, flags] of MODES) {
   });
 }
 
+test("viewer input waits for a queued Back and reaches the restored form", async () => {
+  await begin(["--captain"]);
+  await worker.act({ action: "open", url: lab.site.url("/a") });
+  await worker.act({ action: "open", url: lab.site.url("/landing") });
+  await show();
+  let releaseNavigation = (): void => {};
+  const released = new Promise<void>((resolve) => { releaseNavigation = resolve; });
+  let navigationReady = (): void => {};
+  const ready = new Promise<void>((resolve) => { navigationReady = resolve; });
+  let navigationFinished = false;
+  let earlyInput = false;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/input" && !navigationFinished) earlyInput = true;
+  });
+  await page.route("**/api/nav", async (route) => {
+    const response = await route.fetch();
+    navigationReady();
+    await released;
+    navigationFinished = true;
+    await route.fulfill({ response });
+  });
+  const opening = worker.act({ action: "open", url: lab.site.url("/held") });
+  await waitFor(() => Promise.resolve(lab.site.holding() === 1), "the held load to start");
+  await back().click();
+  await page.keyboard.type("queued");
+  lab.site.release();
+  await opening;
+  await ready;
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  releaseNavigation();
+  await waitFor(async () => (await worker.act({ action: "eval", expression: 'document.querySelector("input").value' })) === '"queued"', "the queued text to reach the restored form");
+  assert.equal(earlyInput, false, "input reached Chrome before Back finished");
+  assert.equal(await pathOf(), "/landing");
+});
+
 test("a Mac viewer uses Cmd+[ and Cmd+] for the shared tab and Cmd+L for its address", async () => {
   await begin(["--captain"]);
   await page.addInitScript(() => {

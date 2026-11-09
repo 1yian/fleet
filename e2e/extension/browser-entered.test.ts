@@ -15,6 +15,7 @@ const viewers: Viewers = [];
 let page: Page;
 let worker: RawWorker;
 let size: { width: number; height: number };
+let fields = "document";
 
 afterEach(async () => {
   const stopped = await Promise.allSettled([...stopViewers(viewers), client?.close(), lab.stop()]);
@@ -23,10 +24,38 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function begin(flags: string[]): Promise<void> {
+async function begin(flags: string[], embedding = "document"): Promise<void> {
   lab = await BrowserLab.start();
   worker = await lab.worker("Users sign in");
   await worker.act({ action: "open", url: lab.site.url("/entry") });
+  fields = "document";
+  if (embedding === "shadow") {
+    await worker.act({
+      action: "eval",
+      expression: `(() => {
+        const host = document.createElement("div");
+        host.id = "host";
+        document.body.append(host);
+        host.attachShadow({ mode: "open" }).append(document.querySelector("form"));
+      })()`,
+    });
+    fields = 'document.getElementById("host").shadowRoot';
+  }
+  if (embedding === "frame") {
+    await worker.act({
+      action: "eval",
+      expression: `new Promise((resolve) => {
+        const frame = document.createElement("iframe");
+        frame.id = "inner";
+        frame.style.cssText = "position:fixed;inset:0;width:100%;height:100%;border:0";
+        frame.onload = () => resolve("ready");
+        frame.srcdoc = document.querySelector("form").outerHTML;
+        document.querySelector("form").remove();
+        document.body.append(frame);
+      })`,
+    });
+    fields = 'document.getElementById("inner").contentDocument';
+  }
   const found: unknown = JSON.parse(
     await worker.act({ action: "eval", expression: "[innerWidth, innerHeight]" }),
   );
@@ -56,7 +85,7 @@ const inChrome = (expression: string): Promise<unknown> =>
     const tab = pages.find((each) => each.title.startsWith(`c-${String(worker.card.id)} `));
     return tab === undefined
       ? undefined
-      : lab.chrome.evaluate(tab.id, expression).catch(() => undefined);
+      : lab.chrome.evaluate(tab.id, expression.replaceAll("document.", `${fields}.`)).catch(() => undefined);
   });
 
 const fieldIs = (name: string, wanted: string): Promise<void> =>
@@ -185,5 +214,57 @@ test("a gated viewer marks the tab too, hides its picture while the password is 
     "the picture to come back",
   );
   assert.equal(await page.locator("#note").isHidden(), true);
+  assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
+});
+
+for (const embedding of ["frame", "shadow"]) {
+  for (const flags of [["--captain"], []]) {
+    test(`${flags.length === 0 ? "gated" : "captain"} passwords in a ${embedding} stay protected after reveal without autocomplete`, async () => {
+      await begin(flags, embedding);
+      await clickField(PASSWORD_FIELD);
+      await page.keyboard.type(TYPED);
+      await fieldIs("p", TYPED);
+      await assert.rejects(worker.act({ action: "eval", expression: `${fields}.querySelector("input[name=p]").value` }), ENTERED);
+      await worker.act({ action: "click", x: REVEAL.x, y: REVEAL.y });
+      assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "text");
+      await assert.rejects(worker.act({ action: "eval", expression: "location.pathname" }), ENTERED);
+      await assert.rejects(worker.shoot(), ENTERED);
+      await assert.rejects(worker.shoot(true), ENTERED);
+      await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
+      const target = await tabOf(lab, worker);
+      const copied = check(BROWSER_OPS["browser.copy"].result, await worker.session.call("browser.copy", { target }));
+      assert.equal(copied.text, null);
+      assert.match(copied.note ?? "", ENTERED);
+      const framed = check(BROWSER_OPS["browser.frame"].result, await worker.session.call("browser.frame", { target }));
+      assert.equal(framed.image, null);
+      assert.match(framed.note ?? "", ENTERED);
+      await worker.act({ action: "open", url: lab.site.url("/a") });
+      assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
+    });
+  }
+}
+
+test("surviving manual passwords stay protected after restart, open and Back with TOTP disabled", async () => {
+  await begin(["--captain"]);
+  await clickField(PASSWORD_FIELD);
+  await page.keyboard.type(TYPED);
+  await fieldIs("p", TYPED);
+  const before = worker;
+  await lab.cardd.restart();
+  worker = await lab.reconnect(before);
+  await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
+  await assert.rejects(worker.act({ action: "eval", expression: PASSWORD_VALUE }), /credential|password entered/);
+  await worker.act({ action: "open", url: lab.site.url("/a") });
+  assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
+  await worker.act({ action: "back" });
+  await fieldIs("p", TYPED);
+  await assert.rejects(worker.act({ action: "eval", expression: PASSWORD_VALUE }), ENTERED);
+  await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
+  await assert.rejects(worker.shoot(), ENTERED);
+  const target = await tabOf(lab, worker);
+  const copied = check(BROWSER_OPS["browser.copy"].result, await worker.session.call("browser.copy", { target }));
+  assert.equal(copied.text, null);
+  assert.match(copied.note ?? "", ENTERED);
+  await worker.act({ action: "forward" });
   assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
 });

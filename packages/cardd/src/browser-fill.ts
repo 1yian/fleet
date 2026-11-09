@@ -2,6 +2,7 @@ import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
 import { call, documentOf, type Doc, type Page } from "./browser-page.ts";
 import { totpCode } from "./browser-totp.ts";
+import { PASSWORD_ENTERED } from "./browser-password.ts";
 
 export interface Credentials {
   readonly username: string;
@@ -61,12 +62,6 @@ const HOLDS = `function (secrets, restoredOnly) {
   return (
     login.some((el) => el !== null && el.value !== "") ||
     fields.some((el) => secrets.some((secret) => secret !== "" && el.value.includes(secret)))
-  );
-}`;
-
-const PASSWORD_ENTERED = `function () {
-  return [...this.querySelectorAll("input")].some(
-    (el) => (el.type === "password" || /\\b(current|new)-password\\b/.test(el.autocomplete)) && el.value !== "",
   );
 }`;
 

@@ -78,10 +78,8 @@ async function navigation(body) {
   busy = true;
   toolbar();
   noteNav("");
-  let sent;
-  await ordered(() => { sent = request(target, body); });
   try {
-    await sent;
+    await ordered(() => request(target, body));
     if (body.action !== "open") return;
     address.blur();
     if (!isPhone()) capture.focus({ preventScroll: true });

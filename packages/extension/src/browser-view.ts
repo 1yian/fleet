@@ -57,7 +57,7 @@ const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
 
 const callBrowser = async (
   cardd: Cardd,
-  card: number,
+  tab: Tab,
   args: BrowserArgs,
 ): Promise<OpResult<"browser">> =>
   check(
@@ -65,7 +65,7 @@ const callBrowser = async (
     await post(
       cardd,
       "browser",
-      { ...args, card, ...(cardd.host === undefined ? {} : { host: cardd.host }) },
+      { ...args, card: tab.card, host: tab.host },
       NAVIGATION_MS,
     ),
   );
@@ -308,7 +308,7 @@ class Viewer {
     const nav = check(NavSchema, JSON.parse(await readBody(request)));
     const tab = (await this.shows(nav.target)) ? this.visible.get(nav.target) : undefined;
     if (tab === undefined) response.writeHead(404).end();
-    else json(response, 200, await callBrowser(this.cardd, tab.card, navArgs(nav)));
+    else json(response, 200, await callBrowser(this.cardd, tab, navArgs(nav)));
   }
 
   private async copy(request: IncomingMessage, response: ServerResponse): Promise<void> {
