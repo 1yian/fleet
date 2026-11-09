@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
-import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 export default function captureTool(pi: ExtensionAPI): void {
   for (const name of ["bash", "run_long"])

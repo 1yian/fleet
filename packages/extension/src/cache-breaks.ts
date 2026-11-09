@@ -109,7 +109,9 @@ function statusText(warmth: Warmth, now: number): string {
   return `cache warm ${span(expires - now)}`;
 }
 
-function cacheLifetimeMs(model: { promptCache?: { short?: number; long?: number } } | undefined) {
+function cacheLifetimeMs(
+  model: { promptCache?: { short?: number | undefined; long?: number | undefined } } | undefined,
+) {
   const seconds =
     model?.promptCache?.[process.env["PI_CACHE_RETENTION"] === "long" ? "long" : "short"];
   return seconds === undefined ? undefined : seconds * 1000;
