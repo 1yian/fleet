@@ -32,17 +32,19 @@ async function begin(flags: string[], embedding = "document"): Promise<void> {
   worker = await lab.worker("Users sign in");
   await worker.act({ action: "open", url: lab.site.url("/entry") });
   fields = "document";
-  if (embedding === "shadow") {
+  if (embedding === "shadow" || embedding === "closed-shadow") {
     await worker.act({
       action: "eval",
       expression: `(() => {
         const host = document.createElement("div");
         host.id = "host";
         document.body.append(host);
-        host.attachShadow({ mode: "open" }).append(document.querySelector("form"));
+        const root = host.attachShadow({ mode: ${JSON.stringify(embedding === "closed-shadow" ? "closed" : "open")} });
+        window.fixtureRoot = root;
+        root.append(document.querySelector("form"));
       })()`,
     });
-    fields = 'document.getElementById("host").shadowRoot';
+    fields = "window.fixtureRoot";
   }
   if (embedding === "frame" || crossFrame) {
     await worker.act({
@@ -299,6 +301,70 @@ test("a gated viewer marks the tab too, hides its picture while the password is 
   );
   assert.equal(await page.locator("#note").isHidden(), true);
   assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
+});
+
+for (const embedding of ["closed-shadow", "cross-frame"]) {
+  for (const flags of [["--captain"], []]) {
+    test(`${flags.length === 0 ? "gated" : "captain"} reveal before typing in a ${embedding} preserves password protection`, async () => {
+      await begin(flags, embedding);
+      if (embedding === "closed-shadow") {
+        assert.equal(
+          await worker.act({ action: "eval", expression: 'document.getElementById("host").shadowRoot === null' }),
+          "true",
+        );
+      }
+      await clickField(REVEAL);
+      await until(
+        async () => (await inChrome('document.querySelector("input[name=p]").type')) === "text" ? true : undefined,
+        "the empty password to be revealed before typing",
+      );
+      assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/entry"');
+      assert.ok((await worker.shoot()).length > 0);
+      await clickField(PASSWORD_FIELD);
+      await page.keyboard.type(TYPED);
+      await fieldIs("p", TYPED);
+      await assert.rejects(worker.act({ action: "eval", expression: "location.pathname" }), ENTERED);
+      await assert.rejects(worker.shoot(), ENTERED);
+      await assert.rejects(worker.shoot(true), ENTERED);
+      await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
+      const target = await tabOf(lab, worker);
+      const copied = check(
+        BROWSER_OPS["browser.copy"].result,
+        await worker.session.call("browser.copy", { target }),
+      );
+      assert.equal(copied.text, null);
+      assert.match(copied.note ?? "", ENTERED);
+      const framed = check(
+        BROWSER_OPS["browser.frame"].result,
+        await worker.session.call("browser.frame", { target }),
+      );
+      assert.equal(framed.image, null);
+      assert.match(framed.note ?? "", ENTERED);
+      await worker.act({ action: "click", ...PASSWORD_FIELD });
+      await page.locator("#capture").focus();
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.keyboard.press("Backspace");
+      await fieldIs("p", "");
+      assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/entry"');
+      assert.ok((await worker.shoot()).length > 0);
+      await worker.act({ action: "read", html: true });
+    });
+  }
+}
+
+test("a reveal click is not dispatched when provenance cannot be established", async () => {
+  await begin(["--captain"]);
+  await lab.cardd.stop();
+  const refused = page.waitForResponse((response) => {
+    if (new URL(response.url()).pathname !== "/api/input") return false;
+    const sent: unknown = JSON.parse(response.request().postData() ?? "null");
+    return (Array.isArray(sent) ? sent : [sent]).some(
+      (input: unknown) => isRecord(input) && input["kind"] === "mouse" && input["action"] === "up",
+    );
+  });
+  await clickField(REVEAL);
+  assert.equal((await refused).status(), 502);
+  assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "password");
 });
 
 for (const embedding of ["frame", "shadow", "cross-frame"]) {

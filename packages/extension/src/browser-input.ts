@@ -193,9 +193,6 @@ const keyCalls = (event: Extract<ViewerInput, { kind: "key" }>): Call[] => {
 export const pastesSelection = (event: ViewerInput): boolean =>
   event.kind === "mouse" && event.button === "middle";
 
-export const entersText = (event: ViewerInput): boolean =>
-  event.kind === "key" || event.kind === "text" || pastesSelection(event);
-
 export function inputCalls(event: ViewerInput): Call[] {
   switch (event.kind) {
     case "mouse":

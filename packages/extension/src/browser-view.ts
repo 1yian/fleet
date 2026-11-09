@@ -6,7 +6,7 @@ import { check, HttpOutcomeSchema, OPS, type BrowserArgs, type OpResult } from "
 import { dial } from "@fleet/protocol/tunnel";
 import { viewerBuild } from "./browser-build.ts";
 import { FitSchema } from "./browser-fit.ts";
-import { entersText, InputSchema, pastesSelection, type ViewerInput } from "./browser-input.ts";
+import { InputSchema, pastesSelection } from "./browser-input.ts";
 import { navArgs, NavSchema } from "./browser-nav.ts";
 import { Pacer } from "./browser-pace.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
@@ -296,15 +296,11 @@ class Viewer {
       }
     }
     const permitted = inputs.filter((input) => this.captain || !pastesSelection(input));
-    await this.declare(permitted);
-    for (const input of permitted) await this.screenFor(input.target).input(input);
-    response.writeHead(204).end();
-  }
-
-  private async declare(inputs: readonly ViewerInput[]): Promise<void> {
-    for (const target of new Set(inputs.filter(entersText).map((input) => input.target))) {
-      await callEntered(this.cardd, target);
+    for (const input of permitted) {
+      await callEntered(this.cardd, input.target);
+      await this.screenFor(input.target).input(input);
     }
+    response.writeHead(204).end();
   }
 
   private async navigate(request: IncomingMessage, response: ServerResponse): Promise<void> {
