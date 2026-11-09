@@ -2,6 +2,7 @@ import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
 import { exposure } from "./browser-hidden.ts";
 import { call, type Page } from "./browser-page.ts";
+import { PASSWORD_CHECK, PASSWORD_INIT, PASSWORD_WORLD } from "./browser-password.ts";
 
 const GROUP = "fleet-scan";
 const WORLD = "fleet-scan";
@@ -93,6 +94,7 @@ const SCAN = `function (count, ...nodes) {
 
 const FlatNodeSchema = Type.Object({
   nodeId: Type.Integer(),
+  backendNodeId: Type.Integer(),
   parentId: Type.Optional(Type.Integer()),
   nodeType: Type.Integer(),
   nodeName: Type.String(),
@@ -109,6 +111,10 @@ const ValueSchema = Type.Object({
   exceptionDetails: Type.Optional(Type.Unknown()),
 });
 const ViewsSchema = Type.Array(Type.String());
+const PasswordSchema = Type.Object({
+  held: Type.Boolean(),
+  passwords: Type.Array(Type.Integer({ minimum: 0 })),
+});
 const QuadsSchema = Type.Object({
   quads: Type.Array(Type.Array(Type.Number(), { minItems: 8, maxItems: 8 })),
 });
@@ -130,6 +136,7 @@ interface Scope {
   readonly frame: string;
   readonly closed: readonly number[];
   readonly texts: readonly number[];
+  readonly inputs: readonly { nodeId: number; backendNodeId: number }[];
 }
 
 const TEXT_NODE = 3;
@@ -239,6 +246,11 @@ function scopesOf(nodes: readonly FlatNode[]): Scope[] {
         frame,
         closed: closed.get(frame) ?? [],
         texts: texts.get(node.nodeId) ?? [],
+        inputs: nodes
+          .filter(
+            (each) => each.nodeName === "INPUT" && frameOf(parents, frames, each.nodeId) === frame,
+          )
+          .map(({ nodeId, backendNodeId }) => ({ nodeId, backendNodeId })),
       };
     });
   for (const frame of closed.keys())
@@ -249,14 +261,18 @@ function scopesOf(nodes: readonly FlatNode[]): Scope[] {
 const isFrameOwner = (node: FlatNode): boolean =>
   ["IFRAME", "FRAME"].includes(node.nodeName.toUpperCase());
 
+type Check =
+  | { readonly kind: "credential"; readonly exposed: (text: string) => boolean }
+  | { readonly kind: "password"; readonly known: Set<string>; readonly restored: boolean };
+
 class Scan {
-  private readonly exposed: (text: string) => boolean;
+  private readonly check: Check;
   private readonly touched: Page[] = [];
   private readonly children = new Map<string, Page[]>();
   private unlisten: (() => void) | undefined;
 
-  constructor(exposed: (text: string) => boolean) {
-    this.exposed = exposed;
+  constructor(check: Check) {
+    this.check = check;
   }
 
   async shows(root: Page): Promise<boolean> {
@@ -286,6 +302,13 @@ class Scan {
 
   private async over(page: Page): Promise<boolean> {
     this.touched.push(page);
+    if (this.check.kind === "password" && this.touched.length > 1) {
+      await call(page, "Page.addScriptToEvaluateOnNewDocument", {
+        source: PASSWORD_INIT,
+        worldName: PASSWORD_WORLD,
+        runImmediately: true,
+      });
+    }
     await call(page, "DOM.enable");
     const worlds = await this.worlds(page);
     const { nodes } = parseCdp(
@@ -304,9 +327,18 @@ class Scan {
       children.length
     )
       throw unreadable();
-    for (const scope of scopesOf(nodes)) if (await this.shown(page, scope, worlds)) return true;
-    for (const child of children) if (await this.over(child)) return true;
-    return false;
+    let held = false;
+    for (const scope of scopesOf(nodes))
+      if (await this.shown(page, scope, worlds)) {
+        if (this.check.kind === "credential") return true;
+        held = true;
+      }
+    for (const child of children)
+      if (await this.over(child)) {
+        if (this.check.kind === "credential") return true;
+        held = true;
+      }
+    return held;
   }
 
   private async worlds(page: Page): Promise<Map<string, number>> {
@@ -319,7 +351,10 @@ class Scan {
     for (const frameId of idsOf(frameTree)) {
       const world = parseCdp(
         WorldSchema,
-        await call(page, "Page.createIsolatedWorld", { frameId, worldName: WORLD }).catch(() => {
+        await call(page, "Page.createIsolatedWorld", {
+          frameId,
+          worldName: this.check.kind === "password" ? PASSWORD_WORLD : WORLD,
+        }).catch(() => {
           throw unreadable();
         }),
         "a frame's world",
@@ -363,6 +398,42 @@ class Scan {
     if (executionContextId === undefined) throw unreadable();
     const objectId = await this.resolve(page, scope.nodeId, executionContextId);
     const closed = await this.resolveAll(page, scope.closed, executionContextId);
+    if (this.check.kind === "password") {
+      const inputs = await this.resolveAll(
+        page,
+        scope.inputs.map(({ nodeId }) => nodeId),
+        executionContextId,
+      );
+      const keys = scope.inputs.map(
+        ({ backendNodeId }) => `${scope.frame}:${String(backendNodeId)}`,
+      );
+      const known = this.check.known;
+      const remembered = keys.flatMap((key, index) => (known.has(key) ? [index] : []));
+      const held = parseCdp(
+        ValueSchema,
+        await call(page, "Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: PASSWORD_CHECK,
+          arguments: [
+            { value: closed.length },
+            { value: remembered },
+            { value: this.check.restored },
+            ...closed,
+            ...inputs,
+          ],
+          returnByValue: true,
+        }),
+        "the page's password fields",
+      );
+      if (held.exceptionDetails !== undefined) throw unreadable();
+      const result = parseCdp(PasswordSchema, held.result.value, "whether a password is held");
+      for (const index of result.passwords) {
+        const key = keys[index];
+        if (key === undefined) throw unreadable();
+        known.add(key);
+      }
+      return result.held;
+    }
     const checked = await Promise.all(
       scope.texts.map(async (nodeId) => ({ nodeId, shown: await drawn(page, nodeId) })),
     );
@@ -384,12 +455,25 @@ class Scan {
       "the page's scan",
     );
     if (done.exceptionDetails !== undefined) throw unreadable();
-    return parseCdp(ViewsSchema, done.result.value, "the page's text").some(this.exposed);
+    return parseCdp(ViewsSchema, done.result.value, "the page's text").some(this.check.exposed);
+  }
+}
+
+export async function holdsPassword(
+  page: Page,
+  known: Set<string>,
+  restored = false,
+): Promise<boolean> {
+  const scan = new Scan({ kind: "password", known, restored });
+  try {
+    return await scan.shows(page);
+  } finally {
+    await scan.lift();
   }
 }
 
 export async function showsCredential(page: Page, secrets: readonly string[]): Promise<boolean> {
-  const scan = new Scan(exposure(secrets));
+  const scan = new Scan({ kind: "credential", exposed: exposure(secrets) });
   try {
     return await scan.shows(page);
   } finally {

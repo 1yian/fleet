@@ -129,7 +129,10 @@ async function viewOf(
         ? asked
         : browser.hostOf(named, asked);
   return {
-    value: await browser.view(sees(db, session, named), captain === true, where),
+    value: {
+      ...(await browser.view(sees(db, session, named), captain === true, where)),
+      canNameHost: own === null,
+    },
     notify: [],
   };
 }
@@ -165,7 +168,7 @@ export async function performBrowserOp(
     case "browser.entered": {
       const { target } = check(OPS["browser.entered"].args, raw);
       const tab = visibleTab(db, session, target);
-      return { value: browser.enter(tab.card, tab.target), notify: [] };
+      return { value: await browser.enter(tab.card, tab.target), notify: [] };
     }
     case "browser.copy": {
       const { target } = check(OPS["browser.copy"].args, raw);

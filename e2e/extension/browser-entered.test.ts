@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { BROWSER_OPS, check } from "@fleet/protocol";
+import { BROWSER_OPS, Cdp, check } from "@fleet/protocol";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { tabOf, until } from "../support/login-fixtures.ts";
+import { isRecord, records } from "../support/json.ts";
 import { pointInPicture, startViewer, stopViewers, type Viewers } from "../support/viewer.ts";
 
 const ENTERED = /a password entered through the viewer is still in this page's form/;
@@ -16,6 +17,7 @@ let page: Page;
 let worker: RawWorker;
 let size: { width: number; height: number };
 let fields = "document";
+let crossFrame = false;
 
 afterEach(async () => {
   const stopped = await Promise.allSettled([...stopViewers(viewers), client?.close(), lab.stop()]);
@@ -25,7 +27,8 @@ afterEach(async () => {
 });
 
 async function begin(flags: string[], embedding = "document"): Promise<void> {
-  lab = await BrowserLab.start();
+  crossFrame = embedding === "cross-frame";
+  lab = await BrowserLab.start({ isolated: crossFrame });
   worker = await lab.worker("Users sign in");
   await worker.act({ action: "open", url: lab.site.url("/entry") });
   fields = "document";
@@ -41,7 +44,7 @@ async function begin(flags: string[], embedding = "document"): Promise<void> {
     });
     fields = 'document.getElementById("host").shadowRoot';
   }
-  if (embedding === "frame") {
+  if (embedding === "frame" || crossFrame) {
     await worker.act({
       action: "eval",
       expression: `new Promise((resolve) => {
@@ -49,7 +52,7 @@ async function begin(flags: string[], embedding = "document"): Promise<void> {
         frame.id = "inner";
         frame.style.cssText = "position:fixed;inset:0;width:100%;height:100%;border:0";
         frame.onload = () => resolve("ready");
-        frame.srcdoc = document.querySelector("form").outerHTML;
+        ${crossFrame ? `frame.src = ${JSON.stringify(lab.site.url("/entry", "login.example.test"))};` : 'frame.srcdoc = document.querySelector("form").outerHTML;'}
         document.querySelector("form").remove();
         document.body.append(frame);
       })`,
@@ -80,13 +83,28 @@ const USER = { x: 170, y: 36 };
 const PASSWORD_FIELD = { x: 170, y: 86 };
 const REVEAL = { x: 365, y: 86 };
 
-const inChrome = (expression: string): Promise<unknown> =>
-  lab.chrome.pages().then((pages) => {
-    const tab = pages.find((each) => each.title.startsWith(`c-${String(worker.card.id)} `));
-    return tab === undefined
-      ? undefined
-      : lab.chrome.evaluate(tab.id, expression.replaceAll("document.", `${fields}.`)).catch(() => undefined);
-  });
+async function inChrome(expression: string): Promise<unknown> {
+  if (crossFrame) {
+    const cdp = await Cdp.connect(lab.chrome.endpoint);
+    try {
+      const listed = await cdp.send("Target.getTargets");
+      if (!isRecord(listed)) throw new Error("Chrome did not list its targets");
+      const frame = records(listed["targetInfos"]).find(
+        (each) => each["type"] === "iframe" && each["url"] === lab.site.url("/entry", "login.example.test"),
+      );
+      const id = frame?.["targetId"];
+      return typeof id === "string" ? await lab.chrome.evaluate(id, expression) : undefined;
+    } finally {
+      cdp.close();
+    }
+  }
+  const tab = (await lab.chrome.pages()).find(
+    (each) => each.title.startsWith(`c-${String(worker.card.id)} `),
+  );
+  return tab === undefined
+    ? undefined
+    : lab.chrome.evaluate(tab.id, expression.replaceAll("document.", `${fields}.`)).catch(() => undefined);
+}
 
 const fieldIs = (name: string, wanted: string): Promise<void> =>
   until(
@@ -217,10 +235,17 @@ test("a gated viewer marks the tab too, hides its picture while the password is 
   assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
 });
 
-for (const embedding of ["frame", "shadow"]) {
+for (const embedding of ["frame", "shadow", "cross-frame"]) {
   for (const flags of [["--captain"], []]) {
     test(`${flags.length === 0 ? "gated" : "captain"} passwords in a ${embedding} stay protected after reveal without autocomplete`, async () => {
       await begin(flags, embedding);
+      await worker.act({
+        action: "eval",
+        expression: `(() => {
+          window.__fleetPasswordHeld = () => false;
+          window.__fleetPasswords = { scan: () => false };
+        })()`,
+      });
       await clickField(PASSWORD_FIELD);
       await page.keyboard.type(TYPED);
       await fieldIs("p", TYPED);
@@ -238,6 +263,17 @@ for (const embedding of ["frame", "shadow"]) {
       const framed = check(BROWSER_OPS["browser.frame"].result, await worker.session.call("browser.frame", { target }));
       assert.equal(framed.image, null);
       assert.match(framed.note ?? "", ENTERED);
+      await worker.act({ action: "click", x: PASSWORD_FIELD.x, y: PASSWORD_FIELD.y });
+      await page.locator("#capture").focus();
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.keyboard.press("Backspace");
+      await fieldIs("p", "");
+      assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/entry"');
+      assert.ok((await worker.shoot()).length > 0);
+      const cleared = check(BROWSER_OPS["browser.frame"].result, await worker.session.call("browser.frame", { target }));
+      assert.equal(cleared.note, null);
+      assert.ok(cleared.image !== null);
+      await worker.act({ action: "read", html: true });
       await worker.act({ action: "open", url: lab.site.url("/a") });
       assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
     });
@@ -249,6 +285,8 @@ test("surviving manual passwords stay protected after restart, open and Back wit
   await clickField(PASSWORD_FIELD);
   await page.keyboard.type(TYPED);
   await fieldIs("p", TYPED);
+  await worker.act({ action: "click", x: REVEAL.x, y: REVEAL.y });
+  assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "text");
   const before = worker;
   await lab.cardd.restart();
   worker = await lab.reconnect(before);

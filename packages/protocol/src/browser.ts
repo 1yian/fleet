@@ -93,6 +93,7 @@ export const BROWSER_OPS = {
     }),
     result: Type.Object({
       host: Nullable(Type.String()),
+      canNameHost: Type.Boolean(),
       browsers: Type.Array(Type.Object({ host: Type.String(), endpoint: Type.String() })),
       problem: Nullable(Type.String()),
       tabs: Type.Array(

@@ -10,9 +10,10 @@ import {
   type Viewers,
 } from "../support/viewer.ts";
 
-const MODES: readonly (readonly [string, string[]])[] = [
-  ["the captain's viewer", ["--captain"]],
-  ["a gated viewer", []],
+const MODES: readonly (readonly [string, string[], boolean])[] = [
+  ["the captain's viewer", ["--captain"], false],
+  ["a gated viewer", [], false],
+  ["a worker-owned gated viewer", [], true],
 ];
 
 const ADDRESS = "Address of the fleet browser tab";
@@ -31,10 +32,12 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function begin(flags: string[]): Promise<void> {
+async function begin(flags: string[], workerOwned = false): Promise<void> {
   lab = await BrowserLab.start();
   worker = await lab.worker("Users go back");
-  url = (await startViewer(lab, viewers, flags)).url;
+  url = (
+    await startViewer(lab, viewers, flags, {}, workerOwned ? { token: worker.token } : undefined)
+  ).url;
   client = await chromium.launch();
   page = await client.newPage({ viewport: { width: 1400, height: 900 } });
 }
@@ -87,9 +90,9 @@ const accelerator = process.platform === "darwin" ? "Meta" : "Control";
 const backKey = process.platform === "darwin" ? "Meta+BracketLeft" : "Alt+ArrowLeft";
 const forwardKey = process.platform === "darwin" ? "Meta+BracketRight" : "Alt+ArrowRight";
 
-for (const [who, flags] of MODES) {
+for (const [who, flags, workerOwned] of MODES) {
   test(`${who}: Back, Forward and Reload act on the worker's own tab, in the one history that the worker and the captain share`, async () => {
-    await begin(flags);
+    await begin(flags, workerOwned);
     await worker.act({ action: "open", url: lab.site.url("/links") });
     await show();
 
@@ -136,7 +139,7 @@ for (const [who, flags] of MODES) {
   });
 
   test(`${who}: the address field loads a typed address in the same tab, and refuses what the tab may not open`, async () => {
-    await begin(flags);
+    await begin(flags, workerOwned);
     await worker.act({ action: "open", url: lab.site.url("/a") });
     await show();
 
@@ -173,7 +176,7 @@ for (const [who, flags] of MODES) {
   });
 
   test(`${who}: an address typed without a scheme is loaded over https, and Back recovers from a page that did not load`, async () => {
-    await begin(flags);
+    await begin(flags, workerOwned);
     await worker.act({ action: "open", url: lab.site.url("/a") });
     await show();
 
@@ -193,7 +196,7 @@ for (const [who, flags] of MODES) {
   });
 
   test(`${who}: the mouse's back and forward buttons over the picture go back and forward in the tab, and leave the viewer page where it is`, async () => {
-    await begin(flags);
+    await begin(flags, workerOwned);
     await worker.act({ action: "open", url: lab.site.url("/links") });
     await show();
     await clickLink();
@@ -221,7 +224,7 @@ for (const [who, flags] of MODES) {
   });
 
   test(`${who}: the keyboard goes back, forward and reloads the tab, and Ctrl or Cmd+L edits its address, with the viewer page left alone`, async () => {
-    await begin(flags);
+    await begin(flags, workerOwned);
     await worker.act({ action: "open", url: lab.site.url("/links") });
     await show();
     await page.evaluate(() => Reflect.set(window, "kept", "the viewer page"));
@@ -297,6 +300,28 @@ test("viewer input waits for a queued Back and reaches the restored form", async
   assert.equal(await pathOf(), "/landing");
 });
 
+test("a worker viewer cannot declare a host or navigate another worker's tab", async () => {
+  await begin([], true);
+  await worker.act({ action: "open", url: lab.site.url("/a") });
+  const other = await lab.worker("Users keep their own tab");
+  await other.act({ action: "open", url: lab.site.url("/b") });
+  await show();
+  await assert.rejects(
+    worker.session.call("browser", { action: "reload", host: "maverick" }),
+    /do not name a host/,
+  );
+  const tab = (await lab.chrome.pages()).find(({ title }) =>
+    title.startsWith(`c-${String(other.card.id)} `),
+  );
+  assert.ok(tab !== undefined);
+  const response = await page.request.post(new URL("/api/nav", url).href, {
+    data: { target: tab.id, action: "open", url: lab.site.url("/pad") },
+  });
+  assert.equal(response.status(), 404);
+  assert.equal(await pathOf(other), "/b");
+  assert.equal(await pathOf(), "/a");
+});
+
 test("a Mac viewer uses Cmd+[ and Cmd+] for the shared tab and Cmd+L for its address", async () => {
   await begin(["--captain"]);
   await page.addInitScript(() => {
@@ -344,9 +369,9 @@ test("the worker's back, forward and reload walk the same history that the capta
   await toolbarIs("on off on");
 });
 
-for (const [who, flags] of MODES) {
+for (const [who, flags, workerOwned] of MODES) {
   test(`${who}: a Back pressed while the worker's own page is still loading is carried out after it`, async () => {
-    await begin(flags);
+    await begin(flags, workerOwned);
     await worker.act({ action: "open", url: lab.site.url("/links") });
     await show();
     await clickLink();

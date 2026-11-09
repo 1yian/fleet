@@ -11,9 +11,11 @@ import { dial, type Dial } from "@fleet/protocol/tunnel";
 import Type from "typebox";
 import type { HostBrowserConfig } from "./browser-config.ts";
 import { copyAnswer } from "./browser-copy.ts";
-import { holdsFilled, holdsLogin, holdsPassword } from "./browser-fill.ts";
+import { holdsFilled, holdsLogin } from "./browser-fill.ts";
+import { holdsPassword } from "./browser-scan.ts";
 import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
+import { PASSWORD_INIT, PASSWORD_WORLD } from "./browser-password.ts";
 import { listTabs, type Listing } from "./browser-listing.ts";
 import { login } from "./browser-login.ts";
 import { atPage, guarded, plain, type Outcome } from "./browser-outcome.ts";
@@ -76,6 +78,7 @@ export class HostBrowser {
   private readonly sessions = new Map<string, string>();
   private readonly trusted = new Set<string>();
   private readonly entered = new Set<string>();
+  private readonly passwords = new Set<string>();
   private readonly filled = new Map<string, { loader: string; fields: readonly string[] }>();
   private readonly db: DatabaseSync;
   private readonly host: string;
@@ -114,8 +117,11 @@ export class HostBrowser {
     }
   }
 
-  enter(target: string): void {
+  async enter(card: number, target: string): Promise<void> {
     this.entered.add(target);
+    const own = await this.pageOf(await this.connection(), card);
+    if (own.target !== target) throw new Error("that tab is not open");
+    await holdsPassword(own.page, this.passwords);
   }
 
   frame(card: number, target: string): Promise<OpResult<"browser.frame">> {
@@ -211,7 +217,8 @@ export class HostBrowser {
   }
 
   private async refuseWhileEntered(page: Page, target: string, refusal: string): Promise<void> {
-    if (this.entered.has(target) && (await holdsPassword(page))) throw new Error(refusal);
+    if (this.entered.has(target) && (await holdsPassword(page, this.passwords).catch(() => true)))
+      throw new Error(refusal);
   }
 
   private async refuseWhileFilled(page: Page, target: string, refusal: Refusal): Promise<void> {
@@ -407,9 +414,16 @@ export class HostBrowser {
     await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }, { sessionId });
     await cdp.send(
       "Page.addScriptToEvaluateOnNewDocument",
+      { source: PASSWORD_INIT, worldName: PASSWORD_WORLD, runImmediately: true },
+      { sessionId },
+    );
+    await cdp.send(
+      "Page.addScriptToEvaluateOnNewDocument",
       { source: initScript(tab.label), runImmediately: true },
       { sessionId },
     );
+    if (this.entered.has(tab.target) && !this.trusted.has(tab.target))
+      await holdsPassword(page, this.passwords, true);
     this.sessions.set(tab.target, sessionId);
     return page;
   }

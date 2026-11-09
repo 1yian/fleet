@@ -1,7 +1,4 @@
-import { PASSWORD_INIT } from "./browser-password.ts";
-
-export const initScript = (label: string): string => `${PASSWORD_INIT}
-(() => {
+export const initScript = (label: string): string => `(() => {
   const label = ${JSON.stringify(label)};
   const fold = (url) => {
     try {

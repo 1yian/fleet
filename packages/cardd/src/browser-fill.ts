@@ -2,7 +2,6 @@ import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
 import { call, documentOf, type Doc, type Page } from "./browser-page.ts";
 import { totpCode } from "./browser-totp.ts";
-import { PASSWORD_ENTERED } from "./browser-password.ts";
 
 export interface Credentials {
   readonly username: string;
@@ -97,9 +96,6 @@ export const holdsLogin = (
   secrets: readonly string[],
   restoredOnly: boolean,
 ): Promise<boolean> => holdsOnDocument(page, HOLDS, [{ value: secrets }, { value: restoredOnly }]);
-
-export const holdsPassword = (page: Page): Promise<boolean> =>
-  holdsOnDocument(page, PASSWORD_ENTERED, []);
 
 export async function holdsFilled(page: Page, fields: readonly string[]): Promise<boolean> {
   try {

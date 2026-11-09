@@ -59,13 +59,14 @@ const callBrowser = async (
   cardd: Cardd,
   tab: Tab,
   args: BrowserArgs,
+  canNameHost: boolean,
 ): Promise<OpResult<"browser">> =>
   check(
     OPS.browser.result,
     await post(
       cardd,
       "browser",
-      { ...args, card: tab.card, host: tab.host },
+      { ...args, card: tab.card, ...(canNameHost ? { host: tab.host } : {}) },
       NAVIGATION_MS,
     ),
   );
@@ -116,6 +117,7 @@ class Viewer {
   private accepts: (host: string) => boolean = () => false;
   private cookie = "";
   private visible = new Map<string, Tab>();
+  private canNameHost = false;
   private readonly token: string;
 
   constructor(cardd: Cardd, transports: Transports, token: string, captain: boolean) {
@@ -181,6 +183,7 @@ class Viewer {
   private async listing(): Promise<View> {
     const view = await callView(this.cardd, this.captain);
     this.own = view.host;
+    this.canNameHost = view.canNameHost;
     this.browsers = new Map(view.browsers.map(({ host, endpoint }) => [host, endpoint]));
     for (const [host, { endpoint, screen }] of this.screens) {
       if (this.browsers.get(host) === endpoint) continue;
@@ -308,7 +311,7 @@ class Viewer {
     const nav = check(NavSchema, JSON.parse(await readBody(request)));
     const tab = (await this.shows(nav.target)) ? this.visible.get(nav.target) : undefined;
     if (tab === undefined) response.writeHead(404).end();
-    else json(response, 200, await callBrowser(this.cardd, tab, navArgs(nav)));
+    else json(response, 200, await callBrowser(this.cardd, tab, navArgs(nav), this.canNameHost));
   }
 
   private async copy(request: IncomingMessage, response: ServerResponse): Promise<void> {

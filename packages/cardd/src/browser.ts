@@ -49,7 +49,7 @@ export class Browser {
     wants: (card: number) => boolean,
     captain: boolean,
     host: string | undefined,
-  ): Promise<OpResult<"browser.view">> {
+  ): Promise<Omit<OpResult<"browser.view">, "canNameHost">> {
     this.touchUsedHosts();
     const shown = openTabs(this.db).filter((tab) => wants(tab.card) && this.configuredOn(tab.host));
     const hosts = new Set(shown.map((tab) => tab.host));
@@ -127,11 +127,13 @@ export class Browser {
     });
   }
 
-  enter(card: number, target: string): OpResult<"browser.entered"> {
-    const tab = openTabs(this.db).find((each) => each.card === card && each.target === target);
-    if (tab === undefined) throw new Error("that tab is not open");
-    this.site(tab.host).enter(target);
-    return {};
+  enter(card: number, target: string): Promise<OpResult<"browser.entered">> {
+    return this.inTurn(card, async () => {
+      const tab = openTabs(this.db).find((each) => each.card === card && each.target === target);
+      if (tab === undefined) throw new Error("that tab is not open");
+      await this.site(tab.host).enter(card, target);
+      return {};
+    });
   }
 
   private async listingOf(
