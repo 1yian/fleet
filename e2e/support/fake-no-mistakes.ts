@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -22,7 +22,7 @@ function retitle(...words: string[]): void {
 
 function ask(root: string): Promise<number | undefined> {
   return new Promise((resolve) => {
-    const socket = connect(join(root, "socket"));
+    const socket = connect(relative(process.cwd(), join(root, "socket")));
     let reply = "";
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => (reply += chunk));
@@ -75,7 +75,7 @@ function serve(root: string): void {
   const server = createServer((socket) => {
     socket.end(`daemon ${String(process.pid)}\n`);
   });
-  server.listen(join(root, "socket"), () => {
+  server.listen(relative(process.cwd(), join(root, "socket")), () => {
     void published().then(() => {
       const record = { pid: process.pid, started_at: new Date().toISOString() };
       writeFileSync(
