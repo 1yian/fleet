@@ -1,4 +1,5 @@
 import { EDITING_COMMANDS } from "./browser-input.ts";
+import { BAR_MARKUP, BAR_NOTE, BAR_SCRIPT, BAR_STYLE } from "./browser-view-bar.ts";
 import {
   PHONE_DOCK,
   PHONE_HEAD,
@@ -30,8 +31,7 @@ export const VIEWER_PAGE = `<!doctype html>
   #problem { margin: 0 16px 12px; padding: 8px 10px; background: #2a1219; color: var(--error); border-radius: 4px; font-size: 12px; }
   #problem[hidden] { display: none; }
   main { display: flex; flex-direction: column; min-width: 0; }
-  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1d1d26; min-height: 44px; }
-  #address { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid #1d1d26; min-height: 48px; }
   #live { color: var(--dim); font-size: 12px; }
   #live.on { color: var(--signal); }
   #copied { max-width: 420px; color: var(--signal); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -44,7 +44,7 @@ export const VIEWER_PAGE = `<!doctype html>
   #note { max-width: 640px; padding: 16px 20px; background: var(--row); color: var(--dim); border: 1px solid #262633; border-radius: 4px; }
   #note[hidden] { display: none; }
   #hint { padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
-${PHONE_STYLE}</style>${PHONE_HEAD}
+${BAR_STYLE}${PHONE_STYLE}</style>${PHONE_HEAD}
 </head>
 <body>
 <aside>
@@ -54,24 +54,24 @@ ${PHONE_STYLE}</style>${PHONE_HEAD}
 </aside>
 <main>
   <header>
-    <div id="address"></div>
+    ${BAR_MARKUP}
     <span id="copied" role="status"></span>
     ${PHONE_KEYBOARD}
     <span id="live" hidden></span>
   </header>
+  ${BAR_NOTE}
   <div id="stage">
     <img id="screen" alt="" hidden draggable="false">
     <textarea id="capture" aria-label="Keyboard input for the page" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" tabindex="-1"></textarea>
     <div id="note" hidden></div>
   </div>
-  <div id="hint" hidden>Click the picture to focus it. Mouse and keys act on the tab. Cmd or Ctrl+C copies, Cmd or Ctrl+V pastes. Reload, zoom and tab keys stay here.</div>
+  <div id="hint" hidden></div>
   ${PHONE_DOCK}
 </main>
 <script>
 const list = document.getElementById("tabs");
 const hint = document.getElementById("hint");
 const problem = document.getElementById("problem");
-const address = document.getElementById("address");
 const live = document.getElementById("live");
 const screen = document.getElementById("screen");
 const note = document.getElementById("note");
@@ -172,7 +172,8 @@ function idle(message) {
   screen.hidden = true;
   live.hidden = true;
   hint.hidden = true;
-  address.textContent = "";
+  current = undefined;
+  toolbar();
   note.hidden = false;
   note.textContent = message;
 }
@@ -276,18 +277,17 @@ function render(tabs) {
     item.append(card, where, page);
     item.onclick = () => {
       if (!tab.live) return;
-      address.textContent = tab.url;
       watch(tab.target);
       render(tabs);
       if (!isPhone()) capture.focus();
     };
     list.append(item);
-    if (tab.target === selected) address.textContent = tab.live ? tab.url : "tab is gone";
   }
+  current = tabs.find((tab) => tab.target === selected);
+  toolbar();
   if (selected !== null && !tabs.some((tab) => tab.target === selected && tab.live)) watch(null);
   const shown = tabs.filter((tab) => tab.live);
   if (selected === null && tabs.length === 1 && shown.length === 1) {
-    address.textContent = shown[0].url;
     watch(shown[0].target);
     render(tabs);
   }
@@ -368,12 +368,12 @@ screen.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 const HOST_ZOOM = ["+", "=", "-", "0"];
-const HOST_WINDOW = ["r", "l", "t", "w", "n", "q"];
+const HOST_WINDOW = ["t", "w", "n", "q"];
 const HOST_TOOLS = ["KeyI", "KeyJ", "KeyC"];
 
 function keepsForHost(event) {
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (["F5", "F11", "F12"].includes(key)) return true;
+  if (["F11", "F12"].includes(key)) return true;
   if (event.ctrlKey && ["Tab", "PageUp", "PageDown"].includes(key)) return true;
   if (mac && event.ctrlKey && event.metaKey) return key === "f";
   const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
@@ -396,6 +396,12 @@ const unreadable = (event) => composing || event.isComposing || event.keyCode ==
 
 capture.addEventListener("keydown", (event) => {
   if (selected === null) return;
+  const shortcut = unreadable(event) ? undefined : shortcutFor(event);
+  if (shortcut !== undefined) {
+    event.preventDefault();
+    shortcut();
+    return;
+  }
   if (keepsForHost(event) || unreadable(event)) return;
   const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   const letter = event.key.toLowerCase();
@@ -484,6 +490,7 @@ async function copy() {
     say(error instanceof Error ? error.message : String(error), error.empty === true ? "empty" : "failed");
   }
 }
+${BAR_SCRIPT}
 ${PHONE_SCRIPT}
 refresh();
 setInterval(refresh, 2000);

@@ -64,14 +64,20 @@ const HOLDS = `function (secrets, restoredOnly) {
   );
 }`;
 
+const PASSWORD_ENTERED = `function () {
+  return [...this.querySelectorAll("input")].some(
+    (el) => (el.type === "password" || /\\b(current|new)-password\\b/.test(el.autocomplete)) && el.value !== "",
+  );
+}`;
+
 const FILLED_FIELD = `function () {
   return this.isConnected && this.value !== "";
 }`;
 
-export async function holdsLogin(
+async function holdsOnDocument(
   page: Page,
-  secrets: readonly string[],
-  restoredOnly: boolean,
+  functionDeclaration: string,
+  args: readonly { value: unknown }[],
 ): Promise<boolean> {
   const handle = parseCdp(
     HandleSchema,
@@ -82,14 +88,23 @@ export async function holdsLogin(
     HeldSchema,
     await call(page, "Runtime.callFunctionOn", {
       objectId: handle.result.objectId,
-      functionDeclaration: HOLDS,
-      arguments: [{ value: secrets }, { value: restoredOnly }],
+      functionDeclaration,
+      arguments: args,
       returnByValue: true,
     }),
     "the page's fields",
   );
   return held.result.value;
 }
+
+export const holdsLogin = (
+  page: Page,
+  secrets: readonly string[],
+  restoredOnly: boolean,
+): Promise<boolean> => holdsOnDocument(page, HOLDS, [{ value: secrets }, { value: restoredOnly }]);
+
+export const holdsPassword = (page: Page): Promise<boolean> =>
+  holdsOnDocument(page, PASSWORD_ENTERED, []);
 
 export async function holdsFilled(page: Page, fields: readonly string[]): Promise<boolean> {
   try {

@@ -83,7 +83,7 @@ test("the viewer lists one tab per card and shows the selected one live", async 
   assert.deepEqual(await labels(), ["c-1 users-see-one-scrollbar", "c-2 users-see-one-footer"]);
   assert.deepEqual(await page.locator("#tabs li .page").allTextContents(), ["Alpha", "Bravo"]);
   await select("c-2 users-see-one-footer");
-  assert.equal(await page.locator("#address").textContent(), lab.site.url("/b"));
+  assert.equal(await page.locator("#address").inputValue(), lab.site.url("/b"));
   const shown = await page.locator("#screen").evaluate((img: HTMLImageElement) => ({
     src: img.src.slice(0, 23),
     width: img.naturalWidth,
@@ -354,7 +354,7 @@ test("with no tab the viewer shows one empty state, and with tabs but none picke
   assert.doesNotMatch(shown, /Pick a tab|idle|Click the picture/);
   for (const quiet of ["#live", "#hint", "#copied", "#screen"])
     assert.equal(await page.locator(quiet).isHidden(), true, `${quiet} with no tab`);
-  assert.equal(await page.locator("#address").textContent(), "");
+  assert.equal(await page.locator("#address").inputValue(), "");
   assert.equal(await note.isVisible(), true);
 });
 

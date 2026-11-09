@@ -81,8 +81,17 @@ async function shot(page: Page, name: string): Promise<void> {
 const onRemote = async (expression: string): Promise<unknown> =>
   JSON.parse(await worker.act({ action: "eval", expression }));
 
-const remoteHas = async (selector: string): Promise<boolean> =>
-  (await onRemote(`document.querySelector(${JSON.stringify(selector)}) !== null`)) === true;
+const remoteHas = async (selector: string): Promise<boolean> => {
+  try {
+    return (
+      (await onRemote(`document.querySelector(${JSON.stringify(selector)}) !== null`)) === true
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("a password entered through the viewer"))
+      return false;
+    throw error;
+  }
+};
 
 const remoteText = async (selector: string): Promise<string> =>
   String(await onRemote(`document.querySelector(${JSON.stringify(selector)})?.textContent ?? ""`));
@@ -178,9 +187,9 @@ test("phone: the captain signs in by touch, with the keyboard button and the key
 
   await waitForRemote("#password");
   await live(page);
+  const next = await atRemote(page, "#next");
   await page.keyboard.insertText(ACCOUNT.password);
   await shot(page, "phone-2-password");
-  const next = await atRemote(page, "#next");
   await page.touchscreen.tap(next.x, next.y);
 
   await waitForRemote("#code");

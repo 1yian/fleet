@@ -38,6 +38,10 @@ const FrameTreeSchema = Type.Object({
   }),
 });
 const FrameEventSchema = Type.Object({ frameId: Type.Optional(Type.String()) });
+const HistorySchema = Type.Object({
+  currentIndex: Type.Integer(),
+  entries: Type.Array(Type.Object({ id: Type.Integer(), url: Type.String() })),
+});
 const SummarySchema = Type.Object({ title: Type.String(), url: Type.String() });
 const PointSchema = Type.Object({ x: Type.Number(), y: Type.Number() });
 
@@ -57,19 +61,6 @@ async function evaluate(page: Page, expression: string): Promise<unknown> {
       `the page threw: ${done.exceptionDetails.exception?.description ?? done.exceptionDetails.text}`,
     );
   return done.result.value;
-}
-
-export function checkedUrl(url: string | undefined): string {
-  if (url === undefined || url === "") throw new Error("open needs a url");
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`${url} is not a full http or https address`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-    throw new Error(`only http and https pages can be opened, not ${parsed.protocol}`);
-  return parsed.toString();
 }
 
 function loaded(page: Page): { done: Promise<boolean>; stop: () => void } {
@@ -139,6 +130,29 @@ export async function navigate(page: Page, url: string): Promise<string> {
   const state = finished ? "" : " (still loading after 30 s)";
   return `${await summary(page)}${state}`;
 }
+
+export interface Steps {
+  readonly back: number | undefined;
+  readonly forward: number | undefined;
+}
+
+export async function stepsOf(page: Page): Promise<Steps> {
+  const { currentIndex, entries } = parseCdp(
+    HistorySchema,
+    await call(page, "Page.getNavigationHistory"),
+    "the tab's history",
+  );
+  const before = entries[currentIndex - 1];
+  return {
+    back: before === undefined || before.url === "about:blank" ? undefined : before.id,
+    forward: entries[currentIndex + 1]?.id,
+  };
+}
+
+const NO_STEP = {
+  back: "your tab has no earlier page to go back to",
+  forward: "your tab has no later page to go forward to",
+} as const;
 
 export const cut = (text: string): string =>
   text.length <= TEXT_LIMIT
@@ -238,6 +252,22 @@ async function dispatchClick(page: Page, x: number, y: number): Promise<void> {
   await call(page, "Input.dispatchMouseEvent", { type: "mouseReleased", ...mouse });
 }
 
+async function stillLoading(load: Load): Promise<string> {
+  const navigating = await within(NAVIGATION_START_MS, load.began);
+  const finished = !navigating || (await within(LOAD_MS, load.ended));
+  return finished ? "" : " The page is still loading after 30 s.";
+}
+
+async function loading(page: Page, start: () => Promise<unknown>): Promise<string> {
+  const load = watchLoad(page, (await documentOf(page)).frame);
+  try {
+    await start();
+    return await stillLoading(load);
+  } finally {
+    load.stop();
+  }
+}
+
 export async function clickPage(page: Page, args: BrowserArgs): Promise<string> {
   if (args.selector === undefined && (args.x === undefined || args.y === undefined))
     throw new Error("click needs a selector, or x and y");
@@ -245,16 +275,22 @@ export async function clickPage(page: Page, args: BrowserArgs): Promise<string> 
     args.selector === undefined
       ? { x: args.x ?? 0, y: args.y ?? 0 }
       : await centerOf(page, args.selector);
-  const load = watchLoad(page, (await documentOf(page)).frame);
-  try {
-    await dispatchClick(page, x, y);
-    const navigating = await within(NAVIGATION_START_MS, load.began);
-    const finished = !navigating || (await within(LOAD_MS, load.ended));
-    const state = finished ? "" : " The page is still loading after 30 s.";
-    return `Clicked ${args.selector ?? `${String(x)},${String(y)}`}.${state}`;
-  } finally {
-    load.stop();
-  }
+  const state = await loading(page, () => dispatchClick(page, x, y));
+  return `Clicked ${args.selector ?? `${String(x)},${String(y)}`}.${state}`;
+}
+
+export async function travel(page: Page, direction: "back" | "forward"): Promise<string> {
+  const entry = (await stepsOf(page))[direction];
+  if (entry === undefined) throw new Error(NO_STEP[direction]);
+  const state = await loading(page, () =>
+    call(page, "Page.navigateToHistoryEntry", { entryId: entry }),
+  );
+  return `Went ${direction}.${state}`;
+}
+
+export async function reloadPage(page: Page): Promise<string> {
+  const state = await loading(page, () => call(page, "Page.reload"));
+  return `Reloaded.${state}`;
 }
 
 export async function pressKey(page: Page, key: string | undefined): Promise<string> {

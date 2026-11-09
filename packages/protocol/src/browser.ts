@@ -2,6 +2,9 @@ import Type, { type Static, type TSchema } from "typebox";
 
 export const BROWSER_ACTIONS = [
   "open",
+  "back",
+  "forward",
+  "reload",
   "read",
   "click",
   "type",
@@ -15,7 +18,7 @@ export const BROWSER_ACTIONS = [
 export const BrowserArgsSchema = Type.Object({
   action: Type.Enum(BROWSER_ACTIONS, {
     description:
-      "open: give your card its own tab and load url (or load url in it again). read: the visible text of the page or of selector, or its HTML. click: click the element that selector names, or the point x,y. type: type text into the element that selector names (or the focused one). press: press one key such as Enter, Tab or Escape. eval: run a JavaScript expression in the page and return its value. screenshot: an image of the tab. login: fill the username and password of site from the fleet's Bitwarden Logins project, without ever showing them to you. close: close your tab",
+      "open: give your card its own tab and load url (or load url in it again). back: go back one page in your tab's history. forward: go forward one page in it. reload: load your tab's current page again. read: the visible text of the page or of selector, or its HTML. click: click the element that selector names, or the point x,y. type: type text into the element that selector names (or the focused one). press: press one key such as Enter, Tab or Escape. eval: run a JavaScript expression in the page and return its value. screenshot: an image of the tab. login: fill the username and password of site from the fleet's Bitwarden Logins project, without ever showing them to you. close: close your tab",
   }),
   url: Type.Optional(Type.String({ description: "open: the http or https address to load" })),
   selector: Type.Optional(
@@ -102,9 +105,16 @@ export const BROWSER_OPS = {
           live: Type.Boolean(),
           title: Type.String(),
           url: Type.String(),
+          canBack: Type.Boolean(),
+          canForward: Type.Boolean(),
         }),
       ),
     }),
+  },
+  "browser.entered": {
+    roles: ["worker", "mate"],
+    args: Type.Object({ target: Type.String() }),
+    result: Type.Object({}),
   },
   "browser.frame": {
     roles: ["worker", "mate"],

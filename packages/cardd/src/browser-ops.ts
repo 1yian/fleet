@@ -112,6 +112,28 @@ async function browse(
   return { value: result, notify: [...done.notify, ...asked] };
 }
 
+async function viewOf(
+  db: DatabaseSync,
+  browser: Browser,
+  session: Session,
+  raw: unknown,
+): Promise<Done> {
+  const { card: named, captain, host: declared } = check(OPS["browser.view"].args, raw);
+  if (captain === true) captainOnly(db, session);
+  const asked = declaredHost(session, declared);
+  const own = session.card;
+  const where =
+    own !== null
+      ? browser.hostOf(own, undefined)
+      : named === undefined
+        ? asked
+        : browser.hostOf(named, asked);
+  return {
+    value: await browser.view(sees(db, session, named), captain === true, where),
+    notify: [],
+  };
+}
+
 export async function performBrowserOp(
   db: DatabaseSync,
   browser: Browser,
@@ -133,26 +155,17 @@ export async function performBrowserOp(
       const told = summonMain(db, card, why);
       return { value: { told: told.length > 0 }, notify: told };
     }
-    case "browser.view": {
-      const { card: named, captain, host: declared } = check(OPS["browser.view"].args, raw);
-      if (captain === true) captainOnly(db, session);
-      const asked = declaredHost(session, declared);
-      const own = session.card;
-      const where =
-        own !== null
-          ? browser.hostOf(own, undefined)
-          : named === undefined
-            ? asked
-            : browser.hostOf(named, asked);
-      return {
-        value: await browser.view(sees(db, session, named), captain === true, where),
-        notify: [],
-      };
-    }
+    case "browser.view":
+      return viewOf(db, browser, session, raw);
     case "browser.frame": {
       const { target } = check(OPS["browser.frame"].args, raw);
       const tab = visibleTab(db, session, target);
       return { value: await browser.frame(tab.card, tab.target), notify: [] };
+    }
+    case "browser.entered": {
+      const { target } = check(OPS["browser.entered"].args, raw);
+      const tab = visibleTab(db, session, target);
+      return { value: browser.enter(tab.card, tab.target), notify: [] };
     }
     case "browser.copy": {
       const { target } = check(OPS["browser.copy"].args, raw);

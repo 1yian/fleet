@@ -2,11 +2,12 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { check, HttpOutcomeSchema, OPS, type OpResult } from "@fleet/protocol";
+import { check, HttpOutcomeSchema, OPS, type BrowserArgs, type OpResult } from "@fleet/protocol";
 import { dial } from "@fleet/protocol/tunnel";
 import { viewerBuild } from "./browser-build.ts";
 import { FitSchema } from "./browser-fit.ts";
-import { InputSchema, pastesSelection } from "./browser-input.ts";
+import { entersText, InputSchema, pastesSelection, type ViewerInput } from "./browser-input.ts";
+import { navArgs, NavSchema } from "./browser-nav.ts";
 import { Pacer } from "./browser-pace.ts";
 import { Poll, type Pulled, type Shown } from "./browser-poll.ts";
 import { openSheprd } from "./browser-place.ts";
@@ -25,16 +26,20 @@ type Cardd = Access;
 type Transports = Readonly<Record<string, readonly string[]>>;
 
 type View = OpResult<"browser.view">;
+type Tab = View["tabs"][number];
 type Copied = OpResult<"browser.copy">;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-async function post(cardd: Cardd, op: string, args: object): Promise<unknown> {
+const CALL_MS = 15_000;
+const NAVIGATION_MS = 60_000;
+
+async function post(cardd: Cardd, op: string, args: object, timeoutMs = CALL_MS): Promise<unknown> {
   const response = await fetch(callUrl(cardd.url), {
     method: "POST",
     headers: { authorization: `Bearer ${cardd.token}`, "content-type": "application/json" },
     body: JSON.stringify({ op, args }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const outcome = check(HttpOutcomeSchema, await response.json());
   if (!outcome.ok) throw new Error(outcome.error);
@@ -49,6 +54,25 @@ const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
       ...(cardd.host === undefined ? {} : { host: cardd.host }),
     }),
   );
+
+const callBrowser = async (
+  cardd: Cardd,
+  card: number,
+  args: BrowserArgs,
+): Promise<OpResult<"browser">> =>
+  check(
+    OPS.browser.result,
+    await post(
+      cardd,
+      "browser",
+      { ...args, card, ...(cardd.host === undefined ? {} : { host: cardd.host }) },
+      NAVIGATION_MS,
+    ),
+  );
+
+const callEntered = async (cardd: Cardd, target: string): Promise<void> => {
+  check(OPS["browser.entered"].result, await post(cardd, "browser.entered", { target }));
+};
 
 const callCopy = async (cardd: Cardd, target: string): Promise<Copied> =>
   check(OPS["browser.copy"].result, await post(cardd, "browser.copy", { target }));
@@ -91,7 +115,7 @@ class Viewer {
   );
   private accepts: (host: string) => boolean = () => false;
   private cookie = "";
-  private visible = new Map<string, string>();
+  private visible = new Map<string, Tab>();
   private readonly token: string;
 
   constructor(cardd: Cardd, transports: Transports, token: string, captain: boolean) {
@@ -121,9 +145,9 @@ class Viewer {
   }
 
   private screenFor(target: string): Screen {
-    const host = this.visible.get(target);
-    if (host === undefined) throw new Error("that tab is not listed for this viewer");
-    return this.screenOf(host);
+    const tab = this.visible.get(target);
+    if (tab === undefined) throw new Error("that tab is not listed for this viewer");
+    return this.screenOf(tab.host);
   }
 
   private knows(candidate: string | null | undefined): boolean {
@@ -163,7 +187,7 @@ class Viewer {
       screen.close();
       this.screens.delete(host);
     }
-    this.visible = new Map(view.tabs.map((tab) => [tab.target, tab.host]));
+    this.visible = new Map(view.tabs.map((tab) => [tab.target, tab]));
     return view;
   }
 
@@ -215,6 +239,7 @@ class Viewer {
       "POST /api/fit": () => this.fit(request, response),
       "POST /api/input": () => this.drive(request, response),
       "POST /api/copy": () => this.copy(request, response),
+      "POST /api/nav": () => this.navigate(request, response),
     };
     const handler = Object.hasOwn(handlers, key) ? handlers[key] : undefined;
     if (handler === undefined) response.writeHead(404).end();
@@ -267,9 +292,23 @@ class Viewer {
         return;
       }
     }
+    await this.declare(inputs);
     for (const input of inputs)
       if (this.captain || !pastesSelection(input)) await this.screenFor(input.target).input(input);
     response.writeHead(204).end();
+  }
+
+  private async declare(inputs: readonly ViewerInput[]): Promise<void> {
+    for (const target of new Set(inputs.filter(entersText).map((input) => input.target))) {
+      await callEntered(this.cardd, target);
+    }
+  }
+
+  private async navigate(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const nav = check(NavSchema, JSON.parse(await readBody(request)));
+    const tab = (await this.shows(nav.target)) ? this.visible.get(nav.target) : undefined;
+    if (tab === undefined) response.writeHead(404).end();
+    else json(response, 200, await callBrowser(this.cardd, tab.card, navArgs(nav)));
   }
 
   private async copy(request: IncomingMessage, response: ServerResponse): Promise<void> {

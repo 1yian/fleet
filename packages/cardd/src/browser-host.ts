@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
+  checkedUrl,
   parseCdp,
   readSelection,
   type BrowserArgs,
@@ -10,42 +11,38 @@ import { dial, type Dial } from "@fleet/protocol/tunnel";
 import Type from "typebox";
 import type { HostBrowserConfig } from "./browser-config.ts";
 import { copyAnswer } from "./browser-copy.ts";
-import { holdsFilled, holdsLogin } from "./browser-fill.ts";
+import { holdsFilled, holdsLogin, holdsPassword } from "./browser-fill.ts";
 import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
+import { listTabs, type Listing } from "./browser-listing.ts";
 import { login } from "./browser-login.ts";
+import { atPage, guarded, plain, type Outcome } from "./browser-outcome.ts";
 import {
-  checkedUrl,
   clickPage,
-  cut,
   documentOf,
   navigate,
   pressKey,
   readPage,
+  reloadPage,
   runExpression,
-  summary,
+  travel,
   typeText,
   type Page,
 } from "./browser-page.ts";
 import {
-  COPY_REFUSED,
-  EVAL_REFUSED,
+  COPY,
+  EVAL,
   KEPT,
+  MARKUP_ENTERED,
   NO_TAB,
+  PICTURE,
   RESTARTED,
   TAB_CLOSED,
+  type Refusal,
 } from "./browser-refusals.ts";
-import { CREDENTIAL_SHOWN } from "./browser-scan.ts";
 import { screenshot } from "./browser-shot.ts";
-import {
-  DestroyedSchema,
-  hiderOf,
-  TargetEventSchema,
-  targetsOf,
-  type Listed,
-} from "./browser-targets.ts";
+import { DestroyedSchema, hiderOf, TargetEventSchema, targetsOf } from "./browser-targets.ts";
 import { Vault } from "./browser-vault.ts";
-import { within } from "./browser-wait.ts";
 import {
   attemptStartedAt,
   labelOf,
@@ -59,34 +56,26 @@ import {
   type Tab,
 } from "./browser-store.ts";
 
-export interface Outcome {
-  readonly result: OpResult<"browser">;
-  readonly notify: readonly string[];
-  readonly captain?: string;
-}
-
 const AttachedSchema = Type.Object({ sessionId: Type.String() });
 const CreatedSchema = Type.Object({ targetId: Type.String() });
 
 const TOUCH_BACKOFF_MS = 5_000;
-const LISTING_MS = 3_000;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const isGone = (error: unknown): boolean =>
   /no target (with given id|found for targetId)/i.test(reason(error));
 export const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
-const plain = (text: string): Outcome => ({ result: { text }, notify: [] });
+type Act = (page: Page, target: string, args: BrowserArgs) => Promise<Outcome>;
 
-async function atPage(page: Page, text: string): Promise<Outcome> {
-  const where = await summary(page).catch(() => undefined);
-  return { result: { text, ...(where === undefined ? {} : { page: where }) }, notify: [] };
-}
+const notAPageAction = (args: BrowserArgs): Promise<Outcome> =>
+  Promise.reject(new Error(`${args.action} is not a page action`));
 
 export class HostBrowser {
   private link: Promise<Cdp> | undefined;
   private failedAt = 0;
   private readonly sessions = new Map<string, string>();
   private readonly trusted = new Set<string>();
+  private readonly entered = new Set<string>();
   private readonly filled = new Map<string, { loader: string; fields: readonly string[] }>();
   private readonly db: DatabaseSync;
   private readonly host: string;
@@ -110,14 +99,22 @@ export class HostBrowser {
     return hiderOf(this.vault, captain);
   }
 
-  async listing(): Promise<{ targets: Map<string, Listed>; problem: string | null }> {
-    const late = `the browser on ${this.host} is unavailable: it did not answer within ${String(LISTING_MS / 1000)} s (it may still be connecting)`;
+  async listing(tabs: readonly Tab[]): Promise<Listing & { problem: string | null }> {
     try {
-      const listed = this.connection().then(targetsOf);
-      return { targets: await within(LISTING_MS, listed, late), problem: null };
+      const listed = listTabs(
+        this.host,
+        this.connection(),
+        (cdp, tab) => this.attach(cdp, tab),
+        tabs,
+      );
+      return { ...(await listed), problem: null };
     } catch (error) {
-      return { targets: new Map(), problem: reason(error) };
+      return { targets: new Map(), standing: new Map(), problem: reason(error) };
     }
+  }
+
+  enter(target: string): void {
+    this.entered.add(target);
   }
 
   frame(card: number, target: string): Promise<OpResult<"browser.frame">> {
@@ -149,7 +146,7 @@ export class HostBrowser {
 
   private async copied(card: number, target: string): Promise<string> {
     const page = await this.ownPage(card, target, "read");
-    await this.refuseWhileFilled(page, target, COPY_REFUSED);
+    await this.refuseWhileFilled(page, target, COPY);
     return scrubbed(await readSelection(page.cdp, page.session), this.vault.values);
   }
 
@@ -159,7 +156,7 @@ export class HostBrowser {
     fullPage: boolean,
     jpeg: boolean,
   ): Promise<Outcome> {
-    await this.refuseWhileFilled(page, target, CREDENTIAL_SHOWN);
+    await this.refuseWhileFilled(page, target, PICTURE);
     return { result: await screenshot(page, fullPage, this.vault.values, jpeg), notify: [] };
   }
 
@@ -181,7 +178,7 @@ export class HostBrowser {
     return this.guarded(
       args.action === "login"
         ? this.signIn(page, card, target, args.site)
-        : this.pageAction(page, target, args, this.vault.values),
+        : this.acts[args.action](page, target, args),
     );
   }
 
@@ -212,7 +209,12 @@ export class HostBrowser {
     };
   }
 
-  private async refuseWhileFilled(page: Page, target: string, refusal: string): Promise<void> {
+  private async refuseWhileEntered(page: Page, target: string, refusal: string): Promise<void> {
+    if (this.entered.has(target) && (await holdsPassword(page))) throw new Error(refusal);
+  }
+
+  private async refuseWhileFilled(page: Page, target: string, refusal: Refusal): Promise<void> {
+    await this.refuseWhileEntered(page, target, refusal.entered);
     const mark = this.filled.get(target);
     if (mark === undefined && this.trusted.has(target)) return;
     const current = mark === undefined ? undefined : (await documentOf(page)).loader;
@@ -221,55 +223,34 @@ export class HostBrowser {
       fields === undefined
         ? await holdsLogin(page, this.vault.values, mark !== undefined)
         : await holdsFilled(page, fields);
-    if (held) throw new Error(refusal);
+    if (held) throw new Error(refusal.stored);
     if (fields !== undefined) this.filled.delete(target);
   }
 
   private guarded(work: Promise<Outcome>): Promise<Outcome> {
-    return work.then(
-      (done) => ({
-        notify: done.notify,
-        ...(done.captain === undefined ? {} : { captain: done.captain }),
-        result: {
-          ...done.result,
-          text: cut(scrubbed(done.result.text, this.vault.values)),
-          ...(done.result.page === undefined
-            ? {}
-            : { page: scrubbed(done.result.page, this.vault.values) }),
-        },
-      }),
-      (error: unknown) => {
-        throw new Error(scrubbed(reason(error), this.vault.values));
-      },
-    );
+    return guarded(work, this.vault.values);
   }
 
-  private async pageAction(
-    page: Page,
-    target: string,
-    args: BrowserArgs,
-    secrets: readonly string[],
-  ): Promise<Outcome> {
-    switch (args.action) {
-      case "read":
-        return atPage(page, await readPage(page, args));
-      case "click":
-        return atPage(page, await clickPage(page, args));
-      case "type":
-        return plain(await typeText(page, args));
-      case "press":
-        return plain(await pressKey(page, args.key));
-      case "eval":
-        await this.refuseWhileFilled(page, target, EVAL_REFUSED);
-        return plain(await runExpression(page, args.expression, secrets));
-      case "screenshot":
-        return this.pictureOf(page, target, args.fullPage === true, false);
-      case "login":
-      case "open":
-      case "close":
-        throw new Error(`${args.action} is not a page action`);
-    }
-  }
+  private readonly acts: Record<BrowserArgs["action"], Act> = {
+    back: async (page) => atPage(page, await travel(page, "back")),
+    forward: async (page) => atPage(page, await travel(page, "forward")),
+    reload: async (page) => atPage(page, await reloadPage(page)),
+    read: async (page, target, args) => {
+      if (args.html === true) await this.refuseWhileEntered(page, target, MARKUP_ENTERED);
+      return atPage(page, await readPage(page, args));
+    },
+    click: async (page, _, args) => atPage(page, await clickPage(page, args)),
+    type: async (page, _, args) => plain(await typeText(page, args)),
+    press: async (page, _, args) => plain(await pressKey(page, args.key)),
+    eval: async (page, target, args) => {
+      await this.refuseWhileFilled(page, target, EVAL);
+      return plain(await runExpression(page, args.expression, this.vault.values));
+    },
+    screenshot: (page, target, args) => this.pictureOf(page, target, args.fullPage === true, false),
+    login: (_, __, args) => notAPageAction(args),
+    open: (_, __, args) => notAPageAction(args),
+    close: (_, __, args) => notAPageAction(args),
+  };
 
   private connection(): Promise<Cdp> {
     if (this.link === undefined) {
@@ -336,6 +317,7 @@ export class HostBrowser {
     this.sessions.delete(target);
     this.trusted.delete(target);
     this.filled.delete(target);
+    this.entered.delete(target);
   }
 
   private stale(tab: Tab): boolean {
