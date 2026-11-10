@@ -42,6 +42,7 @@ export interface LabOptions {
   readonly proxied?: boolean;
   readonly gated?: boolean;
   readonly isolated?: boolean;
+  readonly stock?: boolean;
   readonly logins?: Record<string, unknown>;
 }
 
@@ -90,8 +91,8 @@ export class BrowserLab {
   }
 
   static async start(options: LabOptions = {}): Promise<BrowserLab> {
-    const { vault, isolated } = options;
-    const chrome = await StandInChrome.start(options.rules ?? RULES, undefined, isolated);
+    const { vault } = options;
+    const chrome = await StandInChrome.start(options.rules ?? RULES, undefined, options);
     const { proxy, gate } = await frontsOf(options, chrome.port);
     const endpoint = gate?.endpoint ?? proxy?.endpoint ?? chrome.endpoint;
     const site = await TestSite.start();

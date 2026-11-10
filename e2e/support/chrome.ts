@@ -1,13 +1,25 @@
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { Cdp } from "@fleet/protocol";
 import { chromium, type Browser } from "playwright";
-import { isRecord, optionalString } from "./json.ts";
+import { isRecord, optionalNumber, optionalString } from "./json.ts";
+
+const NEW_SCREENSHOT_SURFACE = "--enable-features=CDPScreenshotNewSurface";
 
 export interface Target {
   readonly id: string;
   readonly type: string;
   readonly title: string;
   readonly url: string;
+}
+
+export interface Window {
+  readonly id: number;
+  readonly state: string;
+}
+
+export interface ChromeOptions {
+  readonly isolated?: boolean;
+  readonly stock?: boolean;
 }
 
 export class StandInChrome {
@@ -22,16 +34,17 @@ export class StandInChrome {
   static async start(
     rules = "MAP *.example.test 127.0.0.1",
     wanted?: number,
-    isolated = false,
+    { isolated = false, stock = false }: ChromeOptions = {},
   ): Promise<StandInChrome> {
     const port = wanted ?? (await freePort());
-    const browser = await chromium.launch({
-      args: [
-        `--remote-debugging-port=${String(port)}`,
-        `--host-resolver-rules=${rules}`,
-        ...(isolated ? ["--site-per-process"] : []),
-      ],
-    });
+    const args = [
+      `--remote-debugging-port=${String(port)}`,
+      `--host-resolver-rules=${rules}`,
+      ...(isolated ? ["--site-per-process"] : []),
+    ];
+    const browser = await chromium.launch(
+      stock ? { channel: "chromium", args, ignoreDefaultArgs: [NEW_SCREENSHOT_SURFACE] } : { args },
+    );
     return new StandInChrome(browser, `http://127.0.0.1:${String(port)}`);
   }
 
@@ -48,6 +61,33 @@ export class StandInChrome {
 
   async pages(): Promise<Target[]> {
     return (await this.targets()).filter((target) => target.type === "page");
+  }
+
+  async window(target: string): Promise<Window> {
+    const cdp = await Cdp.connect(this.endpoint);
+    try {
+      const found = await cdp.send("Browser.getWindowForTarget", { targetId: target });
+      const bounds = isRecord(found) ? found["bounds"] : undefined;
+      const id = isRecord(found) ? optionalNumber(found, "windowId") : undefined;
+      const state = isRecord(bounds) ? optionalString(bounds, "windowState") : undefined;
+      if (id === undefined || state === undefined) throw new Error("the tab has no window");
+      return { id, state };
+    } finally {
+      cdp.close();
+    }
+  }
+
+  async minimize(target: string): Promise<void> {
+    const { id } = await this.window(target);
+    const cdp = await Cdp.connect(this.endpoint);
+    try {
+      await cdp.send("Browser.setWindowBounds", {
+        windowId: id,
+        bounds: { windowState: "minimized" },
+      });
+    } finally {
+      cdp.close();
+    }
   }
 
   async capture(target: string): Promise<string> {

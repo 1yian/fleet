@@ -43,8 +43,16 @@ import {
   type Refusal,
 } from "./browser-refusals.ts";
 import { screenshot } from "./browser-shot.ts";
-import { DestroyedSchema, hiderOf, TargetEventSchema, targetsOf } from "./browser-targets.ts";
+import {
+  DestroyedSchema,
+  hiderOf,
+  isGone,
+  reason,
+  TargetEventSchema,
+  targetsOf,
+} from "./browser-targets.ts";
 import { Vault } from "./browser-vault.ts";
+import { closeTargets, openWindow, raiseWindow, unreachable } from "./browser-window.ts";
 import {
   attemptStartedAt,
   labelOf,
@@ -59,14 +67,9 @@ import {
 } from "./browser-store.ts";
 
 const AttachedSchema = Type.Object({ sessionId: Type.String() });
-const CreatedSchema = Type.Object({ targetId: Type.String() });
 
 const TOUCH_BACKOFF_MS = 5_000;
 
-const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-const isGone = (error: unknown): boolean =>
-  /no target (with given id|found for targetId)/i.test(reason(error));
-export const plural = (count: number): string => `${String(count)} tab${count === 1 ? "" : "s"}`;
 type Act = (page: Page, target: string, args: BrowserArgs) => Promise<Outcome>;
 
 const notAPageAction = (args: BrowserArgs): Promise<Outcome> =>
@@ -115,6 +118,12 @@ export class HostBrowser {
     } catch (error) {
       return { targets: new Map(), standing: new Map(), problem: reason(error) };
     }
+  }
+
+  async raise(card: number): Promise<void> {
+    const cdp = await this.connection();
+    const tab = await this.current(cdp, card);
+    if (tab !== undefined) await raiseWindow(cdp, tab.target);
   }
 
   async enter(card: number, target: string): Promise<void> {
@@ -384,11 +393,7 @@ export class HostBrowser {
   }
 
   private async create(cdp: Cdp, card: number): Promise<Tab> {
-    const { targetId } = parseCdp(
-      CreatedSchema,
-      await cdp.send("Target.createTarget", { url: "about:blank" }),
-      "a new tab",
-    );
+    const targetId = await openWindow(cdp);
     const tab = {
       host: this.host,
       target: targetId,
@@ -447,13 +452,6 @@ export class HostBrowser {
     return this.closeAll(card, targets, true);
   }
 
-  private unreachable(card: number, count: number, error: unknown): OpResult<"browser.release"> {
-    return {
-      closed: 0,
-      note: `${reason(error)}. ${plural(count)} of c-${String(card)} stay open: cardd closes them when the browser on ${this.host} answers again.`,
-    };
-  }
-
   private async closeAll(
     card: number,
     targets: readonly string[],
@@ -463,36 +461,15 @@ export class HostBrowser {
     try {
       cdp = await this.connection();
     } catch (error) {
-      return this.unreachable(card, targets.length, error);
+      return unreachable(this.host, card, targets.length, error);
     }
     try {
-      return await this.closeAlive(cdp, targets);
+      return await closeTargets(cdp, targets, (target) => {
+        this.closed(target);
+      });
     } catch (error) {
       if (!cdp.open && retry) return this.closeAll(card, targets, false);
-      return this.unreachable(card, targets.length, error);
+      return unreachable(this.host, card, targets.length, error);
     }
-  }
-
-  private async closeAlive(
-    cdp: Cdp,
-    targets: readonly string[],
-  ): Promise<OpResult<"browser.release">> {
-    const alive = await this.alive(cdp);
-    let closed = 0;
-    const stuck: string[] = [];
-    for (const target of targets.filter((each) => alive.has(each))) {
-      try {
-        await cdp.send("Target.closeTarget", { targetId: target });
-        closed += 1;
-      } catch (error) {
-        if (!cdp.open) throw error;
-        if (isGone(error)) closed += 1;
-        else stuck.push(reason(error));
-      }
-      this.closed(target);
-    }
-    const note =
-      stuck[0] === undefined ? null : `${plural(stuck.length)} could not be closed: ${stuck[0]}`;
-    return { closed, note };
   }
 }

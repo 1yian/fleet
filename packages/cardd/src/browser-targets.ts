@@ -21,6 +21,12 @@ export const TargetEventSchema = Type.Object({
 });
 export const DestroyedSchema = Type.Object({ targetId: Type.String() });
 
+export const reason = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+export const isGone = (error: unknown): boolean =>
+  /no target (with given id|found for targetId)/i.test(reason(error));
+
 export interface Listed {
   readonly title: string;
   readonly url: string;
