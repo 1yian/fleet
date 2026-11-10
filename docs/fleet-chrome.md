@@ -11,7 +11,7 @@ It has two entries for a tab:
 
 ## Try it on a Mac
 
-You need Node 24 or newer, git, Google Chrome in `/Applications`, and `ssh <host>` that works with no prompt (a key, not a password) to the host whose Chrome the workers use. That host needs `node` on the path of a non-interactive ssh session, which the fleet already requires ([Prerequisites](setup.md#prerequisites)). Its shared Chrome must listen on `127.0.0.1:9222`, as [setup.md](setup.md#what-a-hosts-chrome-service-must-provide) says.
+You need Node 24 or newer, git, Google Chrome in `/Applications` (or `FLEET_CHROME_BIN`, below), and `ssh <host>` that works with no prompt (a key, not a password) to the host whose Chrome the workers use. That host needs `node` on the path of a non-interactive ssh session, which the fleet already requires ([Prerequisites](setup.md#prerequisites)). Its shared Chrome must listen on `127.0.0.1:9222`, as [setup.md](setup.md#what-a-hosts-chrome-service-must-provide) says.
 
 ```sh
 git clone https://github.com/1yian/fleet ~/fleet-chrome-try

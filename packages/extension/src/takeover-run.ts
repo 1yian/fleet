@@ -160,7 +160,10 @@ export class Takeover {
   async run(): Promise<void> {
     const { chrome, host, held } = this.parts;
     try {
-      await this.receive();
+      await this.receive().catch(async (error: unknown) => {
+        await this.scrub().catch(() => undefined);
+        throw error;
+      });
       say(`Chrome is open with ${held.origin} signed in as the worker's tab, through ssh ${host}.`);
       say(
         "When you are done, type back (send this Chrome's session to the worker's tab and reload it), back --force, or discard, then Enter.",
