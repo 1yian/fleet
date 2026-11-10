@@ -89,6 +89,22 @@ export function addLane(
   if (/^c-\d+-a\d+$/.test(lane.name)) {
     throw new Error(`${lane.name} is the form of a worker session, so it cannot name a lane`);
   }
+  try {
+    return insertLane(db, lane);
+  } catch (error) {
+    if (lane.parent !== undefined || !isRootConflict(error)) throw error;
+    throw new Error(`there is already a root lane, ${mainLane(db)}`, { cause: error });
+  }
+}
+
+function isRootConflict(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("one_root_lane");
+}
+
+function insertLane(
+  db: DatabaseSync,
+  lane: { name: string; home: string; parent?: string },
+): string {
   const token = transaction(db, () => {
     if (db.prepare("SELECT 1 FROM lanes WHERE name = ?").get(lane.name) !== undefined)
       throw new Error(`lane ${lane.name} is already in the registry: lane list shows it`);
@@ -445,9 +461,7 @@ export function setSessionState(
 }
 
 export function mainLane(db: DatabaseSync): string {
-  const name = db
-    .prepare("SELECT name FROM lanes WHERE parent IS NULL ORDER BY name LIMIT 1")
-    .get()?.["name"];
+  const name = db.prepare("SELECT name FROM lanes WHERE parent IS NULL").get()?.["name"];
   if (typeof name !== "string") throw new Error("there is no main lane");
   return name;
 }

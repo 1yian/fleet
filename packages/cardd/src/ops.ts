@@ -295,8 +295,14 @@ const HANDLERS: Record<OpName, Handler> = {
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
   "incident.clear": (db, session, raw) =>
     clearFailure(db, session, check(OPS["incident.clear"].args, raw)),
-  "lane.stopping": (db, session, raw) => ({
-    value: markStopping(db, session, check(OPS["lane.stopping"].args, raw)),
+  "lane.stopping": (db, session, raw, timing) => ({
+    value: markStopping(
+      db,
+      session,
+      check(OPS["lane.stopping"].args, raw),
+      timing.wall(),
+      timing.stop,
+    ),
     notify: [],
   }),
   "card.restart": (db, session, raw, timing) =>

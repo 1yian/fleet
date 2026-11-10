@@ -20,6 +20,7 @@ export interface Timings {
   readonly waiting: number;
   readonly keyCooldown: number;
   readonly keyAge: number;
+  readonly stop: number;
   readonly wall: () => number;
 }
 
@@ -45,6 +46,7 @@ export function timings(scale: number, wall: () => number = Date.now): Timings {
     waiting: at(30),
     keyCooldown: at(0.5),
     keyAge: at(10),
+    stop: at(4),
     wall,
   };
 }

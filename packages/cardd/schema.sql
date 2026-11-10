@@ -15,6 +15,8 @@ CREATE UNIQUE INDEX one_mate_per_lane ON sessions (lane) WHERE role = 'mate';
 
 CREATE UNIQUE INDEX one_open_finding ON findings (card, condition) WHERE cleared_at IS NULL;
 
+CREATE UNIQUE INDEX one_root_lane ON lanes ((1)) WHERE parent IS NULL;
+
 CREATE UNIQUE INDEX one_run_per_tick ON cards (parent, tick) WHERE tick IS NOT NULL;
 
 CREATE TABLE attempts (
@@ -214,7 +216,7 @@ CREATE TABLE sessions (
     state IN ('starting', 'idle', 'running', 'waiting', 'exited', 'lost', 'closed')
   ),
   low_water INTEGER NOT NULL DEFAULT 0,
-  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, stopping INTEGER NOT NULL DEFAULT 0 CHECK (stopping IN (0, 1)), maintenance INTEGER NOT NULL DEFAULT 0 CHECK (maintenance IN (0, 1)), batch_since INTEGER, turn_since INTEGER, progress_at INTEGER,
+  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, maintenance INTEGER NOT NULL DEFAULT 0 CHECK (maintenance IN (0, 1)), batch_since INTEGER, turn_since INTEGER, progress_at INTEGER, stopping_until INTEGER,
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
 ) STRICT;
 

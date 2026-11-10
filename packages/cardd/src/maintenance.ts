@@ -6,6 +6,7 @@ import {
   type Maintenance,
   type OpArgs,
 } from "@fleet/protocol";
+import { stopOf, untilOf } from "./lane-stop.ts";
 import { json, laneCardOf, addEntry, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -111,18 +112,19 @@ interface Target {
   readonly seen: number;
 }
 
-function targets(db: DatabaseSync, requester: string, kind: string): Target[] {
+function targets(db: DatabaseSync, requester: string, kind: string, now: number): Target[] {
   const rows = db
     .prepare(
       `SELECT s.id AS id, s.role AS role, s.process AS process, s.maintenance AS supported, coalesce(s.last_seen, 0) AS seen,
-         s.state IN ('idle', 'running', 'waiting') AS connected
+         s.stopping_until AS until, s.state IN ('idle', 'running', 'waiting') AS connected
        FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt
-       WHERE s.id != ? AND s.stopping = 0 AND s.state NOT IN ('starting', 'closed')
+       WHERE s.id != ? AND s.state NOT IN ('starting', 'closed')
          AND (s.role = 'mate' OR a.state = 'active')
          AND (? = 'reload' OR s.role = 'mate')
        ORDER BY s.role DESC, s.id`,
     )
-    .all(requester, kind);
+    .all(requester, kind)
+    .filter((row) => stopOf(untilOf(row), now).kind === "up");
   return rows.map((row) => ({
     id: String(row["id"]),
     role: row["role"] === "mate" ? "mate" : "worker",
@@ -165,7 +167,7 @@ export function requestMaintenance(
   if (caller.lane !== "main") throw new Error("only main can ask the fleet to reload or stow");
   const now = Date.now();
   const notify: string[] = [];
-  for (const target of targets(db, caller.id, raw.kind)) {
+  for (const target of targets(db, caller.id, raw.kind, t.wall())) {
     const open = db
       .prepare(
         "SELECT id FROM maintenance WHERE session = ? AND kind = ? AND state IN ('pending', 'reloading')",
