@@ -19,12 +19,12 @@ function setClock(file: string, ms: number): void {
   renameSync(next, file);
 }
 
-async function started(): Promise<{ fleet: Fleet; clock: string }> {
+async function started(scale = "0.001"): Promise<{ fleet: Fleet; clock: string }> {
   const dir = tempDir("incident-clock-");
   mkdirSync(dir, { recursive: true });
   const clock = join(dir, "clock");
   setClock(clock, Date.now());
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001", CARDD_CLOCK_FILE: clock });
+  fleet = await startFleet({ CARDD_TIMING_SCALE: scale, CARDD_CLOCK_FILE: clock });
   return { fleet, clock };
 }
 
@@ -108,16 +108,22 @@ test("a reminder for an open incident does not offer recovery after its worker f
   const worker = await current.cardd.connect(await begin(current.main, card));
   await reportCooling(worker);
   await worker.call("report", { status: "done", text: "finished before recovery" });
+  const thread = check(OPS.card.result, await current.main.call("card", { card: card.id }));
+  const finished = thread.entries.find((entry) => entry.body === "finished before recovery");
+  assert.ok(finished !== undefined);
   const reminder = await current.main.waitForEntry(
-    (entry) => entry.card === card.id && entry.fields["condition"] === "runtime-failure-open",
-    "the reminder for the open incident",
+    (entry) =>
+      entry.card === card.id &&
+      entry.id > finished.id &&
+      entry.fields["condition"] === "runtime-failure-open",
+    "the reminder after the worker finished",
   );
   assert.match(reminder.body, /Its card is completed, so recovery is not offered/);
   assert.doesNotMatch(reminder.body, /restart_card/);
 });
 
 test("a recovery that fails after its card went on hold does not offer another recovery", async () => {
-  const { fleet: current, clock } = await started();
+  const { fleet: current, clock } = await started("0.01");
   const card = await newCard(current.main, "held during recovery");
   const worker = await current.cardd.connect(await begin(current.main, card));
   const resumeAt = await reportCooling(worker);
