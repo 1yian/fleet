@@ -13,10 +13,10 @@ const HANDOFFS: ReadonlySet<string> = new Set([
   "blocked",
   "needs-decision",
 ]);
-const PAUSE_DEFAULT_MS = 2 * 60 * 60 * 1000;
 const NUDGE =
   "[fleet] Your run is ending without a handoff. Report done, failed, blocked, or " +
-  "needs-decision, or report paused with an until date. Otherwise your card goes back to your mate as stopped.";
+  "needs-decision, or report paused with an until date if you wait on a time or an outside event. " +
+  "Otherwise your card goes back to your mate as stopped.";
 
 const ReportParams = Type.Object({
   status: Type.Enum(
@@ -40,7 +40,10 @@ const ReportParams = Type.Object({
   text: Type.String({ minLength: 1, description: "What happened, in one or two sentences" }),
   key: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "Decision key" })),
   until: Type.Optional(
-    Type.String({ description: "ISO 8601 UTC time like 2026-05-01T10:00:00Z, for paused" }),
+    Type.String({
+      description:
+        "ISO 8601 UTC time like 2026-05-01T10:00:00Z. Required for paused: when the wait on a time or an outside event ends",
+    }),
   ),
   replyTo: OPS.report.args.properties.replyTo,
   pr: Type.Optional(
@@ -54,11 +57,6 @@ const ReportParams = Type.Object({
     Type.Boolean({ description: "true on the done report you send after you merged your PR" }),
   ),
 });
-
-function untilMs(status: string, until: string | undefined): number | undefined {
-  if (until !== undefined) return parseUtc(until);
-  return status === "paused" ? Date.now() + PAUSE_DEFAULT_MS : undefined;
-}
 
 interface LatestReport {
   readonly status: string;
@@ -112,10 +110,10 @@ export class WorkerRun {
       name: "report",
       label: "Report",
       description:
-        "Records a report on your card. End every run with a handoff or a tracked wait. paused until must be within 24 hours from now (default 2 hours); longer waits need a dated hold from your mate.",
+        "Records a report on your card. End every run with a handoff or a tracked wait. paused is only for a wait on a time or an outside event (a quota reset, a third party, a CI run, a date) and needs until, within 24 hours from now; longer waits need a dated hold from your mate. A wait on your mate's action is blocked, never paused.",
       parameters: ReportParams,
       execute: async (_id, params) => {
-        const until = untilMs(params.status, params.until);
+        const until = params.until === undefined ? undefined : parseUtc(params.until);
         const args = {
           status: params.status,
           text: params.text,
