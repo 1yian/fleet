@@ -1,27 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { CardSchema, check, OPS } from "@fleet/protocol";
 import { Cardd } from "../support/cardd.ts";
+import { MIGRATIONS, writeDatabaseAt } from "../support/legacy-database.ts";
 import { tempDir } from "../support/run-root.ts";
 
-const MIGRATIONS = fileURLToPath(new URL("../../packages/cardd/migrations/", import.meta.url));
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
-
-function writeDatabaseAt(file: string, version: number): DatabaseSync {
-  const db = new DatabaseSync(file);
-  const old = readdirSync(MIGRATIONS)
-    .sort()
-    .filter((name) => Number(name.slice(0, 3)) <= version);
-  for (const name of old) db.exec(readFileSync(`${MIGRATIONS}${name}`, "utf8"));
-  db.exec(`PRAGMA user_version = ${String(version)}; PRAGMA foreign_keys = ON`);
-  return db;
-}
 
 function writeOldDatabase(file: string): void {
   const db = writeDatabaseAt(file, 5);
