@@ -83,7 +83,7 @@ Set `ProcessType` to `Interactive` in the plist, next to `KeepAlive`:
 <string>Interactive</string>
 ```
 
-Without it, launchd applies light resource limits (`launchd.plist(5)`): it throttles CPU and I/O, and `cardd` ran below the Docker VM and the agents it serves. `Interactive` gives it normal priority. The plist is written by hand, so nothing in this repository rewrites it. `/updatefleet` pulls code and runs `cardd.restart` (`launchctl kickstart -k`), which restarts the job without re-reading the plist. A plain kickstart does not reload launchd arguments. To apply a plist change, the captain edits the file. Then run `launchctl bootout gui/<uid>/dev.fleet.cardd`, and after it `launchctl bootstrap gui/<uid> ~/Library/LaunchAgents/dev.fleet.cardd.plist`. Check it with `launchctl print gui/<uid>/dev.fleet.cardd | grep -i processtype`.
+Without it, launchd applies light resource limits (`launchd.plist(5)`): it throttles CPU and I/O, and `cardd` ran below the Docker VM and the agents it serves. `Interactive` gives it normal priority. The plist is written by hand, so nothing in this repository rewrites it. `/updatefleet` pulls code and runs `cardd.restart` (`launchctl kickstart -k`), which restarts the job without re-reading the plist. A plain kickstart does not reload launchd arguments. To apply a plist change, edit the file, then run `launchctl bootout gui/<uid>/dev.fleet.cardd`, and after it `launchctl bootstrap gui/<uid> ~/Library/LaunchAgents/dev.fleet.cardd.plist`. Check it with `launchctl print gui/<uid>/dev.fleet.cardd | grep -i processtype`.
 
 ### Running cardd without launchd
 
@@ -125,7 +125,7 @@ Use the absolute path of your `node`. Enable it with `systemctl --user enable --
 
 For systemd, use `["systemctl", "--user", "restart", "cardd"]`. The command must return once `cardd` has been told to restart. The update then waits up to a minute for `cardd` to answer on the new commit.
 
-`/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). Main may restart it by hand when a task needs it, with the same `restart` command, and reads its log after. `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
+`/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
 
 ### A public link through Cloudflare Access
 
