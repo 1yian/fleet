@@ -4,7 +4,7 @@ import { breakdown, percentUsed, watchedFilesystems, type Metric } from "./scrat
 
 export interface ScratchOptions {
   readonly tidy: boolean;
-  readonly largest: string | undefined;
+  readonly largest: readonly string[];
   readonly by: string | undefined;
   readonly json: boolean;
 }
@@ -28,7 +28,7 @@ function describeUse(): string[] {
 }
 
 export function scratchLines(options: ScratchOptions, now: number): string[] {
-  if (options.largest !== undefined) {
+  if (options.largest.length > 0) {
     const found = breakdown(options.largest, metricOf(options.by), now);
     if (options.json) return [JSON.stringify(found)];
     return found.largest.map(

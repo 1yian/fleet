@@ -60,9 +60,13 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-function report({ inodes, bytes }: { inodes: number; bytes: number }): void {
+function report(
+  { inodes, bytes }: { inodes: number; bytes: number },
+  roots?: readonly string[],
+): void {
   const row: JsonRecord = {
     path: "/tmp",
+    ...(roots === undefined ? {} : { roots: [...roots] }),
     inodesUsed: inodes,
     inodesTotal: INODES,
     bytesUsed: bytes,
@@ -114,8 +118,14 @@ async function untilAlarms(count: number): Promise<string[]> {
   }
 }
 
-const heldKeys = (): unknown =>
-  JSON.parse(readFileSync(join(here.root, "state", "disk-alarms.json"), "utf8"));
+const heldKeys = (): unknown[] => {
+  const held: unknown = JSON.parse(
+    readFileSync(join(here.root, "state", "disk-alarms.json"), "utf8"),
+  );
+  return Array.isArray(held)
+    ? held.filter((key) => typeof key === "string" && key.startsWith("far|"))
+    : [];
+};
 
 test("main hears once when a host's filesystem passes 75%, and again only after it drops below and crosses again", async () => {
   for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
@@ -146,6 +156,32 @@ test("main hears once when a host's filesystem passes 75%, and again only after 
   assert.match(alarms[1] ?? "", /is at 86% of its inodes \(900,000 of 1,048,576\)/);
   await afterProbes(4);
   assert.equal(alarmsOf(lastCall()).length, 2);
+});
+
+test("main names the directories of every watched root on the filesystem that crossed, not only /tmp", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  const folder = "/home/far/.fleet";
+  report({ inodes: 1_004_848, bytes: 46 * GIB }, ["/tmp", folder]);
+  publishRecord(`${usage}.largest`, {
+    filesystem: "/dev/nvme0n1p2",
+    partial: false,
+    largest: [
+      { name: `${folder}/node-compile-cache`, inodes: 700_000, bytes: 9 * GIB },
+      { name: `${folder}/scratch`, inodes: 250_000, bytes: 30 * GIB },
+      { name: "/tmp/fleet-c-1300", inodes: 4_000, bytes: GIB },
+    ],
+  });
+  await startMain(lab, here, h);
+  const [alarm] = await untilAlarms(1);
+  assert.equal(
+    alarm,
+    "[fleet] disk: far: /tmp (/dev/nvme0n1p2) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp, /home/far/.fleet by inodes: /home/far/.fleet/node-compile-cache 700,000 inodes; /home/far/.fleet/scratch 250,000 inodes; /tmp/fleet-c-1300 4,000 inodes. This is said once. It is said again only after /tmp drops below 75% and crosses it again.",
+  );
+  const asked = readFileSync(log, "utf8")
+    .split("\n")
+    .filter((line) => line.startsWith("largest"));
+  assert.ok(asked.length > 0);
+  assert.deepEqual([...new Set(asked)], [`largest /tmp ${folder}`]);
 });
 
 test("main names space when space is what crossed, and counts inodes and space separately", async () => {
@@ -289,5 +325,5 @@ test("a host that cannot report its disk use is named once, and the lanes check 
   await untilProbes(4);
   const said = (await lab.history(pane)).replace(/\s+/g, " ");
   assert.equal(said.split("the disk use of far could not be read").length - 1, 1);
-  assert.equal(said.includes("is at"), false);
+  assert.equal(said.includes("disk: far:"), false);
 });

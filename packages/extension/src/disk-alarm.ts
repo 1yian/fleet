@@ -95,7 +95,7 @@ function largestOf({ use, metric }: Crossing, found: Breakdown | undefined): str
   const sized = (each: Largest): string =>
     `${each.name} ${amount(metric === "inodes" ? each.inodes : each.bytes, metric)}`;
   const partial = found.partial ? " (counted for 20 seconds only)" : "";
-  return `Largest under ${use.path} by ${metric}${partial}: ${found.largest.map(sized).join("; ")}.`;
+  return `Largest under ${use.roots.join(", ")} by ${metric}${partial}: ${found.largest.map(sized).join("; ")}.`;
 }
 
 function described(host: string, crossing: Crossing, found?: Breakdown): string {
@@ -115,7 +115,15 @@ async function breakdownOf(
 ): Promise<Breakdown | undefined> {
   try {
     return parseBreakdown(
-      lastJson(await ask(host, ["scratch", "--largest", use.path, "--by", metric, "--json"])),
+      lastJson(
+        await ask(host, [
+          "scratch",
+          ...use.roots.flatMap((root) => ["--largest", root]),
+          "--by",
+          metric,
+          "--json",
+        ]),
+      ),
     );
   } catch {
     return undefined;
