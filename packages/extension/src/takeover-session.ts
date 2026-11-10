@@ -37,6 +37,17 @@ export interface Session {
 const cookieKey = (cookie: Cookie): string =>
   [cookie.name, cookie.domain, cookie.path, JSON.stringify(cookie.partitionKey ?? null)].join("|");
 
+const meaning = (cookie: Cookie): string =>
+  JSON.stringify([
+    cookie.value,
+    cookie.session ? null : cookie.expires,
+    cookie.session,
+    cookie.secure,
+    cookie.httpOnly,
+    cookie.sameSite ?? null,
+    cookie.priority ?? null,
+  ]);
+
 function differing(
   before: Readonly<Record<string, string>>,
   after: Readonly<Record<string, string>>,
@@ -48,10 +59,11 @@ function differing(
 export function changes(held: Session, now: Session): string[] {
   const before = Object.fromEntries(held.cookies.map((cookie) => [cookieKey(cookie), cookie]));
   const after = Object.fromEntries(now.cookies.map((cookie) => [cookieKey(cookie), cookie]));
-  const cookies = differing(
-    Object.fromEntries(Object.entries(before).map(([key, cookie]) => [key, cookie.value])),
-    Object.fromEntries(Object.entries(after).map(([key, cookie]) => [key, cookie.value])),
-  ).map((key) => `${(before[key] ?? after[key])?.name ?? key} (cookie)`);
+  const meanings = (cookies: Readonly<Record<string, Cookie>>): Record<string, string> =>
+    Object.fromEntries(Object.entries(cookies).map(([key, cookie]) => [key, meaning(cookie)]));
+  const cookies = differing(meanings(before), meanings(after)).map(
+    (key) => `${(before[key] ?? after[key])?.name ?? key} (cookie)`,
+  );
   if (held.storage === undefined || now.storage === undefined) return cookies;
   return [
     ...cookies,

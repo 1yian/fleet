@@ -58,7 +58,7 @@ Use one `--lane` name for each lane, so two lanes never share one cookie jar: a 
 - A takeover in progress: type `discard`.
 - Everything on disk: `rm -rf ~/fleet-chrome-try ~/.fleet-chrome`. The lane lock lives in that folder, so it goes too.
 - Nothing else exists: no launchd job, no login item, no proxy setting, no PAC file, no Chrome extension, no change to `~/.ssh` or to Chrome's own profile.
-- If a run was killed hard (power loss, `kill -9`) and left processes: quit the Chrome window that uses `~/.fleet-chrome`, and end the `ssh -N -D` process (`ps aux | grep 'ssh -N -D'`, then `kill <pid>`). Until that Chrome is quit, the next `take` for the lane is refused. If a `take` says that a process holds the lane lock and no takeover is running (the process id was reused), delete the `takeover.lock` file it names.
+- If a run was killed hard (power loss, `kill -9`) and left processes: quit the Chrome window that uses `~/.fleet-chrome`, and end the `ssh -N -D` process (`ps aux | grep 'ssh -N -D'`, then `kill <pid>`). Until that Chrome is quit, the next `take` for the lane is refused. If a `take` says that a process holds the lane lock and no takeover is running (the process id was reused), delete the `takeover.lock` file it names (or, when it says another takeover is recovering the lane and none is starting, the `takeover.lock.<pid>` file it names).
 - What `back` replaced on the worker's tab is not kept. If a worker's tab was signed in as another account and you do not want that replaced, use `discard`.
 
 ## What crosses, and what does not

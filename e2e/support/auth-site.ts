@@ -141,6 +141,13 @@ function signIn(
 export const STALL_PATH = "/stall";
 
 const PAGES: Readonly<Record<string, Reply>> = {
+  "/touch": (request, response) => {
+    response
+      .writeHead(204, {
+        "set-cookie": `sid=${cookieOf(request, "sid") ?? ""}; HttpOnly; Path=/; SameSite=Lax; Max-Age=7200`,
+      })
+      .end();
+  },
   "/pref": (_request, response, url) => {
     response
       .writeHead(204, {

@@ -38,25 +38,39 @@ function running(pid: number): boolean {
   }
 }
 
+function recover(file: string, stale: string): boolean {
+  const claim = `${file}.${stale}`;
+  if (!create(claim)) return false;
+  try {
+    if (holder(file) === stale) rmSync(file, { force: true });
+  } finally {
+    rmSync(claim, { force: true });
+  }
+  return true;
+}
+
+function owned(file: string): LaneLock {
+  return {
+    release: () => {
+      if (holder(file) === String(process.pid)) rmSync(file, { force: true });
+    },
+  };
+}
+
 export function lockLane(folder: string, lane: string): LaneLock {
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   const file = join(folder, LOCK_FILE);
   for (;;) {
-    if (create(file))
-      return {
-        release: () => {
-          rmSync(file, { force: true });
-        },
-      };
+    if (create(file)) return owned(file);
     const text = holder(file);
     if (text === undefined) continue;
     const pid = Number(text);
-    if (Number.isInteger(pid) && pid > 0 && !running(pid)) {
-      rmSync(file, { force: true });
-      continue;
-    }
+    const gone = Number.isInteger(pid) && pid > 0 && !running(pid);
+    if (gone && recover(file, text)) continue;
     throw new Error(
-      `lane ${lane} is already being taken over by process ${text === "" ? "unknown" : text}: finish or discard that takeover first. If no takeover is running, delete ${file}`,
+      gone
+        ? `lane ${lane} is being recovered from a takeover that ended without cleaning up, by another takeover that is starting now: try again. If none is starting, delete ${file}.${text}`
+        : `lane ${lane} is already being taken over by process ${text === "" ? "unknown" : text}: finish or discard that takeover first. If no takeover is running, delete ${file}`,
     );
   }
 }
