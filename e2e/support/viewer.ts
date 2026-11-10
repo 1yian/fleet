@@ -95,21 +95,39 @@ export async function showTab(
   );
 }
 
+export async function pictureBox(page: Page): Promise<{
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}> {
+  const measured = await page.waitForFunction(
+    () => {
+      const img = document.getElementById("screen");
+      if (!(img instanceof HTMLImageElement) || img.hidden || img.clientWidth === 0) return null;
+      const outer = img.getBoundingClientRect();
+      return {
+        left: outer.left + img.clientLeft,
+        top: outer.top + img.clientTop,
+        width: img.clientWidth,
+        height: img.clientHeight,
+      };
+    },
+    undefined,
+    { timeout: WAIT_MS },
+  );
+  const box = await measured.jsonValue();
+  assert.ok(box !== null, "the picture is on screen");
+  return box;
+}
+
 export async function pointInPicture(
   page: Page,
   size: { readonly width: number; readonly height: number },
   x: number,
   y: number,
 ): Promise<{ x: number; y: number }> {
-  const box = await page.locator("#screen").evaluate((img: HTMLImageElement) => {
-    const outer = img.getBoundingClientRect();
-    return {
-      left: outer.left + img.clientLeft,
-      top: outer.top + img.clientTop,
-      width: img.clientWidth,
-      height: img.clientHeight,
-    };
-  });
+  const box = await pictureBox(page);
   return {
     x: box.left + (x / size.width) * box.width,
     y: box.top + (y / size.height) * box.height,

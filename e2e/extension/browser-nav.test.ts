@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 import { chromium, type Browser as Client, type Locator, type Page } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import {
+  pictureBox,
   pointInPicture,
   startViewer,
   stopViewers,
@@ -201,9 +202,8 @@ for (const [who, flags, workerOwned] of MODES) {
     await show();
     await clickLink();
     await onPath("/b");
-    const box = await page.locator("#screen").boundingBox();
-    assert.ok(box !== null);
-    const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const box = await pictureBox(page);
+    const point = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
     const session = await page.context().newCDPSession(page);
     const press = async (button: "back" | "forward"): Promise<void> => {
       for (const type of ["mousePressed", "mouseReleased"] as const)
