@@ -133,11 +133,6 @@ const pausing = (text: string, replyTo?: string): Move => ({
   args: { status: "paused", text, until: LATER, ...(replyTo === undefined ? {} : { replyTo }) },
 });
 
-const noting = (text: string, replyTo: string): Move => ({
-  tool: "report",
-  args: { status: "note", text, replyTo },
-});
-
 test("a silent worker is sent the reply again every five minutes, its mate is never told, and the reply stays open", async () => {
   script("default", () => pausing("still building"));
   script("mate", () => undefined);
@@ -168,7 +163,9 @@ test("a silent worker is sent the reply again every five minutes, its mate is ne
     `five-minute resend cadence scaled to 1500 ms: ${String(gap)} ms`,
   );
   assert.deepEqual(heard("mate", /unanswered/), []);
-  assert.deepEqual(heard("mate", /still building/), []);
+  assert.deepEqual(heard("mate", /paused: still building/), [
+    "[fleet] c-1 dev-port paused: still building",
+  ]);
   const open = (await onBoard(card)).replies;
   assert.deepEqual(
     open.map((each) => [each.id, each.from, each.owes, each.resentAt !== null]),
@@ -185,11 +182,7 @@ test("a correlated report answers the reply and stops its nudges, and a wrong id
       owed = idIn(said) ?? owed;
       return pausing("port 5173", "r-999");
     },
-    (result) => {
-      if (result.includes("r-999")) return noting("port 5173", owed);
-      if (result.startsWith("Reported note")) return pausing("waiting for the next question");
-      return undefined;
-    },
+    (result) => (result.includes("r-999") ? pausing("port 5173", owed) : undefined),
   );
   const card = await mainWithCard("dev-port");
 
@@ -201,7 +194,7 @@ test("a correlated report answers the reply and stops its nudges, and a wrong id
   const [asked] = await hears("default", /reply owed/);
   const id = idIn(asked ?? "") ?? "";
   assert.deepEqual(await hears("mate", /\(replies r-/), [
-    `[fleet] c-1 dev-port note: port 5173 (card now working) (replies ${id})`,
+    `[fleet] c-1 dev-port paused: port 5173 (replies ${id})`,
   ]);
   const refused = h
     .callsOf("default")

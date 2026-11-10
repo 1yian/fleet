@@ -65,34 +65,6 @@ test("routine reports stay on the board, except the first one after the task or 
   );
 });
 
-test("a dated pause never reaches the mate: not as the first report after the task, after a comment, or as a reply", async () => {
-  const until = Date.now() + 3_600_000;
-  const pause = (text: string, replyTo?: string): Promise<unknown> =>
-    worker.call("report", { status: "paused", text, until, replyTo });
-  await pause("ci runs for an hour");
-  await comment("any news?");
-  await pause("still waiting on ci");
-  await fleet.main.call("comment", {
-    card: card.id,
-    text: "what are you waiting for?",
-    reply: true,
-  });
-  const asked = await worker.waitForEntry(
-    (entry) => entry.body === "what are you waiting for?",
-    "the question",
-  );
-  await pause("waiting on ci", `r-${String(asked.id)}`);
-  assert.deepEqual(await worker.call("replies.owed", {}), []);
-  assert.equal(await status(fleet.main, card), "paused");
-  await report("blocked", "ci is down");
-  await fleet.main.call("board", {});
-
-  assert.deepEqual(
-    fleet.main.entries.map(({ entry }) => [entry.fields["status"], entry.body]),
-    [["blocked", "ci is down"]],
-  );
-});
-
 test("a second mate's worker reports to that mate, not to main", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const cleoCard = await newCard(cleo, "Ads stay under budget", "scout");
