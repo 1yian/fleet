@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { factsFrom, finishFrom, type Standing } from "./status.ts";
+import { factsFrom, finishedOpen, type Standing } from "./status.ts";
 import { cardEntries, type Loaded, mainLane, parentOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
 
@@ -51,9 +51,8 @@ function captainItem(
 function mateItem(db: DatabaseSync, loaded: Loaded, now: number): Item[] {
   const { card, entries, standing } = loaded;
   const { hold } = standing.facts;
-  const finish = finishFrom(entries);
   const open = standing.status === "with-mate" || standing.status === "merging";
-  if (!open || (hold === undefined && (finish.merged || finish.workerDone))) return [];
+  if (!open || (hold === undefined && finishedOpen(entries) !== undefined)) return [];
   const why = hold === undefined ? standing.status : `${standing.status}, ${hold.holder} hold`;
   const question = hold === undefined ? "" : `: ${firstLine(hold.question)}`;
   const line = `c-${String(card.id)} ${card.title} (${why}, ${waited(now, standing.since)})${question}`;

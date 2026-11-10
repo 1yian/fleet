@@ -15,7 +15,7 @@ import { requireOpen, type Draft } from "./change.ts";
 import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
 import { allSchedules } from "./schedules.ts";
 import { openReplies } from "./replies.ts";
-import { factsFrom, type Hold } from "./status.ts";
+import { factsFrom, shownPause, type Hold } from "./status.ts";
 import {
   activityOf,
   addEntry,
@@ -69,7 +69,7 @@ function boardCard(db: DatabaseSync, { card, entries, standing }: Loaded): Board
     holder: hold?.holder ?? null,
     replies,
     attention: standing.attention,
-    pausedUntil: standing.pausedUntil,
+    pausedUntil: shownPause(standing),
   };
 }
 

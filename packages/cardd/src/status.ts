@@ -9,8 +9,7 @@ import {
   type Status,
 } from "@fleet/protocol";
 
-export type Stage =
-  "queued" | "working" | "in-review" | "with-mate" | "merging" | "done" | "dropped";
+type Stage = "queued" | "working" | "in-review" | "with-mate" | "merging" | "done" | "dropped";
 
 export interface Hold {
   readonly occurrence: number;
@@ -245,12 +244,15 @@ function holdStatus(hold: Hold, now: number): Status {
   return hold.holder === "captain" ? "needs-you" : "with-mate";
 }
 
+const pauseInForce = (until: number | null, now: number): boolean => (until ?? 0) > now;
+
+const RESTING: ReadonlySet<Stage> = new Set(["working", "in-review"]);
+
 function statusAt(basis: Basis, tally: Tally, now: number): Status {
   if (isClosed(tally.stage)) return tally.stage;
   if (tally.hold !== undefined) return holdStatus(tally.hold, now);
   if (basis.kind === "standing") return "waiting";
-  const resting = tally.stage === "working" || tally.stage === "in-review";
-  return resting && (tally.pausedUntil ?? 0) > now ? "paused" : tally.stage;
+  return RESTING.has(tally.stage) && pauseInForce(tally.pausedUntil, now) ? "paused" : tally.stage;
 }
 
 function factsOf(tally: Tally): Facts {
@@ -299,15 +301,43 @@ export function standingFrom(basis: Basis, entries: readonly Entry[], now: numbe
   const { tally, status, since } = replay(basis, entries, now);
   const needsAttention =
     status === "with-mate" && tally.stage === "with-mate" && tally.hold === undefined;
-  const paused = status === "paused";
+  const facts = factsOf(tally);
   return {
     status,
     stage: tally.stage,
     since,
     attention: needsAttention ? (tally.attention ?? null) : null,
-    pausedUntil: paused ? tally.pausedUntil : null,
-    facts: factsOf(tally),
+    pausedUntil: shownPause({ status, facts }),
+    facts,
   };
+}
+
+export function pausedNow(standing: Standing, now: number): boolean {
+  return pauseInForce(standing.facts.pausedUntil, now);
+}
+
+export function shownPause(standing: {
+  readonly status: Status;
+  readonly facts: Pick<Facts, "pausedUntil">;
+}): number | null {
+  return standing.status === "paused" ? standing.facts.pausedUntil : null;
+}
+
+export function resting(standing: Standing): boolean {
+  return RESTING.has(standing.stage);
+}
+
+export function idleNow(standing: Standing, now: number): boolean {
+  return resting(standing) && !pausedNow(standing, now);
+}
+
+export function isFinished(entries: readonly Entry[]): boolean {
+  return finishFrom(entries).workerDone;
+}
+
+export function finishedOpen(entries: readonly Entry[]): Finish | undefined {
+  const finish = finishFrom(entries);
+  return finish.workerDone || finish.merged ? finish : undefined;
 }
 
 export interface Finish {

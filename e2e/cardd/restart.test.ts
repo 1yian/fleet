@@ -43,6 +43,19 @@ test("at most three ordinary restarts an hour for one card", async () => {
   assert.equal((await restart("a")).repeat, true);
 });
 
+test("a pause during merging stays merging on the board and still refuses a restart", async () => {
+  fleet.cardd.yolo("web");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await worker.call("report", { status: "done", text: "ready to land" });
+  const until = Date.now() + 3_600_000;
+  await worker.call("report", { status: "paused", text: "deploy window", until });
+  const shown = (await fleet.cardd.board()).cards.find((each) => each.id === card.id);
+  if (shown === undefined) throw new Error("the card left the board");
+  assert.equal(shown.status, "merging");
+  assert.equal(shown.pausedUntil, null);
+  await assert.rejects(restart("paused-merge"), /the card is paused: restart never resumes/);
+});
+
 test("only the direct parent restarts, and a restart never resumes paused, finished, or closed work", async () => {
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
