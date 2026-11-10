@@ -49,7 +49,7 @@ export class Link {
   private latest: "running" | "idle" | "waiting" | undefined;
   private nextId = 1;
   private readonly pending = new Map<number, (result: Result) => void>();
-  private readonly untoldAcks = new Set<number>();
+  private readonly untold: ClientMessage[] = [];
   private readonly options: LinkOptions;
   private announced = false;
 
@@ -128,9 +128,17 @@ export class Link {
     });
   }
 
+  read(entry: number): void {
+    this.tell({ t: "read", entry });
+  }
+
   ack(entry: number): void {
-    if (this.connected) this.send({ t: "ack", entry });
-    else this.untoldAcks.add(entry);
+    this.tell({ t: "ack", entry });
+  }
+
+  private tell(message: ClientMessage): void {
+    if (this.connected) this.send(message);
+    else this.untold.push(message);
   }
 
   activity(state: "running" | "idle" | "waiting", progress = false): void {
@@ -157,8 +165,7 @@ export class Link {
     this.connected = true;
     this.announced = true;
     this.backoff = 250;
-    for (const entry of this.untoldAcks) this.send({ t: "ack", entry });
-    this.untoldAcks.clear();
+    for (const message of this.untold.splice(0)) this.send(message);
     if (this.latest !== undefined) this.send({ t: "activity", state: this.latest });
     this.options.onConnect();
   }

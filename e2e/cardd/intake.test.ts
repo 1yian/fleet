@@ -161,6 +161,31 @@ test("a message left in the session file by an aborted turn is resent and taken 
   await worker.close();
 });
 
+test("a comment read in a run that never settled is sent again, and a handoff waits until it is read again", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
+  const card = await newCard(cleo, "Users see one scrollbar");
+  const worker = await fleet.cardd.connect(await begin(cleo, card), [], false);
+  const [task] = await worker.waitForEntries(1);
+  worker.ack(task?.id ?? 0);
+  await cleo.call("comment", { card: card.id, text: "use the v2 endpoint" });
+  const steer = await worker.waitForEntry(
+    (entry) => entry.body === "use the v2 endpoint",
+    "the comment to reach the worker",
+  );
+  worker.read(steer.id);
+  await worker.waitForEntries(3);
+  assert.deepEqual(
+    worker.entries.slice(2, 3).map(({ entry, again }) => [entry.id, again]),
+    [[steer.id, true]],
+  );
+
+  await assert.rejects(
+    worker.call("report", { status: "blocked", text: "the v2 endpoint is down" }),
+    /does not count yet: you have 1 unread comment.*use the v2 endpoint/s,
+  );
+  await worker.close();
+});
+
 test("a comment waits unresent and unreported while the worker's run is going, and is chased once the run ends without taking it in", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
   const main = fleet.main;

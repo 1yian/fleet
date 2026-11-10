@@ -82,7 +82,7 @@ CREATE TABLE "deliveries" (
   ),
   updated_at INTEGER NOT NULL,
   resends INTEGER NOT NULL DEFAULT 0,
-  told_at INTEGER,
+  told_at INTEGER, read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1)),
   PRIMARY KEY (session, entry)
 ) STRICT, WITHOUT ROWID;
 

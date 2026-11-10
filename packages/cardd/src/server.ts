@@ -13,7 +13,7 @@ import {
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { MISSED_HEARTBEATS, runCheck, type JobLossGrace } from "./check.ts";
 import type { Timings } from "./timing.ts";
-import { acknowledge, confirm, toPush } from "./deliveries.ts";
+import { acknowledge, confirm, markRead, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
 import { adoptProcess } from "./incidents.ts";
 import { performOp } from "./ops.ts";
@@ -151,7 +151,8 @@ class Hub {
       if (message.t === "hello") {
         session = this.hello(socket, message);
         token = session === undefined ? undefined : message.token;
-      } else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
+      } else if (message.t === "read") markRead(this.db, live().id, message.entry);
+      else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
       else if (message.t === "activity") {
         if (setSessionState(this.db, live().id, message.state, message.progress === true))
           this.web.changed();

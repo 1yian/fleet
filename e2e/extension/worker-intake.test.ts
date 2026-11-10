@@ -165,6 +165,47 @@ test("a comment that arrives after the worker's connection dropped and came back
   );
 });
 
+function workerDeliveryStates(): string[] {
+  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        "SELECT d.state AS state FROM deliveries d JOIN sessions s ON s.id = d.session WHERE s.role = 'worker' ORDER BY d.entry",
+      )
+      .all()
+      .map((row) => String(row["state"]));
+  } finally {
+    db.close();
+  }
+}
+
+const isTaken = (state: string): boolean => state === "acknowledged" || state === "confirmed";
+
+async function waitForTakenIn(): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const states = workerDeliveryStates();
+    if (states.length > 0 && states.every(isTaken)) return;
+    assert.ok(
+      Date.now() < deadline,
+      `the resent message was not taken in: ${JSON.stringify(states)}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+async function resentAfterRestart(): Promise<void> {
+  await fleet.cardd.restart();
+  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
+}
+
+const sentAgain = (turns: Turn[]): boolean =>
+  turns.some(
+    (turn) =>
+      turn.role === "user" &&
+      turn.text.includes("sent again: the turn that got it ended before it was taken in"),
+  );
+
 test("a message whose turn was aborted is resent after reconnect and taken in on the next settled run", async () => {
   const held = gate();
   h.onModel(async () => {
@@ -179,46 +220,67 @@ test("a message whose turn was aborted is resent after reconnect and taken in on
     (event) => event["type"] === "settled" && event["aborted"] === true,
     "the aborted turn to settle",
   );
-  await fleet.cardd.restart();
-  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
+  await resentAfterRestart();
   const again = await h.waitForCall(1, "default", 30_000);
-  assert.ok(
-    again.some(
-      (turn) =>
-        turn.role === "user" &&
-        turn.text.includes("sent again: the turn that got it ended before it was taken in"),
-    ),
-    JSON.stringify(again),
-  );
+  assert.ok(sentAgain(again), JSON.stringify(again));
   await h.waitFor(
     (event) => event["type"] === "settled" && event["aborted"] !== true,
     "the next run to settle",
   );
   held.open();
-  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true });
-  try {
-    const deadline = Date.now() + 10_000;
-    for (;;) {
-      const rows = db
-        .prepare(
-          "SELECT d.state AS state FROM deliveries d JOIN sessions s ON s.id = d.session WHERE s.role = 'worker'",
-        )
-        .all();
-      if (
-        rows.length > 0 &&
-        rows.every((row) => row["state"] === "acknowledged" || row["state"] === "confirmed")
-      ) {
-        return;
-      }
-      assert.ok(
-        Date.now() < deadline,
-        `the resent message was not taken in: ${JSON.stringify(rows)}`,
-      );
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  } finally {
-    db.close();
-  }
+  await waitForTakenIn();
+});
+
+test("a message whose run was aborted after a tool-use response is not taken in until a later run settles", async () => {
+  const held = gate();
+  h.onModel(() => ({ tool: "report", args: { status: "note", text: "reading the assignment" } }));
+  h.onModel(async () => {
+    await held.wait;
+    return { text: "the aborted turn should not finish" };
+  });
+  h.onModel(() => ({ text: "took the assignment" }));
+  const pi = h.startPi("c-1-a1", env, [EXTENSION]);
+  await h.waitForCall(1, "default", 30_000);
+  pi.abort();
+  await h.waitFor(
+    (event) => event["type"] === "settled" && event["aborted"] === true,
+    "the aborted run to settle",
+  );
+  const states = workerDeliveryStates();
+  assert.ok(
+    states.length > 0 && !states.some(isTaken),
+    `an aborted run took the message in: ${JSON.stringify(states)}`,
+  );
+  await resentAfterRestart();
+  const again = await h.waitForCall(2, "default", 30_000);
+  assert.ok(sentAgain(again), JSON.stringify(again));
+  await h.waitFor(
+    (event) => event["type"] === "settled" && event["aborted"] !== true,
+    "the next run to settle",
+  );
+  held.open();
+  await waitForTakenIn();
+});
+
+test("a worker that read a comment hands off in the same run, before the run settles", async () => {
+  h.onModel(async () => {
+    await fleet.main.call("comment", { card: card.id, text: "scope change: skip the tests" });
+    return { tool: "report", args: { status: "note", text: "running the tests" } };
+  });
+  h.onModel(() => ({
+    tool: "report",
+    args: { status: "blocked", text: "skipped the tests as asked" },
+  }));
+  h.onModel(() => ({ text: "handed off" }));
+  h.startPi("c-1-a1", env, [EXTENSION]);
+
+  const handoff = await fleet.main.waitForEntry(
+    (entry) => entry.kind === "report" && entry.fields["status"] === "blocked",
+    "main to hear the handoff the worker made after reading the comment",
+  );
+  assert.equal(handoff.body, "skipped the tests as asked");
+  const turns = (await h.waitForCall(2, "default", 30_000)).map((turn) => turn.text).join("\n");
+  assert.doesNotMatch(turns, /does not count yet/);
 });
 
 interface Proxy {

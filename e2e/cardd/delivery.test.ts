@@ -105,3 +105,20 @@ test("a done report with an unread comment is refused until the comment is taken
   await fleet.main.call("board", {});
   await worker.call("report", { status: "done", text: "finished with the sidebar" });
 });
+
+test("a done report is allowed once the worker read the comment, before its run settles", async () => {
+  const worker = await fleet.cardd.connect(token, [], false);
+  const [task] = await worker.waitForEntries(1);
+  assert.ok(task !== undefined);
+  worker.ack(task.id);
+  await comment("scope changed: also cover the sidebar");
+  const [, steer] = await worker.waitForEntries(2);
+  assert.ok(steer !== undefined);
+
+  await assert.rejects(
+    worker.call("report", { status: "done", text: "finished" }),
+    /does not count yet: you have 1 unread comment/,
+  );
+  worker.read(steer.id);
+  await worker.call("report", { status: "done", text: "finished with the sidebar" });
+});

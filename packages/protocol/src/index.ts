@@ -378,6 +378,7 @@ const ClientMessage = Type.Union([
     running: Type.Optional(Type.Boolean()),
     started: Type.Optional(Type.Boolean()),
   }),
+  Type.Object({ t: Type.Literal("read"), entry: Type.Integer() }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
   ActivityMessage,
   Type.Object({

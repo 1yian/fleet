@@ -246,6 +246,10 @@ export function acknowledge(db: DatabaseSync, session: string, entry: number): v
   apply(read, write, session, entry, "ack", Date.now());
 }
 
+export function markRead(db: DatabaseSync, session: string, entry: number): void {
+  db.prepare("UPDATE deliveries SET read = 1 WHERE session = ? AND entry = ?").run(session, entry);
+}
+
 const UNREAD_RESENDS = 3;
 
 const CHASE_ROWS = `SELECT d.session AS session, d.state AS state, d.resends AS resends, d.told_at AS told, d.updated_at AS updated, s.role AS role, ${ENTRY_JSON} AS j
@@ -314,7 +318,7 @@ export function remind(
 
 export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[] {
   const resend = db.prepare(
-    `UPDATE deliveries SET state = ?, resends = resends + 1, updated_at = ?
+    `UPDATE deliveries SET state = ?, read = 0, resends = resends + 1, updated_at = ?
      WHERE session = ? AND entry = ?`,
   );
   const told = db.prepare("UPDATE deliveries SET told_at = ? WHERE session = ? AND entry = ?");
@@ -344,7 +348,7 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
   const rows = db
     .prepare(
       `SELECT e.author AS author, e.body AS body FROM deliveries d JOIN entries e ON e.id = d.entry
-       WHERE d.session = ? AND d.state NOT IN (${TAKEN_DELIVERY}) AND e.kind = 'comment'
+       WHERE d.session = ? AND d.read = 0 AND d.state NOT IN (${TAKEN_DELIVERY}) AND e.kind = 'comment'
          AND json_extract(e.fields, '$.task') IS NULL
          AND json_extract(e.fields, '$.for') = 'worker'
        ORDER BY e.id`,
