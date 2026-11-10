@@ -12,6 +12,15 @@ const MONOSPACE = "<style>html, body, input { font-family: monospace; }</style>"
 
 const withFont = (page: string): string => page.replace("</title>", `</title>${MONOSPACE}`);
 
+const entryPage = (extra: string): string => `<!doctype html><title>Entry</title><body style="margin:0">
+    <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/landing'; })">
+      <input name="u" type="text" autocomplete="username" style="position:fixed;left:20px;top:20px;width:300px;height:32px;font-size:18px">
+      <input name="p" type="password" oninput="this.setAttribute('value', this.value)" style="position:fixed;left:20px;top:70px;width:300px;height:32px;font-size:18px">
+      <button id="reveal" type="button" style="position:fixed;left:340px;top:70px;height:32px" onclick="const p = this.form.p; p.type = p.type === 'password' ? 'text' : 'password'">show</button>
+      <button id="submit" type="submit" style="position:fixed;left:20px;top:120px;height:32px">Sign in</button>
+    </form>
+    <p style="position:fixed;left:20px;top:170px;margin:0">entry page</p>${extra}</body>`;
+
 const PAGES: Readonly<Record<string, string>> = {
   "/a": `<!doctype html><title>Alpha</title><body data-owner="a">
     <p>alpha page</p>
@@ -81,14 +90,13 @@ const PAGES: Readonly<Record<string, string>> = {
       <button id="submit" type="submit">Sign in</button>
     </form>
     <p id="u-echo"></p><p id="p-echo"></p></body>`,
-  "/entry": `<!doctype html><title>Entry</title><body style="margin:0">
-    <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/landing'; })">
-      <input name="u" type="text" autocomplete="username" style="position:fixed;left:20px;top:20px;width:300px;height:32px;font-size:18px">
-      <input name="p" type="password" oninput="this.setAttribute('value', this.value)" style="position:fixed;left:20px;top:70px;width:300px;height:32px;font-size:18px">
-      <button id="reveal" type="button" style="position:fixed;left:340px;top:70px;height:32px" onclick="const p = this.form.p; p.type = p.type === 'password' ? 'text' : 'password'">show</button>
-      <button id="submit" type="submit" style="position:fixed;left:20px;top:120px;height:32px">Sign in</button>
-    </form>
-    <p style="position:fixed;left:20px;top:170px;margin:0">entry page</p></body>`,
+  "/entry": entryPage(""),
+  "/entry-kept": entryPage(`
+    <script>
+      const kept = document.querySelector("input[name=p]");
+      kept.value = sessionStorage.getItem("kept") ?? "";
+      kept.addEventListener("input", () => sessionStorage.setItem("kept", kept.value));
+    </script>`),
   "/tint-portal": `<!doctype html><title>Tinted portal</title><body style="margin:0;height:100vh;background:#e00000">
     <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/tint-landing'; })">
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value">

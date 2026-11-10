@@ -102,7 +102,14 @@ const FlatNodeSchema = Type.Object({
   shadowRoots: Type.Optional(
     Type.Array(Type.Object({ nodeId: Type.Integer(), shadowRootType: Type.String() })),
   ),
-  contentDocument: Type.Optional(Type.Object({ nodeId: Type.Integer() })),
+  contentDocument: Type.Optional(
+    Type.Object({
+      nodeId: Type.Integer(),
+      backendNodeId: Type.Integer(),
+      nodeType: Type.Integer(),
+      nodeName: Type.String(),
+    }),
+  ),
 });
 const FlatSchema = Type.Object({ nodes: Type.Array(FlatNodeSchema) });
 const ResolvedSchema = Type.Object({ object: Type.Object({ objectId: Type.String() }) });
@@ -166,6 +173,18 @@ function frameOf(
     if (frame !== undefined) return frame;
   }
   return undefined;
+}
+
+function withDocuments(nodes: readonly FlatNode[]): FlatNode[] {
+  const listed = new Set(nodes.map((node) => node.nodeId));
+  return [
+    ...nodes,
+    ...nodes.flatMap((node) =>
+      node.contentDocument === undefined || listed.has(node.contentDocument.nodeId)
+        ? []
+        : [node.contentDocument],
+    ),
+  ];
 }
 
 function indexOf(nodes: readonly FlatNode[]): {
@@ -311,11 +330,12 @@ class Scan {
     }
     await call(page, "DOM.enable");
     const worlds = await this.worlds(page);
-    const { nodes } = parseCdp(
+    const { nodes: listed } = parseCdp(
       FlatSchema,
       await call(page, "DOM.getFlattenedDocument", { depth: -1, pierce: true }),
       "the page's tree",
     );
+    const nodes = withDocuments(listed);
     await call(page, "Target.setAutoAttach", {
       autoAttach: true,
       waitForDebuggerOnStart: false,

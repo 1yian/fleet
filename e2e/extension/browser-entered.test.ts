@@ -26,11 +26,11 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function begin(flags: string[], embedding = "document"): Promise<void> {
+async function begin(flags: string[], embedding = "document", entry = "/entry"): Promise<void> {
   crossFrame = embedding === "cross-frame";
   lab = await BrowserLab.start({ isolated: crossFrame });
   worker = await lab.worker("Users sign in");
-  await worker.act({ action: "open", url: lab.site.url("/entry") });
+  await worker.act({ action: "open", url: lab.site.url(entry) });
   fields = "document";
   if (embedding === "shadow" || embedding === "closed-shadow") {
     await worker.act({
@@ -278,6 +278,11 @@ test("a password that the worker typed itself, or that the captain has not touch
 
 test("a gated viewer marks the tab too, hides its picture while the password is in the form, and shows it again after the page moves on", async () => {
   await begin([]);
+  const refused: number[] = [];
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/api/input" && !response.ok())
+      refused.push(response.status());
+  });
   await clickField(PASSWORD_FIELD);
   await page.keyboard.type(TYPED);
   await fieldIs("p", TYPED);
@@ -293,6 +298,7 @@ test("a gated viewer marks the tab too, hides its picture while the password is 
     "the picture to be hidden",
   );
   assert.equal(await page.locator("#screen").isHidden(), true);
+  await page.mouse.move(5, 5);
 
   await worker.act({ action: "open", url: lab.site.url("/a") });
   await until(
@@ -300,6 +306,11 @@ test("a gated viewer marks the tab too, hides its picture while the password is 
     "the picture to come back",
   );
   assert.equal(await page.locator("#note").isHidden(), true);
+  assert.deepEqual(
+    refused,
+    [],
+    "a pointer leaving the hidden picture sent input that cardd refused",
+  );
   assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
 });
 
@@ -418,12 +429,13 @@ for (const embedding of ["frame", "shadow", "cross-frame"]) {
 }
 
 test("surviving manual passwords stay protected after restart, open and Back with TOTP disabled", async () => {
-  await begin(["--captain"]);
+  await begin(["--captain"], "document", "/entry-kept");
   await clickField(PASSWORD_FIELD);
   await page.keyboard.type(TYPED);
   await fieldIs("p", TYPED);
   await worker.act({ action: "click", x: REVEAL.x, y: REVEAL.y });
   assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "text");
+  const target = await tabOf(lab, worker);
   const before = worker;
   await lab.cardd.restart();
   worker = await lab.reconnect(before);
@@ -436,7 +448,6 @@ test("surviving manual passwords stay protected after restart, open and Back wit
   await assert.rejects(worker.act({ action: "eval", expression: PASSWORD_VALUE }), ENTERED);
   await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
   await assert.rejects(worker.shoot(), ENTERED);
-  const target = await tabOf(lab, worker);
   const copied = check(BROWSER_OPS["browser.copy"].result, await worker.session.call("browser.copy", { target }));
   assert.equal(copied.text, null);
   assert.match(copied.note ?? "", ENTERED);

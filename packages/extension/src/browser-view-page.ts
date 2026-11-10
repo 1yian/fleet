@@ -319,6 +319,7 @@ let ctrlClick = false;
 let downButton = "left";
 
 function mouse(action, event, lost) {
+  if (screen.hidden) return;
   const buttons = ctrlClick ? (event.buttons === 0 ? 0 : 2) : event.buttons;
   const named = ctrlClick ? "right" : BUTTONS[event.button] ?? "left";
   const button = action === "move" ? heldButton(buttons) : lost ? downButton : named;

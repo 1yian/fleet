@@ -299,8 +299,12 @@ class Viewer {
       }
     }
     const permitted = inputs.filter((input) => this.captain || !pastesSelection(input));
+    const declared = new Set<string>();
     for (const input of permitted) {
-      await callEntered(this.cardd, input.target);
+      if (!declared.has(input.target)) {
+        await callEntered(this.cardd, input.target);
+        declared.add(input.target);
+      }
       await this.screenFor(input.target).input(input);
     }
     response.writeHead(204).end();
