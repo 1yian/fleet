@@ -77,14 +77,16 @@ export class Failures {
   }
 
   flush(): void {
-    for (const compaction of [false, true]) {
+    const kept = [false, true].map((compaction) => {
       const untold = this.untold(compaction);
-      const { clear, error } = untold;
+      const taken = { compaction, clear: untold.clear, error: untold.error };
       untold.clear = false;
       untold.error = undefined;
-      if (clear) this.recovered(compaction);
+      return taken;
+    });
+    for (const { compaction, clear } of kept) if (clear) this.recovered(compaction);
+    for (const { compaction, error } of kept)
       if (error !== undefined) this.report(error, compaction, false);
-    }
   }
 
   register(pi: ExtensionAPI): void {
