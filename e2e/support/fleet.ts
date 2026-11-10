@@ -22,7 +22,7 @@ export async function newCard(
   return check(CardSchema, await mate.call("card.new", { title, kind, project: "web" }));
 }
 
-export const WORKER_HOST = "maverick";
+const WORKER_HOST = "maverick";
 
 export async function begin(
   mate: Session,

@@ -1,6 +1,5 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
-import { BROWSER_OPS } from "./browser.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
@@ -11,9 +10,7 @@ import { PlanSchema } from "./wakes.ts";
 
 export * from "./address.ts";
 export * from "./branch.ts";
-export * from "./browser.ts";
 export * from "./cdp.ts";
-export { readSelection } from "./cdp-selection.ts";
 export * from "./health.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
@@ -363,7 +360,6 @@ export const OPS = {
   ...SCHEDULE_OPS,
   ...INCIDENT_OPS,
   ...JOB_OPS,
-  ...BROWSER_OPS,
   ...MAINTENANCE_OPS,
   report: {
     roles: ["worker"],

@@ -22,14 +22,13 @@
         "support/reaper.ts",
         "support/fake-no-mistakes.ts",
         "trial/*.ts"
-      ]
+      ],
+      "ignore": ["support/chrome.ts"]
     },
     "packages/extension": {
       "entry": [
         "src/index.ts",
         "src/job.ts",
-        "src/browser-view.ts",
-        "src/browser-axi.ts",
         "src/launch.ts",
         "src/relaunch.ts",
         "src/calm/index.ts",
@@ -43,5 +42,5 @@
       "ignore": ["src/vendor/**"]
     }
   },
-  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "mkfifo", "openssl", "pgrep"]
+  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "openssl", "pgrep"]
 }

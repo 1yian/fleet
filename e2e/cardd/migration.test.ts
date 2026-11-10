@@ -321,3 +321,62 @@ test("an attempt made before workers named their branches keeps its branch, thro
     await cardd.stop();
   }
 });
+
+function writeBrowserDatabase(file: string): void {
+  const db = writeDatabaseAt(file, 28);
+  db.exec(`
+    INSERT INTO lanes (name, home) VALUES ('main', '/homes/main');
+    INSERT INTO projects (name, delivery, clones)
+      VALUES ('web', 'no-mistakes', '{"p620":"/clones/web"}');
+    INSERT INTO cards (id, title, name, lane, project, kind, delivery, created_at)
+      VALUES (1, 'Sign in to the ad console', 'ad-console', 'main', 'web', 'scout', NULL, ${String(T)}),
+        (2, 'Check the deployed page', 'deployed-page', 'main', 'web', 'ship', 'no-mistakes', ${String(T)});
+    INSERT INTO browser_tabs (target, card, label, opened_at, closed_at, host) VALUES
+      ('TAB-OPEN', 1, 'c-1 ad-console', ${String(T)}, NULL, 'p620'),
+      ('TAB-CLOSED', 2, 'c-2 deployed-page', ${String(T)}, ${String(T + 1)}, 'p620');
+    INSERT INTO entries (id, card, author, kind, body, fields, created_at) VALUES
+      (1, 1, 'main', 'comment', 'Sign in and read the consent page.', '{"task":"Sign in."}', ${String(T)}),
+      (2, 1, 'browser', 'comment', 'The captain is needed in the browser tab: a passkey.', '{"summon":"a passkey","place":"main"}', ${String(T + 1)}),
+      (3, 2, 'main', 'comment', 'Look at the deployed page.', '{"task":"Look."}', ${String(T)});
+  `);
+  db.close();
+}
+
+test("a database that holds browser tabs opens without the table, keeps every card and entry, and a leftover --browser starts cardd with one warning", async () => {
+  const leftover = JSON.stringify({ p620: { cdp: "http://127.0.0.1:9222" } });
+  const cardd = await Cardd.start({}, ["--browser", leftover], writeBrowserDatabase);
+  try {
+    const db = new DatabaseSync(cardd.db, { readOnly: true });
+    const names = db
+      .prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'browser_%'")
+      .all()
+      .map((row) => String(row["name"]));
+    assert.deepEqual(names, []);
+    const latest = readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).length;
+    assert.equal(db.prepare("PRAGMA user_version").get()?.["user_version"], latest);
+    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+    db.close();
+
+    const board = await cardd.board();
+    assert.deepEqual(
+      board.cards.map(({ id }) => id).filter((id) => id <= 2),
+      [1, 2],
+    );
+    const thread = await cardd.thread(1);
+    assert.deepEqual(
+      thread.entries.map(({ author, kind }) => `${author} ${kind}`),
+      ["main comment", "browser comment"],
+    );
+    assert.equal(thread.entries[1]?.fields["summon"], "a passkey");
+
+    const old = await cardd.post(cardd.addLane("sales", "main"), "browser", {
+      action: "open",
+      url: "https://example.com",
+    });
+    assert.deepEqual(old, { status: 400, body: { ok: false, error: "unknown operation browser" } });
+
+    assert.equal(cardd.errors.match(/--browser is ignored/g)?.length, 1, cardd.errors);
+  } finally {
+    await cardd.stop();
+  }
+});

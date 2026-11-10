@@ -165,29 +165,6 @@ export class Cardd {
     db.close();
   }
 
-  breakBrowserTabs(): void {
-    const db = new DatabaseSync(this.db, { timeout: 5000 });
-    db.exec("DROP TABLE browser_tabs");
-    db.close();
-  }
-
-  refuseBrowserTabRetirement(): void {
-    const db = new DatabaseSync(this.db, { timeout: 5000 });
-    db.exec(
-      "CREATE TRIGGER refuse_tab_retirement BEFORE UPDATE ON browser_tabs BEGIN SELECT RAISE(ABORT, 'browser_tabs refuses the retirement'); END",
-    );
-    db.close();
-  }
-
-  startAttemptAfterTabs(card: number): void {
-    const db = new DatabaseSync(this.db, { timeout: 5000 });
-    db.prepare(
-      `UPDATE attempts SET created_at = (SELECT max(opened_at) + 1 FROM browser_tabs WHERE card = ?)
-       WHERE card = ? AND state IN ('starting', 'active')`,
-    ).run(card, card);
-    db.close();
-  }
-
   setRepo(project: string, repo: string): string {
     const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
     return execFileSync("node", args, {

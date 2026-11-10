@@ -1,8 +1,6 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 
-export { keyPresses } from "./cdp-keys.ts";
-
 const Envelope = Type.Object({
   id: Type.Optional(Type.Integer()),
   method: Type.Optional(Type.String()),

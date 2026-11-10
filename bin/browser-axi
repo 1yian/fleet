@@ -1,3 +1,0 @@
-#!/bin/sh
-# Drives the card's own tab in the fleet's shared Chrome: browser-axi --help
-exec node "$(dirname "$(realpath "$0")")/../packages/extension/src/browser-axi.ts" "$@"
