@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { connect } from "node:net";
 import { after, test } from "node:test";
 import { Cardd } from "./cardd.ts";
+import { FakeVault } from "./fake-vault.ts";
 import { Harness } from "./harness.ts";
 import { Scratch } from "./scratch.ts";
 
@@ -19,6 +21,8 @@ after(async () => {
 
 test("a scratch fleet with cardd, fake GitHub, and a Pi", async () => {
   scratch = new Scratch();
+  const vault = new FakeVault([{ key: "portal", value: "a vault the scenario never disposes" }]);
+  assert.ok(existsSync(vault.dir));
   cardd = await Cardd.start();
   h = await Harness.start();
   h.startPi("leak");

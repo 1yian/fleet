@@ -29,11 +29,19 @@ function sweepStaleRoots(): void {
   }
 }
 
+const owned = new Set<string>();
+
+export function sideDir(prefix: string): string {
+  const dir = mkdtempSync(join(outerTmpdir, `${PREFIX}${String(process.pid)}-${prefix}`));
+  owned.add(dir);
+  return dir;
+}
+
 function claimRoot(): string {
   sweepStaleRoots();
-  const root = mkdtempSync(join(outerTmpdir, `${PREFIX}${String(process.pid)}-`));
+  const root = sideDir("");
   const remove = (): void => {
-    rmSync(root, { recursive: true, force: true });
+    for (const dir of owned) rmSync(dir, { recursive: true, force: true });
   };
   process.on("exit", remove);
   for (const name of SIGNALS) {

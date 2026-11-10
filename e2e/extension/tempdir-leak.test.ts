@@ -100,6 +100,7 @@ test("a run whose runner is interrupted leaves nothing in its run folder", async
 test("a killed run is swept by the next run", async () => {
   await runUntilWaiting("SIGKILL", "test");
   assert.notDeepEqual(leftovers(), []);
+  assert.ok(leftovers().some((name) => name.includes("fleet-fake-vault-")));
   assert.equal(await runToEnd("pass"), 0);
   assert.deepEqual(leftovers(), []);
 });
