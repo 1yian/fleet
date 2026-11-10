@@ -211,6 +211,14 @@ function deliverAfterSync(
   );
 }
 
+function idsClearedOnSettle(pi: ExtensionAPI): Set<number> {
+  const ids = new Set<number>();
+  pi.on("agent_settled", () => {
+    ids.clear();
+  });
+  return ids;
+}
+
 function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["role"]): void {
   applyCachePolicy(role);
   applyCacheBreakLog(pi, ctx);
@@ -232,10 +240,7 @@ function start(
   const runInProgress = trackRun(pi);
   const loaded = idsInSessionFile(sessionFile);
   const injected = new Set(loaded);
-  const injectedAgain = new Set<number>();
-  pi.on("agent_settled", () => {
-    injectedAgain.clear();
-  });
+  const injectedAgain = idsClearedOnSettle(pi);
   let unreadable: string | undefined;
   const maintenance: { queue?: MaintenanceQueue } = {};
   const link = new Link({
