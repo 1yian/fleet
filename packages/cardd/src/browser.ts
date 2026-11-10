@@ -166,25 +166,11 @@ export class Browser {
   }> {
     try {
       const site = this.site(host);
-      const uninspected = current ? [] : await this.enterAll(tabs);
-      const listed = await site.listing(tabs);
-      for (const target of uninspected) listed.targets.delete(target);
-      return { ...listed, hide: site.hider(captain) };
+      if (!current) site.assumeEntered(tabs);
+      return { ...(await site.listing(tabs)), hide: site.hider(captain) };
     } catch (error) {
       return { targets: new Map(), standing: new Map(), problem: reason(error), hide: () => "" };
     }
-  }
-
-  private async enterAll(tabs: readonly Tab[]): Promise<string[]> {
-    const failed = await Promise.all(
-      tabs.map((tab) =>
-        this.enter(tab.card, tab.target).then(
-          (): string[] => [],
-          () => [tab.target],
-        ),
-      ),
-    );
-    return failed.flat();
   }
 
   run(card: number, args: BrowserArgs, declared: string | undefined): Promise<Outcome> {

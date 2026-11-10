@@ -59,7 +59,7 @@ interface Scope {
   readonly frame: string;
   readonly closed: readonly number[];
   readonly texts: readonly number[];
-  readonly inputs: readonly { nodeId: number; backendNodeId: number }[];
+  readonly inputs: readonly { nodeId: number; backendNodeId: number; shadowed: boolean }[];
 }
 
 const TEXT_NODE = 3;
@@ -158,8 +158,21 @@ function textsOf(
   return owned;
 }
 
+function shadowedIn(
+  parents: ReadonlyMap<number, number>,
+  roots: ReadonlySet<number>,
+  from: number,
+): boolean {
+  for (let at: number | undefined = from; at !== undefined; at = parents.get(at))
+    if (roots.has(at)) return true;
+  return false;
+}
+
 function scopesOf(nodes: readonly FlatNode[]): Scope[] {
   const { parents, frames } = indexOf(nodes);
+  const roots = new Set(
+    nodes.flatMap((node) => (node.shadowRoots ?? []).map((root) => root.nodeId)),
+  );
   const texts = textsOf(nodes, parents);
   const closed = new Map<string, number[]>();
   for (const node of nodes)
@@ -185,7 +198,11 @@ function scopesOf(nodes: readonly FlatNode[]): Scope[] {
           .filter(
             (each) => each.nodeName === "INPUT" && frameOf(parents, frames, each.nodeId) === frame,
           )
-          .map(({ nodeId, backendNodeId }) => ({ nodeId, backendNodeId })),
+          .map(({ nodeId, backendNodeId }) => ({
+            nodeId,
+            backendNodeId,
+            shadowed: shadowedIn(parents, roots, nodeId),
+          })),
       };
     });
   for (const frame of closed.keys())
@@ -196,9 +213,11 @@ function scopesOf(nodes: readonly FlatNode[]): Scope[] {
 const isFrameOwner = (node: FlatNode): boolean =>
   ["IFRAME", "FRAME"].includes(node.nodeName.toUpperCase());
 
+export type Suspicion = "none" | "blind" | "all";
+
 type Check =
   | { readonly kind: "credential"; readonly exposed: (text: string) => boolean }
-  | { readonly kind: "password"; readonly known: Set<string>; readonly restored: boolean };
+  | { readonly kind: "password"; readonly known: Set<string>; readonly suspicion: Suspicion };
 
 class Scan {
   private readonly check: Check;
@@ -345,8 +364,14 @@ class Scan {
       const keys = scope.inputs.map(
         ({ backendNodeId }) => `${scope.frame}:${String(backendNodeId)}`,
       );
-      const known = this.check.known;
+      const { known, suspicion } = this.check;
+      const foreign = page !== this.touched[0];
       const remembered = keys.flatMap((key, index) => (known.has(key) ? [index] : []));
+      const suspected = scope.inputs.flatMap((input, index) =>
+        suspicion === "all" || (suspicion === "blind" && (foreign || input.shadowed))
+          ? [index]
+          : [],
+      );
       const held = parseCdp(
         ValueSchema,
         await call(page, "Runtime.callFunctionOn", {
@@ -355,7 +380,7 @@ class Scan {
           arguments: [
             { value: closed.length },
             { value: remembered },
-            { value: this.check.restored },
+            { value: suspected },
             ...closed,
             ...inputs,
           ],
@@ -400,9 +425,9 @@ class Scan {
 export async function holdsPassword(
   page: Page,
   known: Set<string>,
-  restored = false,
+  suspicion: Suspicion = "none",
 ): Promise<boolean> {
-  const scan = new Scan({ kind: "password", known, restored });
+  const scan = new Scan({ kind: "password", known, suspicion });
   try {
     return await scan.shows(page);
   } finally {

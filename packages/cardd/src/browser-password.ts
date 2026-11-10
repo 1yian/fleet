@@ -1,6 +1,6 @@
 export const PASSWORD_WORLD = "fleet-password";
 
-export const PASSWORD_CHECK = `function (count, remembered, restored, ...nodes) {
+export const PASSWORD_CHECK = `function (count, remembered, suspected, ...nodes) {
   if (globalThis.__fleetPasswords === undefined) {
     const passwords = new WeakSet();
     const roots = new WeakSet();
@@ -38,13 +38,12 @@ export const PASSWORD_CHECK = `function (count, remembered, restored, ...nodes) 
   for (let i = 0; i < count; i += 2) tracker.shadows.set(nodes[i], nodes[i + 1]);
   const fields = nodes.slice(count);
   for (const index of remembered) tracker.passwords.add(fields[index]);
-  if (restored) {
-    for (const field of fields) {
-      if (["text", "email", "tel", "url", "search", "number", "password"].includes(field.type)) tracker.passwords.add(field);
-    }
+  for (const index of suspected) {
+    const field = fields[index];
+    if (["text", "email", "tel", "url", "search", "number", "password"].includes(field.type)) tracker.passwords.add(field);
   }
   const held = tracker.scan(this);
   return { held, passwords: fields.flatMap((field, index) => tracker.passwords.has(field) ? [index] : []) };
 }`;
 
-export const PASSWORD_INIT = `(${PASSWORD_CHECK}).call(document, 0, [], false);`;
+export const PASSWORD_INIT = `(${PASSWORD_CHECK}).call(document, 0, [], []);`;

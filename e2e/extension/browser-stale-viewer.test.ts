@@ -3,7 +3,7 @@ import { afterEach, test } from "node:test";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { WORKER_HOST } from "../support/fleet.ts";
-import { embedLogin, type Embedding, type Login } from "../support/login-embedding.ts";
+import { embedLogin, type Login } from "../support/login-embedding.ts";
 import { until } from "../support/login-fixtures.ts";
 import { StaleLink, type Vintage } from "../support/stale-link.ts";
 import { pointInPicture, startViewer, stopViewers, type Viewers } from "../support/viewer.ts";
@@ -34,11 +34,11 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function begin(embedding: Embedding = "document"): Promise<void> {
-  lab = await BrowserLab.start({ isolated: embedding === "cross-frame" });
+async function begin(isolated = false): Promise<void> {
+  lab = await BrowserLab.start({ isolated });
   worker = await lab.worker("Users sign in");
   await worker.act({ action: "open", url: lab.site.url("/entry") });
-  login = await embedLogin(lab, worker, embedding);
+  login = await embedLogin(lab, worker, "document");
   const found: unknown = JSON.parse(
     await worker.act({ action: "eval", expression: "[innerWidth, innerHeight]" }),
   );
@@ -130,9 +130,10 @@ for (const [vintage, sends] of VINTAGES) {
 for (const embedding of ["closed-shadow", "cross-frame"] as const) {
   for (const flags of [["--captain"], []]) {
     const mode = flags.length === 0 ? "gated" : "captain's";
-    test(`a ${mode} viewer that sends no build id cannot put a password revealed before typing in a ${embedding} past the worker`, async () => {
-      await begin(embedding);
+    test(`a ${mode} viewer that sends no build id cannot put a password past the worker when the login appears in a ${embedding} after the tab was listed and is revealed before typing`, async () => {
+      await begin(embedding === "cross-frame");
       const page = await viewerPage(flags, "no-build");
+      login = await embedLogin(lab, worker, embedding);
       await revealPassword(page);
       await typePassword(page);
       await assert.rejects(
