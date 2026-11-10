@@ -16,6 +16,7 @@ export const FLEET_ROW_TYPES: readonly string[] = [
   "fleet-update",
   "fleet-clones",
   "fleet-lanes",
+  "fleet-disk",
 ];
 
 function fleetRow(row: object): boolean {

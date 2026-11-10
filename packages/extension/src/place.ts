@@ -5,6 +5,7 @@ export async function openWorkerWorkspace(
   host: string,
   cwd: string,
   card: { id: number; name: string; lane: string },
+  environment: readonly string[],
 ): Promise<string> {
   const created = await herdr(host, [
     "workspace",
@@ -14,6 +15,7 @@ export async function openWorkerWorkspace(
     "--label",
     card.name,
     "--no-focus",
+    ...environment.flatMap((pair) => ["--env", pair]),
   ]);
   const workspace = field(records([created["workspace"]])[0], "workspace_id");
   if (workspace !== undefined) {

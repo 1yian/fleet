@@ -17,7 +17,7 @@ Every fleet mate sets its messages apart in the terminal. Each message has one m
 
 - The captain's messages are labelled `captain`.
 - A mate's replies have a rule with no name.
-- Rows that the fleet delivers (`fleet`, `fleet-link`, `fleet-update`, `fleet-clones`, `fleet-lanes`) are labelled `fleet`. They are drawn as one tinted box without Pi's own `[fleet]` label above the text, because the text already starts with `[fleet]`.
+- Rows that the fleet delivers (`fleet`, `fleet-link`, `fleet-update`, `fleet-clones`, `fleet-lanes`, `fleet-disk`) are labelled `fleet`. They are drawn as one tinted box without Pi's own `[fleet]` label above the text, because the text already starts with `[fleet]`.
 - The rule is one muted color (the theme's `borderMuted`) and fills the width. It is redrawn at every width, so a resize keeps it whole.
 - There is one rule for each Pi message, not for each paragraph or text block. A reply with several paragraphs, several text blocks, or thinking before the text has one rule.
 - A reply with nothing to show has no rule. That covers an empty reply and a reply that only calls tools. Calm hides short working notes, and a message it empties has no rule either.

@@ -15,6 +15,7 @@ import { bwsConfig, isRecord, readLaneConfig, strings, type LaneConfig } from ".
 import { checkLaneSecrets } from "./lane-secrets.ts";
 import { costRows } from "./cost.ts";
 import { setUpMemory } from "./memory.ts";
+import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences } from "./standing.ts";
 import { hostProblems } from "./prerequisites.ts";
@@ -23,7 +24,7 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T|--bws JSON | home memory <lane> | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]";
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--largest PATH [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T|--bws JSON | home memory <lane> | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -45,6 +46,8 @@ const VALUE_OPTIONS = new Set([
   "--restart",
   "--content",
   "--script",
+  "--largest",
+  "--by",
 ]);
 const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
   if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
@@ -96,6 +99,9 @@ function parseCommandLine() {
       content: { type: "string" },
       absent: { type: "boolean" },
       script: { type: "string" },
+      tidy: { type: "boolean" },
+      largest: { type: "string" },
+      by: { type: "string" },
     },
   });
 }
@@ -262,6 +268,18 @@ switch (command ?? "") {
     console.log(JSON.stringify(costRows(root, Date.now())));
     break;
   }
+  case "scratch":
+    for (const line of scratchLines(
+      {
+        tidy: values.tidy === true,
+        largest: values.largest,
+        by: values.by,
+        json: values.json === true,
+      },
+      Date.now(),
+    ))
+      console.log(line);
+    break;
   case "migrate":
     for (const line of values.undo === true
       ? undoMigration(root, values.from)

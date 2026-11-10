@@ -47,6 +47,7 @@ function claimRoot(): string {
 
 const runRoot = claimRoot();
 process.env["TMPDIR"] = runRoot;
+process.env["FLEET_HOST_DIR"] = join(runRoot, "host");
 if (process.env["NODE_COMPILE_CACHE"] !== undefined) {
   process.env["NODE_COMPILE_CACHE"] = join(runRoot, "node-compile-cache");
 }

@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tempDir } from "./run-root.ts";
 
 const FAKE_BWS = fileURLToPath(new URL("./fake-bws", import.meta.url));
 
@@ -29,7 +30,7 @@ export class FakeVault {
     identity: VaultIdentity = { token: TOKEN, project: PROJECT_ID },
   ) {
     this.identity = identity;
-    this.dir = mkdtempSync("/tmp/fleet-fake-vault-");
+    this.dir = tempDir("fleet-fake-vault-");
     this.tokenFile = join(this.dir, "browser-logins.token");
     mkdirSync(this.dir, { recursive: true });
     writeFileSync(join(this.dir, "token"), identity.token);

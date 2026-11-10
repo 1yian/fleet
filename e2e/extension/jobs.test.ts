@@ -77,6 +77,30 @@ test("a run_long result wakes the worker, and the wait is not a stall", async ()
   assert.deepEqual(await labels(), ["1"]);
 });
 
+test("a run_long job runs with the worker's scratch folder, temp folder, and compile cache, not the host's defaults", async () => {
+  const scratch = join(h.dir, "card");
+  const cache = join(h.dir, "cache");
+  mkdirSync(join(scratch, "tmp"), { recursive: true });
+  env = {
+    ...env,
+    FLEET_SCRATCH: scratch,
+    TMPDIR: join(scratch, "tmp"),
+    NODE_COMPILE_CACHE: cache,
+  };
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "tests", command: 'echo "$FLEET_SCRATCH $TMPDIR $NODE_COMPILE_CACHE"' },
+  }));
+  h.onModel(() => ({ text: "waiting for the tests" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "seen" } }));
+  worker();
+  await fleet.main.waitForEntries(1);
+  assert.equal(
+    lastUser(await h.waitForCall(2)),
+    `[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 0: ${scratch} ${join(scratch, "tmp")} ${cache}`,
+  );
+});
+
 test("a finished job releases its tab while a running job's tab stays", async () => {
   const slow = commandAwaitingGo(9);
   h.onModel(() => ({ tool: "run_long", args: { label: "quick", command: "echo fast" } }));

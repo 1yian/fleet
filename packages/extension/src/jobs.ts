@@ -8,6 +8,7 @@ import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
 import { field, herdr, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
+import { forwardedEnvironment } from "./scratch.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
@@ -110,6 +111,7 @@ export class Jobs {
         "--label",
         tab,
         "--no-focus",
+        ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
       await herdr("local", [
         "pane",

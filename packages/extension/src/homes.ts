@@ -21,6 +21,7 @@ import {
   readLaneConfig,
   type LaneConfig,
 } from "./lane-config.ts";
+import { withCompileCache } from "./scratch.ts";
 import { isMateWorkspace, mateTitle } from "./titles.ts";
 
 interface LaneHome {
@@ -186,7 +187,7 @@ async function start(root: string, info: LaneHome): Promise<void> {
   if (pane === undefined) throw new Error(`workspace ${mateTitle(info.lane)} has no pane`);
   const pi = ["pi", "--continue", ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
-  const command = direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi];
+  const command = withCompileCache(direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi]);
   await herdr(["pane", "run", pane, `cd ${quote(info.home)} && ${command.map(quote).join(" ")}`]);
   await untilPiShows(pane);
   mkdirSync(join(info.home, "state"), { recursive: true });

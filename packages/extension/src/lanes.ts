@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
+import { diskWatch, type Alert } from "./disk-alarm.ts";
 import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
@@ -246,6 +247,14 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
       tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
     }
   };
+  const sayDisk = ({ text, urgent }: Alert): void => {
+    if (shutDown) return;
+    pi.sendMessage(
+      { customType: "fleet-disk", content: `[fleet] disk: ${text}`, display: true },
+      urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
+    );
+  };
+  const watchDisk = diskWatch(home, (host, args) => fleet(config, host, args), sayDisk);
   const checkHost = async (host: string): Promise<void> => {
     try {
       await share(host);
@@ -259,6 +268,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
       const held = (row: Record<string, unknown>) =>
         `${text(row, "lane")} on ${host} is held: ${text(row, "detail")}`;
       tell(of("held").map(held), true);
+      await watchDisk(host);
     } catch (error) {
       if (unreachable.has(host)) return;
       unreachable.add(host);
