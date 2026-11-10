@@ -178,7 +178,7 @@ const ADVICE: Readonly<Record<Exclude<Label, "ok">, string>> = {
 };
 
 function describe(label: Exclude<Label, "ok">, url: URL, count: number): string {
-  return `[fleet] cardd probe: ${ADVICE[label]} (${label}; ${String(count)} failing probes in a row against ${url.host}). Tell the captain. Do not restart or kill cardd yourself: new workers and lanes may fail to connect until it recovers.`;
+  return `[fleet] cardd probe: ${ADVICE[label]} (${label}; ${String(count)} failing probes in a row against ${url.host}). Tell the captain. New workers and lanes may fail to connect until it recovers. Restart cardd on its host only when a task needs it, and check its log after.`;
 }
 
 export function watchMainCardd(
