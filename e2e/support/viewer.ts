@@ -31,7 +31,10 @@ export async function startViewer(
   const access = join(tempDir("fleet-viewer-access-"), "access.json");
   writeFileSync(
     access,
-    JSON.stringify({ url: lab.cardd.url, ...(source ?? { token: lab.mainToken, host: WORKER_HOST }) }),
+    JSON.stringify({
+      url: lab.cardd.url,
+      ...(source ?? { token: lab.mainToken, host: WORKER_HOST }),
+    }),
     { mode: 0o600 },
   );
   const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open", ...flags], {

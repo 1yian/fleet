@@ -92,7 +92,8 @@ async function inChrome(expression: string): Promise<unknown> {
       const listed = await cdp.send("Target.getTargets");
       if (!isRecord(listed)) throw new Error("Chrome did not list its targets");
       const frame = records(listed["targetInfos"]).find(
-        (each) => each["type"] === "iframe" && each["url"] === lab.site.url("/entry", "login.example.test"),
+        (each) =>
+          each["type"] === "iframe" && each["url"] === lab.site.url("/entry", "login.example.test"),
       );
       const id = frame?.["targetId"];
       return typeof id === "string" ? await lab.chrome.evaluate(id, expression) : undefined;
@@ -100,12 +101,14 @@ async function inChrome(expression: string): Promise<unknown> {
       cdp.close();
     }
   }
-  const tab = (await lab.chrome.pages()).find(
-    (each) => each.title.startsWith(`c-${String(worker.card.id)} `),
+  const tab = (await lab.chrome.pages()).find((each) =>
+    each.title.startsWith(`c-${String(worker.card.id)} `),
   );
   return tab === undefined
     ? undefined
-    : lab.chrome.evaluate(tab.id, expression.replaceAll("document.", `${fields}.`)).catch(() => undefined);
+    : lab.chrome
+        .evaluate(tab.id, expression.replaceAll("document.", `${fields}.`))
+        .catch(() => undefined);
 }
 
 const fieldIs = (name: string, wanted: string): Promise<void> =>
@@ -118,6 +121,15 @@ const fieldIs = (name: string, wanted: string): Promise<void> =>
   ).then(() => undefined);
 
 const PASSWORD_VALUE = 'document.querySelector("input[name=p]").value';
+
+async function refusesCopy(target: string): Promise<void> {
+  const copied = check(
+    BROWSER_OPS["browser.copy"].result,
+    await worker.session.call("browser.copy", { target }),
+  );
+  assert.equal(copied.text, null);
+  assert.match(copied.note ?? "", ENTERED);
+}
 
 test("a password that the captain types is kept from the worker's eval, screenshots, HTML and copy until the page moves on", async () => {
   await begin(["--captain"]);
@@ -225,12 +237,7 @@ test("a captain's middle-button paste protects a fresh form before any viewer ke
   await assert.rejects(worker.shoot(true), ENTERED);
   await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
   const target = await tabOf(lab, worker);
-  const copied = check(
-    BROWSER_OPS["browser.copy"].result,
-    await worker.session.call("browser.copy", { target }),
-  );
-  assert.equal(copied.text, null);
-  assert.match(copied.note ?? "", ENTERED);
+  await refusesCopy(target);
   const framed = check(
     BROWSER_OPS["browser.frame"].result,
     await worker.session.call("browser.frame", { target }),
@@ -320,31 +327,38 @@ for (const embedding of ["closed-shadow", "cross-frame"]) {
       await begin(flags, embedding);
       if (embedding === "closed-shadow") {
         assert.equal(
-          await worker.act({ action: "eval", expression: 'document.getElementById("host").shadowRoot === null' }),
+          await worker.act({
+            action: "eval",
+            expression: 'document.getElementById("host").shadowRoot === null',
+          }),
           "true",
         );
       }
       await clickField(REVEAL);
       await until(
-        async () => (await inChrome('document.querySelector("input[name=p]").type')) === "text" ? true : undefined,
+        async () =>
+          (await inChrome('document.querySelector("input[name=p]").type')) === "text"
+            ? true
+            : undefined,
         "the empty password to be revealed before typing",
       );
-      assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/entry"');
+      assert.equal(
+        await worker.act({ action: "eval", expression: "location.pathname" }),
+        '"/entry"',
+      );
       assert.ok((await worker.shoot()).length > 0);
       await clickField(PASSWORD_FIELD);
       await page.keyboard.type(TYPED);
       await fieldIs("p", TYPED);
-      await assert.rejects(worker.act({ action: "eval", expression: "location.pathname" }), ENTERED);
+      await assert.rejects(
+        worker.act({ action: "eval", expression: "location.pathname" }),
+        ENTERED,
+      );
       await assert.rejects(worker.shoot(), ENTERED);
       await assert.rejects(worker.shoot(true), ENTERED);
       await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
       const target = await tabOf(lab, worker);
-      const copied = check(
-        BROWSER_OPS["browser.copy"].result,
-        await worker.session.call("browser.copy", { target }),
-      );
-      assert.equal(copied.text, null);
-      assert.match(copied.note ?? "", ENTERED);
+      await refusesCopy(target);
       const framed = check(
         BROWSER_OPS["browser.frame"].result,
         await worker.session.call("browser.frame", { target }),
@@ -356,7 +370,10 @@ for (const embedding of ["closed-shadow", "cross-frame"]) {
       await page.keyboard.press("ControlOrMeta+A");
       await page.keyboard.press("Backspace");
       await fieldIs("p", "");
-      assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/entry"');
+      assert.equal(
+        await worker.act({ action: "eval", expression: "location.pathname" }),
+        '"/entry"',
+      );
       assert.ok((await worker.shoot()).length > 0);
       await worker.act({ action: "read", html: true });
     });
@@ -376,8 +393,11 @@ test("a reveal click is not dispatched when provenance cannot be established", a
   await clickField(REVEAL);
   assert.equal((await refused).status(), 502);
   await until(
-    async () => (await page.getByRole("alert").isVisible()) &&
-      ((await page.getByRole("alert").textContent()) ?? "").startsWith("Input failed:") ? true : undefined,
+    async () =>
+      (await page.getByRole("alert").isVisible()) &&
+      ((await page.getByRole("alert").textContent()) ?? "").startsWith("Input failed:")
+        ? true
+        : undefined,
     "a visible input failure instead of a silently discarded click",
   );
   assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "password");
@@ -397,18 +417,28 @@ for (const embedding of ["frame", "shadow", "cross-frame"]) {
       await clickField(PASSWORD_FIELD);
       await page.keyboard.type(TYPED);
       await fieldIs("p", TYPED);
-      await assert.rejects(worker.act({ action: "eval", expression: `${fields}.querySelector("input[name=p]").value` }), ENTERED);
+      await assert.rejects(
+        worker.act({
+          action: "eval",
+          expression: `${fields}.querySelector("input[name=p]").value`,
+        }),
+        ENTERED,
+      );
       await worker.act({ action: "click", x: REVEAL.x, y: REVEAL.y });
       assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "text");
-      await assert.rejects(worker.act({ action: "eval", expression: "location.pathname" }), ENTERED);
+      await assert.rejects(
+        worker.act({ action: "eval", expression: "location.pathname" }),
+        ENTERED,
+      );
       await assert.rejects(worker.shoot(), ENTERED);
       await assert.rejects(worker.shoot(true), ENTERED);
       await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
       const target = await tabOf(lab, worker);
-      const copied = check(BROWSER_OPS["browser.copy"].result, await worker.session.call("browser.copy", { target }));
-      assert.equal(copied.text, null);
-      assert.match(copied.note ?? "", ENTERED);
-      const framed = check(BROWSER_OPS["browser.frame"].result, await worker.session.call("browser.frame", { target }));
+      await refusesCopy(target);
+      const framed = check(
+        BROWSER_OPS["browser.frame"].result,
+        await worker.session.call("browser.frame", { target }),
+      );
       assert.equal(framed.image, null);
       assert.match(framed.note ?? "", ENTERED);
       await worker.act({ action: "click", x: PASSWORD_FIELD.x, y: PASSWORD_FIELD.y });
@@ -416,9 +446,15 @@ for (const embedding of ["frame", "shadow", "cross-frame"]) {
       await page.keyboard.press("ControlOrMeta+A");
       await page.keyboard.press("Backspace");
       await fieldIs("p", "");
-      assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/entry"');
+      assert.equal(
+        await worker.act({ action: "eval", expression: "location.pathname" }),
+        '"/entry"',
+      );
       assert.ok((await worker.shoot()).length > 0);
-      const cleared = check(BROWSER_OPS["browser.frame"].result, await worker.session.call("browser.frame", { target }));
+      const cleared = check(
+        BROWSER_OPS["browser.frame"].result,
+        await worker.session.call("browser.frame", { target }),
+      );
       assert.equal(cleared.note, null);
       assert.ok(cleared.image !== null);
       await worker.act({ action: "read", html: true });
@@ -440,7 +476,10 @@ test("surviving manual passwords stay protected after restart, open and Back wit
   await lab.cardd.restart();
   worker = await lab.reconnect(before);
   await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
-  await assert.rejects(worker.act({ action: "eval", expression: PASSWORD_VALUE }), /credential|password entered/);
+  await assert.rejects(
+    worker.act({ action: "eval", expression: PASSWORD_VALUE }),
+    /credential|password entered/,
+  );
   await worker.act({ action: "open", url: lab.site.url("/a") });
   assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
   await worker.act({ action: "back" });
@@ -448,9 +487,7 @@ test("surviving manual passwords stay protected after restart, open and Back wit
   await assert.rejects(worker.act({ action: "eval", expression: PASSWORD_VALUE }), ENTERED);
   await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
   await assert.rejects(worker.shoot(), ENTERED);
-  const copied = check(BROWSER_OPS["browser.copy"].result, await worker.session.call("browser.copy", { target }));
-  assert.equal(copied.text, null);
-  assert.match(copied.note ?? "", ENTERED);
+  await refusesCopy(target);
   await worker.act({ action: "forward" });
   assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
 });

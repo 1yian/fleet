@@ -61,22 +61,39 @@ test("a captain viewer navigates a selected tab on another host without replacin
   lab = await HostLab.start([{ name: "alpha" }, { name: "beta" }]);
   const card = await newCard(lab.main, "Users navigate a remote tab");
   for (const path of ["/a", "/b"])
-    await lab.main.call("browser", { card: card.id, host: "beta", action: "open", url: lab.site.url(path) });
+    await lab.main.call("browser", {
+      card: card.id,
+      host: "beta",
+      action: "open",
+      url: lab.site.url(path),
+    });
   const tab = (await lab.chrome("beta").pages())[0];
   assert.ok(tab !== undefined);
   const viewer = await lab.viewer("alpha");
   const entered = await fetch(viewer);
   const cookie = entered.headers.get("set-cookie")?.split(";")[0] ?? "";
-  for (const [action, path] of [["back", "/a"], ["forward", "/b"], ["reload", "/b"], ["open", "/pad"]] as const) {
-    const response = await fetch(new URL("/api/nav", viewer), {
+  for (const [action, path] of [
+    ["back", "/a"],
+    ["forward", "/b"],
+    ["reload", "/b"],
+    ["open", "/pad"],
+  ] as const) {
+    const response: Response = await fetch(new URL("/api/nav", viewer), {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ target: tab.id, action, ...(action === "open" ? { url: lab.site.url(path) } : {}) }),
+      body: JSON.stringify({
+        target: tab.id,
+        action,
+        ...(action === "open" ? { url: lab.site.url(path) } : {}),
+      }),
     });
     assert.equal(response.status, 200, await response.text());
     assert.deepEqual(await lab.pathsOn("beta"), [path]);
     assert.deepEqual(await lab.pathsOn("alpha"), []);
-    assert.deepEqual((await lab.chrome("beta").pages()).map(({ id }) => id), [tab.id]);
+    assert.deepEqual(
+      (await lab.chrome("beta").pages()).map(({ id }) => id),
+      [tab.id],
+    );
   }
 });
 

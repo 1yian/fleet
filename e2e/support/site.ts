@@ -12,7 +12,9 @@ const MONOSPACE = "<style>html, body, input { font-family: monospace; }</style>"
 
 const withFont = (page: string): string => page.replace("</title>", `</title>${MONOSPACE}`);
 
-const entryPage = (extra: string): string => `<!doctype html><title>Entry</title><body style="margin:0">
+const entryPage = (
+  extra: string,
+): string => `<!doctype html><title>Entry</title><body style="margin:0">
     <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/landing'; })">
       <input name="u" type="text" autocomplete="username" style="position:fixed;left:20px;top:20px;width:300px;height:32px;font-size:18px">
       <input name="p" type="password" oninput="this.setAttribute('value', this.value)" style="position:fixed;left:20px;top:70px;width:300px;height:32px;font-size:18px">
