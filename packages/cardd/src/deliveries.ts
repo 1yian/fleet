@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { check, EntrySchema, PushedEntrySchema, type Entry } from "@fleet/protocol";
 import type { Draft } from "./change.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
@@ -13,22 +13,143 @@ export interface Push {
   readonly again: boolean;
 }
 
-export function confirm(db: DatabaseSync, session: string, inFile: readonly number[]): number {
-  const mark = db.prepare(
-    "UPDATE deliveries SET state = 'confirmed', intake = 'taken', updated_at = ? WHERE session = ? AND entry = ?",
+const DELIVERY_STATES = [
+  "pending",
+  "pushed",
+  "resent",
+  "pushed-again",
+  "filed",
+  "acknowledged",
+  "confirmed",
+] as const;
+type DeliveryState = (typeof DELIVERY_STATES)[number];
+type DeliveryEvent = "push" | "ack" | "confirm" | "resend";
+
+export const QUEUED_DELIVERY = "'pending', 'resent'";
+export const UNTAKEN_DELIVERY = "'pending', 'pushed', 'resent', 'pushed-again', 'filed'";
+export const TAKEN_DELIVERY = "'acknowledged', 'confirmed'";
+
+const AT_CONNECT = "'pending', 'pushed', 'resent', 'pushed-again', 'acknowledged'";
+const WHEN_UP = QUEUED_DELIVERY;
+const AGAIN = "'resent', 'pushed-again'";
+const CHASEABLE = "'pushed', 'pushed-again', 'filed'";
+
+function deliveryState(value: unknown): DeliveryState {
+  const found = DELIVERY_STATES.find((state) => state === value);
+  if (found !== undefined) return found;
+  throw new Error(`bad delivery state: ${JSON.stringify(value)}`);
+}
+
+function afterPush(state: DeliveryState): DeliveryState {
+  switch (state) {
+    case "pending":
+      return "pushed";
+    case "resent":
+      return "pushed-again";
+    case "pushed":
+    case "pushed-again":
+    case "filed":
+    case "acknowledged":
+    case "confirmed":
+      return state;
+    default: {
+      const unreachable: never = state;
+      throw new Error(unreachable);
+    }
+  }
+}
+
+function afterAck(state: DeliveryState): DeliveryState {
+  switch (state) {
+    case "filed":
+    case "confirmed":
+      return "confirmed";
+    case "pending":
+    case "pushed":
+    case "resent":
+    case "pushed-again":
+    case "acknowledged":
+      return "acknowledged";
+    default: {
+      const unreachable: never = state;
+      throw new Error(unreachable);
+    }
+  }
+}
+
+function afterConfirm(state: DeliveryState): DeliveryState {
+  switch (state) {
+    case "acknowledged":
+    case "confirmed":
+      return "confirmed";
+    case "pending":
+    case "pushed":
+    case "resent":
+    case "pushed-again":
+    case "filed":
+      return "filed";
+    default: {
+      const unreachable: never = state;
+      throw new Error(unreachable);
+    }
+  }
+}
+
+function afterResend(state: DeliveryState): DeliveryState {
+  switch (state) {
+    case "pushed":
+    case "pushed-again":
+    case "filed":
+      return "resent";
+    case "pending":
+    case "resent":
+    case "acknowledged":
+    case "confirmed":
+      return state;
+    default: {
+      const unreachable: never = state;
+      throw new Error(unreachable);
+    }
+  }
+}
+
+function nextDelivery(state: DeliveryState, event: DeliveryEvent): DeliveryState {
+  switch (event) {
+    case "push":
+      return afterPush(state);
+    case "ack":
+      return afterAck(state);
+    case "confirm":
+      return afterConfirm(state);
+    case "resend":
+      return afterResend(state);
+    default: {
+      const unreachable: never = event;
+      throw new Error(unreachable);
+    }
+  }
+}
+
+function apply(
+  read: StatementSync,
+  write: StatementSync,
+  session: string,
+  entry: number,
+  event: DeliveryEvent,
+  now: number,
+): void {
+  const row = read.get(session, entry);
+  if (row === undefined) return;
+  write.run(nextDelivery(deliveryState(row["state"]), event), now, session, entry);
+}
+
+export function confirm(db: DatabaseSync, session: string, inFile: readonly number[]): void {
+  const read = db.prepare("SELECT state FROM deliveries WHERE session = ? AND entry = ?");
+  const write = db.prepare(
+    "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ?",
   );
-  for (const entry of inFile) mark.run(Date.now(), session, entry);
-  const row = db
-    .prepare(
-      `SELECT coalesce(
-         (SELECT min(entry) - 1 FROM deliveries WHERE session = ?1 AND state <> 'confirmed'),
-         (SELECT max(entry) FROM deliveries WHERE session = ?1),
-         0) AS low`,
-    )
-    .get(session);
-  const low = Number(row?.["low"]);
-  db.prepare("UPDATE sessions SET low_water = ? WHERE id = ?").run(low, session);
-  return low;
+  const now = Date.now();
+  for (const entry of inFile) apply(read, write, session, entry, "confirm", now);
 }
 
 const QUIET_STATUSES: ReadonlySet<unknown> = new Set(["working", "paused", "note", "in-review"]);
@@ -72,13 +193,13 @@ export function toPush(
   atConnect: boolean,
   batching: Batching,
 ): Push[] {
-  const states = atConnect ? "('pending', 'pushed', 'acknowledged')" : "('pending')";
+  const states = atConnect ? AT_CONNECT : WHEN_UP;
   const rows = json(
     db,
     `SELECT json_object('entry', json(${ENTRY_JSON}), 'name', c.name,
-       'again', json(iif(d.intake = 'resent', 'true', 'false'))) AS j
+       'again', json(iif(d.state IN (${AGAIN}), 'true', 'false'))) AS j
      FROM deliveries d JOIN entries e ON e.id = d.entry JOIN cards c ON c.id = e.card
-     WHERE d.session = ? AND d.state IN ${states} ORDER BY e.id`,
+     WHERE d.session = ? AND d.state IN (${states}) ORDER BY e.id`,
     session,
   );
   const queued = new Set(
@@ -108,26 +229,28 @@ export function toPush(
   const release = !holding || urgent || releasable(db, session, batching);
   if (release) db.prepare("UPDATE sessions SET batch_since = NULL WHERE id = ?").run(session);
   const pushes = all.filter(({ held }) => release || !held).map(({ push }) => push);
-  const mark = db.prepare(
-    "UPDATE deliveries SET state = 'pushed', updated_at = ? WHERE session = ? AND entry = ? AND state = 'pending'",
+  const read = db.prepare("SELECT state FROM deliveries WHERE session = ? AND entry = ?");
+  const write = db.prepare(
+    "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ?",
   );
-  for (const { entry } of pushes) mark.run(Date.now(), session, entry.id);
+  const now = Date.now();
+  for (const { entry } of pushes) apply(read, write, session, entry.id, "push", now);
   return pushes;
 }
 
 export function acknowledge(db: DatabaseSync, session: string, entry: number): void {
-  db.prepare(
-    `UPDATE deliveries SET intake = 'taken',
-       state = iif(state IN ('pending', 'pushed'), 'acknowledged', state), updated_at = ?
-     WHERE session = ? AND entry = ?`,
-  ).run(Date.now(), session, entry);
+  const read = db.prepare("SELECT state FROM deliveries WHERE session = ? AND entry = ?");
+  const write = db.prepare(
+    "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ?",
+  );
+  apply(read, write, session, entry, "ack", Date.now());
 }
 
 const UNREAD_RESENDS = 3;
 
-const NOT_TAKEN = `SELECT d.session AS session, d.resends AS resends, d.told_at AS told, d.updated_at AS updated, s.role AS role, ${ENTRY_JSON} AS j
+const CHASE_ROWS = `SELECT d.session AS session, d.state AS state, d.resends AS resends, d.told_at AS told, d.updated_at AS updated, s.role AS role, ${ENTRY_JSON} AS j
   FROM deliveries d JOIN sessions s ON s.id = d.session JOIN entries e ON e.id = d.entry
-  WHERE d.intake IN ('waiting', 'resent') AND d.state <> 'pending'
+  WHERE d.state IN (${CHASEABLE})
     AND s.state IN ('idle', 'waiting')
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "d.session")}
     AND (?1 - d.updated_at >= ?2 OR (d.resends >= ${String(UNREAD_RESENDS)} AND (d.told_at IS NULL OR ?1 - d.told_at >= ?3)))
@@ -191,12 +314,12 @@ export function remind(
 
 export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[] {
   const resend = db.prepare(
-    `UPDATE deliveries SET state = 'pending', intake = 'resent', resends = resends + 1, updated_at = ?
+    `UPDATE deliveries SET state = ?, resends = resends + 1, updated_at = ?
      WHERE session = ? AND entry = ?`,
   );
   const told = db.prepare("UPDATE deliveries SET told_at = ? WHERE session = ? AND entry = ?");
   return db
-    .prepare(NOT_TAKEN)
+    .prepare(CHASE_ROWS)
     .all(now, t.intake, t.intakeTold)
     .flatMap((row) => {
       const session = String(row["session"]);
@@ -209,7 +332,7 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
       const heard = owed ? tellOwner(db, session, String(row["role"]), entry, resends) : [];
       if (heard.length > 0) told.run(now, session, entry.id);
       if (!due) return heard;
-      resend.run(now, session, entry.id);
+      resend.run(nextDelivery(deliveryState(row["state"]), "resend"), now, session, entry.id);
       return [session, ...heard];
     });
 }
@@ -221,7 +344,7 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
   const rows = db
     .prepare(
       `SELECT e.author AS author, e.body AS body FROM deliveries d JOIN entries e ON e.id = d.entry
-       WHERE d.session = ? AND d.intake <> 'taken' AND e.kind = 'comment'
+       WHERE d.session = ? AND d.state NOT IN (${TAKEN_DELIVERY}) AND e.kind = 'comment'
          AND json_extract(e.fields, '$.task') IS NULL
          AND json_extract(e.fields, '$.for') = 'worker'
        ORDER BY e.id`,

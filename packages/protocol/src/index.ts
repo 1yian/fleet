@@ -446,7 +446,6 @@ const ServerMessage = Type.Union([
     t: Type.Literal("welcome"),
     session: Type.String(),
     role: Type.Enum(["mate", "worker"]),
-    lowWater: Type.Integer(),
   }),
   Type.Object({
     t: Type.Literal("entry"),

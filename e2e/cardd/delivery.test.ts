@@ -58,11 +58,9 @@ test("an older follow-up is resent after a newer steer reached the session file"
     (await again.waitForEntries(1)).map((entry) => entry.body),
     ["older follow-up"],
   );
-  assert.equal(again.welcome?.lowWater, older.id - 1);
   await again.close();
 
   const third = await fleet.cardd.connect(token, [older.id]);
-  assert.equal(third.welcome?.lowWater, newer.id);
   await fleet.main.call("board", {});
   assert.deepEqual(third.entries, []);
 });

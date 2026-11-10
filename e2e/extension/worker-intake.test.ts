@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { WebSocket, WebSocketServer } from "ws";
@@ -162,6 +163,62 @@ test("a comment that arrives after the worker's connection dropped and came back
       .length,
     0,
   );
+});
+
+test("a message whose turn was aborted is resent after reconnect and taken in on the next settled run", async () => {
+  const held = gate();
+  h.onModel(async () => {
+    await held.wait;
+    return { text: "the aborted turn should not finish" };
+  });
+  h.onModel(() => ({ text: "took the assignment" }));
+  const pi = h.startPi("c-1-a1", env, [EXTENSION]);
+  await h.waitForCall(0, "default", 30_000);
+  pi.abort();
+  await h.waitFor(
+    (event) => event["type"] === "settled" && event["aborted"] === true,
+    "the aborted turn to settle",
+  );
+  await fleet.cardd.restart();
+  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
+  const again = await h.waitForCall(1, "default", 30_000);
+  assert.ok(
+    again.some(
+      (turn) =>
+        turn.role === "user" &&
+        turn.text.includes("sent again: the turn that got it ended before it was taken in"),
+    ),
+    JSON.stringify(again),
+  );
+  await h.waitFor(
+    (event) => event["type"] === "settled" && event["aborted"] !== true,
+    "the next run to settle",
+  );
+  held.open();
+  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true });
+  try {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const rows = db
+        .prepare(
+          "SELECT d.state AS state FROM deliveries d JOIN sessions s ON s.id = d.session WHERE s.role = 'worker'",
+        )
+        .all();
+      if (
+        rows.length > 0 &&
+        rows.every((row) => row["state"] === "acknowledged" || row["state"] === "confirmed")
+      ) {
+        return;
+      }
+      assert.ok(
+        Date.now() < deadline,
+        `the resent message was not taken in: ${JSON.stringify(rows)}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  } finally {
+    db.close();
+  }
 });
 
 interface Proxy {

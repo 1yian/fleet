@@ -232,7 +232,7 @@ class Hub {
     }
     this.bySession.get(session.id)?.close(CLOSE_SUPERSEDED, "a newer connection took over");
     this.bySession.set(session.id, socket);
-    const { lowWater, reporters } = transaction(this.db, () => {
+    const reporters = transaction(this.db, () => {
       setSessionState(this.db, session.id, message.running === true ? "running" : "idle");
       adoptProcess(this.db, session.id, message.process);
       const told = adoptMaintenance(
@@ -241,10 +241,11 @@ class Hub {
         message.started === true,
         message.maintenance === true,
       );
-      return { lowWater: confirm(this.db, session.id, message.inFile), reporters: told };
+      confirm(this.db, session.id, message.inFile);
+      return told;
     });
     this.web.changed();
-    send(socket, { t: "welcome", session: session.id, role: session.role, lowWater });
+    send(socket, { t: "welcome", session: session.id, role: session.role });
     this.flush(session.id, true);
     for (const reporter of new Set(reporters)) this.flush(reporter, false);
     return session;

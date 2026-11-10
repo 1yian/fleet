@@ -20,6 +20,7 @@ import {
 } from "./incident-store.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
 import { transitionStop } from "./lane-stop.ts";
+import { QUEUED_DELIVERY, TAKEN_DELIVERY } from "./deliveries.ts";
 import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -178,7 +179,9 @@ export function reportFailure(
 
 function verifyCompaction(db: DatabaseSync, live: Incident, role: "mate" | "worker"): Done {
   const reached = db
-    .prepare("SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND state <> 'pending'")
+    .prepare(
+      `SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND state NOT IN (${QUEUED_DELIVERY})`,
+    )
     .get(live.actor, live.recoveryEntry ?? 0);
   if (reached === undefined) return { value: { cleared: false }, notify: [] };
   applyIncident(db, live, { type: "verified" }, Date.now());
@@ -395,7 +398,9 @@ export function noteControl(db: DatabaseSync, session: string, op: string): void
 function answeredAndActed(db: DatabaseSync, inc: Incident, acted: boolean): boolean {
   if (inc.phase === "compaction" || !acted) return false;
   const taken = db
-    .prepare("SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND intake = 'taken'")
+    .prepare(
+      `SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND state IN (${TAKEN_DELIVERY})`,
+    )
     .get(inc.actor, inc.recoveryEntry ?? 0);
   return taken !== undefined;
 }

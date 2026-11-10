@@ -2,7 +2,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { idlePark } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
 import { jobStateSql, loseSilentJobs } from "./jobs.ts";
-import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
+import { chaseIntake, dueBatches, remind, UNTAKEN_DELIVERY } from "./deliveries.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { liveStateSql } from "./incident-lifecycle.ts";
 import { incidentFrom, LIVE_INCIDENT, roleOf } from "./incident-store.ts";
@@ -94,7 +94,7 @@ const IDLE_WORKERS = (
   FROM (${workerCards(ids)}) w
   WHERE ${quietSql("w.state", "w.attemptId")}
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
-    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN ('pending', 'pushed'))`;
+    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN (${UNTAKEN_DELIVERY}))`;
 
 const NUDGE_TEXT =
   "you went idle without reporting. If the work is done or you are stuck, call report now with the right status. If you are still working, carry on and report when you reach a handoff.";
