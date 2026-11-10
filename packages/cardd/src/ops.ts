@@ -28,6 +28,7 @@ import {
   writeMergeQuestion,
 } from "./holds.ts";
 import { loadPlan } from "./plans.ts";
+import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
@@ -96,6 +97,20 @@ function reportRoute(db: DatabaseSync, card: Card, status: ReportStatus): string
   const firstAfterComment = comment !== undefined && comment.id > (report?.id ?? 0);
   return firstAfterComment || TO_MATE.has(status) ? [card.lane] : [];
 }
+
+function reportRecipients(
+  db: DatabaseSync,
+  session: Session,
+  card: Card,
+  args: OpArgs<"report">,
+): string[] {
+  if (args.replyTo === undefined) return reportRoute(db, card, args.status);
+  requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
+  return [card.lane];
+}
+
+const stopsNothing = (db: DatabaseSync, card: Card, status: ReportStatus): boolean =>
+  status === "stopped" && doneStands(cardEntries(db, card.id));
 
 const REWORK: ReadonlySet<ReportStatus> = new Set([
   "in-review",
@@ -319,8 +334,8 @@ const HANDLERS: Record<OpName, Handler> = {
     requireDatedPause(args.status, args.until);
     requireCommentsRead(db, session.id, args.status);
     const card = openCardWithPr(db, session.card, args.pr);
-    if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
-    const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
+    if (stopsNothing(db, card, args.status)) return { value: card, notify: [] };
+    const to = reportRecipients(db, session, card, args);
     const withdrawn =
       args.merged === true
         ? withdrawMerge(db, card, "merged")
