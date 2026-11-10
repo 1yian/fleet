@@ -12,9 +12,10 @@ const CARD_FOLDER = /^c-\d+$/;
 const CLOSED_MARK = "closed";
 const TMP_FOLDER = "tmp";
 const REMOVING_PREFIX = ".removing-";
-const STALE_PREFIX = ".stale-";
 const LOCK_PREFIX = ".lock-";
+const LOCK_INSTANCE = /^\.lock-c-\d+\.\d+$/;
 const LOCK_STALE_AFTER_S = 60;
+const LOCK_KEEP_MS = DAY_MS;
 const OPEN_LOCK_WAIT_MS = 30_000;
 const CLOSE_LOCK_WAIT_MS = 5000;
 
@@ -33,35 +34,57 @@ const CARD_NUMBER_ONLY =
   'case $1 in "" | *[!0-9]*) echo "not a card number: $1" >&2; exit 1 ;; esac';
 
 const LOCK_FUNCTIONS = `mtime_s() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
-lock_is_stale() {
+lock_pause() {
+  [ "\${FLEET_SCRATCH_LOCK_PAUSE_AT:-}" = "$1" ] || return 0
+  { : > "$FLEET_SCRATCH_LOCK_PAUSE_FILE.reached"; } 2>/dev/null || return 0
+  while [ -e "$FLEET_SCRATCH_LOCK_PAUSE_FILE" ]; do sleep 0.05 2>/dev/null || sleep 1; done
+}
+lock_top() {
+  lk_max=0
+  for lk_entry in "$1".*; do
+    lk_n=\${lk_entry##*.}
+    case $lk_n in "" | *[!0-9]*) continue ;; esac
+    if [ "$lk_n" -gt "$lk_max" ]; then lk_max=$lk_n; fi
+  done
+  echo "$lk_max"
+}
+lock_is_free() {
+  [ -e "$1/released" ] && return 0
   lk_stamp=$(mtime_s "$1") || return 1
   [ $(( $(date +%s) - lk_stamp )) -gt ${String(LOCK_STALE_AFTER_S)} ] && return 0
   lk_owner=$(cat "$1/owner" 2>/dev/null) || return 1
   [ "\${lk_owner#* }" = "$(hostname)" ] || return 1
   lk_pid=\${lk_owner%% *}
   case $lk_pid in "" | *[!0-9]*) return 1 ;; esac
-  ! kill -0 "$lk_pid" 2>/dev/null
+  ! kill -0 "$lk_pid" 2>/dev/null && ! ps -p "$lk_pid" >/dev/null 2>&1
+}
+lock_trim() {
+  for lk_entry in "$1".*; do
+    lk_n=\${lk_entry##*.}
+    case $lk_n in "" | *[!0-9]*) continue ;; esac
+    if [ "$lk_n" -lt "$2" ]; then rm -rf "$lk_entry"; fi
+  done
 }
 lock_take() {
-  lk_held=$1 lk_limit=$2 lk_waited=0 lk_takeovers=0
+  lk_prefix=$1 lk_limit=$2 lk_waited=0 lk_lost=0
   while :; do
-    if mkdir "$lk_held" 2>/dev/null; then
-      printf '%s %s\\n' "$$" "$(hostname)" > "$lk_held/owner" && return 0
-      rmdir "$lk_held" 2>/dev/null
-      return 1
-    fi
-    if lock_is_stale "$lk_held"; then
-      lk_takeovers=$((lk_takeovers + 1))
-      [ "$lk_takeovers" -le 20 ] || return 1
-      lk_judged=$(cat "$lk_held/owner" 2>/dev/null || true)
-      lk_aside=\${lk_held%/*}/${STALE_PREFIX}$$-$lk_takeovers
-      if mv "$lk_held" "$lk_aside" 2>/dev/null; then
-        if [ "$(cat "$lk_aside/owner" 2>/dev/null || true)" = "$lk_judged" ]; then
-          rm -rf "$lk_aside"
-        elif [ ! -e "$lk_held" ]; then
-          mv "$lk_aside" "$lk_held" 2>/dev/null || true
+    lk_top=$(lock_top "$lk_prefix")
+    if [ "$lk_top" -eq 0 ] || lock_is_free "$lk_prefix.$lk_top"; then
+      lock_pause judged
+      lk_next=$lk_prefix.$((lk_top + 1))
+      if mkdir "$lk_next" 2>/dev/null; then
+        lk_held=$lk_next
+        if ! printf '%s %s\\n' "$$" "$(hostname)" > "$lk_held/owner"; then
+          rmdir "$lk_held" 2>/dev/null
+          return 1
         fi
+        lock_trim "$lk_prefix" "$((lk_top + 1))"
+        lock_pause held
+        return 0
       fi
+      [ -d "$lk_next" ] || return 1
+      lk_lost=$((lk_lost + 1))
+      [ "$lk_lost" -le 50 ] || return 1
       continue
     fi
     [ "$lk_waited" -lt "$lk_limit" ] || return 1
@@ -70,10 +93,7 @@ lock_take() {
   done
 }
 lock_release() {
-  lk_owner=$(cat "$1/owner" 2>/dev/null) || return 0
-  [ "\${lk_owner%% *}" = "$$" ] || return 0
-  rm -f "$1/owner"
-  rmdir "$1" 2>/dev/null || true
+  { : > "$lk_held/released"; } 2>/dev/null || true
 }`;
 
 const wait = (fallback: number): string =>
@@ -91,11 +111,12 @@ ${wait(OPEN_LOCK_WAIT_MS)}
 ${LOCK_FUNCTIONS}
 mkdir -p "$root" "$cache"
 if ! lock_take "$lock" "$wait_ms"; then
-  held_by=$(cat "$lock/owner" 2>/dev/null || echo unknown)
-  echo "cannot reopen c-$1: its scratch folder $scratch is locked by $held_by (lock $lock) and the lock did not clear within $wait_ms ms, so no worker was started" >&2
+  holder=$lock.$(lock_top "$lock")
+  held_by=$(cat "$holder/owner" 2>/dev/null || echo unknown)
+  echo "cannot reopen c-$1: its scratch folder $scratch is locked by $held_by (lock $holder) and the lock did not clear within $wait_ms ms, so no worker was started" >&2
   exit 1
 fi
-trap 'lock_release "$lock"' EXIT
+trap lock_release EXIT
 rm -f "$scratch/${CLOSED_MARK}"
 mkdir -p "$scratch/${TMP_FOLDER}"
 printf '%s\\n%s\\n' "$scratch" "$cache"`;
@@ -110,7 +131,7 @@ ${wait(CLOSE_LOCK_WAIT_MS)}
 ${LOCK_FUNCTIONS}
 [ -d "$scratch" ] || exit 0
 lock_take "$lock" "$wait_ms" || exit 0
-trap 'lock_release "$lock"' EXIT
+trap lock_release EXIT
 [ -d "$scratch" ] || exit 0
 aside=$root/${REMOVING_PREFIX}$$-c-$1
 if [ -e "$scratch/${TMP_FOLDER}" ]; then
@@ -123,7 +144,7 @@ if [ -z "$(ls -A "$scratch")" ]; then
 elif [ ! -e "$scratch/${CLOSED_MARK}" ]; then
   : > "$scratch/${CLOSED_MARK}"
 fi
-lock_release "$lock"
+lock_release
 if [ -n "$aside" ]; then rm -rf "$aside" || true; fi`;
 
 const TAKE_AWAY_SCRIPT = `set -u
@@ -131,7 +152,7 @@ root=$1 card=$2 part=$3 aside=$4 now=$5 min_age=$6
 lock=$root/${LOCK_PREFIX}$card
 ${LOCK_FUNCTIONS}
 lock_take "$lock" 0 || exit 0
-trap 'lock_release "$lock"' EXIT
+trap lock_release EXIT
 mark=$root/$card/${CLOSED_MARK}
 if [ -L "$root/$card" ] || [ ! -f "$mark" ] || [ -L "$mark" ]; then exit 0; fi
 stamp=$(mtime_s "$mark") || exit 0
@@ -248,15 +269,32 @@ function takeAway(card: string, part: string, now: number, minAgeMs: number): bo
   return out.trim() === "moved" && removed(join(root, aside));
 }
 
+function olderThan(path: string, cutoff: number): boolean {
+  try {
+    return lstatSync(path).mtimeMs < cutoff;
+  } catch {
+    return false;
+  }
+}
+
+function sweepLeftovers(root: string, now: number): void {
+  for (const entry of entriesOf(root)) {
+    if (!entry.isDirectory()) continue;
+    const path = join(root, entry.name);
+    const crashed = entry.name.startsWith(REMOVING_PREFIX);
+    const idle = LOCK_INSTANCE.test(entry.name) && olderThan(path, now - LOCK_KEEP_MS);
+    if (crashed || idle) removed(path);
+  }
+}
+
 function tidyClosedCards(now: number): string[] {
   const root = scratchRoot();
   const gone: string[] = [];
-  const folders = entriesOf(root).filter((entry) => entry.isDirectory());
-  for (const { name } of folders) {
-    if (name.startsWith(REMOVING_PREFIX) || name.startsWith(STALE_PREFIX))
-      removed(join(root, name));
-  }
-  for (const { name: card } of folders.filter((entry) => CARD_FOLDER.test(entry.name))) {
+  sweepLeftovers(root, now);
+  const cards = entriesOf(root).filter(
+    (entry) => entry.isDirectory() && CARD_FOLDER.test(entry.name),
+  );
+  for (const { name: card } of cards) {
     const closed = closedSince(card);
     if (closed === undefined) continue;
     if (now - closed < CLOSED_KEEP_MS) takeAway(card, TMP_FOLDER, now, 0);

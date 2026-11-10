@@ -161,15 +161,31 @@ function filesystemOf(path: string): string {
   }
 }
 
+function childrenOf(path: string): { device: number; names: string[] } | undefined {
+  try {
+    return { device: statSync(path).dev, names: readdirSync(path) };
+  } catch {
+    return undefined;
+  }
+}
+
 function sizesUnder(paths: readonly string[], deadline: number): Largest[] {
   const sizes: Largest[] = [];
+  let unreadable = 0;
   for (const path of paths) {
-    const device = statSync(path).dev;
-    for (const name of readdirSync(path)) {
+    if (Date.now() > deadline) return sizes;
+    const found = childrenOf(path);
+    if (found === undefined) {
+      unreadable += 1;
+      continue;
+    }
+    for (const name of found.names) {
       if (Date.now() > deadline) return sizes;
-      sizes.push(measure(join(path, name), device, deadline));
+      sizes.push(measure(join(path, name), found.device, deadline));
     }
   }
+  if (unreadable > 0 && unreadable === paths.length)
+    throw new Error(`none of ${paths.join(", ")} could be read`);
   return sizes;
 }
 
