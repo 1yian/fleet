@@ -15,6 +15,7 @@ import {
 const ALARM_PERCENT = 75;
 
 const TIDY_EVERY_MS = 60 * 60_000;
+const DIRECTORY_CHECKS = 3;
 const ALARMS_FILE = join("state", "disk-alarms.json");
 const METRICS: readonly Metric[] = ["inodes", "space"];
 
@@ -66,6 +67,7 @@ function crossingsIn(
   host: string,
   uses: readonly FilesystemUse[],
   held: Set<string>,
+  unlisted: Map<string, number>,
 ): { fresh: Crossing[]; cleared: boolean } {
   const fresh: Crossing[] = [];
   let cleared = false;
@@ -74,8 +76,10 @@ function crossingsIn(
       const percent = percentUsed(use, metric);
       if (percent === undefined) continue;
       const key = [host, use.path, metric].join("|");
-      if (percent < ALARM_PERCENT) cleared = held.delete(key) || cleared;
-      else if (!held.has(key)) fresh.push({ key, use, metric, percent });
+      if (percent < ALARM_PERCENT) {
+        cleared = held.delete(key) || cleared;
+        unlisted.delete(key);
+      } else if (!held.has(key)) fresh.push({ key, use, metric, percent });
     }
   }
   return { fresh, cleared };
@@ -127,6 +131,7 @@ export function diskWatch(
   const held = readHeld(home);
   const tidied = new Map<string, number>();
   const unreadable = new Set<string>();
+  const unlisted = new Map<string, number>();
 
   const read = async (host: string): Promise<Report> => {
     const due = now() - (tidied.get(host) ?? Number.NEGATIVE_INFINITY) >= TIDY_EVERY_MS;
@@ -137,11 +142,17 @@ export function diskWatch(
   };
 
   const announce = async (host: string, label: string, uses: readonly FilesystemUse[]) => {
-    const { fresh, cleared } = crossingsIn(host, uses, held);
+    const { fresh, cleared } = crossingsIn(host, uses, held, unlisted);
     if (cleared) saveHeld(home, held);
     for (const crossing of fresh) {
       const found = await breakdownOf(ask, host, crossing);
+      if (found === undefined) {
+        const failed = (unlisted.get(crossing.key) ?? 0) + 1;
+        unlisted.set(crossing.key, failed);
+        if (failed < DIRECTORY_CHECKS) continue;
+      }
       if (!send({ text: described(label, crossing, found), urgent: true })) return;
+      unlisted.delete(crossing.key);
       held.add(crossing.key);
       saveHeld(home, held);
     }
