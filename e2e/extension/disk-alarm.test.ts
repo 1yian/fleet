@@ -232,6 +232,57 @@ test("a host whose lanes cannot be kept up still has its disk use read, pruned, 
   assert.match(said, /the workspace of ops has no pane/);
 });
 
+test("a directory listing that fails is retried on the next checks, and main hears one alarm that names the directories", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  writeFileSync(`${usage}.largest-fails`, "2");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await startMain(lab, here, h);
+  const [alarm] = await untilAlarms(1);
+  assert.match(alarm ?? "", /Largest under \/tmp by inodes: \/tmp\/fleet-c-1300 88,085 inodes;/);
+  assert.doesNotMatch(alarm ?? "", /could not be read/);
+  assert.equal(callsOf("largest"), 3);
+  await afterProbes(4);
+  assert.equal(alarmsOf(lastCall()).length, 1);
+  assert.equal(callsOf("largest"), 3);
+  assert.deepEqual(heldKeys(), ["far|/tmp|inodes"]);
+});
+
+test("a directory listing that never works is retried for three checks, then main hears one alarm without directories", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  writeFileSync(`${usage}.largest-fails`, "1000");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await startMain(lab, here, h);
+  const [alarm] = await untilAlarms(1);
+  assert.match(
+    alarm ?? "",
+    /is at 96% of its inodes \(1,004,848 of 1,048,576\), over the 75% alarm\. The largest directories could not be read\. /,
+  );
+  assert.equal(callsOf("largest"), 3);
+  await afterProbes(4);
+  assert.equal(alarmsOf(lastCall()).length, 1);
+  assert.equal(callsOf("largest"), 3);
+  assert.deepEqual(heldKeys(), ["far|/tmp|inodes"]);
+});
+
+test("a failed listing is not counted toward a later crossing: after the use drops below the alarm, the count starts again", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  const hold = `${usage}.hold`;
+  writeFileSync(hold, "");
+  writeFileSync(`${usage}.largest-fails`, "1000");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await startMain(lab, here, h);
+  await untilCalls("largest", 1);
+  report({ inodes: 600_000, bytes: 40 * GIB });
+  rmSync(hold);
+  await afterProbes(3);
+  assert.equal(alarmsOf(lastCall()).length, 0);
+
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  const [alarm] = await untilAlarms(1);
+  assert.match(alarm ?? "", /The largest directories could not be read\./);
+  assert.equal(callsOf("largest"), 4);
+});
+
 test("a host that cannot report its disk use is named once, and the lanes check goes on", async () => {
   writeFileSync(usage, "usage: fleet status | up\n");
   const pane = await startMain(lab, here, h);

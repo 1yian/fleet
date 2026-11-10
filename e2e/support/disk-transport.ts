@@ -1,10 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const [usage = "", log = "", command = ""] = process.argv.slice(2);
 
 const hold = `${usage}.hold`;
 const brokenLanes = `${usage}.lanes-fail`;
+const brokenListings = `${usage}.largest-fails`;
+
+function listingFails(): boolean {
+  if (!existsSync(brokenListings)) return false;
+  const left = Number(readFileSync(brokenListings, "utf8"));
+  if (!(left > 0)) return false;
+  writeFileSync(brokenListings, String(left - 1));
+  return true;
+}
 
 function waitWhileHeld(): void {
   const pause = new Int32Array(new SharedArrayBuffer(4));
@@ -16,7 +25,8 @@ if (command.includes("'scratch'")) {
   const tidy = command.includes("'--tidy'") ? " tidy" : "";
   appendFileSync(log, `${largest ? "largest" : "probe"}${tidy}\n`);
   if (largest) waitWhileHeld();
-  process.stdout.write(readFileSync(largest ? `${usage}.largest` : usage, "utf8"));
+  if (largest && listingFails()) process.stdout.write("the host is too busy to count\n");
+  else process.stdout.write(readFileSync(largest ? `${usage}.largest` : usage, "utf8"));
 } else if (command.includes("'--maintenance'") && existsSync(brokenLanes)) {
   process.stderr.write("fleet up: the workspace of ops has no pane\n");
   process.exit(1);
