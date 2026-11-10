@@ -171,13 +171,27 @@ The cleaner owner of the daemon is the host. Prefer starting it once from the ho
 
 ## 3. Lanes and projects
 
-Run these once on the `cardd` host. `lane add` prints the mate's token. A lane's `--home` is informational.
+Run these once on the `cardd` host. The host names are the fleet's own: `maverick`, `p620`, and `cnp-devvm` for the CNP dev VM. They are the names in `cardd`'s `--hosts`, in `--clone`, and in main's `hosts`. The VM's machine hostname, `cx-devvm-01`, is never used in fleet settings.
+
+Check the checkout against the running `cardd` first:
 
 ```sh
+curl -s http://<cardd address>:7420/api/version; echo
+git -C ~/.fleet/app rev-parse HEAD
+```
+
+The two commits must be the same. Every command below opens `cards.db`, and opening it applies the pending migrations. A checkout newer than the running `cardd` would migrate the live database under it. So every `cardd` command except `serve` refuses a database whose schema is older than the checkout's migrations, and says `<file> is at schema N and this checkout has M`. Update `cardd` first (`/updatefleet`, section 7). Add `--migrate` only when you mean to migrate the database from this checkout, such as while `cardd` is stopped. A database with no schema yet is new, and needs no flag.
+
+```sh
+$CARDD lane list --db ~/.fleet/cards.db
 $CARDD lane add main --db ~/.fleet/cards.db --home ~/Projects/fleet
 $CARDD lane add cleo --db ~/.fleet/cards.db --home /path/on/its/host --parent main
+$CARDD lane home cleo /new/path/on/its/host --db ~/.fleet/cards.db
+$CARDD lane remove cleo --db ~/.fleet/cards.db
+$CARDD project list --db ~/.fleet/cards.db
 $CARDD project add web --db ~/.fleet/cards.db --delivery no-mistakes \
-  --clone maverick=/path/to/web --clone p620=/path/on/p620/web
+  --clone maverick=/Users/me/fleet-projects/web --clone p620=/home/me/fleet-projects/web \
+  --hosts '{"p620":["ssh","p620"]}'
 $CARDD project clone web p620=/new/path/on/p620/web --db ~/.fleet/cards.db
 $CARDD project unclone web maverick --db ~/.fleet/cards.db
 $CARDD project remove web --db ~/.fleet/cards.db
@@ -187,6 +201,13 @@ $CARDD project delivery web direct-PR --db ~/.fleet/cards.db
 $CARDD card delivery 125 direct-PR --db ~/.fleet/cards.db
 ```
 
+- `lane add` prints the mate's token. Never put it in a command line. Send it to a private file and pipe that into the host (section 5): `( umask 077; $CARDD lane add cleo ... > ~/.fleet/cleo.token )`. The token is a function of the lane name and the database's key, so it does not change for as long as the lane exists.
+- `--parent main` makes a lane a second mate. `cardd` makes its standing lane card, which is how the board shows the lane, and where main's comments to the lane and its scheduled wakes land. Main can then reach the lane's cards and steer it. A lane added without `--parent` is a root lane, like main. It has no lane card, and main cannot comment on it or reach its cards. A lane that has no parent is also main to `cardd`: when several root lanes exist, the one whose name sorts first gets main's powers, such as the whole board, every schedule, and the captain's summons. So a second root lane named `board` would take them from `main`. Give every second mate a parent.
+- A lane's `--home` is informational: `cardd` never reads it, and the board shows it. `lane home <name> <path>` corrects it, for a lane whose home moved. The path must be absolute.
+- `lane list` and `project list` print one line for each lane or project: a lane's parent, mate state, lane card, and home, and a project's delivery mode, yolo flag, repository, and clones. Adding a lane or a project whose name exists is refused, naming the list command.
+- `lane remove <name>` takes back a lane that was added by mistake or never used: its row, its mate's token, its lane card, and its schedules. It refuses an unknown lane, a lane that is the parent of another, a lane whose mate is not `exited` (stop it first: `lane(<lane>, "stop")` in main), and a lane with open cards. It also refuses a lane that ever worked a card, because entries are append-only: the history keeps the lane. It never touches the lane's home on disk: remove that with `git worktree remove <home>` on its host.
+- Put every project's clone at `~/fleet-projects/<project>` on every host, registered as an absolute path: `/Users/me/fleet-projects/web` on macOS, `/home/me/fleet-projects/web` on Linux. Dispatch puts each worker's worktree beside it, in `~/fleet-projects/<project>.worktrees/`, so all of the fleet's working copies of a project live in one folder that nothing else owns. Never put a clone inside a lane home or inside another repository.
+- `project add` reads the project's repository from the `origin` remote of a clone, unless `--repo` gives it, and then says what it did: `<name>: repo <owner>/<name>`, or `repo not set` with what to do. It reads a clone on the host named in `--hosts`, through that host's transport, in the form of `cardd serve --hosts`. A host that `--hosts` does not list is read on the `cardd` host itself, so a `--clone p620=...` needs `--hosts '{"p620":["ssh","p620"]}'` as above, or `--repo acme/web`. Without either, the repository stays unset until `project repo <name> <owner>/<name>`, or until `cardd serve` starts with the right `--hosts`, which fills a missing repository at each start.
 - A project's clone is a normal clone of the repository on that host. Dispatch creates each worker's worktree next to it, in `<clone>.worktrees/`.
 - To move a clone, move it, run `git worktree repair` with the paths of its worktrees, then run `project clone` with its new path. Workers that already run keep their worktrees, and close still finds them.
 - `project unclone <name> <host>` removes a host's clone from the registry only. It never deletes files. The host stops appearing in project hosts, clone refreshes, close sync, and dispatch choices. It refuses an unknown project, a missing clone, or open attempts on that host, naming their cards. Removing the last clone also requires that no open card uses the project. Its output says when the last clone was removed.
@@ -284,27 +305,59 @@ A `[fleet]` message is a normal turn that enters memory. `e2e/extension/memory.t
 
 ## 5. Second mates
 
-On the host where a mate runs, from that host's checkout:
+Make a second mate in four steps. The first runs on the `cardd` host, the next two on the host where the mate runs, and the last in main. Run `bin/fleet` from that host's fleet root: `~/.fleet/app` on every host except main's, where it is the captain's checkout, `~/Projects/fleet`. That checkout is the root of the host's lane homes, they share its `node_modules`, and it is the one main runs `fleet` from on a remote host (`roots` in section 4). Never use a project clone of this repository, such as `~/fleet-projects/fleet`: the home would be made beside that clone, where no host looks for lane homes.
 
 ```sh
-<checkout>/bin/fleet home add cleo --url ws://<cardd>:7420/session --token <the token from lane add cleo> \
-  --worker-args '["--model","tier/quick"]' \
-  --host p620 --hosts '{"maverick":["ssh","maverick"]}'
-<checkout>/bin/fleet home memory cleo --thinking low
-$EDITOR <checkout>.worktrees/lane-cleo/data/charter.md     # cleo's charter
+( umask 077; $CARDD lane add cleo --db ~/.fleet/cards.db --home <the home on its host> --parent main \
+    > ~/.fleet/cleo.token )
+
+ssh p620 "~/.fleet/app/bin/fleet home add cleo --url ws://<cardd>:7420/session --token-file - --hold \
+  --worker-args '[\"--model\",\"tier/quick\"]' --host p620 --hosts '{\"maverick\":[\"ssh\",\"maverick\"]}'" \
+  < ~/.fleet/cleo.token
+rm ~/.fleet/cleo.token
+
+ssh p620 '~/.fleet/app/bin/fleet home memory cleo --thinking low'
+$EDITOR <fleet root>.worktrees/lane-cleo/data/charter.md     # cleo's charter, on p620
 ```
 
-This makes the home as a worktree of the checkout, with `config/lane.json`, and turns on its conversation memory (section 4). The mate's own settings:
+Then, in main, `lane("cleo", "start")`. On the host itself, the same commands run without the `ssh`: `~/.fleet/app/bin/fleet home add cleo ... --token-file - < ~/.fleet/cleo.token`.
+
+- `home add` makes the home as a worktree of the fleet root, with `config/lane.json`. It takes the token from `--token-file`: a file, or `-` for standard input. The token never sits in a command line, where it shows in `ps` and in the shell's history, and `fleet` never prints it. `--token` still works, and says that it is unsafe. Delete the token file once `home add` has printed the home.
+- `--hold` makes the home held from its first moment. Main starts every lane that is down within a minute (section 6), and a home that is not held would get a mate as soon as `config/lane.json` exists, before its memory and charter do. That mate would run with no charter, and its memory would apply only after a restart. `home add` writes `state/stopped` first and `config/lane.json` last, so no pass sees a home that is half made. Use `--hold` whenever you do more than `home add`, and start the lane when it is ready: `lane(<lane>, "start")` in main, or `fleet up <lane>` on its host.
+- `home add` converges. Each step that is done already is skipped, so it is safe to run again. If an earlier run stopped after it made the worktree, a rerun with the same options adopts that worktree and finishes it. A worktree made ahead, with `git worktree add --detach <home> HEAD`, is adopted the same way. When the home is complete, a rerun prints its path, changes nothing, and needs no token, so it can never replace a lane's settings: change them with `fleet home set` (below). A folder at the home's path that is not a worktree of the fleet root is refused.
+- The home's path is `<fleet root>.worktrees/lane-<lane>`. Give `--home` of `lane add` that path, and correct a registry entry that went stale with `lane home` (section 3).
+
+The mate's own settings:
 
 - `tier` is the optional model the mate starts on, such as `"tier/weaker-orchestrator"` (`--tier` on `home add`). Without it, the mate starts on `tier/orchestrator`. Every start and restart path uses it: `fleet up`, `fleet restart`, main's automatic lane starts, and `lane(name, start|restart)`. It must be a non-empty string.
-- `args` are extra Pi arguments for the mate. A `--model` or `--provider` in `args` takes precedence over `tier`. `workerArgs` are for its workers, and pick their model as they do for main.
+- `args` are extra Pi arguments for the mate (`--args`, a JSON array of strings). A `--model` or `--provider` in `args` takes precedence over `tier`. `workerArgs` are for its workers (`--worker-args`), and pick their model as they do for main.
 - `host`, `hosts`, and `roots` work as for main. Give a mate the transport of every other host that has a clone of a project it works on: when it closes a ship card, it refreshes the project's clone on each host, and a host with no transport is skipped with `no transport for <host>`. Main refreshes it when it next starts, and `/updatefleet` still moves a fleet home.
 - `direnv` names a folder whose direnv environment the mate runs in, such as `"~/cnp"` (`--direnv` on `home add`). The mate starts as `direnv exec <folder> pi`, so it gets what that folder's `.envrc` exports, and its home stays where it is. Every start, restart, and restart of a dead mate does this. The folder's `.envrc` must be allowed (`direnv allow <folder>`). The setting does not reach the mate's workers: a worker gets that environment only from its own pane's shell, such as a shell with the direnv hook in a worktree under that folder.
 - `data/charter.md` is the lane's charter, added to its role contract.
 
+`fleet --help` lists every option of `home add` and `home set`.
+
 On a remote host, `fleet` must work over a non-interactive SSH session, so Node must be on that session's `PATH`. Check it from main's host: `ssh p620 '~/.fleet/app/bin/fleet status'`.
 
-You do not start second mates by hand. Main starts them.
+You do not start second mates by hand. Main starts them, and a held one starts when main's `lane(<lane>, "start")` lifts the hold.
+
+### Changing a lane's settings
+
+`fleet home set <lane>` changes the settings of a home that exists, without making it again. It takes the options of `home add` except the credentials: `--url`, `--host`, `--hosts`, `--roots`, `--tier`, `--args`, `--worker-args`, and `--direnv`. It changes only the options you give, keeps the rest of `config/lane.json` (the token or `bws` block, and `cardd`), checks the result before it replaces the file, and refuses a change that would leave the file unreadable. An empty `--host`, `--tier`, or `--direnv` clears it. `--args` and `--worker-args` replace the whole list. A mate reads its settings when it starts, so a change applies after `lane(<lane>, "restart")` in main, or `fleet restart <lane>` on its host.
+
+The ystack lane's mate loads skills from its own scratch worktree ahead of the released install. Pi loads `--skill` paths after everything it finds by itself, and the first skill of a name wins, so the lane needs `--no-skills` (on Pi 1.5.2) and its three skill folders in order: the scratch worktree's, the released install's, and the home's own, which `--no-skills` would switch off. To set that on the existing home, whose scratch worktree is `data/ystack`, main runs this on maverick, and then restarts the lane:
+
+```sh
+ssh p620 sh <<'EOF'
+~/.fleet/app/bin/fleet home set ystack --args '["--no-skills","--skill","/Users/yian/.fleet/app.worktrees/lane-ystack/data/ystack/skills","--skill","/Users/yian/.agents/skills","--skill","/Users/yian/.fleet/app.worktrees/lane-ystack/.pi/skills"]'
+EOF
+```
+
+```
+lane("ystack", "restart")
+```
+
+p620's checkout must have `home set` first, so run `/updatefleet` after the change that adds it is merged. A skill folder that does not exist only logs one `skill path does not exist` warning when the mate starts, and the released skills load.
 
 ### Goal and scheduled wakes
 
@@ -387,7 +440,7 @@ The dotfiles' `bws-env` already expects the same projects and machine accounts. 
    | `Common` | `GH_TOKEN`         | Optional. A GitHub token for `gh` and `git`, if the lane needs one.                    |
    | `Common` | `<provider key>`   | Optional. One secret for each provider key a lane's Pi needs, named as Pi reads it.    |
 
-   Put a lane token in without printing it: `jq -r .token ~/Projects/fleet/config/lane.json | pbcopy` (or `wl-copy`), then paste it in the web vault. For a new lane, paste what `cardd lane add` printed, and never copy it into `fleet home add`.
+   Put a lane token in without printing it: `jq -r .token ~/Projects/fleet/config/lane.json | pbcopy` (or `wl-copy`), then paste it in the web vault. For a new lane, paste what `cardd lane add` printed, and never put it on a `fleet home add` command line.
 
 ### Where the access token lives
 
@@ -477,7 +530,8 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet arrange`                          | Puts this host's herdr sidebar in order (below).                                            |
 | `fleet update [--check]`                 | Updates this host's checkout and lane homes for `/updatefleet` (section 7).                 |
 | `fleet cardd --root R --db D [--check]`  | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).                     |
-| `fleet home add <lane> ...`              | Makes a lane's home. It takes `--token T`, `--bws JSON`, or both.                           |
+| `fleet home add <lane> ...`              | Makes a lane's home. It takes `--token-file F\|-`, `--bws JSON`, or both (section 5).       |
+| `fleet home set <lane> ...`              | Changes a home's settings, such as its Pi `--args` (section 5).                             |
 | `fleet secrets [lane]`                   | Checks what Bitwarden serves each lane here, before an old file goes (below).               |
 | `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
 | `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |

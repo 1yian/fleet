@@ -137,15 +137,7 @@ function credentials(file: string, config: Json): { token?: string; bws?: BwsCon
   };
 }
 
-export function readLaneConfig(home: string): LaneConfig | undefined {
-  const file = join(home, LANE_FILE);
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    return undefined;
-  }
-  const config: unknown = JSON.parse(text);
+export function parseLaneConfig(file: string, config: unknown): LaneConfig {
   if (!isRecord(config)) throw new Error(`${file} is not a JSON object`);
   const { lane, url } = config;
   const secrets = credentials(file, config);
@@ -166,6 +158,18 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
     ...(folder === undefined ? {} : { direnv: folder }),
     ...(cardd === undefined ? {} : { cardd }),
   };
+}
+
+export function readLaneConfig(home: string): LaneConfig | undefined {
+  const file = join(home, LANE_FILE);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const config: unknown = JSON.parse(text);
+  return parseLaneConfig(file, config);
 }
 
 const MATE_MODEL = "tier/orchestrator";

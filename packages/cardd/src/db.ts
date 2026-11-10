@@ -24,12 +24,23 @@ export function readMigrations(): Migration[] {
   });
 }
 
-export function openDatabase(path: string): DatabaseSync {
+export function openDatabase(path: string, mayMigrate = true): DatabaseSync {
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+  if (!mayMigrate) refuseToMigrate(db, path);
   migrate(db);
   db.exec("PRAGMA foreign_keys = ON");
   return db;
+}
+
+function refuseToMigrate(db: DatabaseSync, path: string): void {
+  const current = schemaVersion(db);
+  const latest = readMigrations().length;
+  if (current === 0 || current >= latest) return;
+  db.close();
+  throw new Error(
+    `${path} is at schema ${String(current)} and this checkout has ${String(latest)}. A running cardd on older code would be left on a migrated database. Update cardd first (/updatefleet), or pass --migrate to migrate it from this checkout`,
+  );
 }
 
 function migrate(db: DatabaseSync): void {
