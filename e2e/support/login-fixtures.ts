@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { BROWSER_OPS, check } from "@fleet/protocol";
+import { viewerBuild } from "@fleet/protocol/build";
 import type { BrowserLab, RawWorker } from "./browser-lab.ts";
 import type { FakeVault } from "./fake-vault.ts";
 import { filesHolding, formsOf } from "./leaks.ts";
@@ -73,7 +74,10 @@ export async function until<T>(
 }
 
 export async function tabOf(lab: BrowserLab, worker: RawWorker): Promise<string> {
-  const view = check(BROWSER_OPS["browser.view"].result, await lab.main.call("browser.view", {}));
+  const view = check(
+    BROWSER_OPS["browser.view"].result,
+    await lab.main.call("browser.view", { build: viewerBuild() }),
+  );
   const target = view.tabs.find((tab) => tab.card === worker.card.id)?.target;
   if (target === undefined) throw new Error("the card has no tab");
   return target;
