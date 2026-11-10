@@ -21,9 +21,9 @@
         "support/leak-fixture.ts",
         "support/reaper.ts",
         "support/fake-no-mistakes.ts",
+        "support/chrome.ts",
         "trial/*.ts"
-      ],
-      "ignore": ["support/chrome.ts"]
+      ]
     },
     "packages/extension": {
       "entry": [
