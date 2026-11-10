@@ -13,6 +13,8 @@ const VIEWER = fileURLToPath(
 );
 
 const WAIT_MS = 15_000;
+const NETWORK_CHANGED = "net::ERR_NETWORK_CHANGED";
+const NAVIGATION_TRIES = 3;
 
 export type Viewers = ReturnType<typeof spawnGuarded>[];
 
@@ -77,13 +79,24 @@ export async function waitFor(check: () => Promise<boolean>, what: string): Prom
   }
 }
 
+async function gotoAcrossNetworkChange(page: Page, address: string): Promise<void> {
+  for (let tries = 1; ; tries += 1) {
+    try {
+      await page.goto(address);
+      return;
+    } catch (error) {
+      if (tries >= NAVIGATION_TRIES || !String(error).includes(NETWORK_CHANGED)) throw error;
+    }
+  }
+}
+
 export async function showTab(
   page: Page,
   address: string,
   label?: string,
   state = "live",
 ): Promise<void> {
-  await page.goto(address);
+  await gotoAcrossNetworkChange(page, address);
   if (label !== undefined) {
     const tab = page.locator("#tabs li", { hasText: label });
     await waitFor(async () => (await tab.count()) > 0, `the tab ${label} to be listed`);

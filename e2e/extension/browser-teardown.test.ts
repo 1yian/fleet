@@ -50,6 +50,16 @@ async function eventually(check: () => Promise<boolean>, what: string): Promise<
   }
 }
 
+async function workerParkedOnItsJobWithATab(): Promise<void> {
+  await eventually(async () => (await chrome.pages()).length === 1, "the worker's tab");
+  await eventually(
+    async () =>
+      (await parts.cardd.board()).cards.find((card) => card.id === 1)?.activity?.state ===
+      "waiting",
+    "the worker to settle on its job",
+  );
+}
+
 test("close closes the tab the worker opened and says so", async () => {
   const { h, mate } = parts;
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
@@ -119,11 +129,32 @@ test("restarting a worker closes the tab it had open", async () => {
   h.onModel(() => ({ text: "started again" }), "worker");
   await connected(h);
   mate.prompt("look at the site");
-  await eventually(async () => (await chrome.pages()).length === 1, "the worker's tab");
+  await workerParkedOnItsJobWithATab();
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
   mate.prompt("restart it");
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
   assert.match(results.at(-1) ?? "", /Started c-1-a1 again.* Closed 1 browser tab\.$/);
+  assert.equal((await chrome.pages()).length, 0);
+});
+
+test("restarting a worker in the middle of a turn closes the tab it had open", async () => {
+  const { h, mate } = parts;
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => ({ tool: "restart_card", args: { card: 1, key: "again" } }), "mate");
+  h.onModel(() => ({ text: "restarted" }), "mate");
+  h.onModel(() => browserStep({ action: "open", url: site.url("/a") }), "worker");
+  h.onModel(() => new Promise(() => undefined), "worker");
+  h.onModel(() => ({ text: "started again" }), "worker");
+  await connected(h);
+  mate.prompt("look at the site");
+  await h.waitForCall(1, "worker", WORKER_WAIT_MS);
+  await eventually(async () => (await chrome.pages()).length === 1, "the worker's tab");
+  await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+  mate.prompt("restart it");
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  assert.match(results.at(-1) ?? "", /^Started c-1-a1 again/);
   assert.equal((await chrome.pages()).length, 0);
 });
 
@@ -163,7 +194,7 @@ test("restarting a worker does not start the replacement when cardd cannot recor
   h.onModel(() => ({ text: "waiting for the job" }), "worker");
   await connected(h);
   mate.prompt("look at the site");
-  await eventually(async () => (await chrome.pages()).length === 1, "the worker's tab");
+  await workerParkedOnItsJobWithATab();
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
   mate.prompt("restart it");
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
