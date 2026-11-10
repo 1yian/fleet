@@ -9,6 +9,7 @@ export type Metric = "inodes" | "space";
 
 export interface FilesystemUse {
   readonly path: string;
+  readonly roots: readonly string[];
   readonly inodesUsed: number;
   readonly inodesTotal: number;
   readonly bytesUsed: number;
@@ -44,11 +45,15 @@ export const percentUsed = (use: FilesystemUse, metric: Metric): number | undefi
   return total > 0 ? (used / total) * 100 : undefined;
 };
 
-function useOf(path: string): FilesystemUse {
+type Roots = [string, ...string[]];
+
+function useOf(roots: Roots): FilesystemUse {
+  const [path] = roots;
   const fs = statfsSync(path);
   const used = (fs.blocks - fs.bfree) * fs.bsize;
   return {
     path,
+    roots,
     inodesUsed: fs.files - fs.ffree,
     inodesTotal: fs.files,
     bytesUsed: used,
@@ -57,24 +62,31 @@ function useOf(path: string): FilesystemUse {
 }
 
 export function watchedFilesystems(): FilesystemUse[] {
-  const seen = new Set<number>();
-  const found: FilesystemUse[] = [];
+  const byDevice = new Map<number, Roots>();
   for (const path of ["/tmp", tmpdir(), hostDir()]) {
     try {
       const device = statSync(path).dev;
-      if (seen.has(device)) continue;
-      seen.add(device);
-      found.push(useOf(path));
+      const roots = byDevice.get(device);
+      if (roots === undefined) byDevice.set(device, [path]);
+      else if (!roots.includes(path)) roots.push(path);
     } catch {
       continue;
     }
   }
-  return found;
+  return Array.from(byDevice.values(), useOf);
 }
 
 export interface Report {
   readonly host: string | undefined;
   readonly filesystems: readonly FilesystemUse[];
+}
+
+function rootsOf(row: Record<string, unknown>, path: string): string[] {
+  const listed = row["roots"];
+  const roots = Array.isArray(listed)
+    ? listed.filter((root): root is string => typeof root === "string")
+    : [];
+  return roots.length === 0 ? [path] : roots;
 }
 
 export function parseReport(value: unknown): Report {
@@ -93,7 +105,14 @@ export function parseReport(value: unknown): Report {
       bytesUsed !== undefined &&
       bytesTotal !== undefined
     )
-      filesystems.push({ path, inodesUsed, inodesTotal, bytesUsed, bytesTotal });
+      filesystems.push({
+        path,
+        roots: rootsOf(row, path),
+        inodesUsed,
+        inodesTotal,
+        bytesUsed,
+        bytesTotal,
+      });
   }
   const host = value["host"];
   return { host: typeof host === "string" && host !== "" ? host : undefined, filesystems };
@@ -135,12 +154,14 @@ function filesystemOf(path: string): string {
   }
 }
 
-export function breakdown(path: string, metric: Metric, now: number): Breakdown {
+export function breakdown(paths: readonly string[], metric: Metric, now: number): Breakdown {
   const deadline = now + WALK_BUDGET_MS;
-  const device = statSync(path).dev;
-  const sizes = readdirSync(path).map((name) => measure(join(path, name), device, deadline));
+  const sizes = paths.flatMap((path) => {
+    const device = statSync(path).dev;
+    return readdirSync(path).map((name) => measure(join(path, name), device, deadline));
+  });
   const largest = sizes.sort((a, b) => sizeOf(b, metric) - sizeOf(a, metric)).slice(0, WATCHED_TOP);
-  return { filesystem: filesystemOf(path), partial: Date.now() > deadline, largest };
+  return { filesystem: filesystemOf(paths[0] ?? ""), partial: Date.now() > deadline, largest };
 }
 
 export function parseBreakdown(value: unknown): Breakdown {

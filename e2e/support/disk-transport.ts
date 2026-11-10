@@ -23,7 +23,8 @@ function waitWhileHeld(): void {
 if (command.includes("'scratch'")) {
   const largest = command.includes("'--largest'");
   const tidy = command.includes("'--tidy'") ? " tidy" : "";
-  appendFileSync(log, `${largest ? "largest" : "probe"}${tidy}\n`);
+  const roots = [...command.matchAll(/'--largest' '([^']*)'/g)].map((found) => found[1]);
+  appendFileSync(log, largest ? `largest ${roots.join(" ")}\n` : `probe${tidy}\n`);
   if (largest) waitWhileHeld();
   if (largest && listingFails()) process.stdout.write("the host is too busy to count\n");
   else process.stdout.write(readFileSync(largest ? `${usage}.largest` : usage, "utf8"));

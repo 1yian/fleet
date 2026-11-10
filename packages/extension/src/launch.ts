@@ -24,7 +24,7 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE =
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--largest PATH [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T|--bws JSON | home memory <lane> | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]";
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U --token T|--bws JSON | home memory <lane> | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]";
 
 const VALUE_OPTIONS = new Set([
   "--from",
@@ -100,7 +100,7 @@ function parseCommandLine() {
       absent: { type: "boolean" },
       script: { type: "string" },
       tidy: { type: "boolean" },
-      largest: { type: "string" },
+      largest: { type: "string", multiple: true },
       by: { type: "string" },
     },
   });
@@ -272,7 +272,7 @@ switch (command ?? "") {
     for (const line of scratchLines(
       {
         tidy: values.tidy === true,
-        largest: values.largest,
+        largest: values.largest ?? [],
         by: values.by,
         json: values.json === true,
       },

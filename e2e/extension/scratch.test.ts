@@ -350,6 +350,60 @@ test("tidy with no fleet folder yet does nothing and succeeds, at the default pl
   assert.deepEqual(next["tidied"], { cacheFiles: 1, cards: [] });
 });
 
+test("scratch ranks the largest directories of several roots together, and the report lists the roots that share a filesystem", () => {
+  const dir = tempDir("fleet-host-dir-");
+  const first = tempDir("fleet-root-a-");
+  const second = tempDir("fleet-root-b-");
+  for (const [root, name, files] of [
+    [first, "a-small", 3],
+    [first, "a-mid", 10],
+    [second, "b-huge", 40],
+    [second, "b-big", 25],
+    [second, "b-mid", 12],
+    [second, "b-few", 5],
+  ] as const) {
+    mkdirSync(join(root, name));
+    for (let index = 0; index < files; index += 1)
+      writeFileSync(join(root, name, `f${String(index)}`), "x");
+  }
+
+  const together = parseRecord(
+    fleet(["scratch", "--largest", first, "--largest", second, "--by", "inodes", "--json"], {})
+      .trim()
+      .split("\n")
+      .at(-1) ?? "",
+  );
+  assert.deepEqual(
+    records(together["largest"]).map((each) => [each["name"], each["inodes"]]),
+    [
+      [join(second, "b-huge"), 41],
+      [join(second, "b-big"), 26],
+      [join(second, "b-mid"), 13],
+      [join(first, "a-mid"), 11],
+      [join(second, "b-few"), 6],
+    ],
+  );
+  const alone = parseRecord(
+    fleet(["scratch", "--largest", first, "--by", "inodes", "--json"], {}).trim(),
+  );
+  assert.deepEqual(
+    records(alone["largest"]).map((each) => each["name"]),
+    [join(first, "a-mid"), join(first, "a-small")],
+  );
+
+  const report = parseRecord(fleet(["scratch", "--json"], { FLEET_HOST_DIR: dir }).trim());
+  const shared = records(report["filesystems"]).find((each) =>
+    Array.isArray(each["roots"]) ? each["roots"].includes(dir) : false,
+  );
+  assert.ok(shared !== undefined, "the host folder is a root of a reported filesystem");
+  const roots = shared["roots"];
+  assert.ok(Array.isArray(roots));
+  assert.equal(shared["path"], roots[0]);
+  assert.ok(roots.includes(process.env["TMPDIR"]));
+  assert.ok(roots.indexOf(process.env["TMPDIR"]) < roots.indexOf(dir));
+  assert.equal(new Set(roots).size, roots.length);
+});
+
 test("scratch reports the use of the filesystems it writes to, and names the largest directories by inodes or by space", () => {
   const dir = tempDir("fleet-host-dir-");
   const tree = tempDir("fleet-tree-");
