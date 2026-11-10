@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -20,11 +21,14 @@ import {
   deadPid,
   DISPATCH,
   fleetAsync,
+  isReleased,
   listing,
   lockCard,
+  locksOf,
   ownerLine,
   seedCard,
   tidyByHand,
+  untilFile,
   withoutJiti,
   WORKER_SCRIPT,
 } from "../support/scratch-files.ts";
@@ -55,6 +59,12 @@ const sleeper = (seconds: number) => spawn("sleep", [String(seconds)], { stdio: 
 const running = (child: ReturnType<typeof sleeper>): boolean =>
   child.exitCode === null && child.signalCode === null;
 
+async function stop(child: ReturnType<typeof sleeper>): Promise<void> {
+  if (!running(child)) return;
+  child.kill("SIGKILL");
+  await once(child, "exit");
+}
+
 function seedClosedCard(hostDir: string): string {
   const card = join(hostDir, "scratch", "c-1");
   mkdirSync(join(card, "tmp"), { recursive: true });
@@ -82,13 +92,15 @@ test("the tidy leaves a card whose lock a live process holds, and takes a lock o
     backdate(lock, 120 / 86_400);
     assert.deepEqual(tidyByHand(dir)["tidied"], { cacheFiles: 0, cards: ["c-4"] });
     assert.equal(existsSync(held), false);
-    assert.equal(existsSync(lock), false);
+    assert.deepEqual(locksOf(dir, 4), [".lock-c-4.2"]);
+    assert.equal(isReleased(join(dir, "scratch", ".lock-c-4.2")), true);
 
     const orphaned = seedCard(dir, "c-5", 8, true);
     const abandoned = lockCard(dir, 5, deadPid());
     assert.deepEqual(tidyByHand(dir)["tidied"], { cacheFiles: 0, cards: ["c-5"] });
     assert.equal(existsSync(orphaned), false);
     assert.equal(existsSync(abandoned), false);
+    assert.deepEqual(locksOf(dir, 5), [".lock-c-5.2"]);
   } finally {
     holder.kill("SIGKILL");
   }
@@ -97,7 +109,7 @@ test("the tidy leaves a card whose lock a live process holds, and takes a lock o
 test("two tidies that start together over a stale lock both finish, and the card's folder goes once", async () => {
   const dir = tempDir("fleet-host-dir-");
   const folder = seedCard(dir, "c-6", 8, true);
-  const lock = lockCard(dir, 6, deadPid());
+  lockCard(dir, 6, deadPid());
   const args = ["scratch", "--tidy", "--json"];
   const runs = await Promise.all([
     fleetAsync(args, { FLEET_HOST_DIR: dir }),
@@ -105,8 +117,66 @@ test("two tidies that start together over a stale lock both finish, and the card
   ]);
   assert.deepEqual(runs.flatMap(tidiedCards), ["c-6"]);
   assert.equal(existsSync(folder), false);
-  assert.equal(existsSync(lock), false);
-  assert.deepEqual(readdirSync(join(dir, "scratch")), []);
+  const [top, ...older] = locksOf(dir, 6).reverse();
+  assert.deepEqual(older, []);
+  assert.equal(isReleased(join(dir, "scratch", top ?? "")), true);
+});
+
+test("a tidy that judged a lock stale and stopped does not take the lock from a process that took it first, and nothing wedges after that process is gone", async () => {
+  const dir = tempDir("fleet-host-dir-");
+  const folder = seedCard(dir, "c-4", 8, true);
+  lockCard(dir, 4, deadPid());
+  const gate = join(dir, "pause");
+  writeFileSync(gate, "");
+  const paused = fleetAsync(["scratch", "--tidy", "--json"], {
+    FLEET_HOST_DIR: dir,
+    FLEET_SCRATCH_LOCK_PAUSE_AT: "judged",
+    FLEET_SCRATCH_LOCK_PAUSE_FILE: gate,
+  });
+  await untilFile(`${gate}.reached`);
+
+  const holder = sleeper(600);
+  try {
+    const pid = holder.pid ?? 0;
+    const taken = lockCard(dir, 4, pid, 2);
+    rmSync(gate);
+    assert.deepEqual(tidiedCards(await paused), []);
+
+    assert.equal(existsSync(folder), true, "the tidy did not enter while the lock was taken");
+    assert.equal(readFileSync(join(taken, "owner"), "utf8"), ownerLine(pid));
+    assert.equal(isReleased(taken), false);
+    assert.deepEqual(locksOf(dir, 4), [".lock-c-4.1", ".lock-c-4.2"]);
+
+    await stop(holder);
+    assert.deepEqual(tidyByHand(dir)["tidied"], { cacheFiles: 0, cards: ["c-4"] });
+    assert.equal(existsSync(folder), false);
+    assert.deepEqual(locksOf(dir, 4), [".lock-c-4.3"]);
+  } finally {
+    await stop(holder);
+  }
+});
+
+test("while one tidy is inside its critical section, a second tidy over the same card does not enter, and both finish", async () => {
+  const dir = tempDir("fleet-host-dir-");
+  const folder = seedCard(dir, "c-6", 8, true);
+  lockCard(dir, 6, deadPid());
+  const gate = join(dir, "pause");
+  writeFileSync(gate, "");
+  const first = fleetAsync(["scratch", "--tidy", "--json"], {
+    FLEET_HOST_DIR: dir,
+    FLEET_SCRATCH_LOCK_PAUSE_AT: "held",
+    FLEET_SCRATCH_LOCK_PAUSE_FILE: gate,
+  });
+  await untilFile(`${gate}.reached`);
+
+  assert.deepEqual(tidyByHand(dir)["tidied"], { cacheFiles: 0, cards: [] });
+  assert.equal(existsSync(folder), true, "the second tidy stayed out of the first one's section");
+
+  rmSync(gate);
+  assert.deepEqual(tidiedCards(await first), ["c-6"]);
+  assert.equal(existsSync(folder), false);
+  assert.deepEqual(locksOf(dir, 6), [".lock-c-6.2"]);
+  assert.equal(isReleased(join(dir, "scratch", ".lock-c-6.2")), true);
 });
 
 test("a reopen waits for the card's lock, then gives the worker a live temp folder that no mark and no later tidy takes away", async () => {
@@ -130,7 +200,9 @@ test("a reopen waits for the card's lock, then gives the worker a live temp fold
 
     assert.equal(holderRunningAtDispatch, false, "the reopen did not finish while the lock held");
     assert.deepEqual(withoutJiti(listing(card)), ["report.md", "tmp/"]);
-    assert.equal(existsSync(lock), false);
+    assert.equal(existsSync(lock), false, "the lock it waited for is gone");
+    assert.deepEqual(locksOf(hostDir, 1), [".lock-c-1.2"]);
+    assert.equal(isReleased(join(hostDir, "scratch", ".lock-c-1.2")), true);
     assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: [] });
     assert.deepEqual(withoutJiti(listing(card)), ["report.md", "tmp/"]);
   } finally {
