@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -71,20 +71,24 @@ function report({ inodes, bytes }: { inodes: number; bytes: number }): void {
   publishRecord(usage, { host: "far", filesystems: [row] });
 }
 
-const probes = (): number =>
+const callsOf = (kind: "probe" | "largest"): number =>
   existsSync(log)
     ? readFileSync(log, "utf8")
         .split("\n")
-        .filter((line) => line.startsWith("probe")).length
+        .filter((line) => line.startsWith(kind)).length
     : 0;
 
-async function untilProbes(count: number): Promise<void> {
+const probes = (): number => callsOf("probe");
+
+async function untilCalls(kind: "probe" | "largest", count: number): Promise<void> {
   const deadline = Date.now() + WAIT_MS;
-  while (probes() < count) {
-    assert.ok(Date.now() < deadline, `timed out waiting for ${String(count)} probes of far`);
+  while (callsOf(kind) < count) {
+    assert.ok(Date.now() < deadline, `timed out waiting for ${String(count)} ${kind} calls to far`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
+
+const untilProbes = (count: number): Promise<void> => untilCalls("probe", count);
 
 const afterProbes = (more: number): Promise<void> => untilProbes(probes() + more);
 
@@ -161,12 +165,7 @@ test("main names space when space is what crossed, and counts inodes and space s
   assert.equal(alarmsOf(lastCall()).length, 2);
 });
 
-test("a restarted main does not say again that a filesystem is still over the alarm", async () => {
-  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
-  report({ inodes: 1_004_848, bytes: 46 * GIB });
-  const pane = await startMain(lab, here, h);
-  await untilAlarms(1);
-
+async function stopMain(pane: string): Promise<void> {
   const before = records([
     (await lab.run(["pane", "process-info", "--pane", pane]))["process_info"],
   ]);
@@ -182,11 +181,55 @@ test("a restarted main does not say again that a filesystem is still over the al
     assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
+}
+
+test("a restarted main does not say again that a filesystem is still over the alarm", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  const pane = await startMain(lab, here, h);
+  await untilAlarms(1);
+
+  await stopMain(pane);
   await startMain(lab, here, h, true);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
   await afterProbes(5);
   const said = sessionText().split("[fleet] disk: far:").length - 1;
   assert.equal(said, 1);
+});
+
+test("a main that stopped before the alarm reached it hears the alarm once after it restarts", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  const hold = `${usage}.hold`;
+  writeFileSync(hold, "");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  const pane = await startMain(lab, here, h);
+  await untilCalls("largest", 1);
+  await stopMain(pane);
+  rmSync(hold);
+  assert.equal(sessionText().includes("[fleet] disk: far:"), false);
+
+  await startMain(lab, here, h, true);
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
+  const [alarm] = await untilAlarms(1);
+  assert.match(alarm ?? "", /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 96% of its inodes/);
+  await afterProbes(5);
+  assert.equal(sessionText().split("[fleet] disk: far:").length - 1, 1);
+  assert.deepEqual(heldKeys(), ["far|/tmp|inodes"]);
+});
+
+test("a host whose lanes cannot be kept up still has its disk use read, pruned, and alarmed", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  writeFileSync(`${usage}.lanes-fail`, "");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  const pane = await startMain(lab, here, h);
+  const [alarm] = await untilAlarms(1);
+  assert.match(alarm ?? "", /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 96% of its inodes/);
+  await afterProbes(4);
+  assert.equal(alarmsOf(lastCall()).length, 1);
+  assert.ok(readFileSync(log, "utf8").includes("probe tidy"), "the hourly tidy was asked for");
+  const said = (await lab.history(pane)).replace(/\s+/g, " ");
+  assert.equal(said.split("lanes: far failed:").length - 1, 1);
+  assert.match(said, /the workspace of ops has no pane/);
 });
 
 test("a host that cannot report its disk use is named once, and the lanes check goes on", async () => {

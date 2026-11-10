@@ -165,6 +165,12 @@ export class Cardd {
     db.close();
   }
 
+  endAttemptsByHand(card: number): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.prepare("UPDATE attempts SET state = 'ended' WHERE card = ?").run(card);
+    db.close();
+  }
+
   setRepo(project: string, repo: string): string {
     const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
     return execFileSync("node", args, {

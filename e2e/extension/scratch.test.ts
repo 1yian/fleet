@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statfsSync,
   symlinkSync,
   utimesSync,
@@ -141,35 +142,130 @@ test("a worker starts with its scratch, temp, and compile cache on disk under th
   ]);
 });
 
-test("dispatching a card again reopens its folder: the closed mark goes and the evidence stays", async () => {
+const DISPATCH = {
+  title: "Run the tests",
+  name: "run-the-tests",
+  kind: "ship",
+  project: "site",
+  intent: "Run the tests",
+  host: "local",
+  task: "run them",
+};
+
+const withoutJiti = (names: readonly string[]): string[] =>
+  names.filter((name) => !name.startsWith("tmp/jiti"));
+
+const tidyByHand = (hostDir: string): Record<string, unknown> =>
+  parseRecord(
+    fleet(["scratch", "--tidy", "--json"], { FLEET_HOST_DIR: hostDir }).trim().split("\n").at(-1) ??
+      "",
+  );
+
+test("dispatching a card again reopens its folder: the closed mark goes, the evidence stays, and a tidy afterwards removes none of it", async () => {
   const hostDir = join(home, ".fleet");
   const card = join(hostDir, "scratch", "c-1");
   mkdirSync(join(card, "tmp"), { recursive: true });
   writeFileSync(join(card, "closed"), "");
   writeFileSync(join(card, "report.md"), "earlier evidence");
+  backdate(join(card, "closed"), 30);
   const { h, mate } = parts;
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
-  h.onModel(
-    () => ({
-      tool: "dispatch",
-      args: {
-        title: "Run the tests",
-        name: "run-the-tests",
-        kind: "ship",
-        project: "site",
-        intent: "Run the tests",
-        host: "local",
-        task: "run them",
-      },
-    }),
-    "mate",
-  );
+  h.onModel(() => ({ tool: "dispatch", args: DISPATCH }), "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "ran them" } }), "worker");
   await connected(h);
   mate.prompt("run the tests");
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-  assert.deepEqual(listing(card), ["report.md", "tmp/"]);
+  assert.deepEqual(withoutJiti(listing(card)), ["report.md", "tmp/"]);
+
+  assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: [] });
+  assert.deepEqual(withoutJiti(listing(card)), ["report.md", "tmp/"]);
+  assert.equal(readFileSync(join(card, "report.md"), "utf8"), "earlier evidence");
+});
+
+test("a close that cannot finish leaves the card's scratch folder as it was, and a tidy by hand removes nothing from it", async () => {
+  const { h, mate, cardd } = parts;
+  const hostDir = join(home, ".fleet");
+  const card = join(hostDir, "scratch", "c-1");
+  let whileOpen: string[] = [];
+  let afterClose: string[] = [];
+  let afterTidy: string[] = [];
+  let tidied: unknown;
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args: DISPATCH }), "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => ({ tool: "bash", args: { command: WORKER_SCRIPT } }), "worker");
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "ran them" } }), "worker");
+  h.onModel(() => {
+    whileOpen = withoutJiti(listing(card));
+    cardd.breakBrowserTabs();
+    return { tool: "close", args: { card: 1, summary: "Done." } };
+  }, "mate");
+  h.onModel(() => {
+    afterClose = withoutJiti(listing(card));
+    tidied = tidyByHand(hostDir)["tidied"];
+    afterTidy = withoutJiti(listing(card));
+    return { text: "close failed" };
+  }, "mate");
+  await connected(h);
+  mate.prompt("run the tests");
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+
+  assert.match(results.at(-1) ?? "", /browser_tabs/);
+  assert.doesNotMatch(results.at(-1) ?? "", /is done/);
+  assert.ok(whileOpen.includes("tmp/clone.txt") && whileOpen.includes("report.md"));
+  assert.deepEqual(afterClose, whileOpen);
+  assert.deepEqual(tidied, { cacheFiles: 0, cards: [] });
+  assert.deepEqual(afterTidy, whileOpen);
+  assert.equal(existsSync(join(card, "closed")), false);
+});
+
+test("a card whose newest attempt cannot be retired keeps its scratch folder, and the close that finishes it clears the folder once", async () => {
+  const { h, mate, cardd, mainToken } = parts;
+  const hostDir = join(home, ".fleet");
+  const card = join(hostDir, "scratch", "c-1");
+  const down = join(h.dir, "far-down");
+  let whileOpen: string[] = [];
+  let afterFailure: string[] = [];
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args: DISPATCH }), "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => ({ tool: "bash", args: { command: WORKER_SCRIPT } }), "worker");
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "ran them" } }), "worker");
+  h.onModel(async () => {
+    whileOpen = withoutJiti(listing(card));
+    cardd.endAttemptsByHand(1);
+    const begun = await cardd.post(mainToken, "attempt.begin", {
+      card: 1,
+      host: "far",
+      task: "run them again",
+    });
+    assert.equal(begun.status, 200);
+    writeFileSync(down, "down");
+    return { tool: "close", args: { card: 1, summary: "Dropped.", landed: false } };
+  }, "mate");
+  h.onModel(() => {
+    afterFailure = withoutJiti(listing(card));
+    rmSync(down);
+    return { tool: "close", args: { card: 1, summary: "Dropped.", landed: false } };
+  }, "mate");
+  h.onModel(() => ({ text: "closed" }), "mate");
+  await connected(h);
+  mate.prompt("run the tests");
+  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+
+  assert.match(results.at(-2) ?? "", /far/);
+  assert.doesNotMatch(results.at(-2) ?? "", /is dropped/);
+  assert.ok(whileOpen.includes("tmp/clone.txt") && whileOpen.includes("report.md"));
+  assert.deepEqual(afterFailure, whileOpen);
+  assert.equal(results.at(-1), "c-1 is dropped.");
+  assert.deepEqual(listing(card), [
+    "closed",
+    "env.txt",
+    ...(process.platform === "linux" ? ["pi-environ.txt"] : []),
+    "probe.cjs",
+    "report.md",
+  ]);
 });
 
 function seedCard(root: string, name: string, ageDays: number, closed: boolean): string {
@@ -200,6 +296,10 @@ test("tidy removes only what is closed and old: an open card is never touched, a
   writeFileSync(join(outside, "closed"), "");
   backdate(join(outside, "closed"), 90);
   symlinkSync(outside, join(dir, "scratch", "c-5"));
+  const leftover = join(dir, "scratch", ".removing-4242-c-6");
+  mkdirSync(join(leftover, "deps"), { recursive: true });
+  writeFileSync(join(leftover, "deps", "index.js"), "x");
+  symlinkSync(outside, join(dir, "scratch", ".removing-4242-c-7"));
   const cache = join(dir, "node-compile-cache", "v24.0.0-x64-aaaa-1000");
   mkdirSync(cache, { recursive: true });
   writeFileSync(join(cache, "fresh"), "entry");
@@ -207,23 +307,25 @@ test("tidy removes only what is closed and old: an open card is never touched, a
   backdate(join(cache, "stale"), 3);
   const before = listing(open);
 
-  const out = parseRecord(
-    fleet(["scratch", "--tidy", "--json"], { FLEET_HOST_DIR: dir }).trim().split("\n").at(-1) ?? "",
-  );
+  const out = tidyByHand(dir);
 
   assert.deepEqual(out["tidied"], { cacheFiles: 1, cards: ["c-4"] });
   assert.deepEqual(listing(open), before);
   assert.deepEqual(listing(justClosed), ["closed", "report.md"]);
-  assert.deepEqual(readdirSync(join(dir, "scratch")).sort(), ["c-2", "c-3", "c-5", "notes"]);
+  assert.deepEqual(readdirSync(join(dir, "scratch")).sort(), [
+    ".removing-4242-c-7",
+    "c-2",
+    "c-3",
+    "c-5",
+    "notes",
+  ]);
+  assert.equal(existsSync(leftover), false);
   assert.equal(readFileSync(join(stranger, "keep.txt"), "utf8"), "not a card folder");
   assert.deepEqual(listing(outside), ["closed", "precious.txt", "tmp/", "tmp/precious.txt"]);
   assert.deepEqual(readdirSync(cache), ["fresh"]);
   assert.equal(existsSync(longClosed), false);
 
-  const again = parseRecord(
-    fleet(["scratch", "--tidy", "--json"], { FLEET_HOST_DIR: dir }).trim().split("\n").at(-1) ?? "",
-  );
-  assert.deepEqual(again["tidied"], { cacheFiles: 0, cards: [] });
+  assert.deepEqual(tidyByHand(dir)["tidied"], { cacheFiles: 0, cards: [] });
 });
 
 test("tidy with no fleet folder yet does nothing and succeeds, at the default place under the home folder", () => {
