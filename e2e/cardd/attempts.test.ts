@@ -190,6 +190,87 @@ test("a restart that is refused, or comes from another lane, leaves the pinned m
   );
 });
 
+const modelOf = async (): Promise<string | undefined> =>
+  check(OPS["attempt.resume"].result, await fleet.main.call("attempt.resume", { card: card.id }))
+    .model;
+const restartWith = async (args: Record<string, unknown>) =>
+  check(
+    OPS["card.restart"].result,
+    await fleet.main.call("card.restart", { card: card.id, mode: "replace", ...args }),
+  );
+const pinNotes = async (): Promise<string[]> =>
+  check(OPS.card.result, await fleet.main.call("card", { card: card.id }))
+    .entries.filter((entry) => entry.kind === "note" && entry.fields["model"] !== undefined)
+    .map((entry) => entry.body);
+
+test("a restart sets the model of a worker that was dispatched without one", async () => {
+  await fleet.main.call("attempt.begin", { card: card.id, host: "maverick", task: "Build it" });
+  assert.equal(await modelOf(), undefined);
+
+  assert.equal((await restartWith({ key: "first", model: "tier/visual" })).repeat, false);
+  assert.equal(await modelOf(), "tier/visual");
+  assert.deepEqual(await pinNotes(), [
+    "Model pin changed from the lane's normal model selection to tier/visual. Every restart keeps it.",
+  ]);
+});
+
+test("a repeated restart key never re-applies its model after a later restart changed it", async () => {
+  const pinned = "anthropic-3/claude-fixture:medium";
+  const later = "openai-codex/gpt-fixture";
+  await fleet.main.call("attempt.begin", {
+    card: card.id,
+    host: "maverick",
+    task: "Build it",
+    model: pinned,
+  });
+
+  assert.equal((await restartWith({ key: "a", model: "tier/visual" })).repeat, false);
+  assert.equal((await restartWith({ key: "b", model: later })).repeat, false);
+  assert.equal((await restartWith({ key: "a", model: "tier/visual" })).repeat, true);
+
+  assert.equal(await modelOf(), later);
+  assert.deepEqual(await pinNotes(), [
+    `Model pin changed from ${pinned} to tier/visual. Every restart keeps it.`,
+    `Model pin changed from tier/visual to ${later}. Every restart keeps it.`,
+  ]);
+});
+
+test("a repeated incident restart keeps the model a later restart chose, and avoid is checked against the model the restart launches", async () => {
+  const pinned = "anthropic-3/claude-fixture:medium";
+  const later = "openai-codex/gpt-fixture";
+  const first = check(
+    OPS["attempt.begin"].result,
+    await fleet.main.call("attempt.begin", {
+      card: card.id,
+      host: "maverick",
+      task: "Build it",
+      model: pinned,
+    }),
+  );
+  const worker = await fleet.cardd.connect(first.token);
+  await worker.call("incident.report", {
+    error: "claude-max 5h quota has exhausted. Restart worker to launch on a new provider.",
+  });
+  const heard = await fleet.main.waitForEntry(
+    (entry) => entry.card === card.id && entry.fields["condition"] === "runtime-failure",
+    "the quota failure",
+  );
+  const found = /Incident (\d+), process generation (\d+)/.exec(heard.body);
+  const incident = { incident: Number(found?.[1]), generation: Number(found?.[2]) };
+  const request = { ...incident, key: "i", model: "tier/visual", avoid: ["anthropic-3"] };
+
+  assert.equal((await restartWith(request)).repeat, false);
+  assert.equal(await modelOf(), "tier/visual");
+  assert.equal((await restartWith({ key: "o", model: later })).repeat, false);
+  assert.equal((await restartWith(request)).repeat, true);
+
+  assert.equal(await modelOf(), later);
+  assert.deepEqual(await pinNotes(), [
+    `Model pin changed from ${pinned} to tier/visual. Every restart keeps it.`,
+    `Model pin changed from tier/visual to ${later}. Every restart keeps it.`,
+  ]);
+});
+
 test("dispatch only starts new work: another host is refused while the worker lives, and its token keeps working", async () => {
   const first = await begin("p620");
   const worker = await fleet.cardd.connect(first.token);

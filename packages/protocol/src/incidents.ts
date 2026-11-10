@@ -65,7 +65,7 @@ export const INCIDENT_OPS = {
         Type.String({
           pattern: MODEL_PIN,
           description:
-            "Replaces the worker's pinned model with this provider/id, such as tier/visual, and every later restart keeps it. Worker replace only",
+            "Sets the worker's model to this provider/id, such as tier/visual, whether or not it was dispatched with an explicit model, and every later restart keeps it. Worker replace only",
         }),
       ),
     }),

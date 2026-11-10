@@ -54,12 +54,14 @@ function refuseAvoidedModel(
   db: DatabaseSync,
   card: number,
   avoid: readonly string[],
+  pinned: string | undefined,
   incident?: Incident,
 ): void {
-  const model = liveAttemptModel(db, card);
+  const model = pinned ?? liveAttemptModel(db, card);
   if (model === undefined) return;
   const provider = model.slice(0, model.indexOf("/"));
-  if (avoid.includes(provider)) throw new AvoidRefused(card, model, provider, incident);
+  if (avoid.includes(provider))
+    throw new AvoidRefused(card, model, provider, pinned === undefined ? incident : undefined);
 }
 
 function requireDirectParent(
@@ -87,13 +89,18 @@ function repin(db: DatabaseSync, lane: string, card: number, model: string): voi
   addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields: { model } }, []);
 }
 
+interface Planned {
+  readonly value: { readonly repeat: boolean };
+  readonly notify: readonly string[];
+}
+
 function ordinaryRestart(
   db: DatabaseSync,
   session: Session,
   card: { id: number; lane: string },
   mate: boolean,
   key: string,
-): { value: unknown; notify: readonly string[] } {
+): Planned {
   if (!mate) requireOpen(db, getCard(db, card.id));
   const intent = intentOf(db, card.id, mate ? "mate" : "worker");
   if (intent !== "working" && intent !== "with-mate")
@@ -130,7 +137,7 @@ function restartIncident(
   incident: number,
   args: OpArgs<"card.restart">,
   timing: Timings,
-): { value: unknown; notify: readonly string[] } {
+): Planned {
   const { generation, avoid } = args;
   if (generation === undefined)
     throw new Error("an incident restart needs the incident's generation");
@@ -139,9 +146,25 @@ function restartIncident(
     throw new Error(`incident ${String(incident)} is not an incident of c-${String(card.id)}`);
   if (avoid !== undefined && found.state === "open") {
     requireCurrent(db, found, generation);
-    refuseAvoidedModel(db, card.id, avoid, found);
+    refuseAvoidedModel(db, card.id, avoid, args.model, found);
   }
   return recover(db, session, { incident, generation, mode: args.mode, key: args.key }, timing);
+}
+
+function planRestart(
+  db: DatabaseSync,
+  session: Session,
+  card: { id: number; lane: string },
+  mate: boolean,
+  args: OpArgs<"card.restart">,
+  timing: Timings,
+): Planned {
+  if (args.incident !== undefined)
+    return restartIncident(db, session, card, args.incident, args, timing);
+  if (args.avoid !== undefined) refuseAvoidedModel(db, card.id, args.avoid, args.model);
+  if (args.mode === "retry")
+    throw new Error("retry needs an incident: name the incident and its generation");
+  return ordinaryRestart(db, session, card, mate, args.key);
 }
 
 export function restartCard(
@@ -149,16 +172,13 @@ export function restartCard(
   session: Session,
   args: OpArgs<"card.restart">,
   timing: Timings,
-): { value: unknown; notify: readonly string[] } {
+): Planned {
   const card = getCard(db, args.card);
   const mate = laneCardOf(db, card.lane) === card.id;
   requireDirectParent(session, card, mate);
   refuseLaunchOption(args, mate);
-  if (args.model !== undefined) repin(db, session.lane, card.id, args.model);
-  if (args.incident !== undefined)
-    return restartIncident(db, session, card, args.incident, args, timing);
-  if (args.avoid !== undefined) refuseAvoidedModel(db, card.id, args.avoid);
-  if (args.mode === "retry")
-    throw new Error("retry needs an incident: name the incident and its generation");
-  return ordinaryRestart(db, session, card, mate, args.key);
+  const planned = planRestart(db, session, card, mate, args, timing);
+  if (args.model !== undefined && !planned.value.repeat)
+    repin(db, session.lane, card.id, args.model);
+  return planned;
 }
