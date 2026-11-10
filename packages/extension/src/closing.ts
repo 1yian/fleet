@@ -204,7 +204,7 @@ function processesOf(session: string, out: string): { stopped: string[]; spared:
   return { stopped, spared };
 }
 
-async function retire(attempt: Attempt, card: number): Promise<Retired> {
+async function retire(attempt: Attempt): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
@@ -221,7 +221,6 @@ async function retire(attempt: Attempt, card: number): Promise<Retired> {
     await onHost(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
-  await onHost(host, ["sh", "-c", CLOSE_SCRATCH_SCRIPT, "scratch", String(card)]);
   const out = `${archiveDir}/${session}.tar.zst`;
   let archive = "";
   for (const each of drop) {
@@ -239,6 +238,18 @@ async function retire(attempt: Attempt, card: number): Promise<Retired> {
     ).trim();
   }
   return { archive: archive === "" ? null : archive, ...processes };
+}
+
+async function clearScratch(hosts: ReadonlySet<string>, card: number): Promise<string[]> {
+  const kept: string[] = [];
+  for (const host of hosts) {
+    try {
+      await onHost(host, ["sh", "-c", CLOSE_SCRATCH_SCRIPT, "scratch", String(card)]);
+    } catch (error) {
+      kept.push(`${host} (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+  return kept;
 }
 
 export async function close(
@@ -262,9 +273,11 @@ export async function close(
   const stopped: string[] = [];
   const spared: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
+  const retiredOn = new Set<string>();
   for (const attempt of plan.attempts) {
     try {
-      const retired = await retire(attempt, id);
+      const retired = await retire(attempt);
+      retiredOn.add(attempt.host);
       if (retired.archive !== null) archives.push(`${attempt.host}:${retired.archive}`);
       stopped.push(...retired.stopped);
       spared.push(...retired.spared);
@@ -275,19 +288,24 @@ export async function close(
   }
   const finish = { card: id, mode: plan.mode, text, archives, left };
   const card = await link.call("close.finish", finish);
+  const scratch = await clearScratch(retiredOn, id);
   const hostsJustUnreachable = new Set(left.map((each) => each.host));
   const found = await refreshClonesInTurn(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
   const landing = moved === "" ? "" : ` ${moved}`;
-  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, { stopped, spared })}`;
+  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, { stopped, spared, scratch })}`;
 }
 
 function outcome(
   archives: readonly string[],
   left: readonly { session: string; host: string; reason: string }[],
   clones: readonly string[],
-  { stopped, spared }: { stopped: readonly string[]; spared: readonly string[] },
+  {
+    stopped,
+    spared,
+    scratch,
+  }: { stopped: readonly string[]; spared: readonly string[]; scratch: readonly string[] },
 ): string {
   const ended = stopped.length === 0 ? "" : ` Stopped leftover processes: ${stopped.join("; ")}.`;
   const shared = spared.length === 0 ? "" : ` Kept shared services: ${spared.join("; ")}.`;
@@ -297,5 +315,7 @@ function outcome(
       ? ""
       : ` Left in place: ${left.map((each) => `${each.host} ${each.session} (${each.reason})`).join("; ")}.`;
   const found = clones.length === 0 ? "" : ` Clones: ${clones.join("; ")}.`;
-  return `${ended}${shared}${kept}${stayed}${found}`;
+  const folder =
+    scratch.length === 0 ? "" : ` Scratch folder left in place: ${scratch.join("; ")}.`;
+  return `${ended}${shared}${kept}${stayed}${folder}${found}`;
 }
