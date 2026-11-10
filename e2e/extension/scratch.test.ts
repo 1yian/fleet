@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -8,7 +7,6 @@ import {
   rmSync,
   statfsSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -24,42 +22,18 @@ import {
 } from "../support/dispatch-lab.ts";
 import { isRecord, parseRecord, records } from "../support/json.ts";
 import { tempDir } from "../support/run-root.ts";
+import {
+  backdate,
+  DISPATCH,
+  fleet,
+  listing,
+  seedCard,
+  tidyByHand,
+  withoutJiti,
+  WORKER_SCRIPT,
+} from "../support/scratch-files.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
-const LAUNCH = fileURLToPath(new URL("../../packages/extension/src/launch.ts", import.meta.url));
-const DAY_MS = 86_400_000;
-
-const fleet = (args: readonly string[], env: Record<string, string>): string =>
-  execFileSync(process.execPath, [LAUNCH, ...args], {
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-  });
-
-function listing(root: string, prefix = ""): string[] {
-  return readdirSync(root, { withFileTypes: true })
-    .flatMap((entry) =>
-      entry.isDirectory()
-        ? [`${prefix}${entry.name}/`, ...listing(join(root, entry.name), `${prefix}${entry.name}/`)]
-        : [`${prefix}${entry.name}`],
-    )
-    .sort();
-}
-
-function backdate(path: string, days: number): void {
-  const then = new Date(Date.now() - days * DAY_MS);
-  utimesSync(path, then, then);
-}
-
-const WORKER_SCRIPT = `
-printf '%s\\n%s\\n%s\\n' "$FLEET_SCRATCH" "$TMPDIR" "$NODE_COMPILE_CACHE" > "$FLEET_SCRATCH/env.txt"
-if [ -r /proc/$PPID/environ ]; then
-  tr '\\0' '\\n' < /proc/$PPID/environ | grep -E '^(NODE_COMPILE_CACHE|TMPDIR|FLEET_SCRATCH)=' | sort > "$FLEET_SCRATCH/pi-environ.txt"
-fi
-echo "findings for the mate" > "$FLEET_SCRATCH/report.md"
-echo "a clone that the worker made" > "$TMPDIR/clone.txt"
-echo 'module.exports = 1;' > "$FLEET_SCRATCH/probe.cjs"
-node "$FLEET_SCRATCH/probe.cjs"
-`;
 
 let parts: DispatchLab;
 let home: string;
@@ -68,7 +42,12 @@ beforeEach(async () => {
   const config = process.env["XDG_CONFIG_HOME"] ?? join(process.env["HOME"] ?? "", ".config");
   parts = await startDispatchLab({
     workerArgs: ["-e", SHELL],
-    mate: { HOME: home, XDG_CONFIG_HOME: config, FLEET_HOST_DIR: "" },
+    mate: {
+      HOME: home,
+      XDG_CONFIG_HOME: config,
+      FLEET_HOST_DIR: "",
+      FLEET_SCRATCH_LOCK_WAIT_MS: "4000",
+    },
   });
   parts.cardd.yolo("site");
 });
@@ -141,25 +120,6 @@ test("a worker starts with its scratch, temp, and compile cache on disk under th
     "report.md",
   ]);
 });
-
-const DISPATCH = {
-  title: "Run the tests",
-  name: "run-the-tests",
-  kind: "ship",
-  project: "site",
-  intent: "Run the tests",
-  host: "local",
-  task: "run them",
-};
-
-const withoutJiti = (names: readonly string[]): string[] =>
-  names.filter((name) => !name.startsWith("tmp/jiti"));
-
-const tidyByHand = (hostDir: string): Record<string, unknown> =>
-  parseRecord(
-    fleet(["scratch", "--tidy", "--json"], { FLEET_HOST_DIR: hostDir }).trim().split("\n").at(-1) ??
-      "",
-  );
 
 test("dispatching a card again reopens its folder: the closed mark goes, the evidence stays, and a tidy afterwards removes none of it", async () => {
   const hostDir = join(home, ".fleet");
@@ -268,18 +228,6 @@ test("a card whose newest attempt cannot be retired keeps its scratch folder, an
   ]);
 });
 
-function seedCard(root: string, name: string, ageDays: number, closed: boolean): string {
-  const card = join(root, "scratch", name);
-  mkdirSync(join(card, "tmp", "deps"), { recursive: true });
-  writeFileSync(join(card, "tmp", "deps", "index.js"), "x");
-  writeFileSync(join(card, "report.md"), "evidence");
-  if (closed) writeFileSync(join(card, "closed"), "");
-  for (const path of [join(card, "tmp", "deps", "index.js"), join(card, "report.md")])
-    backdate(path, ageDays);
-  if (closed) backdate(join(card, "closed"), ageDays);
-  return card;
-}
-
 test("tidy removes only what is closed and old: an open card is never touched, a closed card keeps its evidence for seven days, and old compile cache entries go", () => {
   const dir = tempDir("fleet-host-dir-");
   const open = seedCard(dir, "c-2", 90, false);
@@ -300,6 +248,9 @@ test("tidy removes only what is closed and old: an open card is never touched, a
   mkdirSync(join(leftover, "deps"), { recursive: true });
   writeFileSync(join(leftover, "deps", "index.js"), "x");
   symlinkSync(outside, join(dir, "scratch", ".removing-4242-c-7"));
+  const staleLeftover = join(dir, "scratch", ".stale-4242-1");
+  mkdirSync(staleLeftover);
+  writeFileSync(join(staleLeftover, "owner"), "4242 elsewhere\n");
   const cache = join(dir, "node-compile-cache", "v24.0.0-x64-aaaa-1000");
   mkdirSync(cache, { recursive: true });
   writeFileSync(join(cache, "fresh"), "entry");
@@ -320,6 +271,7 @@ test("tidy removes only what is closed and old: an open card is never touched, a
     "notes",
   ]);
   assert.equal(existsSync(leftover), false);
+  assert.equal(existsSync(staleLeftover), false);
   assert.equal(readFileSync(join(stranger, "keep.txt"), "utf8"), "not a card folder");
   assert.deepEqual(listing(outside), ["closed", "precious.txt", "tmp/", "tmp/precious.txt"]);
   assert.deepEqual(readdirSync(cache), ["fresh"]);
@@ -402,6 +354,36 @@ test("scratch ranks the largest directories of several roots together, and the r
   assert.ok(roots.includes(process.env["TMPDIR"]));
   assert.ok(roots.indexOf(process.env["TMPDIR"]) < roots.indexOf(dir));
   assert.equal(new Set(roots).size, roots.length);
+});
+
+test("the directory budget stops the walk: a spent budget returns what was counted, says partial, and leaves the rest unscanned", () => {
+  const first = tempDir("fleet-root-a-");
+  const second = tempDir("fleet-root-b-");
+  const files = 4000;
+  for (const root of [first, second]) {
+    for (const name of ["x", "y"]) {
+      mkdirSync(join(root, name));
+      for (let index = 0; index < files; index += 1)
+        writeFileSync(join(root, name, `f${String(index)}`), "x");
+    }
+  }
+  const started = Date.now();
+  const out = parseRecord(
+    fleet(["scratch", "--largest", first, "--largest", second, "--by", "inodes", "--json"], {
+      FLEET_SCRATCH_WALK_MS: "1",
+    })
+      .trim()
+      .split("\n")
+      .at(-1) ?? "",
+  );
+  assert.ok(Date.now() - started < 20_000, "the call returned promptly");
+  assert.equal(out["partial"], true);
+  const counted = records(out["largest"]).map((each) => Number(each["inodes"]));
+  assert.ok(counted.length < 4, "the walk stopped before it reached every child");
+  assert.ok(
+    counted.every((inodes) => inodes < files + 1),
+    "no child was counted in full",
+  );
 });
 
 test("scratch reports the use of the filesystems it writes to, and names the largest directories by inodes or by space", () => {

@@ -31,6 +31,12 @@ export interface Breakdown {
 const WATCHED_TOP = 5;
 const WALK_BUDGET_MS = 20_000;
 
+function walkBudgetMs(): number {
+  const set = process.env["FLEET_SCRATCH_WALK_MS"];
+  const given = set === undefined || set === "" ? Number.NaN : Number(set);
+  return Number.isFinite(given) && given >= 0 ? given : WALK_BUDGET_MS;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -126,6 +132,7 @@ function measure(path: string, device: number, deadline: number): Largest {
   let bytes = 0;
   const pending = [path];
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (Date.now() > deadline) break;
     let stat;
     try {
       stat = lstatSync(next);
@@ -135,7 +142,7 @@ function measure(path: string, device: number, deadline: number): Largest {
     if (stat.dev !== device) continue;
     inodes += 1;
     bytes += stat.blocks * 512;
-    if (!stat.isDirectory() || Date.now() > deadline) continue;
+    if (!stat.isDirectory()) continue;
     try {
       for (const name of readdirSync(next)) pending.push(join(next, name));
     } catch {
@@ -154,12 +161,21 @@ function filesystemOf(path: string): string {
   }
 }
 
-export function breakdown(paths: readonly string[], metric: Metric, now: number): Breakdown {
-  const deadline = now + WALK_BUDGET_MS;
-  const sizes = paths.flatMap((path) => {
+function sizesUnder(paths: readonly string[], deadline: number): Largest[] {
+  const sizes: Largest[] = [];
+  for (const path of paths) {
     const device = statSync(path).dev;
-    return readdirSync(path).map((name) => measure(join(path, name), device, deadline));
-  });
+    for (const name of readdirSync(path)) {
+      if (Date.now() > deadline) return sizes;
+      sizes.push(measure(join(path, name), device, deadline));
+    }
+  }
+  return sizes;
+}
+
+export function breakdown(paths: readonly string[], metric: Metric, now: number): Breakdown {
+  const deadline = now + walkBudgetMs();
+  const sizes = sizesUnder(paths, deadline);
   const largest = sizes.sort((a, b) => sizeOf(b, metric) - sizeOf(a, metric)).slice(0, WATCHED_TOP);
   return { filesystem: filesystemOf(paths[0] ?? ""), partial: Date.now() > deadline, largest };
 }
