@@ -56,6 +56,34 @@ test("a worker whose process ends in its last turn after done leaves the card do
   assert.equal(plan.mode, "done");
 });
 
+test("a pane stop in the last turn after done leaves the card done and closable", async () => {
+  const held = gate();
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "Assessment delivered" } }));
+  h.onModel(async () => {
+    await held.wait;
+    return { text: "Summary of the assessment" };
+  });
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "Nothing to add" } }));
+  const pi = await worker();
+  await h.waitForCall(1);
+  pi.abort();
+  await h.waitFor((e) => e["type"] === "settled" && e["aborted"] === true, "the stopped run");
+  held.open();
+  pi.prompt("Anything to add?");
+  await fleet.main.waitForEntries(2);
+
+  assert.deepEqual(await reports(fleet.main), [
+    ["done", "Assessment delivered"],
+    ["done", "Nothing to add"],
+  ]);
+  assert.equal(await status(fleet.main, card), "with-mate");
+  const plan = check(
+    OPS["close.begin"].result,
+    await fleet.main.call("close.begin", { card: card.id }),
+  );
+  assert.equal(plan.mode, "done");
+});
+
 test("a worker whose pane closes in the middle of its work does not file a pane stop", async () => {
   const held = gate();
   h.onModel(async () => {
