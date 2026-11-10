@@ -14,7 +14,7 @@ import { idLabel } from "./text.ts";
 import { Collapsible } from "./Collapsible.tsx";
 import { Entries } from "./Thread.tsx";
 import { LiveChip } from "./TaskCard.tsx";
-import { glyphOf, phraseOf, prLabel, since, type Question } from "./format.ts";
+import { glyphOf, laterLabel, phraseOf, prLabel, since, type Question } from "./format.ts";
 import { BackIcon, SendIcon, StatusIcon } from "./icons.tsx";
 
 interface Props {
@@ -183,6 +183,14 @@ function Properties(props: {
           {phraseOf(card, asked)}
         </>,
       )}
+      {card.until === null
+        ? null
+        : row(
+            "Until",
+            <time dateTime={new Date(card.until).toISOString()}>
+              {laterLabel(card.until, now)}
+            </time>,
+          )}
       {row("Lane", <span className="tag">{card.lane}</span>)}
       {card.mate ? null : row("Project", card.project ?? <span className="muted">None</span>)}
       {row("Kind", <span className="kind">{card.mate ? "lane card" : card.kind}</span>)}

@@ -261,6 +261,36 @@ test("board shows the open cards by what needs attention, and counts the closed 
   await Promise.all([sessions.cleo.close(), sessions.worker.close()]);
 });
 
+test("board shows a card held until a date as waiting with its date whatever its worker last reported, and a blocked worker with no hold as blocked", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const hour = 3_600_000;
+  const reports = {
+    "held after blocked": { status: "blocked", text: "waiting for the load balancer" },
+    "held after paused": { status: "paused", text: "CI runs", until: Date.now() + hour },
+    "blocked alone": { status: "blocked", text: "waiting for the load balancer" },
+  } as const;
+  const sessions: Session[] = [cleo];
+  for (const [title, report] of Object.entries(reports)) {
+    const card = await newCard(cleo, title);
+    const worker = await fleet.cardd.connect(await begin(cleo, card));
+    sessions.push(worker);
+    await worker.call("report", report);
+    if (title.startsWith("held"))
+      await cleo.call("hold", {
+        card: card.id,
+        question: "Wait for the load balancer?",
+        until: Date.now() + 2 * hour + 300_000,
+      });
+  }
+  const [board = ""] = await mainCalls([["board", { lane: "cleo" }]]);
+  const rows = board.split("\n");
+  const row = (title: string): string => rows.find((each) => each.endsWith(`,${title}`)) ?? "";
+  assert.match(row("held after blocked"), /^ {2}\d+,waiting \(in 2h\),/);
+  assert.match(row("held after paused"), /^ {2}\d+,waiting \(in 2h\),/);
+  assert.match(row("blocked alone"), /^ {2}\d+,with-mate \(blocked\),/);
+  await Promise.all(sessions.map((session) => session.close()));
+});
+
 test("board filters by status and lane, caps the closed cards, adds fields, and refuses an unknown one", async () => {
   const sessions = await seed();
   const [dropped, cleo, capped, fields, unknown] = await mainCalls([
