@@ -65,6 +65,10 @@ interface LatestReport {
   readonly until: number | undefined;
 }
 
+function pauseHint(latest: LatestReport | undefined): boolean {
+  return latest?.status === "paused" && latest.until !== undefined && latest.until > Date.now();
+}
+
 export class WorkerRun {
   private latest: LatestReport | undefined;
   private unsent: string | undefined;
@@ -175,9 +179,8 @@ export class WorkerRun {
 
   private mayEnd(): boolean {
     if (this.jobs.waiting || this.recoveryCheck) return true;
-    if (this.latest === undefined) return false;
-    const { status, until } = this.latest;
-    if (status === "paused") return until !== undefined && until > Date.now();
-    return HANDOFFS.has(status) || status === "stopped";
+    if (pauseHint(this.latest)) return true;
+    const status = this.latest?.status;
+    return status !== undefined && (HANDOFFS.has(status) || status === "stopped");
   }
 }

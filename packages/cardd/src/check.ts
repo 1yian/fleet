@@ -10,7 +10,7 @@ import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
 import { describe, labelOf } from "./incident-text.ts";
 import { incidentFrom } from "./incident-store.ts";
 import { replyNudges } from "./replies.ts";
-import { finishFrom, type Stage } from "./status.ts";
+import { finishedOpen, idleNow, resting } from "./status.ts";
 import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
@@ -32,8 +32,6 @@ interface Match {
 const keyOf = (match: Match): string =>
   `${match.condition}${match.instance === undefined ? "" : `:${match.instance}`}#${String(match.tier)}`;
 
-const WORKING: ReadonlySet<Stage> = new Set(["working", "in-review"]);
-
 const workerCards = (
   ids: readonly number[],
 ): string => `SELECT c.id AS card, c.lane AS lane, a.id AS attemptId, a.state AS attempt, a.created_at AS started,
@@ -43,8 +41,6 @@ const workerCards = (
   FROM cards c JOIN attempts a ON a.card = c.id AND a.state IN ('starting', 'active')
   JOIN sessions s ON s.attempt = a.id
   WHERE c.id IN (${ids.map(Number).join(", ")})`;
-
-const LATEST_REPORT = `(SELECT fields FROM entries WHERE card = w.card AND kind = 'report' ORDER BY id DESC LIMIT 1)`;
 
 const WORKER_RULES: readonly {
   condition: string;
@@ -96,9 +92,7 @@ const IDLE_WORKERS = (
   FROM (${workerCards(ids)}) w
   WHERE ${quietSql("w.state", "w.attemptId")}
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
-    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN ('pending', 'pushed'))
-    AND NOT (coalesce(json_extract(${LATEST_REPORT}, '$.status'), '') = 'paused'
-      AND coalesce(json_extract(${LATEST_REPORT}, '$.until'), 0) > ?1)`;
+    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN ('pending', 'pushed'))`;
 
 const NUDGE_TEXT =
   "you went idle without reporting. If the work is done or you are stuck, call report now with the right status. If you are still working, carry on and report when you reach a handoff.";
@@ -120,7 +114,7 @@ function workerMatches(
   now: number,
   t: Timings,
 ): Match[] {
-  const ids = open.filter(({ standing }) => WORKING.has(standing.stage)).map(({ card }) => card.id);
+  const ids = open.filter(({ standing }) => resting(standing)).map(({ card }) => card.id);
   if (ids.length === 0) return [];
   const running = WORKER_RULES.flatMap(({ condition, text, where, since, first }) =>
     rows(
@@ -134,7 +128,13 @@ function workerMatches(
         : [{ card: Number(row["card"]), lane: String(row["lane"]), condition, text, tier }];
     }),
   );
-  const idle = rows(db, IDLE_WORKERS(ids), now).flatMap((row): Match[] => {
+  const idleIds = open.filter(({ standing }) => idleNow(standing, now)).map(({ card }) => card.id);
+  return [...running, ...idleMatches(db, idleIds, now, t)];
+}
+
+function idleMatches(db: DatabaseSync, ids: readonly number[], now: number, t: Timings): Match[] {
+  if (ids.length === 0) return [];
+  return rows(db, IDLE_WORKERS(ids)).flatMap((row): Match[] => {
     const card = Number(row["card"]);
     const lane = String(row["lane"]);
     const seen = Number(row["seen"]);
@@ -163,7 +163,6 @@ function workerMatches(
       ...(tier === 0 ? [] : [{ card, lane, condition: "worker-idle", text, tier }]),
     ];
   });
-  return [...running, ...idle];
 }
 
 const PROCESS_PHASES: Readonly<Record<string, "startup" | "lost">> = {
@@ -232,8 +231,8 @@ function finishedCards(open: readonly Loaded[], t: Timings): Match[] {
   return open.flatMap(({ card: own, entries, standing }) => {
     if (own.status !== "with-mate" && own.status !== "merging") return [];
     const { hold } = standing.facts;
-    const finish = finishFrom(entries);
-    if (hold !== undefined || !(finish.merged || finish.workerDone)) return [];
+    const finish = finishedOpen(entries);
+    if (hold !== undefined || finish === undefined) return [];
     return finishedMatches({ ...own, since: standing.since }, finish, t.wall(), t);
   });
 }

@@ -16,7 +16,7 @@ import {
   type Incident,
 } from "./incident-store.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
-import { finishFrom } from "./status.ts";
+import { isFinished, pausedNow } from "./status.ts";
 import { addCard, addEntry, laneCardOf, loadCard, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -42,8 +42,9 @@ export function intentOf(db: DatabaseSync, card: number, role: "mate" | "worker"
   if (role === "mate") return "working";
   const { card: own, entries, standing } = loadCard(db, card);
   if (own.status === "done" || own.status === "dropped") return "closed";
-  if (own.status === "paused" || (standing.facts.pausedUntil ?? 0) > Date.now()) return "paused";
-  if (finishFrom(entries).workerDone) return "completed";
+  const now = Date.now();
+  if (pausedNow(standing, now)) return "paused";
+  if (isFinished(entries)) return "completed";
   return ["working", "in-review", "merging"].includes(own.status) ? "working" : own.status;
 }
 
