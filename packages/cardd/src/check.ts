@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs, quietSql } from "./attempts.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
-import { escalationText, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
+import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
 import { expireMaintenance } from "./maintenance.ts";
@@ -324,22 +324,26 @@ function incidentMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     });
 }
 
+const findingOpen = (db: DatabaseSync, card: number, key: string): boolean =>
+  db
+    .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
+    .get(card, key) !== undefined;
+
 function escalationMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   return unrecoverable(db).flatMap((stuck) => {
     const { incident, lane } = stuck;
     if (repeatTier(now - incident.firstAt, t.repeat, t.repeat) === 0) return [];
-    return [
-      {
-        card: incident.card,
-        lane,
-        to: mainLane(db),
-        condition: UNRECOVERABLE,
-        instance: String(incident.id),
-        text: escalationText(stuck),
-        tier: 1,
-        fields: { incident: incident.id },
-      },
-    ];
+    const match: Match = {
+      card: incident.card,
+      lane,
+      to: mainLane(db),
+      condition: UNRECOVERABLE,
+      instance: String(incident.id),
+      text: escalationText(stuck, t.wall()),
+      tier: 1,
+      fields: { incident: incident.id },
+    };
+    return told(db, incident) && !findingOpen(db, match.card, keyOf(match)) ? [] : [match];
   });
 }
 
@@ -388,11 +392,8 @@ function writeFindings(
 ): void {
   for (const match of matches) {
     const key = keyOf(match);
-    const open = db
-      .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
-      .get(match.card, key);
     const to = recipientOf(db, match);
-    if (open !== undefined || to === undefined) continue;
+    if (findingOpen(db, match.card, key) || to === undefined) continue;
     if (match.worker !== true && !isUp(db, to)) continue;
     const fields = {
       ...match.fields,

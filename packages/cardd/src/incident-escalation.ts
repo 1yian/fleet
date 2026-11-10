@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
-import { exhaustion } from "./incident-kinds.ts";
+import { exhaustion, remaining } from "./incident-kinds.ts";
 import { incidentFrom, liveIncident, type Incident } from "./incident-store.ts";
-import { FAILURE_OF } from "./incident-text.ts";
+import { FAILURE_OF, stamp } from "./incident-text.ts";
 import { addEntry, transaction, workerOf } from "./store.ts";
 
 export const UNRECOVERABLE = "runtime-failure-unrecoverable";
@@ -29,6 +29,9 @@ const bodyOf = (db: DatabaseSync, condition: string, inc: Incident): string | un
   const body = db.prepare(ENTRY_OF).get(condition, inc.card, inc.id)?.["body"];
   return typeof body === "string" ? body : undefined;
 };
+
+export const told = (db: DatabaseSync, inc: Incident): boolean =>
+  bodyOf(db, UNRECOVERABLE, inc) !== undefined;
 
 function noteRefusal(db: DatabaseSync, refused: AvoidRefused): void {
   const worker = workerOf(db, refused.card);
@@ -58,7 +61,7 @@ const LIVE_OF_WORKERS_IN_SECOND_LANES = `SELECT i.* FROM incidents i
 
 function whyNoRecovery(db: DatabaseSync, inc: Incident): string | undefined {
   if (inc.state === "blocked") return exhaustion(inc);
-  if (inc.state === "recovering" && bodyOf(db, UNRECOVERABLE, inc) === undefined) return undefined;
+  if (inc.state === "recovering" && !told(db, inc)) return undefined;
   return bodyOf(db, REFUSED, inc);
 }
 
@@ -82,7 +85,14 @@ export function unrecoverable(db: DatabaseSync): Unrecoverable[] {
     });
 }
 
-export function escalationText({ incident: inc, lane, reason }: Unrecoverable): string {
+export function escalationText(
+  { incident: inc, lane, reason }: Unrecoverable,
+  wall: number,
+): string {
   const cause = inc.phase === "turn" || inc.phase === "compaction" ? `: ${inc.error}` : "";
-  return `runtime failure with no recovery left: c-${String(inc.card)} in lane ${lane}, incident ${String(inc.id)}, ${FAILURE_OF[inc.phase]}${cause} (classified ${inc.classification}). Why: ${reason}. ${lane} was told and cannot recover it, so it needs you.`;
+  const pending =
+    inc.eligibleAt !== null && inc.eligibleAt > wall && remaining(inc).includes("retry")
+      ? ` A retry is still pending, eligible at ${stamp(inc.eligibleAt)}.`
+      : "";
+  return `runtime failure with no recovery left: c-${String(inc.card)} in lane ${lane}, incident ${String(inc.id)}, ${FAILURE_OF[inc.phase]}${cause} (classified ${inc.classification}). Why: ${reason}.${pending} ${lane} was told and cannot recover it, so it needs you.`;
 }

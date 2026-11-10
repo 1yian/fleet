@@ -56,6 +56,15 @@ function refuseAvoidedModel(db: DatabaseSync, card: number, avoid: readonly stri
   if (avoid.includes(provider)) throw new AvoidRefused(card, model, provider);
 }
 
+function requireDirectParent(
+  session: Session,
+  card: { id: number; lane: string },
+  mate: boolean,
+): void {
+  if (mate ? session.lane !== "main" : session.lane !== card.lane)
+    throw new Error(`only the direct parent can restart c-${String(card.id)}`);
+}
+
 function ordinaryRestart(
   db: DatabaseSync,
   session: Session,
@@ -63,8 +72,6 @@ function ordinaryRestart(
   mate: boolean,
   key: string,
 ): { value: unknown; notify: readonly string[] } {
-  if (mate ? session.lane !== "main" : session.lane !== card.lane)
-    throw new Error(`only the direct parent can restart c-${String(card.id)}`);
   if (!mate) requireOpen(db, getCard(db, card.id));
   const intent = intentOf(db, card.id, mate ? "mate" : "worker");
   if (intent !== "working" && intent !== "with-mate")
@@ -103,6 +110,7 @@ export function restartCard(
   const card = getCard(db, args.card);
   const mate = laneCardOf(db, card.lane) === card.id;
   const { incident, generation } = args;
+  requireDirectParent(session, card, mate);
   if (args.avoid !== undefined && (args.mode === "retry" || mate))
     throw new Error(
       "avoid applies only when a worker's process is replaced: retry and a second mate's restart start no new worker process",

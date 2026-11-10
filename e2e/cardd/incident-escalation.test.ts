@@ -63,7 +63,18 @@ const restart = (
   card: Card,
   incident: { incident: number; generation: number },
   rest: Record<string, unknown>,
-): Promise<unknown> => cleo.call("card.restart", { card: card.id, ...incident, ...rest });
+  by: Session = cleo,
+): Promise<unknown> => by.call("card.restart", { card: card.id, ...incident, ...rest });
+
+const ELIGIBLE_AT = /eligible at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)/;
+const eligibleAt = (mate: Session, card: Card): string | undefined =>
+  ELIGIBLE_AT.exec(heardBy(mate, "runtime-failure", card)[0]?.body ?? "")?.[1];
+
+async function afterChecks(): Promise<void> {
+  const witness = await newCard(cleo, "a clock for the test");
+  await begin(cleo, witness);
+  await reachedTier(cleo, witness, "worker-never-connected", 3);
+}
 
 test("a refused avoid on an explicit model reaches main once after the mate's first reminder, naming the card, lane, incident, and reason, and the mate's reminders go on", async () => {
   const card = await newCard(cleo, "Users see Spanish copy");
@@ -91,6 +102,12 @@ test("a refused avoid on an explicit model reaches main once after the mate's fi
     "a restart keeps that model",
   ])
     assert.ok(told.body.includes(part), `${part} in: ${told.body}`);
+  const eligible = eligibleAt(cleo, card);
+  assert.ok(eligible !== undefined, "the mate heard when the retry becomes eligible");
+  assert.ok(
+    told.body.includes(`A retry is still pending, eligible at ${eligible}.`),
+    `the pending retry and its time in: ${told.body}`,
+  );
 
   const last = await reachedTier(cleo, card, "runtime-failure-open", 4);
   assert.ok(last.id > told.id, "the mate's own reminders go on after main was told");
@@ -98,10 +115,48 @@ test("a refused avoid on an explicit model reaches main once after the mate's fi
   assert.equal(heardBy(fleet.main, "runtime-failure-open", card).length, 0);
 
   await worker.call("incident.clear", {});
-  const witness = await newCard(cleo, "a clock for the test");
-  await begin(cleo, witness);
-  await reachedTier(cleo, witness, "worker-never-connected", 3);
+  await afterChecks();
   assert.equal(heardBy(fleet.main, "runtime-failure-unrecoverable").length, 1);
+});
+
+test("another mate's refused avoid on a lane that is not its own records nothing and does not reach main", async () => {
+  const dan = await fleet.cardd.connect(fleet.cardd.addLane("dan", "main"));
+  const card = await newCard(cleo, "Users see Spanish copy");
+  await failingWorker(card, RATE_LIMITED, { model: MODEL });
+  const incident = await incidentHeard(cleo);
+  await assert.rejects(
+    restart(card, incident, { mode: "replace", avoid: ["openai-codex"], key: "foreign" }, dan),
+    /only the direct parent can restart/,
+  );
+
+  await reachedTier(cleo, card, "runtime-failure-open", 4);
+  assert.deepEqual(heardBy(fleet.main, "runtime-failure-unrecoverable"), []);
+});
+
+test("a pause and a resume of the same unrecoverable incident do not tell main a second time", async () => {
+  const card = await newCard(cleo, "Users see one scrollbar");
+  const worker = await failingWorker(card, "HTTP 401 invalid api key");
+  await fleet.main.waitForEntry(
+    is("runtime-failure-unrecoverable"),
+    "main to hear about bad credentials",
+  );
+
+  await worker.call("report", {
+    status: "paused",
+    text: "waiting for a new key",
+    until: Date.now() + 3_600_000,
+  });
+  await afterChecks();
+  const reminded = new Set(heardBy(cleo, "runtime-failure-open", card).map((entry) => entry.id));
+  await worker.call("report", { status: "working", text: "the key was replaced" });
+
+  await cleo.waitForEntry(
+    (entry) =>
+      entry.card === card.id && is("runtime-failure-open")(entry) && !reminded.has(entry.id),
+    "the mate's reminder after the resume",
+  );
+  await afterChecks();
+  assert.equal(heardBy(fleet.main, "runtime-failure-unrecoverable", card).length, 1);
 });
 
 test("a failure whose retry becomes eligible at a known time does not reach main, even when the mate asks for it too early", async () => {
@@ -140,6 +195,7 @@ test("a failure that needs no model refusal escalates when its retries are spent
     "main to hear that the retries are spent",
   );
   assert.match(told.body, /every recovery its class allows is spent \(2 of 2 retries\)/);
+  assert.ok(!told.body.includes("still pending"), told.body);
   assert.match(told.body, /c-\d+ in lane cleo, incident \d+/);
 });
 
@@ -154,6 +210,7 @@ test("bad credentials leave no recovery from the start, and main hears once afte
   const firstReminder = await reachedTier(cleo, card, "runtime-failure-open", 1);
   assert.ok(told.id > firstReminder.id);
   assert.match(told.body, /restarting is not a repair for auth/);
+  assert.ok(!told.body.includes("still pending"), told.body);
   await reachedTier(cleo, card, "runtime-failure-open", 4);
   assert.equal(heardBy(fleet.main, "runtime-failure-unrecoverable").length, 1);
 });
