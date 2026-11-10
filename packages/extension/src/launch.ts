@@ -26,16 +26,15 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE = [
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --token T | --bws JSON) [--hold] [lane options] | home set <lane> [lane options] | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
-  "lane options (home add, home set): --host NAME --hosts JSON --roots JSON --tier MODEL --args JSON --worker-args JSON --direnv FOLDER",
-  "  --hosts and --roots take a JSON object, --args and --worker-args a JSON array of strings, and home set also takes --url. An empty --host, --tier, or --direnv clears it.",
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
+  "lane options of home add: --host NAME --hosts JSON --roots JSON --tier MODEL --direnv FOLDER --args JSON --worker-args JSON",
+  "  --hosts and --roots take a JSON object, --args and --worker-args a JSON array of strings. home set takes only --args and --worker-args, and changes only those.",
   "  --token-file reads the lane token from a file, or from standard input with -, so it never sits in a command line. --hold makes the home held until it is started.",
 ].join("\n");
 
 const VALUE_OPTIONS = new Set([
   "--from",
   "--url",
-  "--token",
   "--token-file",
   "--bws",
   "--args",
@@ -54,6 +53,14 @@ const VALUE_OPTIONS = new Set([
   "--content",
   "--script",
 ]);
+const TOKEN_REFUSED =
+  "fleet: --token is not accepted, because a token in a command line shows in the process list and in shell history. Pipe it in with --token-file -, give --token-file FILE, or use --bws JSON";
+
+if (process.argv.slice(2).some((arg) => arg === "--token" || arg.startsWith("--token="))) {
+  console.error(TOKEN_REFUSED);
+  process.exit(2);
+}
+
 const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
   if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
   const value = all[index + 1];
@@ -86,7 +93,6 @@ function parseCommandLine() {
       maintenance: { type: "boolean" },
       from: { type: "string" },
       url: { type: "string" },
-      token: { type: "string" },
       "token-file": { type: "string" },
       hold: { type: "boolean" },
       bws: { type: "string" },
@@ -149,35 +155,30 @@ function jsonStrings(flag: string, text: string): string[] {
   return value.map(String);
 }
 
-const clearable = (text: string): string | undefined => (text === "" ? undefined : text);
-
-function laneSettings(): Record<string, unknown> {
-  const settings: Record<string, unknown> = {};
-  const given = (key: string, text: string | undefined, read: (text: string) => unknown): void => {
-    if (text !== undefined) settings[key] = read(text);
+function listSettings(): { args?: string[]; workerArgs?: string[] } {
+  const { args, "worker-args": workerArgs } = values;
+  return {
+    ...(args === undefined ? {} : { args: jsonStrings("--args", args) }),
+    ...(workerArgs === undefined ? {} : { workerArgs: jsonStrings("--worker-args", workerArgs) }),
   };
-  given("url", values.url, (text) => text);
-  given("host", values.host, clearable);
-  given("tier", values.tier, clearable);
-  given("direnv", values.direnv, clearable);
-  given("hosts", values.hosts, (text) => jsonObject("--hosts", text));
-  given("roots", values.roots, jsonRoots);
-  given("args", values.args, (text) => jsonStrings("--args", text));
-  given("workerArgs", values["worker-args"], (text) => jsonStrings("--worker-args", text));
-  return settings;
 }
 
-function leaseToken(): string | undefined {
-  const { token, "token-file": file } = values;
-  if (token !== undefined && file !== undefined)
-    throw new Error("give --token or --token-file, not both");
-  if (file === undefined) {
-    if (token !== undefined)
-      console.error(
-        "fleet: --token puts the token in the process list and in shell history. Pipe it in with --token-file - instead",
-      );
-    return token;
-  }
+function laneSettings(): Record<string, unknown> {
+  const { url, host, tier, direnv, hosts, roots } = values;
+  return {
+    ...(url === undefined ? {} : { url }),
+    ...(host === undefined ? {} : { host }),
+    ...(tier === undefined ? {} : { tier }),
+    ...(direnv === undefined ? {} : { direnv }),
+    ...(hosts === undefined ? {} : { hosts: jsonObject("--hosts", hosts) }),
+    ...(roots === undefined ? {} : { roots: jsonRoots(roots) }),
+    ...listSettings(),
+  };
+}
+
+function laneToken(): string | undefined {
+  const file = values["token-file"];
+  if (file === undefined) return undefined;
   const text = readFileSync(file === "-" ? 0 : file, "utf8").trim();
   if (text === "") throw new Error(`${file === "-" ? "standard input" : file} holds no token`);
   return text;
@@ -259,13 +260,19 @@ switch (command ?? "") {
       break;
     }
     if (rest[0] === "set" && rest[1] !== undefined) {
-      if (
-        values.token !== undefined ||
-        values["token-file"] !== undefined ||
-        values.bws !== undefined
-      )
-        throw new Error("home set does not change a lane's credentials");
-      const changes = laneSettings();
+      const addOnly = [
+        values.url,
+        values.host,
+        values.hosts,
+        values.roots,
+        values.tier,
+        values.direnv,
+        values["token-file"],
+        values.bws,
+      ];
+      if (addOnly.some((each) => each !== undefined))
+        throw new Error("home set changes only --args and --worker-args");
+      const changes = listSettings();
       if (Object.keys(changes).length === 0) throw new Error(USAGE);
       reconfigure(existingHome(root, rest[1]), changes);
       console.log(
@@ -281,7 +288,7 @@ switch (command ?? "") {
       );
       break;
     }
-    const token = leaseToken();
+    const token = laneToken();
     if (values.url === undefined || (token === undefined && values.bws === undefined))
       throw new Error(USAGE);
     const config = parseLaneConfig("fleet home add", {

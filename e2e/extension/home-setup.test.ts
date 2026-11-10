@@ -65,18 +65,25 @@ test("home add reads the token from standard input or a file and never prints it
     refused(["home", "add", "zed", "--url", LANE_URL, "--token-file", "-"], "\n"),
     /standard input holds no token/,
   );
-  assert.match(
-    refused(["home", "add", "zed", "--url", LANE_URL, "--token", "x", "--token-file", "-"], "y\n"),
-    /give --token or --token-file, not both/,
-  );
   assert.equal(existsSync(homeOf("zed")), false);
 });
 
-test("home add with --token still works, and says that the token is now in the process list", () => {
-  const done = ok(["home", "add", "cleo", "--url", LANE_URL, "--token", TOKEN]);
-  assert.equal(laneFile("cleo")["token"], TOKEN);
-  assert.match(done.stderr, /--token puts the token in the process list.*--token-file -/);
-  assert.ok(!done.stderr.includes(TOKEN));
+test("--token is refused for every command, names the safe ways, and never echoes its value", () => {
+  const added = ["home", "add", "cleo", "--url", LANE_URL];
+  const attempts = [
+    [...added, "--token", TOKEN],
+    [...added, `--token=${TOKEN}`],
+    [...added, "--token", TOKEN, "--token-file", "-"],
+    ["status", "--token", TOKEN],
+  ];
+  for (const args of attempts) {
+    const done = run(args, `${TOKEN}\n`);
+    assert.equal(done.status, 2, args.join(" "));
+    assert.match(done.stderr, /--token-file -.*--token-file FILE.*--bws/);
+    assert.equal(done.stdout, "");
+    assert.ok(!(done.stdout + done.stderr).includes(TOKEN), "the token reached the output");
+    assert.equal(existsSync(homeOf("cleo")), false);
+  }
 });
 
 test("home add finishes a worktree that was made ahead, and a rerun changes nothing", () => {
@@ -115,7 +122,7 @@ test("a home added with --hold is held, so no pass starts its mate until it is s
   );
 });
 
-test("home set changes a lane's settings in place, keeps its token and the rest, and checks them first", () => {
+test("home set changes only a lane's Pi args, keeps the rest of its settings, and refuses other options", () => {
   ok(
     [
       "home",
@@ -142,19 +149,17 @@ test("home set changes a lane's settings in place, keeps its token and the rest,
     "cleo",
     "--args",
     JSON.stringify(args),
-    "--tier",
-    "",
     "--worker-args",
     '["--model","tier/quick"]',
   ]);
   assert.equal(
     set.stdout.trim(),
-    "cleo: set tier, args, workerArgs. Restart the lane for its mate to use them",
+    "cleo: set args, workerArgs. Restart the lane for its mate to use them",
   );
   const file = laneFile("cleo");
   assert.deepEqual(file["args"], args);
   assert.deepEqual(file["workerArgs"], ["--model", "tier/quick"]);
-  assert.equal("tier" in file, false);
+  assert.equal(file["tier"], "tier/weaker-orchestrator");
   assert.equal(file["token"], TOKEN);
   assert.deepEqual(file["hosts"], { p620: ["ssh", "p620"] });
   assert.equal(file["url"], LANE_URL);
@@ -164,8 +169,21 @@ test("home set changes a lane's settings in place, keeps its token and the rest,
     refused(["home", "set", "cleo", "--args", '{"a":1}']),
     /--args must be a JSON array of strings/,
   );
-  assert.match(refused(["home", "set", "cleo", "--roots", '{"p620":3}']), /--roots must be/);
-  assert.match(refused(["home", "set", "cleo", "--direnv", "cnp"]), /"direnv" must be an absolute/);
+  for (const option of [
+    "--url",
+    "--host",
+    "--hosts",
+    "--roots",
+    "--tier",
+    "--direnv",
+    "--token-file",
+    "--bws",
+  ])
+    assert.match(
+      refused(["home", "set", "cleo", "--args", "[]", option, "x"]),
+      /home set changes only --args and --worker-args/,
+      option,
+    );
   assert.match(refused(["home", "set", "ghost", "--args", "[]"]), /no lane ghost on this host/);
   assert.match(refused(["home", "set", "cleo"]), /usage: fleet/);
   assert.equal(readFileSync(join(homeOf("cleo"), "config", "lane.json"), "utf8"), before);
@@ -175,7 +193,6 @@ test("fleet --help lists the options of home add and home set", () => {
   const help = execFileSync("node", [scratch.launch, "--help"], { encoding: "utf8" });
   for (const option of [
     "--token-file",
-    "--token",
     "--bws",
     "--hold",
     "--host",
@@ -188,4 +205,6 @@ test("fleet --help lists the options of home add and home set", () => {
     "home set",
   ])
     assert.ok(help.includes(option), `fleet --help does not list ${option}`);
+  assert.match(help, /home set <lane> \[--args JSON\] \[--worker-args JSON\]/);
+  assert.doesNotMatch(help, /--token(?!-file)/);
 });

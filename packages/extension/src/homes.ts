@@ -126,13 +126,14 @@ export function writeLaneConfig(home: string, config: LaneConfig): void {
   replaceFile(join(home, LANE_FILE), `${JSON.stringify(config, null, 2)}\n`);
 }
 
-export function reconfigure(home: string, changes: Readonly<Record<string, unknown>>): void {
+export function reconfigure(
+  home: string,
+  changes: { readonly args?: readonly string[]; readonly workerArgs?: readonly string[] },
+): void {
   const file = join(home, LANE_FILE);
   const current: unknown = JSON.parse(readFileSync(file, "utf8"));
   if (!isRecord(current)) throw new Error(`${file} is not a JSON object`);
-  const next = Object.fromEntries(
-    Object.entries({ ...current, ...changes }).filter(([, value]) => value !== undefined),
-  );
+  const next = { ...current, ...changes };
   parseLaneConfig(file, next);
   replaceFile(file, `${JSON.stringify(next, null, 2)}\n`);
 }
