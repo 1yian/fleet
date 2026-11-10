@@ -286,9 +286,14 @@ const repeats = (inc: Incident, args: RecoveryRequest): boolean =>
   inc.recoveryKey === args.key &&
   inc.recoveryMode === args.mode;
 
-function requireWorking(db: DatabaseSync, inc: Incident): void {
-  const current = intentOf(db, inc.card, roleOf(db, inc.actor));
-  if (current !== "working") throw new Error(`the card is ${current}: recovery never resumes it`);
+export function requireCurrent(db: DatabaseSync, inc: Incident, generation: number): void {
+  const current = generationOf(db, inc.actor);
+  if (generation !== inc.generation || current !== inc.generation)
+    throw new Error(
+      `incident ${String(inc.id)} is about process generation ${String(inc.generation)}, but the actor is on ${String(current)} and you named ${String(generation)}: read the card again`,
+    );
+  const intent = intentOf(db, inc.card, roleOf(db, inc.actor));
+  if (intent !== "working") throw new Error(`the card is ${intent}: recovery never resumes it`);
   if (inc.intent !== "working" && inc.intent !== "merging")
     throw new Error(`the card was ${inc.intent}: recovery never resumes it`);
 }
@@ -299,12 +304,7 @@ function requireRecoverable(
   args: RecoveryRequest,
   t: Timings,
 ): void {
-  const current = generationOf(db, inc.actor);
-  if (args.generation !== inc.generation || current !== inc.generation)
-    throw new Error(
-      `incident ${String(inc.id)} is about process generation ${String(inc.generation)}, but the actor is on ${String(current)} and you named ${String(args.generation)}: read the card again`,
-    );
-  requireWorking(db, inc);
+  requireCurrent(db, inc, args.generation);
   if (!remaining(inc).includes(args.mode))
     throw new Error(
       `${args.mode} is not available for incident ${String(inc.id)} (${inc.classification}, ${inc.phase}). Available: ${remaining(inc).join(", ") || "none"}`,

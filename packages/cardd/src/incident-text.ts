@@ -15,13 +15,15 @@ export function nextStep(inc: Incident): string {
   return `Recover with restart_card(card=${String(inc.card)}, incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")})${when}`;
 }
 
+export const FAILURE_OF: Readonly<Record<Incident["phase"], string>> = {
+  turn: "its model turn failed",
+  compaction: "its conversation compaction failed",
+  startup: "it never connected after starting",
+  lost: "its process stopped without a final event",
+};
+
 export function describe(inc: Incident, label: string): string {
-  const what = {
-    turn: "its model turn failed",
-    compaction: "its conversation compaction failed",
-    startup: "it never connected after starting",
-    lost: "its process stopped without a final event",
-  }[inc.phase];
+  const what = FAILURE_OF[inc.phase];
   const cause = inc.phase === "turn" || inc.phase === "compaction" ? `: ${inc.error}` : "";
   const end = cause.endsWith(".") ? "" : ".";
   const ids = `Incident ${String(inc.id)}, process generation ${String(inc.generation)}.`;

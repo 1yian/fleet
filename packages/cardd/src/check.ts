@@ -2,6 +2,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { quietSql } from "./attempts.ts";
 import { jobStateSql, loseSilentJobs } from "./jobs.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
+import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
 import { expireMaintenance } from "./maintenance.ts";
@@ -10,7 +11,7 @@ import { describe, labelOf } from "./incident-text.ts";
 import { incidentFrom } from "./incident-store.ts";
 import { replyNudges } from "./replies.ts";
 import { finishFrom, type Stage } from "./status.ts";
-import { addEntry, getCard, loadOpenCards, workerOf, type Loaded } from "./store.ts";
+import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { firedSchedules } from "./schedules.ts";
@@ -332,6 +333,29 @@ function incidentMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     });
 }
 
+const findingOpen = (db: DatabaseSync, card: number, key: string): boolean =>
+  db
+    .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
+    .get(card, key) !== undefined;
+
+function escalationMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+  return unrecoverable(db).flatMap((stuck) => {
+    const { incident, lane } = stuck;
+    if (repeatTier(now - incident.firstAt, t.repeat, t.repeat) === 0) return [];
+    const match: Match = {
+      card: incident.card,
+      lane,
+      to: mainLane(db),
+      condition: UNRECOVERABLE,
+      instance: String(incident.id),
+      text: escalationText(stuck, t.wall()),
+      tier: 1,
+      fields: { incident: incident.id },
+    };
+    return told(db, incident) && !findingOpen(db, match.card, keyOf(match)) ? [] : [match];
+  });
+}
+
 function holdMatches(db: DatabaseSync, open: readonly Loaded[], now: number): Match[] {
   return open.flatMap(({ card, standing }) => {
     const { hold } = standing.facts;
@@ -377,11 +401,8 @@ function writeFindings(
 ): void {
   for (const match of matches) {
     const key = keyOf(match);
-    const open = db
-      .prepare("SELECT 1 FROM findings WHERE card = ? AND condition = ? AND cleared_at IS NULL")
-      .get(match.card, key);
     const to = recipientOf(db, match);
-    if (open !== undefined || to === undefined) continue;
+    if (findingOpen(db, match.card, key) || to === undefined) continue;
     if (match.worker !== true && !isUp(db, to)) continue;
     const fields = {
       ...match.fields,
@@ -417,6 +438,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
     ...bundleMatches(db, open, now, t),
     ...lostJobMatches(db, now, t),
     ...incidentMatches(db, now, t),
+    ...escalationMatches(db, now, t),
     ...holdMatches(db, open, now),
   ].filter((match) => acting.has(match.card));
   clearStopped(db, now, matches);

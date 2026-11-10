@@ -17,6 +17,7 @@ import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { acknowledgeMaintenance, maintenanceStatus, requestMaintenance } from "./maintenance.ts";
+import { keepingRefusals } from "./incident-escalation.ts";
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
 import { restartCard } from "./restarts.ts";
@@ -372,7 +373,7 @@ export async function performOp(
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
   if (isBrowserOp(op)) return performBrowserOp(db, browser, session, op, args);
-  const done = await performStored(db, session, op, args, timing, hosts);
+  const done = await keepingRefusals(db, () => performStored(db, session, op, args, timing, hosts));
   if (op === "report" && session.card !== null && check(OPS.report.args, args).status === "stopped")
     await browser.release(session.card);
   return done;

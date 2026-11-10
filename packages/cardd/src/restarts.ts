@@ -2,8 +2,9 @@ import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
 import { liveAttemptModel } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
-import { generationOf, incidentById } from "./incident-store.ts";
-import { intentOf, recover } from "./incidents.ts";
+import { AvoidRefused } from "./incident-escalation.ts";
+import { generationOf, incidentById, type Incident } from "./incident-store.ts";
+import { intentOf, recover, requireCurrent } from "./incidents.ts";
 import { addEntry, getCard, laneCardOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -48,14 +49,25 @@ function alreadyRequested(db: DatabaseSync, card: number, key: string): boolean 
   return row !== undefined;
 }
 
-function refuseAvoidedModel(db: DatabaseSync, card: number, avoid: readonly string[]): void {
+function refuseAvoidedModel(
+  db: DatabaseSync,
+  card: number,
+  avoid: readonly string[],
+  incident?: Incident,
+): void {
   const model = liveAttemptModel(db, card);
   if (model === undefined) return;
   const provider = model.slice(0, model.indexOf("/"));
-  if (avoid.includes(provider))
-    throw new Error(
-      `c-${String(card)} was dispatched on ${model} and a restart keeps that model, so it cannot avoid ${provider}: restart without avoid, or start new work on another model`,
-    );
+  if (avoid.includes(provider)) throw new AvoidRefused(card, model, provider, incident);
+}
+
+function requireDirectParent(
+  session: Session,
+  card: { id: number; lane: string },
+  mate: boolean,
+): void {
+  if (mate ? session.lane !== "main" : session.lane !== card.lane)
+    throw new Error(`only the direct parent can restart c-${String(card.id)}`);
 }
 
 function ordinaryRestart(
@@ -65,8 +77,6 @@ function ordinaryRestart(
   mate: boolean,
   key: string,
 ): { value: unknown; notify: readonly string[] } {
-  if (mate ? session.lane !== "main" : session.lane !== card.lane)
-    throw new Error(`only the direct parent can restart c-${String(card.id)}`);
   if (!mate) requireOpen(db, getCard(db, card.id));
   const intent = intentOf(db, card.id, mate ? "mate" : "worker");
   if (intent !== "working" && intent !== "with-mate")
@@ -96,6 +106,27 @@ function ordinaryRestart(
   return { value, notify: [] };
 }
 
+function restartIncident(
+  db: DatabaseSync,
+  session: Session,
+  card: { id: number },
+  incident: number,
+  args: OpArgs<"card.restart">,
+  timing: Timings,
+): { value: unknown; notify: readonly string[] } {
+  const { generation, avoid } = args;
+  if (generation === undefined)
+    throw new Error("an incident restart needs the incident's generation");
+  const found = incidentById(db, incident);
+  if (found?.card !== card.id)
+    throw new Error(`incident ${String(incident)} is not an incident of c-${String(card.id)}`);
+  if (avoid !== undefined && found.state === "open") {
+    requireCurrent(db, found, generation);
+    refuseAvoidedModel(db, card.id, avoid, found);
+  }
+  return recover(db, session, { incident, generation, mode: args.mode, key: args.key }, timing);
+}
+
 export function restartCard(
   db: DatabaseSync,
   session: Session,
@@ -104,20 +135,15 @@ export function restartCard(
 ): { value: unknown; notify: readonly string[] } {
   const card = getCard(db, args.card);
   const mate = laneCardOf(db, card.lane) === card.id;
-  const { incident, generation } = args;
+  requireDirectParent(session, card, mate);
   if (args.avoid !== undefined && (args.mode === "retry" || mate))
     throw new Error(
       "avoid applies only when a worker's process is replaced: retry and a second mate's restart start no new worker process",
     );
+  if (args.incident !== undefined)
+    return restartIncident(db, session, card, args.incident, args, timing);
   if (args.avoid !== undefined) refuseAvoidedModel(db, card.id, args.avoid);
-  if (incident === undefined) {
-    if (args.mode === "retry")
-      throw new Error("retry needs an incident: name the incident and its generation");
-    return ordinaryRestart(db, session, card, mate, args.key);
-  }
-  if (generation === undefined)
-    throw new Error("an incident restart needs the incident's generation");
-  if (incidentById(db, incident)?.card !== card.id)
-    throw new Error(`incident ${String(incident)} is not an incident of c-${String(card.id)}`);
-  return recover(db, session, { incident, generation, mode: args.mode, key: args.key }, timing);
+  if (args.mode === "retry")
+    throw new Error("retry needs an incident: name the incident and its generation");
+  return ordinaryRestart(db, session, card, mate, args.key);
 }

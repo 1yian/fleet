@@ -182,7 +182,7 @@ test("a worker process killed with no final event raises one unknown incident th
   );
   await assert.rejects(recover(fleet.main, heard, "replace", "k", 99), /read the card again/);
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
-  await assert.rejects(recover(cleo, heard, "replace"), /not yours to recover: only main can/);
+  await assert.rejects(recover(cleo, heard, "replace"), /only the direct parent can restart/);
 });
 
 test("a recovery check on the live process is verified by a real answer and an action, once, and duplicates are refused", async () => {
