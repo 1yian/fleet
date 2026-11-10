@@ -17,7 +17,7 @@ import { scrubbed } from "./browser-hidden.ts";
 import { initScript } from "./browser-init.ts";
 import { PASSWORD_INIT, PASSWORD_WORLD } from "./browser-password.ts";
 import { listTabs, type Listing } from "./browser-listing.ts";
-import { login } from "./browser-login.ts";
+import { signIn } from "./browser-login.ts";
 import { atPage, guarded, plain, type Outcome } from "./browser-outcome.ts";
 import {
   clickPage,
@@ -126,11 +126,23 @@ export class HostBrowser {
     if (tab !== undefined) await raiseWindow(cdp, tab.target);
   }
 
+  assumeEntered(tabs: readonly Tab[]): void {
+    for (const tab of tabs) this.entered.add(tab.target);
+  }
+
   async enter(card: number, target: string): Promise<void> {
     this.entered.add(target);
+    await this.inspect(card, target);
+  }
+
+  async held(card: number, target: string): Promise<boolean> {
+    return this.entered.has(target) && (await this.inspect(card, target).catch(() => true));
+  }
+
+  private async inspect(card: number, target: string): Promise<boolean> {
     const own = await this.pageOf(await this.connection(), card);
     if (own.target !== target) throw new Error("that tab is not open");
-    await holdsPassword(own.page, this.passwords);
+    return holdsPassword(own.page, this.passwords);
   }
 
   frame(card: number, target: string): Promise<OpResult<"browser.frame">> {
@@ -193,7 +205,13 @@ export class HostBrowser {
     if (this.mayShowCode(target, args.action)) throw new Error(RESTARTED);
     return this.guarded(
       args.action === "login"
-        ? this.signIn(page, card, target, args.site)
+        ? signIn(
+            { db: this.db, vault: this.vault, filled: this.filled },
+            card,
+            page,
+            target,
+            args.site,
+          )
         : this.acts[args.action](page, target, args),
     );
   }
@@ -204,25 +222,6 @@ export class HostBrowser {
 
   private mayShowCode(target: string, action: BrowserArgs["action"]): boolean {
     return ["read", "eval", "screenshot"].includes(action) && this.mayHoldCode(target);
-  }
-
-  private async signIn(
-    page: Page,
-    card: number,
-    target: string,
-    site: string | undefined,
-  ): Promise<Outcome> {
-    const mark = (loader: string, fields: readonly string[]): void => {
-      const known = this.filled.get(target);
-      const kept = known?.loader === loader ? known.fields : [];
-      this.filled.set(target, { loader, fields: [...kept, ...fields] });
-    };
-    const done = await login({ db: this.db, vault: this.vault, card, page, mark }, site);
-    return {
-      result: { text: done.text },
-      notify: done.notify,
-      ...(done.captain === undefined ? {} : { captain: done.captain }),
-    };
   }
 
   private async refuseWhileEntered(page: Page, target: string, refusal: string): Promise<void> {

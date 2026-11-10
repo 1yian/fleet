@@ -90,6 +90,12 @@ export const BROWSER_OPS = {
       card: Type.Optional(Type.Integer()),
       captain: Type.Optional(Type.Boolean()),
       host: Type.Optional(Type.String({ minLength: 1 })),
+      build: Type.Optional(
+        Type.String({
+          description:
+            "The build id of the code that asks (`viewerBuild`). cardd treats the tabs it lists as holding entered input when this is missing or is not its own build, because code of another build may not declare what a person types",
+        }),
+      ),
     }),
     result: Type.Object({
       host: Nullable(Type.String()),
@@ -116,6 +122,11 @@ export const BROWSER_OPS = {
     roles: ["worker", "mate"],
     args: Type.Object({ target: Type.String() }),
     result: Type.Object({}),
+  },
+  "browser.held": {
+    roles: ["worker", "mate"],
+    args: Type.Object({}),
+    result: Type.Object({ held: Type.Boolean() }),
   },
   "browser.frame": {
     roles: ["worker", "mate"],

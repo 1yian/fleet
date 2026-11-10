@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { fillLogin } from "./browser-fill.ts";
+import type { Outcome } from "./browser-outcome.ts";
 import { documentOf, type Doc, type Page } from "./browser-page.ts";
 import { credentialsOf, type Secret, type Vault } from "./browser-vault.ts";
 import { addEntry, getCard, mainLane } from "./store.ts";
@@ -57,7 +58,7 @@ function requestFor(db: DatabaseSync, card: number, site: string, host: string):
   return [lane];
 }
 
-export interface LoginContext {
+interface LoginContext {
   readonly db: DatabaseSync;
   readonly vault: Vault;
   readonly card: number;
@@ -94,7 +95,7 @@ interface Done {
   readonly captain?: string;
 }
 
-export async function login(context: LoginContext, requested: string | undefined): Promise<Done> {
+async function login(context: LoginContext, requested: string | undefined): Promise<Done> {
   const { vault, page } = context;
   const { logins } = vault;
   if (logins === undefined)
@@ -117,4 +118,30 @@ export async function login(context: LoginContext, requested: string | undefined
       throw new Error(`login failed: ${error instanceof Error ? error.message : "it failed"}`);
     },
   );
+}
+
+export interface SignIn {
+  readonly db: DatabaseSync;
+  readonly vault: Vault;
+  readonly filled: Map<string, { loader: string; fields: readonly string[] }>;
+}
+
+export async function signIn(
+  { db, vault, filled }: SignIn,
+  card: number,
+  page: Page,
+  target: string,
+  site: string | undefined,
+): Promise<Outcome> {
+  const mark = (loader: string, fields: readonly string[]): void => {
+    const known = filled.get(target);
+    const kept = known?.loader === loader ? known.fields : [];
+    filled.set(target, { loader, fields: [...kept, ...fields] });
+  };
+  const done = await login({ db, vault, card, page, mark }, site);
+  return {
+    result: { text: done.text },
+    notify: done.notify,
+    ...(done.captain === undefined ? {} : { captain: done.captain }),
+  };
 }

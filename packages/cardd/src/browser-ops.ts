@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { BROWSER_OPS, check, OPS, type BrowserArgs, type OpName } from "@fleet/protocol";
 import type { Browser } from "./browser.ts";
+import { isOwnBuild } from "./browser-build.ts";
 import { openTabs, type Tab } from "./browser-store.ts";
 import { summonCaptain, summonMain } from "./browser-summon.ts";
 import { getCard, mainLane, type Session } from "./store.ts";
@@ -130,7 +131,7 @@ async function viewOf(
   session: Session,
   raw: unknown,
 ): Promise<Done> {
-  const { card: named, captain, host: declared } = check(OPS["browser.view"].args, raw);
+  const { card: named, captain, host: declared, build } = check(OPS["browser.view"].args, raw);
   if (captain === true) captainOnly(db, session);
   const asked = declaredHost(session, declared);
   const own = session.card;
@@ -142,7 +143,7 @@ async function viewOf(
         : browser.hostOf(named, asked);
   return {
     value: {
-      ...(await browser.view(sees(db, session, named), captain === true, where)),
+      ...(await browser.view(sees(db, session, named), captain === true, where, isOwnBuild(build))),
       canNameHost: own === null,
     },
     notify: [],
@@ -176,6 +177,10 @@ export async function performBrowserOp(
       const { target } = check(OPS["browser.frame"].args, raw);
       const tab = visibleTab(db, session, target);
       return { value: await browser.frame(tab.card, tab.target), notify: [] };
+    }
+    case "browser.held": {
+      check(OPS["browser.held"].args, raw);
+      return { value: await browser.held(sees(db, session, undefined)), notify: [] };
     }
     case "browser.entered": {
       const { target } = check(OPS["browser.entered"].args, raw);

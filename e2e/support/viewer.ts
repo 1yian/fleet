@@ -26,7 +26,7 @@ export async function startViewer(
   viewers: Viewers,
   flags: string[],
   env: Record<string, string> = {},
-  source?: { readonly token: string; readonly host?: string },
+  source?: { readonly token: string; readonly host?: string; readonly url?: string },
 ): Promise<Started> {
   const access = join(tempDir("fleet-viewer-access-"), "access.json");
   writeFileSync(

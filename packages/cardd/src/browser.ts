@@ -50,9 +50,10 @@ export class Browser {
     wants: (card: number) => boolean,
     captain: boolean,
     host: string | undefined,
+    current: boolean,
   ): Promise<Omit<OpResult<"browser.view">, "canNameHost">> {
     this.touchUsedHosts();
-    const shown = openTabs(this.db).filter((tab) => wants(tab.card) && this.configuredOn(tab.host));
+    const shown = this.shownTo(wants);
     const hosts = new Set(shown.map((tab) => tab.host));
     if (host !== undefined && this.configuredOn(host)) hosts.add(host);
     const listed = new Map(
@@ -64,6 +65,7 @@ export class Browser {
               await this.listingOf(
                 each,
                 captain,
+                current,
                 shown.filter((tab) => tab.host === each),
               ),
             ] as const,
@@ -87,6 +89,20 @@ export class Browser {
       problem: problems.length === 0 ? null : problems.join(" "),
       tabs,
     };
+  }
+
+  private shownTo(wants: (card: number) => boolean): Tab[] {
+    return openTabs(this.db).filter((tab) => wants(tab.card) && this.configuredOn(tab.host));
+  }
+
+  async held(wants: (card: number) => boolean): Promise<OpResult<"browser.held">> {
+    for (const tab of this.shownTo(wants)) {
+      const held = await this.inTurn(tab.card, () =>
+        this.site(tab.host).held(tab.card, tab.target),
+      );
+      if (held) return { held: true };
+    }
+    return { held: false };
   }
 
   hasTab(card: number, declared: string | undefined): boolean {
@@ -140,6 +156,7 @@ export class Browser {
   private async listingOf(
     host: string,
     captain: boolean,
+    current: boolean,
     tabs: readonly Tab[],
   ): Promise<{
     targets: Map<string, Listed>;
@@ -149,6 +166,7 @@ export class Browser {
   }> {
     try {
       const site = this.site(host);
+      if (!current) site.assumeEntered(tabs);
       return { ...(await site.listing(tabs)), hide: site.hider(captain) };
     } catch (error) {
       return { targets: new Map(), standing: new Map(), problem: reason(error), hide: () => "" };

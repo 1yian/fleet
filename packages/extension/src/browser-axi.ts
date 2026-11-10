@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { encode } from "@toon-format/toon";
 import { check, HttpOutcomeSchema, OPS, type BrowserArgs, type OpResult } from "@fleet/protocol";
+import { viewerBuild } from "@fleet/protocol/build";
 import {
   callUrl,
   resolveSource,
@@ -143,7 +144,7 @@ function argsFor(command: string, rest: readonly string[], values: Values): Brow
 
 async function call(
   access: Access,
-  op: "browser" | "browser.view",
+  op: "browser" | "browser.view" | "browser.held",
   args: object,
 ): Promise<unknown> {
   const named = access.host === undefined ? {} : { host: access.host };
@@ -159,6 +160,12 @@ async function call(
   if (!outcome.ok) throw new Error(outcome.error);
   return outcome.value;
 }
+
+const callView = async (access: Access, args: object = {}): Promise<unknown> =>
+  call(access, "browser.view", { build: viewerBuild(), ...args });
+
+const callHeld = async (access: Access): Promise<boolean> =>
+  check(OPS["browser.held"].result, await call(access, "browser.held", {})).held;
 
 const SHOT_DIR = "fleet-shot-";
 const SHOT_KEEP_MS = 24 * 60 * 60 * 1000;
@@ -191,7 +198,7 @@ function saveImage(image: { mimeType: string; data: string }, out: string | unde
   return file;
 }
 
-async function place(source: Source, why: string | undefined): Promise<string> {
+async function place({ source, access }: Caller, why: string | undefined): Promise<string> {
   if (why !== undefined)
     return `the captain is needed (${why}): the Browser tab opens in your lane's workspace if the captain is there, and otherwise in main's workspace`;
   const workspace = process.env["HERDR_WORKSPACE_ID"];
@@ -205,6 +212,7 @@ async function place(source: Source, why: string | undefined): Promise<string> {
       open: false,
       focus: false,
       captain: false,
+      held: () => callHeld(access),
     });
     return placed.started
       ? "a Browser tab in your own workspace shows your tab live"
@@ -226,7 +234,7 @@ async function unplace(access: Access): Promise<string | undefined> {
   const workspace = process.env["HERDR_WORKSPACE_ID"];
   if (workspace === undefined) return undefined;
   try {
-    const view = check(OPS["browser.view"].result, await call(access, "browser.view", {}));
+    const view = check(OPS["browser.view"].result, await callView(access));
     if (view.tabs.length > 0 || !(await removeViewer(workspace))) return undefined;
     return "the Browser tab in your own workspace is closed, since no tab is left to show";
   } catch (error) {
@@ -315,7 +323,7 @@ async function state({ access }: Caller, values: Values): Promise<Printed> {
   const card = count(values.card, "card");
   const view = check(
     OPS["browser.view"].result,
-    await call(access, "browser.view", card === undefined ? {} : { card }),
+    await callView(access, card === undefined ? {} : { card }),
   );
   if (view.browsers.length === 0)
     throw new Error(
@@ -338,12 +346,12 @@ async function state({ access }: Caller, values: Values): Promise<Printed> {
 }
 
 async function viewerNote(
-  { source, access }: Caller,
+  caller: Caller,
   command: string,
   captain: string | undefined,
 ): Promise<string | undefined> {
-  if (captain !== undefined || command === "open") return place(source, captain);
-  return command === "close" ? unplace(access) : undefined;
+  if (captain !== undefined || command === "open") return place(caller, captain);
+  return command === "close" ? unplace(caller.access) : undefined;
 }
 
 async function act(

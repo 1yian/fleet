@@ -3,8 +3,8 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { check, HttpOutcomeSchema, OPS, type BrowserArgs, type OpResult } from "@fleet/protocol";
+import { viewerBuild } from "@fleet/protocol/build";
 import { dial } from "@fleet/protocol/tunnel";
-import { viewerBuild } from "./browser-build.ts";
 import { FitSchema } from "./browser-fit.ts";
 import { InputSchema, pastesSelection } from "./browser-input.ts";
 import { navArgs, NavSchema } from "./browser-nav.ts";
@@ -46,10 +46,11 @@ async function post(cardd: Cardd, op: string, args: object, timeoutMs = CALL_MS)
   return outcome.value;
 }
 
-const callView = async (cardd: Cardd, captain: boolean): Promise<View> =>
+const callView = async (cardd: Cardd, captain: boolean, build: string): Promise<View> =>
   check(
     OPS["browser.view"].result,
     await post(cardd, "browser.view", {
+      build,
       ...(captain ? { captain } : {}),
       ...(cardd.host === undefined ? {} : { host: cardd.host }),
     }),
@@ -109,6 +110,7 @@ class Viewer {
   private readonly cardd: Cardd;
   private readonly transports: Transports;
   private readonly captain: boolean;
+  private readonly build: string;
   private readonly screens = new Map<string, { endpoint: string; screen: Screen }>();
   private readonly paced = new Map<string, { pacer: Pacer; response: ServerResponse }>();
   private browsers = new Map<string, string>();
@@ -123,11 +125,18 @@ class Viewer {
   private canNameHost = false;
   private readonly token: string;
 
-  constructor(cardd: Cardd, transports: Transports, token: string, captain: boolean) {
+  constructor(
+    cardd: Cardd,
+    transports: Transports,
+    token: string,
+    captain: boolean,
+    build: string,
+  ) {
     this.cardd = cardd;
     this.transports = transports;
     this.token = token;
     this.captain = captain;
+    this.build = build;
   }
 
   close(): void {
@@ -184,7 +193,7 @@ class Viewer {
   }
 
   private async listing(): Promise<View> {
-    const view = await callView(this.cardd, this.captain);
+    const view = await callView(this.cardd, this.captain, this.build);
     this.own = view.host;
     this.canNameHost = view.canNameHost;
     this.browsers = new Map(view.browsers.map(({ host, endpoint }) => [host, endpoint]));
@@ -420,7 +429,14 @@ async function main(): Promise<void> {
   const token = randomBytes(24).toString("base64url");
   const captain = flags.includes("--captain");
   const source = sourceFromViewerArguments(flags);
-  const viewer = new Viewer(await resolveSource(source), transportsOf(source), token, captain);
+  const build = viewerBuild();
+  const viewer = new Viewer(
+    await resolveSource(source),
+    transportsOf(source),
+    token,
+    captain,
+    build,
+  );
   const server = createServer((request, response) => {
     void viewer.answer(request, response);
   });
@@ -434,7 +450,7 @@ async function main(): Promise<void> {
       ...(line === undefined ? [] : [line]),
     ].join("\n"),
   );
-  console.log(`Viewer build: ${viewerBuild()}`);
+  console.log(`Viewer build: ${build}`);
   const launch = launchOf(flags);
   if (launch !== undefined) console.log(`Viewer launch: ${launch}`);
   if (flags.includes("--open") && process.env["FLEET_BROWSER_VIEW_OPEN"] !== "0") {

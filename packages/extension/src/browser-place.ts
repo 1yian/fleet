@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Entry } from "@fleet/protocol";
+import { viewerBuild } from "@fleet/protocol/build";
 import { quote } from "@fleet/protocol/route";
 import { viewerArguments, type Source } from "./browser-access.ts";
-import { viewerBuild } from "./browser-build.ts";
 import { field, herdr, paneText, records, rootPane, shellIdle } from "./host.ts";
 import type { Link } from "./link.ts";
 
@@ -30,6 +30,7 @@ export interface Placement {
   readonly open: boolean;
   readonly focus: boolean;
   readonly captain: boolean;
+  readonly held: () => Promise<boolean>;
 }
 
 export interface Placed {
@@ -102,17 +103,22 @@ async function runningViewer(pane: string): Promise<Printed | undefined> {
 async function stop(pane: string): Promise<void> {
   await herdr("local", ["pane", "send-keys", pane, "ctrl+c"]);
   if (!(await until(() => shellIdle("local", pane), STOP_WAIT_MS)))
-    throw new Error(
-      "the viewer in the Browser tab did not stop, so the captain's viewer was not started",
-    );
+    throw new Error("the viewer in the Browser tab did not stop, so a new viewer was not started");
+}
+
+async function replaceable(placement: Placement, running: Printed): Promise<boolean> {
+  if (placement.captain) return running.mode !== "captain" || running.build !== viewerBuild();
+  return (
+    running.mode === "gated" &&
+    running.build !== viewerBuild() &&
+    !(await placement.held().catch(() => true))
+  );
 }
 
 async function startable(placement: Placement, pane: string): Promise<boolean> {
   if (await shellIdle("local", pane)) return true;
-  if (!placement.captain) return false;
   const running = await runningViewer(pane);
-  if (running === undefined) return false;
-  if (running.mode === "captain" && running.build === viewerBuild()) return false;
+  if (running === undefined || !(await replaceable(placement, running))) return false;
   await stop(pane);
   return true;
 }
@@ -244,6 +250,7 @@ async function answer(link: Link, entry: Entry, who: Summoned): Promise<string> 
       open: true,
       focus: true,
       captain: who.main,
+      held: async () => (await link.call("browser.held", {})).held,
     });
     return who.main ? linkNote(placed.link) : "";
   }

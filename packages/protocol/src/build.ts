@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SOURCES = ["./", "../../protocol/src/"].map((path) =>
+const SOURCES = ["../../extension/src/", "./"].map((path) =>
   fileURLToPath(new URL(path, import.meta.url)),
 );
 

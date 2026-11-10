@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./build": "./src/build.ts",
     "./route": "./src/route.ts",
     "./transport": "./src/transport.ts",
     "./tunnel": "./src/tunnel.ts"
