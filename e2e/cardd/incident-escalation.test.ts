@@ -53,9 +53,20 @@ async function failingWorker(
   return worker;
 }
 
-async function incidentHeard(mate: Session): Promise<{ incident: number; generation: number }> {
-  const heard = await mate.waitForEntry(is("runtime-failure"), "the runtime failure");
-  const found = /Incident (\d+), process generation (\d+)/.exec(heard.body);
+const INCIDENT_IDS = /Incident (\d+), process generation (\d+)/;
+
+async function incidentHeard(
+  mate: Session,
+  not?: number,
+): Promise<{ incident: number; generation: number }> {
+  const heard = await mate.waitForEntry(
+    (entry) =>
+      is("runtime-failure")(entry) &&
+      INCIDENT_IDS.exec(entry.body) !== null &&
+      INCIDENT_IDS.exec(entry.body)?.[1] !== String(not),
+    "the runtime failure",
+  );
+  const found = INCIDENT_IDS.exec(heard.body);
   return { incident: Number(found?.[1]), generation: Number(found?.[2]) };
 }
 
@@ -130,6 +141,34 @@ test("another mate's refused avoid on a lane that is not its own records nothing
   );
 
   await reachedTier(cleo, card, "runtime-failure-open", 4);
+  assert.deepEqual(heardBy(fleet.main, "runtime-failure-unrecoverable"), []);
+});
+
+test("a stale restart request is refused as its own error and records nothing, so the new incident stays with its mate", async () => {
+  const card = await newCard(cleo, "Users see Spanish copy");
+  const worker = await failingWorker(card, RATE_LIMITED, { model: MODEL });
+  const cleared = await incidentHeard(cleo);
+  await worker.call("incident.clear", {});
+  await worker.call("incident.report", { error: RATE_LIMITED });
+  const current = await incidentHeard(cleo, cleared.incident);
+  assert.notEqual(current.incident, cleared.incident);
+
+  const avoid = { mode: "replace", avoid: ["openai-codex"] };
+  await assert.rejects(
+    restart(card, cleared, { ...avoid, key: "cached" }),
+    /is cleared: there is nothing to recover/,
+  );
+  await assert.rejects(
+    restart(card, { ...current, generation: current.generation + 1 }, { ...avoid, key: "stale" }),
+    /read the card again/,
+  );
+
+  await cleo.waitForEntry(
+    (entry) =>
+      entry.fields["reminder"] === `runtime-failure-open:${String(current.incident)}` &&
+      Number(entry.fields["tier"]) >= 4,
+    "the mate's last reminder about the new incident",
+  );
   assert.deepEqual(heardBy(fleet.main, "runtime-failure-unrecoverable"), []);
 });
 

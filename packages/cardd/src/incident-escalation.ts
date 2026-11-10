@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { exhaustion, remaining } from "./incident-kinds.ts";
-import { incidentFrom, liveIncident, type Incident } from "./incident-store.ts";
+import { incidentFrom, type Incident } from "./incident-store.ts";
 import { FAILURE_OF, stamp } from "./incident-text.ts";
-import { addEntry, transaction, workerOf } from "./store.ts";
+import { addEntry, transaction } from "./store.ts";
 
 export const UNRECOVERABLE = "runtime-failure-unrecoverable";
 const REFUSED = "restart-refused";
@@ -11,14 +11,16 @@ export class AvoidRefused extends Error {
   readonly card: number;
   readonly model: string;
   readonly provider: string;
+  readonly incident: Incident | undefined;
 
-  constructor(card: number, model: string, provider: string) {
+  constructor(card: number, model: string, provider: string, incident?: Incident) {
     super(
       `c-${String(card)} was dispatched on ${model} and a restart keeps that model, so it cannot avoid ${provider}: restart without avoid, or start new work on another model`,
     );
     this.card = card;
     this.model = model;
     this.provider = provider;
+    this.incident = incident;
   }
 }
 
@@ -34,11 +36,10 @@ export const told = (db: DatabaseSync, inc: Incident): boolean =>
   bodyOf(db, UNRECOVERABLE, inc) !== undefined;
 
 function noteRefusal(db: DatabaseSync, refused: AvoidRefused): void {
-  const worker = workerOf(db, refused.card);
-  const live = worker === undefined ? undefined : liveIncident(db, worker);
-  if (live === undefined || bodyOf(db, REFUSED, live) !== undefined) return;
+  const { incident } = refused;
+  if (incident === undefined || bodyOf(db, REFUSED, incident) !== undefined) return;
   const body = `a restart avoiding ${refused.provider} was refused: c-${String(refused.card)} was dispatched on ${refused.model}, and a restart keeps that model`;
-  const fields = { condition: REFUSED, incident: live.id };
+  const fields = { condition: REFUSED, incident: incident.id };
   addEntry(db, { card: refused.card, author: "check", kind: "note", body, fields }, []);
 }
 
