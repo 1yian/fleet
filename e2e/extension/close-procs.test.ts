@@ -14,6 +14,7 @@ import {
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
 import type { Harness, Pi } from "../support/harness.ts";
+import { until } from "../support/live-fleet.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 
@@ -183,10 +184,11 @@ const stoppedPids = (text: string): string[] =>
     ).matchAll(/ pid (\d+) /g),
   ].map((each) => each[1] ?? "");
 
+const STUBBORN =
+  'exec node -e "process.on(process.argv[1], Function()); setInterval(Function(), 1000)" SIGTERM';
+
 test("two closes of one card at once close it once and stop only the leftover process", async () => {
-  const { pid, results } = await closeWithLeftover('trap "" TERM; while :; do sleep 1; done', {
-    twice: true,
-  });
+  const { pid, results } = await closeWithLeftover(STUBBORN, { twice: true });
   const closes = results.slice(-2);
   assert.equal(closes.length, 2);
   for (const each of closes) {
@@ -199,4 +201,31 @@ test("two closes of one card at once close it once and stop only the leftover pr
   assert.equal(closed.length, 1);
   assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
   assert.equal(existsSync(`${clone}.worktrees/c-1-a1`), false);
+});
+
+test("a close that another close of the card beats says so instead of failing", async () => {
+  const termed = join(h.dir, "termed");
+  const elsewhere = until(
+    () => (existsSync(termed) ? true : undefined),
+    "the leftover to be told to stop",
+  ).then(() =>
+    parts.cardd.post(parts.mainToken, "close.finish", {
+      card: 1,
+      mode: "done",
+      text: "Closed from another session.",
+      archives: [],
+      left: [],
+    }),
+  );
+  const { pid, result } = await closeWithLeftover(
+    `trap "touch ${termed}" TERM; while :; do sleep 1; done`,
+  );
+  assert.equal((await elsewhere).status, 200);
+  assert.equal(
+    result,
+    "c-1 was closed by another close at the same time, so there is nothing left to do.",
+  );
+  assert.equal(alive(pid), false);
+  const closed = (await parts.cardd.thread(1)).entries.filter((each) => each.kind === "cleanup");
+  assert.equal(closed.length, 1);
 });

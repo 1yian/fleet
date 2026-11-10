@@ -279,12 +279,35 @@ export async function close(link: Link, request: CloseRequest): Promise<string> 
   return outcome;
 }
 
+const planOf = (link: Link, { card, landed }: CloseRequest) =>
+  link.call("close.begin", { card, ...(landed === undefined ? {} : { landed }) });
+
+async function closedMeanwhile(link: Link, request: CloseRequest): Promise<boolean> {
+  try {
+    await planOf(link, request);
+    return false;
+  } catch (error) {
+    return error instanceof Error && / is already (done|dropped)$/.test(error.message);
+  }
+}
+
 async function closeOnce(link: Link, request: CloseRequest): Promise<string> {
-  const { card: id, text, landed, confirm } = request;
-  const plan = await link.call("close.begin", {
-    card: id,
-    ...(landed === undefined ? {} : { landed }),
-  });
+  const plan = await planOf(link, request);
+  try {
+    return await teardown(link, request, plan);
+  } catch (error) {
+    if (await closedMeanwhile(link, request))
+      return `c-${String(request.card)} was closed by another close at the same time, so there is nothing left to do.`;
+    throw error;
+  }
+}
+
+async function teardown(
+  link: Link,
+  request: CloseRequest,
+  plan: OpResult<"close.begin">,
+): Promise<string> {
+  const { card: id, text, confirm } = request;
   const moved = plan.land ? await landLocally(id, plan) : "";
   const warning = await unlandedWarning(id, plan, confirm === true);
   if (warning !== undefined) return warning;
