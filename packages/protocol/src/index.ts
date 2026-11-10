@@ -9,6 +9,7 @@ import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
 import { Shown, STANDING_OPS, Status } from "./standing.ts";
 import { PlanSchema } from "./wakes.ts";
+import { DatedWaitSchema, HOLD_WAIT_ARGS, RemainingStepSchema } from "./waits.ts";
 
 export * from "./address.ts";
 export * from "./branch.ts";
@@ -16,6 +17,7 @@ export * from "./cdp.ts";
 export * from "./health.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
+export * from "./waits.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";
 export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
@@ -120,6 +122,7 @@ export const BoardCardSchema = Type.Object({
   holder: Nullable(Holder),
   replies: Type.Array(OwedReplySchema),
   ...Shown,
+  datedWait: Nullable(DatedWaitSchema),
 });
 export type BoardCard = Static<typeof BoardCardSchema>;
 
@@ -131,6 +134,7 @@ export const CardViewSchema = Type.Object({
       question: Type.String(),
       options: Type.Array(Type.String()),
       until: Nullable(Type.Integer()),
+      remaining: Type.Array(RemainingStepSchema),
     }),
   ),
   attempts: Type.Array(
@@ -247,7 +251,7 @@ export const OPS = {
             "Who the hold waits on: main (a second mate escalates here) or captain (only main). Omit it for a new hold to wait on the next level up, and for an open hold to stay where it is",
         }),
       ),
-      until: Type.Optional(Type.Integer()),
+      ...HOLD_WAIT_ARGS,
       replyTo: ReplyTo,
     }),
     result: CardSchema,

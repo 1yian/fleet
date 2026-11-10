@@ -19,13 +19,17 @@ function controlUrl(): string {
   return url;
 }
 
-function scalarArgs(value: unknown): Record<string, string | number | boolean | readonly string[]> {
+type ArgValue = string | number | boolean | readonly string[] | readonly number[];
+
+function scalarArgs(value: unknown): Record<string, ArgValue> {
   if (!isRecord(value)) return {};
-  const args: Record<string, string | number | boolean | readonly string[]> = {};
+  const args: Record<string, ArgValue> = {};
   for (const [key, item] of Object.entries(value)) {
     if (typeof item === "string" || typeof item === "number" || typeof item === "boolean")
       args[key] = item;
     else if (Array.isArray(item) && item.every((each) => typeof each === "string"))
+      args[key] = item;
+    else if (Array.isArray(item) && item.every((each) => typeof each === "number"))
       args[key] = item;
   }
   return args;

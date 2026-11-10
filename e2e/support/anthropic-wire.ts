@@ -20,7 +20,9 @@ export type WireMove = {
   | { readonly texts: readonly string[]; readonly thinking?: string }
   | {
       readonly tool: string;
-      readonly args?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+      readonly args?: Readonly<
+        Record<string, string | number | boolean | readonly string[] | readonly number[]>
+      >;
     }
 );
 

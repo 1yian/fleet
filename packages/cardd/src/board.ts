@@ -26,6 +26,7 @@ import {
   loadCards,
   type Loaded,
 } from "./store.ts";
+import { datedWait } from "./waits.ts";
 
 export class StaleCard extends Error {}
 
@@ -70,6 +71,7 @@ function boardCard(db: DatabaseSync, { card, entries, standing }: Loaded): Board
     replies,
     attention: standing.attention,
     until: standing.until,
+    datedWait: datedWait(db, standing),
   };
 }
 
@@ -104,6 +106,11 @@ function buildBoard(db: DatabaseSync, now: number): Board {
   return { cards, holds, schedules: allSchedules(db) };
 }
 
+function stepOf(db: DatabaseSync, id: number) {
+  const { title, status } = getCard(db, id);
+  return { card: id, title, status };
+}
+
 export function cardView(db: DatabaseSync, id: number): CardView {
   const each = loadCard(db, id);
   const { hold } = each.standing.facts;
@@ -117,6 +124,7 @@ export function cardView(db: DatabaseSync, id: number): CardView {
             question: hold.question,
             options: [...hold.options],
             until: hold.until,
+            remaining: hold.remaining.map((id) => stepOf(db, id)),
           },
     attempts: attemptsOf(db, id),
     entries: each.entries,
@@ -164,7 +172,8 @@ function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
 function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: string): string[] {
   if (until <= Date.now()) throw new Error("until must be in the future");
   const facts = factsFrom(cardEntries(db, card.id));
-  const fields = { ...rewritten(facts, facts.hold?.holder ?? "owner", until), reason };
+  const base = rewritten(facts, facts.hold?.holder ?? "owner", until);
+  const fields = { ...base, wait: { by: "later", text: reason }, remaining: [], reason };
   const body = facts.hold?.question ?? reason;
   const draft: Draft = { card: card.id, author: "captain", kind: "hold", body, fields };
   requireOpen(db, card);

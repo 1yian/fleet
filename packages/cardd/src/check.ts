@@ -1,4 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import { idlePark } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
 import { jobStateSql, loseSilentJobs } from "./jobs.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
@@ -15,6 +16,7 @@ import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } fro
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { firedSchedules } from "./schedules.ts";
+import { datedWaits } from "./waits.ts";
 import { scheduledWakes } from "./wakes.ts";
 
 interface Match {
@@ -425,15 +427,19 @@ function writeFindings(
 
 export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLossGrace): string[] {
   const open = loadOpenCards(db);
+  const waits = datedWaits(db, open);
   const acting = new Set(
     open
-      .filter(({ standing }) => standing.status !== "waiting" && standing.status !== "paused")
+      .filter(({ card, standing }) => {
+        if (standing.status === "paused") return false;
+        return standing.status !== "waiting" || idlePark(waits.get(card.id));
+      })
       .map(({ card }) => card.id),
   );
   const matches = [
     ...withIncidents(db, workerMatches(db, open, now, t), now, t),
     ...finishedCards(open, t),
-    ...bundleMatches(db, open, now, t),
+    ...bundleMatches(db, open, waits, now, t),
     ...lostJobMatches(db, now, t),
     ...incidentMatches(db, now, t),
     ...escalationMatches(db, now, t),

@@ -1,5 +1,5 @@
 import type { MouseEvent } from "react";
-import type { BoardCard, Status } from "@fleet/protocol";
+import { idlePark, waitText, type BoardCard, type DatedWait, type Status } from "@fleet/protocol";
 import { Ask } from "./Ask.tsx";
 import {
   age,
@@ -155,6 +155,16 @@ function glanceOf(card: BoardCard, now: number): string {
 const waiting = (from: number, now: number): string =>
   age(from, now) === "now" ? "just now" : `waiting ${age(from, now)}`;
 
+export function WaitLine(props: { readonly wait: DatedWait; readonly now: number }) {
+  const { wait, now } = props;
+  const held = age(wait.since, now) === "now" ? "just now" : age(wait.since, now);
+  return (
+    <p className={idlePark(wait) ? "wait idle" : "wait"}>
+      {waitText(wait)} · held {held}
+    </p>
+  );
+}
+
 function IdRow({
   card,
   asked,
@@ -217,6 +227,7 @@ export function TaskCard(props: CardProps) {
           <Rich text={card.summary} />
         </p>
       ) : null}
+      {card.datedWait === null ? null : <WaitLine wait={card.datedWait} now={now} />}
       <div className="meta">
         <StatusChip card={card} facts={facts} now={now} />
         <LiveChip card={card} now={now} />

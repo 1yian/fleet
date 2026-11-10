@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { CardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
 import type { Cardd, Session } from "./cardd.ts";
+import { OUTSIDE_DATE } from "./fleet.ts";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -89,6 +90,7 @@ async function seedOpen(
     card: cards["later"].id,
     question: "Renew the certificate on Thursday?",
     until: Date.now() + 3 * DAY,
+    ...OUTSIDE_DATE,
   });
 
   const working = await ship(

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -171,10 +171,10 @@ test("a card that waits on its mate is reminded in a flat bundle, one reminder e
   assert.deepEqual(sent, inOrder(sent));
   assert.match(
     cleo.entries.at(-1)?.entry.body ?? "",
-    /^reminder: 1 card needs a decision or action from you\. Give a hold an until=<date> only when the card waits on an outside event \(a quota reset, a third party, a CI run\) or the captain said later or named a date\.\nYou can settle or close these yourself\. Act on each now:\n- c-\d+ blocked \(with-mate, \d+ min\)$/,
+    /^reminder: 1 card needs a decision or action from you\. Date a hold only when a process or an outside event is the blocker, or the captain said later, and say what watches it\. Never date a hold to quiet a card\.\nYou can settle or close these yourself\. Act on each now\. A dated wait that says nothing is running is an idle park: start what it waits on, or clear the hold and act:\n- c-\d+ blocked \(with-mate, \d+ min\)$/,
   );
 
-  await cleo.call("hold", { card: card.id, question: "later?", until: Date.now() + 3_600_000 });
+  await park(cleo, card, "later?", 3_600_000);
   const stopped = (await tiersOf(card, "decisions")).length;
   await metronome(6);
   assert.equal((await tiersOf(card, "decisions")).length, stopped);
@@ -197,7 +197,7 @@ test("a hold that waits on main reminds main, and not the lane mate that raised 
 test("a dated hold that comes back is announced at once, then reminded flat until it is dated again", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const card = await newCard(cleo, "Ads stay under budget");
-  await cleo.call("hold", { card: card.id, question: "Later?", until: Date.now() + 300 });
+  await park(cleo, card, "Later?", 300);
 
   const ended = await fleet.main.waitForEntry(
     (entry) => entry.card === card.id && String(entry.fields["condition"]).startsWith("hold-ended"),
@@ -208,11 +208,7 @@ test("a dated hold that comes back is announced at once, then reminded flat unti
   const sent = await tiersOf(card, "decisions");
   assert.deepEqual(sent, inOrder(sent));
 
-  await fleet.main.call("hold", {
-    card: card.id,
-    question: "wait again",
-    until: Date.now() + 3_600_000,
-  });
+  await park(fleet.main, card, "wait again", 3_600_000);
   const stopped = (await tiersOf(card, "decisions")).length;
   await metronome(6);
   assert.equal((await tiersOf(card, "decisions")).length, stopped);

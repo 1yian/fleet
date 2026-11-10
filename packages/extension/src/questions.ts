@@ -16,8 +16,18 @@ const HoldParams = Type.Object({
   to: OPS.hold.args.properties.to,
   replyTo: OPS.hold.args.properties.replyTo,
   until: Type.Optional(
-    Type.String({ description: "ISO 8601 time with Z or an offset, like 2026-05-01T10:00:00Z" }),
+    Type.String({
+      description:
+        "ISO 8601 time with Z or an offset, like 2026-05-01T10:00:00Z. A date needs exactly one of job, schedule, worker, watcher, outside, or said, and remaining",
+    }),
   ),
+  job: OPS.hold.args.properties.job,
+  schedule: OPS.hold.args.properties.schedule,
+  worker: OPS.hold.args.properties.worker,
+  watcher: OPS.hold.args.properties.watcher,
+  outside: OPS.hold.args.properties.outside,
+  said: OPS.hold.args.properties.said,
+  remaining: OPS.hold.args.properties.remaining,
   clear: Type.Optional(
     Type.Boolean({
       description:
@@ -44,7 +54,20 @@ const HoldParams = Type.Object({
   ),
 });
 
-const SETTING = ["question", "options", "to", "until", "replyTo"] as const;
+const SETTING = [
+  "question",
+  "options",
+  "to",
+  "until",
+  "replyTo",
+  "job",
+  "schedule",
+  "worker",
+  "watcher",
+  "outside",
+  "said",
+  "remaining",
+] as const;
 const CLEARING = ["words", "note", "choice"] as const;
 
 type HoldArgs = Static<typeof HoldParams>;
@@ -72,15 +95,14 @@ export function registerQuestions(
   const setHold = async (params: HoldArgs): Promise<string> => {
     const extra = CLEARING.filter((key) => params[key] !== undefined);
     if (extra.length > 0) throw new Error(`${extra.join(", ")} only go with clear=true`);
-    const { card: id, question, options, to, until, replyTo } = params;
+    const { card: id, question, until, said, ...rest } = params;
     if (question === undefined) throw new Error("a hold needs its question");
+    const { options, to, replyTo, job, schedule, worker, watcher, outside, remaining } = rest;
     const args = {
-      card: id,
-      question,
-      ...(options === undefined ? {} : { options }),
-      ...(to === undefined ? {} : { to }),
+      ...{ card: id, question, options, to, replyTo },
+      ...{ job, schedule, worker, watcher, outside, remaining, said },
       ...(until === undefined ? {} : { until: parseUtc(until) }),
-      ...(replyTo === undefined ? {} : { replyTo }),
+      ...(said === undefined ? {} : { source: sourceOf(said) }),
     };
     return `Held. ${card(await link.call("hold", args))}`;
   };
@@ -88,7 +110,7 @@ export function registerQuestions(
     name: "hold",
     label: "Hold",
     description:
-      "Holds a card at a gate, with every question of the gate bundled in one hold: the evidence, the consequence, the options, and your recommendation. A card has one hold, so holding it again rewrites the same hold. A second mate's hold waits on main. Main's hold waits on the captain, and main escalates a second mate's hold with to=captain. until holds it until a date, such as when the captain says later. clear=true clears the hold: with words, the captain's exact words, when he decided it, or with note, your own decision when it was yours or main's. Words are checked against what the captain wrote. replyTo answers a reply you owe with this hold.",
+      "Holds a card at a gate, with every question of the gate bundled in one hold: the evidence, the consequence, the options, and your recommendation. A card has one hold, so holding it again rewrites the same hold. A second mate's hold waits on main. Main's hold waits on the captain, and main escalates a second mate's hold with to=captain. until holds it until a date, only when a process or an outside event is truly the blocker or the captain said later, never to quiet a card. A date must say what watches it, with exactly one of job (a running job id), schedule (a schedule id), worker (a card number whose worker is live), watcher (who else checks it and how), outside (an outside date or event), or said (the captain's exact words for later), and must state remaining: [] when no other work is left, otherwise each step that does not depend on the event on an open card of its own. The date covers only what depends on the event. clear=true clears the hold: with words, the captain's exact words, when he decided it, or with note, your own decision when it was yours or main's. Words are checked against what the captain wrote. replyTo answers a reply you owe with this hold.",
     parameters: HoldParams,
     execute: async (_id, params) =>
       reply(params.clear === true ? await clearHold(params) : await setHold(params)),

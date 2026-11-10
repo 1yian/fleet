@@ -13,7 +13,7 @@ import { Stale } from "./Stale.tsx";
 import { idLabel } from "./text.ts";
 import { Collapsible } from "./Collapsible.tsx";
 import { Entries } from "./Thread.tsx";
-import { LiveChip } from "./TaskCard.tsx";
+import { LiveChip, WaitLine } from "./TaskCard.tsx";
 import { glyphOf, laterLabel, phraseOf, prLabel, since, type Question } from "./format.ts";
 import { BackIcon, SendIcon, StatusIcon } from "./icons.tsx";
 
@@ -202,6 +202,9 @@ function Properties(props: {
               {prLabel(card.pr)}
             </a>,
           )}
+      {card.datedWait === null
+        ? null
+        : row("Waiting", <WaitLine wait={card.datedWait} now={now} />)}
       {card.mate ? null : row("Updated", since(card.updatedAt, now))}
       {row(
         "Created",

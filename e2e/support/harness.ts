@@ -21,6 +21,9 @@ export interface Turn {
   readonly role: string;
   readonly text: string;
 }
+type ToolArgs = Readonly<
+  Record<string, string | number | boolean | readonly string[] | readonly number[]>
+>;
 export type Move = {
   readonly promptTokens?: number;
   readonly cacheRead?: number;
@@ -31,10 +34,10 @@ export type Move = {
   | {
       readonly tool: string;
       readonly text?: string;
-      readonly args?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+      readonly args?: ToolArgs;
       readonly alongside?: readonly {
         readonly tool: string;
-        readonly args?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+        readonly args?: ToolArgs;
       }[];
     }
 );

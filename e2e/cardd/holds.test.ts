@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { MERGE_OPTIONS, type Board, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { begin, newCard, OUTSIDE_DATE, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 const PR = "https://github.com/acme/web/pull/7";
 
@@ -376,6 +376,7 @@ test("an open hold stops close, and a hold held until a date leaves Needs you un
     question: "Renew now?",
     options: ["Yes", "Later"],
     until,
+    ...OUTSIDE_DATE,
   });
   assert.equal(await status(fleet.main, held), "waiting");
   assert.deepEqual(await needsYou(), []);
