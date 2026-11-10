@@ -35,8 +35,8 @@ bin/fleet-chrome take 1 --host p620 --lane main
 
 What happens, in order:
 
-1. It reads tab 1 over ssh: the cookies that Chrome would send to its address (including `HttpOnly`, `Secure`, `Partitioned`, and cookies of the parent domain), and its `localStorage`. It prints only the counts.
-2. It starts `ssh -N -D 127.0.0.1:<port> p620`, a SOCKS proxy that ends on the host.
+1. It starts `ssh -N -D 127.0.0.1:<port> p620`, a SOCKS proxy that ends on the host.
+2. It reads tab 1 over ssh: the cookies that Chrome would send to its address (including `HttpOnly`, `Secure`, `Partitioned`, and cookies of the parent domain), and its `localStorage`. It prints only the counts.
 3. It starts `/Applications/Google Chrome.app` with its own profile, `~/.fleet-chrome/main/profile` (the name after `--lane`), and with every request sent through that proxy. Even `localhost` and `127.0.0.1` go through it, so a worker's dev server on the host's `localhost:3000` opens as it does for the worker.
 4. It replaces what that profile holds for the site with the copy, then opens the same address.
 5. You use the site in that Chrome: sign in, type a password, use Touch ID or your password manager's extension, click through.
@@ -45,11 +45,11 @@ What happens, in order:
    - `back --force`: the same, when `back` refused because the worker's tab changed while you held it (it names what changed).
    - `discard` (or Ctrl-C, or closing the terminal): leave the worker's tab as it is, remove the copy from the Mac profile, and quit Chrome.
 
-   Every way of ending goes through the same steps. A `back` that is already running finishes first (so a stalled one delays the end), a line typed after `discard` or `back` is ignored, and then every tab of that Chrome is closed (so no page can write the session back while it is removed), the copy is removed, Chrome quits, and the proxy closes. Ctrl-C while the first page is still loading does the same.
+   Every way of ending goes through the same steps. A `back` that is already running finishes first (so a stalled one delays the end), a line typed after `discard`, or after a `back` that sent, is ignored, and then every tab of that Chrome is closed (so no page can write the session back while it is removed), the copy is removed, Chrome quits, and the proxy closes. Ctrl-C while the first page is still loading does the same.
 
 Use one `--lane` name for each lane, so two lanes never share one cookie jar: a second copy of the same site into one profile replaces the first. Only one takeover can run for a lane at a time. The first one writes its process id into `~/.fleet-chrome/<lane>/takeover.lock` before it starts anything, and a second one is refused, names the lane and that process id, and starts nothing. The lock is removed when the takeover ends, however it ends. A lock whose process is gone (a killed takeover) is replaced by the next run.
 
-`take` takes a number from `list` or the start of a tab id (the second column of `list`). A number counts the tabs in the order that `list` printed them, so it can name another tab if the host's tabs changed since: run `list` just before `take`, or use the start of the id. Any other text, and an id start that fits more than one tab, is refused with the list of tabs.
+`take` takes the number that `list` prints. The number counts the tabs in the order that `list` printed them, so it can name another tab if the host's tabs changed since: run `list` just before `take`. Any other text, and a number that no tab has, is refused with the list of tabs.
 
 `FLEET_CHROME_HOME` moves the profile folder (default `~/.fleet-chrome`). `FLEET_CHROME_BIN` names another Chrome to start, and `FLEET_CHROME_ARGS` adds arguments to it.
 

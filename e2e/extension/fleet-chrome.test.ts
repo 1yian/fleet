@@ -77,12 +77,7 @@ const user = (held: JsonRecord): unknown => {
   return isRecord(me) ? me["user"] : undefined;
 };
 
-function takeover(
-  tab: Target,
-  home?: string,
-  ssh?: SocksSsh,
-  select = tab.id.slice(0, 8),
-): FleetChrome {
+function takeover(home?: string, ssh?: SocksSsh, select = "1"): FleetChrome {
   assert.ok(lab !== undefined);
   const flags = ["--host", "alpha", "--endpoint", lab.chrome("alpha").endpoint, "--lane", "lane-a"];
   const started = FleetChrome.start(["take", select, ...flags], ssh, home);
@@ -90,8 +85,8 @@ function takeover(
   return started;
 }
 
-async function heldAsAlice(tab: Target, home?: string): Promise<FleetChrome> {
-  const run = takeover(tab, home);
+async function heldAsAlice(home?: string): Promise<FleetChrome> {
+  const run = takeover(home);
   const mac = await run.macPage();
   await mac.waitForFunction(() => document.getElementById("who")?.textContent === "alice");
   await run.letGo();
@@ -148,7 +143,7 @@ test("a taken-over tab is the worker's session in a real Chrome of its own, rout
   assert.match(listed.output, new RegExp(`.*Auth app +${site.origin}/`));
 
   const before = await holds(hostChrome, tab);
-  const run = takeover(tab);
+  const run = takeover();
   await run.waitFor(/Chrome is open with .* signed in as the worker's tab, through ssh alpha/);
   assert.match(run.output, /Holding .*Auth app \(.*\): 3 cookies, 5 localStorage items\./);
 
@@ -220,7 +215,7 @@ test("a taken-over tab is the worker's session in a real Chrome of its own, rout
 
 test("back refuses a tab that the worker changed while it was held, and back --force replaces it", async () => {
   const { tab, hostChrome } = await aliceAtWork();
-  const run = await heldAsAlice(tab);
+  const run = await heldAsAlice();
 
   await hostChrome.evaluate(tab.id, `fetch("/pref?v=light").then(() => true)`);
   run.send("back");
@@ -241,7 +236,7 @@ test("back refuses a tab that the worker changed while it was held, and back --f
 
 test("back refuses a session that the worker's tab renewed while it was held, though no value changed", async () => {
   const { tab, hostChrome } = await aliceAtWork();
-  const run = await heldAsAlice(tab);
+  const run = await heldAsAlice();
 
   await hostChrome.evaluate(tab.id, `fetch("/touch").then(() => true)`);
   run.send("back");
@@ -254,7 +249,7 @@ test("back refuses a session that the worker's tab renewed while it was held, th
 test("discard leaves the worker's tab alone and removes the copy from the Mac profile", async () => {
   const { tab, hostChrome } = await aliceAtWork();
   const before = await holds(hostChrome, tab);
-  const run = await heldAsAlice(tab);
+  const run = await heldAsAlice();
   const port = (await run.waitFor(/Chrome debugging port: (\d+)/))[1];
 
   run.send("discard");
@@ -262,14 +257,14 @@ test("discard leaves the worker's tab alone and removes the copy from the Mac pr
   await endedWithNothingLeft(run, port, hostChrome, tab, before);
 });
 
-test("two takeovers of one lane at once are refused by the lane lock before anything starts, and a text that is neither a tab number nor the start of a tab id is refused with the open tabs", async () => {
+test("two takeovers of one lane at once are refused by the lane lock before anything starts, and a tab that is not a number that list printed (a title, or the start of a tab id) is refused with the open tabs", async () => {
   const { tab } = await aliceAtWork();
   assert.ok(lab !== undefined && site !== undefined);
-  const first = takeover(tab);
+  const first = takeover();
   await first.macPage();
   await first.letGo();
   assert.equal(readFileSync(lockOf(first.home), "utf8").trim(), String(first.pid));
-  const second = takeover(tab, first.home, first.ssh);
+  const second = takeover(first.home, first.ssh);
   assert.equal(await second.exited, 1);
   assert.match(
     second.output,
@@ -278,24 +273,26 @@ test("two takeovers of one lane at once are refused by the lane lock before anyt
   assert.equal(first.ssh.forwardPids().length, 1, "the refused takeover started no proxy");
   assert.equal(readFileSync(lockOf(first.home), "utf8").trim(), String(first.pid));
 
-  const nothing = takeover(tab, undefined, undefined, "Auth app");
-  assert.equal(await nothing.exited, 1);
-  assert.match(
-    nothing.output,
-    new RegExp(`no tab matches "Auth app":\\n1 +\\w+ +.*Auth app +${site.origin}/`),
-  );
-  assert.equal(existsSync(lockOf(nothing.home)), false);
+  for (const wanted of ["Auth app", tab.id.slice(0, 8), "2"]) {
+    const refused = takeover(undefined, undefined, wanted);
+    assert.equal(await refused.exited, 1);
+    assert.match(
+      refused.output,
+      new RegExp(`no tab matches "${wanted}":\\n1 +.*Auth app +${site.origin}/`),
+    );
+    assert.equal(existsSync(lockOf(refused.home)), false);
+  }
 });
 
 test("a lock left by a process that is gone is taken over", async () => {
-  const { tab } = await aliceAtWork();
+  await aliceAtWork();
   const home = tempDir("fleet-chrome-");
   mkdirSync(join(home, "lane-a"), { recursive: true });
   const gone = spawnSync(process.execPath, ["-e", ""]).pid;
   assert.ok(!isRunning(gone));
   writeFileSync(lockOf(home), `${String(gone)}\n`);
 
-  const run = await heldAsAlice(tab, home);
+  const run = await heldAsAlice(home);
   assert.equal(readFileSync(lockOf(home), "utf8").trim(), String(run.pid));
   run.send("discard");
   assert.equal(await run.exited, 0);
@@ -303,9 +300,9 @@ test("a lock left by a process that is gone is taken over", async () => {
 });
 
 test("a takeover killed hard leaves a stale lock, and the next one is still refused while its Chrome runs", async () => {
-  const { tab } = await aliceAtWork();
+  await aliceAtWork();
   assert.ok(lab !== undefined);
-  const first = takeover(tab);
+  const first = takeover();
   await first.macPage();
   await first.letGo();
   const port = (await first.waitFor(/Chrome debugging port: (\d+)/))[1];
@@ -314,7 +311,7 @@ test("a takeover killed hard leaves a stale lock, and the next one is still refu
   await first.exited;
   try {
     assert.ok(existsSync(lockOf(first.home)), "a killed takeover cannot remove its lock");
-    const second = takeover(tab, first.home);
+    const second = takeover(first.home);
     assert.equal(await second.exited, 1);
     assert.match(second.output, /a Chrome already runs with this profile/);
     assert.equal(existsSync(lockOf(first.home)), false, "the refused takeover left no lock");
@@ -327,12 +324,12 @@ test("a takeover killed hard leaves a stale lock, and the next one is still refu
 });
 
 test("takeovers that start together on a stale lock are not both let in", async () => {
-  const { tab } = await aliceAtWork();
+  await aliceAtWork();
   const home = tempDir("fleet-chrome-");
   mkdirSync(join(home, "lane-a"), { recursive: true });
   writeFileSync(lockOf(home), `${String(spawnSync(process.execPath, ["-e", ""]).pid)}\n`);
 
-  const runs = Array.from({ length: 4 }, () => takeover(tab, home));
+  const runs = Array.from({ length: 4 }, () => takeover(home));
   const refusal = /lane lane-a is (already being taken over|being recovered)/;
   const opened = (run: FleetChrome): boolean => run.output.includes("Chrome is open with");
   await until(
@@ -351,8 +348,8 @@ test("takeovers that start together on a stale lock are not both let in", async 
 });
 
 test("a takeover that ends does not remove a lock that another process now holds", async () => {
-  const { tab } = await aliceAtWork();
-  const run = await heldAsAlice(tab);
+  await aliceAtWork();
+  const run = await heldAsAlice();
   writeFileSync(lockOf(run.home), `${String(process.pid)}\n`);
 
   run.send("discard");
@@ -363,7 +360,7 @@ test("a takeover that ends does not remove a lock that another process now holds
 test("SIGTERM while a takeover is held discards it: the copy leaves the Mac profile, Chrome and the proxy end", async () => {
   const { tab, hostChrome } = await aliceAtWork();
   const before = await holds(hostChrome, tab);
-  const run = takeover(tab);
+  const run = takeover();
   const mac = await run.macPage();
   await mac.waitForFunction(() => document.getElementById("who")?.textContent === "alice");
   const port = (await run.waitFor(/Chrome debugging port: (\d+)/))[1];
@@ -379,7 +376,7 @@ test("Ctrl-C while the first page is still loading removes the copy as well, tho
   assert.ok(site !== undefined);
   await hostChrome.evaluate(tab.id, `(history.pushState(null, "", "${STALL_PATH}"), true)`);
   const before = await holds(hostChrome, tab);
-  const run = takeover(tab);
+  const run = takeover();
   const port = (await run.waitFor(/Chrome debugging port: (\d+)/))[1];
   await until(
     () => (site?.stallCount === 0 ? undefined : true),
@@ -392,8 +389,8 @@ test("Ctrl-C while the first page is still loading removes the copy as well, tho
   await endedWithNothingLeft(run, port, hostChrome, tab, before);
 });
 
-async function heldAsBob(tab: Target): Promise<FleetChrome> {
-  const run = takeover(tab);
+async function heldAsBob(): Promise<FleetChrome> {
+  const run = takeover();
   const mac = await run.macPage();
   await mac.waitForFunction(() => document.getElementById("who")?.textContent === "alice");
   await mac.fill("#user", "bob");
@@ -407,7 +404,7 @@ async function heldAsBob(tab: Target): Promise<FleetChrome> {
 test("discard closes the pages of the Mac Chrome first, so a page that keeps renewing the session cannot put it back", async () => {
   const { tab, hostChrome } = await aliceAtWork();
   const before = await holds(hostChrome, tab);
-  const run = takeover(tab);
+  const run = takeover();
   const mac = await run.macPage();
   await mac.waitForFunction(() => document.getElementById("who")?.textContent === "alice");
   await mac.evaluate(() => {
@@ -430,7 +427,7 @@ test("a worker tab that has moved to another origin gets only the cookies, and i
   const { tab, hostChrome } = await aliceAtWork();
   assert.ok(site !== undefined);
   const other = `http://127.0.0.1:${String(site.port)}`;
-  const run = await heldAsAlice(tab);
+  const run = await heldAsAlice();
   await hostChrome.evaluate(tab.id, `location.href = "${other}/"`);
   await until(
     async () =>
@@ -453,7 +450,7 @@ test("a worker tab that has moved to another origin gets only the cookies, and i
 test("a line pasted after discard is ignored, so back does not send", async () => {
   const { tab, hostChrome } = await aliceAtWork();
   const before = await holds(hostChrome, tab);
-  const run = await heldAsBob(tab);
+  const run = await heldAsBob();
   const reached = run.ssh.hostCommands();
 
   run.send("discard\nback");
@@ -466,7 +463,7 @@ test("a line pasted after discard is ignored, so back does not send", async () =
 
 test("input that ends right after back still lets the send finish", async () => {
   const { tab, hostChrome } = await aliceAtWork();
-  const run = await heldAsBob(tab);
+  const run = await heldAsBob();
 
   run.send("back");
   run.endInput();
@@ -483,10 +480,10 @@ test("input that ends right after back still lets the send finish", async () => 
   assert.equal(after["marker"], null, "the worker's tab was reloaded");
 });
 
-test("the host's own loopback addresses go through the host as well, and the number that list prints selects the tab", async () => {
-  const { tab } = await aliceAtWork((own) => `http://127.0.0.1:${String(own.port)}/`);
+test("the host's own loopback addresses go through the host as well", async () => {
+  await aliceAtWork((own) => `http://127.0.0.1:${String(own.port)}/`);
   assert.ok(site !== undefined);
-  const run = takeover(tab, undefined, undefined, "1");
+  const run = takeover();
   const mac = await run.macPage();
   await mac.waitForFunction(() => document.getElementById("who")?.textContent === "alice");
   assert.equal(mac.url(), `http://127.0.0.1:${String(site.port)}/`);

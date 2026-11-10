@@ -379,7 +379,7 @@ The token URL rests for about 30 seconds in herdr workspace metadata and in Shep
 
 ### Fleet Chrome on the Mac
 
-`bin/fleet-chrome` is a prototype that takes a worker's tab into a real Chrome on the machine you run it on, with the tab's session copied in and that Chrome's traffic routed through the host, and sends the session back when you are done. It needs only `ssh <host>`. It installs nothing and changes no setting. [fleet-chrome.md](fleet-chrome.md) has the commands to try it on a Mac, how to undo everything, and what it cannot do yet. The viewer above stays the way to watch a tab that must not reload.
+`bin/fleet-chrome` is a prototype that takes a worker's tab into a real Chrome on the machine you run it on, with the tab's session copied in and that Chrome's traffic routed through the host, and sends the session back when you are done. It installs nothing and changes no setting. [fleet-chrome.md](fleet-chrome.md) has what it needs, the commands to try it on a Mac, how to undo everything, and what it cannot do yet. The viewer above stays the way to watch a tab that must not reload.
 
 ## 3. Lanes and projects
 

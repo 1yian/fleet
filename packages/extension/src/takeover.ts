@@ -18,7 +18,7 @@ const USAGE = `usage:
   fleet-chrome take <tab> --host <host> [--lane <name>] [--endpoint <url>]
 
 <host> is an ssh name that reaches the host of the shared Chrome with no prompt.
-<tab> is a number from list or the start of a tab id (the second column of list).
+<tab> is the number that list prints.
 --lane names the Mac profile (one per lane).`;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -54,23 +54,14 @@ function parse(argv: readonly string[]): Options {
 }
 
 const listing = (tabs: readonly Page[]): string =>
-  tabs
-    .map(
-      (tab, at) =>
-        `${String(at + 1)}  ${tab.id.slice(0, 8)}  ${tab.title || "(no title)"}  ${tab.url}`,
-    )
-    .join("\n");
+  tabs.map((tab, at) => `${String(at + 1)}  ${tab.title || "(no title)"}  ${tab.url}`).join("\n");
 
 function choose(tabs: readonly Page[], wanted: string | undefined): Page {
   if (tabs.length === 0) throw new Error("the host's Chrome has no web page open");
   if (wanted === undefined) throw new Error(`name the tab to take:\n${listing(tabs)}`);
-  const numbered = /^\d+$/.test(wanted) ? tabs[Number(wanted) - 1] : undefined;
-  const found =
-    numbered === undefined ? tabs.filter((tab) => tab.id.startsWith(wanted)) : [numbered];
-  const [only] = found;
-  if (found.length === 1 && only !== undefined) return only;
-  const which = found.length === 0 ? "no tab matches" : "more than one tab matches";
-  throw new Error(`${which} "${wanted}":\n${listing(found.length === 0 ? tabs : found)}`);
+  const found = /^\d+$/.test(wanted) ? tabs[Number(wanted) - 1] : undefined;
+  if (found === undefined) throw new Error(`no tab matches "${wanted}":\n${listing(tabs)}`);
+  return found;
 }
 
 async function list(options: Options): Promise<void> {
