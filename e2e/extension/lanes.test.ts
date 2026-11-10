@@ -149,6 +149,23 @@ const users = (turns: Turn[]): string =>
     .map((turn) => turn.text)
     .join("\n");
 
+test(
+  "a mate starts with its compile cache under the host's fleet folder, off the tmp folder",
+  { skip: process.platform !== "linux" && "reads /proc" },
+  async () => {
+    h.onModel(() => ({ text: "noted" }), "mate");
+    await startMain(lab, here, h);
+    await waitState(here, "ops", "running");
+    await waitPi("ops");
+    const processes = records((await paneInfo("ops"))[0]?.["foreground_processes"]);
+    const pid = processes.find((each) => each["name"] === "pi" || each["argv0"] === "pi")?.["pid"];
+    const environ = readFileSync(`/proc/${String(pid)}/environ`, "utf8").split("\0");
+    const hostDir = process.env["FLEET_HOST_DIR"] ?? "";
+    assert.notEqual(hostDir, "");
+    assert.ok(environ.includes(`NODE_COMPILE_CACHE=${join(hostDir, "node-compile-cache")}`));
+  },
+);
+
 test("main brings up every lane on both hosts, and starts a mate that dies", async () => {
   h.onModel(() => ({ text: "noted" }), "mate");
   const pane = await startMain(lab, here, h);

@@ -169,6 +169,35 @@ A host-shared no-mistakes daemon is not a worker's process, even when a worker s
 
 The cleaner owner of the daemon is the host. Prefer starting it once from the host's own login with the daemon start command of no-mistakes, which installs it as a user service. Agent maintenance follows the scoped approval and evidence requirements in [worker rule 9](../packages/extension/prompts/worker.md#rules), coordinated by the [mate](../packages/extension/prompts/mate.md). Main owns rollout and must arrange a supported worker reload before maintenance so the executing worker uses the updated prompts and guard. Fleet's cleanup only preserves shared daemons; it does not administer them.
 
+## Scratch space and the disk alarm
+
+A host's `/tmp` can be a memory filesystem with a fixed number of files. On p620 it is a tmpfs with 1,048,576 inodes. It ran out on Nov 9 and broke test runs with `ENOSPC`, and it reached 96% again after that. So the fleet keeps its scratch space on disk, bounds it, and tells main when a filesystem fills.
+
+**The folder.** `~/.fleet` on each host, the folder that already holds `cards.db` and `app`. `FLEET_HOST_DIR` changes it. The fleet adds two things under it:
+
+- `scratch/c-<N>/` is card N's folder, with `tmp/` inside it.
+- `node-compile-cache/` is the Node compile cache.
+
+**What fills `/tmp`.** Two things, measured on p620 on Nov 10. Workers' evidence and scratch folders held 513,000 of the 618,000 inodes that `du` counted, in 427 `/tmp/fleet-*` folders (`/tmp/fleet-c-1300` alone had 88,000). The Node compile cache held about 335,000 more, which is what main's hand prune freed. Pi (`cli.js` and its extension loader, jiti), `tsc`, `eslint`, and `prettier` each call `module.enableCompileCache()` with no directory, which means `$TMPDIR/node-compile-cache`. An entry's name comes from the source path and content, so every worktree and every scratch copy of the repository adds new entries, and Node never removes one. `cardd` does not enable it. Nothing in this repository set it.
+
+**A worker's environment.** Dispatch makes `scratch/c-<N>/tmp` on the worker's host and starts the worker's herdr workspace with three variables (`herdr workspace create --env`):
+
+| Variable             | Value                                         |
+| -------------------- | --------------------------------------------- |
+| `FLEET_SCRATCH`      | `~/.fleet/scratch/c-<N>`, the evidence folder |
+| `TMPDIR`             | `~/.fleet/scratch/c-<N>/tmp`                  |
+| `NODE_COMPILE_CACHE` | `~/.fleet/node-compile-cache`                 |
+
+Pi, its extension cache, the worker's shell tools, `mktemp`, `npm`, `tsc`, `eslint`, and Chromium profiles then write on disk. A `run_long` job tab does not inherit the workspace's variables, so the extension passes the same three to the tab (`herdr tab create --env`). The worker contract tells the worker to put reports and evidence in `$FLEET_SCRATCH`. The end-to-end suite keeps its run folder in `/tmp` on purpose (`e2e/support/run-root.ts`: a short path for socket files) and removes it when it ends, also after a failed or killed run.
+
+**A mate's environment.** `fleet up`, `fleet restart`, and the relaunch after `/updatefleet` start Pi with `NODE_COMPILE_CACHE` set to the same cache. A main that the captain starts by hand does not get it: put `export NODE_COMPILE_CACHE="$HOME/.fleet/node-compile-cache"` in the shell profile that starts it.
+
+**A closed card.** `close` removes the card's `tmp/` at once and writes `closed` in the card's folder. The evidence stays for 7 days after that, then it goes. A card with nothing but `tmp/` leaves no folder. A card's folder that has no `closed` file is never touched, however old. Dispatching the card again removes `closed`. A card that is closed while its host is unreachable gets no `closed` file, so its folder stays.
+
+**The tidy.** Main asks every host once an hour, with its minute check, to run `fleet scratch --tidy`. It removes compile cache files that nothing has written for 2 days. For each card folder with a `closed` file it removes `tmp/`, and the whole folder 7 days after close. It looks only at real folders named `c-<digits>` and never follows a link. It is safe to run at any time and by hand.
+
+**The alarm.** Each minute, main reads the use of the filesystems that hold `/tmp`, the temp folder, and `~/.fleet` on every host (`fleet scratch --json`). When a filesystem passes 75% of its inodes or of its space, main gets one message that names the host, the filesystem, the percentage, and the five largest directories (by inodes for an inode alarm, by space for a space alarm). It says it once for each crossing. It says it again only after the filesystem has dropped below 75% and crossed it again. Main keeps what it has said in `state/disk-alarms.json`, so a restart does not repeat it. A host whose use cannot be read is named once, and again when it works.
+
 ## 3. Lanes and projects
 
 Run these once on the `cardd` host. The host names are the fleet's own: `maverick`, `p620`, and `cnp-devvm` for the CNP dev VM. They are the names in `cardd`'s `--hosts`, in `--clone`, and in main's `hosts`. The VM's machine hostname, `cx-devvm-01`, is never used in fleet settings.
@@ -538,6 +567,8 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
 | `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                 |
 | `fleet cost`                             | Prints this host's last-24-hour usage rows as JSON. Main reads it for its daily cost line.  |
+| `fleet scratch [--tidy] [--json]`        | Prints the use of the filesystems the fleet writes scratch to. `--tidy` tidies first.       |
+| `fleet scratch --largest PATH [--by M]`  | Prints the largest directories under PATH, by `inodes` (default) or `space`.                |
 | `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.

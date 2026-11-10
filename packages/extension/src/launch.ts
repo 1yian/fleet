@@ -18,6 +18,7 @@ import { isRecord, parseLaneConfig, readLaneConfig, strings } from "./lane-confi
 import { checkLaneSecrets } from "./lane-secrets.ts";
 import { costRows } from "./cost.ts";
 import { setUpMemory } from "./memory.ts";
+import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences } from "./standing.ts";
 import { hostProblems } from "./prerequisites.ts";
@@ -26,7 +27,7 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE = [
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--largest PATH [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
   "lane options of home add: --host NAME --hosts JSON --roots JSON --tier MODEL --direnv FOLDER --args JSON --worker-args JSON",
   "  --hosts and --roots take a JSON object, --args and --worker-args a JSON array of strings. home set takes only --args and --worker-args, and changes only those.",
   "  --token-file reads the lane token from a file, or from standard input with -, so it never sits in a command line. --hold makes the home held until it is started.",
@@ -52,6 +53,8 @@ const VALUE_OPTIONS = new Set([
   "--restart",
   "--content",
   "--script",
+  "--largest",
+  "--by",
 ]);
 const TOKEN_REFUSED =
   "fleet: --token is not accepted, because a token in a command line shows in the process list and in shell history. Pipe it in with --token-file -, give --token-file FILE, or use --bws JSON";
@@ -112,6 +115,9 @@ function parseCommandLine() {
       content: { type: "string" },
       absent: { type: "boolean" },
       script: { type: "string" },
+      tidy: { type: "boolean" },
+      largest: { type: "string" },
+      by: { type: "string" },
     },
   });
 }
@@ -356,6 +362,18 @@ switch (command ?? "") {
     console.log(JSON.stringify(costRows(root, Date.now())));
     break;
   }
+  case "scratch":
+    for (const line of scratchLines(
+      {
+        tidy: values.tidy === true,
+        largest: values.largest,
+        by: values.by,
+        json: values.json === true,
+      },
+      Date.now(),
+    ))
+      console.log(line);
+    break;
   case "migrate":
     for (const line of values.undo === true
       ? undoMigration(root, values.from)

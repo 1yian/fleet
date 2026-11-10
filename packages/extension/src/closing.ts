@@ -5,6 +5,7 @@ import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
+import { CLOSE_SCRATCH_SCRIPT } from "./scratch.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
   fileURLToPath(new URL("./archive.sh", import.meta.url)),
@@ -203,7 +204,7 @@ function processesOf(session: string, out: string): { stopped: string[]; spared:
   return { stopped, spared };
 }
 
-async function retire(attempt: Attempt): Promise<Retired> {
+async function retire(attempt: Attempt, card: number): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
@@ -220,6 +221,7 @@ async function retire(attempt: Attempt): Promise<Retired> {
     await onHost(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
+  await onHost(host, ["sh", "-c", CLOSE_SCRATCH_SCRIPT, "scratch", String(card)]);
   const out = `${archiveDir}/${session}.tar.zst`;
   let archive = "";
   for (const each of drop) {
@@ -262,7 +264,7 @@ export async function close(
   const left: { session: string; host: string; reason: string }[] = [];
   for (const attempt of plan.attempts) {
     try {
-      const retired = await retire(attempt);
+      const retired = await retire(attempt, id);
       if (retired.archive !== null) archives.push(`${attempt.host}:${retired.archive}`);
       stopped.push(...retired.stopped);
       spared.push(...retired.spared);
