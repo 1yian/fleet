@@ -13,6 +13,8 @@ export class Failures {
   private failed: string | undefined;
   private unsent: string | undefined;
   private compactionUnsent: string | undefined;
+  private clearUnsent = false;
+  private compactionClearUnsent = false;
   private compactionPending: string | undefined;
   private readonly link: Link;
   private blockage: Blockage | undefined;
@@ -36,8 +38,14 @@ export class Failures {
   flush(): void {
     const error = this.unsent;
     const compaction = this.compactionUnsent;
+    const clear = this.clearUnsent;
+    const compactionClear = this.compactionClearUnsent;
     this.unsent = undefined;
     this.compactionUnsent = undefined;
+    this.clearUnsent = false;
+    this.compactionClearUnsent = false;
+    if (clear) this.recovered(false);
+    if (compactionClear) this.recovered(true);
     if (error !== undefined) this.report(error, false, false);
     if (compaction !== undefined) this.report(compaction, true, false);
   }
@@ -65,7 +73,7 @@ export class Failures {
       compactionSucceeded();
       this.compactionPending = undefined;
       if (this.owed === undefined) blockage.release();
-      this.link.call("incident.clear", { compacted: true }).catch(() => undefined);
+      this.recovered(true);
     });
     pi.on("agent_settled", (event) => {
       if (this.owed !== undefined) blockage.raise(this.owed, blockage.now);
@@ -75,7 +83,16 @@ export class Failures {
       if (pending !== undefined && this.failed === undefined)
         this.raisePiFault(pending, true, blockage.now);
       if (this.failed !== undefined) this.report(this.failed, false, true);
-      else this.link.call("incident.clear", {}).catch(() => undefined);
+      else this.recovered(false);
+    });
+  }
+
+  private recovered(compaction: boolean): void {
+    if (compaction) this.compactionUnsent = undefined;
+    else this.unsent = undefined;
+    this.link.call("incident.clear", compaction ? { compacted: true } : {}).catch(() => {
+      if (compaction) this.compactionClearUnsent = true;
+      else this.clearUnsent = true;
     });
   }
 

@@ -113,4 +113,7 @@ export default function probe(pi: ExtensionAPI): void {
   pi.on("agent_settled", (event) => {
     report({ type: "settled", aborted: event.aborted });
   });
+  pi.on("session_compact", () => {
+    report({ type: "compacted" });
+  });
 }

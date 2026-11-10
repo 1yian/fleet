@@ -286,7 +286,14 @@ test("an in-process reload does not keep a recovered turn failure open", async (
   await untilIncidents(["cleared", "open"]);
 });
 
-test("an in-process reload does not keep a recovered compaction failure open", async () => {
+interface CompactingCleo {
+  readonly cleo: Pi;
+  readonly setClock: (ms: number) => void;
+  readonly turn: () => Promise<void>;
+  readonly compactorUp: () => void;
+}
+
+async function startCompactingCleo(): Promise<CompactingCleo> {
   const clockFile = join(tempDir("fleet-clock-"), "clock");
   const setClock = (ms: number): void => {
     const next = `${clockFile}.next`;
@@ -296,12 +303,12 @@ test("an in-process reload does not keep a recovered compaction failure open", a
   setClock(T0);
   fleet = await startFleet();
   h = await Harness.start();
-  let compactorUp = false;
+  let up = false;
   for (let call = 0; call < 80; call += 1)
     h.onModel((seen) => {
       if (!seen.some((turn) => turn.text.includes("ONLY output the structured summary")))
         return { text: "ok" };
-      return compactorUp ? { text: "a summary" } : { fail: COMPACTOR_DOWN };
+      return up ? { text: "a summary" } : { fail: COMPACTOR_DOWN };
     }, "cleo");
   const token = fleet.cardd.addLane("cleo", "main");
   const env = {
@@ -315,24 +322,81 @@ test("an in-process reload does not keep a recovered compaction failure open", a
   mkdirSync(join(h.dir, "agent"), { recursive: true });
   await h.waitForNth((event) => event["type"] === "fleet_connected", 1, "cleo to connect");
   let turns = 0;
-  const turn = async (): Promise<void> => {
-    turns += 1;
-    cleo.prompt(`${BIG}${String(turns)}`);
-    await h?.waitForNth((event) => event["type"] === "settled", turns, "the turn to settle");
-  };
   const attempted = (): boolean =>
     h
       ?.callsOf("cleo")
       .some((seen) =>
         seen.some((each) => each.text.includes("ONLY output the structured summary")),
       ) === true;
+  const turn = async (): Promise<void> => {
+    turns += 1;
+    cleo.prompt(`${BIG}${String(turns)}`);
+    await h?.waitForNth((event) => event["type"] === "settled", turns, "the turn to settle");
+  };
   while (!attempted()) await turn();
   await fleet.main.waitForEntry(isFailure, "the compaction failure");
   await untilIncidents(["open"]);
+  return {
+    cleo,
+    setClock,
+    turn,
+    compactorUp: () => {
+      up = true;
+    },
+  };
+}
+
+test("an in-process reload does not keep a recovered compaction failure open", async () => {
+  const { cleo, setClock, turn, compactorUp } = await startCompactingCleo();
   await reloaded(cleo, 2);
-  compactorUp = true;
+  compactorUp();
   setClock(T0 + 31 * SECOND);
   await turn();
+  await untilIncidents(["cleared"]);
+});
+
+test("a turn that recovers while cardd is unreachable closes its incident at the next connect", async () => {
+  fleet = await startFleet();
+  h = await Harness.start();
+  h.onModel(() => ({ fail: "provider exploded: code 42" }), "cleo");
+  h.onModel(() => ({ text: "ok" }), "cleo");
+  h.onModel(() => ({ fail: "provider exploded: code 43" }), "cleo");
+  const token = fleet.cardd.addLane("cleo", "main");
+  const env = {
+    FLEET_URL: fleet.cardd.url,
+    FLEET_TOKEN: token,
+    FLEET_ROLE: "mate",
+    FLEET_FAKE_AGENT: "cleo",
+  };
+  const cleo = h.startPi("cleo", env, [EXTENSION]);
+  await h.waitForNth((event) => event["type"] === "fleet_connected", 1, "cleo to connect");
+  cleo.prompt("first");
+  const first = await fleet.main.waitForEntry(isFailure, "the first failure");
+  await untilIncidents(["open"]);
+  await fleet.cardd.stop();
+  cleo.prompt("second");
+  await h.waitForNth((event) => event["type"] === "settled", 2, "the turn to settle");
+  await fleet.cardd.restart();
+  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "cleo to reconnect");
+  await untilIncidents(["cleared"]);
+  const main = await fleet.cardd.connect(fleet.mainToken);
+  cleo.prompt("third");
+  await main.waitForEntry(
+    (entry) => isFailure(entry) && entry.id !== first.id,
+    "the failure after the recovery to open a new incident",
+  );
+  await untilIncidents(["cleared", "open"]);
+});
+
+test("a compaction that recovers while cardd is unreachable closes its incident at the next connect", async () => {
+  const { setClock, turn, compactorUp } = await startCompactingCleo();
+  await fleet?.cardd.stop();
+  compactorUp();
+  setClock(T0 + 31 * SECOND);
+  await turn();
+  await h?.waitFor((event) => event["type"] === "compacted", "the compaction to succeed");
+  await fleet?.cardd.restart();
+  await h?.waitForNth((event) => event["type"] === "fleet_connected", 2, "cleo to reconnect");
   await untilIncidents(["cleared"]);
 });
 
