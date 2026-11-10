@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { newCard } from "../support/fleet.ts";
+import { isRecord } from "../support/json.ts";
 import { git } from "../support/remote.ts";
 import { tempDir } from "../support/run-root.ts";
 
@@ -139,4 +140,19 @@ test("lane remove refuses a lane that is in use, and removes one that never work
   const stranger = await cardd.connect(idle);
   assert.equal(stranger.welcome, undefined);
   assert.equal(cardd.addLane("idle", "main", "/homes/idle"), idle);
+});
+
+test("lane remove takes back an unused lane that a reload request left a record for", async () => {
+  cardd.addLane("idle", "main", "/homes/idle");
+  const rows = await main.call("maintenance.request", { batch: "b1", kind: "reload" });
+  assert.ok(
+    Array.isArray(rows) &&
+      rows.filter(isRecord).some((row) => row["session"] === "idle" && row["state"] === "failed"),
+    "the request left no record for the lane that is not connected",
+  );
+  const removed = cardd.admin("lane", "remove", "idle");
+  assert.equal(removed.status, 0, removed.stderr);
+  assert.match(removed.stdout, /^idle: removed the lane and its lane card\./);
+  assert.doesNotMatch(removed.stderr, /SQLITE|constraint/i);
+  assert.doesNotMatch(ok("lane", "list"), /^idle:/m);
 });

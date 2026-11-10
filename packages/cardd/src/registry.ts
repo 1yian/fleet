@@ -91,6 +91,7 @@ export function removeLane(db: DatabaseSync, lane: string): string {
     db.prepare("DELETE FROM deliveries WHERE session = ?").run(lane);
     db.prepare("UPDATE lanes SET card = NULL WHERE name = ?").run(lane);
     db.prepare("DELETE FROM cards WHERE lane = ?").run(lane);
+    db.prepare("DELETE FROM maintenance WHERE session = ? OR requester = ?").run(lane, lane);
     db.prepare("DELETE FROM sessions WHERE role = 'mate' AND lane = ?").run(lane);
     db.prepare("DELETE FROM lanes WHERE name = ?").run(lane);
     const dropped = schedules === 0 ? "" : `, with ${String(schedules)} of its schedules`;
