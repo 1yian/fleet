@@ -94,7 +94,7 @@ export class HostBrowser {
     this.config = config;
     this.dial = dial(via, config.cdp);
     this.vault = new Vault(config.logins, host, via);
-    for (const tab of openTabs(db, host)) this.entered.mark(tab.target);
+    for (const tab of openTabs(db, host)) this.entered.mark(tab.target, true);
   }
 
   hasTab(card: number): boolean {

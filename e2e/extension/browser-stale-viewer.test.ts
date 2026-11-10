@@ -155,6 +155,25 @@ for (const embedding of ["closed-shadow", "cross-frame"] as const) {
   }
 }
 
+test("a captain's stale viewer that keeps its tab through a cardd restart cannot put a password past the worker before it lists again", async () => {
+  await begin();
+  const page = await viewerPage(["--captain"], "no-build");
+  const release = links[0]?.holdListings();
+  assert.ok(release !== undefined);
+  const before = worker;
+  await lab.cardd.restart();
+  worker = await lab.reconnect(before);
+  await worker.act({ action: "open", url: lab.site.url("/a") });
+  await worker.act({ action: "open", url: lab.site.url("/entry") });
+  login = await embedLogin(lab, worker, "closed-shadow");
+  await revealPassword(page);
+  await typePassword(page);
+  await assert.rejects(worker.act({ action: "eval", expression: "location.pathname" }), ENTERED);
+  await assert.rejects(worker.shoot(), ENTERED);
+  await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
+  release();
+});
+
 test("a password that the worker typed itself stays readable beside a current viewer and is refused once a stale viewer lists the tab", async () => {
   await begin();
   await worker.act({ action: "type", selector: "input[name=p]", text: "worker-typed" });

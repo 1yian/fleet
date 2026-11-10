@@ -24,17 +24,32 @@ function spoken(vintage: Vintage, sent: Record<string, unknown>): Record<string,
   return { ...sent, args: vintage === "old-build" ? { ...rest, build: OLD_BUILD } : rest };
 }
 
+interface Listings {
+  wait: Promise<void>;
+}
+
 export class StaleLink {
   readonly url: string;
   private readonly server: Server;
+  private readonly listings: Listings;
 
-  private constructor(server: Server, port: number) {
+  private constructor(server: Server, port: number, listings: Listings) {
     this.server = server;
+    this.listings = listings;
     this.url = `ws://127.0.0.1:${String(port)}/session`;
+  }
+
+  holdListings(): () => void {
+    let release = (): void => undefined;
+    this.listings.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
   }
 
   static async start(carddUrl: string, vintage: Vintage): Promise<StaleLink> {
     const call = carddUrl.replace(/^ws/, "http").replace(/\/session$/, "/call");
+    const listings: Listings = { wait: Promise.resolve() };
     const server = createServer((request, response) => {
       readBody(request)
         .then(async (body) => {
@@ -45,6 +60,7 @@ export class StaleLink {
               .end(JSON.stringify({ ok: true, value: {} }));
             return;
           }
+          if (sent["op"] === "browser.view") await listings.wait;
           const answer = await fetch(call, {
             method: "POST",
             headers: {
@@ -64,7 +80,7 @@ export class StaleLink {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address: AddressInfo | string | null = server.address();
     if (address === null || typeof address === "string") throw new Error("the link has no port");
-    return new StaleLink(server, address.port);
+    return new StaleLink(server, address.port, listings);
   }
 
   async stop(): Promise<void> {
