@@ -14,6 +14,7 @@ const HOST_NAME = new RegExp(`^${NAME}$`);
 const TEAM_DOMAIN = new RegExp(`^${NAME}(:\\d{1,5})?$`);
 const AUDIENCE_TAG = /^[0-9a-f]{64}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
+const KEYS_UNAVAILABLE = "the signing keys could not be fetched";
 
 export interface AccessConfig {
   readonly host: string;
@@ -60,8 +61,18 @@ export function parseAccess(flags: AccessFlags): AccessConfig | undefined {
   };
 }
 
+class Refusal extends Error {}
+
 function describe(error: unknown): string {
-  if (error instanceof errors.JOSEError || !(error instanceof Error)) return String(error);
+  if (error instanceof Refusal) return error.message;
+  if (error instanceof errors.JWTClaimValidationFailed)
+    return `${error.code} on the ${error.claim} claim`;
+  if (error instanceof errors.JOSEError) return error.code;
+  return "the token or the signing keys raised an unexpected error";
+}
+
+function fetchFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
   const cause = error.cause instanceof Error ? `: ${error.cause.message}` : "";
   return `${error.message}${cause}`;
 }
@@ -94,11 +105,12 @@ export class Access {
 
   async admits(token: string | undefined): Promise<boolean> {
     try {
-      if (token === undefined) throw new Error("the request has no Cf-Access-Jwt-Assertion header");
+      if (token === undefined)
+        throw new Refusal("the request has no Cf-Access-Jwt-Assertion header");
       const { payload } = await jwtVerify(token, this.lookup, this.rules);
       const email = payload["email"];
       if (typeof email !== "string" || email.toLowerCase() !== this.owner)
-        throw new Error("the token is for another email address");
+        throw new Refusal("the token is for another email address");
       return true;
     } catch (error) {
       this.note(describe(error));
@@ -107,16 +119,19 @@ export class Access {
   }
 
   private readonly lookup: JWTVerifyGetKey = async (header, token) => {
-    if (Date.now() < this.failedAt + this.cooldown)
-      throw new Error("the signing keys could not be fetched a moment ago");
+    if (Date.now() < this.failedAt + this.cooldown) throw new Refusal(KEYS_UNAVAILABLE);
     try {
       return await this.keys(header, token);
     } catch (error) {
       const unmatched =
         error instanceof errors.JWKSNoMatchingKey ||
         error instanceof errors.JWKSMultipleMatchingKeys;
-      if (!unmatched) this.failedAt = Date.now();
-      throw error;
+      if (unmatched) throw error;
+      const now = Date.now();
+      if (now >= this.failedAt + this.cooldown)
+        console.error(`public host could not fetch the signing keys: ${fetchFailure(error)}`);
+      this.failedAt = now;
+      throw new Refusal(KEYS_UNAVAILABLE);
     }
   };
 

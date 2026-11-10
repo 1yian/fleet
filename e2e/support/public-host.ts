@@ -65,6 +65,10 @@ export function unsigned(key: SigningKey, claims: Record<string, unknown>): stri
   return `${encode({ alg: "none", typ: "JWT", kid: key.kid })}.${encode(claims)}.`;
 }
 
+export function critical(name: string, claims: Record<string, unknown>): string {
+  return `${encode({ alg: "RS256", typ: "JWT", crit: [name] })}.${encode(claims)}.AAAA`;
+}
+
 export function macSigned(key: SigningKey, claims: Record<string, unknown>): string {
   const head = `${encode({ alg: "HS256", typ: "JWT", kid: key.kid })}.${encode(claims)}`;
   const secret = key.publicKey.export({ type: "spki", format: "pem" });

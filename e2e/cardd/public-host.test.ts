@@ -5,6 +5,7 @@ import { BoardSchema, CardSchema, check } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
 import {
   AUDIENCE,
+  critical,
   exchange,
   macSigned,
   OWNER,
@@ -159,6 +160,31 @@ test("a request for the public host without a valid token gets no board, page, d
 
   const cookie = through(undefined, { cookie: `CF_Authorization=${site.token()}` });
   await assertRefusedEverywhere("the token only in the cookie", cookie, seed);
+});
+
+test("the refusal log names a reason, never text from a token, so tokens that differ only in their text log once", async () => {
+  const marker = "unique-extension-";
+  const claims = site.claims();
+  for (let each = 0; each < 20; each += 1)
+    assert.equal(
+      (
+        await exchange(
+          base(),
+          "/api/board",
+          "GET",
+          through(critical(`${marker}${String(each)}`, claims)),
+        )
+      ).status,
+      403,
+    );
+  assert.equal((await exchange(base(), "/api/board", "GET", through(undefined))).status, 403);
+  await eventually("the last refusal to be logged", () =>
+    Promise.resolve(cardd.errors.includes("no Cf-Access-Jwt-Assertion header")),
+  );
+
+  assert.ok(!cardd.errors.includes(marker), cardd.errors);
+  const refusals = cardd.errors.split("\n").filter((line) => line.includes("refused a request"));
+  assert.equal(refusals.length, 2, cardd.errors);
 });
 
 test("a valid token is not enough from a page of another origin, or without one on a write", async () => {
