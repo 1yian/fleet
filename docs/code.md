@@ -25,7 +25,7 @@ Every board test file calls `boundBoardFile` from `e2e/support/board.ts`, which 
 ### Command line
 
 ```
-cardd serve --db <file> [--listen <host:port>] [--board <built board folder>] [--hostname <name>]... [--hosts <json>] [--browser <json>]
+cardd serve --db <file> [--listen <host:port>] [--board <built board folder>] [--hostname <name>]... [--hosts <json>] [--browser <json>] [--public-host <host> --access-team <team domain> --access-aud <tag> --access-email <email>]
 cardd lane add <name> --db <file> --home <path> [--parent <lane>]
 cardd lane plan <name> --db <file> [--plan <json>]
 cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>]
@@ -37,7 +37,7 @@ cardd project delivery <name> <mode> --db <file>
 cardd card delivery <number> <mode> --db <file>
 ```
 
-`serve --hosts` and `serve --browser` take JSON, and [setup.md](setup.md) owns their form. `project add` without `--repo` reads the project's GitHub repository from the `origin` remote of a clone on the `cardd` host. `serve` fills in any that are missing at each start.
+`serve --hosts` and `serve --browser` take JSON, and [setup.md](setup.md) owns their form. The four `--public-host` and `--access-*` flags turn on the public board link, and [setup.md](setup.md) owns that too (A public link through Cloudflare Access). They are set together or `serve` refuses to start. `project add` without `--repo` reads the project's GitHub repository from the `origin` remote of a clone on the `cardd` host. `serve` fills in any that are missing at each start.
 
 `project clone` sets one host's clone of a registered project to a new path, so a clone can move. Attempts already begun keep their worktrees where they are: close finds them through the clone's worktree list, not through a stored path.
 
@@ -92,7 +92,21 @@ cardd card delivery <number> <mode> --db <file>
 - The extension holds every pushed entry until Pi has loaded all extensions (its `resources_discover` event). A push that arrives earlier would start the model's first request before other extensions, such as pi-fff, have registered their tools, and the tool list would change between requests and break the prompt cache prefix. `e2e/extension/prefix-stable-tools.test.ts` covers it.
 - Unread deliveries resend every two minutes while the receiver is up. Each resend uses the same entry, marked `again`, including entries already in the session file. Main hears after three resends, then every 15 minutes. Main's own unread entries keep resending without a self-escalation. The extension deduplicates repeated delivery within a turn, not forever. This tracks reading, independently of reply obligations.
 - `server.ts`: one websocket per session, plus `POST /call` with a bearer token for scripts. The first message must be hello with the token. Every later message checks that the session is still live, so an ended or replaced attempt loses access at once. At start no session is connected: live sessions reconnect and become idle, or running when their hello says a run is going, so a reconnect never makes a running worker eligible for the unread-message chase. The extension's link remembers the latest activity it was asked to send and sends it right after welcome, so a run that ends between hello and welcome still leaves the session idle.
-- `web.ts`: the board has no login, and only the Tailscale network reaches `cardd` (spec section 21.4). Every board request must name an allowed Host, which closes DNS rebinding, and its Origin, when present, must be allowed.
+- `web.ts`: the board has no login. Without a public host, only the Tailscale network reaches `cardd` (spec section 21.4): every board request must name an allowed Host, which closes DNS rebinding, and its Origin, when present, must be allowed. With a public host, a request for it needs Cloudflare Access's token instead (The public host, below).
+
+### The public host
+
+`access.ts` and `Web.channel` in `web.ts` decide what a request is before any route sees it. Without the four flags, every request is a tailnet request and nothing here runs. With them, each request is one of three things:
+
+- Public: its Host is the public host exactly, with no port. Its Origin, when present, must be `https://<public host>`, and a write or a websocket upgrade must carry one. It needs a valid `Cf-Access-Jwt-Assertion` header. Only the board's own routes answer it: the pages, `/api/board`, `/api/card/N`, `/api/version`, `POST /api/action`, and the `/live` socket. `/call`, `/session`, and `/api/health` do not, even to the owner.
+- Refused: its Host is anything else, but it carries a header that begins with `cf-`, a `Cdn-Loop` header, or an Origin whose host name is the public host, under any scheme or port. Cloudflare adds those headers to every request that it forwards, so such a request came through the tunnel with a rewritten Host. The markers only refuse: they never make a request public, so a valid token does not rescue it. This is the rule that stops a tailnet-looking request from becoming a way round the token check.
+- Tailnet: everything else, handled exactly as before.
+
+A process on the host that runs the tunnel can still send a request with the tailnet Host and none of the markers. It gets the tailnet's access, which any process on that host already has: the board with no login, and `/call` with a token.
+
+The token is checked with `jose`: RS256 only (`none` and `HS*` are refused before a key is looked up), the signature against the team's certs endpoint, `iss` equal to `https://<team domain>`, `aud` holding the AUD tag, `exp` required, `nbf` and `exp` honored with five seconds of skew, and `email` equal to the owner, ignoring case. The keys are kept for ten minutes. An unknown key id fetches them again at most once every thirty seconds, and so does a failed fetch, because `Access` refuses without fetching for that long after a failure. A request whose keys cannot be had is refused, never let through. `CARDD_TIMING_SCALE` scales both times. A refusal gives a 403 with no reason and no board content. The reason goes to the log, once a minute for each reason. A reason is a name from a fixed set: a fixed sentence from `access.ts` or `Web.channel`, a `jose` error code, or a `jose` error code with the claim that failed. It never holds text from the request, so tokens that differ only in their text log once and keep nothing. A failed fetch of the keys logs its cause once for each cooldown. The token is read from the header only, never from the `CF_Authorization` cookie, so a cookie that Cloudflare would have turned into a header at the edge buys nothing at cardd. A websocket that was opened with a valid token stays open after the token expires. It carries only the word `changed`, and the data behind it still needs a valid token.
+
+The test certs endpoint is served over TLS with a certificate that `openssl` makes for the test, and cardd trusts it through `NODE_EXTRA_CA_CERTS`. That keeps the production code free of any switch that fetches keys over plain HTTP.
 
 ### The timed check
 

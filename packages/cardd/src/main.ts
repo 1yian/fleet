@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
+import { parseAccess } from "./access.ts";
 import { parseBrowserConfig } from "./browser-config.ts";
 import { openDatabase } from "./db.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
@@ -44,6 +45,10 @@ const { values, positionals } = parseArgs({
     repo: { type: "string" },
     hosts: { type: "string", default: "{}" },
     browser: { type: "string" },
+    "public-host": { type: "string" },
+    "access-team": { type: "string" },
+    "access-aud": { type: "string" },
+    "access-email": { type: "string" },
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
@@ -107,13 +112,24 @@ if (command === "serve") {
   const scale = Number(process.env["CARDD_TIMING_SCALE"] ?? "1");
   if (!(scale > 0)) throw new Error("CARDD_TIMING_SCALE must be a positive number");
   const clock = clockFrom(process.env["CARDD_CLOCK_FILE"]);
+  const access = parseAccess([
+    values["public-host"],
+    values["access-team"],
+    values["access-aud"],
+    values["access-email"],
+  ]);
   const url = await serve(db, host, Number(port), timings(scale, clock), {
     files: values.board,
     hostnames: values.hostname,
     hosts,
     browser: values.browser === undefined ? undefined : parseBrowserConfig(values.browser),
+    access,
   });
   console.log(`cardd listening on ${url}`);
+  if (access !== undefined)
+    console.log(
+      `cardd serves the board at https://${access.host} to ${access.owner}, signed in through Cloudflare Access team ${access.team}`,
+    );
 } else if (
   command === "lane" &&
   rest[0] === "add" &&
@@ -191,6 +207,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> [--hosts <json>] [--browser <json>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project unclone <name> <host> --db <file> | cardd project remove <name> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] [--browser <json>] [--public-host <host> --access-team <team domain> --access-aud <tag> --access-email <email>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project unclone <name> <host> --db <file> | cardd project remove <name> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
   );
 }

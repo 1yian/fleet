@@ -18,6 +18,8 @@ export interface Timings {
   readonly repeat: number;
   readonly finished: number;
   readonly waiting: number;
+  readonly keyCooldown: number;
+  readonly keyAge: number;
   readonly wall: () => number;
 }
 
@@ -41,6 +43,8 @@ export function timings(scale: number, wall: () => number = Date.now): Timings {
     repeat: at(5),
     finished: at(120),
     waiting: at(30),
+    keyCooldown: at(0.5),
+    keyAge: at(10),
     wall,
   };
 }
