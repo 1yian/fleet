@@ -49,6 +49,11 @@ export class FleetChrome {
     return this.said;
   }
 
+  get pid(): number {
+    assert.ok(this.child.pid !== undefined, "the takeover did not start");
+    return this.child.pid;
+  }
+
   async waitFor(pattern: RegExp): Promise<RegExpExecArray> {
     const deadline = Date.now() + WAIT_MS;
     for (;;) {
@@ -66,6 +71,18 @@ export class FleetChrome {
     this.child.stdin?.write(`${line}\n`);
   }
 
+  endInput(): void {
+    this.child.stdin?.end();
+  }
+
+  terminate(): void {
+    this.child.kill("SIGTERM");
+  }
+
+  ctrlC(): void {
+    process.kill(-this.pid, "SIGINT");
+  }
+
   async macPage(): Promise<Page> {
     const port = (await this.waitFor(/Chrome debugging port: (\d+)/))[1];
     this.browser ??= await chromium.connectOverCDP(`http://127.0.0.1:${String(port)}`);
@@ -81,7 +98,7 @@ export class FleetChrome {
 
   async stop(): Promise<void> {
     await this.letGo();
-    this.child.kill("SIGTERM");
+    this.terminate();
     await this.exited;
   }
 }

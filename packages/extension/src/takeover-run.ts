@@ -17,6 +17,7 @@ import {
   replaceStorage,
   type Page,
 } from "./takeover-page.ts";
+import { whenAborted } from "./takeover-interrupt.ts";
 import { changes, counts, type Session } from "./takeover-session.ts";
 
 type Outcome = "sent" | "discarded" | "closed";
@@ -29,6 +30,7 @@ export interface Parts {
   readonly host: string;
   readonly profile: string;
   readonly tunnelEnded: Promise<string>;
+  readonly signal: AbortSignal;
 }
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -51,18 +53,25 @@ export class Takeover {
   }
 
   private async receive(): Promise<void> {
-    const { chrome, held, tab } = this.parts;
+    const { chrome, held, tab, signal } = this.parts;
     const mac = await Cdp.connect(chrome.endpoint);
     this.mac = mac;
-    const [first] = await pagesOf(mac);
-    this.macTab = first?.id ?? (await blankPage(mac));
-    const sessionId = await attach(mac, this.macTab);
-    const refused = await replaceCookies(mac, sessionId, held.urls, held.cookies);
-    if (refused.length > 0) say(`warning: Chrome refused these cookies: ${refused.join(", ")}`);
-    await landOn(mac, sessionId, held.origin);
-    if (held.storage !== undefined) await replaceStorage(mac, sessionId, held.storage);
-    const failure = await navigate(mac, sessionId, tab.url);
-    if (failure !== undefined) say(`warning: the page did not load: ${failure}`);
+    const unwatch = whenAborted(signal, () => {
+      mac.close();
+    });
+    try {
+      const [first] = await pagesOf(mac);
+      this.macTab = first?.id ?? (await blankPage(mac));
+      const sessionId = await attach(mac, this.macTab);
+      const refused = await replaceCookies(mac, sessionId, held.urls, held.cookies);
+      if (refused.length > 0) say(`warning: Chrome refused these cookies: ${refused.join(", ")}`);
+      await landOn(mac, sessionId, held.origin);
+      if (held.storage !== undefined) await replaceStorage(mac, sessionId, held.storage);
+      const failure = await navigate(mac, sessionId, tab.url);
+      if (failure !== undefined) say(`warning: the page did not load: ${failure}`);
+    } finally {
+      unwatch();
+    }
   }
 
   private async collect(): Promise<Session> {
@@ -120,55 +129,80 @@ export class Takeover {
   }
 
   private ending(): Promise<Outcome> {
+    const { chrome, tunnelEnded, signal } = this.parts;
     return new Promise((resolve) => {
       const input = createInterface({ input: process.stdin });
+      let outcome: Outcome | undefined;
       let queue: Promise<void> = Promise.resolve();
+      const settle = (): void => {
+        queue = queue.then(() => {
+          if (outcome !== undefined) resolve(outcome);
+        });
+      };
+      const conclude = (done: Outcome): void => {
+        if (outcome === undefined || done === "sent") outcome = done;
+        settle();
+      };
       input.on("line", (line) => {
-        queue = queue
-          .then(() => this.command(line.trim()))
-          .then((done) => {
-            if (done !== undefined) resolve(done);
-          });
+        queue = queue.then(async () => {
+          if (outcome !== undefined) return;
+          const done = await this.command(line.trim());
+          if (done !== undefined) conclude(done);
+        });
       });
       input.once("close", () => {
-        resolve("discarded");
+        conclude("discarded");
       });
-      void this.parts.chrome.exited.then(() => {
-        resolve("closed");
+      void chrome.exited.then(() => {
+        conclude("closed");
       });
-      void this.parts.tunnelEnded.then((why) => {
-        say(
-          `warning: the ssh tunnel ended (${why}). This Chrome cannot reach the site now: type back to send what it holds, or discard.`,
-        );
+      void tunnelEnded.then((why) => {
+        if (outcome === undefined)
+          say(
+            `warning: the ssh tunnel ended (${why}). This Chrome cannot reach the site now: type back to send what it holds, or discard.`,
+          );
       });
-      for (const signal of ["SIGINT", "SIGTERM"] as const)
-        process.once(signal, () => {
-          resolve("discarded");
-        });
+      whenAborted(signal, () => {
+        conclude("discarded");
+      });
     });
   }
 
   private async scrub(): Promise<void> {
-    const mac = this.connection();
-    const { held } = this.parts;
-    const sessionId = await attach(mac, await blankPage(mac));
-    await replaceCookies(mac, sessionId, held.urls, []);
-    await clearOrigin(mac, sessionId, held.origin);
-    say(`Removed the copied session of ${held.origin} from the Mac profile.`);
+    const { chrome, held } = this.parts;
+    const mac = await Cdp.connect(chrome.endpoint);
+    try {
+      const sessionId = await attach(mac, await blankPage(mac));
+      await replaceCookies(mac, sessionId, held.urls, []);
+      await clearOrigin(mac, sessionId, held.origin);
+      say(`Removed the copied session of ${held.origin} from the Mac profile.`);
+    } finally {
+      mac.close();
+    }
+  }
+
+  private async holding(): Promise<Outcome> {
+    const { host, held, signal } = this.parts;
+    try {
+      await this.receive();
+      signal.throwIfAborted();
+    } catch (error) {
+      if (!signal.aborted) {
+        await this.scrub().catch(() => undefined);
+        throw error;
+      }
+      return "discarded";
+    }
+    say(`Chrome is open with ${held.origin} signed in as the worker's tab, through ssh ${host}.`);
+    say(
+      "When you are done, type back (send this Chrome's session to the worker's tab and reload it), back --force, or discard, then Enter.",
+    );
+    return this.ending();
   }
 
   async run(): Promise<void> {
-    const { chrome, host, held } = this.parts;
     try {
-      await this.receive().catch(async (error: unknown) => {
-        await this.scrub().catch(() => undefined);
-        throw error;
-      });
-      say(`Chrome is open with ${held.origin} signed in as the worker's tab, through ssh ${host}.`);
-      say(
-        "When you are done, type back (send this Chrome's session to the worker's tab and reload it), back --force, or discard, then Enter.",
-      );
-      const outcome = await this.ending();
+      const outcome = await this.holding();
       if (outcome === "closed")
         say(
           `Chrome was closed, so nothing was sent back. The copied session may still be in ${this.parts.profile}: delete that folder to remove it.`,
@@ -180,7 +214,7 @@ export class Takeover {
       if (outcome === "discarded") say("Discarded: the worker's tab was not touched.");
     } finally {
       this.mac?.close();
-      await chrome.quit();
+      await this.parts.chrome.quit();
     }
   }
 }

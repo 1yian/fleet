@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { dial } from "@fleet/protocol/tunnel";
+import { dial, type Dial } from "@fleet/protocol/tunnel";
 import { hold, tabsOf, through } from "./takeover-host.ts";
+import { interruption, whenAborted } from "./takeover-interrupt.ts";
+import { lockLane } from "./takeover-lock.ts";
 import { launchChrome } from "./takeover-mac.ts";
 import type { Page } from "./takeover-page.ts";
 import { Takeover } from "./takeover-run.ts";
@@ -13,11 +15,11 @@ const DEFAULT_ENDPOINT = "http://127.0.0.1:9222";
 
 const USAGE = `usage:
   fleet-chrome list --host <host> [--endpoint <url>]
-  fleet-chrome take <tab> --host <host> [--lane <name>] [--also <url>]... [--endpoint <url>]
+  fleet-chrome take <tab> --host <host> [--lane <name>] [--endpoint <url>]
 
 <host> is an ssh name that reaches the host of the shared Chrome with no prompt.
 <tab> is a number from list, the start of a tab id, or text of its address or title.
---lane names the Mac profile (one per lane). --also adds another address whose cookies go with the session.`;
+--lane names the Mac profile (one per lane).`;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -26,7 +28,6 @@ interface Options {
   readonly host: string;
   readonly endpoint: string;
   readonly lane: string;
-  readonly also: readonly string[];
   readonly tab: string | undefined;
 }
 
@@ -39,7 +40,6 @@ function parse(argv: readonly string[]): Options {
       host: { type: "string" },
       endpoint: { type: "string" },
       lane: { type: "string" },
-      also: { type: "string", multiple: true },
     },
   });
   if ((command !== "list" && command !== "take") || (values.host ?? "") === "")
@@ -49,7 +49,6 @@ function parse(argv: readonly string[]): Options {
     host: values.host ?? "",
     endpoint: values.endpoint ?? DEFAULT_ENDPOINT,
     lane: values.lane ?? "default",
-    also: values.also ?? [],
     tab: positionals[0],
   };
 }
@@ -88,19 +87,23 @@ async function list(options: Options): Promise<void> {
   }
 }
 
-async function take(options: Options): Promise<void> {
-  const via = dial(["ssh", options.host], options.endpoint);
-  const socks = await openSocks(options.host).catch((error: unknown) => {
-    via.close();
-    throw error;
-  });
+async function takeOver(
+  options: Options,
+  profile: string,
+  via: Dial,
+  signal: AbortSignal,
+): Promise<void> {
+  const socks = await openSocks(options.host, signal);
   try {
+    const unwatch = whenAborted(signal, () => {
+      via.close();
+    });
     const tab = choose(await through(via, tabsOf), options.tab);
-    const held = await through(via, (cdp) => hold(cdp, tab, options.also));
+    const held = await through(via, (cdp) => hold(cdp, tab));
+    unwatch();
+    signal.throwIfAborted();
     console.log(`Holding ${tab.title || tab.url} (${held.origin}): ${counts(held)}.`);
-    const home = process.env["FLEET_CHROME_HOME"] ?? join(homedir(), ".fleet-chrome");
-    const profile = join(home, options.lane, "profile");
-    const chrome = await launchChrome({ profile, socks: socks.port });
+    const chrome = await launchChrome({ profile, socks: socks.port }, signal);
     console.log(`Chrome debugging port: ${String(chrome.port)} (loopback only)`);
     await new Takeover({
       chrome,
@@ -110,10 +113,27 @@ async function take(options: Options): Promise<void> {
       host: options.host,
       profile,
       tunnelEnded: socks.ended,
+      signal,
     }).run();
   } finally {
     socks.close();
+  }
+}
+
+async function take(options: Options): Promise<void> {
+  const home = process.env["FLEET_CHROME_HOME"] ?? join(homedir(), ".fleet-chrome");
+  const folder = join(home, options.lane);
+  const via = dial(["ssh", options.host], options.endpoint);
+  const lock = lockLane(folder, options.lane);
+  const interrupt = interruption();
+  try {
+    await takeOver(options, join(folder, "profile"), via, interrupt.signal);
+  } catch (error) {
+    throw interrupt.signal.aborted ? new Error("interrupted") : error;
+  } finally {
     via.close();
+    interrupt.release();
+    lock.release();
   }
 }
 

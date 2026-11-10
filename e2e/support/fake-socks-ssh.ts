@@ -81,7 +81,7 @@ function serve(address: string): void {
 }
 
 if (forward !== undefined) {
-  note({ kind: "forward", address: forward });
+  note({ kind: "forward", address: forward, pid: process.pid });
   serve(forward);
 } else {
   note({ kind: "command", command: command.join(" ") });

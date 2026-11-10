@@ -156,6 +156,7 @@ function loadEvent(cdp: Cdp, sessionId: string): { done: Promise<void>; stop: ()
     stop = cdp.listen((event) => {
       if (event.sessionId === sessionId && event.method === "Page.loadEventFired") resolve();
     });
+    cdp.onClose(resolve);
   });
   return { done, stop };
 }

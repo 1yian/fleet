@@ -68,10 +68,11 @@ const chromeArguments = ({ profile, socks }: Launch): string[] => [
   "about:blank",
 ];
 
-export async function launchChrome(launch: Launch): Promise<LocalChrome> {
+export async function launchChrome(launch: Launch, signal: AbortSignal): Promise<LocalChrome> {
+  signal.throwIfAborted();
   mkdirSync(launch.profile, { recursive: true, mode: 0o700 });
   await refuseRunning(launch.profile);
-  const child = spawn(chromeBinary(), chromeArguments(launch), { stdio: "ignore" });
+  const child = spawn(chromeBinary(), chromeArguments(launch), { stdio: "ignore", detached: true });
   const exited = new Promise<number | null>((resolve) => {
     child.once("exit", resolve);
     child.once("error", () => {
@@ -79,26 +80,33 @@ export async function launchChrome(launch: Launch): Promise<LocalChrome> {
     });
   });
   const deadline = Date.now() + READY_MS;
-  for (;;) {
-    const port = portOf(launch.profile);
-    if (port !== undefined && (await alive(port))) {
-      const quit = async (): Promise<void> => {
-        const cdp = await Cdp.connect(`http://127.0.0.1:${String(port)}`).catch(() => undefined);
-        await cdp?.send("Browser.close").catch(() => undefined);
-        cdp?.close();
-        const stopped = await Promise.race([exited, sleep(EXIT_MS, "late")]);
-        if (stopped === "late") child.kill("SIGKILL");
-      };
-      return { endpoint: `http://127.0.0.1:${String(port)}`, port, exited, quit };
+  try {
+    for (;;) {
+      const port = portOf(launch.profile);
+      const answering = port !== undefined && (await alive(port));
+      signal.throwIfAborted();
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw new Error(
+          `Chrome exited at once (${chromeBinary()}): another Chrome may already hold this profile, or FLEET_CHROME_BIN is wrong`,
+        );
+      if (port !== undefined && answering) {
+        const quit = async (): Promise<void> => {
+          const cdp = await Cdp.connect(`http://127.0.0.1:${String(port)}`).catch(() => undefined);
+          await cdp?.send("Browser.close").catch(() => undefined);
+          cdp?.close();
+          const stopped = await Promise.race([exited, sleep(EXIT_MS, "late")]);
+          if (stopped === "late") child.kill("SIGKILL");
+        };
+        return { endpoint: `http://127.0.0.1:${String(port)}`, port, exited, quit };
+      }
+      if (Date.now() > deadline)
+        throw new Error(
+          `Chrome did not open its debugging port within ${String(READY_MS / 1000)} s`,
+        );
+      await sleep(100);
     }
-    if (child.exitCode !== null || child.signalCode !== null)
-      throw new Error(
-        `Chrome exited at once (${chromeBinary()}): another Chrome may already hold this profile, or FLEET_CHROME_BIN is wrong`,
-      );
-    if (Date.now() > deadline) {
-      child.kill("SIGKILL");
-      throw new Error(`Chrome did not open its debugging port within ${String(READY_MS / 1000)} s`);
-    }
-    await sleep(100);
+  } catch (error) {
+    child.kill("SIGKILL");
+    throw error;
   }
 }

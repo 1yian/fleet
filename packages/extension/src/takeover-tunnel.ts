@@ -57,9 +57,12 @@ const sshArguments = (host: string, port: number): string[] => [
   host,
 ];
 
-export async function openSocks(host: string): Promise<Socks> {
+export async function openSocks(host: string, signal: AbortSignal): Promise<Socks> {
   const port = await freePort();
-  const child = spawn("ssh", sshArguments(host, port), { stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn("ssh", sshArguments(host, port), {
+    stdio: ["ignore", "ignore", "pipe"],
+    detached: true,
+  });
   let said = "";
   child.stderr.on("data", (chunk: Buffer) => {
     said = `${said}${chunk.toString("utf8")}`.slice(-FAILURE_CHARS);
@@ -76,15 +79,19 @@ export async function openSocks(host: string): Promise<Socks> {
     child.kill("SIGTERM");
   };
   const deadline = Date.now() + READY_MS;
-  while (!(await accepts(port))) {
-    const early = await Promise.race([ended, sleep(100, undefined)]);
-    if (early !== undefined) throw new Error(`ssh -D to ${host} failed: ${early}`);
-    if (Date.now() > deadline) {
-      close();
-      throw new Error(
-        `ssh -D to ${host} did not open its proxy within ${String(READY_MS / 1000)} s`,
-      );
+  try {
+    while (!(await accepts(port))) {
+      signal.throwIfAborted();
+      const early = await Promise.race([ended, sleep(100, undefined)]);
+      if (early !== undefined) throw new Error(`ssh -D to ${host} failed: ${early}`);
+      if (Date.now() > deadline)
+        throw new Error(
+          `ssh -D to ${host} did not open its proxy within ${String(READY_MS / 1000)} s`,
+        );
     }
+  } catch (error) {
+    close();
+    throw error;
   }
   return { port, ended, close };
 }

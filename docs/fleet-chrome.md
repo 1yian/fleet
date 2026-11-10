@@ -43,45 +43,46 @@ What happens, in order:
 6. In the terminal, type one of these and press Enter:
    - `back`: send what this Chrome now holds to the worker's tab (its cookies for the site, `localStorage`, and `sessionStorage` replace the tab's), then reload the worker's tab. The copy is removed from the Mac profile and Chrome quits.
    - `back --force`: the same, when `back` refused because the worker's tab changed while you held it (it names what changed).
-   - `discard` (or Ctrl-C): leave the worker's tab as it is, remove the copy from the Mac profile, and quit Chrome.
+   - `discard` (or Ctrl-C, or closing the terminal): leave the worker's tab as it is, remove the copy from the Mac profile, and quit Chrome.
 
-Use one `--lane` name for each lane, so two lanes never share one cookie jar: a second copy of the same site into one profile replaces the first. Only one takeover can run for a profile at a time; a second one is refused and says so.
+   Every way of ending goes through the same steps. A `back` that is already running finishes first (so a stalled one delays the end), a line typed after `discard` or `back` is ignored, and then the copy is removed, Chrome quits, and the proxy closes. Ctrl-C while the first page is still loading does the same.
+
+Use one `--lane` name for each lane, so two lanes never share one cookie jar: a second copy of the same site into one profile replaces the first. Only one takeover can run for a lane at a time. The first one writes its process id into `~/.fleet-chrome/<lane>/takeover.lock` before it starts anything, and a second one is refused, names the lane and that process id, and starts nothing. The lock is removed when the takeover ends, however it ends. A lock whose process is gone (a killed takeover) is replaced by the next run.
 
 `take` takes a number from `list`, the start of a tab id, or text from its address or title. It stops and lists the candidates when the text matches none or more than one.
 
 `FLEET_CHROME_HOME` moves the profile folder (default `~/.fleet-chrome`). `FLEET_CHROME_BIN` names another Chrome to start, and `FLEET_CHROME_ARGS` adds arguments to it.
 
-To bring cookies of a second site along, such as a single sign-on page, add `--also https://accounts.example.com/`. It can be repeated.
-
 ### Undo everything
 
 - A takeover in progress: type `discard`.
-- Everything on disk: `rm -rf ~/fleet-chrome-try ~/.fleet-chrome`.
+- Everything on disk: `rm -rf ~/fleet-chrome-try ~/.fleet-chrome`. The lane lock lives in that folder, so it goes too.
 - Nothing else exists: no launchd job, no login item, no proxy setting, no PAC file, no Chrome extension, no change to `~/.ssh` or to Chrome's own profile.
-- If a run was killed hard (power loss, `kill -9`) and left processes: quit the Chrome window that uses `~/.fleet-chrome`, and end the `ssh -N -D` process (`ps aux | grep 'ssh -N -D'`, then `kill <pid>`).
+- If a run was killed hard (power loss, `kill -9`) and left processes: quit the Chrome window that uses `~/.fleet-chrome`, and end the `ssh -N -D` process (`ps aux | grep 'ssh -N -D'`, then `kill <pid>`). Until that Chrome is quit, the next `take` for the lane is refused. If a `take` says that a process holds the lane lock and no takeover is running (the process id was reused), delete the `takeover.lock` file it names.
 - What `back` replaced on the worker's tab is not kept. If a worker's tab was signed in as another account and you do not want that replaced, use `discard`.
 
 ## What crosses, and what does not
 
-| Crosses                                                     | Stays behind                                                                                                                                                    |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cookies for the tab's address and for each `--also` address | A password you type (it is in the page, not in cookies or storage)                                                                                              |
-| `localStorage` and `sessionStorage` of the tab's own origin | `IndexedDB`, `Cache Storage`, service workers, form drafts, in-page state                                                                                       |
-| Traffic: every request of that Chrome leaves from the host  | Cookies of other sites that you did not name with `--also`                                                                                                      |
-|                                                             | Passkeys and any key that stays in a device (Touch ID, a security key, Chrome's device-bound session keys): a session that needs one refreshes only on the host |
-|                                                             | Storage of iframes from other origins                                                                                                                           |
+| Crosses                                                      | Stays behind                                                                                                                                                    |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cookies for the tab's address and for the root of its origin | A password you type (it is in the page, not in cookies or storage)                                                                                              |
+| `localStorage` and `sessionStorage` of the tab's own origin  | `IndexedDB`, `Cache Storage`, service workers, form drafts, in-page state                                                                                       |
+| Traffic: every request of that Chrome leaves from the host   | Cookies that live on other sites, such as a single sign-on page                                                                                                 |
+|                                                              | Passkeys and any key that stays in a device (Touch ID, a security key, Chrome's device-bound session keys): a session that needs one refreshes only on the host |
+|                                                              | Storage of iframes from other origins                                                                                                                           |
 
 ## Rules it keeps
 
 - A password you type goes to the site from the Mac. `fleet-chrome` never types, reads, or prints a form value. The worker's tab never receives it, and after `back` its page holds no password you typed. What the worker's tab does hold is the session you made (cookies and tokens), and a worker's `eval` can read `localStorage` tokens, as it can today. It cannot read an `HttpOnly` cookie through the page.
 - It prints counts, names of what changed, and errors. It never prints a value.
-- Nothing is written outside the Mac profile folder, and `back` and `discard` remove the copied session from it (cookies, `localStorage`, `IndexedDB`, caches, and service workers of that site). Chrome's history and HTTP cache for the site stay in the profile: delete `~/.fleet-chrome/<lane>` to remove those too.
+- Nothing is written outside the lane's folder (`~/.fleet-chrome/<lane>`, which holds the profile and the lane lock), and `back` and `discard` remove the copied session from the profile (cookies, `localStorage`, `IndexedDB`, caches, and service workers of that site). Chrome's history and HTTP cache for the site stay in the profile: delete `~/.fleet-chrome/<lane>` to remove those too.
 - It reaches the host the way the fleet does: `ssh <host>` for the host's Chrome, which stays on its own `127.0.0.1`, and `ssh -D` bound to `127.0.0.1` of the Mac. Nothing listens on a network address and nothing is forwarded.
 - `back` replaces the worker's session with what the Mac holds. It does not merge. It refuses, and names what changed, when the worker's tab changed while you held it.
 
 ## What the prototype cannot do yet
 
 - No Chrome extension, tab list, or omnibox keyword. You start it from a terminal. A small extension that lists the workers' tabs and starts a takeover is the next step, and it needs a native messaging host.
+- Only the tab's own site crosses. A sign-on that keeps its cookie on another site (a single sign-on page, an identity provider) is not copied, so the Mac Chrome asks you to sign in again at that page. Watch live is the way to use such a page today.
 - It does not pause the worker. The worker's tab stays live. `back` can see what changed in the worker's cookies and storage, but not what changed on the server: if the worker or the Mac rotates a one-time refresh token (Supabase and many OAuth sites), the other side's copy dies at the next refresh. Take over a tab when the worker is idle on it.
 - `back` reloads the worker's tab where it is. It does not follow the page you ended on in the Mac Chrome.
 - If you quit Chrome with Cmd+Q during a takeover, the Mac copy is gone and nothing is sent back. The copied session may remain in the profile folder until you delete `~/.fleet-chrome/<lane>`.

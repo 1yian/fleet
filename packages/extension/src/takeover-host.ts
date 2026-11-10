@@ -29,9 +29,9 @@ async function onOrigin(cdp: Cdp, sessionId: string, origin: string): Promise<bo
   return (await originOf(cdp, sessionId).catch(() => undefined)) === origin;
 }
 
-export async function hold(cdp: Cdp, tab: Page, also: readonly string[]): Promise<Session> {
+export async function hold(cdp: Cdp, tab: Page): Promise<Session> {
   const origin = new URL(tab.url).origin;
-  const urls = [...new Set([`${origin}/`, tab.url, ...also])];
+  const urls = [...new Set([`${origin}/`, tab.url])];
   const sessionId = await attach(cdp, tab.id);
   if (!(await onOrigin(cdp, sessionId, origin)))
     throw new Error(`the tab is not showing ${origin} any more: its storage cannot be read`);

@@ -59,23 +59,26 @@ export class AuthSite {
   readonly port: number;
   private readonly server: Server;
   private readonly seen: string[];
+  private readonly stalled: string[];
 
-  private constructor(server: Server, port: number, seen: string[]) {
+  private constructor(server: Server, port: number, seen: string[], stalled: string[]) {
     this.server = server;
     this.port = port;
     this.seen = seen;
+    this.stalled = stalled;
   }
 
   static async start(): Promise<AuthSite> {
     const sessions = new Map<string, string>();
     const seen: string[] = [];
+    const stalled: string[] = [];
     const server = createServer((request, response) => {
-      void answer(request, response, sessions, seen);
+      void answer(request, response, sessions, seen, stalled);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("the site has no port");
-    return new AuthSite(server, address.port, seen);
+    return new AuthSite(server, address.port, seen, stalled);
   }
 
   url(path: string): string {
@@ -88,6 +91,10 @@ export class AuthSite {
 
   get signins(): string[] {
     return [...this.seen];
+  }
+
+  get stallCount(): number {
+    return this.stalled.length;
   }
 
   async stop(): Promise<void> {
@@ -131,6 +138,8 @@ function signIn(
   });
 }
 
+export const STALL_PATH = "/stall";
+
 const PAGES: Readonly<Record<string, Reply>> = {
   "/pref": (_request, response, url) => {
     response
@@ -149,8 +158,13 @@ async function answer(
   response: ServerResponse,
   sessions: Map<string, string>,
   seen: string[],
+  stalled: string[],
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://site");
+  if (url.pathname === STALL_PATH) {
+    stalled.push(request.url ?? "");
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/signin") {
     await signIn(request, response, sessions, seen);
     return;

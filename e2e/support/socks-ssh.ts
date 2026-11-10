@@ -1,7 +1,7 @@
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isRecord, optionalString, parseRecord } from "./json.ts";
+import { isRecord, optionalNumber, optionalString, parseRecord } from "./json.ts";
 import { tempDir } from "./run-root.ts";
 
 const FAKE = fileURLToPath(new URL("./fake-socks-ssh.ts", import.meta.url));
@@ -42,6 +42,16 @@ export class SocksSsh {
       call["kind"] === "forward"
         ? [`${optionalString(call, "host") ?? ""} ${optionalString(call, "address") ?? ""}`]
         : [],
+    );
+  }
+
+  hostCommands(): number {
+    return this.calls().filter((call) => call["kind"] === "command").length;
+  }
+
+  forwardPids(): number[] {
+    return this.calls().flatMap((call) =>
+      call["kind"] === "forward" ? [optionalNumber(call, "pid") ?? 0] : [],
     );
   }
 }
