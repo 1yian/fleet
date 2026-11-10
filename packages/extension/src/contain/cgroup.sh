@@ -1,5 +1,7 @@
 own=$(sed -n 's/^0:://p' /proc/self/cgroup)
-dir=/sys/fs/cgroup${own%/}/$unit
+own=${own%/}
+own=${own%"/$unit"}
+dir=/sys/fs/cgroup$own/$unit
 
 backend_attach() {
   mkdir -p "$dir" || return 1
@@ -10,7 +12,7 @@ backend_attach() {
 
 backend_adopt() {
   (
-    dir=/sys/fs/cgroup${own%/}/$host_unit
+    dir=/sys/fs/cgroup$own/$host_unit
     backend_attach "$@"
   )
 }

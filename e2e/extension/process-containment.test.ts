@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, test } from "node:test";
+import { after, afterEach, before, beforeEach, describe, test } from "node:test";
 import {
   mateConnected as connected,
   startDispatchLab,
@@ -14,6 +14,7 @@ import {
 } from "../support/dispatch-lab.ts";
 import { guardCleanup } from "../support/guarded.ts";
 import type { Harness, Pi } from "../support/harness.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 
@@ -134,7 +135,7 @@ test("restarting a worker stops a server it detached from everything", async () 
   await eventually(async () => !(await listening(port)), "the server to be gone after restart");
 });
 
-test("close stops a server that a run_long job detached from everything", async () => {
+async function closeStopsJobServer(): Promise<void> {
   const { command, portFile } = detachedServerCommand();
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
@@ -149,4 +150,19 @@ test("close stops a server that a run_long job detached from everything", async 
   const port = await serverPort(portFile);
   assert.match(results.at(-1) ?? "", /^c-1 is done\./);
   await eventually(async () => !(await listening(port)), "the job's server to be gone after close");
+}
+
+test("close stops a server that a run_long job detached from everything", closeStopsJobServer);
+
+describe("on a host without a systemd user bus", () => {
+  let runtime: string | undefined;
+  before(() => {
+    runtime = process.env["XDG_RUNTIME_DIR"];
+    process.env["XDG_RUNTIME_DIR"] = tempDir("fleet-no-bus-");
+  });
+  after(() => {
+    if (runtime === undefined) delete process.env["XDG_RUNTIME_DIR"];
+    else process.env["XDG_RUNTIME_DIR"] = runtime;
+  });
+  test("close stops a server that a run_long job detached from everything", closeStopsJobServer);
 });
