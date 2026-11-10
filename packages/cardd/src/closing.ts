@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
+import { endLiveAttempts } from "./attempts.ts";
 import { requireOrdinary } from "./change.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
@@ -155,14 +156,7 @@ export function closeFinish(
     { card: args.card, landed: args.mode === "done" },
     closeCheck,
   );
-  const now = Date.now();
-  db.prepare(
-    `UPDATE sessions SET state = 'closed' WHERE attempt IN
-       (SELECT id FROM attempts WHERE card = ? AND state IN ('starting', 'active'))`,
-  ).run(card.id);
-  db.prepare(
-    "UPDATE attempts SET state = 'ended', updated_at = ? WHERE card = ? AND state IN ('starting', 'active')",
-  ).run(now, card.id);
+  endLiveAttempts(db, card.id, Date.now());
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
   const closed = { outcome: args.mode, archives: args.archives, left: args.left };

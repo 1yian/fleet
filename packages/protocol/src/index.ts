@@ -20,6 +20,16 @@ export * from "./wakes.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";
 export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
+export {
+  JOB_RUNNING,
+  jobIsRunning,
+  nextJob,
+  parseJobState,
+  startedJob,
+  type JobEvent,
+  type JobLife,
+  type JobState,
+} from "./jobs.ts";
 
 export const STATUSES = [
   "queued",

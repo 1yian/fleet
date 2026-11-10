@@ -141,18 +141,20 @@ CREATE TABLE incidents (
   closed_at INTEGER
 ) STRICT;
 
-CREATE TABLE jobs (
+CREATE TABLE "jobs" (
   id INTEGER PRIMARY KEY,
   attempt INTEGER NOT NULL REFERENCES attempts (id),
   label TEXT NOT NULL,
   command TEXT NOT NULL,
   tab TEXT,
-  state TEXT NOT NULL CHECK (state IN ('running', 'finished', 'lost')),
+  state TEXT NOT NULL CHECK (state IN ('running', 'lost', 'finished', 'abandoned')),
   exit_code INTEGER,
   output_tail TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL, dropped_at INTEGER,
-  CHECK ((state = 'finished') = (exit_code IS NOT NULL))
+  updated_at INTEGER NOT NULL,
+  dropped_at INTEGER,
+  CHECK ((state = 'finished') = (exit_code IS NOT NULL)),
+  CHECK (dropped_at IS NULL OR state = 'lost')
 ) STRICT;
 
 CREATE TABLE lanes (
@@ -218,6 +220,15 @@ CREATE TABLE sessions (
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
 ) STRICT;
 
+CREATE TRIGGER attempts_refuse_running_jobs
+BEFORE UPDATE OF state ON attempts
+WHEN NEW.state NOT IN ('starting', 'active')
+  AND OLD.state IN ('starting', 'active')
+  AND EXISTS (SELECT 1 FROM jobs WHERE attempt = NEW.id AND state = 'running')
+BEGIN
+  SELECT RAISE (ABORT, 'end the attempt only after its running jobs leave running');
+END;
+
 CREATE TRIGGER card_revision AFTER UPDATE ON cards
 WHEN NEW.revision = OLD.revision
 BEGIN
@@ -232,4 +243,21 @@ END;
 CREATE TRIGGER entries_no_update BEFORE UPDATE ON entries
 BEGIN
   SELECT RAISE (ABORT, 'entries are append-only');
+END;
+
+CREATE TRIGGER jobs_revive_needs_live_attempt
+BEFORE UPDATE OF state ON jobs
+WHEN NEW.state = 'running'
+  AND OLD.state != 'running'
+  AND (SELECT state FROM attempts WHERE id = NEW.attempt) NOT IN ('starting', 'active')
+BEGIN
+  SELECT RAISE (ABORT, 'a running job needs a live attempt');
+END;
+
+CREATE TRIGGER jobs_running_needs_live_attempt
+BEFORE INSERT ON jobs
+WHEN NEW.state = 'running'
+  AND (SELECT state FROM attempts WHERE id = NEW.attempt) NOT IN ('starting', 'active')
+BEGIN
+  SELECT RAISE (ABORT, 'a running job needs a live attempt');
 END;

@@ -13,7 +13,7 @@ import {
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { Browser } from "./browser.ts";
 import type { BrowserConfig } from "./browser-config.ts";
-import { MISSED_HEARTBEATS, runCheck } from "./check.ts";
+import { MISSED_HEARTBEATS, runCheck, type JobLossGrace } from "./check.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
@@ -103,17 +103,20 @@ class Hub {
   }
 
   private lastTick = Date.now();
-  private graceUntil = 0;
+  private readonly jobLossGrace: JobLossGrace = { until: 0 };
 
   check(): void {
     const now = Date.now();
+    this.jobLossGrace.firstCheckAt ??= now;
     if (now - this.lastTick > this.timing.every + this.timing.heartbeat)
-      this.graceUntil = now + MISSED_HEARTBEATS * this.timing.heartbeat;
+      this.jobLossGrace.until = now + MISSED_HEARTBEATS * this.timing.heartbeat;
     this.lastTick = now;
     const started = performance.now();
     this.fillRepos();
     const filled = performance.now();
-    const notify = transaction(this.db, () => runCheck(this.db, now, this.timing, this.graceUntil));
+    const notify = transaction(this.db, () =>
+      runCheck(this.db, now, this.timing, this.jobLossGrace),
+    );
     const checked = performance.now();
     for (const recipient of notify) this.flush(recipient, false);
     if (notify.length > 0) this.web.changed();

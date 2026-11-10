@@ -1,5 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { loseSilentJobs, quietSql } from "./attempts.ts";
+import { quietSql } from "./attempts.ts";
+import { jobStateSql, loseSilentJobs } from "./jobs.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
@@ -238,11 +239,19 @@ function finishedCards(open: readonly Loaded[], t: Timings): Match[] {
 
 export const MISSED_HEARTBEATS = 3;
 
-let firstCheckAt: number | undefined;
+export interface JobLossGrace {
+  firstCheckAt?: number;
+  until: number;
+}
 
-function lostJobs(db: DatabaseSync, now: number, t: Timings, graceUntil: number): string[] {
-  firstCheckAt ??= now;
-  if (now - firstCheckAt < MISSED_HEARTBEATS * t.heartbeat || now < graceUntil) return [];
+function jobLossHeld(grace: JobLossGrace, now: number, heartbeat: number): boolean {
+  const started = grace.firstCheckAt;
+  if (started === undefined) return true;
+  return now - started < MISSED_HEARTBEATS * heartbeat || now < grace.until;
+}
+
+function lostJobs(db: DatabaseSync, now: number, t: Timings, grace: JobLossGrace): string[] {
+  if (jobLossHeld(grace, now, t.heartbeat)) return [];
   return loseSilentJobs(db, now - MISSED_HEARTBEATS * t.heartbeat).flatMap((job) => {
     const card = getCard(db, job.card);
     const body = `job lost: job ${String(job.id)} (${job.label}) stopped reporting. It is not run again.`;
@@ -277,7 +286,7 @@ function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     db,
     `SELECT j.id AS id, j.label AS label, j.updated_at AS since, a.card AS card, c.lane AS lane
      FROM jobs j JOIN attempts a ON a.id = j.attempt JOIN cards c ON c.id = a.card
-     WHERE j.state = 'lost' AND j.dropped_at IS NULL AND a.state IN ('starting', 'active')
+     WHERE ${jobStateSql("j.state", "lost")} AND j.dropped_at IS NULL AND a.state IN ('starting', 'active')
        AND NOT EXISTS (SELECT 1 FROM jobs later
          WHERE later.attempt = j.attempt AND later.label = j.label AND later.id > j.id)
      ORDER BY j.id`,
@@ -395,7 +404,7 @@ function writeFindings(
   }
 }
 
-export function runCheck(db: DatabaseSync, now: number, t: Timings, graceUntil = 0): string[] {
+export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLossGrace): string[] {
   const open = loadOpenCards(db);
   const acting = new Set(
     open
@@ -412,7 +421,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, graceUntil =
   ].filter((match) => acting.has(match.card));
   clearStopped(db, now, matches);
   const notify = new Set<string>([
-    ...lostJobs(db, now, t, graceUntil),
+    ...lostJobs(db, now, t, grace),
     ...chaseIntake(db, now, t),
     ...scheduledWakes(db, t.wall()),
     ...firedSchedules(db, t.wall()),

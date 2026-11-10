@@ -8,18 +8,8 @@ import {
   type ReportStatus,
 } from "@fleet/protocol";
 import { requireCommentsRead } from "./deliveries.ts";
-import {
-  beginAttempt,
-  finishJob,
-  localLanding,
-  nameBranch,
-  dropLostJob,
-  ownJob,
-  runningJobs,
-  resumeAttempt,
-  startJob,
-  touchJob,
-} from "./attempts.ts";
+import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
+import { dropLostJob, finishJob, ownJob, runningJobs, startJob, touchJob } from "./jobs.ts";
 import { boardView, cardView } from "./board.ts";
 import type { Browser } from "./browser.ts";
 import { isBrowserOp, performBrowserOp, type BrowserOpName } from "./browser-ops.ts";

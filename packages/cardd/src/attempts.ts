@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { branchNameProblem, check, type Card, type CardView, type Delivery } from "@fleet/protocol";
 import Type from "typebox";
+import { abandonRunningJobs, runningJobSql } from "./jobs.ts";
 import { requireOpen } from "./change.ts";
 import {
   addEntry,
@@ -223,7 +224,7 @@ function taskWithDelivery(card: Card, task: string, delivery: Delivery | null): 
 
 export const quietSql = (state: string, attempt: string): string =>
   `(${state} IN ('idle', 'waiting')
-    AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.attempt = ${attempt} AND j.state = 'running'))`;
+    AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.attempt = ${attempt} AND ${runningJobSql("j.state")}))`;
 
 function connected(db: DatabaseSync, session: string): boolean {
   const state = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
@@ -327,128 +328,13 @@ export function resumeAttempt(db: DatabaseSync, card: Card): Begun {
   };
 }
 
-function attemptOf(db: DatabaseSync, session: string): number {
-  const id = db.prepare("SELECT attempt FROM sessions WHERE id = ?").get(session)?.["attempt"];
-  if (typeof id !== "number") throw new Error(`${session} is not a worker session`);
-  return id;
-}
-
-export function startJob(
-  db: DatabaseSync,
-  session: string,
-  job: { label: string; command: string },
-): number {
-  const now = Date.now();
-  const { lastInsertRowid } = db
-    .prepare(
-      "INSERT INTO jobs (attempt, label, command, state, created_at, updated_at) VALUES (?, ?, ?, 'running', ?, ?)",
-    )
-    .run(attemptOf(db, session), job.label, job.command, now, now);
-  return Number(lastInsertRowid);
-}
-
-export function finishJob(
-  db: DatabaseSync,
-  session: string,
-  job: { id: number; exitCode: number; outputTail: string },
-): { label: string } | undefined {
-  const row = db
-    .prepare(
-      `UPDATE jobs SET state = 'finished', exit_code = ?, output_tail = ?, updated_at = ?
-       WHERE id = ? AND attempt = ? AND state IN ('running', 'lost') RETURNING label`,
-    )
-    .get(job.exitCode, job.outputTail, Date.now(), job.id, attemptOf(db, session));
-  const label = row?.["label"];
-  if (typeof label !== "string") return undefined;
-  return { label };
-}
-
-export function touchJob(
-  db: DatabaseSync,
-  session: string,
-  job: number,
-): { running: boolean; revived?: { label: string } } {
-  const attempt = attemptOf(db, session);
-  const before = db
-    .prepare("SELECT state FROM jobs WHERE id = ? AND attempt = ?")
-    .get(job, attempt);
-  const row = db
-    .prepare(
-      `UPDATE jobs SET state = 'running', updated_at = ?
-       WHERE id = ? AND attempt = ? AND (state = 'running' OR (state = 'lost' AND dropped_at IS NULL))
-       RETURNING label`,
-    )
-    .get(Date.now(), job, attempt);
-  if (row === undefined) return { running: false };
-  if (before?.["state"] === "lost")
-    return { running: true, revived: { label: String(row["label"]) } };
-  return { running: true };
-}
-
-export function ownJob(
-  db: DatabaseSync,
-  session: string,
-  job: number,
-): { label: string; running: boolean } | undefined {
-  const row = db
-    .prepare("SELECT label, state FROM jobs WHERE id = ? AND attempt = ?")
-    .get(job, attemptOf(db, session));
-  if (row === undefined) return undefined;
-  return {
-    label: String(row["label"]),
-    running: row["state"] === "running",
-  };
-}
-
-export function dropLostJob(
-  db: DatabaseSync,
-  job: number,
-  owner: { session: string } | { lane: string },
-): { label: string; dropped: boolean; state: string } | undefined {
-  const row = db
-    .prepare(
-      `SELECT j.label AS label, j.state AS state, j.dropped_at AS dropped_at, j.attempt AS attempt, c.lane AS lane
-       FROM jobs j JOIN attempts a ON a.id = j.attempt JOIN cards c ON c.id = a.card WHERE j.id = ?`,
-    )
-    .get(job);
-  if (row === undefined) return undefined;
-  const owned =
-    "session" in owner
-      ? row["attempt"] === attemptOf(db, owner.session)
-      : row["lane"] === owner.lane;
-  if (!owned) return undefined;
-  const label = String(row["label"]);
-  const state = String(row["state"]);
-  if (state !== "lost") return { label, state, dropped: false };
-  if (row["dropped_at"] === null)
-    db.prepare("UPDATE jobs SET dropped_at = ? WHERE id = ?").run(Date.now(), job);
-  return { label, state, dropped: true };
-}
-
-export function loseSilentJobs(
-  db: DatabaseSync,
-  before: number,
-): { id: number; label: string; card: number }[] {
-  const silent = db
-    .prepare(
-      `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE j.state = 'running' AND j.updated_at < ? AND a.state IN ('starting', 'active')
-       ORDER BY j.id`,
-    )
-    .all(before)
-    .map((row) => ({
-      id: Number(row["id"]),
-      label: String(row["label"]),
-      card: Number(row["card"]),
-    }));
-  const lose = db.prepare("UPDATE jobs SET state = 'lost', updated_at = ? WHERE id = ?");
-  for (const job of silent) lose.run(Date.now(), job.id);
-  return silent;
-}
-
-export function runningJobs(db: DatabaseSync, session: string): { id: number; label: string }[] {
-  return db
-    .prepare("SELECT id, label FROM jobs WHERE attempt = ? AND state = 'running' ORDER BY id")
-    .all(attemptOf(db, session))
-    .map((row) => ({ id: Number(row["id"]), label: String(row["label"]) }));
+export function endLiveAttempts(db: DatabaseSync, card: number, now: number): void {
+  abandonRunningJobs(db, card, now);
+  db.prepare(
+    `UPDATE sessions SET state = 'closed' WHERE attempt IN
+       (SELECT id FROM attempts WHERE card = ? AND state IN ('starting', 'active'))`,
+  ).run(card);
+  db.prepare(
+    "UPDATE attempts SET state = 'ended', updated_at = ? WHERE card = ? AND state IN ('starting', 'active')",
+  ).run(now, card);
 }
