@@ -18,6 +18,8 @@ function ownNames(): string[] {
   return [hostname().toLowerCase(), firstLabel(hostname())];
 }
 
+export const ownHostName = (): string => ownNames().at(-1) ?? "local";
+
 const ownsHostName = (host: string): boolean =>
   host === "local" || ownNames().includes(host.toLowerCase());
 

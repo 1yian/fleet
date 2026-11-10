@@ -9,6 +9,7 @@ import Type from "typebox";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
+import { forwardedEnvironment } from "./scratch.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
@@ -111,6 +112,7 @@ export class Jobs {
         "--label",
         tab,
         "--no-focus",
+        ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
