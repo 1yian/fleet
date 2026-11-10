@@ -63,8 +63,6 @@ export class Link {
     this.socket = socket;
     socket.addEventListener("open", () => {
       const { process: id } = this.options;
-      const started = !this.announced;
-      this.announced = true;
       const hello = {
         t: "hello" as const,
         token: this.options.token,
@@ -72,7 +70,7 @@ export class Link {
         maintenance: this.options.onMaintenance !== undefined,
         running: this.options.running?.() === true,
         ...(id === undefined ? {} : { process: id }),
-        ...(started ? { started: true } : {}),
+        ...(this.announced ? {} : { started: true }),
       };
       this.send(hello);
     });
@@ -157,6 +155,7 @@ export class Link {
 
   private welcomed(): void {
     this.connected = true;
+    this.announced = true;
     this.backoff = 250;
     for (const entry of this.untoldAcks) this.send({ t: "ack", entry });
     this.untoldAcks.clear();

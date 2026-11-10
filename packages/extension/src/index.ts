@@ -273,10 +273,7 @@ function start(
     seen.add(entry.id);
     const deliver = (extra: string): void => {
       sendEntry(pi, entry, mode, format(entry, name, again) + extra);
-      if (entry.fields["compaction"] === true) {
-        failures.expectCompaction();
-        compact();
-      }
+      if (entry.fields["compaction"] === true) compact();
       pi.events.emit("fleet:delivered", { entryId: entry.id, mode });
       if (entry.fields["recovery"] !== undefined) worker?.checkingHealth();
       else worker?.reset();

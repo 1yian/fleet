@@ -12,8 +12,6 @@ const FALLBACK = "the model turn failed with no error message";
 export class Failures {
   private failed: string | undefined;
   private unsent: string | undefined;
-  private reported = false;
-  private compactionReported = false;
   private compactionUnsent: string | undefined;
   private compactionPending: string | undefined;
   private readonly link: Link;
@@ -33,10 +31,6 @@ export class Failures {
     if (label === undefined) {
       if (this.failed === undefined) this.blockage?.release();
     } else if (this.blockage !== undefined) this.blockage.raise(label, this.blockage.now);
-  }
-
-  expectCompaction(): void {
-    this.compactionReported = true;
   }
 
   flush(): void {
@@ -71,8 +65,6 @@ export class Failures {
       compactionSucceeded();
       this.compactionPending = undefined;
       if (this.owed === undefined) blockage.release();
-      if (!this.compactionReported) return;
-      this.compactionReported = false;
       this.link.call("incident.clear", { compacted: true }).catch(() => undefined);
     });
     pi.on("agent_settled", (event) => {
@@ -83,10 +75,7 @@ export class Failures {
       if (pending !== undefined && this.failed === undefined)
         this.raisePiFault(pending, true, blockage.now);
       if (this.failed !== undefined) this.report(this.failed, false, true);
-      else if (this.reported) {
-        this.reported = false;
-        this.link.call("incident.clear", {}).catch(() => undefined);
-      }
+      else this.link.call("incident.clear", {}).catch(() => undefined);
     });
   }
 
@@ -98,8 +87,6 @@ export class Failures {
     const resume = resumeAt === undefined ? {} : { resumeAt };
     this.link.call("incident.report", { error, ...phase, ...resume }).then(
       () => {
-        if (compaction) this.compactionReported = true;
-        else this.reported = true;
         if (blocks) this.raisePiFault(error, compaction, since);
       },
       () => {
