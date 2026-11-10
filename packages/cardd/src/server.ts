@@ -22,6 +22,7 @@ import { Summoned } from "./browser-ops.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
+import { Access, type AccessConfig } from "./access.ts";
 import { Web } from "./web.ts";
 import { LoopHealth } from "./health.ts";
 import { version } from "./version.ts";
@@ -74,6 +75,7 @@ class Hub {
     files: string | undefined,
     hosts: Hosts,
     browser: BrowserConfig | undefined,
+    access: Access | undefined,
   ) {
     this.health = new LoopHealth(
       { sockets: () => this.open, sessions: () => this.bySession.size },
@@ -89,6 +91,7 @@ class Hub {
         this.flush(session, false);
       },
       files,
+      access,
     );
   }
 
@@ -200,15 +203,24 @@ class Hub {
   }
 
   async answerHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const channel = await this.web.channel(request);
+    if (channel === "refused") this.web.refuse(response);
+    else if (channel === "public") await this.web.answer(request, response, channel);
+    else await this.answerTailnet(request, response);
+  }
+
+  private async answerTailnet(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (this.answerHealth(request, response)) return;
+    if (request.method === "POST" && request.url === "/call") await this.call(request, response);
+    else await this.web.answer(request, response, "tailnet");
+  }
+
+  private async call(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const reply = (status: number, outcome: HttpOutcome): void => {
       response
         .writeHead(status, { "content-type": "application/json" })
         .end(JSON.stringify(outcome));
     };
-    if (request.method !== "POST" || request.url !== "/call") {
-      await this.web.answer(request, response);
-      return;
-    }
     const token = /^Bearer (\S+)$/.exec(request.headers.authorization ?? "")?.[1];
     const session = token === undefined ? undefined : sessionByToken(this.db, token);
     if (!session?.live) {
@@ -282,23 +294,32 @@ export async function serve(
     hostnames,
     hosts,
     browser,
+    access,
   }: {
     files?: string | undefined;
     hostnames: readonly string[];
     hosts: Hosts;
     browser?: BrowserConfig | undefined;
+    access?: AccessConfig | undefined;
   },
 ): Promise<string> {
   db.prepare(
     "UPDATE sessions SET state = 'lost', last_seen = ? WHERE state IN ('idle', 'running', 'waiting')",
   ).run(Date.now());
-  const hub = new Hub(db, timing, files, hosts, browser);
+  const hub = new Hub(
+    db,
+    timing,
+    files,
+    hosts,
+    browser,
+    access === undefined ? undefined : new Access(access, timing),
+  );
   hub.fillRepos();
   setInterval(() => {
     hub.check();
   }, timing.every).unref();
   const server = createServer((request, response) => {
-    if (!hub.answerHealth(request, response)) void hub.answerHttp(request, response);
+    void hub.answerHttp(request, response);
   });
   server.on("connection", (socket) => {
     hub.open += 1;
@@ -310,19 +331,27 @@ export async function serve(
   const sessions = new WebSocketServer({ noServer: true });
   const boards = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
-    const path = new URL(request.url ?? "/", "http://cardd").pathname;
-    const target =
-      path === "/session"
-        ? sessions
-        : path === "/live" && hub.web.permits(request)
-          ? boards
-          : undefined;
-    if (target === undefined) socket.destroy();
-    else
-      target.handleUpgrade(request, socket, head, (ws) => {
-        if (target === sessions) hub.attach(ws);
-        else hub.web.watch(ws);
-      });
+    socket.on("error", () => {
+      socket.destroy();
+    });
+    void (async () => {
+      const channel = await hub.web.channel(request);
+      const path = new URL(request.url ?? "/", "http://cardd").pathname;
+      const target =
+        channel === "refused"
+          ? undefined
+          : path === "/session" && channel === "tailnet"
+            ? sessions
+            : path === "/live" && hub.web.allows(request, channel)
+              ? boards
+              : undefined;
+      if (target === undefined) socket.destroy();
+      else
+        target.handleUpgrade(request, socket, head, (ws) => {
+          if (target === sessions) hub.attach(ws);
+          else hub.web.watch(ws);
+        });
+    })();
   });
   await new Promise<void>((resolve) => server.listen(port, host, resolve));
   const address: AddressInfo | string | null = server.address();

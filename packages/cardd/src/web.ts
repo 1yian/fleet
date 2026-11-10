@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket } from "ws";
+import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { getCard, transaction } from "./store.ts";
 import { version } from "./version.ts";
@@ -33,6 +34,15 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
+export type Channel = "tailnet" | "public";
+
+const CLOUDFLARE_HEADER = /^(cf-|cdn-loop$)/;
+const ACCESS_TOKEN_HEADER = "cf-access-jwt-assertion";
+
+function reply(response: ServerResponse, status: number, value: unknown): void {
+  response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
+}
+
 function canonical(authority: string): string | undefined {
   if (/[\s/?#@\\]/.test(authority)) return undefined;
   try {
@@ -42,23 +52,75 @@ function canonical(authority: string): string | undefined {
   }
 }
 
+function originHostname(origin: string): string | undefined {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
 export class Web {
   private readonly hosts = new Set<string>();
+  private readonly access: Access | undefined;
 
   allow(authorities: readonly string[]): void {
     for (const authority of authorities) {
       const host = canonical(authority);
       if (host === undefined)
         throw new Error(`${authority} is not a host name with an optional port`);
+      if (host === this.access?.host)
+        throw new Error(`${authority} is the public host, which tailnet names cannot share`);
       this.hosts.add(host);
     }
+  }
+
+  async channel(request: IncomingMessage): Promise<Channel | "refused"> {
+    const access = this.access;
+    if (access === undefined) return "tailnet";
+    const header = request.headers.host;
+    if ((header === undefined ? undefined : canonical(header)) === access.host)
+      return this.publicChannel(request, access);
+    const forwarded =
+      Object.keys(request.headers).some((name) => CLOUDFLARE_HEADER.test(name)) ||
+      originHostname(request.headers.origin ?? "") === access.host;
+    if (!forwarded) return "tailnet";
+    access.note(
+      "a request that came through Cloudflare or names the public host reached another host name: the tunnel must forward the Host header unchanged",
+    );
+    return "refused";
+  }
+
+  private async publicChannel(
+    request: IncomingMessage,
+    access: Access,
+  ): Promise<Channel | "refused"> {
+    const origin = request.headers.origin;
+    const reads =
+      (request.method === "GET" || request.method === "HEAD") && !request.headers.upgrade;
+    if (origin === undefined ? !reads : origin !== `https://${access.host}`) {
+      access.note("the Origin is not the public host's https origin");
+      return "refused";
+    }
+    const token = request.headers[ACCESS_TOKEN_HEADER];
+    return (await access.admits(typeof token === "string" ? token : undefined))
+      ? "public"
+      : "refused";
+  }
+
+  allows(request: IncomingMessage, channel: Channel): boolean {
+    return channel === "public" || this.permits(request);
+  }
+
+  refuse(response: ServerResponse): void {
+    reply(response, 403, { ok: false, error: "refused" });
   }
 
   accepted(): string {
     return `these hosts: ${[...this.hosts].join(", ")}`;
   }
 
-  permits(request: IncomingMessage): boolean {
+  private permits(request: IncomingMessage): boolean {
     const header = request.headers.host;
     const host = header === undefined ? undefined : canonical(header);
     if (host === undefined || !this.hosts.has(host)) return false;
@@ -79,10 +141,16 @@ export class Web {
   private readonly flush: (session: string) => void;
   private readonly files: string | undefined;
 
-  constructor(db: DatabaseSync, flush: (session: string) => void, files: string | undefined) {
+  constructor(
+    db: DatabaseSync,
+    flush: (session: string) => void,
+    files: string | undefined,
+    access: Access | undefined,
+  ) {
     this.db = db;
     this.flush = flush;
     this.files = files === undefined ? undefined : resolve(files);
+    this.access = access;
   }
 
   watch(socket: WebSocket): void {
@@ -109,22 +177,26 @@ export class Web {
     this.quiet.unref();
   }
 
-  async answer(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const json = (status: number, value: unknown): void => {
-      response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
-    };
+  async answer(
+    request: IncomingMessage,
+    response: ServerResponse,
+    channel: Channel,
+  ): Promise<void> {
     try {
-      if (!this.permits(request)) {
-        json(403, { ok: false, error: `cardd serves the board only to ${this.accepted()}` });
+      if (!this.allows(request, channel)) {
+        reply(response, 403, {
+          ok: false,
+          error: `cardd serves the board only to ${this.accepted()}`,
+        });
         return;
       }
       const value = await this.route(request);
       if (value === undefined)
         this.serveFile(new URL(request.url ?? "/", "http://board").pathname, response);
-      else json(200, value);
+      else reply(response, 200, value);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      json(error instanceof StaleCard ? 409 : 400, { ok: false, error: message });
+      reply(response, error instanceof StaleCard ? 409 : 400, { ok: false, error: message });
     }
   }
 

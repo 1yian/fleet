@@ -127,6 +127,34 @@ For systemd, use `["systemctl", "--user", "restart", "cardd"]`. The command must
 
 `/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). Do not update or restart it by hand. `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
 
+### A public link through Cloudflare Access
+
+The board has no login of its own, so a public link needs a gate in front of it. `cardd` can serve the board at a public host name when a Cloudflare tunnel carries it there and Cloudflare Access signs the owner in. It is off unless all four values are set, and tailnet use does not change.
+
+`cardd` takes four values, set together or not at all:
+
+```sh
+--public-host board.example.com \
+--access-team myteam.cloudflareaccess.com \
+--access-aud <the 64 hex characters of the application's AUD tag> \
+--access-email owner@example.com
+```
+
+`--access-team` is the team domain of the Access login, `--access-aud` is the AUD tag on the application's Overview page, and `--access-email` is the one person who may open the board. A partial or malformed set stops `cardd` at start and says which value is wrong. Add them to the command in the launchd plist, then `launchctl bootout` and `launchctl bootstrap` the job (the plist change does not reach a `kickstart`).
+
+The tunnel must send the public host's own Host header, and nothing may rewrite it. In the tunnel's ingress, point the public host at `cardd`'s tailnet address and leave `httpHostHeader` out:
+
+```yaml
+ingress:
+  - hostname: board.example.com
+    service: http://<tailnet ip>:7420
+  - service: http_status:404
+```
+
+The Access application must cover the same host name, with a policy that allows only the owner's email. `cardd` does not trust the tunnel or the DNS record. It checks the `Cf-Access-Jwt-Assertion` header of every request for the public host, so a request that reaches it without a valid token gets a 403 and no board content. A request with another Host that came through Cloudflare is refused too, so a tunnel that still rewrites the Host header shows nothing. The public host serves the board only: pages, data, actions, and the live socket. It does not serve `/call`, `/session`, or `/api/health`.
+
+To check it, open the public link and sign in: the board loads, a card changes without a reload, and an answer goes through. On the host, `curl -i -H 'Host: board.example.com' http://<tailnet ip>:7420/api/board` must answer 403, and so must a request with the tailnet name as its Host and `-H 'Origin: https://board.example.com'`. `cardd` prints `cardd serves the board at https://board.example.com to ...` at start, and a log line `public host refused a request: <reason>` once a minute for each reason that it refused. To roll back, remove the four values and restart `cardd`: the public host then gets a 403 as before.
+
 ## Process containment
 
 Fleet tracks every process a worker starts, so that `close`, a worker restart (`restart_card` replace) kill the whole tree, even processes that detach, double-fork, `setsid`, run from `/tmp`, or clear their environment. It picks a backend on each host from what the host can do, never from its name:

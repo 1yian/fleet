@@ -68,6 +68,7 @@ jobs:
               - "packages/protocol/**"
               - "e2e/board/**"
               - "e2e/support/cardd.ts"
+              - "e2e/support/public-host.ts"
               - "package-lock.json"
             extension-e2e:
               - "packages/**"
@@ -79,6 +80,7 @@ jobs:
               - "packages/protocol/**"
               - "e2e/support/cardd.ts"
               - "e2e/support/fleet.ts"
+              - "e2e/support/public-host.ts"
               - "e2e/cardd/**"
               - "package-lock.json"
 
