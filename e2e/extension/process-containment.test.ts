@@ -12,6 +12,7 @@ import {
   WORKER_WAIT_MS,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
+import { guardCleanup } from "../support/guarded.ts";
 import type { Harness, Pi } from "../support/harness.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
@@ -20,6 +21,7 @@ const SERVER = `
 const { createServer } = require("node:net");
 const { writeFileSync } = require("node:fs");
 const [portFile] = process.argv.slice(2);
+writeFileSync(portFile + ".pid", String(process.pid));
 createServer().listen(0, "127.0.0.1", function () {
   writeFileSync(portFile, String(this.address().port));
 });
@@ -28,14 +30,27 @@ createServer().listen(0, "127.0.0.1", function () {
 let parts: DispatchLab;
 let h: Harness;
 let mate: Pi;
+let disarm: () => void = () => undefined;
 beforeEach(async () => {
   parts = await startDispatchLab({ workerArgs: ["-e", SHELL] });
   ({ h, mate } = parts);
   parts.cardd.yolo("site");
 });
 afterEach(async () => {
+  disarm();
+  disarm = () => undefined;
+  stopServer(join(h.dir, "server.port.pid"));
   await stopDispatchLab(parts);
 });
+
+function stopServer(pidFile: string): void {
+  if (!existsSync(pidFile)) return;
+  try {
+    process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
+  } catch {
+    return;
+  }
+}
 
 const listening = (port: number): Promise<boolean> =>
   new Promise((resolve) => {
@@ -78,8 +93,9 @@ const dispatchStep = {
 
 async function serverPort(portFile: string): Promise<number> {
   await eventually(() => Promise.resolve(existsSync(portFile)), "the server port file");
-  const port = Number(readFileSync(portFile, "utf8"));
-  return port;
+  const pid = readFileSync(`${portFile}.pid`, "utf8");
+  disarm = guardCleanup(`server-${pid}`, ["sh", "-c", `kill -9 ${pid}`]);
+  return Number(readFileSync(portFile, "utf8"));
 }
 
 test("close stops a server the worker detached from everything", async () => {
@@ -116,4 +132,21 @@ test("restarting a worker stops a server it detached from everything", async () 
   mate.prompt("restart it");
   await h.waitForCall(4, "mate", WORKER_WAIT_MS);
   await eventually(async () => !(await listening(port)), "the server to be gone after restart");
+});
+
+test("close stops a server that a run_long job detached from everything", async () => {
+  const { command, portFile } = detachedServerCommand();
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => ({ tool: "run_long", args: { label: "serve", command } }), "worker");
+  h.onModel(() => ({ text: "the job runs" }), "worker");
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "server running" } }), "worker");
+  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Done." } }), "mate");
+  await connected(h);
+  mate.prompt("run the server in a job");
+  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  const port = await serverPort(portFile);
+  assert.match(results.at(-1) ?? "", /^c-1 is done\./);
+  await eventually(async () => !(await listening(port)), "the job's server to be gone after close");
 });

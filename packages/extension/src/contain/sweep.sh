@@ -18,6 +18,10 @@ backend_adopt() {
   return 1
 }
 
+backend_exists() {
+  return 1
+}
+
 backend_members() {
   group=$(group_of_record) || return 1
   [ -n "$group" ] || return 0

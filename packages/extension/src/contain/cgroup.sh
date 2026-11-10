@@ -15,6 +15,10 @@ backend_adopt() {
   )
 }
 
+backend_exists() {
+  [ -d "$dir" ]
+}
+
 backend_members() {
   [ -d "$dir" ] || return 0
   cat "$dir/cgroup.procs"
