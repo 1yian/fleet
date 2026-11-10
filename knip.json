@@ -30,6 +30,7 @@
         "src/job.ts",
         "src/browser-view.ts",
         "src/browser-axi.ts",
+        "src/takeover.ts",
         "src/launch.ts",
         "src/relaunch.ts",
         "src/calm/index.ts",

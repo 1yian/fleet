@@ -1,0 +1,3 @@
+#!/bin/sh
+# Takes a worker's tab into a real Chrome on this machine and sends the session back: fleet-chrome --help
+exec node "$(dirname "$(realpath "$0")")/../packages/extension/src/takeover.ts" "$@"

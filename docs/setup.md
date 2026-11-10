@@ -377,6 +377,10 @@ Fleet tries `~/.local/state/herdr/gpui/bin/sheprd browser open --tab <viewer URL
 
 The token URL rests for about 30 seconds in herdr workspace metadata and in Sheprd's saved tabs on frontera (`~/.local/state/herdr/gpui/browser-tabs.json`). Treat both as sensitive, like the printed viewer address. The token dies with its viewer run. A forwarded listener is loopback-only, and every route of the viewer still requires the token. Gated worker viewers keep their `browser.frame` pull model.
 
+### Fleet Chrome on the Mac
+
+`bin/fleet-chrome` is a prototype that takes a worker's tab into a real Chrome on the machine you run it on, with the tab's session copied in and that Chrome's traffic routed through the host, and sends the session back when you are done. It needs only `ssh <host>`. It installs nothing and changes no setting. [fleet-chrome.md](fleet-chrome.md) has the commands to try it on a Mac, how to undo everything, and what it cannot do yet. The viewer above stays the way to watch a tab that must not reload.
+
 ## 3. Lanes and projects
 
 Run these once on the `cardd` host. `lane add` prints the mate's token. A lane's `--home` is informational.
