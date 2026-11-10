@@ -69,7 +69,7 @@ test("a card held until a date and a worker paused until a date show their dates
   const waiting = region("Up next").getByRole("article", { name: held.card.title });
   await waiting.locator(".chip", { hasText: DATED }).waitFor();
   const pausedCard = region("In progress").getByRole("article", { name: paused.card.title });
-  await pausedCard.locator(".chip", { hasText: /^paused until \d{2}:\d{2}$/ }).waitFor();
+  await pausedCard.locator(".chip", { hasText: /^paused until (?:\S+ )?\d{2}:\d{2}$/ }).waitFor();
   assert.doesNotMatch(await waiting.innerText(), /blocked/i);
 
   await page.goto(`${http()}#/c-${String(held.card.id)}`);
@@ -80,5 +80,5 @@ test("a card held until a date and a worker paused until a date show their dates
   await page.goto(`${http()}#/c-${String(paused.card.id)}`);
   await property("Status").filter({ hasText: "Paused" }).waitFor();
   assert.equal(await property("Status").innerText(), "Paused");
-  assert.match(await property("Until").innerText(), /^\d{2}:\d{2}$/);
+  assert.match(await property("Until").innerText(), /^(?:\S+ )?\d{2}:\d{2}$/);
 });
