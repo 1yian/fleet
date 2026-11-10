@@ -33,7 +33,11 @@ afterEach(async () => {
 });
 
 async function inPage(expression: string): Promise<unknown> {
-  return JSON.parse(await worker.act({ action: "eval", expression }));
+  const tab = (await lab.chrome.pages()).find((each) =>
+    each.title.startsWith(`c-${String(worker.card.id)} `),
+  );
+  if (tab === undefined) throw new Error("the card has no tab");
+  return lab.chrome.evaluate(tab.id, expression);
 }
 
 async function start(isolated = false): Promise<void> {
@@ -48,6 +52,12 @@ async function start(isolated = false): Promise<void> {
     permissions: ["clipboard-read", "clipboard-write"],
   });
   page = await context.newPage();
+}
+
+async function emptyFramedPassword(): Promise<void> {
+  const frame = (await lab.chrome.targets()).find((each) => each.type === "iframe");
+  if (frame === undefined) throw new Error("the framed page has no target");
+  await lab.chrome.evaluate(frame.id, "document.getElementById('vaulted').value = ''");
 }
 
 async function pointOnPage(x: number, y: number): Promise<{ x: number; y: number }> {
@@ -158,6 +168,7 @@ for (const isolated of [false, true]) {
     ];
     if (isolated) shown.push([await launchViewer(lab, viewers, []), "embedded-words"]);
     for (const [address, label] of shown) {
+      if (label !== undefined) await emptyFramedPassword();
       await showTab(page, address, label);
       await setClipboard("before");
       const word = await pointOnPage(IN_FRAME.x + 60, IN_FRAME.y + 14);

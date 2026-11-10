@@ -2,97 +2,15 @@ import { parseCdp } from "@fleet/protocol";
 import Type from "typebox";
 import { exposure } from "./browser-hidden.ts";
 import { call, type Page } from "./browser-page.ts";
+import { PASSWORD_CHECK, PASSWORD_INIT, PASSWORD_WORLD } from "./browser-password.ts";
+import { SCAN } from "./browser-scan-script.ts";
 
 const GROUP = "fleet-scan";
 const WORLD = "fleet-scan";
 
-const SCAN = `function (count, ...nodes) {
-  const closed = new Map();
-  for (let i = 0; i < count; i += 2) closed.set(nodes[i], nodes[i + 1]);
-  const undrawn = new Set(nodes.slice(count));
-  const rootOf = (el) => el.shadowRoot ?? closed.get(el) ?? null;
-  const doc = this.ownerDocument ?? this;
-  const view = doc.defaultView;
-  const unescaped = (text) => text.replace(/\\\\([0-9a-fA-F]{1,6})\\s?|\\\\([\\s\\S])/g, (all, hex, char) => {
-    if (hex === undefined) return char;
-    const code = Number.parseInt(hex, 16);
-    return code === 0 || code > 0x10ffff ? "\\ufffd" : String.fromCodePoint(code);
-  });
-  const generated = (el, which) => {
-    const style = view.getComputedStyle(el, which);
-    if (style.display === "none") return "";
-    return [...style.content.matchAll(/"((?:[^"\\\\]|\\\\.)*)"|'((?:[^'\\\\]|\\\\.)*)'/g)]
-      .map((found) => unescaped(found[1] ?? found[2] ?? ""))
-      .join("");
-  };
-  const styleOf = (el) => {
-    try {
-      return view.getComputedStyle(el);
-    } catch (error) {
-      return null;
-    }
-  };
-  const boxed = (node) => {
-    try {
-      const range = doc.createRange();
-      range.selectNodeContents(node);
-      return [...range.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0);
-    } catch (error) {
-      return true;
-    }
-  };
-  const innerOf = (node) => (node.nodeType === 3 ? node.nodeValue : node.innerText) ?? "";
-  const fields = ["INPUT", "TEXTAREA", "SELECT"];
-  const views = [];
-  const queue = [this];
-  for (const parent of queue) {
-    for (let node = parent.firstChild; node !== null; node = node.nextSibling) {
-      if (node.nodeType !== 1) continue;
-      for (const attribute of node.attributes) views.push(attribute.value);
-      if (fields.includes(node.tagName)) views.push(node.value);
-      if (node.tagName === "OPTION") views.push(node.text);
-      queue.push(node);
-      const root = rootOf(node);
-      if (root === null) continue;
-      queue.push(root);
-      views.push([...root.childNodes].map(innerOf).join(""));
-    }
-  }
-  const flat = (el) => {
-    const root = rootOf(el);
-    if (root !== null) return [...root.childNodes];
-    return el.tagName === "SLOT" ? el.assignedNodes({ flatten: true }) : [...el.childNodes];
-  };
-  const text = [];
-  const stack = [{ nodes: [...this.childNodes], at: 0, shown: true, visible: true, tail: "" }];
-  while (stack.length > 0) {
-    const top = stack[stack.length - 1];
-    if (top.at >= top.nodes.length) {
-      stack.pop();
-      text.push(top.tail);
-      continue;
-    }
-    const node = top.nodes[top.at];
-    top.at += 1;
-    if (node.nodeType === 3) {
-      if (top.shown && top.visible && !undrawn.has(node) && boxed(node)) text.push(node.nodeValue ?? "");
-    } else if (node.nodeType === 1) {
-      const style = styleOf(node);
-      const shown = top.shown && (style === null || style.display !== "none");
-      const contents = shown && (style === null || style.contentVisibility !== "hidden");
-      const visible = style === null || style.visibility === "visible";
-      const drawn = contents && visible;
-      text.push(drawn ? generated(node, "::before") : "");
-      stack.push({ nodes: flat(node), at: 0, shown: contents, visible, tail: drawn ? generated(node, "::after") : "" });
-    }
-  }
-  views.push(text.join(""));
-  if (this.nodeType === 9) views.push(this.body?.innerText ?? "");
-  return views;
-}`;
-
 const FlatNodeSchema = Type.Object({
   nodeId: Type.Integer(),
+  backendNodeId: Type.Integer(),
   parentId: Type.Optional(Type.Integer()),
   nodeType: Type.Integer(),
   nodeName: Type.String(),
@@ -100,7 +18,14 @@ const FlatNodeSchema = Type.Object({
   shadowRoots: Type.Optional(
     Type.Array(Type.Object({ nodeId: Type.Integer(), shadowRootType: Type.String() })),
   ),
-  contentDocument: Type.Optional(Type.Object({ nodeId: Type.Integer() })),
+  contentDocument: Type.Optional(
+    Type.Object({
+      nodeId: Type.Integer(),
+      backendNodeId: Type.Integer(),
+      nodeType: Type.Integer(),
+      nodeName: Type.String(),
+    }),
+  ),
 });
 const FlatSchema = Type.Object({ nodes: Type.Array(FlatNodeSchema) });
 const ResolvedSchema = Type.Object({ object: Type.Object({ objectId: Type.String() }) });
@@ -109,6 +34,10 @@ const ValueSchema = Type.Object({
   exceptionDetails: Type.Optional(Type.Unknown()),
 });
 const ViewsSchema = Type.Array(Type.String());
+const PasswordSchema = Type.Object({
+  held: Type.Boolean(),
+  passwords: Type.Array(Type.Integer({ minimum: 0 })),
+});
 const QuadsSchema = Type.Object({
   quads: Type.Array(Type.Array(Type.Number(), { minItems: 8, maxItems: 8 })),
 });
@@ -130,6 +59,7 @@ interface Scope {
   readonly frame: string;
   readonly closed: readonly number[];
   readonly texts: readonly number[];
+  readonly inputs: readonly { nodeId: number; backendNodeId: number }[];
 }
 
 const TEXT_NODE = 3;
@@ -159,6 +89,18 @@ function frameOf(
     if (frame !== undefined) return frame;
   }
   return undefined;
+}
+
+function withDocuments(nodes: readonly FlatNode[]): FlatNode[] {
+  const listed = new Set(nodes.map((node) => node.nodeId));
+  return [
+    ...nodes,
+    ...nodes.flatMap((node) =>
+      node.contentDocument === undefined || listed.has(node.contentDocument.nodeId)
+        ? []
+        : [node.contentDocument],
+    ),
+  ];
 }
 
 function indexOf(nodes: readonly FlatNode[]): {
@@ -239,6 +181,11 @@ function scopesOf(nodes: readonly FlatNode[]): Scope[] {
         frame,
         closed: closed.get(frame) ?? [],
         texts: texts.get(node.nodeId) ?? [],
+        inputs: nodes
+          .filter(
+            (each) => each.nodeName === "INPUT" && frameOf(parents, frames, each.nodeId) === frame,
+          )
+          .map(({ nodeId, backendNodeId }) => ({ nodeId, backendNodeId })),
       };
     });
   for (const frame of closed.keys())
@@ -249,14 +196,18 @@ function scopesOf(nodes: readonly FlatNode[]): Scope[] {
 const isFrameOwner = (node: FlatNode): boolean =>
   ["IFRAME", "FRAME"].includes(node.nodeName.toUpperCase());
 
+type Check =
+  | { readonly kind: "credential"; readonly exposed: (text: string) => boolean }
+  | { readonly kind: "password"; readonly known: Set<string>; readonly restored: boolean };
+
 class Scan {
-  private readonly exposed: (text: string) => boolean;
+  private readonly check: Check;
   private readonly touched: Page[] = [];
   private readonly children = new Map<string, Page[]>();
   private unlisten: (() => void) | undefined;
 
-  constructor(exposed: (text: string) => boolean) {
-    this.exposed = exposed;
+  constructor(check: Check) {
+    this.check = check;
   }
 
   async shows(root: Page): Promise<boolean> {
@@ -286,27 +237,46 @@ class Scan {
 
   private async over(page: Page): Promise<boolean> {
     this.touched.push(page);
+    if (this.check.kind === "password" && this.touched.length > 1) {
+      await call(page, "Page.addScriptToEvaluateOnNewDocument", {
+        source: PASSWORD_INIT,
+        worldName: PASSWORD_WORLD,
+        runImmediately: true,
+      });
+    }
     await call(page, "DOM.enable");
     const worlds = await this.worlds(page);
-    const { nodes } = parseCdp(
+    const { nodes: listed } = parseCdp(
       FlatSchema,
       await call(page, "DOM.getFlattenedDocument", { depth: -1, pierce: true }),
       "the page's tree",
     );
+    const nodes = withDocuments(listed);
     await call(page, "Target.setAutoAttach", {
       autoAttach: true,
       waitForDebuggerOnStart: false,
       flatten: true,
     });
+    const children = this.attached(page, nodes);
+    let held = false;
+    for (const scope of scopesOf(nodes))
+      if (await this.shown(page, scope, worlds)) {
+        if (this.check.kind === "credential") return true;
+        held = true;
+      }
+    for (const child of children)
+      if (await this.over(child)) {
+        if (this.check.kind === "credential") return true;
+        held = true;
+      }
+    return held;
+  }
+
+  private attached(page: Page, nodes: readonly FlatNode[]): Page[] {
     const children = this.children.get(page.session) ?? [];
-    if (
-      nodes.filter((node) => isFrameOwner(node) && node.contentDocument === undefined).length >
-      children.length
-    )
-      throw unreadable();
-    for (const scope of scopesOf(nodes)) if (await this.shown(page, scope, worlds)) return true;
-    for (const child of children) if (await this.over(child)) return true;
-    return false;
+    const owners = nodes.filter((node) => isFrameOwner(node) && node.contentDocument === undefined);
+    if (owners.length > children.length) throw unreadable();
+    return children;
   }
 
   private async worlds(page: Page): Promise<Map<string, number>> {
@@ -319,7 +289,10 @@ class Scan {
     for (const frameId of idsOf(frameTree)) {
       const world = parseCdp(
         WorldSchema,
-        await call(page, "Page.createIsolatedWorld", { frameId, worldName: WORLD }).catch(() => {
+        await call(page, "Page.createIsolatedWorld", {
+          frameId,
+          worldName: this.check.kind === "password" ? PASSWORD_WORLD : WORLD,
+        }).catch(() => {
           throw unreadable();
         }),
         "a frame's world",
@@ -363,6 +336,42 @@ class Scan {
     if (executionContextId === undefined) throw unreadable();
     const objectId = await this.resolve(page, scope.nodeId, executionContextId);
     const closed = await this.resolveAll(page, scope.closed, executionContextId);
+    if (this.check.kind === "password") {
+      const inputs = await this.resolveAll(
+        page,
+        scope.inputs.map(({ nodeId }) => nodeId),
+        executionContextId,
+      );
+      const keys = scope.inputs.map(
+        ({ backendNodeId }) => `${scope.frame}:${String(backendNodeId)}`,
+      );
+      const known = this.check.known;
+      const remembered = keys.flatMap((key, index) => (known.has(key) ? [index] : []));
+      const held = parseCdp(
+        ValueSchema,
+        await call(page, "Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: PASSWORD_CHECK,
+          arguments: [
+            { value: closed.length },
+            { value: remembered },
+            { value: this.check.restored },
+            ...closed,
+            ...inputs,
+          ],
+          returnByValue: true,
+        }),
+        "the page's password fields",
+      );
+      if (held.exceptionDetails !== undefined) throw unreadable();
+      const result = parseCdp(PasswordSchema, held.result.value, "whether a password is held");
+      for (const index of result.passwords) {
+        const key = keys[index];
+        if (key === undefined) throw unreadable();
+        known.add(key);
+      }
+      return result.held;
+    }
     const checked = await Promise.all(
       scope.texts.map(async (nodeId) => ({ nodeId, shown: await drawn(page, nodeId) })),
     );
@@ -384,12 +393,25 @@ class Scan {
       "the page's scan",
     );
     if (done.exceptionDetails !== undefined) throw unreadable();
-    return parseCdp(ViewsSchema, done.result.value, "the page's text").some(this.exposed);
+    return parseCdp(ViewsSchema, done.result.value, "the page's text").some(this.check.exposed);
+  }
+}
+
+export async function holdsPassword(
+  page: Page,
+  known: Set<string>,
+  restored = false,
+): Promise<boolean> {
+  const scan = new Scan({ kind: "password", known, restored });
+  try {
+    return await scan.shows(page);
+  } finally {
+    await scan.lift();
   }
 }
 
 export async function showsCredential(page: Page, secrets: readonly string[]): Promise<boolean> {
-  const scan = new Scan(exposure(secrets));
+  const scan = new Scan({ kind: "credential", exposed: exposure(secrets) });
   try {
     return await scan.shows(page);
   } finally {

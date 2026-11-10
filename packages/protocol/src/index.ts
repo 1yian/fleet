@@ -9,6 +9,7 @@ import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
 import { PlanSchema } from "./wakes.ts";
 
+export * from "./address.ts";
 export * from "./branch.ts";
 export * from "./browser.ts";
 export * from "./cdp.ts";

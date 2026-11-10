@@ -9,7 +9,11 @@ export const PHONE_STYLE = `
   .phone li.selected { border-bottom-color: var(--signal); }
   .phone li .host { display: none; }
   .phone main { flex: 1; min-height: 0; }
-  .phone header { gap: 8px; padding: 6px 10px; min-height: 40px; }
+  .phone header { flex-wrap: wrap; gap: 6px 8px; padding: 6px 10px; min-height: 40px; }
+  .phone #bar { flex-basis: 100%; }
+  .phone #bar button { width: 40px; height: 40px; }
+  .phone #address { height: 40px; font-size: 16px; }
+  .phone #navnote { padding: 6px 10px; }
   .phone #copied, .phone #hint { display: none; }
   .phone #stage { padding: 0; align-items: stretch; }
   .phone #screen { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; border: 0; border-radius: 0; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }

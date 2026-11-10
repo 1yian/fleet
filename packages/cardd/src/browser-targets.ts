@@ -26,6 +26,13 @@ export interface Listed {
   readonly url: string;
 }
 
+export interface Standing {
+  readonly canBack: boolean;
+  readonly canForward: boolean;
+}
+
+const UNKNOWN: Standing = { canBack: false, canForward: false };
+
 export async function targetsOf(cdp: Cdp): Promise<Map<string, Listed>> {
   const listed = parseCdp(TargetsSchema, await cdp.send("Target.getTargets"), "the target list");
   return new Map(listed.targetInfos.map(({ targetId, title, url }) => [targetId, { title, url }]));
@@ -42,10 +49,12 @@ export function tabView(
   db: DatabaseSync,
   tab: Tab,
   targets: ReadonlyMap<string, Listed>,
+  standing: ReadonlyMap<string, Standing>,
   hide: (text: string) => string,
 ): OpResult<"browser.view">["tabs"][number] {
   const here = targets.get(tab.target);
   return {
+    ...(standing.get(tab.target) ?? UNKNOWN),
     card: tab.card,
     name: getCard(db, tab.card).name,
     label: tab.label,

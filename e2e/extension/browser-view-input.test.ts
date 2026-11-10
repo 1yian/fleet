@@ -66,13 +66,13 @@ test("keys with modifiers arrive with their key, code and modifiers", async () =
   await rig.show(rig.captain);
   await rig.clickInPicture(FIELD.x, FIELD.y);
   await page.keyboard.press("Control+Shift+KeyK");
-  await page.keyboard.press("Alt+ArrowLeft");
+  await page.keyboard.press("Alt+ArrowUp");
   await page.keyboard.press("F2");
   await rig.sawAll(
     [
       "keydown key=K code=KeyK ctrl+shift",
       "keyup key=K code=KeyK ctrl+shift",
-      "keydown key=ArrowLeft code=ArrowLeft alt",
+      "keydown key=ArrowUp code=ArrowUp alt",
       "keydown key=F2 code=F2",
       "keyup key=F2 code=F2",
     ],
@@ -129,7 +129,7 @@ test("a Mac's Cmd and Option shortcuts edit the field, since the page's own cann
   await waitFor(async () => (await rig.fieldValue()) !== "Q", "Cmd+Z to undo");
 });
 
-test("reload, zoom, tab and developer tools shortcuts are left to the browser that shows the viewer", async () => {
+test("zoom, tab and developer tools shortcuts are left to the browser that shows the viewer", async () => {
   const { page } = rig;
   await rig.show(rig.captain);
   await rig.clickInPicture(FIELD.x, FIELD.y);
@@ -142,14 +142,11 @@ test("reload, zoom, tab and developer tools shortcuts are left to the browser th
     });
   });
   for (const shortcut of [
-    "ControlOrMeta+KeyR",
-    "ControlOrMeta+Shift+KeyR",
     "ControlOrMeta+KeyT",
     "ControlOrMeta+Equal",
     "ControlOrMeta+Minus",
     "ControlOrMeta+Digit0",
     "ControlOrMeta+Digit2",
-    "F5",
     "F12",
     "ControlOrMeta+KeyK",
     "KeyZ",
@@ -161,14 +158,11 @@ test("reload, zoom, tab and developer tools shortcuts are left to the browser th
     return Array.isArray(found) ? found.map(String) : [];
   });
   assert.deepEqual(heard, [
-    "r:false",
-    "R:false",
     "t:false",
     "=:false",
     "-:false",
     "0:false",
     "2:false",
-    "F5:false",
     "F12:false",
     "k:true",
     "z:true",

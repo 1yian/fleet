@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { optionalString, parseRecord } from "./json.ts";
 
@@ -11,6 +11,17 @@ export interface Posted {
 const MONOSPACE = "<style>html, body, input { font-family: monospace; }</style>";
 
 const withFont = (page: string): string => page.replace("</title>", `</title>${MONOSPACE}`);
+
+const entryPage = (
+  extra: string,
+): string => `<!doctype html><title>Entry</title><body style="margin:0">
+    <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/landing'; })">
+      <input name="u" type="text" autocomplete="username" style="position:fixed;left:20px;top:20px;width:300px;height:32px;font-size:18px">
+      <input name="p" type="password" oninput="this.setAttribute('value', this.value)" style="position:fixed;left:20px;top:70px;width:300px;height:32px;font-size:18px">
+      <button id="reveal" type="button" style="position:fixed;left:340px;top:70px;height:32px" onclick="const p = this.form.p; p.type = p.type === 'password' ? 'text' : 'password'">show</button>
+      <button id="submit" type="submit" style="position:fixed;left:20px;top:120px;height:32px">Sign in</button>
+    </form>
+    <p style="position:fixed;left:20px;top:170px;margin:0">entry page</p>${extra}</body>`;
 
 const PAGES: Readonly<Record<string, string>> = {
   "/a": `<!doctype html><title>Alpha</title><body data-owner="a">
@@ -35,6 +46,10 @@ const PAGES: Readonly<Record<string, string>> = {
       for (const type of ["copy", "cut", "paste"]) document.addEventListener(type, () => note(type));
       document.getElementById("field").addEventListener("compositionstart", () => note("compositionstart"));
     </script></body>`,
+  "/slow-input": `<!doctype html><title>Slow input</title><body>
+    <input id="field" autofocus style="position:fixed;left:20px;top:80px;width:360px;height:32px">
+    <img src="/held" alt="">
+  </body>`,
   "/framed": `<!doctype html><title>Framed</title><body style="margin:0">
     <iframe id="inner" style="position:fixed;left:20px;top:20px;width:360px;height:120px;border:0"></iframe>
     <input id="field" style="position:fixed;left:20px;top:160px;width:360px;height:32px;font-size:18px">
@@ -77,6 +92,13 @@ const PAGES: Readonly<Record<string, string>> = {
       <button id="submit" type="submit">Sign in</button>
     </form>
     <p id="u-echo"></p><p id="p-echo"></p></body>`,
+  "/entry": entryPage(""),
+  "/entry-kept": entryPage(`
+    <script>
+      const kept = document.querySelector("input[name=p]");
+      kept.value = sessionStorage.getItem("kept") ?? "";
+      kept.addEventListener("input", () => sessionStorage.setItem("kept", kept.value));
+    </script>`),
   "/tint-portal": `<!doctype html><title>Tinted portal</title><body style="margin:0;height:100vh;background:#e00000">
     <form id="form" onsubmit="event.preventDefault(); fetch('/session', { method: 'POST', body: JSON.stringify({ username: this.u.value, password: this.p.value, code: '' }) }).then(() => { location.href = '/tint-landing'; })">
       <input name="u" type="text" autocomplete="username" oninput="document.getElementById('u-echo').textContent = this.value">
@@ -246,17 +268,35 @@ export class TestSite {
   readonly posted: Posted[];
   readonly port: number;
   private readonly server: Server;
+  private readonly held: ServerResponse[];
 
-  private constructor(server: Server, port: number, posted: Posted[]) {
+  private constructor(server: Server, port: number, posted: Posted[], held: ServerResponse[]) {
     this.server = server;
     this.port = port;
     this.posted = posted;
+    this.held = held;
+  }
+
+  holding(): number {
+    return this.held.length;
+  }
+
+  release(): void {
+    for (const response of this.held.splice(0))
+      response
+        .writeHead(200, { "content-type": "text/html; charset=utf-8" })
+        .end(withFont(`<!doctype html><title>Held</title><body><p>held page</p></body>`));
   }
 
   static async start(): Promise<TestSite> {
     const posted: Posted[] = [];
+    const held: ServerResponse[] = [];
     const server = createServer((request, response) => {
       const path = new URL(request.url ?? "/", "http://site").pathname;
+      if (path === "/held") {
+        held.push(response);
+        return;
+      }
       if (request.method === "POST" && path === "/session") {
         void bodyOf(request).then((body) => {
           const sent = parseRecord(body);
@@ -288,7 +328,7 @@ export class TestSite {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address: AddressInfo | string | null = server.address();
     if (address === null || typeof address === "string") throw new Error("no site address");
-    return new TestSite(server, address.port, posted);
+    return new TestSite(server, address.port, posted, held);
   }
 
   url(path: string, host = "127.0.0.1"): string {

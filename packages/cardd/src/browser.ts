@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { BrowserArgs, OpResult } from "@fleet/protocol";
 import type { BrowserConfig } from "./browser-config.ts";
-import { HostBrowser, plural, type Outcome } from "./browser-host.ts";
+import { HostBrowser, plural } from "./browser-host.ts";
+import type { Outcome } from "./browser-outcome.ts";
 import { NO_TAB } from "./browser-refusals.ts";
 import {
   attemptHost,
@@ -12,7 +13,7 @@ import {
   tabsOf,
   type Tab,
 } from "./browser-store.ts";
-import { tabView, type Listed } from "./browser-targets.ts";
+import { tabView, type Listed, type Standing } from "./browser-targets.ts";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
 
@@ -48,19 +49,35 @@ export class Browser {
     wants: (card: number) => boolean,
     captain: boolean,
     host: string | undefined,
-  ): Promise<OpResult<"browser.view">> {
+  ): Promise<Omit<OpResult<"browser.view">, "canNameHost">> {
     this.touchUsedHosts();
     const shown = openTabs(this.db).filter((tab) => wants(tab.card) && this.configuredOn(tab.host));
     const hosts = new Set(shown.map((tab) => tab.host));
     if (host !== undefined && this.configuredOn(host)) hosts.add(host);
     const listed = new Map(
       await Promise.all(
-        [...hosts].map(async (each) => [each, await this.listingOf(each, captain)] as const),
+        [...hosts].map(
+          async (each) =>
+            [
+              each,
+              await this.listingOf(
+                each,
+                captain,
+                shown.filter((tab) => tab.host === each),
+              ),
+            ] as const,
+        ),
       ),
     );
     const tabs = shown.map((tab) => {
       const there = listed.get(tab.host);
-      return tabView(this.db, tab, there?.targets ?? new Map(), there?.hide ?? (() => ""));
+      return tabView(
+        this.db,
+        tab,
+        there?.targets ?? new Map(),
+        there?.standing ?? new Map(),
+        there?.hide ?? (() => ""),
+      );
     });
     const problems = [...listed.values()].flatMap(({ problem }) => problem ?? []);
     return {
@@ -110,19 +127,30 @@ export class Browser {
     });
   }
 
+  enter(card: number, target: string): Promise<OpResult<"browser.entered">> {
+    return this.inTurn(card, async () => {
+      const tab = openTabs(this.db).find((each) => each.card === card && each.target === target);
+      if (tab === undefined) throw new Error("that tab is not open");
+      await this.site(tab.host).enter(card, target);
+      return {};
+    });
+  }
+
   private async listingOf(
     host: string,
     captain: boolean,
+    tabs: readonly Tab[],
   ): Promise<{
     targets: Map<string, Listed>;
+    standing: Map<string, Standing>;
     problem: string | null;
     hide: (text: string) => string;
   }> {
     try {
       const site = this.site(host);
-      return { ...(await site.listing()), hide: site.hider(captain) };
+      return { ...(await site.listing(tabs)), hide: site.hider(captain) };
     } catch (error) {
-      return { targets: new Map(), problem: reason(error), hide: () => "" };
+      return { targets: new Map(), standing: new Map(), problem: reason(error), hide: () => "" };
     }
   }
 

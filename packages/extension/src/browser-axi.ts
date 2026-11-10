@@ -18,6 +18,8 @@ const EXIT = { ok: 0, error: 1, usage: 2, notFound: 3, noBrowser: 4 } as const;
 const USAGE = `browser-axi: drive your card's tab in the fleet's shared Chrome
   browser-axi                          show whether the fleet has a shared browser and your tab
   browser-axi open <url>               give your card its own tab and load url (or load another url in it)
+  browser-axi back | forward           go one page back or forward in your tab's history
+  browser-axi reload                   load your tab's current page again
   browser-axi read [--selector css] [--html]
   browser-axi click --selector css | --x n --y n
   browser-axi type --text <text> [--selector css] [--submit]
@@ -123,6 +125,9 @@ const BUILDERS: Record<string, Builder> = {
     ...(values["full-page"] === true ? { fullPage: true } : {}),
   }),
   login: (_, values) => ({ action: "login", ...withOnly("site", values.site) }),
+  back: () => ({ action: "back" }),
+  forward: () => ({ action: "forward" }),
+  reload: () => ({ action: "reload" }),
   close: () => ({ action: "close" }),
 };
 
@@ -235,6 +240,9 @@ const HELP: Record<string, readonly string[]> = {
     "Run `browser-axi login` on a login page: the fleet fills the username and password and you never see them",
     "Run `browser-axi open <url> --captain <why>` or add --captain <why> to any command when a passkey, a one-time code, terms or a payment needs the captain",
   ],
+  back: ["Run `browser-axi read` for the page's text, or `browser-axi forward` to return"],
+  forward: ["Run `browser-axi read` for the page's text, or `browser-axi back` to return"],
+  reload: ["Run `browser-axi read` for the page's text"],
   screenshot: ["Look at the picture file named in `image` with your image tools"],
   login: [
     "Run `browser-axi click --selector <css>` on the sign-in button, then `browser-axi read`",

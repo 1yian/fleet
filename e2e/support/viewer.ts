@@ -26,11 +26,15 @@ export async function startViewer(
   viewers: Viewers,
   flags: string[],
   env: Record<string, string> = {},
+  source?: { readonly token: string; readonly host?: string },
 ): Promise<Started> {
   const access = join(tempDir("fleet-viewer-access-"), "access.json");
   writeFileSync(
     access,
-    JSON.stringify({ url: lab.cardd.url, token: lab.mainToken, host: WORKER_HOST }),
+    JSON.stringify({
+      url: lab.cardd.url,
+      ...(source ?? { token: lab.mainToken, host: WORKER_HOST }),
+    }),
     { mode: 0o600 },
   );
   const viewer = spawnGuarded("node", [VIEWER, "--access", access, "--open", ...flags], {

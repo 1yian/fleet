@@ -1,4 +1,6 @@
 import { EDITING_COMMANDS } from "./browser-input.ts";
+import { BAR_MARKUP, BAR_NOTE, BAR_SCRIPT, BAR_STYLE } from "./browser-view-bar.ts";
+import { COPY_SCRIPT } from "./browser-view-copy.ts";
 import {
   PHONE_DOCK,
   PHONE_HEAD,
@@ -30,8 +32,7 @@ export const VIEWER_PAGE = `<!doctype html>
   #problem { margin: 0 16px 12px; padding: 8px 10px; background: #2a1219; color: var(--error); border-radius: 4px; font-size: 12px; }
   #problem[hidden] { display: none; }
   main { display: flex; flex-direction: column; min-width: 0; }
-  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1d1d26; min-height: 44px; }
-  #address { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid #1d1d26; min-height: 48px; }
   #live { color: var(--dim); font-size: 12px; }
   #live.on { color: var(--signal); }
   #copied { max-width: 420px; color: var(--signal); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -44,7 +45,7 @@ export const VIEWER_PAGE = `<!doctype html>
   #note { max-width: 640px; padding: 16px 20px; background: var(--row); color: var(--dim); border: 1px solid #262633; border-radius: 4px; }
   #note[hidden] { display: none; }
   #hint { padding: 0 16px 10px; color: var(--dim); font-size: 12px; }
-${PHONE_STYLE}</style>${PHONE_HEAD}
+${BAR_STYLE}${PHONE_STYLE}</style>${PHONE_HEAD}
 </head>
 <body>
 <aside>
@@ -54,24 +55,24 @@ ${PHONE_STYLE}</style>${PHONE_HEAD}
 </aside>
 <main>
   <header>
-    <div id="address"></div>
+    ${BAR_MARKUP}
     <span id="copied" role="status"></span>
     ${PHONE_KEYBOARD}
     <span id="live" hidden></span>
   </header>
+  ${BAR_NOTE}
   <div id="stage">
     <img id="screen" alt="" hidden draggable="false">
     <textarea id="capture" aria-label="Keyboard input for the page" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" tabindex="-1"></textarea>
     <div id="note" hidden></div>
   </div>
-  <div id="hint" hidden>Click the picture to focus it. Mouse and keys act on the tab. Cmd or Ctrl+C copies, Cmd or Ctrl+V pastes. Reload, zoom and tab keys stay here.</div>
+  <div id="hint" hidden></div>
   ${PHONE_DOCK}
 </main>
 <script>
 const list = document.getElementById("tabs");
 const hint = document.getElementById("hint");
 const problem = document.getElementById("problem");
-const address = document.getElementById("address");
 const live = document.getElementById("live");
 const screen = document.getElementById("screen");
 const note = document.getElementById("note");
@@ -119,9 +120,10 @@ async function flow() {
     const batch = [pending.shift()];
     while (pending.length > 0 && typeof pending[0] !== "function" && pending[0].target === batch[0].target) batch.push(pending.shift());
     try {
-      await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
-    } catch {
-      continue;
+      const response = await fetch("/api/input", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batch) });
+      if (!response.ok) throw new Error((await response.json()).error ?? "the tab did not accept input");
+    } catch (error) {
+      noteNav("Input failed: " + (error instanceof Error ? error.message : String(error)));
     }
   }
   flowing = false;
@@ -172,7 +174,8 @@ function idle(message) {
   screen.hidden = true;
   live.hidden = true;
   hint.hidden = true;
-  address.textContent = "";
+  current = undefined;
+  toolbar();
   note.hidden = false;
   note.textContent = message;
 }
@@ -276,18 +279,17 @@ function render(tabs) {
     item.append(card, where, page);
     item.onclick = () => {
       if (!tab.live) return;
-      address.textContent = tab.url;
       watch(tab.target);
       render(tabs);
       if (!isPhone()) capture.focus();
     };
     list.append(item);
-    if (tab.target === selected) address.textContent = tab.live ? tab.url : "tab is gone";
   }
+  current = tabs.find((tab) => tab.target === selected);
+  toolbar();
   if (selected !== null && !tabs.some((tab) => tab.target === selected && tab.live)) watch(null);
   const shown = tabs.filter((tab) => tab.live);
   if (selected === null && tabs.length === 1 && shown.length === 1) {
-    address.textContent = shown[0].url;
     watch(shown[0].target);
     render(tabs);
   }
@@ -318,6 +320,7 @@ let ctrlClick = false;
 let downButton = "left";
 
 function mouse(action, event, lost) {
+  if (screen.hidden) return;
   const buttons = ctrlClick ? (event.buttons === 0 ? 0 : 2) : event.buttons;
   const named = ctrlClick ? "right" : BUTTONS[event.button] ?? "left";
   const button = action === "move" ? heldButton(buttons) : lost ? downButton : named;
@@ -368,12 +371,12 @@ screen.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 const HOST_ZOOM = ["+", "=", "-", "0"];
-const HOST_WINDOW = ["r", "l", "t", "w", "n", "q"];
+const HOST_WINDOW = ["t", "w", "n", "q"];
 const HOST_TOOLS = ["KeyI", "KeyJ", "KeyC"];
 
 function keepsForHost(event) {
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (["F5", "F11", "F12"].includes(key)) return true;
+  if (["F11", "F12"].includes(key)) return true;
   if (event.ctrlKey && ["Tab", "PageUp", "PageDown"].includes(key)) return true;
   if (mac && event.ctrlKey && event.metaKey) return key === "f";
   const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
@@ -396,6 +399,12 @@ const unreadable = (event) => composing || event.isComposing || event.keyCode ==
 
 capture.addEventListener("keydown", (event) => {
   if (selected === null) return;
+  const shortcut = unreadable(event) ? undefined : shortcutFor(event);
+  if (shortcut !== undefined) {
+    event.preventDefault();
+    shortcut();
+    return;
+  }
   if (keepsForHost(event) || unreadable(event)) return;
   const accelerator = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   const letter = event.key.toLowerCase();
@@ -437,53 +446,8 @@ capture.addEventListener("copy", (event) => {
   void copy();
 });
 
-let forgetting = 0;
-function say(text, state) {
-  copied.textContent = text;
-  copied.title = text;
-  copied.className = state;
-  clearTimeout(forgetting);
-  forgetting = setTimeout(() => { copied.textContent = ""; copied.title = ""; }, 5000);
-}
-
-function selection(target) {
-  return ordered(async () => {
-    const response = await fetch("/api/copy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target }) });
-    const answer = await response.json();
-    if (!response.ok) throw new Error(answer.error ?? "the viewer could not read the selection");
-    if (answer.text === null) throw new Error(answer.note ?? "nothing was copied");
-    if (answer.text === "") throw Object.assign(new Error("nothing is selected"), { empty: true });
-    return answer.text;
-  });
-}
-
-async function write(read) {
-  if (navigator.clipboard === undefined) throw new Error("this browser does not allow the viewer to write to the clipboard");
-  if (typeof ClipboardItem === "undefined") {
-    const text = await read;
-    await navigator.clipboard.writeText(text);
-    return text;
-  }
-  let text = "";
-  const blob = read.then((value) => { text = value; return new Blob([value], { type: "text/plain" }); });
-  try {
-    await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
-  } catch (error) {
-    await read;
-    throw error;
-  }
-  return text;
-}
-
-async function copy() {
-  if (selected === null) return;
-  try {
-    const text = await write(selection(selected));
-    say("copied " + Array.from(text).length + " characters", "");
-  } catch (error) {
-    say(error instanceof Error ? error.message : String(error), error.empty === true ? "empty" : "failed");
-  }
-}
+${COPY_SCRIPT}
+${BAR_SCRIPT}
 ${PHONE_SCRIPT}
 refresh();
 setInterval(refresh, 2000);
