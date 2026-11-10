@@ -171,7 +171,7 @@ test("a normal cardd restart does not alert main", async () => {
 });
 
 test("a mate that is not main is never told about cardd probes", async () => {
-  const token = cardd.addLane("second", undefined, tempDir("fleet-home-"));
+  const token = cardd.addLane("second", "main", tempDir("fleet-home-"));
   const second = h.startPi(
     "second",
     {
