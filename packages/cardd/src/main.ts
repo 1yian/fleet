@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { parseAccess } from "./access.ts";
-import { parseBrowserConfig } from "./browser-config.ts";
 import { openDatabase } from "./db.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { stampLogLines } from "./log.ts";
@@ -118,11 +117,14 @@ if (command === "serve") {
     values["access-aud"],
     values["access-email"],
   ]);
+  if (values.browser !== undefined)
+    console.warn(
+      "cardd: --browser is ignored, the fleet has no browser any more. Remove it from the launch arguments; a later release refuses it.",
+    );
   const url = await serve(db, host, Number(port), timings(scale, clock), {
     files: values.board,
     hostnames: values.hostname,
     hosts,
-    browser: values.browser === undefined ? undefined : parseBrowserConfig(values.browser),
     access,
   });
   console.log(`cardd listening on ${url}`);
@@ -207,6 +209,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> [--hosts <json>] [--browser <json>] [--public-host <host> --access-team <team domain> --access-aud <tag> --access-email <email>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project unclone <name> <host> --db <file> | cardd project remove <name> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] [--public-host <host> --access-team <team domain> --access-aud <tag> --access-email <email>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project unclone <name> <host> --db <file> | cardd project remove <name> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
   );
 }

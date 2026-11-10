@@ -11,8 +11,6 @@ import { requireCommentsRead } from "./deliveries.ts";
 import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
 import { dropLostJob, finishJob, ownJob, runningJobs, startJob, touchJob } from "./jobs.ts";
 import { boardView, cardView } from "./board.ts";
-import type { Browser } from "./browser.ts";
-import { isBrowserOp, performBrowserOp, type BrowserOpName } from "./browser-ops.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
@@ -125,7 +123,7 @@ function rework(
   return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
-const HANDLERS: Record<Exclude<OpName, BrowserOpName>, Handler> = {
+const HANDLERS: Record<OpName, Handler> = {
   "maintenance.request": (db, session, raw, timing) =>
     requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
   "maintenance.status": (db, _session, raw) => ({
@@ -368,21 +366,16 @@ export async function performOp(
   args: unknown,
   timing: Timings,
   hosts: Hosts,
-  browser: Browser,
 ): Promise<Done> {
   const roles: readonly string[] = OPS[op].roles;
   if (!roles.includes(session.role)) throw new Error(`${session.role} sessions cannot call ${op}`);
-  if (isBrowserOp(op)) return performBrowserOp(db, browser, session, op, args);
-  const done = await keepingRefusals(db, () => performStored(db, session, op, args, timing, hosts));
-  if (op === "report" && session.card !== null && check(OPS.report.args, args).status === "stopped")
-    await browser.release(session.card);
-  return done;
+  return keepingRefusals(db, () => performStored(db, session, op, args, timing, hosts));
 }
 
 async function performStored(
   db: DatabaseSync,
   session: Session,
-  op: Exclude<OpName, BrowserOpName>,
+  op: OpName,
   args: unknown,
   timing: Timings,
   hosts: Hosts,

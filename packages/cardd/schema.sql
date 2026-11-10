@@ -1,5 +1,3 @@
-CREATE INDEX browser_tabs_open ON browser_tabs (card) WHERE closed_at IS NULL;
-
 CREATE INDEX deliveries_not_taken ON deliveries (session) WHERE intake IN ('waiting', 'resent');
 
 CREATE INDEX entries_by_card ON entries (card, id);
@@ -32,14 +30,6 @@ CREATE TABLE attempts (
   updated_at INTEGER NOT NULL, branch_named INTEGER NOT NULL DEFAULT 1 CHECK (branch_named IN (0, 1)),
   UNIQUE (card, n)
 ) STRICT;
-
-CREATE TABLE browser_tabs (
-  target TEXT PRIMARY KEY,
-  card INTEGER NOT NULL REFERENCES cards (id),
-  label TEXT NOT NULL,
-  opened_at INTEGER NOT NULL,
-  closed_at INTEGER
-, host TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TABLE card_blockers (
   card INTEGER NOT NULL REFERENCES cards (id),
