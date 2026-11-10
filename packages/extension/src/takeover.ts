@@ -18,7 +18,7 @@ const USAGE = `usage:
   fleet-chrome take <tab> --host <host> [--lane <name>] [--endpoint <url>]
 
 <host> is an ssh name that reaches the host of the shared Chrome with no prompt.
-<tab> is a number from list, the start of a tab id, or text of its address or title.
+<tab> is a number from list or the start of a tab id (the second column of list).
 --lane names the Mac profile (one per lane).`;
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -66,12 +66,7 @@ function choose(tabs: readonly Page[], wanted: string | undefined): Page {
   if (wanted === undefined) throw new Error(`name the tab to take:\n${listing(tabs)}`);
   const numbered = /^\d+$/.test(wanted) ? tabs[Number(wanted) - 1] : undefined;
   const found =
-    numbered === undefined
-      ? tabs.filter(
-          (tab) =>
-            tab.id.startsWith(wanted) || tab.url.includes(wanted) || tab.title.includes(wanted),
-        )
-      : [numbered];
+    numbered === undefined ? tabs.filter((tab) => tab.id.startsWith(wanted)) : [numbered];
   const [only] = found;
   if (found.length === 1 && only !== undefined) return only;
   const which = found.length === 0 ? "no tab matches" : "more than one tab matches";

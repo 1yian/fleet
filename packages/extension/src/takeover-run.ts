@@ -7,6 +7,7 @@ import {
   attach,
   blankPage,
   clearOrigin,
+  closePages,
   landOn,
   navigate,
   originOf,
@@ -172,7 +173,9 @@ export class Takeover {
     const { chrome, held } = this.parts;
     const mac = await Cdp.connect(chrome.endpoint);
     try {
-      const sessionId = await attach(mac, await blankPage(mac));
+      const inert = await blankPage(mac);
+      await closePages(mac, inert);
+      const sessionId = await attach(mac, inert);
       await replaceCookies(mac, sessionId, held.urls, []);
       await clearOrigin(mac, sessionId, held.origin);
       say(`Removed the copied session of ${held.origin} from the Mac profile.`);

@@ -5,6 +5,7 @@ import Value from "typebox/value";
 import { CookieSchema, StorageSchema, type Cookie, type Storage } from "./takeover-session.ts";
 
 const LOAD_MS = 30_000;
+const CLOSE_MS = 10_000;
 const STUB_PATH = "/.fleet-takeover";
 const STUB_PAGE = Buffer.from("<!doctype html><title>Fleet Chrome</title>").toString("base64");
 
@@ -45,6 +46,18 @@ export async function pagesOf(cdp: Cdp): Promise<Page[]> {
 export async function blankPage(cdp: Cdp): Promise<string> {
   const created = await cdp.send("Target.createTarget", { url: "about:blank" });
   return parseCdp(CreatedSchema, created, "the new tab").targetId;
+}
+
+export async function closePages(cdp: Cdp, keep: string): Promise<void> {
+  const deadline = Date.now() + CLOSE_MS;
+  for (;;) {
+    const others = (await pagesOf(cdp)).filter((each) => each.id !== keep);
+    if (others.length === 0) return;
+    if (Date.now() > deadline) throw new Error("Chrome did not close its pages");
+    for (const page of others)
+      await cdp.send("Target.closeTarget", { targetId: page.id }).catch(() => undefined);
+    await sleep(50);
+  }
 }
 
 export async function attach(cdp: Cdp, target: string): Promise<string> {
@@ -131,7 +144,7 @@ export async function readStorage(cdp: Cdp, sessionId: string): Promise<Storage>
   const text = await evaluate(
     cdp,
     sessionId,
-    "JSON.stringify({ local: Object.fromEntries(Object.entries(localStorage)), tab: Object.fromEntries(Object.entries(sessionStorage)) })",
+    "JSON.stringify(Object.fromEntries(Object.entries(localStorage)))",
   );
   if (typeof text !== "string") throw new Error("the page gave no storage");
   const parsed: unknown = JSON.parse(text);
@@ -142,7 +155,7 @@ export async function replaceStorage(cdp: Cdp, sessionId: string, storage: Stora
   await evaluate(
     cdp,
     sessionId,
-    `(() => { const wanted = ${JSON.stringify(storage)}; for (const [name, area] of [["local", localStorage], ["tab", sessionStorage]]) { area.clear(); for (const [key, value] of Object.entries(wanted[name])) area.setItem(key, value); } return true; })()`,
+    `(() => { localStorage.clear(); for (const [key, value] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(key, value); return true; })()`,
   );
 }
 

@@ -19,10 +19,7 @@ export const CookieSchema = Type.Object({
   partitionKey: Type.Optional(PartitionKeySchema),
 });
 
-export const StorageSchema = Type.Object({
-  local: Type.Record(Type.String(), Type.String()),
-  tab: Type.Record(Type.String(), Type.String()),
-});
+export const StorageSchema = Type.Record(Type.String(), Type.String());
 
 export type Cookie = Static<typeof CookieSchema>;
 export type Storage = Static<typeof StorageSchema>;
@@ -67,14 +64,11 @@ export function changes(held: Session, now: Session): string[] {
   if (held.storage === undefined || now.storage === undefined) return cookies;
   return [
     ...cookies,
-    ...differing(held.storage.local, now.storage.local).map((key) => `${key} (localStorage)`),
-    ...differing(held.storage.tab, now.storage.tab).map((key) => `${key} (sessionStorage)`),
+    ...differing(held.storage, now.storage).map((key) => `${key} (localStorage)`),
   ];
 }
 
 export function counts(session: Session): string {
-  const storage = session.storage;
-  const local = storage === undefined ? 0 : Object.keys(storage.local).length;
-  const tab = storage === undefined ? 0 : Object.keys(storage.tab).length;
-  return `${String(session.cookies.length)} cookies, ${String(local)} localStorage items, ${String(tab)} sessionStorage items`;
+  const local = session.storage === undefined ? 0 : Object.keys(session.storage).length;
+  return `${String(session.cookies.length)} cookies, ${String(local)} localStorage items`;
 }

@@ -15,7 +15,6 @@ const PAGE = `<!doctype html><title>Auth app</title><body style="font-family:mon
   <input id="pass" type="password" autocomplete="current-password">
   <button id="go" type="submit">Sign in</button>
 </form>
-<textarea id="draft"></textarea>
 <script>
   const show = async () => {
     const me = await (await fetch("/me")).json();
@@ -30,9 +29,6 @@ const PAGE = `<!doctype html><title>Auth app</title><body style="font-family:mon
     if (answer.ok) localStorage.setItem("token", (await answer.json()).token);
     await show();
   };
-  const draft = document.getElementById("draft");
-  draft.value = sessionStorage.getItem("draft") ?? "";
-  draft.oninput = () => sessionStorage.setItem("draft", draft.value);
   show();
 </script></body>`;
 
@@ -147,6 +143,9 @@ const PAGES: Readonly<Record<string, Reply>> = {
         "set-cookie": `sid=${cookieOf(request, "sid") ?? ""}; HttpOnly; Path=/; SameSite=Lax; Max-Age=7200`,
       })
       .end();
+  },
+  "/renew": (_request, response) => {
+    response.writeHead(204, { "set-cookie": "renewed=again; Path=/; Max-Age=3600" }).end();
   },
   "/pref": (_request, response, url) => {
     response
