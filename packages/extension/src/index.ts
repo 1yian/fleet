@@ -304,6 +304,7 @@ function start(
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);
   applyPolicies(pi, ctx, role);
   pi.on("session_shutdown", () => {
+    worker?.dispose();
     link.stop();
   });
   registerIntake(pi, link);

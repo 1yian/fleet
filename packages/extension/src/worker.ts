@@ -77,6 +77,7 @@ export class WorkerRun {
   private recoveryCheck = false;
   private lastText = "";
   private paneEpoch = 0;
+  private disposed = false;
   private recheck: ReturnType<typeof setTimeout> | undefined;
   private readonly link: Link;
   private readonly jobs: Jobs;
@@ -95,6 +96,11 @@ export class WorkerRun {
     this.recoveryCheck = false;
   }
 
+  dispose(): void {
+    this.disposed = true;
+    clearTimeout(this.recheck);
+  }
+
   private async settlePane(fallback: boolean): Promise<void> {
     const epoch = ++this.paneEpoch;
     clearTimeout(this.recheck);
@@ -102,7 +108,7 @@ export class WorkerRun {
       (shown) => shown.attention === "blocked",
       () => fallback,
     );
-    if (epoch !== this.paneEpoch) return;
+    if (this.disposed || epoch !== this.paneEpoch) return;
     this.failures.obligation(blocked ? BLOCKED_PANE : undefined);
     if (!blocked) return;
     this.recheck = setTimeout(() => {
