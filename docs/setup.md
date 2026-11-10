@@ -140,7 +140,7 @@ The board has no login of its own, so a public link needs a gate in front of it.
 --access-email owner@example.com
 ```
 
-`--access-team` is the team domain of the Access login, `--access-aud` is the AUD tag on the application's Overview page, and `--access-email` is the one person who may open the board. A partial or malformed set stops `cardd` at start and says which value is wrong. Add them to the command in the launchd plist, then `launchctl bootout` and `launchctl bootstrap` the job (the plist change does not reach a `kickstart`).
+`--access-team` is the team domain of the Access login, `--access-aud` is the AUD tag on the application's Overview page, and `--access-email` is the one person who may open the board. A partial or malformed set stops `cardd` at start and says which value is wrong, and so does a `--hostname` that is the public host. Add them to the command in the launchd plist, then `launchctl bootout` and `launchctl bootstrap` the job (the plist change does not reach a `kickstart`).
 
 The tunnel must send the public host's own Host header, and nothing may rewrite it. In the tunnel's ingress, point the public host at `cardd`'s tailnet address and leave `httpHostHeader` out:
 
