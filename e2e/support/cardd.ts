@@ -171,6 +171,12 @@ export class Cardd {
     db.close();
   }
 
+  endAttemptsByHand(card: number): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.prepare("UPDATE attempts SET state = 'ended' WHERE card = ?").run(card);
+    db.close();
+  }
+
   refuseBrowserTabRetirement(): void {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     db.exec(

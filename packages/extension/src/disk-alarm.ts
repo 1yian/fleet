@@ -26,6 +26,7 @@ export interface Alert {
 }
 
 interface Crossing {
+  readonly key: string;
   readonly use: FilesystemUse;
   readonly metric: Metric;
   readonly percent: number;
@@ -53,31 +54,31 @@ function readHeld(home: string): Set<string> {
 }
 
 function saveHeld(home: string, held: ReadonlySet<string>): void {
-  mkdirSync(join(home, "state"), { recursive: true });
-  writeFileSync(join(home, ALARMS_FILE), JSON.stringify([...held].sort()));
+  try {
+    mkdirSync(join(home, "state"), { recursive: true });
+    writeFileSync(join(home, ALARMS_FILE), JSON.stringify([...held].sort()));
+  } catch {
+    return;
+  }
 }
 
 function crossingsIn(
   host: string,
   uses: readonly FilesystemUse[],
   held: Set<string>,
-): { fresh: Crossing[]; changed: boolean } {
+): { fresh: Crossing[]; cleared: boolean } {
   const fresh: Crossing[] = [];
-  let changed = false;
+  let cleared = false;
   for (const use of uses) {
     for (const metric of METRICS) {
       const percent = percentUsed(use, metric);
       if (percent === undefined) continue;
       const key = [host, use.path, metric].join("|");
-      if (percent < ALARM_PERCENT) changed = held.delete(key) || changed;
-      else if (!held.has(key)) {
-        held.add(key);
-        changed = true;
-        fresh.push({ use, metric, percent });
-      }
+      if (percent < ALARM_PERCENT) cleared = held.delete(key) || cleared;
+      else if (!held.has(key)) fresh.push({ key, use, metric, percent });
     }
   }
-  return { fresh, changed };
+  return { fresh, cleared };
 }
 
 function sizesOf({ use, metric }: Crossing): string {
@@ -120,7 +121,7 @@ async function breakdownOf(
 export function diskWatch(
   home: string,
   ask: Ask,
-  send: (alert: Alert) => void,
+  send: (alert: Alert) => boolean,
   now: () => number = Date.now,
 ): (host: string) => Promise<void> {
   const held = readHeld(home);
@@ -136,11 +137,13 @@ export function diskWatch(
   };
 
   const announce = async (host: string, label: string, uses: readonly FilesystemUse[]) => {
-    const { fresh, changed } = crossingsIn(host, uses, held);
-    if (changed) saveHeld(home, held);
+    const { fresh, cleared } = crossingsIn(host, uses, held);
+    if (cleared) saveHeld(home, held);
     for (const crossing of fresh) {
       const found = await breakdownOf(ask, host, crossing);
-      send({ text: described(label, crossing, found), urgent: true });
+      if (!send({ text: described(label, crossing, found), urgent: true })) return;
+      held.add(crossing.key);
+      saveHeld(home, held);
     }
   };
 

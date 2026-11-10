@@ -1,4 +1,12 @@
-import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync, type Dirent } from "node:fs";
+import {
+  lstatSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  unlinkSync,
+  type Dirent,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +18,7 @@ const CLOSED_KEEP_MS = 7 * DAY_MS;
 const CARD_FOLDER = /^c-\d+$/;
 const CLOSED_MARK = "closed";
 const TMP_FOLDER = "tmp";
+const REMOVING_PREFIX = ".removing-";
 
 export function hostDir(): string {
   const set = process.env["FLEET_HOST_DIR"];
@@ -30,8 +39,8 @@ ${CARD_NUMBER_ONLY}
 dir=${SHELL_HOST_DIR}
 scratch=$dir/scratch/c-$1
 cache=$dir/node-compile-cache
-mkdir -p "$scratch/${TMP_FOLDER}" "$cache"
 rm -f "$scratch/${CLOSED_MARK}"
+mkdir -p "$scratch/${TMP_FOLDER}" "$cache"
 printf '%s\\n%s\\n' "$scratch" "$cache"`;
 
 export const CLOSE_SCRATCH_SCRIPT = `set -eu
@@ -136,18 +145,30 @@ function removed(path: string): boolean {
   }
 }
 
+function takeAway(card: string, part: string | undefined): boolean {
+  if (closedSince(card) === undefined) return false;
+  const root = scratchRoot();
+  const aside = join(root, `${REMOVING_PREFIX}${String(process.pid)}-${card}`);
+  try {
+    renameSync(join(root, card, ...(part === undefined ? [] : [part])), aside);
+  } catch {
+    return false;
+  }
+  return removed(aside);
+}
+
 function tidyClosedCards(now: number): string[] {
   const root = scratchRoot();
   const gone: string[] = [];
-  const folders = entriesOf(root).filter(
-    (entry) => entry.isDirectory() && CARD_FOLDER.test(entry.name),
-  );
-  for (const { name: card } of folders) {
+  const folders = entriesOf(root).filter((entry) => entry.isDirectory());
+  for (const { name } of folders) {
+    if (name.startsWith(REMOVING_PREFIX)) removed(join(root, name));
+  }
+  for (const { name: card } of folders.filter((entry) => CARD_FOLDER.test(entry.name))) {
     const closed = closedSince(card);
     if (closed === undefined) continue;
-    const folder = join(root, card);
-    if (now - closed < CLOSED_KEEP_MS) removed(join(folder, TMP_FOLDER));
-    else if (removed(folder)) gone.push(card);
+    if (now - closed < CLOSED_KEEP_MS) takeAway(card, TMP_FOLDER);
+    else if (takeAway(card, undefined)) gone.push(card);
   }
   return gone;
 }

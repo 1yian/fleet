@@ -222,6 +222,13 @@ async function costLines(config: LaneConfig): Promise<string[]> {
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
+function deliver(pi: ExtensionAPI, customType: string, content: string, urgent: boolean): void {
+  pi.sendMessage(
+    { customType, content, display: true },
+    urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
+  );
+}
+
 function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   const unreachable = new Set<string>();
   const unshared = new Set<string>();
@@ -230,11 +237,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   const isDown = (): boolean => shutDown;
   const tell = (lines: readonly string[], urgent: boolean): void => {
     if (lines.length === 0 || shutDown) return;
-    const content = `[fleet] lanes: ${lines.join("; ")}`;
-    pi.sendMessage(
-      { customType: "fleet-lanes", content, display: true },
-      urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
-    );
+    deliver(pi, "fleet-lanes", `[fleet] lanes: ${lines.join("; ")}`, urgent);
   };
   const share = async (host: string): Promise<void> => {
     try {
@@ -247,33 +250,42 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
       tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
     }
   };
-  const sayDisk = ({ text, urgent }: Alert): void => {
-    if (shutDown) return;
-    pi.sendMessage(
-      { customType: "fleet-disk", content: `[fleet] disk: ${text}`, display: true },
-      urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
-    );
+  const sayDisk = ({ text, urgent }: Alert): boolean => {
+    if (shutDown) return false;
+    deliver(pi, "fleet-disk", `[fleet] disk: ${text}`, urgent);
+    return true;
   };
   const watchDisk = diskWatch(home, (host, args) => fleet(config, host, args), sayDisk);
+  const reportDown = (host: string, error: unknown): void => {
+    if (unreachable.has(host)) return;
+    unreachable.add(host);
+    const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
+    tell([`${host} ${why}: ${messageOf(error)}`], true);
+  };
+  const maintain = async (host: string): Promise<void> => {
+    await share(host);
+    const out = await rows(config, host, ["up", "--maintenance"]);
+    if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
+    const of = (action: string) => out.filter((row) => text(row, "action") === action);
+    tell(
+      of("started").map((row) => `${text(row, "lane")} started on ${host}`),
+      false,
+    );
+    const held = (row: Record<string, unknown>) =>
+      `${text(row, "lane")} on ${host} is held: ${text(row, "detail")}`;
+    tell(of("held").map(held), true);
+  };
   const checkHost = async (host: string): Promise<void> => {
     try {
-      await share(host);
-      const out = await rows(config, host, ["up", "--maintenance"]);
-      if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
-      const of = (action: string) => out.filter((row) => text(row, "action") === action);
-      tell(
-        of("started").map((row) => `${text(row, "lane")} started on ${host}`),
-        false,
-      );
-      const held = (row: Record<string, unknown>) =>
-        `${text(row, "lane")} on ${host} is held: ${text(row, "detail")}`;
-      tell(of("held").map(held), true);
+      await maintain(host);
+    } catch (error) {
+      reportDown(host, error);
+      if (error instanceof HostUnreachable) return;
+    }
+    try {
       await watchDisk(host);
     } catch (error) {
-      if (unreachable.has(host)) return;
-      unreachable.add(host);
-      const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-      tell([`${host} ${why}: ${messageOf(error)}`], true);
+      reportDown(host, error);
     }
   };
   const dailyCost = async (): Promise<void> => {
