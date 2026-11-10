@@ -13,8 +13,13 @@ export type Push = Extract<ServerMessage, { t: "entry" }>;
 type Result = Extract<ServerMessage, { t: "result" }>;
 
 const CLOSE_NOT_LIVE = 4001;
+const CLOSE_SUPERSEDED = 4002;
 const CLOSE_UNREADABLE = 4003;
 const MAX_BACKOFF_MS = 10_000;
+
+function stopsForGood(code: number): boolean {
+  return code === CLOSE_NOT_LIVE || code === CLOSE_SUPERSEDED;
+}
 
 function checkResult<N extends OpName>(op: N, value: unknown): OpResult<N>;
 function checkResult(op: OpName, value: unknown): unknown {
@@ -46,6 +51,7 @@ export class Link {
   private readonly pending = new Map<number, (result: Result) => void>();
   private readonly untoldAcks = new Set<number>();
   private readonly options: LinkOptions;
+  private announced = false;
 
   constructor(options: LinkOptions) {
     this.options = options;
@@ -58,13 +64,15 @@ export class Link {
     socket.addEventListener("open", () => {
       const { process: id } = this.options;
       const hello = {
-        t: "hello",
+        t: "hello" as const,
         token: this.options.token,
         inFile: this.options.inFile(),
         maintenance: this.options.onMaintenance !== undefined,
         running: this.options.running?.() === true,
-      } as const;
-      this.send(id === undefined ? hello : { ...hello, process: id });
+        ...(id === undefined ? {} : { process: id }),
+        ...(this.announced ? {} : { started: true }),
+      };
+      this.send(hello);
     });
     socket.addEventListener("message", (event) => {
       let message: ServerMessage;
@@ -80,7 +88,7 @@ export class Link {
     socket.addEventListener("close", (event) => {
       this.connected = false;
       this.failPending("cardd closed the connection");
-      if (event.code === CLOSE_NOT_LIVE) this.stopped = true;
+      if (stopsForGood(event.code)) this.stopped = true;
       if (this.stopped) return;
       setTimeout(() => {
         this.start();
@@ -147,6 +155,7 @@ export class Link {
 
   private welcomed(): void {
     this.connected = true;
+    this.announced = true;
     this.backoff = 250;
     for (const entry of this.untoldAcks) this.send({ t: "ack", entry });
     this.untoldAcks.clear();

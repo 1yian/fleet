@@ -9,7 +9,17 @@ function entryIdOf(message: unknown): number | undefined {
   return isRecord(details) ? optionalNumber(details, "entryId") : undefined;
 }
 
+function registerReload(pi: ExtensionAPI): void {
+  pi.registerCommand("probe-reload", {
+    description: "Reload extensions in this process",
+    handler: async (_args, ctx) => {
+      await ctx.reload();
+    },
+  });
+}
+
 export default function probe(pi: ExtensionAPI): void {
+  registerReload(pi);
   const url = (process.env["FLEET_CONTROL_URL"] ?? "").replace(/^http/, "ws");
   const socket = new WebSocket(`${url}/probe`);
   const outbox: string[] = [];
@@ -102,5 +112,8 @@ export default function probe(pi: ExtensionAPI): void {
   });
   pi.on("agent_settled", (event) => {
     report({ type: "settled", aborted: event.aborted });
+  });
+  pi.on("session_compact", () => {
+    report({ type: "compacted" });
   });
 }

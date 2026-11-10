@@ -8,13 +8,54 @@ const FALLBACK_COMPACTION = "the conversation compaction failed with no error me
 const PI_FAULT =
   /cannot find (module|package)|ERR_MODULE_NOT_FOUND|failed to load url|does not provide an export/i;
 const FALLBACK = "the model turn failed with no error message";
+const KEY = Symbol.for("fleet:untold-incidents");
+
+interface Untold {
+  clear: boolean;
+  error: string | undefined;
+}
+
+interface Outbox {
+  turn: Untold;
+  compaction: Untold;
+}
+
+function isUntold(value: unknown): value is Untold {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "clear" in value &&
+    typeof value.clear === "boolean" &&
+    "error" in value &&
+    (value.error === undefined || typeof value.error === "string")
+  );
+}
+
+function isOutbox(value: unknown): value is Outbox {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "turn" in value &&
+    isUntold(value.turn) &&
+    "compaction" in value &&
+    isUntold(value.compaction)
+  );
+}
+
+function outbox(): Outbox {
+  const found: unknown = Reflect.get(globalThis, KEY);
+  if (isOutbox(found)) return found;
+  const created: Outbox = {
+    turn: { clear: false, error: undefined },
+    compaction: { clear: false, error: undefined },
+  };
+  Reflect.set(globalThis, KEY, created);
+  return created;
+}
 
 export class Failures {
   private failed: string | undefined;
-  private unsent: string | undefined;
-  private reported = false;
-  private compactionReported = false;
-  private compactionUnsent: string | undefined;
+  private readonly outbox = outbox();
   private compactionPending: string | undefined;
   private readonly link: Link;
   private blockage: Blockage | undefined;
@@ -35,17 +76,17 @@ export class Failures {
     } else if (this.blockage !== undefined) this.blockage.raise(label, this.blockage.now);
   }
 
-  expectCompaction(): void {
-    this.compactionReported = true;
-  }
-
   flush(): void {
-    const error = this.unsent;
-    const compaction = this.compactionUnsent;
-    this.unsent = undefined;
-    this.compactionUnsent = undefined;
-    if (error !== undefined) this.report(error, false, false);
-    if (compaction !== undefined) this.report(compaction, true, false);
+    const kept = [false, true].map((compaction) => {
+      const untold = this.untold(compaction);
+      const taken = { compaction, clear: untold.clear, error: untold.error };
+      untold.clear = false;
+      untold.error = undefined;
+      return taken;
+    });
+    for (const { compaction, clear } of kept) if (clear) this.recovered(compaction);
+    for (const { compaction, error } of kept)
+      if (error !== undefined) this.report(error, compaction, false);
   }
 
   register(pi: ExtensionAPI): void {
@@ -71,9 +112,7 @@ export class Failures {
       compactionSucceeded();
       this.compactionPending = undefined;
       if (this.owed === undefined) blockage.release();
-      if (!this.compactionReported) return;
-      this.compactionReported = false;
-      this.link.call("incident.clear", { compacted: true }).catch(() => undefined);
+      this.recovered(true);
     });
     pi.on("agent_settled", (event) => {
       if (this.owed !== undefined) blockage.raise(this.owed, blockage.now);
@@ -83,10 +122,19 @@ export class Failures {
       if (pending !== undefined && this.failed === undefined)
         this.raisePiFault(pending, true, blockage.now);
       if (this.failed !== undefined) this.report(this.failed, false, true);
-      else if (this.reported) {
-        this.reported = false;
-        this.link.call("incident.clear", {}).catch(() => undefined);
-      }
+      else this.recovered(false);
+    });
+  }
+
+  private untold(compaction: boolean): Untold {
+    return compaction ? this.outbox.compaction : this.outbox.turn;
+  }
+
+  private recovered(compaction: boolean): void {
+    const untold = this.untold(compaction);
+    untold.error = undefined;
+    this.link.call("incident.clear", compaction ? { compacted: true } : {}).catch(() => {
+      untold.clear = true;
     });
   }
 
@@ -98,13 +146,10 @@ export class Failures {
     const resume = resumeAt === undefined ? {} : { resumeAt };
     this.link.call("incident.report", { error, ...phase, ...resume }).then(
       () => {
-        if (compaction) this.compactionReported = true;
-        else this.reported = true;
         if (blocks) this.raisePiFault(error, compaction, since);
       },
       () => {
-        if (compaction) this.compactionUnsent = error;
-        else this.unsent = error;
+        this.untold(compaction).error = error;
         if (blocks) this.raisePiFault(error, compaction, since);
       },
     );

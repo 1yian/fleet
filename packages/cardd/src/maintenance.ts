@@ -66,18 +66,18 @@ function settle(
 export function adoptMaintenance(
   db: DatabaseSync,
   session: string,
-  process: string | undefined,
+  started: boolean,
   supported: boolean,
 ): string[] {
   db.prepare("UPDATE sessions SET maintenance = ? WHERE id = ?").run(Number(supported), session);
-  if (process === undefined) return [];
-  const moved = db
+  if (!started) return [];
+  const open = db
     .prepare(
-      `SELECT id FROM maintenance WHERE session = ? AND process IS NOT ?
+      `SELECT id FROM maintenance WHERE session = ?
        AND (state = 'reloading' OR (state = 'pending' AND kind = 'reload'))`,
     )
-    .all(session, process);
-  return moved.flatMap((row) =>
+    .all(session);
+  return open.flatMap((row) =>
     settle(db, Number(row["id"]), "completed", "reconnected on a new process"),
   );
 }

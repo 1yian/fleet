@@ -9,6 +9,7 @@ import {
   WORKER_WAIT_MS,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
+import type { Move } from "../support/harness.ts";
 
 let parts: DispatchLab;
 beforeEach(async () => {
@@ -39,30 +40,38 @@ async function seenCount(count: number): Promise<string[]> {
 
 test("a restart with avoid starts the worker's Pi with PI_TIERS_AVOID, and a plain restart clears it", async () => {
   const { h, mate } = parts;
-  h.onModel(() => ({ tool: "board", args: {} }), "mate");
-  h.onModel(
-    () => ({
-      tool: "dispatch",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "site",
-        intent: "Fix the scrollbar",
-        host: "local",
-        task: "fix the scrollbar",
+  const asks: Record<string, readonly Move[]> = {
+    "ship the scrollbar fix": [
+      { tool: "board", args: {} },
+      {
+        tool: "dispatch",
+        args: {
+          title: "Users see one scrollbar",
+          name: "one-scrollbar",
+          kind: "ship",
+          project: "site",
+          intent: "Fix the scrollbar",
+          host: "local",
+          task: "fix the scrollbar",
+        },
       },
-    }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(
-    () => ({ tool: "restart_card", args: { card: 1, key: "a", avoid: ["claude-max", "openai"] } }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "restarted avoiding" }), "mate");
-  h.onModel(() => ({ tool: "restart_card", args: { card: 1, key: "b" } }), "mate");
-  h.onModel(() => ({ text: "restarted plain" }), "mate");
+      { text: "dispatched" },
+    ],
+    "restart it, avoiding claude-max and openai": [
+      { tool: "restart_card", args: { card: 1, key: "a", avoid: ["claude-max", "openai"] } },
+      { text: "restarted avoiding" },
+    ],
+    "restart it again": [
+      { tool: "restart_card", args: { card: 1, key: "b" } },
+      { text: "restarted plain" },
+    ],
+  };
+  for (let call = 0; call < 40; call += 1)
+    h.onModel((turns) => {
+      const at = turns.findLastIndex((turn) => turn.role === "user" && turn.text in asks);
+      const done = turns.slice(at).filter((turn) => turn.role === "toolResult").length;
+      return asks[turns[at]?.text ?? ""]?.[done] ?? { text: "noted" };
+    }, "mate");
   for (let turn = 0; turn < 3; turn += 1) {
     h.onModel(
       () => ({ tool: "run_long", args: { label: `wait${String(turn)}`, command: "sleep 600" } }),
