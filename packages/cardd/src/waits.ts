@@ -8,7 +8,7 @@ import {
 } from "@fleet/protocol";
 import { requireCaptainWords } from "./authority.ts";
 import type { Standing } from "./status.ts";
-import { reachable, workerOf, type Loaded, type Session } from "./store.ts";
+import { mainLane, reachable, type Loaded, type Session } from "./store.ts";
 
 type Watching = Pick<DatedWait, "watch" | "what">;
 
@@ -38,7 +38,14 @@ function scheduleWatch(db: DatabaseSync, id: number): Watching {
 
 function workerWatch(db: DatabaseSync, card: number): Watching {
   const name = `the worker of c-${String(card)}`;
-  return workerOf(db, card) === undefined ? gone(`${name} is not running`) : alive(name);
+  const connected = db
+    .prepare(
+      `SELECT 1 FROM sessions s JOIN attempts a ON a.id = s.attempt
+       WHERE a.card = ? AND a.state IN ('starting', 'active')
+         AND s.state IN ('starting', 'idle', 'running', 'waiting')`,
+    )
+    .get(card);
+  return connected === undefined ? gone(`${name} is not running`) : alive(name);
 }
 
 const CHECKED: Record<"job" | "schedule" | "worker", (db: DatabaseSync, id: number) => Watching> = {
@@ -85,9 +92,26 @@ function statedWaits(args: OpArgs<"hold">): Wait[] {
   return waits;
 }
 
-function requireWait(db: DatabaseSync, args: OpArgs<"hold">): Wait {
+const LANE_OF: Record<"job" | "schedule" | "worker", string> = {
+  job: `SELECT c.lane AS lane FROM jobs j JOIN attempts a ON a.id = j.attempt
+    JOIN cards c ON c.id = a.card WHERE j.id = ?`,
+  schedule: "SELECT owner AS lane FROM schedules WHERE id = ?",
+  worker: "SELECT lane FROM cards WHERE id = ?",
+};
+
+function requireReach(db: DatabaseSync, session: Session, wait: Wait): void {
+  if (!("id" in wait) || session.lane === mainLane(db)) return;
+  const lane = db.prepare(LANE_OF[wait.by]).get(wait.id)?.["lane"];
+  if (lane !== session.lane)
+    throw new Error(
+      `${wait.by} ${String(wait.id)} is not in your lane, or does not exist: a dated hold can watch only a job, schedule, or worker of its own lane`,
+    );
+}
+
+function requireWait(db: DatabaseSync, session: Session, args: OpArgs<"hold">): Wait {
   const [wait, ...extra] = statedWaits(args);
   if (wait === undefined || extra.length > 0) throw new Error(WAIT_HELP);
+  requireReach(db, session, wait);
   const seen = watching(db, wait);
   if (seen.watch === "gone")
     throw new Error(`a dated hold needs a watcher that runs now, and ${seen.what}`);
@@ -139,5 +163,8 @@ export function dating(
     if (stray.length > 0) throw new Error(`${stray.join(", ")} only go with until`);
     return { wait: null, remaining: [] };
   }
-  return { wait: requireWait(db, args), remaining: requireCards(db, session, own, args.remaining) };
+  return {
+    wait: requireWait(db, session, args),
+    remaining: requireCards(db, session, own, args.remaining),
+  };
 }

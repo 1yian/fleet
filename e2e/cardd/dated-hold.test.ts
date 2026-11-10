@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import {
   CardViewSchema,
   check,
+  idlePark,
   OPS,
   waitLine,
   type BoardCard,
@@ -198,7 +199,7 @@ test("a job that watches the event is shown running, and shown gone when it fini
   );
   await assert.rejects(
     cleo.call("hold", date(await newCard(cleo, "Typo"), { job: 99_999, remaining: [] })),
-    { message: /job 99999 does not exist/ },
+    { message: /job 99999 is not in your lane, or does not exist/ },
   );
 
   const silent = check(
@@ -235,7 +236,7 @@ test("a schedule that wakes the mate is shown running, and shown gone when it is
   await assert.rejects(
     cleo.call("hold", date(await newCard(cleo, "Again"), { schedule, remaining: [] })),
     {
-      message: /needs a watcher that runs now, and schedule \d+ is gone/,
+      message: /schedule \d+ is not in your lane, or does not exist/,
     },
   );
 });
@@ -260,6 +261,90 @@ test("a worker named as the watcher is shown gone once its card closes", async (
     cleo.call("hold", date(await newCard(cleo, "Again"), { worker: watched.id, remaining: [] })),
     { message: /the worker of c-\d+ is not running/ },
   );
+});
+
+test("a worker whose Pi has exited is not a watcher: its hold reads gone, and a new hold on it is refused", async () => {
+  const watched = await newCard(cleo, "Watched card");
+  const worker = await fleet.cardd.connect(await begin(cleo, watched));
+  const waiter = await newCard(cleo, "Waiter card");
+  await cleo.call("hold", date(waiter, { worker: watched.id, remaining: [] }));
+  assert.equal((await waitOf(waiter))?.watch, "running");
+
+  await worker.close();
+  const gone = await waitReads(waiter, "gone");
+  assert.equal(gone.what, `the worker of c-${String(watched.id)} is not running`);
+  assert.equal(idlePark(gone), true);
+  await assert.rejects(
+    cleo.call("hold", date(await newCard(cleo, "Again"), { worker: watched.id, remaining: [] })),
+    { message: /needs a watcher that runs now, and the worker of c-\d+ is not running/ },
+  );
+});
+
+test("a mate can watch only its own lane's job, schedule, and worker, and a refusal tells nothing about them", async () => {
+  const quinn = await fleet.cardd.connect(fleet.cardd.addLane("quinn", "main"));
+  const build = await newCard(cleo, "Build card");
+  const worker = await fleet.cardd.connect(await begin(cleo, build));
+  const job = check(
+    OPS["job.start"].result,
+    await worker.call("job.start", { label: "secret release build", command: "make release" }),
+  ).job;
+  const beat = setInterval(() => {
+    worker.call("job.alive", { job }).catch(() => undefined);
+  }, 20);
+  const schedule = check(
+    OPS["schedule.set"].result,
+    await cleo.call("schedule.set", {
+      to: "cleo",
+      at: "05:17",
+      timezone: "Pacific/Auckland",
+      text: "Check the quota.",
+    }),
+  ).id;
+  const mine = await newCard(quinn, "Quinn card");
+  const foreign: [string, Record<string, number>][] = [
+    ["job", { job }],
+    ["schedule", { schedule }],
+    ["worker", { worker: build.id }],
+  ];
+  const absent: Record<string, Record<string, number>> = {
+    job: { job: 99_999 },
+    schedule: { schedule: 99_999 },
+    worker: { worker: 99_999 },
+  };
+  const refusal = (card: Card, args: Record<string, number>): Promise<string> =>
+    quinn.call("hold", date(card, { ...args, remaining: [] })).then(
+      () => "accepted",
+      (rejected: unknown) => (rejected instanceof Error ? rejected.message : String(rejected)),
+    );
+  try {
+    for (const [kind, args] of foreign) {
+      const message = await refusal(mine, args);
+      assert.match(message, /^\w+ \d+ is not in your lane, or does not exist/);
+      assert.doesNotMatch(message, /secret|release|05:17|Auckland|running|finished/);
+      const missing = await refusal(mine, absent[kind] ?? {});
+      assert.equal(
+        message.replace(/\d+/, "N"),
+        missing.replace(/\d+/, "N"),
+        `a ${kind} of another lane reads like one that does not exist`,
+      );
+    }
+    await worker.call("job.finish", { job, exitCode: 0, outputTail: "done" });
+    assert.match(await refusal(mine, { job }), /^job \d+ is not in your lane, or does not exist/);
+    assert.deepEqual(await holdEntries(mine), []);
+    assert.equal(await status(quinn, mine), "queued");
+
+    const mains = await newCard(fleet.main, "Main's own card");
+    await fleet.main.call("hold", date(mains, { schedule, remaining: [] }));
+    const seen = check(OPS.board.result, await fleet.main.call("board", {})).find(
+      (each) => each.id === mains.id,
+    );
+    assert.deepEqual(
+      [seen?.datedWait?.watch, seen?.datedWait?.what],
+      ["running", `schedule ${String(schedule)} (05:17 Pacific/Auckland)`],
+    );
+  } finally {
+    clearInterval(beat);
+  }
 });
 
 test("a dated hold from before this information was kept reads as an idle park, and re-dating it keeps its age", async () => {

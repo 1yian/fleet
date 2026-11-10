@@ -106,15 +106,27 @@ function openItems(
 
 const waited = (now: number, since: number): string => `${String(minutesSince(now, since))} min`;
 
-function lastBundle(db: DatabaseSync, to: string): { at: number; count: number } {
+interface LastBundle {
+  readonly at: number;
+  readonly informed: number;
+  readonly count: number;
+}
+
+function lastBundle(db: DatabaseSync, to: string): LastBundle {
   const row = db
     .prepare(
-      `SELECT count(*) AS count, coalesce(max(created_at), 0) AS at FROM entries
+      `SELECT count(*) AS count, coalesce(max(created_at), 0) AS at,
+         coalesce(max(CASE WHEN json_extract(fields, '$.watched') > 0 THEN created_at END), 0) AS informed
+       FROM entries
        WHERE author = 'check' AND json_extract(fields, '$.condition') = ?1
          AND json_extract(fields, '$.to') = ?2`,
     )
     .get(BUNDLE, to);
-  return { at: Number(row?.["at"]), count: Number(row?.["count"]) };
+  return {
+    at: Number(row?.["at"]),
+    informed: Number(row?.["informed"]),
+    count: Number(row?.["count"]),
+  };
 }
 
 const group = (title: string, items: readonly Item[]): string[] =>
@@ -123,9 +135,16 @@ const group = (title: string, items: readonly Item[]): string[] =>
 const inGroup = (items: readonly Item[], wanted: Group): Item[] =>
   items.filter(({ group: each }) => each === wanted);
 
+const plural = (n: number, one: string, many: string): string =>
+  `${String(n)} ${n === 1 ? one : many}`;
+
 function bundleText(items: readonly Item[]): string {
   const acting = items.filter(({ group: each }) => each !== "watched");
-  const count = acting.length === 1 ? "1 card needs" : `${String(acting.length)} cards need`;
+  const watched = inGroup(items, "watched");
+  const lead =
+    acting.length === 0
+      ? `information: ${plural(watched.length, "dated wait", "dated waits")}, nothing needs action`
+      : `reminder: ${acting.length === 1 ? "1 card needs" : `${String(acting.length)} cards need`} a decision or action from you`;
   const sections = [
     ...group(
       "You can settle or close these yourself. Act on each now. A dated wait that says nothing is running is an idle park: start what it waits on, or clear the hold and act:",
@@ -137,10 +156,10 @@ function bundleText(items: readonly Item[]): string {
     ),
     ...group(
       "Dated waits with something running, an outside date, or the captain's later. Information only, no action now:",
-      inGroup(items, "watched"),
+      watched,
     ),
   ];
-  return `reminder: ${count} a decision or action from you. Date a hold only when a process or an outside event is the blocker, or the captain said later, and say what watches it. Never date a hold to quiet a card.\n${sections.join("\n")}`;
+  return `${lead}. Date a hold only when a process or an outside event is the blocker, or the captain said later, and say what watches it. Never date a hold to quiet a card.\n${sections.join("\n")}`;
 }
 
 export function bundleMatches(
@@ -155,11 +174,13 @@ export function bundleMatches(
     ({ to }) => to,
   );
   return [...byMate].flatMap(([to, items]): BundleMatch[] => {
-    const first = items.find(({ group: each }) => each !== "watched");
-    if (first === undefined || now - first.since < t.waiting) return [];
+    const acting = items.filter(({ group: each }) => each !== "watched");
+    const [first] = acting.length > 0 ? acting : items;
+    if (first === undefined || now - first.since < (acting.length > 0 ? t.waiting : t.informing))
+      return [];
     const last = lastBundle(db, to);
     if (now - last.at < t.waiting) return [];
-    const fields = { to };
+    if (acting.length === 0 && now - last.informed < t.informing) return [];
     return [
       {
         card: first.card,
@@ -167,7 +188,7 @@ export function bundleMatches(
         condition: BUNDLE,
         text: bundleText(items),
         tier: last.count + 1,
-        fields,
+        fields: { to, watched: inGroup(items, "watched").length },
       },
     ];
   });

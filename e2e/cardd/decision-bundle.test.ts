@@ -229,7 +229,7 @@ test("a dated wait with something behind it is listed as information, and an idl
   );
 });
 
-test("dated waits alone send no reminder, and a card held for the captain's later is told apart from one parked with nothing running", async () => {
+test("dated waits alone start no list on the 30 minute cadence, and a card held for the captain's later is told apart from one parked with nothing running", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const quinn = await fleet.cardd.connect(fleet.cardd.addLane("quinn", "main"));
   await blocked(quinn, "Clock for the test");

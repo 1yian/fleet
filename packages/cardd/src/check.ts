@@ -436,15 +436,18 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
       })
       .map(({ card }) => card.id),
   );
-  const matches = [
+  const checks = [
     ...withIncidents(db, workerMatches(db, open, now, t), now, t),
     ...finishedCards(open, t),
-    ...bundleMatches(db, open, waits, now, t),
     ...lostJobMatches(db, now, t),
     ...incidentMatches(db, now, t),
     ...escalationMatches(db, now, t),
     ...holdMatches(db, open, now),
-  ].filter((match) => acting.has(match.card));
+  ];
+  const matches = [
+    ...checks.filter((match) => acting.has(match.card)),
+    ...bundleMatches(db, open, waits, now, t),
+  ];
   clearStopped(db, now, matches);
   const notify = new Set<string>([
     ...lostJobs(db, now, t, grace),
