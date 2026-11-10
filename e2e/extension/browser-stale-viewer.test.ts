@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
 import { WORKER_HOST } from "../support/fleet.ts";
+import { embedLogin, type Embedding, type Login } from "../support/login-embedding.ts";
 import { until } from "../support/login-fixtures.ts";
 import { StaleLink, type Vintage } from "../support/stale-link.ts";
 import { pointInPicture, startViewer, stopViewers, type Viewers } from "../support/viewer.ts";
@@ -10,6 +11,7 @@ import { pointInPicture, startViewer, stopViewers, type Viewers } from "../suppo
 const ENTERED = /a password entered through the viewer is still in this page's form/;
 const TYPED = "S3cr3t-typed-in-a-stale-viewer";
 const PASSWORD_FIELD = { x: 170, y: 86 };
+const REVEAL = { x: 365, y: 86 };
 const PASSWORD_VALUE = 'document.querySelector("input[name=p]").value';
 
 let lab: BrowserLab;
@@ -17,6 +19,7 @@ let client: Client | undefined;
 const viewers: Viewers = [];
 const links: StaleLink[] = [];
 let worker: RawWorker;
+let login: Login;
 let size: { width: number; height: number };
 
 afterEach(async () => {
@@ -31,10 +34,11 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function begin(): Promise<void> {
-  lab = await BrowserLab.start();
+async function begin(embedding: Embedding = "document"): Promise<void> {
+  lab = await BrowserLab.start({ isolated: embedding === "cross-frame" });
   worker = await lab.worker("Users sign in");
   await worker.act({ action: "open", url: lab.site.url("/entry") });
+  login = await embedLogin(lab, worker, embedding);
   const found: unknown = JSON.parse(
     await worker.act({ action: "eval", expression: "[innerWidth, innerHeight]" }),
   );
@@ -63,14 +67,7 @@ async function viewerPage(flags: string[], vintage: Vintage | undefined): Promis
   return page;
 }
 
-async function inChrome(expression: string): Promise<unknown> {
-  const tab = (await lab.chrome.pages()).find((each) =>
-    each.title.startsWith(`c-${String(worker.card.id)} `),
-  );
-  return tab === undefined
-    ? undefined
-    : lab.chrome.evaluate(tab.id, expression).catch(() => undefined);
-}
+const inChrome = (expression: string): Promise<unknown> => login.inChrome(expression);
 
 const passwordIs = (wanted: string): Promise<true> =>
   until(
@@ -78,11 +75,26 @@ const passwordIs = (wanted: string): Promise<true> =>
     `the password field to hold ${wanted}`,
   );
 
-async function typePassword(page: Page): Promise<void> {
-  const point = await pointInPicture(page, size, PASSWORD_FIELD.x, PASSWORD_FIELD.y);
+async function click(page: Page, at: { x: number; y: number }): Promise<void> {
+  const point = await pointInPicture(page, size, at.x, at.y);
   await page.mouse.click(point.x, point.y);
+}
+
+async function typePassword(page: Page): Promise<void> {
+  await click(page, PASSWORD_FIELD);
   await page.keyboard.type(TYPED);
   await passwordIs(TYPED);
+}
+
+async function revealPassword(page: Page): Promise<void> {
+  await click(page, REVEAL);
+  await until(
+    async () =>
+      (await inChrome('document.querySelector("input[name=p]").type')) === "text"
+        ? true
+        : undefined,
+    "the empty password to be revealed before typing",
+  );
 }
 
 const VINTAGES: readonly [Vintage, string][] = [
@@ -110,6 +122,33 @@ for (const [vintage, sends] of VINTAGES) {
       await page.keyboard.press("Backspace");
       await passwordIs("");
       assert.equal(await worker.act({ action: "eval", expression: PASSWORD_VALUE }), '""');
+      assert.ok((await worker.shoot()).length > 0);
+    });
+  }
+}
+
+for (const embedding of ["closed-shadow", "cross-frame"] as const) {
+  for (const flags of [["--captain"], []]) {
+    const mode = flags.length === 0 ? "gated" : "captain's";
+    test(`a ${mode} viewer that sends no build id cannot put a password revealed before typing in a ${embedding} past the worker`, async () => {
+      await begin(embedding);
+      const page = await viewerPage(flags, "no-build");
+      await revealPassword(page);
+      await typePassword(page);
+      await assert.rejects(
+        worker.act({ action: "eval", expression: "location.pathname" }),
+        ENTERED,
+      );
+      await assert.rejects(worker.shoot(), ENTERED);
+      await assert.rejects(worker.act({ action: "read", html: true }), ENTERED);
+
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.keyboard.press("Backspace");
+      await passwordIs("");
+      assert.equal(
+        await worker.act({ action: "eval", expression: "location.pathname" }),
+        '"/entry"',
+      );
       assert.ok((await worker.shoot()).length > 0);
     });
   }

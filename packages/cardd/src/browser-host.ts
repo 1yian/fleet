@@ -126,10 +126,6 @@ export class HostBrowser {
     if (tab !== undefined) await raiseWindow(cdp, tab.target);
   }
 
-  assumeEntered(tabs: readonly Tab[]): void {
-    for (const tab of tabs) this.entered.add(tab.target);
-  }
-
   async enter(card: number, target: string): Promise<void> {
     this.entered.add(target);
     await this.inspect(card, target);

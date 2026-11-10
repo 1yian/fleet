@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { BROWSER_OPS, Cdp, check } from "@fleet/protocol";
+import { BROWSER_OPS, check } from "@fleet/protocol";
 import { chromium, type Browser as Client, type Page } from "playwright";
 import { BrowserLab, type RawWorker } from "../support/browser-lab.ts";
+import { embedLogin, type Embedding, type Login } from "../support/login-embedding.ts";
+import { isRecord } from "../support/json.ts";
 import { tabOf, until } from "../support/login-fixtures.ts";
-import { isRecord, records } from "../support/json.ts";
 import { pointInPicture, startViewer, stopViewers, type Viewers } from "../support/viewer.ts";
 
 const ENTERED = /a password entered through the viewer is still in this page's form/;
@@ -16,8 +17,7 @@ const viewers: Viewers = [];
 let page: Page;
 let worker: RawWorker;
 let size: { width: number; height: number };
-let fields = "document";
-let crossFrame = false;
+let login: Login;
 
 afterEach(async () => {
   const stopped = await Promise.allSettled([...stopViewers(viewers), client?.close(), lab.stop()]);
@@ -26,41 +26,15 @@ afterEach(async () => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function begin(flags: string[], embedding = "document", entry = "/entry"): Promise<void> {
-  crossFrame = embedding === "cross-frame";
-  lab = await BrowserLab.start({ isolated: crossFrame });
+async function begin(
+  flags: string[],
+  embedding: Embedding = "document",
+  entry = "/entry",
+): Promise<void> {
+  lab = await BrowserLab.start({ isolated: embedding === "cross-frame" });
   worker = await lab.worker("Users sign in");
   await worker.act({ action: "open", url: lab.site.url(entry) });
-  fields = "document";
-  if (embedding === "shadow" || embedding === "closed-shadow") {
-    await worker.act({
-      action: "eval",
-      expression: `(() => {
-        const host = document.createElement("div");
-        host.id = "host";
-        document.body.append(host);
-        const root = host.attachShadow({ mode: ${JSON.stringify(embedding === "closed-shadow" ? "closed" : "open")} });
-        window.fixtureRoot = root;
-        root.append(document.querySelector("form"));
-      })()`,
-    });
-    fields = "window.fixtureRoot";
-  }
-  if (embedding === "frame" || crossFrame) {
-    await worker.act({
-      action: "eval",
-      expression: `new Promise((resolve) => {
-        const frame = document.createElement("iframe");
-        frame.id = "inner";
-        frame.style.cssText = "position:fixed;inset:0;width:100%;height:100%;border:0";
-        frame.onload = () => resolve("ready");
-        ${crossFrame ? `frame.src = ${JSON.stringify(lab.site.url("/entry", "login.example.test"))};` : 'frame.srcdoc = document.querySelector("form").outerHTML;'}
-        document.querySelector("form").remove();
-        document.body.append(frame);
-      })`,
-    });
-    fields = 'document.getElementById("inner").contentDocument';
-  }
+  login = await embedLogin(lab, worker, embedding);
   const found: unknown = JSON.parse(
     await worker.act({ action: "eval", expression: "[innerWidth, innerHeight]" }),
   );
@@ -85,31 +59,7 @@ const USER = { x: 170, y: 36 };
 const PASSWORD_FIELD = { x: 170, y: 86 };
 const REVEAL = { x: 365, y: 86 };
 
-async function inChrome(expression: string): Promise<unknown> {
-  if (crossFrame) {
-    const cdp = await Cdp.connect(lab.chrome.endpoint);
-    try {
-      const listed = await cdp.send("Target.getTargets");
-      if (!isRecord(listed)) throw new Error("Chrome did not list its targets");
-      const frame = records(listed["targetInfos"]).find(
-        (each) =>
-          each["type"] === "iframe" && each["url"] === lab.site.url("/entry", "login.example.test"),
-      );
-      const id = frame?.["targetId"];
-      return typeof id === "string" ? await lab.chrome.evaluate(id, expression) : undefined;
-    } finally {
-      cdp.close();
-    }
-  }
-  const tab = (await lab.chrome.pages()).find((each) =>
-    each.title.startsWith(`c-${String(worker.card.id)} `),
-  );
-  return tab === undefined
-    ? undefined
-    : lab.chrome
-        .evaluate(tab.id, expression.replaceAll("document.", `${fields}.`))
-        .catch(() => undefined);
-}
+const inChrome = (expression: string): Promise<unknown> => login.inChrome(expression);
 
 const fieldIs = (name: string, wanted: string): Promise<void> =>
   until(
@@ -321,7 +271,7 @@ test("a gated viewer marks the tab too, hides its picture while the password is 
   assert.equal(await worker.act({ action: "eval", expression: "location.pathname" }), '"/a"');
 });
 
-for (const embedding of ["closed-shadow", "cross-frame"]) {
+for (const embedding of ["closed-shadow", "cross-frame"] as const) {
   for (const flags of [["--captain"], []]) {
     test(`${flags.length === 0 ? "gated" : "captain"} reveal before typing in a ${embedding} preserves password protection`, async () => {
       await begin(flags, embedding);
@@ -403,7 +353,7 @@ test("a reveal click is not dispatched when provenance cannot be established", a
   assert.equal(await inChrome('document.querySelector("input[name=p]").type'), "password");
 });
 
-for (const embedding of ["frame", "shadow", "cross-frame"]) {
+for (const embedding of ["frame", "shadow", "cross-frame"] as const) {
   for (const flags of [["--captain"], []]) {
     test(`${flags.length === 0 ? "gated" : "captain"} passwords in a ${embedding} stay protected after reveal without autocomplete`, async () => {
       await begin(flags, embedding);
@@ -420,7 +370,7 @@ for (const embedding of ["frame", "shadow", "cross-frame"]) {
       await assert.rejects(
         worker.act({
           action: "eval",
-          expression: `${fields}.querySelector("input[name=p]").value`,
+          expression: `${login.fields}.querySelector("input[name=p]").value`,
         }),
         ENTERED,
       );
