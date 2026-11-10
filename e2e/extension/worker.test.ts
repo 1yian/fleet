@@ -263,6 +263,27 @@ test("a message lost before the session file existed is delivered again after a 
   );
 });
 
+test("a comment queued while the worker was down is delivered after a crash, and the worker hands off in the response that held it", async () => {
+  const held = gate();
+  h.onModel(async () => {
+    await held.wait;
+    return { text: "never sent" };
+  });
+  const pi = await worker("the task message");
+  await h.waitFor(delivered(START), "the task message delivered");
+  await pi.kill();
+  held.open();
+  await comment("queued while the worker was down");
+
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "done after the crash" } }));
+  await worker();
+  await fleet.main.waitForEntries(1);
+  const first = await h.waitForCall(1);
+
+  assert.equal(count(first, fleetText("queued while the worker was down")), 1);
+  assert.deepEqual(reports(fleet.main), [["done", "done after the crash"]]);
+});
+
 test("a session file with a torn last line does not stop the restarted worker from connecting", async () => {
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "first done" } }));
   const pi = await worker("first");

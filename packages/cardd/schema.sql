@@ -1,5 +1,5 @@
 CREATE INDEX deliveries_not_taken ON deliveries (session)
-  WHERE state IN ('pending', 'pushed', 'resent', 'pushed-again', 'filed');
+  WHERE state IN ('pending', 'pushed', 'resent', 'pushed-again', 'read', 'filed');
 
 CREATE INDEX entries_by_card ON entries (card, id);
 
@@ -78,11 +78,13 @@ CREATE TABLE "deliveries" (
   session TEXT NOT NULL REFERENCES sessions (id),
   entry INTEGER NOT NULL REFERENCES entries (id),
   state TEXT NOT NULL CHECK (
-    state IN ('pending', 'pushed', 'resent', 'pushed-again', 'filed', 'acknowledged', 'confirmed')
+    state IN (
+      'pending', 'pushed', 'resent', 'pushed-again', 'read', 'filed', 'acknowledged', 'confirmed'
+    )
   ),
   updated_at INTEGER NOT NULL,
   resends INTEGER NOT NULL DEFAULT 0,
-  told_at INTEGER, read INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1)),
+  told_at INTEGER,
   PRIMARY KEY (session, entry)
 ) STRICT, WITHOUT ROWID;
 

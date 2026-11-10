@@ -18,21 +18,24 @@ const DELIVERY_STATES = [
   "pushed",
   "resent",
   "pushed-again",
+  "read",
   "filed",
   "acknowledged",
   "confirmed",
 ] as const;
 type DeliveryState = (typeof DELIVERY_STATES)[number];
-type DeliveryEvent = "push" | "ack" | "confirm" | "resend";
+type DeliveryEvent = "push" | "read" | "ack" | "confirm" | "resend";
 
 export const QUEUED_DELIVERY = "'pending', 'resent'";
-export const UNTAKEN_DELIVERY = "'pending', 'pushed', 'resent', 'pushed-again', 'filed'";
+const SENT_DELIVERY = "'pushed', 'pushed-again'";
+const UNREAD_DELIVERY = `${QUEUED_DELIVERY}, ${SENT_DELIVERY}`;
+export const IN_FLIGHT_DELIVERY = `${UNREAD_DELIVERY}, 'read'`;
 export const TAKEN_DELIVERY = "'acknowledged', 'confirmed'";
 
-const AT_CONNECT = "'pending', 'pushed', 'resent', 'pushed-again', 'acknowledged'";
+const AT_CONNECT = `${IN_FLIGHT_DELIVERY}, 'acknowledged'`;
 const WHEN_UP = QUEUED_DELIVERY;
 const AGAIN = "'resent', 'pushed-again'";
-const CHASEABLE = "'pushed', 'pushed-again', 'filed'";
+const CHASEABLE = `${SENT_DELIVERY}, 'read', 'filed'`;
 
 function deliveryState(value: unknown): DeliveryState {
   const found = DELIVERY_STATES.find((state) => state === value);
@@ -48,6 +51,26 @@ function afterPush(state: DeliveryState): DeliveryState {
       return "pushed-again";
     case "pushed":
     case "pushed-again":
+    case "read":
+    case "filed":
+    case "acknowledged":
+    case "confirmed":
+      return state;
+    default: {
+      const unreachable: never = state;
+      throw new Error(unreachable);
+    }
+  }
+}
+
+function afterRead(state: DeliveryState): DeliveryState {
+  switch (state) {
+    case "pushed":
+    case "pushed-again":
+      return "read";
+    case "pending":
+    case "resent":
+    case "read":
     case "filed":
     case "acknowledged":
     case "confirmed":
@@ -68,6 +91,7 @@ function afterAck(state: DeliveryState): DeliveryState {
     case "pushed":
     case "resent":
     case "pushed-again":
+    case "read":
     case "acknowledged":
       return "acknowledged";
     default: {
@@ -86,6 +110,7 @@ function afterConfirm(state: DeliveryState): DeliveryState {
     case "pushed":
     case "resent":
     case "pushed-again":
+    case "read":
     case "filed":
       return "filed";
     default: {
@@ -99,6 +124,7 @@ function afterResend(state: DeliveryState): DeliveryState {
   switch (state) {
     case "pushed":
     case "pushed-again":
+    case "read":
     case "filed":
       return "resent";
     case "pending":
@@ -117,6 +143,8 @@ function nextDelivery(state: DeliveryState, event: DeliveryEvent): DeliveryState
   switch (event) {
     case "push":
       return afterPush(state);
+    case "read":
+      return afterRead(state);
     case "ack":
       return afterAck(state);
     case "confirm":
@@ -247,7 +275,11 @@ export function acknowledge(db: DatabaseSync, session: string, entry: number): v
 }
 
 export function markRead(db: DatabaseSync, session: string, entry: number): void {
-  db.prepare("UPDATE deliveries SET read = 1 WHERE session = ? AND entry = ?").run(session, entry);
+  const read = db.prepare("SELECT state FROM deliveries WHERE session = ? AND entry = ?");
+  const write = db.prepare(
+    "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ?",
+  );
+  apply(read, write, session, entry, "read", Date.now());
 }
 
 const UNREAD_RESENDS = 3;
@@ -318,7 +350,7 @@ export function remind(
 
 export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[] {
   const resend = db.prepare(
-    `UPDATE deliveries SET state = ?, read = 0, resends = resends + 1, updated_at = ?
+    `UPDATE deliveries SET state = ?, resends = resends + 1, updated_at = ?
      WHERE session = ? AND entry = ?`,
   );
   const told = db.prepare("UPDATE deliveries SET told_at = ? WHERE session = ? AND entry = ?");
@@ -348,7 +380,7 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
   const rows = db
     .prepare(
       `SELECT e.author AS author, e.body AS body FROM deliveries d JOIN entries e ON e.id = d.entry
-       WHERE d.session = ? AND d.read = 0 AND d.state NOT IN (${TAKEN_DELIVERY}) AND e.kind = 'comment'
+       WHERE d.session = ? AND d.state IN (${UNREAD_DELIVERY}) AND e.kind = 'comment'
          AND json_extract(e.fields, '$.task') IS NULL
          AND json_extract(e.fields, '$.for') = 'worker'
        ORDER BY e.id`,
@@ -359,6 +391,6 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
     .map((row) => `from ${sender(String(row["author"]))}: ${String(row["body"])}`)
     .join("\n");
   throw new Error(
-    `this ${status} report does not count yet: you have ${String(rows.length)} unread comment(s) that the fleet is delivering to you now. Read them, act on them, answer with report(status="working", text=...), then send this report again if it still holds.\n${unread}`,
+    `this ${status} report does not count yet: you have ${String(rows.length)} unread comment(s): none of your finished model responses has held them yet, whether the fleet has sent them or still has them queued. Read them, act on them, answer with report(status="working", text=...), then send this report again if it still holds.\n${unread}`,
   );
 }
