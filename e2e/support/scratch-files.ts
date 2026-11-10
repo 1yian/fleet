@@ -1,5 +1,5 @@
-import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -85,11 +85,44 @@ node "$FLEET_SCRATCH/probe.cjs"
 
 const HOSTNAME = hostname();
 
-export function lockCard(hostDir: string, card: number, pid: number): string {
-  const lock = join(hostDir, "scratch", `.lock-c-${String(card)}`);
-  mkdirSync(lock, { recursive: true });
+export function locksOf(hostDir: string, card: number): string[] {
+  const prefix = `.lock-c-${String(card)}.`;
+  const root = join(hostDir, "scratch");
+  mkdirSync(root, { recursive: true });
+  return readdirSync(root)
+    .filter((name) => name.startsWith(prefix))
+    .sort((a, b) => Number(a.slice(prefix.length)) - Number(b.slice(prefix.length)));
+}
+
+export function lockCard(hostDir: string, card: number, pid: number, generation?: number): string {
+  const prefix = `.lock-c-${String(card)}.`;
+  const top = locksOf(hostDir, card).at(-1);
+  const next = generation ?? (top === undefined ? 1 : Number(top.slice(prefix.length)) + 1);
+  const lock = join(hostDir, "scratch", `${prefix}${String(next)}`);
+  mkdirSync(lock);
   writeFileSync(join(lock, "owner"), `${String(pid)} ${HOSTNAME}\n`);
   return lock;
+}
+
+export const isReleased = (lock: string): boolean => existsSync(join(lock, "released"));
+
+export async function untilFile(path: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+export function fleetResult(
+  args: readonly string[],
+  env: Record<string, string>,
+): { status: number | null; stderr: string } {
+  const { status, stderr } = spawnSync(process.execPath, [LAUNCH, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
+  return { status, stderr };
 }
 
 export const ownerLine = (pid: number): string => `${String(pid)} ${HOSTNAME}\n`;

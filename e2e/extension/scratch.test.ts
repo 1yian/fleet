@@ -26,6 +26,7 @@ import {
   backdate,
   DISPATCH,
   fleet,
+  fleetResult,
   listing,
   seedCard,
   tidyByHand,
@@ -248,9 +249,10 @@ test("tidy removes only what is closed and old: an open card is never touched, a
   mkdirSync(join(leftover, "deps"), { recursive: true });
   writeFileSync(join(leftover, "deps", "index.js"), "x");
   symlinkSync(outside, join(dir, "scratch", ".removing-4242-c-7"));
-  const staleLeftover = join(dir, "scratch", ".stale-4242-1");
-  mkdirSync(staleLeftover);
-  writeFileSync(join(staleLeftover, "owner"), "4242 elsewhere\n");
+  const idleLock = join(dir, "scratch", ".lock-c-8.1");
+  mkdirSync(idleLock);
+  backdate(idleLock, 2);
+  mkdirSync(join(dir, "scratch", ".lock-c-8.2"));
   const cache = join(dir, "node-compile-cache", "v24.0.0-x64-aaaa-1000");
   mkdirSync(cache, { recursive: true });
   writeFileSync(join(cache, "fresh"), "entry");
@@ -264,6 +266,9 @@ test("tidy removes only what is closed and old: an open card is never touched, a
   assert.deepEqual(listing(open), before);
   assert.deepEqual(listing(justClosed), ["closed", "report.md"]);
   assert.deepEqual(readdirSync(join(dir, "scratch")).sort(), [
+    ".lock-c-3.1",
+    ".lock-c-4.1",
+    ".lock-c-8.2",
     ".removing-4242-c-7",
     "c-2",
     "c-3",
@@ -271,7 +276,7 @@ test("tidy removes only what is closed and old: an open card is never touched, a
     "notes",
   ]);
   assert.equal(existsSync(leftover), false);
-  assert.equal(existsSync(staleLeftover), false);
+  assert.equal(existsSync(idleLock), false);
   assert.equal(readFileSync(join(stranger, "keep.txt"), "utf8"), "not a card folder");
   assert.deepEqual(listing(outside), ["closed", "precious.txt", "tmp/", "tmp/precious.txt"]);
   assert.deepEqual(readdirSync(cache), ["fresh"]);
@@ -378,12 +383,40 @@ test("the directory budget stops the walk: a spent budget returns what was count
   );
   assert.ok(Date.now() - started < 20_000, "the call returned promptly");
   assert.equal(out["partial"], true);
+  assert.ok(
+    records(out["largest"]).every((each) => !String(each["name"]).startsWith(second)),
+    "the later root was not reached after the budget was spent",
+  );
   const counted = records(out["largest"]).map((each) => Number(each["inodes"]));
   assert.ok(counted.length < 4, "the walk stopped before it reached every child");
   assert.ok(
     counted.every((inodes) => inodes < files + 1),
     "no child was counted in full",
   );
+});
+
+test("a watched root that cannot be read is skipped and the others still answer, and when none can be read the call fails", () => {
+  const first = tempDir("fleet-root-a-");
+  mkdirSync(join(first, "a-dir"));
+  for (let index = 0; index < 3; index += 1)
+    writeFileSync(join(first, "a-dir", `f${String(index)}`), "x");
+  const missing = join(first, "does-not-exist");
+
+  const out = parseRecord(
+    fleet(["scratch", "--largest", first, "--largest", missing, "--by", "inodes", "--json"], {})
+      .trim()
+      .split("\n")
+      .at(-1) ?? "",
+  );
+  assert.deepEqual(
+    records(out["largest"]).map((each) => [each["name"], each["inodes"]]),
+    [[join(first, "a-dir"), 4]],
+  );
+  assert.equal(out["partial"], false);
+
+  const none = fleetResult(["scratch", "--largest", missing, "--by", "inodes", "--json"], {});
+  assert.notEqual(none.status, 0);
+  assert.ok(none.stderr.includes(`none of ${missing} could be read`), none.stderr);
 });
 
 test("scratch reports the use of the filesystems it writes to, and names the largest directories by inodes or by space", () => {
