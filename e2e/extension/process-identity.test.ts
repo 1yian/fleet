@@ -400,6 +400,61 @@ test("a compaction that recovers while cardd is unreachable closes its incident 
   await untilIncidents(["cleared"]);
 });
 
+test("a recovery and a later failure that cardd never heard survive a reload and reach it in order", async () => {
+  fleet = await startFleet();
+  h = await Harness.start();
+  h.onModel(() => ({ fail: "provider exploded: code 42" }), "cleo");
+  h.onModel(() => ({ text: "ok" }), "cleo");
+  h.onModel(() => ({ fail: "provider exploded: code 43" }), "cleo");
+  const token = fleet.cardd.addLane("cleo", "main");
+  const env = {
+    FLEET_URL: fleet.cardd.url,
+    FLEET_TOKEN: token,
+    FLEET_ROLE: "mate",
+    FLEET_FAKE_AGENT: "cleo",
+  };
+  const cleo = h.startPi("cleo", env, [EXTENSION]);
+  await h.waitForNth((event) => event["type"] === "fleet_connected", 1, "cleo to connect");
+  cleo.prompt("first");
+  const first = await fleet.main.waitForEntry(isFailure, "the first failure");
+  await untilIncidents(["open"]);
+  await fleet.cardd.stop();
+  cleo.prompt("second");
+  await h.waitForNth((event) => event["type"] === "settled", 2, "the recovery to settle");
+  cleo.prompt("third");
+  await h.waitForNth((event) => event["type"] === "settled", 3, "the next failure to settle");
+  cleo.prompt("/probe-reload");
+  await h.waitFor(
+    (event) => event["type"] === "session" && event["reason"] === "reload",
+    "the extension to reload",
+  );
+  await fleet.cardd.restart();
+  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "cleo to reconnect");
+  await untilIncidents(["cleared", "open"]);
+  const main = await fleet.cardd.connect(fleet.mainToken);
+  await main.waitForEntry(
+    (entry) => isFailure(entry) && entry.id !== first.id,
+    "the failure after the recovery to open a new incident",
+  );
+});
+
+test("a compaction that recovers while cardd is unreachable closes its incident after a reload", async () => {
+  const { cleo, setClock, turn, compactorUp } = await startCompactingCleo();
+  await fleet?.cardd.stop();
+  compactorUp();
+  setClock(T0 + 31 * SECOND);
+  await turn();
+  await h?.waitFor((event) => event["type"] === "compacted", "the compaction to succeed");
+  cleo.prompt("/probe-reload");
+  await h?.waitFor(
+    (event) => event["type"] === "session" && event["reason"] === "reload",
+    "the extension to reload",
+  );
+  await fleet?.cardd.restart();
+  await h?.waitForNth((event) => event["type"] === "fleet_connected", 2, "cleo to reconnect");
+  await untilIncidents(["cleared"]);
+});
+
 test("a start announcement survives a hello that cardd never accepted", async () => {
   h = await Harness.start();
   const hellos: boolean[] = [];
