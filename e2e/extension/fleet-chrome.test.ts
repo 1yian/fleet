@@ -225,12 +225,8 @@ test("back refuses a tab that the worker changed while it was held, and back --f
   await hostChrome.evaluate(tab.id, `fetch("/pref?v=light").then(() => true)`);
   run.send("back");
   await run.waitFor(/Refused: the worker's tab changed while you held it \(pref \(cookie\)\)/);
-  assert.equal(
-    (await holds(hostChrome, tab))["marker"],
-    "host tab alive",
-    "a refusal does not reload the tab",
-  );
-  assert.equal((await holds(hostChrome, tab))["pref"], "pref=light");
+  const kept = await holds(hostChrome, tab);
+  assert.deepEqual([kept["marker"], kept["pref"]], ["host tab alive", "pref=light"]);
 
   run.send("back --force");
   await run.waitFor(/Sent back to alpha/);
@@ -258,18 +254,12 @@ test("back refuses a session that the worker's tab renewed while it was held, th
 test("discard leaves the worker's tab alone and removes the copy from the Mac profile", async () => {
   const { tab, hostChrome } = await aliceAtWork();
   const before = await holds(hostChrome, tab);
-  const run = takeover(tab);
-  const mac = await run.macPage();
-  await mac.waitForFunction(() => document.getElementById("who")?.textContent === "alice");
+  const run = await heldAsAlice(tab);
   const port = (await run.waitFor(/Chrome debugging port: (\d+)/))[1];
-  await run.letGo();
 
   run.send("discard");
   await run.waitFor(/Discarded: the worker's tab was not touched\./);
-  assert.equal(await run.exited, 0);
-  assert.deepEqual(await holds(hostChrome, tab), before);
-  await assert.rejects(fetch(`http://127.0.0.1:${String(port)}/json/version`), "Chrome was closed");
-  assert.deepEqual(await cookiesLeftIn(run), []);
+  await endedWithNothingLeft(run, port, hostChrome, tab, before);
 });
 
 test("two takeovers of one lane at once are refused by the lane lock before anything starts, and a text that is neither a tab number nor the start of a tab id is refused with the open tabs", async () => {
@@ -288,21 +278,13 @@ test("two takeovers of one lane at once are refused by the lane lock before anyt
   assert.equal(first.ssh.forwardPids().length, 1, "the refused takeover started no proxy");
   assert.equal(readFileSync(lockOf(first.home), "utf8").trim(), String(first.pid));
 
-  const nothing = FleetChrome.start([
-    "take",
-    "Auth app",
-    "--host",
-    "alpha",
-    "--endpoint",
-    lab.chrome("alpha").endpoint,
-  ]);
-  running.push(nothing);
+  const nothing = takeover(tab, undefined, undefined, "Auth app");
   assert.equal(await nothing.exited, 1);
   assert.match(
     nothing.output,
     new RegExp(`no tab matches "Auth app":\\n1 +\\w+ +.*Auth app +${site.origin}/`),
   );
-  assert.equal(existsSync(join(nothing.home, "default", "takeover.lock")), false);
+  assert.equal(existsSync(lockOf(nothing.home)), false);
 });
 
 test("a lock left by a process that is gone is taken over", async () => {
@@ -442,6 +424,30 @@ test("discard closes the pages of the Mac Chrome first, so a page that keeps ren
   run.send("discard");
   await run.waitFor(/Discarded: the worker's tab was not touched\./);
   await endedWithNothingLeft(run, port, hostChrome, tab, before);
+});
+
+test("a worker tab that has moved to another origin gets only the cookies, and its own storage is left alone", async () => {
+  const { tab, hostChrome } = await aliceAtWork();
+  assert.ok(site !== undefined);
+  const other = `http://127.0.0.1:${String(site.port)}`;
+  const run = await heldAsAlice(tab);
+  await hostChrome.evaluate(tab.id, `location.href = "${other}/"`);
+  await until(
+    async () =>
+      (await hostChrome.evaluate(tab.id, "location.origin").catch(() => undefined)) === other
+        ? true
+        : undefined,
+    "the worker's tab to be on the other origin",
+  );
+  await hostChrome.evaluate(tab.id, `localStorage.setItem("mine", "other origin")`);
+
+  run.send("back");
+  await run.waitFor(
+    /warning: the worker's tab is not on .* any more, so only cookies were replaced/,
+  );
+  assert.equal(await run.exited, 0);
+  const stored = `JSON.stringify([localStorage.getItem("mine"), localStorage.getItem("token")])`;
+  assert.equal(await hostChrome.evaluate(tab.id, stored), `["other origin",null]`);
 });
 
 test("a line pasted after discard is ignored, so back does not send", async () => {

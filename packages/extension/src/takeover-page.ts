@@ -80,12 +80,6 @@ async function evaluate(cdp: Cdp, sessionId: string, expression: string): Promis
   return done.result.value;
 }
 
-export async function originOf(cdp: Cdp, sessionId: string): Promise<string> {
-  const origin = await evaluate(cdp, sessionId, "location.origin");
-  if (typeof origin !== "string") throw new Error("the page has no origin");
-  return origin;
-}
-
 export async function readCookies(
   cdp: Cdp,
   sessionId: string,
@@ -140,23 +134,37 @@ export async function replaceCookies(
   return refused;
 }
 
-export async function readStorage(cdp: Cdp, sessionId: string): Promise<Storage> {
+const onlyOn = (origin: string, otherwise: string): string =>
+  `if (location.origin !== ${JSON.stringify(origin)}) return ${otherwise};`;
+
+export async function readStorage(
+  cdp: Cdp,
+  sessionId: string,
+  origin: string,
+): Promise<Storage | undefined> {
   const text = await evaluate(
     cdp,
     sessionId,
-    "JSON.stringify(Array.from({ length: localStorage.length }, (_, at) => { const key = localStorage.key(at); return [key, localStorage.getItem(key)]; }))",
-  );
+    `(() => { ${onlyOn(origin, "null")} return JSON.stringify(Array.from({ length: localStorage.length }, (_, at) => { const key = localStorage.key(at); return [key, localStorage.getItem(key)]; })); })()`,
+  ).catch(() => null);
+  if (text === null) return undefined;
   if (typeof text !== "string") throw new Error("the page gave no storage");
   const parsed: unknown = JSON.parse(text);
   return parseCdp(StorageSchema, parsed, "the page's storage");
 }
 
-export async function replaceStorage(cdp: Cdp, sessionId: string, storage: Storage): Promise<void> {
-  await evaluate(
+export async function replaceStorage(
+  cdp: Cdp,
+  sessionId: string,
+  origin: string,
+  storage: Storage,
+): Promise<boolean> {
+  const done = await evaluate(
     cdp,
     sessionId,
-    `(() => { localStorage.clear(); for (const [key, value] of ${JSON.stringify(storage)}) localStorage.setItem(key, value); return true; })()`,
-  );
+    `(() => { ${onlyOn(origin, "false")} localStorage.clear(); for (const [key, value] of ${JSON.stringify(storage)}) localStorage.setItem(key, value); return true; })()`,
+  ).catch(() => false);
+  return done === true;
 }
 
 export async function clearOrigin(cdp: Cdp, sessionId: string, origin: string): Promise<void> {

@@ -10,7 +10,6 @@ import {
   closePages,
   landOn,
   navigate,
-  originOf,
   pagesOf,
   readCookies,
   readStorage,
@@ -67,7 +66,11 @@ export class Takeover {
       const refused = await replaceCookies(mac, sessionId, held.urls, held.cookies);
       if (refused.length > 0) say(`warning: Chrome refused these cookies: ${refused.join(", ")}`);
       await landOn(mac, sessionId, held.origin);
-      if (held.storage !== undefined) await replaceStorage(mac, sessionId, held.storage);
+      if (
+        held.storage !== undefined &&
+        !(await replaceStorage(mac, sessionId, held.origin, held.storage))
+      )
+        throw new Error(`Chrome did not stay on ${held.origin} while its storage was copied`);
       const failure = await navigate(mac, sessionId, tab.url);
       if (failure !== undefined) say(`warning: the page did not load: ${failure}`);
     } finally {
@@ -82,9 +85,13 @@ export class Takeover {
       throw new Error("the tab in Chrome is closed: type discard, and take the tab again");
     });
     const cookies = await readCookies(mac, sessionId, held.urls);
-    const here = await originOf(mac, sessionId).catch(() => undefined);
-    if (here !== held.origin) await landOn(mac, sessionId, held.origin);
-    return { ...held, cookies, storage: await readStorage(mac, sessionId) };
+    let storage = await readStorage(mac, sessionId, held.origin);
+    if (storage === undefined) {
+      await landOn(mac, sessionId, held.origin);
+      storage = await readStorage(mac, sessionId, held.origin);
+    }
+    if (storage === undefined) throw new Error(`Chrome did not stay on ${held.origin}`);
+    return { ...held, cookies, storage };
   }
 
   private async back(force: boolean): Promise<boolean> {
