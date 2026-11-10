@@ -23,7 +23,7 @@ afterEach(async () => {
 
 const lastText = (turns: Turn[] | undefined): string => turns?.at(-1)?.text ?? "";
 
-const pathOfAnotherCheckout = (): string =>
+const pathWithoutAnyBrowserAxi = (): string =>
   (process.env["PATH"] ?? "")
     .split(delimiter)
     .filter((dir) => !existsSync(join(dir, "browser-axi")))
@@ -47,7 +47,7 @@ test("a worker that calls browser-axi gets command not found, its PATH holds onl
       FLEET_URL: fleet.cardd.url,
       FLEET_TOKEN: token,
       FLEET_ROLE: "worker",
-      PATH: pathOfAnotherCheckout(),
+      PATH: pathWithoutAnyBrowserAxi(),
     },
     [EXTENSION],
     [],
