@@ -3,6 +3,7 @@ import { quietSql } from "./attempts.ts";
 import { jobStateSql, loseSilentJobs } from "./jobs.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
+import { liveStateSql } from "./incident-lifecycle.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
 import { expireMaintenance } from "./maintenance.ts";
@@ -311,7 +312,7 @@ function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
 function incidentMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
   return rows(
     db,
-    "SELECT * FROM incidents WHERE state IN ('open', 'blocked', 'recovering') AND parent IS NOT NULL AND phase IN ('turn', 'compaction')",
+    `SELECT * FROM incidents WHERE state IN (${liveStateSql()}) AND parent IS NOT NULL AND phase IN ('turn', 'compaction')`,
   )
     .map(incidentFrom)
     .flatMap((inc) => {

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { remaining } from "./incident-kinds.ts";
+import { recoveryOffered } from "./incident-lifecycle.ts";
 import type { Incident } from "./incident-store.ts";
 import { addEntry } from "./store.ts";
 
@@ -7,7 +8,7 @@ export const stamp = (ms: number): string => new Date(ms).toISOString();
 
 export function nextStep(inc: Incident): string {
   const modes = remaining(inc);
-  if (inc.intent !== "working" && inc.intent !== "merging")
+  if (!recoveryOffered(inc.intent))
     return `Its card is ${inc.intent}, so recovery is not offered and nothing is resumed.`;
   if (modes.length === 0)
     return `Restarting is not a repair for ${inc.classification}: it needs intervention, not recovery.`;

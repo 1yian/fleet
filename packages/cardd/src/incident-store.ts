@@ -1,5 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Kind, Mode, Phase } from "./incident-kinds.ts";
+import {
+  incidentIntent,
+  incidentState,
+  liveStateSql,
+  type IncidentIntent,
+  type IncidentState,
+} from "./incident-lifecycle.ts";
 
 export interface Incident {
   readonly id: number;
@@ -10,8 +17,8 @@ export interface Incident {
   readonly phase: Phase;
   readonly classification: Kind;
   readonly error: string;
-  readonly intent: string;
-  readonly state: string;
+  readonly intent: IncidentIntent;
+  readonly state: IncidentState;
   readonly retries: number;
   readonly replacements: number;
   readonly eligibleAt: number | null;
@@ -50,8 +57,8 @@ export function incidentFrom(row: Record<string, unknown>): Incident {
     phase: PHASES.find((each) => each === phase) ?? "turn",
     classification: kindOf(row["classification"]),
     error: String(row["error"]),
-    intent: String(row["intent"]),
-    state: String(row["state"]),
+    intent: incidentIntent(row["intent"]),
+    state: incidentState(row["state"]),
     retries: Number(row["retries"]),
     replacements: Number(row["replacements"]),
     eligibleAt: numberOf(row["eligible_at"]),
@@ -69,9 +76,7 @@ export function incidentById(db: DatabaseSync, id: number): Incident | undefined
 
 export function liveIncident(db: DatabaseSync, actor: string): Incident | undefined {
   const row = db
-    .prepare(
-      "SELECT * FROM incidents WHERE actor = ? AND state IN ('open', 'recovering', 'blocked')",
-    )
+    .prepare(`SELECT * FROM incidents WHERE actor = ? AND state IN (${liveStateSql()})`)
     .get(actor);
   return row === undefined ? undefined : incidentFrom(row);
 }
@@ -82,4 +87,4 @@ export function generationOf(db: DatabaseSync, actor: string): number {
   );
 }
 
-export const LIVE_INCIDENT = `EXISTS (SELECT 1 FROM incidents i WHERE i.actor = SESSION AND i.state IN ('open', 'recovering', 'blocked'))`;
+export const LIVE_INCIDENT = `EXISTS (SELECT 1 FROM incidents i WHERE i.actor = SESSION AND i.state IN (${liveStateSql()}))`;

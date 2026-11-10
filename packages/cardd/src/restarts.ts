@@ -4,7 +4,8 @@ import { liveAttemptModel } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
-import { intentOf, recover, requireCurrent } from "./incidents.ts";
+import { intentOf } from "./incident-lifecycle.ts";
+import { recover, requireCurrent } from "./incidents.ts";
 import { addEntry, getCard, laneCardOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
