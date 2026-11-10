@@ -19,7 +19,7 @@ export const CookieSchema = Type.Object({
   partitionKey: Type.Optional(PartitionKeySchema),
 });
 
-export const StorageSchema = Type.Record(Type.String(), Type.String());
+export const StorageSchema = Type.Array(Type.Tuple([Type.String(), Type.String()]));
 
 export type Cookie = Static<typeof CookieSchema>;
 export type Storage = Static<typeof StorageSchema>;
@@ -46,29 +46,34 @@ const meaning = (cookie: Cookie): string =>
   ]);
 
 function differing(
-  before: Readonly<Record<string, string>>,
-  after: Readonly<Record<string, string>>,
+  before: ReadonlyMap<string, string>,
+  after: ReadonlyMap<string, string>,
 ): string[] {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  return [...keys].filter((key) => before[key] !== after[key]);
+  return [...new Set([...before.keys(), ...after.keys()])].filter(
+    (key) => before.get(key) !== after.get(key),
+  );
 }
 
+const byKey = (session: Session): Map<string, Cookie> =>
+  new Map(session.cookies.map((cookie) => [cookieKey(cookie), cookie]));
+
+const meanings = (cookies: ReadonlyMap<string, Cookie>): Map<string, string> =>
+  new Map([...cookies].map(([key, cookie]) => [key, meaning(cookie)]));
+
 export function changes(held: Session, now: Session): string[] {
-  const before = Object.fromEntries(held.cookies.map((cookie) => [cookieKey(cookie), cookie]));
-  const after = Object.fromEntries(now.cookies.map((cookie) => [cookieKey(cookie), cookie]));
-  const meanings = (cookies: Readonly<Record<string, Cookie>>): Record<string, string> =>
-    Object.fromEntries(Object.entries(cookies).map(([key, cookie]) => [key, meaning(cookie)]));
+  const before = byKey(held);
+  const after = byKey(now);
   const cookies = differing(meanings(before), meanings(after)).map(
-    (key) => `${(before[key] ?? after[key])?.name ?? key} (cookie)`,
+    (key) => `${(before.get(key) ?? after.get(key))?.name ?? key} (cookie)`,
   );
   if (held.storage === undefined || now.storage === undefined) return cookies;
   return [
     ...cookies,
-    ...differing(held.storage, now.storage).map((key) => `${key} (localStorage)`),
+    ...differing(new Map(held.storage), new Map(now.storage)).map((key) => `${key} (localStorage)`),
   ];
 }
 
 export function counts(session: Session): string {
-  const local = session.storage === undefined ? 0 : Object.keys(session.storage).length;
+  const local = session.storage?.length ?? 0;
   return `${String(session.cookies.length)} cookies, ${String(local)} localStorage items`;
 }

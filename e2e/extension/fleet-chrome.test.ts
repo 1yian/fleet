@@ -26,12 +26,15 @@ afterEach(async () => {
   site = undefined;
 });
 
+const COLLIDING_KEYS = ["__proto__", "length", "key", "toString"];
+
 const SIGNED_IN_BY_THE_WORKER = `(async () => {
   const answer = await fetch("/signin", {
     method: "POST",
     body: JSON.stringify({ user: "alice", password: ${JSON.stringify(PASSWORDS["alice"])} }),
   });
   localStorage.setItem("token", (await answer.json()).token);
+  for (const key of ${JSON.stringify(COLLIDING_KEYS)}) localStorage.setItem(key, "kept " + key);
   window.marker = "host tab alive";
   return true;
 })()`;
@@ -39,6 +42,7 @@ const SIGNED_IN_BY_THE_WORKER = `(async () => {
 const WHAT_THE_HOST_TAB_HOLDS = `(async () => JSON.stringify({
   marker: window.marker ?? null,
   token: localStorage.getItem("token"),
+  colliding: ${JSON.stringify(COLLIDING_KEYS)}.map((key) => localStorage.getItem(key)),
   pref: document.cookie.split("; ").find((pair) => pair.startsWith("pref=")) ?? null,
   me: await (await fetch("/me")).json(),
   html: document.documentElement.outerHTML,
@@ -80,20 +84,8 @@ function takeover(
   select = tab.id.slice(0, 8),
 ): FleetChrome {
   assert.ok(lab !== undefined);
-  const started = FleetChrome.start(
-    [
-      "take",
-      select,
-      "--host",
-      "alpha",
-      "--endpoint",
-      lab.chrome("alpha").endpoint,
-      "--lane",
-      "lane-a",
-    ],
-    ssh,
-    home,
-  );
+  const flags = ["--host", "alpha", "--endpoint", lab.chrome("alpha").endpoint, "--lane", "lane-a"];
+  const started = FleetChrome.start(["take", select, ...flags], ssh, home);
   running.push(started);
   return started;
 }
@@ -138,12 +130,8 @@ async function endedWithNothingLeft(
 }
 
 async function cookiesLeftIn(fleetChrome: FleetChrome): Promise<string[]> {
-  const context = await chromium.launchPersistentContext(
-    join(fleetChrome.home, "lane-a", "profile"),
-    {
-      headless: true,
-    },
-  );
+  const profile = join(fleetChrome.home, "lane-a", "profile");
+  const context = await chromium.launchPersistentContext(profile, { headless: true });
   try {
     return (await context.cookies()).map((cookie) => cookie.name);
   } finally {
@@ -162,12 +150,17 @@ test("a taken-over tab is the worker's session in a real Chrome of its own, rout
   const before = await holds(hostChrome, tab);
   const run = takeover(tab);
   await run.waitFor(/Chrome is open with .* signed in as the worker's tab, through ssh alpha/);
-  assert.match(run.output, /Holding .*Auth app \(.*\): 3 cookies, 1 localStorage items\./);
+  assert.match(run.output, /Holding .*Auth app \(.*\): 3 cookies, 5 localStorage items\./);
 
   const mac = await run.macPage();
   assert.equal(mac.url(), site.url("/"));
   await mac.waitForFunction(() => document.getElementById("who")?.textContent === "alice");
   assert.equal(await mac.evaluate(() => localStorage.getItem("token")), before["token"]);
+  assert.deepEqual(
+    await mac.evaluate((keys) => keys.map((key) => localStorage.getItem(key)), COLLIDING_KEYS),
+    ["kept __proto__", "kept length", "kept key", "kept toString"],
+    "items whose names are also names on Storage or Object were copied",
+  );
   assert.ok(
     run.ssh.destinations().includes(`auth.example.test:${String(site.port)}`),
     "the Mac Chrome reached the site through the ssh tunnel, by a name only the host can resolve",
@@ -196,7 +189,7 @@ test("a taken-over tab is the worker's session in a real Chrome of its own, rout
   await run.letGo();
 
   run.send("back");
-  await run.waitFor(/Sent back to alpha: 3 cookies, 1 localStorage items\./);
+  await run.waitFor(/Sent back to alpha: 3 cookies, 5 localStorage items\./);
   assert.equal(await run.exited, 0);
   const after = await until(async () => {
     const seen = await holds(hostChrome, tab);
@@ -204,6 +197,7 @@ test("a taken-over tab is the worker's session in a real Chrome of its own, rout
   }, "the worker's tab to be bob");
   assert.equal(after["marker"], null, "the worker's tab was reloaded");
   assert.equal(after["token"], macToken);
+  assert.deepEqual(after["colliding"], before["colliding"], "and were sent back");
   assert.equal(after["pref"], "pref=dark");
 
   const password = PASSWORDS["bob"] ?? "";

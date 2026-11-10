@@ -144,7 +144,7 @@ export async function readStorage(cdp: Cdp, sessionId: string): Promise<Storage>
   const text = await evaluate(
     cdp,
     sessionId,
-    "JSON.stringify(Object.fromEntries(Object.entries(localStorage)))",
+    "JSON.stringify(Array.from({ length: localStorage.length }, (_, at) => { const key = localStorage.key(at); return [key, localStorage.getItem(key)]; }))",
   );
   if (typeof text !== "string") throw new Error("the page gave no storage");
   const parsed: unknown = JSON.parse(text);
@@ -155,7 +155,7 @@ export async function replaceStorage(cdp: Cdp, sessionId: string, storage: Stora
   await evaluate(
     cdp,
     sessionId,
-    `(() => { localStorage.clear(); for (const [key, value] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(key, value); return true; })()`,
+    `(() => { localStorage.clear(); for (const [key, value] of ${JSON.stringify(storage)}) localStorage.setItem(key, value); return true; })()`,
   );
 }
 
