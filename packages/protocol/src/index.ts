@@ -380,6 +380,7 @@ const ClientMessage = Type.Union([
     process: Type.Optional(Type.String()),
     maintenance: Type.Optional(Type.Boolean()),
     running: Type.Optional(Type.Boolean()),
+    started: Type.Optional(Type.Boolean()),
   }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
   ActivityMessage,

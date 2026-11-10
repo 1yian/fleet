@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +28,7 @@ import { Link, type Push } from "./link.ts";
 import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
+import { processId } from "./process-id.ts";
 import { reportActivity, trackRun } from "./progress.ts";
 import { MUTABLE_TAIL } from "./cache-ttl.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
@@ -246,7 +246,7 @@ function start(
     url,
     token,
     inFile: () => idsInSessionFile(sessionFile),
-    process: randomUUID(),
+    process: processId(),
     running: runInProgress,
     onUnreadable: (error) => {
       if (unreadable === error) return;

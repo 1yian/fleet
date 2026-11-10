@@ -241,7 +241,7 @@ class Hub {
       const told = adoptMaintenance(
         this.db,
         session.id,
-        message.process,
+        message.started === true,
         message.maintenance === true,
       );
       return { lowWater: confirm(this.db, session.id, message.inFile), reporters: told };
