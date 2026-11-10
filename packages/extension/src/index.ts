@@ -230,7 +230,8 @@ function start(
 ): void {
   enableCodemode(pi);
   const runInProgress = trackRun(pi);
-  const injected = new Set(idsInSessionFile(sessionFile));
+  const loaded = idsInSessionFile(sessionFile);
+  const injected = new Set(loaded);
   const injectedAgain = new Set<number>();
   pi.on("agent_settled", () => {
     injectedAgain.clear();
@@ -310,7 +311,7 @@ function start(
     worker?.dispose();
     link.stop();
   });
-  registerIntake(pi, link);
+  registerIntake(pi, link, loaded);
   reportActivity(pi, link, () => (jobs?.waiting === true ? "waiting" : "idle"));
   link.start();
 }

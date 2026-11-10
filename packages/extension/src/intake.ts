@@ -4,9 +4,9 @@ import type { Link } from "./link.ts";
 
 const UNFINISHED: ReadonlySet<unknown> = new Set(["error", "aborted"]);
 
-export function registerIntake(pi: ExtensionAPI, link: Link): void {
-  const inRun = new Set<number>();
-  const unanswered = new Set<number>();
+export function registerIntake(pi: ExtensionAPI, link: Link, loaded: readonly number[]): void {
+  const inRun = new Set<number>(loaded);
+  const unanswered = new Set<number>(loaded);
   let lastStop: unknown;
   pi.on("message_end", (event) => {
     const id = fleetEntryId(event.message);
