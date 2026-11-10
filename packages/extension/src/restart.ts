@@ -13,6 +13,7 @@ const RestartParams = Type.Object({
   mode: Type.Optional(OPS["card.restart"].args.properties.mode),
   key: Type.Optional(OPS["card.restart"].args.properties.key),
   avoid: OPS["card.restart"].args.properties.avoid,
+  model: OPS["card.restart"].args.properties.model,
 });
 
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
@@ -27,7 +28,7 @@ export function registerRestart(
     name: "restart_card",
     label: "Restart card",
     description:
-      "Restarts your worker on the SAME card, conversation, branch, and work, with or without a runtime incident. Only its direct parent may restart it; main may restart a second mate by its lane card, never main or cardd. Default mode=replace. With incident, name its generation too: stale generations are refused; mode=retry sends a health check instead. Never resumes paused or completed work. Ordinary restarts are capped at 3 per hour per card. Repeat the same key for an idempotent retry. avoid lists exact provider names the new process must not use, for this restart only (replace of a worker only); a later restart without avoid clears it. A worker dispatched with an explicit model keeps it, so an avoid that names that model's provider is refused.",
+      "Restarts your worker on the SAME card, conversation, branch, and work, with or without a runtime incident. Only its direct parent may restart it; main may restart a second mate by its lane card, never main or cardd. Default mode=replace. With incident, name its generation too: stale generations are refused; mode=retry sends a health check instead. Never resumes paused or completed work. Ordinary restarts are capped at 3 per hour per card. Repeat the same key for an idempotent retry. avoid lists exact provider names the new process must not use, for this restart only (replace of a worker only); a later restart without avoid clears it. A worker dispatched with an explicit model keeps it, so an avoid that names that model's provider is refused. model=provider/id (such as tier/visual) replaces the worker's pinned model on the same card, conversation, branch, and PR, and every later restart keeps it (replace of your own worker only); use it when the pinned model's account cannot serve the work.",
     parameters: RestartParams,
     execute: async (_id, params) => {
       const key = params.key ?? randomUUID();

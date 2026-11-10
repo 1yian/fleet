@@ -95,6 +95,101 @@ test("a restart cannot avoid the provider of the worker's explicit model, and re
   assert.equal(plain.repeat, true);
 });
 
+test("the card's own mate re-pins a live attempt's model with a restart, and every later restart launches it", async () => {
+  const pinned = "anthropic-3/claude-fixture:medium";
+  await fleet.main.call("attempt.begin", {
+    card: card.id,
+    host: "maverick",
+    task: "Build the iOS screens",
+    model: pinned,
+  });
+  const resume = async () =>
+    check(OPS["attempt.resume"].result, await fleet.main.call("attempt.resume", { card: card.id }));
+  const modelOnBoard = async () =>
+    check(OPS.card.result, await fleet.main.call("card", { card: card.id })).attempts.map(
+      ({ model }) => model,
+    );
+  const restart = (args: Record<string, unknown>) =>
+    fleet.main.call("card.restart", { card: card.id, mode: "replace", ...args });
+
+  assert.equal((await resume()).model, pinned);
+  assert.deepEqual(await modelOnBoard(), [pinned]);
+
+  await assert.rejects(
+    restart({ key: "bad", mode: "retry", model: "tier/visual" }),
+    /model applies only when a worker's process is replaced/,
+  );
+  assert.equal((await resume()).model, pinned);
+
+  const first = check(
+    OPS["card.restart"].result,
+    await restart({ key: "repin", model: "tier/visual" }),
+  );
+  assert.equal(first.repeat, false);
+  const after = await resume();
+  assert.equal(after.model, "tier/visual");
+  assert.equal(after.session, c("-a1"));
+  assert.equal(after.branch, c("-a1"));
+  assert.deepEqual(await modelOnBoard(), ["tier/visual"]);
+
+  const again = check(OPS["card.restart"].result, await restart({ key: "plain" }));
+  assert.equal(again.repeat, false);
+  assert.equal((await resume()).model, "tier/visual");
+
+  const thread = check(OPS.card.result, await fleet.main.call("card", { card: card.id })).entries;
+  const notes = thread.filter(
+    (entry) => entry.fields["model"] !== undefined && entry.kind === "note",
+  );
+  assert.deepEqual(
+    notes.map((entry) => entry.body),
+    [`Model pin changed from ${pinned} to tier/visual. Every restart keeps it.`],
+  );
+});
+
+test("a restart that is refused, or comes from another lane, leaves the pinned model as it was", async () => {
+  const pinned = "anthropic-3/claude-fixture:medium";
+  await fleet.main.call("attempt.begin", {
+    card: card.id,
+    host: "maverick",
+    task: "Build it",
+    model: pinned,
+  });
+  const other = await fleet.cardd.connect(fleet.cardd.addLane("other", "main"));
+  await assert.rejects(
+    other.call("card.restart", { card: card.id, mode: "replace", key: "x", model: "tier/visual" }),
+    /only the direct parent can/,
+  );
+  await assert.rejects(
+    fleet.main.call("card.restart", {
+      card: card.id,
+      mode: "replace",
+      key: "y",
+      model: "tier/visual",
+      avoid: ["tier"],
+    }),
+    /cannot avoid tier/,
+  );
+  await assert.rejects(
+    fleet.main.call("card.restart", {
+      card: card.id,
+      mode: "replace",
+      key: "z",
+      model: "not-a-model",
+    }),
+    /pattern/,
+  );
+  const resumed = check(
+    OPS["attempt.resume"].result,
+    await fleet.main.call("attempt.resume", { card: card.id }),
+  );
+  assert.equal(resumed.model, pinned);
+  const thread = check(OPS.card.result, await fleet.main.call("card", { card: card.id })).entries;
+  assert.deepEqual(
+    thread.filter((entry) => entry.kind === "note"),
+    [],
+  );
+});
+
 test("dispatch only starts new work: another host is refused while the worker lives, and its token keeps working", async () => {
   const first = await begin("p620");
   const worker = await fleet.cardd.connect(first.token);

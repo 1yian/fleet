@@ -392,3 +392,57 @@ test("a database that holds browser tabs opens without the table, keeps every ca
     await cardd.stop();
   }
 });
+
+function writePinnedAttemptDatabase(file: string): void {
+  const db = writeDatabaseAt(file, 29);
+  db.prepare("INSERT INTO secrets (name, value) VALUES ('token-key', ?)").run(KEY);
+  db.exec(`
+    INSERT INTO lanes (name, home) VALUES ('main', '/homes/main');
+    INSERT INTO projects (name, delivery, clones, repo)
+      VALUES ('web', 'no-mistakes', '{"maverick":"/clones/web"}', 'acme/web');
+    INSERT INTO cards (id, title, name, lane, project, kind, delivery, created_at)
+      VALUES (1, 'Build the iOS screens', 'ios-screens', 'main', 'web', 'ship', 'no-mistakes', ${String(T)}),
+        (2, 'Fix the scrollbar', 'one-scrollbar', 'main', 'web', 'ship', 'no-mistakes', ${String(T)});
+    INSERT INTO attempts (id, card, n, host, state, branch, created_at, updated_at) VALUES
+      (1, 1, 1, 'maverick', 'active', 'fm/c-1-a1', ${String(T)}, ${String(T)}),
+      (2, 2, 1, 'maverick', 'active', 'fm/c-2-a1', ${String(T)}, ${String(T)});
+    INSERT INTO sessions (id, role, lane, attempt, host, token_hash, state) VALUES
+      ('main', 'mate', 'main', NULL, '', '${sha(tokenOf("mate", "main"))}', 'exited'),
+      ('c-1-a1', 'worker', 'main', 1, 'maverick', '${sha(tokenOf("worker", "c-1-a1"))}', 'idle'),
+      ('c-2-a1', 'worker', 'main', 2, 'maverick', '${sha(tokenOf("worker", "c-2-a1"))}', 'idle');
+    INSERT INTO entries (id, card, author, kind, body, fields, created_at) VALUES
+      (1, 1, 'mate:main', 'comment', 'Build it.', '{"task":true,"model":"anthropic-3/claude-fixture:medium"}', ${String(T)}),
+      (2, 2, 'mate:main', 'comment', 'Fix it.', '{"task":true}', ${String(T)});
+    INSERT INTO deliveries (session, entry, state, updated_at) VALUES
+      ('c-1-a1', 1, 'confirmed', ${String(T)}),
+      ('c-2-a1', 2, 'confirmed', ${String(T)});
+  `);
+  db.close();
+}
+
+test("an attempt dispatched on an explicit model before the pin was a column keeps that model, and the card's mate can re-pin it", async () => {
+  const cardd = await Cardd.start({}, [], writePinnedAttemptDatabase);
+  try {
+    const main = await cardd.connect(tokenOf("mate", "main"));
+    const modelOf = async (card: number): Promise<string | null | undefined> =>
+      check(OPS.card.result, await main.call("card", { card })).attempts[0]?.model;
+    assert.equal(await modelOf(1), "anthropic-3/claude-fixture:medium");
+    assert.equal(await modelOf(2), null);
+    const resumed = check(
+      OPS["attempt.resume"].result,
+      await main.call("attempt.resume", { card: 1 }),
+    );
+    assert.equal(resumed.model, "anthropic-3/claude-fixture:medium");
+
+    await main.call("card.restart", {
+      card: 1,
+      mode: "replace",
+      key: "repin",
+      model: "tier/visual",
+    });
+    assert.equal(await modelOf(1), "tier/visual");
+    assert.equal(await modelOf(2), null);
+  } finally {
+    await cardd.stop();
+  }
+});

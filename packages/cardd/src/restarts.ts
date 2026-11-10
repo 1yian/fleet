@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
-import { liveAttemptModel } from "./attempts.ts";
+import { liveAttemptModel, repinAttempt } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
@@ -71,6 +71,22 @@ function requireDirectParent(
     throw new Error(`only the direct parent can restart c-${String(card.id)}`);
 }
 
+function refuseLaunchOption(args: OpArgs<"card.restart">, mate: boolean): void {
+  const option = (["avoid", "model"] as const).find((name) => args[name] !== undefined);
+  if (option !== undefined && (args.mode === "retry" || mate))
+    throw new Error(
+      `${option} applies only when a worker's process is replaced: retry and a second mate's restart start no new worker process`,
+    );
+}
+
+function repin(db: DatabaseSync, lane: string, card: number, model: string): void {
+  const { previous } = repinAttempt(db, card, model);
+  if (previous === model) return;
+  const was = previous ?? "the lane's normal model selection";
+  const body = `Model pin changed from ${was} to ${model}. Every restart keeps it.`;
+  addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields: { model } }, []);
+}
+
 function ordinaryRestart(
   db: DatabaseSync,
   session: Session,
@@ -137,10 +153,8 @@ export function restartCard(
   const card = getCard(db, args.card);
   const mate = laneCardOf(db, card.lane) === card.id;
   requireDirectParent(session, card, mate);
-  if (args.avoid !== undefined && (args.mode === "retry" || mate))
-    throw new Error(
-      "avoid applies only when a worker's process is replaced: retry and a second mate's restart start no new worker process",
-    );
+  refuseLaunchOption(args, mate);
+  if (args.model !== undefined) repin(db, session.lane, card.id, args.model);
   if (args.incident !== undefined)
     return restartIncident(db, session, card, args.incident, args, timing);
   if (args.avoid !== undefined) refuseAvoidedModel(db, card.id, args.avoid);
