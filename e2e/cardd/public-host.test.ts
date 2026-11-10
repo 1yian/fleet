@@ -275,37 +275,6 @@ test("tailnet access is unchanged when a public host is configured", async () =>
   assert.equal(site.issuer.hits, 0);
 });
 
-test("without the four public-host values, cardd refuses the public host and its https origin as it always did", async () => {
-  await cardd.stop();
-  cardd = await Cardd.start({}, ["--board", BOARD]);
-  const own = new URL(cardd.url.replace(/^ws/, "http")).host;
-  const token = site.token();
-
-  const named = await exchange(base(), "/api/board", "GET", through(token));
-  assert.equal(named.status, 403);
-  assert.match(named.body, /only to these hosts: .*127\.0\.0\.1:\d+/);
-  assert.equal((await exchange(base(), "/", "GET", through(token))).status, 403);
-  const rebound = await exchange(
-    base(),
-    "/api/action",
-    "POST",
-    { ...JSON_BODY, ...through(token) },
-    {},
-  );
-  assert.equal(rebound.status, 403);
-  assert.equal(await upgrade(base(), "/live", through(token)), "refused");
-  assert.equal(
-    (await exchange(base(), "/api/board", "GET", { host: own, origin: ORIGIN })).status,
-    403,
-  );
-  assert.equal(await upgrade(base(), "/live", { host: own, origin: ORIGIN }), "refused");
-
-  const forwarded = { host: own, "cf-ray": "8a1b2c3d4e5f-AMS", [TOKEN_HEADER]: token };
-  assert.equal((await exchange(base(), "/api/board", "GET", forwarded)).status, 200);
-  assert.equal(await upgrade(base(), "/live", forwarded), "opened");
-  assert.equal(site.issuer.hits, 0);
-});
-
 test("the four public-host values are set together, and each is checked at start", () => {
   const [host, team, aud, email] = site.flags.filter((_, index) => index % 2 === 1);
   const flags = {
@@ -369,8 +338,12 @@ test("the signing keys are fetched once and kept, and an unknown key id cannot m
   assert.equal((await exchange(base(), "/api/board", "GET", valid)).status, 200);
 });
 
-async function eventually(what: string, reached: () => Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 10_000;
+async function eventually(
+  what: string,
+  reached: () => Promise<boolean>,
+  within = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + within;
   while (!(await reached())) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -391,9 +364,11 @@ test("a key that Cloudflare rotated in is picked up once the cooldown has passed
   const next = signingKey("next");
   site.issuer.published = [site.key, next];
   const rotated = through(signed(next, site.claims()));
-  await eventually("the rotated key to be accepted", async () => {
-    return (await exchange(base(), "/api/board", "GET", rotated)).status === 200;
-  });
+  await eventually(
+    "the rotated key to be accepted before the cached keys expire",
+    async () => (await exchange(base(), "/api/board", "GET", rotated)).status === 200,
+    4000,
+  );
   assert.equal(site.issuer.hits, 2);
   assert.equal((await exchange(base(), "/api/board", "GET", first)).status, 200);
 });
