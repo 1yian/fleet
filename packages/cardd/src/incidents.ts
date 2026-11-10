@@ -10,10 +10,12 @@ import {
 } from "./incident-kinds.ts";
 import { applyIncident, insertOpened, intentOf, recoveryOffered } from "./incident-lifecycle.ts";
 import {
+  currentIntent,
   generationOf,
   incidentById,
   incidentFrom,
   liveIncident,
+  roleOf,
   type Incident,
 } from "./incident-store.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
@@ -89,7 +91,9 @@ export function openIncident(
   });
   const inc = incidentById(db, id);
   if (inc === undefined) throw new Error("the incident was not saved");
-  const notify = silent ? [] : tell(db, inc, actor.role, describe(inc, labelOf(inc, actor.role)));
+  const notify = silent
+    ? []
+    : tell(db, inc, actor.role, describe(db, inc, labelOf(inc, actor.role)));
   return { inc, notify };
 }
 
@@ -120,7 +124,7 @@ function failRecovery(
   );
   const after = incidentById(db, inc.id) ?? { ...inc, classification: kind, eligibleAt: eligible };
   const left = recoverable
-    ? nextStep(after)
+    ? nextStep(db, after)
     : "No recovery is left within its bounds: it needs intervention.";
   const body = `recovery of incident ${String(inc.id)} (${inc.recoveryMode ?? "retry"}) did not verify: ${error}. ${left}`;
   return tell(db, after, role, body);
@@ -278,7 +282,7 @@ export function requireCurrent(db: DatabaseSync, inc: Incident, generation: numb
     throw new Error(
       `incident ${String(inc.id)} is about process generation ${String(inc.generation)}, but the actor is on ${String(current)} and you named ${String(generation)}: read the card again`,
     );
-  const intent = intentOf(db, inc.card, roleOf(db, inc.actor));
+  const intent = currentIntent(db, inc);
   if (intent !== "working") throw new Error(`the card is ${intent}: recovery never resumes it`);
   if (!recoveryOffered(inc.intent))
     throw new Error(`the card was ${inc.intent}: recovery never resumes it`);
@@ -387,12 +391,6 @@ export function noteControl(db: DatabaseSync, session: string, op: string): void
   applyIncident(db, undefined, { type: "controlled", actor: session }, Date.now());
 }
 
-function roleOf(db: DatabaseSync, actor: string): "mate" | "worker" {
-  return db.prepare("SELECT role FROM sessions WHERE id = ?").get(actor)?.["role"] === "mate"
-    ? "mate"
-    : "worker";
-}
-
 function answeredAndActed(db: DatabaseSync, inc: Incident, acted: boolean): boolean {
   if (inc.phase === "compaction" || !acted) return false;
   const taken = db
@@ -431,7 +429,7 @@ export function reconcileIncidents(db: DatabaseSync, now: number, t: Timings): s
   for (const row of due) {
     const inc = incidentFrom(row);
     const modes = remaining(inc);
-    const current = intentOf(db, inc.card, roleOf(db, inc.actor));
+    const current = currentIntent(db, inc);
     if (modes.length === 0 || !recoveryOffered(inc.intent)) {
       applyIncident(db, inc, { type: "due-told" }, t.wall());
       continue;
@@ -474,5 +472,5 @@ export function watchdogIncident(
     true,
   );
   const ids = `Incident ${String(made.inc.id)}, process generation ${String(made.inc.generation)}.`;
-  return `${ids} ${nextStep(made.inc)}`;
+  return `${ids} ${nextStep(db, made.inc)}`;
 }

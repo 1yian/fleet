@@ -3,6 +3,7 @@ import type { Kind, Mode, Phase } from "./incident-kinds.ts";
 import {
   incidentIntent,
   incidentState,
+  intentOf,
   liveStateSql,
   type IncidentIntent,
   type IncidentState,
@@ -85,6 +86,16 @@ export function generationOf(db: DatabaseSync, actor: string): number {
   return Number(
     db.prepare("SELECT generation FROM sessions WHERE id = ?").get(actor)?.["generation"] ?? 0,
   );
+}
+
+export function roleOf(db: DatabaseSync, actor: string): "mate" | "worker" {
+  return db.prepare("SELECT role FROM sessions WHERE id = ?").get(actor)?.["role"] === "mate"
+    ? "mate"
+    : "worker";
+}
+
+export function currentIntent(db: DatabaseSync, inc: Incident): IncidentIntent {
+  return intentOf(db, inc.card, roleOf(db, inc.actor));
 }
 
 export const LIVE_INCIDENT = `EXISTS (SELECT 1 FROM incidents i WHERE i.actor = SESSION AND i.state IN (${liveStateSql()}))`;

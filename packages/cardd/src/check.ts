@@ -4,12 +4,11 @@ import { jobStateSql, loseSilentJobs } from "./jobs.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { liveStateSql } from "./incident-lifecycle.ts";
-import { LIVE_INCIDENT } from "./incident-store.ts";
+import { incidentFrom, LIVE_INCIDENT, roleOf } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
 import { expireMaintenance } from "./maintenance.ts";
 import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
 import { describe, labelOf } from "./incident-text.ts";
-import { incidentFrom } from "./incident-store.ts";
 import { replyNudges } from "./replies.ts";
 import { finishedOpen, idleNow, resting } from "./status.ts";
 import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
@@ -318,8 +317,7 @@ function incidentMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     .flatMap((inc) => {
       const tier = repeatTier(now - inc.firstAt, t.repeat, t.repeat);
       if (inc.parent === null || tier === 0) return [];
-      const role = db.prepare("SELECT role FROM sessions WHERE id = ?").get(inc.actor)?.["role"];
-      const text = `reminder: ${describe(inc, labelOf(inc, role === "mate" ? "mate" : "worker"))}`;
+      const text = `reminder: ${describe(db, inc, labelOf(inc, roleOf(db, inc.actor)))}`;
       return [
         {
           card: inc.card,
