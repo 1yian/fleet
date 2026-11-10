@@ -347,6 +347,41 @@ test("a mate can watch only its own lane's job, schedule, and worker, and a refu
   }
 });
 
+test("a hold on a schedule that was removed stays gone when another lane's schedule takes its id, and shows nothing of that schedule", async () => {
+  const quinn = await fleet.cardd.connect(fleet.cardd.addLane("quinn", "main"));
+  const mine = check(
+    OPS["schedule.set"].result,
+    await cleo.call("schedule.set", {
+      to: "cleo",
+      at: "05:00",
+      timezone: "UTC",
+      text: "Check the quota.",
+    }),
+  ).id;
+  const card = await newCard(cleo, "Quota card");
+  await cleo.call("hold", date(card, { schedule: mine, remaining: [] }));
+  assert.equal((await waitOf(card))?.watch, "running");
+  await cleo.call("schedule.remove", { id: mine });
+
+  const theirs = check(
+    OPS["schedule.set"].result,
+    await quinn.call("schedule.set", {
+      to: "quinn",
+      at: "05:17",
+      timezone: "Pacific/Auckland",
+      text: "Quinn's private wake.",
+    }),
+  ).id;
+  assert.equal(theirs, mine, "quinn's schedule took the id of the one that was removed");
+
+  const read = await waitOf(card);
+  assert.deepEqual(
+    [read?.watch, read?.what],
+    ["gone", `schedule ${String(mine)} is gone (removed, or it fired once)`],
+  );
+  assert.equal(idlePark(read ?? undefined), true);
+});
+
 test("a dated hold from before this information was kept reads as an idle park, and re-dating it keeps its age", async () => {
   const card = await newCard(cleo, "Old park");
   const opened = Date.now() - 6 * 24 * HOUR;

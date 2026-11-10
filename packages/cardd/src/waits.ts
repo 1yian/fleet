@@ -21,9 +21,15 @@ const REMAINING_HELP =
 const alive = (what: string): Watching => ({ watch: "running", what });
 const gone = (what: string): Watching => ({ watch: "gone", what });
 
+const ABSENT: Record<"job" | "schedule" | "worker", (id: number) => Watching> = {
+  job: (id) => gone(`job ${String(id)} does not exist`),
+  schedule: (id) => gone(`schedule ${String(id)} is gone (removed, or it fired once)`),
+  worker: (card) => gone(`the worker of c-${String(card)} is not running`),
+};
+
 function jobWatch(db: DatabaseSync, id: number): Watching {
   const row = db.prepare("SELECT label, state FROM jobs WHERE id = ?").get(id);
-  if (row === undefined) return gone(`job ${String(id)} does not exist`);
+  if (row === undefined) return ABSENT.job(id);
   const name = `job ${String(id)} (${String(row["label"])})`;
   const state = parseJobState(row["state"]);
   return jobIsRunning(state) ? alive(name) : gone(`${name} is ${state}`);
@@ -31,13 +37,12 @@ function jobWatch(db: DatabaseSync, id: number): Watching {
 
 function scheduleWatch(db: DatabaseSync, id: number): Watching {
   const row = db.prepare("SELECT at, timezone, on_date FROM schedules WHERE id = ?").get(id);
-  if (row === undefined) return gone(`schedule ${String(id)} is gone (removed, or it fired once)`);
+  if (row === undefined) return ABSENT.schedule(id);
   const when = `${typeof row["on_date"] === "string" ? `${row["on_date"]} ` : ""}${String(row["at"])} ${String(row["timezone"])}`;
   return alive(`schedule ${String(id)} (${when})`);
 }
 
 function workerWatch(db: DatabaseSync, card: number): Watching {
-  const name = `the worker of c-${String(card)}`;
   const connected = db
     .prepare(
       `SELECT 1 FROM sessions s JOIN attempts a ON a.id = s.attempt
@@ -45,7 +50,7 @@ function workerWatch(db: DatabaseSync, card: number): Watching {
          AND s.state IN ('starting', 'idle', 'running', 'waiting')`,
     )
     .get(card);
-  return connected === undefined ? gone(`${name} is not running`) : alive(name);
+  return connected === undefined ? ABSENT.worker(card) : alive(`the worker of c-${String(card)}`);
 }
 
 const CHECKED: Record<"job" | "schedule" | "worker", (db: DatabaseSync, id: number) => Watching> = {
@@ -60,16 +65,32 @@ const STATED: Record<"watcher" | "outside" | "later", DatedWait["watch"]> = {
   later: "later",
 };
 
-function watching(db: DatabaseSync, wait: Wait | null): Watching {
+const LANE_OF: Record<"job" | "schedule" | "worker", string> = {
+  job: `SELECT c.lane AS lane FROM jobs j JOIN attempts a ON a.id = j.attempt
+    JOIN cards c ON c.id = a.card WHERE j.id = ?`,
+  schedule: "SELECT owner AS lane FROM schedules WHERE id = ?",
+  worker: "SELECT lane FROM cards WHERE id = ?",
+};
+
+function reaches(db: DatabaseSync, lane: string, wait: Extract<Wait, { id: number }>): boolean {
+  if (lane === mainLane(db)) return true;
+  return db.prepare(LANE_OF[wait.by]).get(wait.id)?.["lane"] === lane;
+}
+
+const MATE = "mate:";
+
+function watching(db: DatabaseSync, wait: Wait | null, author: string): Watching {
   if (wait === null) return { watch: "none", what: "" };
-  if ("id" in wait) return CHECKED[wait.by](db, wait.id);
-  return { watch: STATED[wait.by], what: wait.text };
+  if (!("id" in wait)) return { watch: STATED[wait.by], what: wait.text };
+  const lane = author.startsWith(MATE) ? author.slice(MATE.length) : undefined;
+  if (lane === undefined || !reaches(db, lane, wait)) return ABSENT[wait.by](wait.id);
+  return CHECKED[wait.by](db, wait.id);
 }
 
 export function datedWait(db: DatabaseSync, standing: Standing): DatedWait | null {
   const { hold } = standing.facts;
   if (standing.status !== "waiting" || hold === undefined || hold.until === null) return null;
-  return { until: hold.until, since: hold.openedAt, ...watching(db, hold.wait) };
+  return { until: hold.until, since: hold.openedAt, ...watching(db, hold.wait, hold.author) };
 }
 
 export function datedWaits(db: DatabaseSync, open: readonly Loaded[]): Map<number, DatedWait> {
@@ -92,17 +113,9 @@ function statedWaits(args: OpArgs<"hold">): Wait[] {
   return waits;
 }
 
-const LANE_OF: Record<"job" | "schedule" | "worker", string> = {
-  job: `SELECT c.lane AS lane FROM jobs j JOIN attempts a ON a.id = j.attempt
-    JOIN cards c ON c.id = a.card WHERE j.id = ?`,
-  schedule: "SELECT owner AS lane FROM schedules WHERE id = ?",
-  worker: "SELECT lane FROM cards WHERE id = ?",
-};
-
 function requireReach(db: DatabaseSync, session: Session, wait: Wait): void {
-  if (!("id" in wait) || session.lane === mainLane(db)) return;
-  const lane = db.prepare(LANE_OF[wait.by]).get(wait.id)?.["lane"];
-  if (lane !== session.lane)
+  if (!("id" in wait)) return;
+  if (!reaches(db, session.lane, wait))
     throw new Error(
       `${wait.by} ${String(wait.id)} is not in your lane, or does not exist: a dated hold can watch only a job, schedule, or worker of its own lane`,
     );
@@ -112,7 +125,7 @@ function requireWait(db: DatabaseSync, session: Session, args: OpArgs<"hold">): 
   const [wait, ...extra] = statedWaits(args);
   if (wait === undefined || extra.length > 0) throw new Error(WAIT_HELP);
   requireReach(db, session, wait);
-  const seen = watching(db, wait);
+  const seen = watching(db, wait, `${MATE}${session.lane}`);
   if (seen.watch === "gone")
     throw new Error(`a dated hold needs a watcher that runs now, and ${seen.what}`);
   if (!("id" in wait) && wait.by === "later")

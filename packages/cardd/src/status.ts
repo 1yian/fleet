@@ -26,6 +26,7 @@ export interface Hold {
   readonly wait: Wait | null;
   readonly remaining: readonly number[];
   readonly openedAt: number;
+  readonly author: string;
   readonly entry: number;
 }
 
@@ -70,6 +71,7 @@ function holdFrom(tally: Tally, entry: Entry): void {
     until: typeof until === "number" ? until : null,
     wait: parseWait(entry.fields["wait"]),
     remaining: parseCards(entry.fields["remaining"]),
+    author: entry.author,
     entry: entry.id,
   };
   const open = tally.hold;
@@ -95,6 +97,7 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       wait: null,
       remaining: [],
       openedAt: entry.createdAt,
+      author: entry.author,
       entry: entry.id,
     };
   } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };
