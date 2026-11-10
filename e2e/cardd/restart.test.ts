@@ -52,7 +52,7 @@ test("a pause during merging stays merging on the board and still refuses a rest
   const shown = (await fleet.cardd.board()).cards.find((each) => each.id === card.id);
   if (shown === undefined) throw new Error("the card left the board");
   assert.equal(shown.status, "merging");
-  assert.equal(shown.pausedUntil, null);
+  assert.equal(shown.until, null);
   await assert.rejects(restart("paused-merge"), /the card is paused: restart never resumes/);
 });
 
