@@ -38,6 +38,18 @@ export class Summoned extends Error {
 
 const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+function summon(
+  db: DatabaseSync,
+  browser: Browser,
+  card: number,
+  why: string,
+  declared: string | undefined,
+): string[] {
+  const asked = summonCaptain(db, card, why);
+  if (asked.length > 0) void browser.raise(card, declared);
+  return asked;
+}
+
 function summoned(
   db: DatabaseSync,
   browser: Browser,
@@ -51,7 +63,7 @@ function summoned(
   const refusal = reason(error).replace(/\.?\s*$/, "");
   return new Summoned(
     `${refusal}. The captain was asked to open the tab: ${why}.`,
-    summonCaptain(db, card, why),
+    summon(db, browser, card, why, declared),
     error,
   );
 }
@@ -107,7 +119,7 @@ async function browse(
     throw summoned(db, browser, card, args.captain, declared, error);
   });
   const why = args.captain ?? done.captain;
-  const asked = why === undefined ? [] : summonCaptain(db, card, why);
+  const asked = why === undefined ? [] : summon(db, browser, card, why, declared);
   const result = why === undefined ? done.result : { ...done.result, captain: why };
   return { value: result, notify: [...done.notify, ...asked] };
 }

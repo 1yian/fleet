@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { BrowserArgs, OpResult } from "@fleet/protocol";
 import type { BrowserConfig } from "./browser-config.ts";
-import { HostBrowser, plural } from "./browser-host.ts";
+import { HostBrowser } from "./browser-host.ts";
 import type { Outcome } from "./browser-outcome.ts";
 import { NO_TAB } from "./browser-refusals.ts";
 import {
@@ -14,6 +14,7 @@ import {
   type Tab,
 } from "./browser-store.ts";
 import { tabView, type Listed, type Standing } from "./browser-targets.ts";
+import { plural } from "./browser-window.ts";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
 
@@ -157,6 +158,17 @@ export class Browser {
   run(card: number, args: BrowserArgs, declared: string | undefined): Promise<Outcome> {
     if (this.config === undefined) return Promise.reject(new Error(NO_BROWSER));
     return this.inTurn(card, () => this.perform(card, args, declared));
+  }
+
+  raise(card: number, declared: string | undefined): Promise<void> {
+    return this.inTurn(card, async () => {
+      try {
+        const tab = this.liveTab(card, declared);
+        if (tab !== undefined && this.configuredOn(tab.host)) await this.site(tab.host).raise(card);
+      } catch {
+        return;
+      }
+    });
   }
 
   release(card: number): Promise<OpResult<"browser.release">> {
