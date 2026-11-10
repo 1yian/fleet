@@ -106,3 +106,19 @@ export function remaining(inc: {
     mode === "retry" ? inc.retries < MAX_RETRIES : inc.replacements < MAX_REPLACEMENTS,
   );
 }
+
+export function exhaustion(inc: {
+  readonly phase: Phase;
+  readonly classification: Kind;
+  readonly retries: number;
+  readonly replacements: number;
+}): string {
+  const modes = modesFor(inc.phase, inc.classification);
+  if (modes.length === 0) return `restarting is not a repair for ${inc.classification}`;
+  const spent = modes.map((mode) =>
+    mode === "retry"
+      ? `${String(inc.retries)} of ${String(MAX_RETRIES)} retries`
+      : `${String(inc.replacements)} of ${String(MAX_REPLACEMENTS)} replacement`,
+  );
+  return `every recovery its class allows is spent (${spent.join(" and ")})`;
+}

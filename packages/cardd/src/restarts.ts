@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
 import { liveAttemptModel } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
+import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById } from "./incident-store.ts";
 import { intentOf, recover } from "./incidents.ts";
 import { addEntry, getCard, laneCardOf, type Session } from "./store.ts";
@@ -52,10 +53,7 @@ function refuseAvoidedModel(db: DatabaseSync, card: number, avoid: readonly stri
   const model = liveAttemptModel(db, card);
   if (model === undefined) return;
   const provider = model.slice(0, model.indexOf("/"));
-  if (avoid.includes(provider))
-    throw new Error(
-      `c-${String(card)} was dispatched on ${model} and a restart keeps that model, so it cannot avoid ${provider}: restart without avoid, or start new work on another model`,
-    );
+  if (avoid.includes(provider)) throw new AvoidRefused(card, model, provider);
 }
 
 function ordinaryRestart(

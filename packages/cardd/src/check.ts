@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { loseSilentJobs, quietSql } from "./attempts.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
+import { escalationText, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
 import { expireMaintenance } from "./maintenance.ts";
@@ -9,7 +10,7 @@ import { describe, labelOf } from "./incident-text.ts";
 import { incidentFrom } from "./incident-store.ts";
 import { replyNudges } from "./replies.ts";
 import { finishFrom, type Stage } from "./status.ts";
-import { addEntry, getCard, loadOpenCards, workerOf, type Loaded } from "./store.ts";
+import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { firedSchedules } from "./schedules.ts";
@@ -323,6 +324,25 @@ function incidentMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
     });
 }
 
+function escalationMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
+  return unrecoverable(db).flatMap((stuck) => {
+    const { incident, lane } = stuck;
+    if (repeatTier(now - incident.firstAt, t.repeat, t.repeat) === 0) return [];
+    return [
+      {
+        card: incident.card,
+        lane,
+        to: mainLane(db),
+        condition: UNRECOVERABLE,
+        instance: String(incident.id),
+        text: escalationText(stuck),
+        tier: 1,
+        fields: { incident: incident.id },
+      },
+    ];
+  });
+}
+
 function holdMatches(db: DatabaseSync, open: readonly Loaded[], now: number): Match[] {
   return open.flatMap(({ card, standing }) => {
     const { hold } = standing.facts;
@@ -408,6 +428,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, graceUntil =
     ...bundleMatches(db, open, now, t),
     ...lostJobMatches(db, now, t),
     ...incidentMatches(db, now, t),
+    ...escalationMatches(db, now, t),
     ...holdMatches(db, open, now),
   ].filter((match) => acting.has(match.card));
   clearStopped(db, now, matches);
