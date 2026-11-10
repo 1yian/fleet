@@ -84,7 +84,9 @@ function ownCard(db: DatabaseSync, session: Session, id: number): Card {
   return card;
 }
 
-function reportRoute(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
+function reportRoute(db: DatabaseSync, card: Card, args: OpArgs<"report">): string[] {
+  if (args.status === "paused") return [];
+  if (args.replyTo !== undefined) return [card.lane];
   const entries = cardEntries(db, card.id);
   const comment = entries.findLast(
     (entry) =>
@@ -93,7 +95,7 @@ function reportRoute(db: DatabaseSync, card: Card, status: ReportStatus): string
   );
   const report = entries.findLast((entry) => entry.kind === "report");
   const firstAfterComment = comment !== undefined && comment.id > (report?.id ?? 0);
-  return firstAfterComment || TO_MATE.has(status) ? [card.lane] : [];
+  return firstAfterComment || TO_MATE.has(args.status) ? [card.lane] : [];
 }
 
 const REWORK: ReadonlySet<ReportStatus> = new Set([
@@ -308,7 +310,7 @@ const HANDLERS: Record<OpName, Handler> = {
     requireCommentsRead(db, session.id, args.status);
     const card = openCardWithPr(db, session.card, args.pr);
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
-    const to = args.replyTo === undefined ? reportRoute(db, card, args.status) : [card.lane];
+    const to = reportRoute(db, card, args);
     const withdrawn =
       args.merged === true
         ? withdrawMerge(db, card, "merged")

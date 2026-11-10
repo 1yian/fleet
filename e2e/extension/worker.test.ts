@@ -128,14 +128,13 @@ test("a worker woken from a pause is nudged and stopped when it ends a run on a 
   h.onModel(() => ({ text: "that is all" }));
   h.onModel(() => ({ text: "still nothing" }));
   await comment("any news?");
-  await fleet.main.waitForEntries(3);
+  await fleet.main.waitForEntries(2);
 
   assert.match(
     lastUser(await h.waitForCall(4)) ?? "",
     /^\[fleet\] Your run is ending without a handoff/,
   );
   assert.deepEqual(reports(fleet.main), [
-    ["paused", "waiting for CI"],
     ["working", "back at it"],
     ["stopped", "ended the run without a handoff: still nothing"],
   ]);
