@@ -32,6 +32,10 @@ export type Move = {
       readonly tool: string;
       readonly text?: string;
       readonly args?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+      readonly alongside?: readonly {
+        readonly tool: string;
+        readonly args?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+      }[];
     }
 );
 export interface Failure {

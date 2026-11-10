@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { onHost, piPids, shellPid } from "./host.ts";
+import { onHelper, onHost, piPids, shellPid } from "./host.ts";
 
 const script = (name: string): string =>
   readFileSync(fileURLToPath(new URL(`./contain/${name}.sh`, import.meta.url)), "utf8");
@@ -41,7 +41,7 @@ async function run(
   pids: number[],
 ): Promise<string> {
   const backend = await backendOn(host);
-  return onHost(host, [
+  return onHelper(host, [
     "sh",
     "-c",
     scriptFor(backend),

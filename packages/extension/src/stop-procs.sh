@@ -1,13 +1,29 @@
 # Stops every process that lives inside one worktree: its cwd is the worktree or below,
 # or its command line names a path inside it. Whole path components only, so c-71-a1
 # never matches c-71-a10. Never touches this script, its ancestors, or its children, nor a host-shared
-# no-mistakes daemon and the processes under it (contain/service.sh says what that is). Sends TERM,
+# no-mistakes daemon and the processes under it (contain/service.sh says what that is), nor a
+# helper that fleet started (another close, a restart): its environment carries $helper_mark=1,
+# which every process below it inherits, and a process counts when it or any ancestor has it,
+# because a helper's short-lived subshell may be exiting while it is read. A process that is gone by
+# then is not listed: it is not a leftover. The mark is set when the
+# helper starts, so it needs no registry and has no window in which the helper looks like the
+# worker's. Sends TERM,
 # waits up to 5 seconds, then KILL for what remains. Prints one line per process:
 # <pid> <TAB> TERM|KILL|ALIVE <TAB> <command>.
-# Usage: sh -c "$(cat contain/service.sh stop-procs.sh)" stop <worktree>
+# Usage: sh -c "helper_mark=<name>
+# $(cat contain/service.sh stop-procs.sh)" stop <worktree>
 set -u
+tab=$(printf '\t')
 root=${1%/}
 [ -n "$root" ] || exit 0
+
+marked() {
+  if [ -r "/proc/$1/environ" ]; then
+    tr '\0' '\n' <"/proc/$1/environ" 2>/dev/null | grep -qx "$helper_mark=1"
+  else
+    ps -Eww -o command= -p "$1" 2>/dev/null | grep -Eq " $helper_mark=1( |$)"
+  fi
+}
 
 snapshot() {
   daemons=$(shared_daemons "$root" | tr '\n' ' ')
@@ -38,6 +54,13 @@ snapshot() {
         n++
       }
       return 0
+    }
+    function lineage(pid,   p, n, out) {
+      for (p = pid; p != "" && p > 1 && n < 64; p = parent[p]) {
+        out = out " " p
+        n++
+      }
+      return out
     }
     function under(pid,   p, n) {
       for (p = pid; p != "" && p != 0 && n < 64; p = parent[p]) {
@@ -72,9 +95,16 @@ snapshot() {
       for (p = SELF; p != "" && p != 0; p = parent[p]) skip[p] = 1
       for (pid in cmd) {
         if (skip[pid] || under(pid) || state[pid] ~ /^Z/ || below(pid)) continue
-        if (cwd[pid] || names(cmd[pid])) print pid "\t" substr(cmd[pid], 1, 100)
+        if (cwd[pid] || names(cmd[pid])) print pid "\t" lineage(pid) "\t" substr(cmd[pid], 1, 100)
       }
-    }'
+    }' | while IFS=$tab read -r pid lineage cmd; do
+    alive "$pid" || continue
+    helper=0
+    for p in $lineage; do
+      if marked "$p"; then helper=1; break; fi
+    done
+    [ "$helper" -eq 1 ] || printf '%s\t%s\n' "$pid" "$cmd"
+  done
 }
 
 alive() {
@@ -98,7 +128,6 @@ wait_gone() {
   done
 }
 
-tab=$(printf '\t')
 for round in 1 2 3; do
   found=$(snapshot)
   [ -n "$found" ] || break
