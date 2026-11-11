@@ -164,15 +164,30 @@ export function pushScratch(world: World, inside: string): string {
   return `pushed ${branch} to origin/${branch}`;
 }
 
-export function workshopOf(world: World): { clone: LocalClone; skills: string } | undefined {
-  const loaded: string[] = [];
-  world.lane.args.forEach((arg, at) => {
-    if (arg === "--skill") loaded.push(resolve(world.lane.args[at + 1] ?? ""));
-  });
-  for (const clone of world.clones) {
-    const skills = join(scratchPath(clone), "skills");
-    if (loaded.includes(skills)) return { clone, skills };
+export interface Workshop {
+  readonly clone: LocalClone;
+  readonly skills: string;
+  readonly scratch: string;
+}
+
+function checkoutOf(skills: string): Workshop["scratch"] | undefined {
+  const top = gitOrNothing(dirname(skills), "rev-parse", "--show-toplevel");
+  return top !== undefined && resolved(top) === resolved(dirname(skills)) ? top : undefined;
+}
+
+export function workshopOf(world: World): Workshop | undefined {
+  const loaded = world.lane.args.flatMap((arg, at) =>
+    world.lane.args[at - 1] === "--skill" ? [resolve(arg)] : [],
+  );
+  for (const skills of loaded) {
+    const scratch = checkoutOf(skills);
+    const clone = scratch === undefined ? undefined : cloneOfCheckout(world, scratch);
+    if (scratch !== undefined && clone !== undefined && resolved(scratch) !== resolved(clone.path))
+      return { clone, skills, scratch };
   }
+  for (const clone of world.clones)
+    if (loaded.includes(join(scratchPath(clone), "skills")))
+      return { clone, skills: join(scratchPath(clone), "skills"), scratch: scratchPath(clone) };
   return undefined;
 }
 
@@ -208,7 +223,9 @@ function skillTarget(world: World, path: string): Mapped | undefined {
   const workshop = workshopOf(world);
   const inside = skillRelative(path);
   if (workshop === undefined || inside === undefined) return undefined;
-  const scratch = ensureScratch(world, workshop.clone);
+  const scratch = existsSync(workshop.scratch)
+    ? workshop.scratch
+    : ensureScratch(world, workshop.clone);
   return { scratch, target: join(scratch, "skills", inside), note: noteOf(scratch) };
 }
 
