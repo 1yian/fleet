@@ -232,11 +232,10 @@ export class Cardd {
   }
 
   async act(card: number, action: BoardAction["action"]): Promise<number> {
-    const revision = (await this.board()).cards.find((each) => each.id === card)?.revision ?? -1;
     const response = await fetch(this.http("/api/action"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ card, revision, action }),
+      body: JSON.stringify({ card, action }),
     });
     return response.status;
   }

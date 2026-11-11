@@ -37,6 +37,29 @@ import { canSee, datedWait, sightOf } from "./waits.ts";
 
 export class StaleCard extends Error {}
 
+const deferred = (hold: Hold, now: number): boolean => hold.until !== null && hold.until > now;
+
+const askingCaptain = (hold: Hold, now: number): boolean =>
+  hold.holder === "captain" && !deferred(hold, now);
+
+const sameAsk = (a: Hold, b: Hold): boolean =>
+  a.holder === b.holder &&
+  a.question === b.question &&
+  a.options.length === b.options.length &&
+  a.options.every((option, at) => option === b.options[at]);
+
+function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
+  const entries = cardEntries(db, card.id);
+  const open = factsFrom(entries).hold;
+  const name = `c-${String(card.id)}`;
+  if (open === undefined || deferred(open, Date.now()))
+    throw new StaleCard(`${name} is no longer waiting for your answer, so nothing was recorded`);
+  const shown = factsFrom(entries.filter((entry) => entry.id === seen)).hold;
+  if (shown === undefined || !sameAsk(open, shown))
+    throw new StaleCard(`${name}'s decision changed, so nothing was recorded`);
+  return open;
+}
+
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
 const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
 
@@ -110,7 +133,7 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
     const card = boardCard(db, each, neglect);
     const { hold } = each.standing.facts;
     const open = card.status !== "done" && card.status !== "dropped";
-    if (open && hold?.holder === "captain" && (hold.until === null || hold.until <= now)) {
+    if (open && hold !== undefined && askingCaptain(hold, now)) {
       const { entry, question, options, merge } = hold;
       holds.push({ card: card.id, hold: entry, question, options: [...options], merge });
     }
@@ -156,6 +179,7 @@ export function cardView(db: DatabaseSync, id: number, lane: string, timing: Tim
       hold === undefined
         ? null
         : {
+            entry: hold.entry,
             holder: hold.holder,
             question: hold.question,
             options: [...hold.options],
@@ -180,9 +204,7 @@ function answerOnBoard(
   written: boolean,
   source: "board" | "pane",
 ): string[] {
-  const open = holdOf(db, card);
-  if (open?.entry !== hold)
-    throw new StaleCard(`that hold on #${String(card.id)} is no longer open`);
+  const open = requireSeen(db, card, hold);
   if (open.holder !== "captain")
     throw new Error("that hold is with main or its mate. It reaches you when main escalates it");
   const picked = written && open.merge ? MERGE_OPTIONS[1] : choice;
@@ -206,8 +228,15 @@ function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
   return to;
 }
 
-function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: string): string[] {
+function deferOnBoard(
+  db: DatabaseSync,
+  card: Card,
+  hold: number,
+  until: number,
+  reason: string,
+): string[] {
   if (until <= Date.now()) throw new Error("until must be in the future");
+  requireSeen(db, card, hold);
   const facts = factsFrom(cardEntries(db, card.id));
   const base = rewritten(facts, facts.hold?.holder ?? "owner", until);
   const fields = { ...base, wait: { by: "later", text: reason }, remaining: [], reason };
@@ -223,22 +252,16 @@ export function paneAnswer(
   db: DatabaseSync,
   raw: unknown,
 ): { readonly value: Card; readonly notify: readonly string[] } {
-  const { card: id, revision, choice, written } = check(OPS["pane.answer"].args, raw);
-  const card = getCard(db, id);
-  const open = holdOf(db, card);
-  if (card.revision !== revision || open === undefined)
-    throw new StaleCard(`c-${String(id)} changed since you looked, so nothing was recorded`);
-  const notify = answerOnBoard(db, card, open.entry, choice, written === true, "pane");
+  const { card: id, hold, choice, written } = check(OPS["pane.answer"].args, raw);
+  const notify = answerOnBoard(db, getCard(db, id), hold, choice, written === true, "pane");
   return { value: getCard(db, id), notify };
 }
 
 export function boardAction(db: DatabaseSync, raw: unknown): string[] {
-  const { card: id, revision, action } = check(BoardActionSchema, raw);
+  const { card: id, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);
-  if (action.kind !== "comment" && card.revision !== revision)
-    throw new StaleCard(`#${String(id)} changed since you looked; here is the current card`);
   if (action.kind === "answer")
     return answerOnBoard(db, card, action.hold, action.choice, action.written === true, "board");
   if (action.kind === "comment") return commentOnBoard(db, card, action.text);
-  return deferOnBoard(db, card, action.until, action.reason);
+  return deferOnBoard(db, card, action.hold, action.until, action.reason);
 }

@@ -133,6 +133,7 @@ export const CardViewSchema = Type.Object({
   card: BoardCardSchema,
   hold: Nullable(
     Type.Object({
+      entry: Type.Integer(),
       holder: Holder,
       question: Type.String(),
       options: Type.Array(Type.String()),
@@ -263,7 +264,7 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
-      revision: Type.Integer(),
+      hold: Type.Integer(),
       choice: Type.String({ minLength: 1 }),
       written: Type.Optional(Type.Boolean()),
     }),
@@ -430,7 +431,6 @@ export type Thread = Static<typeof ThreadSchema>;
 
 export const BoardActionSchema = Type.Object({
   card: Type.Integer(),
-  revision: Type.Integer(),
   action: Type.Union([
     Type.Object({
       kind: Type.Literal("answer"),
@@ -441,6 +441,7 @@ export const BoardActionSchema = Type.Object({
     Type.Object({ kind: Type.Literal("comment"), text: Type.String({ minLength: 1 }) }),
     Type.Object({
       kind: Type.Literal("hold"),
+      hold: Type.Integer(),
       until: Type.Integer(),
       reason: Type.String({ minLength: 1 }),
     }),

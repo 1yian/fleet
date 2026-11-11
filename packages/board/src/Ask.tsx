@@ -13,7 +13,7 @@ interface Props {
   readonly showQuestion: boolean;
   readonly onRead: (() => void) | undefined;
   readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
-  readonly onLater: (until: number, reason: string) => void;
+  readonly onLater: (hold: number, until: number, reason: string) => void;
 }
 
 type Mode = "options" | "words" | "later";
@@ -87,7 +87,14 @@ function AskBody(props: Props) {
       {mode === "words" ? (
         <Words question={question} onAnswer={props.onAnswer} onCancel={toOptions} />
       ) : null}
-      {mode === "later" ? <Later onLater={props.onLater} onCancel={toOptions} /> : null}
+      {mode === "later" ? (
+        <Later
+          onLater={(until, reason) => {
+            props.onLater(question.hold, until, reason);
+          }}
+          onCancel={toOptions}
+        />
+      ) : null}
       {mode === "options" ? (
         <div className="ask-foot">
           {question.merge ? null : (
@@ -204,7 +211,10 @@ function presets(now: number): Preset[] {
   ];
 }
 
-function Later(props: { readonly onLater: Props["onLater"]; readonly onCancel: () => void }) {
+function Later(props: {
+  readonly onLater: (until: number, reason: string) => void;
+  readonly onCancel: () => void;
+}) {
   const [options] = useState(() => presets(Date.now()));
   return (
     <div className="later" role="group" aria-label="Ask me later">

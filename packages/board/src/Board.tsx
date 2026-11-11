@@ -28,7 +28,7 @@ interface Props {
     choice: string,
     written: boolean,
   ) => Promise<boolean>;
-  readonly onLater: (card: number, until: number, reason: string) => void;
+  readonly onLater: (card: number, hold: number, until: number, reason: string) => void;
   readonly onDismiss: (card: number) => void;
   readonly notices: ReadonlyMap<number, string>;
 }

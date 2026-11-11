@@ -427,15 +427,14 @@ test("Needs you: Later uses the hold action and the card moves to Later in Up ne
     .waitFor();
 });
 
-test("Needs you: a click on a card that changed shows a notice in that card and sends nothing", async () => {
+test("Needs you: a click on a hold whose decision changed shows a notice in that card and sends nothing", async () => {
   const snapshot = await cardd.board();
   await freezeBoardUntilAction(page, snapshot);
   await open();
   const title = "Pick the API version";
   const id = fleet.cards["simple"]?.id ?? 0;
-  const shown = snapshot.cards.find((each) => each.id === id);
   const held = snapshot.holds.find((each) => each.card === id);
-  assert.ok(shown && held);
+  assert.ok(held);
   await main.call("hold", {
     card: id,
     question: "Which API version ships now?",
@@ -448,12 +447,11 @@ test("Needs you: a click on a card that changed shows a notice in that card and 
   const sent: unknown = response.request().postDataJSON();
   assert.deepEqual(check(BoardActionSchema, sent), {
     card: id,
-    revision: shown.revision,
     action: { kind: "answer", hold: held.hold, choice: "v2" },
   });
   assert.equal(response.status(), 409);
   const stale = card(title).getByRole("alert");
-  await stale.getByText(`#${String(id)} changed since you looked`).waitFor();
+  await stale.getByText(`c-${String(id)}'s decision changed`).waitFor();
   await stale.getByText("Nothing was sent").waitFor();
   assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 0);
   assert.equal(await page.getByRole("alert").count(), 1);

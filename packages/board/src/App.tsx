@@ -49,11 +49,7 @@ function useNow(): number {
   return now;
 }
 
-function useDecisions(
-  board: Board | undefined,
-  refresh: () => void,
-  setNotice: (notice: string | undefined) => void,
-) {
+function useDecisions(refresh: () => void, setNotice: (notice: string | undefined) => void) {
   const [notices, setNotices] = useState<ReadonlyMap<number, string>>(new Map());
   const noticeOn = useCallback((card: number, text: string | undefined) => {
     setNotices((all) => {
@@ -65,12 +61,11 @@ function useDecisions(
   }, []);
   const send = useCallback(
     async (card: number, action: BoardAction["action"]): Promise<string | undefined> => {
-      const revision = board?.cards.find((each) => each.id === card)?.revision ?? 0;
-      const error = await act({ card, revision, action });
+      const error = await act({ card, action });
       refresh();
       return error;
     },
-    [board, refresh],
+    [refresh],
   );
   const decide = useCallback(
     async (card: number, action: BoardAction["action"]): Promise<boolean> => {
@@ -87,8 +82,8 @@ function useDecisions(
     [decide],
   );
   const later = useCallback(
-    (card: number, until: number, reason: string) => {
-      void decide(card, { kind: "hold", until, reason });
+    (card: number, hold: number, until: number, reason: string) => {
+      void decide(card, { kind: "hold", hold, until, reason });
     },
     [decide],
   );
@@ -131,7 +126,7 @@ export function App() {
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
 
-  const { notices, answer, later, dismiss, reply } = useDecisions(board, refresh, setNotice);
+  const { notices, answer, later, dismiss, reply } = useDecisions(refresh, setNotice);
   useEscape(close);
 
   const banner =
@@ -171,8 +166,8 @@ export function App() {
               dismiss(shown.id);
             }}
             onAnswer={(hold, choice, written) => answer(shown.id, hold, choice, written)}
-            onLater={(until, reason) => {
-              later(shown.id, until, reason);
+            onLater={(hold, until, reason) => {
+              later(shown.id, hold, until, reason);
             }}
             onReply={(text) => reply(shown.id, text)}
             onFail={setNotice}
