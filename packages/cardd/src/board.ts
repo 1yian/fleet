@@ -42,7 +42,8 @@ const deferred = (hold: Hold, now: number): boolean => hold.until !== null && ho
 const askingCaptain = (hold: Hold, now: number): boolean =>
   hold.holder === "captain" && !deferred(hold, now);
 
-const sameAsk = (a: Hold, b: Hold): boolean =>
+const sameHold = (a: Hold, b: Hold): boolean =>
+  a.occurrence === b.occurrence &&
   a.holder === b.holder &&
   a.question === b.question &&
   a.options.length === b.options.length &&
@@ -54,8 +55,9 @@ function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
   const name = `c-${String(card.id)}`;
   if (open === undefined || deferred(open, Date.now()))
     throw new StaleCard(`${name} is no longer waiting for your answer, so nothing was recorded`);
-  const shown = factsFrom(entries.filter((entry) => entry.id === seen)).hold;
-  if (shown === undefined || !sameAsk(open, shown))
+  const upToSeen = entries.slice(0, entries.findIndex((entry) => entry.id === seen) + 1);
+  const shown = factsFrom(upToSeen).hold;
+  if (shown === undefined || !sameHold(open, shown))
     throw new StaleCard(`${name}'s decision changed, so nothing was recorded`);
   return open;
 }

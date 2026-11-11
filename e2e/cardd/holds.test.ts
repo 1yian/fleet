@@ -412,6 +412,41 @@ test("a merge question is part of the hold: it goes up through main, and is with
   assert.equal(held.at(-1)?.fields["occurrence"], 2);
 });
 
+test("a merge question withdrawn while the PR is reworked and asked again in the same words refuses the card he saw before", async () => {
+  const { card, worker } = await laneCard("Ads exports");
+  const question = `Merge ${PR}? Checks are green.`;
+  await worker.call("report", { status: "done", text: "PR ready", pr: PR });
+  await fleet.main.call("hold", { card: card.id, to: "captain", question });
+  const seen = await theHold();
+
+  await cleo.call("comment", { card: card.id, text: "Fix the failing check first." });
+  assert.deepEqual(await needsYou(), []);
+  await worker.call("report", { status: "done", text: "fixed" });
+  await fleet.main.call("hold", { card: card.id, to: "captain", question });
+  const again = await theHold();
+  assert.deepEqual([again.question, again.options], [seen.question, seen.options]);
+  assert.notEqual(again.hold, seen.hold, "the hold is a newer entry");
+
+  const oldCard = { kind: "answer", hold: seen.hold, choice: MERGE_OPTIONS[0] } as const;
+  assert.equal(await fleet.cardd.act(card.id, oldCard), 409);
+  const putOff = {
+    kind: "hold",
+    hold: seen.hold,
+    until: Date.now() + 3_600_000,
+    reason: "later",
+  } as const;
+  assert.equal(await fleet.cardd.act(card.id, putOff), 409);
+  await assert.rejects(
+    fleet.main.call("pane.answer", { card: card.id, hold: seen.hold, choice: MERGE_OPTIONS[0] }),
+    { message: /c-\d+'s decision changed, so nothing was recorded/ },
+  );
+  assert.deepEqual(await needsYou(), [card.id]);
+  assert.equal((await entries(card)).filter((entry) => entry.kind === "answer").length, 0);
+
+  assert.equal(await fleet.cardd.act(card.id, { ...oldCard, hold: again.hold }), 200);
+  assert.equal(await status(cleo, card), "merging");
+});
+
 test("a ship card that is done without a PR raises no merge question", async () => {
   const { card, worker } = await laneCard();
   await worker.call("report", { status: "done", text: "branch ready" });
