@@ -10,7 +10,7 @@ import {
 import { requireCommentsRead } from "./deliveries.ts";
 import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
 import { dropLostJob, finishJob, ownJob, runningJobs, startJob, touchJob } from "./jobs.ts";
-import { boardFor, cardView } from "./board.ts";
+import { boardFor, cardView, paneAnswer } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
@@ -159,6 +159,11 @@ const HANDLERS: Record<OpName, Handler> = {
     closeFinish(db, session, raw, closeCheck),
   hold,
   release,
+  "pane.answer": (db, session, raw) => {
+    if (session.lane !== mainLane(db))
+      throw new Error("only main's pane takes the captain's answers");
+    return paneAnswer(db, raw);
+  },
   "card.new": (db, session, raw) => {
     const { lane, ...args } = check(OPS["card.new"].args, raw);
     if (lane !== undefined && lane !== session.lane) {

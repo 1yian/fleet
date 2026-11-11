@@ -334,6 +334,9 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `session_shutdown` clears the status and the widget, so a reload or a new session never leaves a count that no one refreshes. The new session paints again at its first connect.
 - The footer's chips row also starts with a glyph, so `e2e/extension/pane.test.ts` tells the strip from the chips by the character after the glyph: a digit is a chip.
 - The strip is a widget above the editor, under its own key, so Calm's boat draws beside it. Neither sets the title, and the editor stays with OptChat.
+- `pane/decide.ts` owns opening the card, for the `/d` command and for the strip's click alike, and refuses a second open while one is up. `pane/decisions.ts` reads the decisions: the `board` op's cards with status Needs you, each with its hold from the `card` op, oldest first. `pane/card.ts` draws the card and takes its keys. It keeps no copy of cardd's state: after a refused answer it reads the decisions again.
+- A pane answer is an op, not the board's HTTP route. The extension's link is authenticated as main, so `pane.answer` needs no host allowlist and no second client, and `cardd` refuses it from any other lane. It runs the board's answer code (`answerOnBoard`), so the stale check, the merge-choice rule, and the notifications are the board's, and only `source` differs. The answer entry keeps `by: "board"` so the board's thread shows it as the captain's answer.
+- The click is a `MouseRegion` around the strip. It acts on a left `click` only and leaves presses and drags to the terminal's text selection. `e2e/extension/decide.test.ts` sends the SGR mouse sequences for press and release to the pane, because herdr has no click command. Pi turns mouse reports on only in fullscreen mode.
 
 ### Calm
 

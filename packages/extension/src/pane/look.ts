@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   mixColors,
+  MouseRegion,
   replaceControlCharacters,
   stripTerminalSequences,
   truncateToWidth,
@@ -13,6 +14,7 @@ import { KINDS, type Glance, type Kind, type Need } from "./glance.ts";
 const GLYPHS: Readonly<Record<Kind, string>> = { broken: "●", "needs-you": "◆", stalled: "◇" };
 const LANDED_GLYPH = "▲";
 const CLEAR_TEXT = "✓ clear";
+const DECIDE_HINT = "/d";
 const TINT = 0.13;
 const MINUTE_MS = 60_000;
 
@@ -60,19 +62,27 @@ export interface Row {
   readonly kind: Kind;
   readonly text: string;
   readonly more: number;
+  readonly decide: boolean;
 }
 
 export const rowOf = (needs: readonly Need[], now: number): Row | undefined => {
   const [first] = needs;
   return first === undefined
     ? undefined
-    : { kind: first.kind, text: describe(first, now), more: needs.length - 1 };
+    : {
+        kind: first.kind,
+        text: describe(first, now),
+        more: needs.length - 1,
+        decide: needs.some((each) => each.kind === "needs-you"),
+      };
 };
 
 function paint(theme: Theme, row: Row, width: number): string {
   const { colors } = theme;
   const tone = TONES[row.kind](colors);
-  const right = row.more === 0 ? "" : `+${String(row.more)} more `;
+  const tail = [row.more === 0 ? "" : `+${String(row.more)} more`, row.decide ? DECIDE_HINT : ""];
+  const joined = tail.filter((part) => part !== "").join(" · ");
+  const right = joined === "" ? "" : `${joined} `;
   const gap = right === "" ? 0 : 1;
   const room = Math.max(0, width - 3 - visibleWidth(right) - gap);
   const text = stripTerminalSequences(truncateToWidth(row.text, room));
@@ -82,9 +92,14 @@ function paint(theme: Theme, row: Row, width: number): string {
   return theme.style(` ${glyph} ${text}${pad}${right}`, { bg: tint });
 }
 
-export function strip(theme: Theme, row: Row): Component {
-  return {
+export function strip(theme: Theme, row: Row, open: () => void): Component {
+  const painted: Component = {
     render: (width) => [paint(theme, row, width)],
     invalidate: () => undefined,
   };
+  return new MouseRegion(painted, (event) => {
+    if (event.type !== "click" || event.button !== "left") return undefined;
+    open();
+    return { handled: true };
+  });
 }

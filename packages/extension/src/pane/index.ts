@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { BoardCard, CardView } from "@fleet/protocol";
 import type { Link } from "../link.ts";
+import { Decide } from "./decide.ts";
 import { glanceOf, unreachable, type Glance, type Limits, type ReportTimes } from "./glance.ts";
 import { chips, rowOf, strip } from "./look.ts";
 
@@ -61,12 +62,16 @@ class Pane {
   private readonly link: Link;
   private readonly ctx: ExtensionContext;
   private readonly rules: Settings;
+  readonly decide: Decide;
 
   constructor(link: Link, ctx: ExtensionContext, rules: Settings) {
     this.link = link;
     this.ctx = ctx;
     this.rules = rules;
     this.since = lastMessageAt(ctx);
+    this.decide = new Decide(link, ctx, () => {
+      this.refresh();
+    });
   }
 
   refresh(): void {
@@ -173,7 +178,13 @@ class Pane {
     const key = row === undefined ? "" : JSON.stringify(row);
     if (key === this.row) return;
     this.row = key;
-    ui.setWidget(STRIP_KEY, row === undefined ? undefined : (_tui, theme) => strip(theme, row));
+    const open = (): void => {
+      void this.decide.open();
+    };
+    ui.setWidget(
+      STRIP_KEY,
+      row === undefined ? undefined : (_tui, theme) => strip(theme, row, open),
+    );
   }
 }
 
@@ -184,6 +195,10 @@ export function showPane(pi: ExtensionAPI, link: Link, ctx: ExtensionContext): v
   const refresh = (): void => {
     pane.refresh();
   };
+  pi.registerCommand("d", {
+    description: "Answer the decisions that wait for you, one at a time",
+    handler: () => pane.decide.open(),
+  });
   pi.events.on("fleet:connected", refresh);
   pi.events.on("fleet:delivered", refresh);
   pi.on("tool_execution_end", (event) => {

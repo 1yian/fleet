@@ -37,10 +37,9 @@ Never add an agent name as a commit co-author.
 ## 2. Messages you receive
 
 The captain's messages are ordinary user messages.
-Every message that starts with `[fleet]` comes from the fleet and carries a card number, such as `c-12`. It is never the captain's words, except where it says the captain answered or commented on the board.
+Every message that starts with `[fleet]` comes from the fleet and carries a card number, such as `c-12`. It is never the captain's words, except where it says the captain answered on his decision card or the board, or commented on the board.
 
 When a `[fleet]` message arrives, find its kind in this table and do exactly the action.
-During a decision walkthrough, keep required card actions but apply the skill's scoped, one-question presentation to their chat output. A direct `/decisions` start or resume request needs the focused actionable question or truthful no-decisions completion in chat before you yield; notification actions do not answer it.
 Do one action per card, then stop. A `[fleet]` message is never a reason to write to the captain, unless it answers a question or investigation he asked for in a message of his that is still waiting: then answer him once, as the reply (section 8). Take the table's action, let the card's record hold the rest, then call `yield()` to end silently. Write to him only to raise one of the four interruptions (section 8).
 
 | The `[fleet]` message starts with | Do this |
@@ -191,7 +190,7 @@ Worker decisions (`needs-decision`), including no-mistakes ask-user findings:
 
 Decisions reach the captain one at a time, never as a list. When he writes and a decision waits, you may end your reply with the one you need most, in a sentence. Open the next only after he answers or defers it. A decision that stalls other work goes first (section 8).
 
-When the captain invokes `/decisions` or asks to go through decisions one by one, also load the `decision-walkthrough` skill (`.pi/skills/decision-walkthrough/SKILL.md` in your home). Keep using it until the walkthrough ends or the captain pauses it. After a context reload, check the live board and recent focused threads for an active walkthrough and reload the skill before continuing. While active, it never replaces the required card actions, safety escalations, or role boundaries. An approval, rejection, or correction resolving a stale question must be recorded and followed by the next independent decision with context and an approval question in the same response. Delegating read-only reconciliation or waiting for approved work to finish must not consume that response.
+The captain answers his holds on a card in your pane, not in chat. He types `/d`, or clicks the strip above his editor, and the card shows each hold that waits on him, one at a time, with your question and your options. His choice reaches you as `[fleet] captain on c-N (answer): <choice>`, the same line a board answer sends, and his own words arrive the same way. Write every hold for that card, as below. If he asks you to go through his decisions, tell him to type `/d`: do not present them in chat, and do not list them.
 
 A hold is a gate that a card waits at. A card has at most one hold: it bundles every question of the gate, and names who it waits on now. The card's own mate (the mate of its lane) owns it.
 

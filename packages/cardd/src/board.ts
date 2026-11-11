@@ -3,6 +3,7 @@ import {
   check,
   BoardActionSchema,
   MERGE_OPTIONS,
+  OPS,
   type Board,
   type BoardCard,
   type Card,
@@ -155,6 +156,7 @@ function answerOnBoard(
   hold: number,
   choice: string,
   written: boolean,
+  source: "board" | "pane",
 ): string[] {
   const open = holdOf(db, card);
   if (open?.entry !== hold)
@@ -162,7 +164,7 @@ function answerOnBoard(
   if (open.holder !== "captain")
     throw new Error("that hold is with main or its mate. It reaches you when main escalates it");
   const picked = written && open.merge ? MERGE_OPTIONS[1] : choice;
-  const args = { words: choice, source: "board", choice: picked, ...(written ? { written } : {}) };
+  const args = { words: choice, source, choice: picked, ...(written ? { written } : {}) };
   return [...answerHold(db, null, card, open, args).notify];
 }
 
@@ -195,13 +197,26 @@ function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: strin
   return to;
 }
 
+export function paneAnswer(
+  db: DatabaseSync,
+  raw: unknown,
+): { readonly value: Card; readonly notify: readonly string[] } {
+  const { card: id, revision, choice, written } = check(OPS["pane.answer"].args, raw);
+  const card = getCard(db, id);
+  const open = holdOf(db, card);
+  if (card.revision !== revision || open === undefined)
+    throw new StaleCard(`c-${String(id)} changed since you looked, so nothing was recorded`);
+  const notify = answerOnBoard(db, card, open.entry, choice, written === true, "pane");
+  return { value: getCard(db, id), notify };
+}
+
 export function boardAction(db: DatabaseSync, raw: unknown): string[] {
   const { card: id, revision, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);
   if (action.kind !== "comment" && card.revision !== revision)
     throw new StaleCard(`#${String(id)} changed since you looked; here is the current card`);
   if (action.kind === "answer")
-    return answerOnBoard(db, card, action.hold, action.choice, action.written === true);
+    return answerOnBoard(db, card, action.hold, action.choice, action.written === true, "board");
   if (action.kind === "comment") return commentOnBoard(db, card, action.text);
   return deferOnBoard(db, card, action.until, action.reason);
 }
