@@ -3,7 +3,7 @@ const ENTER = ["\r", "\n"];
 const BACKSPACE = ["\u007f", "\b"];
 const INTERRUPT = "\u0003";
 
-export const hasTerminal = (): boolean => process.stdin.isTTY && process.stdout.isTTY;
+const hasTerminal = (): boolean => process.stdin.isTTY && process.stdout.isTTY;
 
 export function clearScreen(): void {
   if (hasTerminal()) process.stdout.write("\u001b[2J\u001b[H");

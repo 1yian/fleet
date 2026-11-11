@@ -26,7 +26,7 @@ function originOf(dir: string): string | undefined {
   return url === undefined ? undefined : normalizedRemote(url);
 }
 
-export function cloneOfCheckout(world: World, inside: string): LocalClone | undefined {
+function cloneOfCheckout(world: World, inside: string): LocalClone | undefined {
   const origin = originOf(inside);
   if (origin === undefined) return undefined;
   return world.clones.find((clone) => originOf(clone.path) === origin);
@@ -49,7 +49,7 @@ function isWorktreeOf(clone: string, path: string): boolean {
     .some((line) => line.startsWith("worktree ") && resolved(line.slice(9)) === here);
 }
 
-export function ensureScratch(world: World, clone: LocalClone): string {
+function ensureScratch(world: World, clone: LocalClone): string {
   const path = scratchPath(clone);
   if (existsSync(path)) {
     if (!isWorktreeOf(clone.path, path))

@@ -54,7 +54,7 @@ function lineRange(lines: string | undefined): string[] {
   return [`Lines ${lines}.`];
 }
 
-export function showText(
+function showText(
   world: World,
   target: Target,
   path: string,

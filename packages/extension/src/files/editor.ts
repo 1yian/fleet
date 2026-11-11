@@ -48,7 +48,7 @@ function hasNul(path: string): boolean {
   }
 }
 
-export function notTextBecause(path: string): string | undefined {
+function notTextBecause(path: string): string | undefined {
   const { size } = statSync(path);
   if (size > MAX_EDIT_BYTES) return `larger than ${String(MAX_EDIT_BYTES / 1024 / 1024)} MiB`;
   return hasNul(path) ? "a binary file" : undefined;

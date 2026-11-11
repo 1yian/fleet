@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { laneHomes } from "../homes.ts";
 import type { World } from "./world.ts";
 
-export type Kind = "root" | "home" | "clone" | "worker" | "skill";
+type Kind = "root" | "home" | "clone" | "worker" | "skill";
 
 export type Decision =
   | { readonly editable: true }

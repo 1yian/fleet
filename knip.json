@@ -42,5 +42,5 @@
       "ignore": ["src/vendor/**"]
     }
   },
-  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "openssl", "pgrep"]
+  "ignoreBinaries": ["bws", "file", "fzf", "herdr", "lavish-axi", "openssl", "pgrep", "ya", "yazi"]
 }
