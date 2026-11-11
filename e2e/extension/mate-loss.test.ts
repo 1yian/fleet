@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Entry } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { Harness } from "../support/harness.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 
 let fleet: Fleet;
 let h: Harness;
 beforeEach(async () => {
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.02" });
+  const dir = tempDir("mate-loss-clock-");
+  mkdirSync(dir, { recursive: true });
+  const clock = join(dir, "clock");
+  writeFileSync(clock, new Date().toISOString());
+  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.02", CARDD_CLOCK_FILE: clock });
   h = await Harness.start();
 });
 afterEach(async () => {
@@ -53,7 +60,7 @@ test("a second mate whose process is killed with no final event raises one incid
   assert.equal(fleet.main.entries.filter((push) => isFailure(push.entry)).length, 1);
 });
 
-test("a second mate that main stopped on purpose is not reported as lost", async () => {
+test("a second mate that main stopped on purpose is not reported while the stop has not ended", async () => {
   const pi = await connectedMate("leo");
   await fleet.main.call("lane.stopping", { lane: "leo" });
   await pi.kill();

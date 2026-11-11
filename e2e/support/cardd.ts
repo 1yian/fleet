@@ -366,6 +366,11 @@ export class Session {
     await until(() => this.closeCode, "close");
   }
 
+  async lose(): Promise<void> {
+    this.socket.close(4000, "lost");
+    await until(() => this.closeCode, "close");
+  }
+
   private receive(message: ServerMessage): void {
     if (message.t === "welcome") this.welcome = message;
     else if (message.t === "entry") {

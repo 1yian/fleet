@@ -19,6 +19,7 @@ import {
   type Incident,
 } from "./incident-store.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
+import { transitionStop } from "./lane-stop.ts";
 import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -361,7 +362,7 @@ function reconnected(db: DatabaseSync, session: string): void {
 }
 
 export function adoptProcess(db: DatabaseSync, session: string, process: string | undefined): void {
-  db.prepare("UPDATE sessions SET stopping = 0 WHERE id = ?").run(session);
+  transitionStop(db, session, { event: "connect" });
   if (process === undefined) return;
   const known = db.prepare("SELECT process FROM sessions WHERE id = ?").get(session)?.["process"];
   if (known === process) {
