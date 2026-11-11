@@ -86,6 +86,11 @@ const stoppedFile = (home: string): string => join(home, "state", "stopped");
 const HELD_AT_CREATION = "held since the home was made\n";
 const startsFile = (home: string): string => join(home, "state", "starts");
 
+function liftHold(home: string): void {
+  rmSync(stoppedFile(home), { force: true });
+  rmSync(startsFile(home), { force: true });
+}
+
 const canonical = (path: string): string => {
   try {
     return realpathSync(path);
@@ -245,13 +250,13 @@ const named = (root: string, lane: string | undefined): LaneHome[] => {
 
 async function upOne(root: string, info: LaneHome, only: string | undefined): Promise<Outcome> {
   const { lane, home } = info;
-  if (only !== undefined && heldReason(home) !== undefined) {
-    rmSync(stoppedFile(home), { force: true });
-    rmSync(startsFile(home), { force: true });
+  if (only !== undefined && heldReason(home) !== undefined) liftHold(home);
+  if (await running(lane)) {
+    if (heldReason(home) !== undefined) liftHold(home);
+    return { lane, action: "running" };
   }
   const reason = heldReason(home);
   if (reason !== undefined) return { lane, action: "stopped", detail: reason };
-  if (await running(lane)) return { lane, action: "running" };
   if (recentStarts(home, Date.now()).length >= STARTS_BEFORE_HOLD) {
     const detail = `started ${String(STARTS_BEFORE_HOLD)} times in ${String(CRASH_WINDOW_MS / 60_000)} minutes`;
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
@@ -286,10 +291,10 @@ export async function stop(root: string, lane: string): Promise<void> {
 
 async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
-  if (all && held !== undefined) return { lane: info.lane, action: "stopped", detail: held };
+  if (all && held !== undefined && !(await running(info.lane)))
+    return { lane: info.lane, action: "stopped", detail: held };
   await close(info.lane);
-  rmSync(stoppedFile(info.home), { force: true });
-  rmSync(startsFile(info.home), { force: true });
+  liftHold(info.home);
   await start(root, info);
   return { lane: info.lane, action: "started" };
 }

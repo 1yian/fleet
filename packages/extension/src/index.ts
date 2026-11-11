@@ -32,7 +32,7 @@ import { processId } from "./process-id.ts";
 import { reportActivity, trackRun } from "./progress.ts";
 import { MUTABLE_TAIL } from "./cache-ttl.ts";
 import { ROLE_PROMPTS } from "./prompts.ts";
-import { MaintenanceQueue } from "./maintenance.ts";
+import { MaintenanceQueue, STALE_RELOAD_FLAG } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
 import { registerRestart } from "./restart.ts";
 import { registerQuestions } from "./questions.ts";
@@ -161,11 +161,14 @@ function tellLaunchLost(pi: ExtensionAPI): (text: string) => void {
   };
 }
 
-function tellUnreadable(pi: ExtensionAPI, error: string): void {
+function tellUnreadable(pi: ExtensionAPI, error: string, reloading: boolean): void {
+  const next = reloading
+    ? "This session runs older code than cardd, so it reloads itself at its next safe point, on the same conversation."
+    : "It may run other code than this extension. The session keeps reconnecting.";
   pi.sendMessage(
     {
       customType: "fleet-link",
-      content: `[fleet] link: cardd sent a message this session cannot read (${error}). It may run other code than this extension. The session keeps reconnecting.`,
+      content: `[fleet] link: cardd sent a message this session cannot read (${error}). ${next}`,
       display: true,
     },
     { triggerTurn: false },
@@ -252,7 +255,10 @@ function start(
     onUnreadable: (error) => {
       if (unreadable === error) return;
       unreadable = error;
-      tellUnreadable(pi, error);
+      tellUnreadable(pi, error, maintenance.queue?.reloadForStaleCode() === true);
+    },
+    onUnreadableResult: () => {
+      maintenance.queue?.reloadForStaleCode();
     },
     onMaintenance: (request) => maintenance.queue?.receive(request),
     onConnect: () => {
@@ -338,6 +344,11 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
+  pi.registerFlag(STALE_RELOAD_FLAG, {
+    type: "string",
+    description:
+      "When this process last relaunched itself because cardd's messages were unreadable",
+  });
   pi.registerFlag("fleet-bws", {
     type: "string",
     description: "Where to read this session's bws secrets, as JSON without any secret value",

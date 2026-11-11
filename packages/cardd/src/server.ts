@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import type { DatabaseSync } from "node:sqlite";
 import {
   check,
+  CLOSE,
   HttpCallSchema,
   isOpName,
   type HttpOutcome,
@@ -24,13 +25,11 @@ import { Web } from "./web.ts";
 import { LoopHealth } from "./health.ts";
 import { version } from "./version.ts";
 
-const CLOSE_BAD_MESSAGE = 4000;
-const CLOSE_NOT_LIVE = 4001;
-const CLOSE_SUPERSEDED = 4002;
-
 const EVERY_INTERFACE: ReadonlySet<string> = new Set(["0.0.0.0", "::", "::ffff:0.0.0.0"]);
 
 class NotLive extends Error {}
+
+const unreadableKey = (session: string): string => `unreadable ${session}`;
 
 function text(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString("utf8");
@@ -61,6 +60,7 @@ class Hub {
   private readonly timing: Timings;
   private readonly hosts: Hosts;
   private readonly reading = new Set<string>();
+  private readonly said = new Set<string>();
   readonly web: Web;
   readonly health: LoopHealth;
   open = 0;
@@ -149,6 +149,8 @@ class Hub {
       return current;
     };
     const handle = (message: ClientMessage): void => {
+      if (message.t !== "hello" && session !== undefined)
+        this.said.delete(unreadableKey(session.id));
       if (message.t === "hello") {
         session = this.hello(socket, message);
         token = session === undefined ? undefined : message.token;
@@ -169,16 +171,31 @@ class Hub {
         handle(parseClientMessage(text(data)));
       } catch (error) {
         const code =
-          session === undefined || error instanceof NotLive ? CLOSE_NOT_LIVE : CLOSE_BAD_MESSAGE;
+          session === undefined || error instanceof NotLive ? CLOSE.notLive : CLOSE.badMessage;
         socket.close(code, reason(error).slice(0, 120));
       }
     });
-    socket.on("close", (code) => {
-      if (session === undefined || this.bySession.get(session.id) !== socket) return;
+    socket.on("close", (code, why) => {
+      if (session === undefined) return;
+      if (code === CLOSE.unreadable) this.cannotRead(session.id, why.toString("utf8"));
+      if (this.bySession.get(session.id) !== socket) return;
       this.bySession.delete(session.id);
       if (setSessionState(this.db, session.id, code === 1000 ? "exited" : "lost"))
         this.web.changed();
     });
+  }
+
+  private sayOnce(key: string, line: string): void {
+    if (this.said.has(key)) return;
+    this.said.add(key);
+    console.log(line);
+  }
+
+  private cannotRead(session: string, why: string): void {
+    this.sayOnce(
+      unreadableKey(session),
+      `session ${session} cannot read what cardd sends it (${why}). It runs other code than this cardd, so it keeps reconnecting until it reloads or is restarted. This is said once until it reads cardd again.`,
+    );
   }
 
   answerHealth(request: IncomingMessage, response: ServerResponse): boolean {
@@ -229,10 +246,15 @@ class Hub {
   ): Session | undefined {
     const session = sessionByToken(this.db, message.token);
     if (!session?.live) {
-      socket.close(CLOSE_NOT_LIVE, "unknown token, or the attempt ended");
+      if (session !== undefined)
+        this.sayOnce(
+          `ended ${session.id}`,
+          `refused ${session.id}: its attempt ended, so it cannot connect. It stops retrying.`,
+        );
+      socket.close(CLOSE.notLive, "unknown token, or the attempt ended");
       return undefined;
     }
-    this.bySession.get(session.id)?.close(CLOSE_SUPERSEDED, "a newer connection took over");
+    this.bySession.get(session.id)?.close(CLOSE.superseded, "a newer connection took over");
     this.bySession.set(session.id, socket);
     const reporters = transaction(this.db, () => {
       setSessionState(this.db, session.id, message.running === true ? "running" : "idle");

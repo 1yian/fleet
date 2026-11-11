@@ -381,6 +381,13 @@ export type OpName = keyof typeof OPS;
 export type OpArgs<O extends OpName> = Static<(typeof OPS)[O]["args"]>;
 export type OpResult<O extends OpName> = Static<(typeof OPS)[O]["result"]>;
 
+export const CLOSE = {
+  badMessage: 4000,
+  notLive: 4001,
+  superseded: 4002,
+  unreadable: 4003,
+} as const;
+
 const ClientMessage = Type.Union([
   Type.Object({
     t: Type.Literal("hello"),

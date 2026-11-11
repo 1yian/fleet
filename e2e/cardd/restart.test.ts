@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { check, OPS, type Card } from "@fleet/protocol";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
+import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
+import type { Session } from "../support/cardd.ts";
 
 let fleet: Fleet;
 let card: Card;
@@ -97,3 +98,60 @@ test("main restarts a second mate by its lane card, and nobody else restarts it"
     /only the direct parent can restart/,
   );
 });
+
+const PR = "https://github.com/acme/web/pull/7";
+const HOUR_MS = 3_600_000;
+
+const resting: Record<string, (worker: Session, card: Card) => Promise<unknown>> = {
+  paused: (worker) =>
+    worker.call("report", { status: "paused", text: "wait", until: Date.now() + HOUR_MS }),
+  finished: (worker) => worker.call("report", { status: "done", text: "done, no PR" }),
+  "merging after the merge word": async (worker, own) => {
+    await worker.call("report", { status: "done", text: "PR ready", pr: PR });
+    await fleet.main.call("release", {
+      card: own.id,
+      words: "yes, merge it",
+      source: "chat",
+      choice: MERGE_OPTIONS[0],
+    });
+  },
+  "waiting on the merge question": (worker) =>
+    worker.call("report", { status: "done", text: "PR ready", pr: PR }),
+  "waiting on a dated hold": (_worker, own) => park(fleet.main, own, "wait for CI", HOUR_MS),
+};
+
+for (const [name, rest] of Object.entries(resting)) {
+  test(`a restart reconnects the disconnected worker of a card that is ${name}, resumes nothing, and what the mate sends next reaches it`, async () => {
+    const token = await begin(fleet.main, card);
+    const worker = await fleet.cardd.connect(token);
+    await rest(worker, card);
+    const before = await status(fleet.main, card);
+    await assert.rejects(
+      restart("while-connected"),
+      /its worker is connected, so there is nothing/,
+    );
+
+    await worker.lose();
+    await fleet.cardd.waitForSessionLost(`c-${String(card.id)}-a1`);
+    const plan = await restart("reconnect");
+
+    assert.deepEqual(
+      [plan.actor, plan.role, plan.reconnect, plan.repeat],
+      [`c-${String(card.id)}-a1`, "worker", true, false],
+    );
+    assert.equal(await status(fleet.main, card), before);
+    const entries = (await fleet.cardd.thread(card.id)).entries;
+    assert.equal(
+      entries.filter((entry) => entry.fields["for"] === "worker").length,
+      0,
+      "the restart sent the worker nothing",
+    );
+    assert.equal((await restart("reconnect")).repeat, true);
+
+    const returned = await fleet.cardd.connect(token);
+    await fleet.main.call("comment", { card: card.id, text: "Carry on." });
+    const heard = await returned.waitForEntry((entry) => entry.body === "Carry on.", "the comment");
+    assert.equal(heard.card, card.id);
+    await returned.close();
+  });
+}

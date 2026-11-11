@@ -28,7 +28,7 @@ export function registerRestart(
     name: "restart_card",
     label: "Restart card",
     description:
-      "Restarts your worker on the SAME card, conversation, branch, and work, with or without a runtime incident. Only its direct parent may restart it; main may restart a second mate by its lane card, never main or cardd. Default mode=replace. With incident, name its generation too: stale generations are refused; mode=retry sends a health check instead. Never resumes paused or completed work. Ordinary restarts are capped at 3 per hour per card. Repeat the same key for an idempotent retry. avoid lists exact provider names the new process must not use, for this restart only (replace of a worker only); a later restart without avoid clears it. A worker dispatched with an explicit model keeps it, so an avoid that names that model's provider is refused. A pinned model on one account of a tiers.json account group does not pin the account: the worker moves to another account of the group that serves the same model when its own is throttled or out of quota, and avoid may name another account of the group. model=provider/id (such as tier/visual) sets the worker's model whether or not it was dispatched with an explicit model, on the same card, conversation, branch, and PR, and every later restart keeps it. Only the card's own mate can set it, only when the worker's process is replaced, and a refused or repeated restart changes nothing. Use it when the current model's account cannot serve the work; avoid is then checked against the new model.",
+      "Restarts your worker on the SAME card, conversation, branch, and work, with or without a runtime incident. Only its direct parent may restart it; main may restart a second mate by its lane card, never main or cardd. Default mode=replace. With incident, name its generation too: stale generations are refused; mode=retry sends a health check instead. Never resumes paused or completed work: for a card that is paused, finished, or waiting, it replaces only a worker whose process is disconnected (as after a cardd restart that left it unable to connect), sends it nothing, and leaves the card as it was, so a comment or the wake that you send next reaches it. Ordinary restarts are capped at 3 per hour per card. Repeat the same key for an idempotent retry. avoid lists exact provider names the new process must not use, for this restart only (replace of a worker only); a later restart without avoid clears it. A worker dispatched with an explicit model keeps it, so an avoid that names that model's provider is refused. A pinned model on one account of a tiers.json account group does not pin the account: the worker moves to another account of the group that serves the same model when its own is throttled or out of quota, and avoid may name another account of the group. model=provider/id (such as tier/visual) sets the worker's model whether or not it was dispatched with an explicit model, on the same card, conversation, branch, and PR, and every later restart keeps it. Only the card's own mate can set it, only when the worker's process is replaced, and a refused or repeated restart changes nothing. Use it when the current model's account cannot serve the work; avoid is then checked against the new model.",
     parameters: RestartParams,
     execute: async (_id, params) => {
       const key = params.key ?? randomUUID();
@@ -66,6 +66,12 @@ async function carryOut(
   const started = await replaceWorker(link, launch, plan, avoid);
   if (plan.incident !== null)
     return `${started} The recovery check reaches it when it connects${incident}. ${CHECK_NOTE}`;
+  return started + (await resumeNote(link, plan));
+}
+
+async function resumeNote(link: Link, plan: Plan): Promise<string> {
+  if (plan.reconnect === true)
+    return " The card keeps its state: nothing was resumed, and what you send it next reaches it.";
   if (!plan.repeat) await link.call("comment", { card: plan.card, text: RESTARTED_NOTE });
-  return started;
+  return "";
 }

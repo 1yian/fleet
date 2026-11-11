@@ -1,15 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
-import { liveAttemptModel, repinAttempt } from "./attempts.ts";
+import { connected, liveAttemptModel, repinAttempt } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
-import { intentOf } from "./incident-lifecycle.ts";
+import { intentOf, type IncidentIntent } from "./incident-lifecycle.ts";
 import { recover, requireCurrent } from "./incidents.ts";
 import { addEntry, getCard, laneCardOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
 const RESTARTS_PER_HOUR = 3;
+const RESTING_INTENTS: ReadonlySet<IncidentIntent> = new Set([
+  "completed",
+  "paused",
+  "waiting",
+  "needs-you",
+]);
 const HOUR_MS = 3_600_000;
 
 interface Target {
@@ -94,6 +100,35 @@ interface Planned {
   readonly notify: readonly string[];
 }
 
+function refusedRestart(intent: IncidentIntent, connectedWorker: boolean): Error {
+  const why = connectedWorker
+    ? ", and its worker is connected, so there is nothing to reconnect: restart replaces only a worker that is disconnected"
+    : "";
+  return new Error(`the card is ${intent}: restart never resumes paused or finished work${why}`);
+}
+
+interface Restartable {
+  readonly target: Target;
+  readonly repeat: boolean;
+  readonly resting: boolean;
+}
+
+function restartable(
+  db: DatabaseSync,
+  card: { id: number; lane: string },
+  mate: boolean,
+  key: string,
+): Restartable {
+  const intent = intentOf(db, card.id, mate ? "mate" : "worker");
+  const resting = RESTING_INTENTS.has(intent);
+  if (!resting && intent !== "working" && intent !== "with-mate")
+    throw refusedRestart(intent, false);
+  const target = targetOf(db, card.id, card.lane, mate);
+  const repeat = alreadyRequested(db, card.id, key);
+  if (resting && !repeat && connected(db, target.actor)) throw refusedRestart(intent, true);
+  return { target, repeat, resting };
+}
+
 function ordinaryRestart(
   db: DatabaseSync,
   session: Session,
@@ -102,18 +137,16 @@ function ordinaryRestart(
   key: string,
 ): Planned {
   if (!mate) requireOpen(db, getCard(db, card.id));
-  const intent = intentOf(db, card.id, mate ? "mate" : "worker");
-  if (intent !== "working" && intent !== "with-mate")
-    throw new Error(`the card is ${intent}: restart never resumes paused or finished work`);
-  const target = targetOf(db, card.id, card.lane, mate);
-  const repeat = alreadyRequested(db, card.id, key);
+  const { target, repeat, resting } = restartable(db, card, mate, key);
   if (!repeat && restartsInLastHour(db, card.id) >= RESTARTS_PER_HOUR)
     throw new Error(
       `c-${String(card.id)} was restarted ${String(RESTARTS_PER_HOUR)} times in the last hour`,
     );
   const generation = generationOf(db, target.actor);
   if (!repeat) {
-    const body = "Restart requested on the same conversation, branch, and work.";
+    const body = resting
+      ? "Reconnect requested: the worker's process was disconnected. The card keeps its state and nothing is resumed."
+      : "Restart requested on the same conversation, branch, and work.";
     const fields = { restartKey: key, generation };
     addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
   }
@@ -126,6 +159,7 @@ function ordinaryRestart(
     generation,
     replaced: false,
     repeat,
+    reconnect: resting,
   };
   return { value, notify: [] };
 }

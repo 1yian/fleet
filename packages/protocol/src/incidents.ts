@@ -80,6 +80,12 @@ export const INCIDENT_OPS = {
       generation: Type.Integer(),
       replaced: Type.Boolean(),
       repeat: Type.Boolean(),
+      reconnect: Type.Optional(
+        Type.Boolean({
+          description:
+            "True when the card rests (paused, finished, or waiting) and the worker's process was only disconnected: the restart resumes nothing",
+        }),
+      ),
     }),
   },
 } as const;
