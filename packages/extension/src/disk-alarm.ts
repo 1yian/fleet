@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HostUnreachable } from "./host.ts";
+import { isRecord } from "./lane-config.ts";
 import {
   parseBreakdown,
   parseReport,
@@ -16,6 +18,8 @@ const ALARM_PERCENT = 75;
 
 const TIDY_EVERY_MS = 60 * 60_000;
 const DIRECTORY_CHECKS = 3;
+const QUEUE_WAIT_MS = Number(process.env["FLEET_DISK_QUEUE_WAIT_MS"]) || 30 * 60_000;
+export const DISK_MESSAGE = "fleet-disk";
 const ALARMS_FILE = join("state", "disk-alarms.json");
 const METRICS: readonly Metric[] = ["inodes", "space"];
 
@@ -24,6 +28,18 @@ export type Ask = (host: string, args: readonly string[]) => Promise<string>;
 export interface Alert {
   readonly text: string;
   readonly urgent: boolean;
+  readonly crossing?: string;
+}
+
+interface Queued {
+  readonly id: string;
+  readonly at: number;
+}
+
+interface Memory {
+  readonly held: Set<string>;
+  readonly unlisted: Map<string, number>;
+  readonly queued: Map<string, Queued>;
 }
 
 interface Crossing {
@@ -63,11 +79,43 @@ function saveHeld(home: string, held: ReadonlySet<string>): void {
   }
 }
 
+function parseLine(line: string): unknown {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+}
+
+function crossingIdOf(entry: unknown): string | undefined {
+  if (!isRecord(entry) || entry["type"] !== "custom_message") return undefined;
+  if (entry["customType"] !== DISK_MESSAGE) return undefined;
+  const details = entry["details"];
+  const id = isRecord(details) ? details["crossing"] : undefined;
+  return typeof id === "string" ? id : undefined;
+}
+
+export function announcedIn(file: string | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (file === undefined) return ids;
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return ids;
+  }
+  for (const line of text.split("\n")) {
+    if (!line.includes(DISK_MESSAGE)) continue;
+    const id = crossingIdOf(parseLine(line));
+    if (id !== undefined) ids.add(id);
+  }
+  return ids;
+}
+
 function crossingsIn(
   host: string,
   uses: readonly FilesystemUse[],
-  held: Set<string>,
-  unlisted: Map<string, number>,
+  { held, unlisted, queued }: Memory,
 ): { fresh: Crossing[]; cleared: boolean } {
   const fresh: Crossing[] = [];
   let cleared = false;
@@ -79,6 +127,7 @@ function crossingsIn(
       if (percent < ALARM_PERCENT) {
         cleared = held.delete(key) || cleared;
         unlisted.delete(key);
+        queued.delete(key);
       } else if (!held.has(key)) fresh.push({ key, use, metric, percent });
     }
   }
@@ -134,12 +183,16 @@ export function diskWatch(
   home: string,
   ask: Ask,
   send: (alert: Alert) => boolean,
+  announced: () => ReadonlySet<string>,
   now: () => number = Date.now,
 ): (host: string) => Promise<void> {
-  const held = readHeld(home);
+  const memory: Memory = {
+    held: readHeld(home),
+    unlisted: new Map(),
+    queued: new Map(),
+  };
   const tidied = new Map<string, number>();
   const unreadable = new Set<string>();
-  const unlisted = new Map<string, number>();
 
   const read = async (host: string): Promise<Report> => {
     const due = now() - (tidied.get(host) ?? Number.NEGATIVE_INFINITY) >= TIDY_EVERY_MS;
@@ -149,20 +202,42 @@ export function diskWatch(
     return report;
   };
 
+  const settle = (): void => {
+    const { held, queued } = memory;
+    if (queued.size === 0) return;
+    const seen = announced();
+    let changed = false;
+    for (const [key, { id }] of queued) {
+      if (!seen.has(id)) continue;
+      queued.delete(key);
+      held.add(key);
+      changed = true;
+    }
+    if (changed) saveHeld(home, held);
+  };
+
+  const waiting = (key: string): boolean => {
+    const sent = memory.queued.get(key);
+    return sent !== undefined && now() - sent.at < QUEUE_WAIT_MS;
+  };
+
   const announce = async (host: string, label: string, uses: readonly FilesystemUse[]) => {
-    const { fresh, cleared } = crossingsIn(host, uses, held, unlisted);
-    if (cleared) saveHeld(home, held);
+    settle();
+    const { fresh, cleared } = crossingsIn(host, uses, memory);
+    if (cleared) saveHeld(home, memory.held);
     for (const crossing of fresh) {
+      if (waiting(crossing.key)) continue;
       const found = await breakdownOf(ask, host, crossing);
       if (found === undefined) {
-        const failed = (unlisted.get(crossing.key) ?? 0) + 1;
-        unlisted.set(crossing.key, failed);
+        const failed = (memory.unlisted.get(crossing.key) ?? 0) + 1;
+        memory.unlisted.set(crossing.key, failed);
         if (failed < DIRECTORY_CHECKS) continue;
       }
-      if (!send({ text: described(label, crossing, found), urgent: true })) return;
-      unlisted.delete(crossing.key);
-      held.add(crossing.key);
-      saveHeld(home, held);
+      const id = randomUUID();
+      const alert = { text: described(label, crossing, found), urgent: true, crossing: id };
+      if (!send(alert)) return;
+      memory.unlisted.delete(crossing.key);
+      memory.queued.set(crossing.key, { id, at: now() });
     }
   };
 

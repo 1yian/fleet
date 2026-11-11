@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
-import { Harness, type Turn } from "../support/harness.ts";
+import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { publishRecord, records, type JsonRecord } from "../support/json.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
@@ -14,6 +14,9 @@ const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const TRANSPORT = fileURLToPath(new URL("../support/disk-transport.ts", import.meta.url));
 const INODES = 1_048_576;
 const GIB = 2 ** 30;
+const QUEUE_WAIT_MS = 20_000;
+const CROSSED = ["far|/tmp|inodes"];
+const ALARM = "[fleet] disk: far:";
 
 let cardd: Cardd;
 let h: Harness;
@@ -49,6 +52,7 @@ beforeEach(async () => {
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "300",
+    FLEET_DISK_QUEUE_WAIT_MS: String(QUEUE_WAIT_MS),
   });
 });
 afterEach(async (t) => {
@@ -119,13 +123,53 @@ async function untilAlarms(count: number): Promise<string[]> {
 }
 
 const heldKeys = (): unknown[] => {
-  const held: unknown = JSON.parse(
-    readFileSync(join(here.root, "state", "disk-alarms.json"), "utf8"),
-  );
+  const file = join(here.root, "state", "disk-alarms.json");
+  if (!existsSync(file)) return [];
+  const held: unknown = JSON.parse(readFileSync(file, "utf8"));
   return Array.isArray(held)
     ? held.filter((key) => typeof key === "string" && key.startsWith("far|"))
     : [];
 };
+
+async function until(check: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + WAIT_MS;
+  while (!check()) {
+    assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+const sessionAlarms = (): number => sessionText().split(ALARM).length - 1;
+
+const untilHeld = (keys: readonly unknown[]): Promise<void> =>
+  until(
+    () => JSON.stringify(heldKeys()) === JSON.stringify(keys),
+    `the held crossings ${keys.join()}`,
+  );
+
+const untilSessionAlarms = (count: number): Promise<void> =>
+  until(() => sessionAlarms() >= count, `${String(count)} alarms in main's session file`);
+
+async function busyMain(): Promise<{ pane: string; release: () => void }> {
+  const turn = gate();
+  h.onModel(async () => {
+    await turn.wait;
+    return { text: "noted" };
+  }, "mate");
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  const pane = await startMain(lab, here, h);
+  await h.waitFor((e) => e["type"] === "fleet_connected", "main to connect");
+  await untilProbes(2);
+  await lab.submit(pane, "hello");
+  await h.waitForCall(0, "mate", WAIT_MS);
+  return { pane, release: turn.open };
+}
+
+async function crossWhileBusy(): Promise<void> {
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await untilCalls("largest", 1);
+  await afterProbes(2);
+}
 
 test("main hears once when a host's filesystem passes 75%, and again only after it drops below and crosses again", async () => {
   for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
@@ -224,6 +268,7 @@ test("a restarted main does not say again that a filesystem is still over the al
   report({ inodes: 1_004_848, bytes: 46 * GIB });
   const pane = await startMain(lab, here, h);
   await untilAlarms(1);
+  await untilHeld(CROSSED);
 
   await stopMain(pane);
   await startMain(lab, here, h, true);
@@ -251,6 +296,62 @@ test("a main that stopped before the alarm reached it hears the alarm once after
   await afterProbes(5);
   assert.equal(sessionText().split("[fleet] disk: far:").length - 1, 1);
   assert.deepEqual(heldKeys(), ["far|/tmp|inodes"]);
+});
+
+test("a main that stops while the alarm is only queued behind a running turn hears the alarm once after it restarts", async () => {
+  const { pane, release } = await busyMain();
+  await crossWhileBusy();
+  assert.deepEqual(heldKeys(), [], "a queued message is not a said crossing");
+  assert.equal(sessionAlarms(), 0);
+
+  await stopMain(pane);
+  release();
+  await startMain(lab, here, h, true);
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
+  await untilSessionAlarms(1);
+  await untilHeld(CROSSED);
+  await afterProbes(5);
+  assert.equal(sessionAlarms(), 1);
+  assert.deepEqual(heldKeys(), CROSSED);
+});
+
+test("a main that is busy when the crossing comes gets one alarm after its turn, not one for each check, and holds the crossing once it has it", async () => {
+  const { release } = await busyMain();
+  await crossWhileBusy();
+  await afterProbes(2);
+  assert.deepEqual(heldKeys(), [], "a queued message is not a said crossing");
+  assert.equal(callsOf("largest"), 1, "the queued alarm is not queued again");
+  assert.equal(sessionAlarms(), 0);
+
+  release();
+  const [alarm] = await untilAlarms(1);
+  assert.match(alarm ?? "", /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 96% of its inodes/);
+  await untilHeld(CROSSED);
+  await afterProbes(5);
+  assert.equal(sessionAlarms(), 1);
+  assert.equal(callsOf("largest"), 1);
+});
+
+test("an alarm that the captain drops by stopping main's turn is not lost: it is said again once the wait has passed, and once only", async () => {
+  const { pane, release } = await busyMain();
+  await crossWhileBusy();
+  assert.deepEqual(heldKeys(), []);
+
+  await lab.press(pane, "esc");
+  await h.waitFor(
+    (e) => e["type"] === "settled" && e["aborted"] === true,
+    "the turn to be aborted",
+  );
+  await afterProbes(2);
+  assert.equal(sessionAlarms(), 0, "the stopped turn dropped the queued alarm");
+  assert.deepEqual(heldKeys(), [], "a dropped message is not a said crossing");
+
+  await untilSessionAlarms(1);
+  await untilHeld(CROSSED);
+  await afterProbes(5);
+  release();
+  assert.equal(sessionAlarms(), 1);
+  assert.equal(callsOf("largest"), 2);
 });
 
 test("a host whose lanes cannot be kept up still has its disk use read, pruned, and alarmed", async () => {

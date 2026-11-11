@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
-import { diskWatch, type Alert } from "./disk-alarm.ts";
+import { announcedIn, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
 import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
@@ -159,7 +159,12 @@ async function act(
   return out.map((row) => describe(host, row)).join("\n");
 }
 
-export function registerLanes(pi: ExtensionAPI, home: string, link: Link): LaneStates | undefined {
+export function registerLanes(
+  pi: ExtensionAPI,
+  home: string,
+  link: Link,
+  sessionFile: string | undefined,
+): LaneStates | undefined {
   const config = readLaneConfig(home);
   if (config === undefined) return undefined;
   pi.registerTool({
@@ -179,7 +184,7 @@ export function registerLanes(pi: ExtensionAPI, home: string, link: Link): LaneS
       return reply((await withLanes(() => restartAll(config))).join("\n"));
     },
   });
-  keepRunning(pi, config, home);
+  keepRunning(pi, config, home, sessionFile);
   return async () => {
     const lanes: LaneRow[] = [];
     const unreachable: { host: string; error: string }[] = [];
@@ -222,14 +227,34 @@ async function costLines(config: LaneConfig): Promise<string[]> {
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
-function deliver(pi: ExtensionAPI, customType: string, content: string, urgent: boolean): void {
+function deliver(
+  pi: ExtensionAPI,
+  customType: string,
+  content: string,
+  urgent: boolean,
+  details?: Record<string, string>,
+): void {
   pi.sendMessage(
-    { customType, content, display: true },
+    { customType, content, display: true, ...(details === undefined ? {} : { details }) },
     urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
   );
 }
 
-function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
+function diskSayer(pi: ExtensionAPI, isDown: () => boolean): (alert: Alert) => boolean {
+  return ({ text, urgent, crossing }) => {
+    if (isDown()) return false;
+    const details = crossing === undefined ? undefined : { crossing };
+    deliver(pi, DISK_MESSAGE, `[fleet] disk: ${text}`, urgent, details);
+    return true;
+  };
+}
+
+function keepRunning(
+  pi: ExtensionAPI,
+  config: LaneConfig,
+  home: string,
+  sessionFile: string | undefined,
+): void {
   const unreachable = new Set<string>();
   const unshared = new Set<string>();
   let ticking = false;
@@ -250,12 +275,12 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
       tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
     }
   };
-  const sayDisk = ({ text, urgent }: Alert): boolean => {
-    if (shutDown) return false;
-    deliver(pi, "fleet-disk", `[fleet] disk: ${text}`, urgent);
-    return true;
-  };
-  const watchDisk = diskWatch(home, (host, args) => fleet(config, host, args), sayDisk);
+  const watchDisk = diskWatch(
+    home,
+    (host, args) => fleet(config, host, args),
+    diskSayer(pi, isDown),
+    () => announcedIn(sessionFile),
+  );
   const reportDown = (host: string, error: unknown): void => {
     if (unreachable.has(host)) return;
     unreachable.add(host);
