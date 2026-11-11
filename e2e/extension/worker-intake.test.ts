@@ -7,7 +7,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { WebSocket, WebSocketServer } from "ws";
 import { parseServerMessage, type Card } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
-import { gate, Harness, type Turn } from "../support/harness.ts";
+import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 
@@ -263,40 +263,75 @@ test("a message whose run was aborted after a tool-use response is not taken in 
 });
 
 const TASK_ENTRY = 1;
-const BIG = "lorem ipsum dolor ".repeat(8000);
+const HALF_A_WINDOW = "lorem ipsum dolor ".repeat(16000);
+const TASK_TEXT = "run the tests";
 
-test("a message that compaction left out of the restarted model's context is resent, not taken in by the restarted run", async () => {
+async function abortedAfterLongResponses(): Promise<Pi> {
   const held = gate();
+  for (let call = 0; call < 2; call += 1)
+    h.onModel(() => ({
+      tool: "report",
+      text: HALF_A_WINDOW,
+      args: { status: "note", text: "reading the assignment" },
+    }));
   h.onModel(async () => {
     await held.wait;
     return { text: "the aborted turn should not finish" };
   });
   const pi = h.startPi("c-1-a1", env, [EXTENSION]);
-  await h.waitForCall(0, "default", 30_000);
+  await h.waitForCall(2, "default", 30_000);
   pi.abort();
   await h.waitFor(
     (event) => event["type"] === "settled" && event["aborted"] === true,
-    "the aborted turn to settle",
+    "the aborted run to settle",
   );
-  pi.prompt(BIG);
-  await h.waitForNth((event) => event["type"] === "settled", 2, "the next run to settle");
-  pi.compact();
-  assert.equal((await pi.compactResponse())["success"], true);
-  await pi.kill();
   held.open();
+  assert.ok(!workerDeliveryStates().some(isTaken), "an aborted run took the assignment in");
+  return pi;
+}
 
+async function restartAndAsk(): Promise<void> {
   const restarted = h.startPi("c-1-a1", env, [EXTENSION]);
   await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
   restarted.prompt("an unrelated question");
-  await h.waitForNth((event) => event["type"] === "settled", 3, "the restarted run to settle");
+  await h.waitForNth((event) => event["type"] === "settled", 2, "the restarted run to settle");
+}
 
+async function assertResentAndTakenIn(): Promise<void> {
+  const asked = h.calls.find((turns) =>
+    turns.some((turn) => turn.text === "an unrelated question"),
+  );
+  assert.ok(asked !== undefined, "the restarted model was never asked");
+  assert.ok(
+    !asked.some((turn) => turn.text.includes(TASK_TEXT)),
+    "the restarted model held the assignment, so compaction did not remove it",
+  );
   await h.waitForNth(
     (event) => event["type"] === "message_end" && event["entryId"] === TASK_ENTRY,
     2,
     "the assignment the restarted model never held to be sent again",
   );
-  await h.waitForNth((event) => event["type"] === "settled", 4, "the resent assignment to settle");
+  await h.waitForNth((event) => event["type"] === "settled", 3, "the resent assignment to settle");
   await waitForTakenIn();
+}
+
+test("a message that compaction removed before a restart is resent, not taken in by the restarted run", async () => {
+  const pi = await abortedAfterLongResponses();
+  pi.compact();
+  assert.equal((await pi.compactResponse())["success"], true);
+  await pi.kill();
+
+  await restartAndAsk();
+  await assertResentAndTakenIn();
+});
+
+test("a message that compaction removed between a restart and its first request is resent, not taken in by that run", async () => {
+  const pi = await abortedAfterLongResponses();
+  await pi.kill();
+
+  await restartAndAsk();
+  await h.waitFor((event) => event["type"] === "compacted", "the restarted run to compact first");
+  await assertResentAndTakenIn();
 });
 
 test("a worker that read a comment hands off in the same run, before the run settles", async () => {

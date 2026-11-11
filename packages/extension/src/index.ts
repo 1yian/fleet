@@ -15,7 +15,7 @@ import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { watchMainCardd } from "./cardd-watch.ts";
 import { Failures } from "./failure.ts";
-import { format, idsInModelContext, idsInSessionFile } from "./inbox.ts";
+import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs, registerDropJob } from "./jobs.ts";
@@ -315,7 +315,7 @@ function start(
     worker?.dispose();
     link.stop();
   });
-  registerIntake(pi, link, idsInModelContext(ctx.sessionManager));
+  registerIntake(pi, link);
   reportActivity(pi, link, () => (jobs?.waiting === true ? "waiting" : "idle"));
   link.start();
 }
