@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { ADD_WORKTREE, SYNC_FUNCTIONS } from "../clones.ts";
 import { editorArgs, runEditor } from "./editor.ts";
-import { git, gitOrNothing } from "./git.ts";
+import { git, gitOrNothing, gitPaths } from "./git.ts";
 import { decide, resolved, skillRelative } from "./places.ts";
 import { PROJECTS_UNAVAILABLE, type LocalClone, type World } from "./world.ts";
 
@@ -45,13 +45,18 @@ function cloneOfCheckout(world: World, inside: string): LocalClone | undefined {
   return world.clones.find((clone) => originOf(clone.path) === origin);
 }
 
-function newBranch(world: World): string {
+function newBranch(world: World, repository: string): string {
   const stamp = new Date()
     .toISOString()
     .replace(/\.\d+Z$/, "")
     .replace(/[-:]/g, "")
     .replace("T", "-");
-  return `scratch/${world.host}-${stamp}`;
+  const named = `scratch/${world.host}-${stamp}`;
+  const taken = (name: string): boolean =>
+    gitOrNothing(repository, "show-ref", "--verify", "--quiet", `refs/heads/${name}`) !== undefined;
+  let name = named;
+  for (let again = 2; taken(name); again += 1) name = `${named}-${String(again)}`;
+  return name;
 }
 
 function isWorktreeOf(clone: string, path: string): boolean {
@@ -69,7 +74,7 @@ function ensureScratch(world: World, clone: LocalClone): string {
       throw new Error(`${path} exists and is not a worktree of ${clone.path}`);
     return path;
   }
-  const branch = newBranch(world);
+  const branch = newBranch(world, clone.path);
   const from = clone.delivery === "local-only" ? "local" : "origin";
   try {
     execFileSync(
@@ -98,9 +103,13 @@ interface Standing {
 }
 
 function holdsNothingNew(path: string, base: string): boolean {
-  const merged = gitOrNothing(path, "merge-tree", "--write-tree", base, "HEAD");
-  const tree = gitOrNothing(path, "rev-parse", `${base}^{tree}`);
-  return merged !== undefined && tree !== undefined && merged.split("\n")[0] === tree;
+  const fork = gitOrNothing(path, "merge-base", base, "HEAD");
+  if (fork === undefined) return false;
+  const mine = gitPaths(path, "diff", "--name-only", "--no-renames", fork, "HEAD");
+  const unlanded = gitPaths(path, "diff", "--name-only", "--no-renames", base, "HEAD");
+  if (mine === undefined || unlanded === undefined) return false;
+  const left = new Set(unlanded);
+  return mine.every((file) => !left.has(file));
 }
 
 export function standingOf(clone: LocalClone, path: string): Standing {
@@ -152,7 +161,7 @@ export function resetScratch(world: World, project: string | undefined): string[
     const { branch, dirty, merged } = standingOf(clone, path);
     if (dirty > 0) throw new Error(`${clone.project}: ${path} has ${String(dirty)} dirty files`);
     if (!merged) throw new Error(`${clone.project}: ${branch} has commits that are not merged`);
-    const next = newBranch(world);
+    const next = newBranch(world, path);
     const start = baseOf(clone);
     git(path, "switch", "--no-track", "-c", next, start);
     git(path, "branch", "-D", branch);

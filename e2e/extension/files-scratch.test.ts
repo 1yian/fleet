@@ -228,6 +228,21 @@ test("E makes a scratch for a local-only repository that has no origin at all", 
   assert.match(reset.stdout, new RegExp(`from main, and ${old} is deleted`));
 });
 
+test("scratch reset again and again in the same second always lands on a new branch", () => {
+  edit(agents());
+  const seen = new Set([branchOf(scratchOf())]);
+  for (let round = 0; round < 3; round += 1) {
+    const reset = fleet.files(["scratch", "reset"]);
+    assert.equal(reset.status, 0, reset.stderr);
+    seen.add(branchOf(scratchOf()));
+  }
+  assert.equal(seen.size, 4);
+  assert.deepEqual(
+    branches().filter((name) => name.startsWith("scratch/")),
+    [branchOf(scratchOf())],
+  );
+});
+
 test("E says how far the scratch is ahead of the lane's checkout when the remote moved on", () => {
   landOnRemote(fleet.remote, "elsewhere");
   edit(agents());
