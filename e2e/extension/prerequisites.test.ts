@@ -39,7 +39,11 @@ beforeEach(async () => {
     token: cardd.addLane("cleo", "main"),
     args: mateArgs(h),
   });
-  lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
+  lab = await HerdrLab.start({
+    ...h.piEnv("mate"),
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    FLEET_TOOL_DIRS: join(scratch.parent, "no-tool-dirs"),
+  });
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);

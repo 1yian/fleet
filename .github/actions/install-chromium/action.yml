@@ -1,0 +1,14 @@
+name: Install Chromium
+description: Installs the Chromium that Playwright drives, from a cache when it can, and then only the system packages that the runner lacks.
+runs:
+  using: composite
+  steps:
+    - id: playwright
+      shell: bash
+      run: echo "version=$(npx playwright --version | awk '{ print $NF }')" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+    - shell: bash
+      run: ${{ github.action_path }}/install.sh

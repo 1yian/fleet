@@ -1,0 +1,14 @@
+name: Install direnv
+description: Installs the direnv release binary after checking it against a pinned checksum, so no job depends on the Ubuntu archive for it.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DIRENV_VERSION: 2.37.1
+        DIRENV_SHA256: 1f1b93dd6f38523fde26dfac96151ef9d31a374e3005cd3345fb93555ae0c9b5
+      run: |
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o direnv "https://github.com/direnv/direnv/releases/download/v${DIRENV_VERSION}/direnv.linux-amd64"
+        echo "${DIRENV_SHA256}  direnv" | sha256sum -c -
+        chmod +x direnv && sudo mv direnv /usr/local/bin/direnv
+        direnv version
