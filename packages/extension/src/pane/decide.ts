@@ -4,7 +4,8 @@ import type { Link } from "../link.ts";
 import { DecisionCard } from "./card.ts";
 import { answerDecision, loadDecisions } from "./decisions.ts";
 
-const OVERLAY: OverlayOptions = { width: 78, minWidth: 40, margin: 1 };
+const MARGIN = 1;
+const OVERLAY: OverlayOptions = { width: 78, minWidth: 40, margin: MARGIN };
 const NOTHING_WAITING = "Nothing is waiting for your decision.";
 
 export class Decide {
@@ -35,7 +36,7 @@ export class Decide {
             theme,
             keys,
             decisions,
-            rows: () => tui.terminal.rows,
+            rows: () => tui.terminal.rows - 2 * MARGIN,
             send: (decision, choice, written) =>
               answerDecision(this.link, decision, choice, written),
             reload: () => loadDecisions(this.link),

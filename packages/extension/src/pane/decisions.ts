@@ -1,4 +1,4 @@
-import type { CardView } from "@fleet/protocol";
+import type { BoardCard, CardView } from "@fleet/protocol";
 import type { Link } from "../link.ts";
 
 const DEADLINE_MS = 10_000;
@@ -11,17 +11,17 @@ export interface Decision {
   readonly options: readonly string[];
 }
 
+const needsYou = (card: BoardCard): boolean => card.status === "needs-you";
+
 function decisionOf({ card, hold }: CardView): Decision[] {
-  if (hold?.holder !== "captain") return [];
+  if (!needsYou(card) || hold?.holder !== "captain") return [];
   const { question, options } = hold;
   return [{ card: card.id, title: card.title, revision: card.revision, question, options }];
 }
 
 export async function loadDecisions(link: Link): Promise<Decision[]> {
   const cards = await link.call("board", {}, DEADLINE_MS);
-  const waiting = cards
-    .filter((card) => card.status === "needs-you")
-    .sort((a, b) => a.updatedAt - b.updatedAt);
+  const waiting = cards.filter(needsYou).sort((a, b) => a.updatedAt - b.updatedAt);
   const views = await Promise.all(
     waiting.map((card) => link.call("card", { card: card.id }, DEADLINE_MS)),
   );

@@ -16,8 +16,9 @@ const WRITE_LABEL = "My words…";
 const RECOMMENDED = "recommended";
 const MAX_DOTS = 10;
 const MAX_BODY_ROWS = 16;
-const MIN_BODY_ROWS = 3;
-const CHROME_ROWS = 12;
+const MIN_BODY_ROWS = 2;
+const FRAME_ROWS = 8;
+const WRITE_ROWS = 2;
 const BORDER_COLUMNS = 1;
 const PADDING = 2;
 const margin = " ".repeat(PADDING);
@@ -56,6 +57,7 @@ export class DecisionCard implements Component, Focusable {
   private index = 0;
   private row = 0;
   private scroll = 0;
+  private choiceTop = 0;
   private mode: Mode = "choose";
   private sending = false;
   private note: string | undefined;
@@ -117,6 +119,14 @@ export class DecisionCard implements Component, Focusable {
   private move(step: number): void {
     const count = this.choices.length;
     this.row = (this.row + step + count) % count;
+  }
+
+  private shownChoices(): readonly [number, number] {
+    const rows = this.pickRows();
+    const last = this.choices.length - rows;
+    const top = Math.max(this.row - rows + 1, Math.min(this.choiceTop, this.row));
+    this.choiceTop = Math.max(0, Math.min(last, top));
+    return [this.choiceTop, rows];
   }
 
   private page(step: number): void {
@@ -183,12 +193,22 @@ export class DecisionCard implements Component, Focusable {
   private settle(): void {
     this.row = 0;
     this.scroll = 0;
+    this.choiceTop = 0;
     this.mode = "choose";
   }
 
+  private spare(): number {
+    const fixed = FRAME_ROWS + (this.note === undefined ? 0 : 1);
+    return Math.max(2, this.deps.rows() - fixed);
+  }
+
+  private pickRows(): number {
+    if (this.mode === "write") return WRITE_ROWS;
+    return Math.min(this.choices.length, Math.max(1, this.spare() - MIN_BODY_ROWS));
+  }
+
   private bodyRows(): number {
-    const fixed = CHROME_ROWS + this.choices.length;
-    return Math.max(MIN_BODY_ROWS, Math.min(MAX_BODY_ROWS, this.deps.rows() - fixed));
+    return Math.max(1, Math.min(MAX_BODY_ROWS, this.spare() - this.pickRows()));
   }
 
   render(width: number): string[] {
@@ -214,8 +234,7 @@ export class DecisionCard implements Component, Focusable {
       quiet(`c-${String(decision.card)} ${plain(decision.title)}`),
       line(""),
       ...shown,
-      ...(lower > 0 ? [quiet(`▼ ${String(lower)} more lines, PgDn to read`)] : []),
-      line(""),
+      lower > 0 ? quiet(`▼ ${String(lower)} more lines, PgDn to read`) : line(""),
       ...this.choiceRows(decision, inner).map(line),
       line(""),
       ...(this.note === undefined ? [] : [line(theme.fg("warning", this.fit(this.note, inner)))]),
@@ -247,7 +266,10 @@ export class DecisionCard implements Component, Focusable {
       const typed = this.input.render(inner)[0] ?? "";
       return [theme.fg("muted", `Your words for c-${String(decision.card)}:`), typed];
     }
-    return this.choices.map((label, at) => this.choice(label, at, inner));
+    const [top, rows] = this.shownChoices();
+    return this.choices
+      .slice(top, top + rows)
+      .map((label, at) => this.choice(label, top + at, inner));
   }
 
   private choice(label: string, at: number, inner: number): string {
@@ -266,6 +288,8 @@ export class DecisionCard implements Component, Focusable {
     if (this.sending) return "sending…";
     if (this.mode === "write") return "⏎ send   esc back";
     const read = overflow ? "   PgUp/PgDn read" : "";
-    return `↑↓ choose   ⏎ confirm${read}   esc later`;
+    const count = this.choices.length;
+    const place = this.pickRows() < count ? ` ${String(this.row + 1)}/${String(count)}` : "";
+    return `↑↓ choose${place}   ⏎ confirm${read}   esc later`;
   }
 }

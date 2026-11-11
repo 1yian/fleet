@@ -7,6 +7,7 @@ import { CardSchema, check, type Card } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
+import { records } from "../support/json.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -45,13 +46,34 @@ function herdr(): HerdrLab {
   return opened;
 }
 
-async function openMain(): Promise<string> {
+async function openLab(): Promise<HerdrLab> {
   opened = await HerdrLab.start({
     ...h.piEnv("mate"),
     FLEET_PANE_POLL_MS: "3600000",
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
   });
-  return startMain(opened, scratch, h);
+  return opened;
+}
+
+async function openMain(): Promise<string> {
+  return startMain(await openLab(), scratch, h);
+}
+
+async function openShortMain(): Promise<string> {
+  const lab = await openLab();
+  const made = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    scratch.root,
+    "--label",
+    "1stmate",
+    "--no-focus",
+  ]);
+  const root = String(records([made["root_pane"]])[0]?.["pane_id"]);
+  await lab.run(["pane", "split", root, "--direction", "down", "--ratio", "0.65"]);
+  await lab.run(["pane", "close", root]);
+  return startMain(lab, scratch, h);
 }
 
 async function screenWhere(pane: string, what: string, ready: (screen: string) => boolean) {
@@ -295,4 +317,40 @@ test("a question longer than the card scrolls with PgDn and PgUp, and the card s
 
   await herdr().type(pane, PAGE_UP.repeat(3));
   await screenWhere(pane, "the top again", onCard(["FIRST LINE", "more lines"], ["LAST LINE"]));
+});
+
+test("in a 12-row pane the card stays on screen and the choice that is selected is the one on screen", async () => {
+  const pane = await openShortMain();
+  const middle = Array.from({ length: 12 }, (_, at) => `Item ${String(at + 1)} of the evidence`);
+  const question = ["FIRST LINE", ...middle, "LAST LINE"].join("\n");
+  const long = await askedMain(pane, "Long question", question, ["Ship it", "Hold"], 1);
+  answers(1);
+
+  await herdr().submit(pane, "/d");
+  const first = await screenWhere(
+    pane,
+    "the card in the short pane",
+    onCard(["Decision 1 of 1", "FIRST LINE", "▌ Ship it", "esc later"], ["Hold"]),
+  );
+  keep("9-short-pane-first-choice", first);
+  const rows = rowsOf(first).length;
+  const top = rowsOf(first).findIndex((row) => row.includes("╭"));
+  assert.ok(top >= 1, "the card keeps its top margin");
+  assert.ok(top + cardRows(first).length <= rows - 1, "the card keeps its bottom margin");
+
+  await herdr().press(pane, "down");
+  const second = await screenWhere(
+    pane,
+    "the second choice",
+    onCard(["▌ Hold", "2/3", "esc later"], ["Ship it", "My words"]),
+  );
+  keep("9-short-pane-second-choice", second);
+
+  await herdr().press(pane, "down");
+  await screenWhere(pane, "my words", onCard(["▌ My words…", "3/3", "esc later"], ["Hold"]));
+
+  await herdr().press(pane, "up", "enter");
+  await screenWhere(pane, "the answer", (screen) => cardRows(screen).length === 0);
+  assert.deepEqual(await answered(long), [{ body: "Hold", source: "pane", written: undefined }]);
+  await mainWasTold(2, long, "Hold");
 });
