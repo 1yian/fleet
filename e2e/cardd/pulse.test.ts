@@ -369,6 +369,7 @@ test("the steps behind a card that main holds count another lane's cards without
       card: waiting.id,
       mode: "done",
       text: "finished",
+      next: { drop: "nothing to build" },
       archives: [],
       left: [],
     });
@@ -385,6 +386,7 @@ test("a closed card and a lane card have no pulse", async () => {
     card: done.id,
     mode: "done",
     text: "finished",
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });

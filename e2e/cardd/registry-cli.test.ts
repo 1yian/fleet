@@ -120,6 +120,7 @@ test("lane remove refuses a lane that is in use, and removes one that never work
     card: card.id,
     mode: "done",
     text: "Search ads convert best.",
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });

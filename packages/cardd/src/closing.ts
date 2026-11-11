@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card } from "@fleet/protocol";
+import { check, OPS, type Card, type Next } from "@fleet/protocol";
 import { endLiveAttempts } from "./attempts.ts";
 import { requireOrdinary } from "./change.ts";
 import { closeCardIncidents } from "./incident-lifecycle.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
+import { nextLine, requireNext, type NextStep } from "./next-step.ts";
 import {
   addEntry,
   cardEntries,
@@ -74,9 +75,15 @@ function outcome(
 function closable(
   db: DatabaseSync,
   session: Session,
-  args: { card: number; landed?: boolean | undefined },
+  args: { card: number; landed?: boolean | undefined; next?: Next | undefined },
   closeCheck: CloseCheck | undefined,
-): { card: Card; mode: "done" | "dropped"; verify: boolean; land: boolean } {
+): {
+  card: Card;
+  mode: "done" | "dropped";
+  verify: boolean;
+  land: boolean;
+  next: NextStep | undefined;
+} {
   const { card } = reachable(db, session, args.card);
   const name = `c-${String(card.id)}`;
   requireOrdinary(db, card);
@@ -87,7 +94,8 @@ function closable(
       `${name} has an open hold; clear it first with hold(card, clear=true), with the captain's words when it waits on him`,
     );
   }
-  return { card, ...outcome(db, card, args.landed, closeCheck) };
+  const closing = outcome(db, card, args.landed, closeCheck);
+  return { card, ...closing, next: requireNext(db, session, card, closing.mode, args.next) };
 }
 
 export function closeBegin(
@@ -151,10 +159,10 @@ export function closeFinish(
   closeCheck?: CloseCheck,
 ): Done {
   const args = check(OPS["close.finish"].args, raw);
-  const { card } = closable(
+  const { card, next } = closable(
     db,
     session,
-    { card: args.card, landed: args.mode === "done" },
+    { card: args.card, landed: args.mode === "done", next: args.next },
     closeCheck,
   );
   const now = Date.now();
@@ -162,7 +170,12 @@ export function closeFinish(
   endLiveAttempts(db, card.id, now);
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
-  const closed = { outcome: args.mode, archives: args.archives, left: args.left };
+  const closed = {
+    outcome: args.mode,
+    archives: args.archives,
+    left: args.left,
+    ...(next === undefined ? {} : { next }),
+  };
   const to = withEcho(db, session, card, other === session.lane ? [] : [other]);
   addEntry(
     db,
@@ -170,7 +183,7 @@ export function closeFinish(
       card: card.id,
       author: `mate:${session.lane}`,
       kind: "cleanup",
-      body: args.text,
+      body: next === undefined ? args.text : `${nextLine(next)}\n${args.text}`,
       fields: closed,
     },
     to,

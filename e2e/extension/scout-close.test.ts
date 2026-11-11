@@ -62,33 +62,23 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-test("normal close delivers an unchanged scout after main coordinates separate implementation, preserving its report", async () => {
-  const report = join(scratch.parent, "reports", "assessment.md");
+const DISPATCH_SCOUT = {
+  tool: "dispatch",
+  args: {
+    title: "Assess the lifecycle",
+    name: "assessment",
+    kind: "scout",
+    project: "fleet",
+    intent: "Fix the scrollbar",
+    host: "local",
+    task: "Write the read-only assessment.",
+  },
+};
+
+function scriptDeliveredAssessment(report: string): void {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
-  h.onModel(
-    () => ({
-      tool: "dispatch",
-      args: {
-        title: "Assess the lifecycle",
-        name: "assessment",
-        kind: "scout",
-        project: "fleet",
-        intent: "Fix the scrollbar",
-        host: "local",
-        task: "Write the read-only assessment.",
-      },
-    }),
-    "mate",
-  );
+  h.onModel(() => DISPATCH_SCOUT, "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(async () => {
-    await main.call("comment", {
-      card: 2,
-      text: "Implementation is assigned elsewhere. Close the delivered assessment normally.",
-    });
-    return { tool: "close", args: { card: 2, summary: `Assessment delivered: ${report}` } };
-  }, "mate");
-  h.onModel(() => ({ text: "closed" }), "mate");
   h.onModel(() => {
     mkdirSync(join(scratch.parent, "reports"));
     writeFileSync(report, REPORT);
@@ -100,21 +90,92 @@ test("normal close delivers an unchanged scout after main coordinates separate i
       },
     };
   }, "worker");
+}
+
+test("normal close delivers an unchanged scout after main coordinates a decision on its implementation, preserving its report", async () => {
+  const report = join(scratch.parent, "reports", "assessment.md");
+  scriptDeliveredAssessment(report);
+  h.onModel(async () => {
+    await main.call("comment", {
+      card: 2,
+      text: "Implementation is the captain's call. Close the delivered assessment normally.",
+    });
+    return {
+      tool: "card_new",
+      args: {
+        title: "Build the scrollbar fix or drop it?",
+        name: "scrollbar-decision",
+        kind: "captain",
+      },
+    };
+  }, "mate");
+  h.onModel(
+    () => ({
+      tool: "close",
+      args: {
+        card: 2,
+        summary: `Assessment delivered: ${report}`,
+        next: { decision: 3 },
+      },
+    }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "closed" }), "mate");
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   mate.prompt("assess the lifecycle");
 
-  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "c-2 is done.");
   const outcome = await main.waitForEntry(
     (entry) => entry.kind === "cleanup",
     "the delivered outcome",
   );
   assert.equal(outcome.fields["outcome"], "done");
-  assert.equal(outcome.body, `Assessment delivered: ${report}`);
+  assert.deepEqual(outcome.fields["next"], { decision: 3 });
+  assert.equal(outcome.body, `Next: the captain decides on c-3.\nAssessment delivered: ${report}`);
   assert.equal((await cardd.thread(2)).card.status, "done");
   assert.equal(readFileSync(report, "utf8"), REPORT);
   assert.equal(existsSync(`${scratch.root}.archive`), false);
   assert.deepEqual(worktreesOf(scratch.root), ["branch refs/heads/main"]);
   assert.deepEqual(branchesOf(scratch.root), ["main"]);
+  assert.deepEqual(await workersOf(lab), []);
+});
+
+test("a close that names no next step leaves the scout open with its worker running, and the retry that names one closes it", async () => {
+  const report = join(scratch.parent, "reports", "assessment.md");
+  scriptDeliveredAssessment(report);
+  const summary = `Assessment delivered: ${report}`;
+  h.onModel(() => ({ tool: "close", args: { card: 2, summary } }), "mate");
+  let workersAtRefusal: string[] = [];
+  let statusAtRefusal = "";
+  h.onModel(async () => {
+    workersAtRefusal = await workersOf(lab);
+    statusAtRefusal = (await cardd.thread(2)).card.status;
+    return {
+      tool: "close",
+      args: { card: 2, summary, next: { drop: "the findings make it moot" } },
+    };
+  }, "mate");
+  h.onModel(() => ({ text: "closed" }), "mate");
+  await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
+  mate.prompt("assess the lifecycle");
+
+  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+  assert.match(
+    results.at(-2) ?? "",
+    /^c-2 is a scout: it closes Done only when the close says what happens next\. Pass next with exactly one of build=.*decision=.*drop=/s,
+  );
+  assert.equal(workersAtRefusal.length, 1);
+  assert.equal(statusAtRefusal, "with-mate");
+  assert.equal(results.at(-1), "c-2 is done.");
+  const outcome = await main.waitForEntry(
+    (entry) => entry.kind === "cleanup",
+    "the delivered outcome",
+  );
+  assert.deepEqual(outcome.fields["next"], { drop: "the findings make it moot" });
+  assert.equal(
+    outcome.body.split("\n")[0],
+    "Next: nothing is built, because the findings make it moot.",
+  );
   assert.deepEqual(await workersOf(lab), []);
 });

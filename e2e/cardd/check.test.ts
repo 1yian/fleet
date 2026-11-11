@@ -279,6 +279,7 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
     ),
   );
   assert.doesNotMatch(reminder.body, /relay/i);
+  assert.match(reminder.body, /close\(card, summary, next=<build, decision, or drop>\)/);
   await reach(cleo, card, "finished", 2);
   await reach(cleo, card, "finished", 3);
   const sent = await tiersOf(card, "finished");
@@ -294,6 +295,7 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
     card: card.id,
     mode: "done",
     text: "closed by cleo",
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });

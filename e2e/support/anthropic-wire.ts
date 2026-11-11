@@ -21,7 +21,15 @@ export type WireMove = {
   | {
       readonly tool: string;
       readonly args?: Readonly<
-        Record<string, string | number | boolean | readonly string[] | readonly number[]>
+        Record<
+          string,
+          | string
+          | number
+          | boolean
+          | readonly string[]
+          | readonly number[]
+          | Readonly<Record<string, string | number>>
+        >
       >;
     }
 );

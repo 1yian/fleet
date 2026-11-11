@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardName, DELIVERIES, OPS, type Card, type Schedule } from "@fleet/protocol";
+import { CardName, DELIVERIES, NextSchema, OPS, type Card, type Schedule } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
@@ -101,6 +101,11 @@ const CloseParams = Type.Object({
         "Set true to answer close's warning about commits or files not on the base branch: the card ends Done and that work is archived first",
     }),
   ),
+  next: Type.Optional({
+    ...NextSchema,
+    description:
+      "Required to close a scout card Done, and refused for any other close: what happens to its findings, with exactly one of build, decision, or drop",
+  }),
 });
 
 async function oneCard(link: Link, params: BoardArgs & { card: number }): Promise<string> {
@@ -258,7 +263,7 @@ export function registerMate(
     name: "close",
     label: "Close",
     description:
-      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the attempt has commits not on the base branch or uncommitted files, close does not close the card: it lists them and warns, and close(card, summary, confirm=true) then ends it as Done and archives that work first (use it when the work landed elsewhere). close(card, summary=<why>, landed=false) ends work that did not land as Dropped. It refuses while the card has a hold. The summary is the card's record, not a message to the captain.",
+      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the attempt has commits not on the base branch or uncommitted files, close does not close the card: it lists them and warns, and close(card, summary, confirm=true) then ends it as Done and archives that work first (use it when the work landed elsewhere). close(card, summary=<why>, landed=false) ends work that did not land as Dropped. A scout card (a report: a plan or an investigation) closes Done only when the close says what happens next, with next set to exactly one of build=<a ship card that carries the build, open or Done>, decision=<an open card whose decision waits on the captain: a hold on it that waits on him, or a captain-only card>, or drop=<why nothing is built>. Build directly when the captain already asked for the thing built, put a build-or-drop decision to him when he asked only for a plan, and drop when the findings make it moot. close checks that the named card exists and the thread shows what was named. It refuses while the card has a hold. The summary is the card's record, not a message to the captain.",
     parameters: CloseParams,
     execute: async (_id, params) =>
       reply(
@@ -267,6 +272,7 @@ export function registerMate(
           text: params.summary,
           landed: params.landed,
           confirm: params.confirm,
+          next: params.next,
         }),
       ),
   });
