@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { maintenanceLine, type Maintenance } from "@fleet/protocol";
 import { mateRelaunchArgs, readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
+import { LEAVING } from "./worker.ts";
 
 const RELAUNCH = fileURLToPath(new URL("./relaunch.ts", import.meta.url));
 
@@ -33,6 +34,7 @@ export function relaunchSelf(ctx: ExtensionContext, pane: string): void {
 export class MaintenanceQueue {
   private readonly requests = new Map<number, Maintenance>();
   private busy = false;
+  private readonly pi: ExtensionAPI;
   private readonly link: Link;
   private readonly ctx: ExtensionContext;
   private readonly mayHaveJobs: boolean;
@@ -45,6 +47,7 @@ export class MaintenanceQueue {
     mayHaveJobs: boolean,
     stow: (() => Promise<unknown>) | undefined,
   ) {
+    this.pi = pi;
     this.link = link;
     this.ctx = ctx;
     this.mayHaveJobs = mayHaveJobs;
@@ -103,6 +106,7 @@ export class MaintenanceQueue {
         return;
       }
       this.requests.delete(request.id);
+      this.pi.events.emit(LEAVING, {});
       relaunchSelf(this.ctx, pane);
     } catch (error) {
       this.requests.delete(request.id);

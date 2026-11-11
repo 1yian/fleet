@@ -301,7 +301,7 @@ test("the pane says only that cardd is not answering while it is down, and the c
   assert.equal(stripRows(back).length, 1);
 });
 
-test("a card handed back long ago that then stops is not stalled until the limit has passed since it stopped", async () => {
+test("a card handed back long ago that then reports blocked is not stalled until the limit has passed since the report", async () => {
   const pane = await openMain({ ...QUICK_LIMITS, FLEET_PANE_STALL_MS: String(STALL_MS) });
   await screenWhere(pane, "the clear state", showing(["✓ clear"]));
 
@@ -319,18 +319,18 @@ test("a card handed back long ago that then stops is not stalled until the limit
   await clockWorker.call("report", { status: "working", text: "back at it" });
   await screenWhere(pane, "the clock card to resume", showing(["✓ clear"], ["◇"]));
 
-  const stoppedAt = Date.now();
-  await handedWorker.call("report", { status: "stopped", text: "the run was aborted" });
+  const reportedAt = Date.now();
+  await handedWorker.call("report", { status: "blocked", text: "the run is waiting" });
   await cleoLandedCard("Check the invoices");
   const fresh = await screenWhere(pane, "the pane to read the stop", showing(["▲ 1"]));
-  keep("8-stopped-after-done", fresh);
-  assert.ok(!fresh.includes("◇"), `a card that stopped just now is stalled:\n${fresh}`);
+  keep("8-blocked-after-done", fresh);
+  assert.ok(!fresh.includes("◇"), `a card that reported just now is stalled:\n${fresh}`);
   assert.ok(fresh.includes("✓ clear"));
   assert.deepEqual(stripRows(fresh), []);
 
-  const worker = `c-${String(handed.id)} Check the ads budget: worker stopped`;
+  const worker = `c-${String(handed.id)} Check the ads budget: worker blocked`;
   const stalled = await screenWhere(pane, "the stall limit to pass", showing([worker, "◇ 1"]));
   keep("9-stalled-after-the-limit", stalled);
-  assert.ok(Date.now() - stoppedAt >= STALL_MS, "it stalled before the limit passed");
+  assert.ok(Date.now() - reportedAt >= STALL_MS, "it stalled before the limit passed");
   assert.equal(stripRows(stalled).length, 1);
 });

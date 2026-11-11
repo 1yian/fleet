@@ -376,3 +376,14 @@ export function finishFrom(entries: readonly Entry[]): Finish {
   }
   return finish;
 }
+
+export function doneStands(entries: readonly Entry[]): boolean {
+  let stands = false;
+  for (const entry of entries) {
+    const status = text(entry, "status");
+    if (entry.kind === "comment" && toWorker(entry)) stands = false;
+    else if (entry.kind === "report" && status !== "note")
+      stands = status === "done" || status === "merged";
+  }
+  return stands;
+}

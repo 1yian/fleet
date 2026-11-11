@@ -151,6 +151,11 @@ export class Pi {
     await this.exited;
   }
 
+  async end(signal: "SIGTERM" | "SIGHUP"): Promise<void> {
+    this.child.kill(signal);
+    await this.exited;
+  }
+
   private command(record: JsonRecord): void {
     this.child.stdin?.write(`${JSON.stringify(record)}\n`);
   }

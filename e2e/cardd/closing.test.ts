@@ -327,12 +327,37 @@ test("new worker input and incomplete handoffs still prevent normal close", asyn
   await assert.rejects(fleet.main.call("close.begin", done), unfinished);
   await worker.call("report", { status: "done", text: "evidence checked" });
   const current = worker;
-  for (const state of ["in-review", "blocked", "failed", "stopped"] as const) {
+  for (const state of ["in-review", "blocked", "failed"] as const) {
     await current.call("report", { status: "done", text: "assessment delivered" });
     await current.call("report", { status: state, text: "not complete" });
     await assert.rejects(fleet.main.call("close.begin", done), unfinished);
   }
   assert.equal(await status(fleet.main, card), "with-mate");
+});
+
+test("a stopped report after done changes nothing, and the card still closes", async () => {
+  const card = await newCard(fleet.main, "Assess the lifecycle", "scout");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  const done = { card: card.id };
+  await worker.call("report", { status: "done", text: "assessment delivered" });
+  await worker.call("report", { status: "stopped", text: "stopped from the pane" });
+
+  const board = check(OPS.board.result, await fleet.main.call("board", {}));
+  assert.equal(board.find((each) => each.id === card.id)?.attention, null);
+  assert.equal(
+    check(OPS["close.begin"].result, await fleet.main.call("close.begin", done)).mode,
+    "done",
+  );
+
+  await fleet.main.call("comment", { card: card.id, text: "Check the missing evidence." });
+  await worker.call("report", { status: "working", text: "checking" });
+  await worker.call("report", { status: "stopped", text: "stopped from the pane" });
+  await assert.rejects(
+    fleet.main.call("close.begin", done),
+    notLanded(card.id, "the worker has not reported done"),
+  );
+  const after = check(OPS.board.result, await fleet.main.call("board", {}));
+  assert.equal(after.find((each) => each.id === card.id)?.attention, "stopped");
 });
 
 test("dispatch refuses a captain card", async () => {
