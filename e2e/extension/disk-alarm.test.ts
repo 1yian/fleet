@@ -402,6 +402,26 @@ test("a new session announces a crossing that is still over the alarm, once", as
   assert.deepEqual(counts, [1, 1]);
 });
 
+test("a /new typed in the running main announces a crossing that is still over the alarm once in the new session, not again after", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  const pane = await startMain(lab, here, h);
+  await untilAlarms(1);
+  await untilHeld(CROSSED);
+
+  await lab.submit(pane, "/new");
+  await until(() => sessionFiles().length === 2, "the new session's file");
+  await until(
+    () => sessionFiles().every((file) => readFileSync(file, "utf8").split(ALARM).length === 2),
+    "one alarm in each session",
+  );
+  await afterProbes(5);
+  const counts = sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
+  assert.deepEqual(counts, [1, 1]);
+  assert.equal(alarmsOf(lastCall()).length, 1, "the new conversation holds its own single alarm");
+  assert.deepEqual(sessionFiles().map(replayed), [CROSSED, CROSSED]);
+});
+
 test("a host whose lanes cannot be kept up still has its disk use read, pruned, and alarmed", async () => {
   for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
   writeFileSync(`${usage}.lanes-fail`, "");
