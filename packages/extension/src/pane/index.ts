@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { BoardCard } from "@fleet/protocol";
 import type { Link } from "../link.ts";
-import { glanceOf, unreachable, withNeed, type Glance, type Limits } from "./glance.ts";
+import { glanceOf, unreachable, type Glance, type Limits } from "./glance.ts";
 import { chips, rowOf, strip } from "./look.ts";
 
 const STATUS_KEY = "fleet-attention";
@@ -118,9 +118,9 @@ class Pane {
   private glance(now: number): Glance | undefined {
     const silent = this.silentSince;
     const down = silent !== undefined && now - silent >= this.rules.silentMs;
-    if (this.cards === undefined && !down) return undefined;
-    const glance = glanceOf(this.cards ?? [], now, this.since, this.rules.limits);
-    return down ? withNeed(glance, unreachable(silent)) : glance;
+    if (down) return { needs: [unreachable(silent)], landed: 0 };
+    if (this.cards === undefined) return undefined;
+    return glanceOf(this.cards, now, this.since, this.rules.limits);
   }
 
   private paint(): void {

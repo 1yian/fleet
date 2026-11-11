@@ -233,20 +233,25 @@ test("the strip shows the worst need first with the rest counted, the chips colo
   assert.equal(stripRows(again).length, 1);
 });
 
-test("the pane says so when cardd stops answering, and the strip goes once it answers again", async () => {
+test("the pane says only that cardd is not answering while it is down, and the counts return once it answers", async () => {
   const pane = await openMain(QUICK_LIMITS);
   await screenWhere(pane, "the clear state", showing(["✓ clear"]));
+  const failing = await cleoShipCard("Fix the Cleo rule");
+  await (await workerOf(failing)).call("report", { status: "failed", text: "the build is red" });
+  const worker = `c-${String(failing.id)} Fix the Cleo rule: worker failed`;
+  await screenWhere(pane, "the failed worker", showing([worker, "● 1"]));
 
   await cardd.stop();
   const down = await screenWhere(
     pane,
-    "the broken strip",
-    showing(["● cardd: not answering", "● 1"]),
+    "only the broken cardd",
+    showing(["● cardd: not answering", "● 1"], [worker, "+1 more"]),
   );
   keep("6-cardd-down", down);
+  assert.equal(stripRows(down).length, 1);
 
   await cardd.restart();
-  const back = await screenWhere(pane, "the clear state again", showing(["✓ clear"], ["cardd:"]));
+  const back = await screenWhere(pane, "the failed worker again", showing([worker], ["cardd:"]));
   keep("7-cardd-back", back);
-  assert.deepEqual(stripRows(back), []);
+  assert.equal(stripRows(back).length, 1);
 });

@@ -34,7 +34,7 @@ The strip shows the worst need: broken first, then needs you, then stalled, olde
 
 The two times are `cardd`'s own: `notConnected` and `stall` in the timed check. A reload or a brief disconnect is under both, so it does not flicker.
 
-When `cardd` has not answered for 30 seconds, the pane says so as a broken need (`● cardd: not answering`), because the counts are no longer current. It clears when `cardd` answers again.
+When `cardd` has not answered for 30 seconds, the pane shows that alone as a broken need (`● cardd: not answering`), because every other count is no longer current. The counts return when `cardd` answers again.
 
 Landed counts the cards that ended Done since the captain's last message. His next message resets it. A message that is a command, such as `/calm`, is not a message. The count survives a reload because it starts from the last user message in the session.
 

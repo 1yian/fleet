@@ -68,11 +68,6 @@ const worstFirst = (a: Need, b: Need): number =>
 const landedSince = (card: BoardCard, since: number): boolean =>
   card.status === "done" && !card.mate && card.kind !== "standing" && card.updatedAt > since;
 
-export const withNeed = (glance: Glance, extra: Need): Glance => ({
-  ...glance,
-  needs: [...glance.needs, extra].sort(worstFirst),
-});
-
 export function glanceOf(
   cards: readonly BoardCard[],
   now: number,
