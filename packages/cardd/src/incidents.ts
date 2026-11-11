@@ -317,7 +317,7 @@ export function recover(
   session: Session,
   args: RecoveryRequest,
   t: Timings,
-): Done {
+): { readonly value: Recovery; readonly notify: readonly string[] } {
   const inc = incidentById(db, args.incident);
   if (inc === undefined) throw new Error(`no incident ${String(args.incident)}`);
   if (inc.parent !== session.lane) reject(inc, session.lane);

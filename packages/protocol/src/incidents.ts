@@ -1,4 +1,5 @@
 import Type from "typebox";
+import { MODEL_PIN } from "./model.ts";
 
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
 const Provider = Type.String({ pattern: "^[A-Za-z0-9._:/@+-]+$", maxLength: 100 });
@@ -58,6 +59,13 @@ export const INCIDENT_OPS = {
           maxItems: 20,
           description:
             "Exact provider names the restarted worker must not use, for this restart only",
+        }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          pattern: MODEL_PIN,
+          description:
+            "Sets the worker's model to this provider/id, such as tier/visual, whether or not it was dispatched with an explicit model, and every later restart keeps it. Worker replace only",
         }),
       ),
     }),

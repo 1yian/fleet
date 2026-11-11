@@ -334,7 +334,10 @@ test("board(card=N) shows one card's hold, attempt, report, and thread, cut unti
     view,
     /^card:\n {2}id: 3\n {2}name: fix-the-scrollbar\n {2}title: Fix the scrollbar\n {2}kind: ship\n {2}project: web\n {2}delivery: no-mistakes\n {2}lane: main\n {2}status: working\n {2}waits: worker\n {2}pr: none\n/,
   );
-  assert.match(view, /^attempts\[1\]\{n,host,state,branch\}:\n {2}1,maverick,active,\S*c-3-a1$/m);
+  assert.match(
+    view,
+    /^attempts\[1\]\{n,host,state,branch,model\}:\n {2}1,maverick,active,\S*c-3-a1,null$/m,
+  );
   assert.match(view, /^report: \/tmp\/scrollbar-report\.md$/m);
   assert.doesNotMatch(view, /^(hold|intent|spec):/m);
   assert.match(

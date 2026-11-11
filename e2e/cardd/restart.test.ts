@@ -78,6 +78,15 @@ test("main restarts a second mate by its lane card, and nobody else restarts it"
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const laneCard = (await fleet.cardd.board()).cards.find((each) => each.name === "cleo");
   assert.ok(laneCard !== undefined);
+  await assert.rejects(
+    fleet.main.call("card.restart", {
+      card: laneCard.id,
+      mode: "replace",
+      key: "pin",
+      model: "tier/visual",
+    }),
+    /model applies only when a worker's process is replaced/,
+  );
   const plan = check(
     OPS["card.restart"].result,
     await fleet.main.call("card.restart", { card: laneCard.id, mode: "replace", key: "m" }),

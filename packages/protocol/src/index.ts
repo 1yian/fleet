@@ -3,6 +3,7 @@ import Value from "typebox/value";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
+import { MODEL_PIN } from "./model.ts";
 import { ActivityMessage, LandingFields } from "./progress.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
@@ -155,6 +156,7 @@ export const CardViewSchema = Type.Object({
       host: Type.String(),
       state: Type.String(),
       branch: Nullable(Type.String()),
+      model: Nullable(Type.String()),
     }),
   ),
   entries: Type.Array(EntrySchema),
@@ -173,7 +175,7 @@ const AttemptPlan = Type.Object({
   name: Type.String(),
   lane: Type.String(),
   delivery: Nullable(Delivery),
-  model: Type.Optional(Type.String({ pattern: "^[^/\\s]+/[^\\s]+$" })),
+  model: Type.Optional(Type.String({ pattern: MODEL_PIN })),
 });
 
 export const OPS = {
