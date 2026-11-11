@@ -221,7 +221,6 @@ test("the captain's own words on a merge question from the board are never refus
   const board = check(BoardSchema, await (await fetch(`${http}api/board`)).json());
   const question = board.holds.find((each) => each.card === card.id);
   assert.equal(question?.merge, true);
-  const revision = board.cards.find((each) => each.id === card.id)?.revision;
   const action = {
     kind: "answer",
     hold: question.hold,
@@ -231,7 +230,7 @@ test("the captain's own words on a merge question from the board are never refus
   const response = await fetch(`${http}api/action`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ card: card.id, revision, action }),
+    body: JSON.stringify({ card: card.id, action }),
   });
   assert.equal(response.status, 200);
 
@@ -337,7 +336,7 @@ const mateAsks = (card: Card, extra: Record<string, unknown> = {}) =>
 const pick = async (card: Card, choice: string, written = false) =>
   fleet.main.call("pane.answer", {
     card: card.id,
-    revision: (await view(card)).card.revision,
+    hold: (await view(card)).hold?.entry,
     choice,
     ...(written ? { written } : {}),
   });

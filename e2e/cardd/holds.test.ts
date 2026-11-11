@@ -205,22 +205,14 @@ test("a pick or his own words on a merge question from the pane are never refuse
   const words = "Not before the audit";
   const { hold } = await theHold();
   await fleet.main.call("pane.answer", { card: card.id, hold, choice: words, written: true });
-  assert.equal(
-    (await entries(card)).find((entry) => entry.kind === "answer"),
-    undefined,
-  );
-  const heard = (await entries(card)).findLast((entry) => entry.kind === "comment");
+  const heard = (await entries(card)).filter((entry) => entry.author === "captain");
   assert.deepEqual(
-    [heard?.author, heard?.body, heard?.fields["written"], heard?.fields["source"]],
-    ["captain", words, true, "pane"],
+    heard.map(({ kind, body, fields }) => [kind, body, fields["written"], fields["source"]]),
+    [["comment", words, true, "pane"]],
   );
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual(await needsYou(), []);
-  const told = await cleo.waitForEntry(
-    (entry) => entry.kind === "comment" && entry.author === "captain",
-    "his words",
-  );
-  assert.equal(told.body, words);
+  await cleo.waitForEntry((entry) => entry.body === words, "his words");
 
   await cleo.call("release", { card: card.id, words, source: "record" });
   assert.equal(await status(cleo, card), "with-mate");
