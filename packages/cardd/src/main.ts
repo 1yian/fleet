@@ -10,6 +10,13 @@ import { DELIVERIES } from "@fleet/protocol";
 import { setCardDelivery } from "./attempts.ts";
 import { parsePlan, setNextPlan, showPlans } from "./plans.ts";
 import {
+  describeLanes,
+  describeProjects,
+  describeRepo,
+  removeLane,
+  setLaneHome,
+} from "./registry.ts";
+import {
   addLane,
   addProject,
   removeClone,
@@ -41,6 +48,7 @@ const { values, positionals } = parseArgs({
     delivery: { type: "string" },
     clone: { type: "string", multiple: true, default: [] },
     yolo: { type: "boolean", default: false },
+    migrate: { type: "boolean", default: false },
     repo: { type: "string" },
     hosts: { type: "string", default: "{}" },
     browser: { type: "string" },
@@ -51,8 +59,8 @@ const { values, positionals } = parseArgs({
   },
 });
 if (values.db === undefined) throw new Error("--db is required");
-const db = openDatabase(values.db);
 const [command, ...rest] = positionals;
+const db = openDatabase(values.db, command === "serve" || values.migrate);
 const hosts = parseHosts(values.hosts);
 
 function parseHosts(raw: string): Hosts {
@@ -140,6 +148,17 @@ if (command === "serve") {
 ) {
   const lane = { name: rest[1], home: values.home };
   console.log(addLane(db, values.parent === undefined ? lane : { ...lane, parent: values.parent }));
+} else if (command === "lane" && rest[0] === "list") {
+  for (const line of describeLanes(db)) console.log(line);
+} else if (command === "lane" && rest[0] === "remove" && rest[1] !== undefined) {
+  console.log(removeLane(db, rest[1]));
+} else if (
+  command === "lane" &&
+  rest[0] === "home" &&
+  rest[1] !== undefined &&
+  rest[2] !== undefined
+) {
+  console.log(setLaneHome(db, rest[1], rest[2]));
 } else if (command === "lane" && rest[0] === "plan" && rest[1] !== undefined) {
   if (values.plan !== undefined) setNextPlan(db, rest[1], parsePlan(values.plan));
   console.log(JSON.stringify(showPlans(db, rest[1])));
@@ -157,6 +176,10 @@ if (command === "serve") {
   const repo = values.repo === undefined ? null : ownerName(values.repo, "--repo");
   addProject(db, { name: rest[1], delivery: values.delivery, clones, yolo: values.yolo, repo });
   await Promise.all(projectsWithoutRepo(db).map((project) => fillRepo(db, hosts, project)));
+  console.log(`${rest[1]}: added`);
+  console.log(describeRepo(db, rest[1]));
+} else if (command === "project" && rest[0] === "list") {
+  for (const line of describeProjects(db)) console.log(line);
 } else if (
   command === "project" &&
   rest[0] === "repo" &&
@@ -209,6 +232,6 @@ if (command === "serve") {
   console.log(`${rest[1]}: yolo ${rest[2]}`);
 } else {
   throw new Error(
-    "usage: cardd serve --db <file> [--hosts <json>] [--public-host <host> --access-team <team domain> --access-aud <tag> --access-email <email>] | cardd lane add <name> --db <file> --home <path> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project unclone <name> <host> --db <file> | cardd project remove <name> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>",
+    "usage: cardd serve --db <file> [--hosts <json>] [--public-host <host> --access-team <team domain> --access-aud <tag> --access-email <email>] | cardd lane add <name> --db <file> --home <path> [--parent <lane>] | cardd lane list --db <file> | cardd lane home <name> <path> --db <file> | cardd lane remove <name> --db <file> | cardd lane plan <name> --db <file> [--plan <json>] | cardd project list --db <file> | cardd project add <name> --db <file> --delivery <mode> [--clone <host>=<path>]... [--yolo] [--repo <owner/name>] [--hosts <json>] | cardd project clone <name> <host>=<path> --db <file> | cardd project unclone <name> <host> --db <file> | cardd project remove <name> --db <file> | cardd project repo <name> <owner/name> --db <file> | cardd project yolo <name> on|off --db <file> | cardd project delivery <name> <mode> --db <file> | cardd card delivery <number> <mode> --db <file>. Every command but serve refuses to migrate a database that an older cardd runs on, unless you add --migrate",
   );
 }

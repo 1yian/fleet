@@ -51,10 +51,11 @@ export class Scratch {
     return join(this.root, "packages", "extension", "src", "launch.ts");
   }
 
-  fleet(args: readonly string[], env: Record<string, string> = {}): string {
+  fleet(args: readonly string[], env: Record<string, string> = {}, input?: string): string {
     return execFileSync("node", [this.launch, ...args], {
       encoding: "utf8",
       env: { ...process.env, ...env },
+      ...(input === undefined ? {} : { input }),
     });
   }
 
@@ -73,7 +74,7 @@ export class Scratch {
     },
   ): string {
     const args = ["home", "add", lane, "--url", settings.url];
-    if (settings.token !== undefined) args.push("--token", settings.token);
+    if (settings.token !== undefined) args.push("--token-file", "-");
     if (settings.bws !== undefined) args.push("--bws", JSON.stringify(settings.bws));
     args.push("--args", JSON.stringify(settings.args ?? []));
     args.push(
@@ -85,7 +86,7 @@ export class Scratch {
     if (settings.direnv !== undefined) args.push("--direnv", settings.direnv);
     if (settings.tier !== undefined) args.push("--tier", settings.tier);
     if (settings.host !== undefined) args.push("--host", settings.host);
-    return this.fleet(args).trim();
+    return this.fleet(args, {}, settings.token).trim();
   }
 
   dispose(): void {

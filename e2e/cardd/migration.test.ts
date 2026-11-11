@@ -132,6 +132,28 @@ test("a database with a project capacity opens, keeps its project, and dispatche
   }
 });
 
+test("an admin command refuses to migrate a database that an older cardd runs on, unless told to", () => {
+  const file = join(tempDir("fleet-cardd-"), "cards.db");
+  writeOldDatabase(file);
+  const before = contents(file);
+  const list = (...more: string[]) =>
+    spawnSync("node", [MAIN, "lane", "list", "--db", file, ...more], { encoding: "utf8" });
+
+  const refused = list();
+  assert.equal(refused.status, 1);
+  assert.match(
+    refused.stderr,
+    /is at schema 5 and this checkout has \d+\. A running cardd on older code would be left on a migrated database\. Update cardd first \(\/updatefleet\), or pass --migrate/,
+  );
+  assert.equal(contents(file), before);
+
+  const allowed = list("--migrate");
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.equal(allowed.stdout, "main: no parent, no mate, no lane card, home /homes/main\n");
+  assert.notEqual(contents(file), before);
+  assert.equal(list().status, 0);
+});
+
 test("the live fleet's database from before holds opens with every entry, delivery, and open ask", async () => {
   const cardd = await Cardd.start({}, [], writeLiveShapedDatabase);
   try {
