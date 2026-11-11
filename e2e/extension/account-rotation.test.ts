@@ -179,6 +179,19 @@ test("a new run tries again an account that ran out in the run before, once its 
   ]);
 });
 
+test("a failure with one account free again for a new run does not hold its recovery until a later account cools", async () => {
+  grouped(["anthropic-2", "anthropic-3", "anthropic-4"], { rateLimitSeconds: 1 });
+  h.onModel(() => ({ fail: RATE_LIMIT }));
+  h.onModel(slowly(OUT_OF_QUOTA));
+  (await dispatched())();
+  const heard = await fleet.main.waitForEntry(isFailure, "the exhaustion to reach the mate");
+  assert.match(heard.body, /anthropic-3 \(throttled in this run\)/);
+  const cools = /anthropic-2 \(out of quota until (\S+?)\)/.exec(heard.body)?.[1];
+  const recovers = /eligible at (\S+?)\.(?: |$)/.exec(heard.body)?.[1];
+  assert.ok(cools !== undefined && recovers !== undefined, heard.body);
+  assert.ok(Date.parse(recovers) < Date.parse(cools), heard.body);
+});
+
 test("a worker whose every account for the model ran out of quota fails once with the model and the accounts named", async () => {
   h.onModel(() => ({ fail: OUT_OF_QUOTA }));
   h.onModel(() => ({ fail: OUT_OF_QUOTA }));

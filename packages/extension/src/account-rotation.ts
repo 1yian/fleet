@@ -28,7 +28,8 @@ const RATE_LIMITED = /\b429\b|rate.?limit|too many requests/i;
 const REASONS = ["throttled", "out of quota"] as const;
 const Reason = Type.Enum(REASONS);
 type Reason = Static<typeof Reason>;
-const BLOCKED_UNTIL = new RegExp(`\\((?:${REASONS.join("|")}) until (\\S+?)\\)`, "g");
+const HELD = "in this run";
+const BLOCKED = new RegExp(`\\((?:${REASONS.join("|")}) (?:until (\\S+?)|${HELD})\\)`, "g");
 
 const CooledSchema = Type.Object({
   provider: Type.String(),
@@ -66,9 +67,12 @@ function cooldownMs(reason: Reason): number {
 }
 
 export function accountResumeAt(error: string, now: number = Date.now()): number | undefined {
-  const times = [...error.matchAll(BLOCKED_UNTIL)].map((found) => Date.parse(found[1] ?? ""));
-  const later = times.filter((time) => time > now);
-  return later.length === 0 ? undefined : Math.min(...later);
+  const times = [...error.matchAll(BLOCKED)].map((found) =>
+    found[1] === undefined ? now : Date.parse(found[1]),
+  );
+  if (times.length === 0) return undefined;
+  const earliest = Math.min(...times);
+  return earliest > now ? earliest : undefined;
 }
 
 function avoided(): ReadonlySet<string> {
@@ -197,8 +201,7 @@ export class AccountRotation {
     const now = Date.now();
     if (cooled === undefined || (cooled.untilMs <= now && !this.failed.has(provider)))
       return { provider, usable: model };
-    const until =
-      cooled.untilMs > now ? `until ${new Date(cooled.untilMs).toISOString()}` : "in this run";
+    const until = cooled.untilMs > now ? `until ${new Date(cooled.untilMs).toISOString()}` : HELD;
     return { provider, blocked: `${cooled.reason} ${until}` };
   }
 
