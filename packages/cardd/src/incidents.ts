@@ -19,8 +19,8 @@ import {
   type Incident,
 } from "./incident-store.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
+import { QUEUED_DELIVERY, TAKEN_DELIVERY } from "./delivery-states.ts";
 import { transitionStop } from "./lane-stop.ts";
-import { QUEUED_DELIVERY, TAKEN_DELIVERY } from "./deliveries.ts";
 import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 

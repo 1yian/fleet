@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Status } from "@fleet/protocol";
-import { QUEUED_DELIVERY } from "./deliveries.ts";
+import { QUEUED_DELIVERY } from "./delivery-states.ts";
 import type { Kind, Mode, Phase } from "./incident-kinds.ts";
 import { isFinished, pausedNow } from "./status.ts";
 import { loadCard } from "./store.ts";

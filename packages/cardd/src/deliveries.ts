@@ -1,6 +1,12 @@
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { check, EntrySchema, PushedEntrySchema, type Entry } from "@fleet/protocol";
 import type { Draft } from "./change.ts";
+import {
+  IN_FLIGHT_DELIVERY,
+  QUEUED_DELIVERY,
+  SENT_DELIVERY,
+  UNREAD_DELIVERY,
+} from "./delivery-states.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { addEntry, ENTRY_JSON, json, mainLane } from "./store.ts";
 import { holdFor } from "./waits.ts";
@@ -25,12 +31,6 @@ const DELIVERY_STATES = [
 ] as const;
 type DeliveryState = (typeof DELIVERY_STATES)[number];
 type DeliveryEvent = "push" | "read" | "ack" | "confirm" | "resend";
-
-export const QUEUED_DELIVERY = "'pending', 'resent'";
-const SENT_DELIVERY = "'pushed', 'pushed-again'";
-const UNREAD_DELIVERY = `${QUEUED_DELIVERY}, ${SENT_DELIVERY}`;
-export const IN_FLIGHT_DELIVERY = `${UNREAD_DELIVERY}, 'read'`;
-export const TAKEN_DELIVERY = "'acknowledged', 'confirmed'";
 
 const AT_CONNECT = `${IN_FLIGHT_DELIVERY}, 'acknowledged'`;
 const WHEN_UP = QUEUED_DELIVERY;
