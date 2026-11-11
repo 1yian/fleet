@@ -12,7 +12,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { LATER_EXAMPLES } from "@fleet/protocol";
+import { LATER_EXAMPLES, laidOut } from "@fleet/protocol";
 import type { Decision } from "./decisions.ts";
 
 const WRITE_LABEL = "My words…";
@@ -59,10 +59,22 @@ const oneLine = (data: string): string =>
 
 const plain = (text: string): string => replaceControlCharacters(stripTerminalSequences(text));
 
+const NUMBER_MARKER = /^\d{1,2}\.\s+/;
+
+function hanging(clean: string, width: number): string[] {
+  const marker = NUMBER_MARKER.exec(clean)?.[0];
+  if (marker === undefined) return wrapTextWithAnsi(clean, width);
+  const [first = "", ...rest] = wrapTextWithAnsi(
+    clean.slice(marker.length),
+    Math.max(1, width - marker.length),
+  );
+  return [`${marker}${first}`, ...rest.map((row) => `${" ".repeat(marker.length)}${row}`)];
+}
+
 function paragraphs(text: string, width: number): string[] {
   return text.split("\n").flatMap((line) => {
     const clean = plain(line).trimEnd();
-    return clean === "" ? [""] : wrapTextWithAnsi(clean, width);
+    return clean === "" ? [""] : hanging(clean, width);
   });
 }
 
@@ -359,7 +371,7 @@ export class DecisionCard implements Component, Focusable {
     const inner = Math.max(1, width - 2 * PADDING);
     const line = (text: string): string => `${margin}${text}`;
     const quiet = (text: string): string => line(theme.fg("muted", this.fit(text, inner)));
-    const body = paragraphs(decision.question, inner);
+    const body = paragraphs(laidOut(decision.question), inner);
     const layout = this.layout();
     const rows = layout.body;
     const spacer = (rank: number): string[] => (layout.spacers >= rank ? [""] : []);

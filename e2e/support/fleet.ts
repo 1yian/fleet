@@ -64,6 +64,34 @@ export function oldDatedHold(
   }
 }
 
+function insertEntry(
+  cardd: Cardd,
+  card: Card,
+  author: string,
+  kind: string,
+  body: string,
+  fields: Record<string, unknown>,
+): void {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(card.id, author, kind, body, JSON.stringify(fields), Date.now());
+  } finally {
+    db.close();
+  }
+}
+
+export function oldMergeHold(cardd: Cardd, card: Card, options: readonly string[]): void {
+  const fields = { holder: "captain", options, merge: true, until: null, occurrence: 1 };
+  insertEntry(cardd, card, "mate:main", "hold", "Merge it?", fields);
+}
+
+export function oldApproval(cardd: Cardd, card: Card): void {
+  const fields = { occurrence: 1, source: "board", by: "board", choice: "Approve & merge" };
+  insertEntry(cardd, card, "captain", "answer", "Approve & merge", fields);
+}
+
 export const park = (
   mate: Session,
   card: Card,

@@ -18,6 +18,7 @@ export const SHIP = "Ship the scrollbar fix?";
 export const RENAME = "Rename the repository?";
 export const MY_WORDS = "Keep the old name until the move in March";
 export const SEEN = "I put it to you.";
+const PR = "https://github.com/acme/web/pull/2930";
 
 export const showing =
   (shown: readonly string[], hidden: readonly string[] = []) =>
@@ -245,6 +246,34 @@ export class DecideLab {
     return card;
   }
 
+  async askedMerge(
+    pane: string,
+    title: string,
+    ask: { question: string; options: string[]; approves: string[] },
+    count: number,
+  ): Promise<Card> {
+    this.cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
+    const card = check(
+      CardSchema,
+      await this.cleo.call("card.new", { title, kind: "ship", project: "web" }),
+    );
+    const began = await this.cleo.call("attempt.begin", {
+      card: card.id,
+      host: "maverick",
+      task: title,
+    });
+    const worker = await this.cardd.connect(check(OPS["attempt.begin"].result, began).token);
+    this.h.onModel(
+      () => ({ tool: "hold", args: { card: card.id, to: "captain", ...ask } }),
+      "mate",
+    );
+    this.h.onModel(() => ({ text: SEEN }), "mate");
+    await worker.call("report", { status: "done", text: "PR green and ready", pr: PR });
+    await this.screenWhere(pane, `${String(count)} on the strip`, showing([`◆ ${String(count)}`]));
+    await this.h.waitForCall(count * 2 - 1, "mate", WAIT_MS);
+    return card;
+  }
+
   async answered(card: Card): Promise<{ body: string; source: unknown; written: unknown }[]> {
     const { entries } = await this.cardd.thread(card.id);
     return entries
@@ -260,6 +289,33 @@ export class DecideLab {
     const found = (await this.cardd.board()).cards.find((each) => each.id === card.id);
     if (found === undefined) throw new Error(`c-${String(card.id)} is not on the board`);
     return found.revision;
+  }
+
+  async mergeAnswer(card: Card): Promise<{
+    kind: string;
+    body: string;
+    choice: unknown;
+    approved: unknown;
+    source: unknown;
+  }> {
+    const { entries } = await this.cardd.thread(card.id);
+    const heard = entries.findLast(
+      (entry) =>
+        entry.author === "captain" && (entry.kind === "answer" || entry.kind === "comment"),
+    );
+    if (heard === undefined) throw new Error(`c-${String(card.id)} has no answer from the captain`);
+    const { kind, body, fields } = heard;
+    return {
+      kind,
+      body,
+      choice: fields["choice"],
+      approved: fields["approved"],
+      source: fields["source"],
+    };
+  }
+
+  async statusOf(card: Card): Promise<string | undefined> {
+    return (await this.cardd.board()).cards.find((each) => each.id === card.id)?.status;
   }
 
   async mainWasTold(index: number, card: Card, text: string): Promise<void> {

@@ -13,6 +13,7 @@ const HoldParams = Type.Object({
   card: CardId,
   question: Type.Optional(OPS.hold.args.properties.question),
   options: OPS.hold.args.properties.options,
+  approves: OPS.hold.args.properties.approves,
   to: OPS.hold.args.properties.to,
   replyTo: OPS.hold.args.properties.replyTo,
   until: Type.Optional(
@@ -49,7 +50,8 @@ const HoldParams = Type.Object({
   ),
   choice: Type.Optional(
     Type.String({
-      description: "With clear, for a merge question: Approve & merge, or Request changes",
+      description:
+        "With clear, on a merge question: the option of the hold that the captain's words amount to. It approves the merge only when the hold names it in approves. Leave it out when his words do not pick an option, which records no approval",
     }),
   ),
 });
@@ -57,6 +59,7 @@ const HoldParams = Type.Object({
 const SETTING = [
   "question",
   "options",
+  "approves",
   "to",
   "until",
   "replyTo",
@@ -97,9 +100,10 @@ export function registerQuestions(
     if (extra.length > 0) throw new Error(`${extra.join(", ")} only go with clear=true`);
     const { card: id, question, until, said, ...rest } = params;
     if (question === undefined) throw new Error("a hold needs its question");
-    const { options, to, replyTo, job, schedule, worker, watcher, outside, remaining } = rest;
+    const { options, approves, to, replyTo, job, schedule, worker, watcher, outside } = rest;
+    const { remaining } = rest;
     const args = {
-      ...{ card: id, question, options, to, replyTo },
+      ...{ card: id, question, options, approves, to, replyTo },
       ...{ job, schedule, worker, watcher, outside, remaining, said },
       ...(until === undefined ? {} : { until: parseUtc(until) }),
       ...(said === undefined ? {} : { source: sourceOf(said) }),

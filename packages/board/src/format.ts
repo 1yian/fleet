@@ -1,5 +1,5 @@
 import {
-  MERGE_OPTIONS,
+  approvedBy,
   type Activity,
   type Board,
   type BoardCard,
@@ -165,9 +165,7 @@ export interface Facts {
 }
 
 export function factsOf(entries: readonly Entry[]): Facts {
-  const approved = entries.some(
-    (entry) => entry.kind === "answer" && entry.fields["choice"] === MERGE_OPTIONS[0],
-  );
+  const approved = entries.some((entry) => entry.kind === "answer" && approvedBy(entry.fields));
   const asked = entries.some((entry) => entry.kind === "hold" && entry.fields["merge"] === true);
   return { approval: approved ? "you" : asked ? "other" : "automatic" };
 }

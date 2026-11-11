@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, MERGE_OPTIONS, OPS, type Card, type Holder } from "@fleet/protocol";
+import { APPROVE_MERGE, check, OPS, type Card, type Holder } from "@fleet/protocol";
 import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
@@ -88,6 +88,7 @@ function isSame(
     question: string;
     until: number | null;
     options: readonly string[];
+    approves: readonly string[];
   } & Dating,
 ): boolean {
   return (
@@ -95,6 +96,7 @@ function isSame(
     open.question === next.question &&
     open.until === next.until &&
     open.options.join("\n") === next.options.join("\n") &&
+    open.approves.join("\n") === next.approves.join("\n") &&
     JSON.stringify([open.wait, open.remaining]) === JSON.stringify([next.wait, next.remaining])
   );
 }
@@ -106,6 +108,7 @@ export function rewritten(
 ): {
   holder: Holder;
   options: readonly string[];
+  approves: readonly string[];
   merge: boolean;
   until: number | null;
   occurrence: number;
@@ -114,6 +117,7 @@ export function rewritten(
   return {
     holder,
     options: open?.options ?? [],
+    approves: open?.approves ?? [],
     merge: open?.merge ?? false,
     until: until ?? null,
     occurrence: open?.occurrence ?? facts.occurrences + 1,
@@ -131,6 +135,31 @@ function answeredBy(
   return askersOf(db, card, replyTo);
 }
 
+interface Offer {
+  readonly options?: readonly string[] | undefined;
+  readonly approves?: readonly string[] | undefined;
+}
+
+function approvingOptions(card: Card, open: Hold | undefined, offer: Offer): readonly string[] {
+  const name = `c-${String(card.id)}`;
+  if (open?.merge !== true) {
+    if (offer.approves === undefined) return [];
+    throw new Error(`${name} has no merge question open, so no option can approve a merge`);
+  }
+  if (offer.approves === undefined) {
+    if (offer.options === undefined) return open.approves;
+    throw new Error(
+      `${name}'s open hold is its merge question: say which of the new options approve the merge with approves=[...], or approves=[] when none does`,
+    );
+  }
+  const stray = offer.approves.filter(
+    (option) => !(offer.options ?? open.options).includes(option),
+  );
+  if (stray.length > 0)
+    throw new Error(`approves must be options of the hold, and these are not: ${stray.join(", ")}`);
+  return offer.approves;
+}
+
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.hold.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -145,6 +174,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   requireClimb(db, session, card, current, target);
   const base = rewritten(facts, target, args.until);
   const options = args.options ?? base.options;
+  const approves = approvingOptions(card, open, args);
   const replyTo = args.replyTo;
   const asker = answeredBy(db, session, card, replyTo);
   const same = isSame(open, {
@@ -152,11 +182,19 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     question: args.question,
     until: base.until,
     options,
+    approves,
     ...dated,
   });
   if (same && replyTo === undefined) return { value: card, notify: [] };
   const escalated = open !== undefined && target !== current;
-  const fields = { ...base, ...dated, options, ...(escalated ? { escalated } : {}), replyTo };
+  const fields = {
+    ...base,
+    ...dated,
+    options,
+    approves,
+    ...(escalated ? { escalated } : {}),
+    replyTo,
+  };
   const draft: Draft = {
     card: card.id,
     author: `mate:${session.lane}`,
@@ -171,10 +209,45 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   return { value: getCard(db, card.id), notify: to };
 }
 
-function requireMergeChoice(choice: string | undefined): void {
-  const [approve, changes] = MERGE_OPTIONS;
-  if (choice !== approve && choice !== changes)
-    throw new Error(`a merge question needs the choice "${approve}" or "${changes}"`);
+interface Answer {
+  readonly words: string;
+  readonly source: string;
+  readonly choice?: string | undefined;
+  readonly written?: boolean;
+}
+
+function requireOffered(card: Card, open: Hold, choice: string | undefined): void {
+  const offered = [...new Set([...open.options, ...open.approves])];
+  if (choice === undefined || offered.includes(choice)) return;
+  throw new Error(
+    `choice must be one of the options of c-${String(card.id)}'s merge question: ${offered.join(" | ")}`,
+  );
+}
+
+const approvesMerge = (open: Hold, args: Answer): boolean =>
+  open.merge &&
+  args.written !== true &&
+  args.choice !== undefined &&
+  open.approves.includes(args.choice);
+
+function toTheMate(db: DatabaseSync, card: Card, open: Hold, args: Answer): Done {
+  const fields = {
+    for: "mate",
+    answers: open.entry,
+    source: args.source,
+    ...(args.written === true ? { written: true } : { choice: args.choice }),
+  };
+  const draft: Draft = {
+    card: card.id,
+    author: "captain",
+    kind: "comment",
+    body: args.words,
+    fields,
+  };
+  requireOpen(db, card);
+  const to = hearers(db, card, null, ["main"]);
+  addEntry(db, draft, to);
+  return { value: getCard(db, card.id), notify: to };
 }
 
 export function answerHold(
@@ -182,20 +255,18 @@ export function answerHold(
   actor: string | null,
   card: Card,
   open: Hold,
-  args: {
-    readonly words: string;
-    readonly source: string;
-    readonly choice?: string | undefined;
-    readonly written?: boolean;
-  },
+  args: Answer,
 ): Done {
-  if (open.merge) requireMergeChoice(args.choice);
+  const approved = approvesMerge(open, args);
+  if (open.merge && actor === null && !approved) return toTheMate(db, card, open, args);
+  if (open.merge) requireOffered(card, open, args.choice);
   const fields = {
     hold: open.entry,
     occurrence: open.occurrence,
     source: args.source,
     by: actor === null ? "board" : `mate:${actor}`,
     choice: args.choice,
+    ...(open.merge ? { approved } : {}),
     ...(args.written === true ? { written: true } : {}),
   };
   const draft: Draft = {
@@ -287,7 +358,8 @@ export function mergeQuestion(
   const holder: Holder = levelsOf(db, card).includes("main") ? "main" : "captain";
   const fields = {
     holder,
-    options: [...MERGE_OPTIONS],
+    options: [APPROVE_MERGE],
+    approves: [APPROVE_MERGE],
     merge: true,
     until: null,
     occurrence: facts.occurrences + 1,
