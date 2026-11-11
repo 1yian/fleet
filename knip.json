@@ -25,6 +25,9 @@
         "trial/*.ts"
       ]
     },
+    "packages/chrome": {
+      "entry": ["src/guard.ts"]
+    },
     "packages/extension": {
       "entry": [
         "src/index.ts",

@@ -19,10 +19,18 @@ export class StandInChrome {
     this.endpoint = endpoint;
   }
 
-  static async start(rules = "MAP *.example.test 127.0.0.1"): Promise<StandInChrome> {
-    const port = await freePort();
+  static async start(
+    rules = "MAP *.example.test 127.0.0.1",
+    extraArgs: readonly string[] = [],
+    fixedPort?: number,
+  ): Promise<StandInChrome> {
+    const port = fixedPort ?? (await freePort());
     const browser = await chromium.launch({
-      args: [`--remote-debugging-port=${String(port)}`, `--host-resolver-rules=${rules}`],
+      args: [
+        `--remote-debugging-port=${String(port)}`,
+        `--host-resolver-rules=${rules}`,
+        ...extraArgs,
+      ],
     });
     return new StandInChrome(browser, `http://127.0.0.1:${String(port)}`);
   }
@@ -79,7 +87,7 @@ async function attach(cdp: Cdp, target: string): Promise<string> {
   return sessionId;
 }
 
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
