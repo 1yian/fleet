@@ -90,3 +90,30 @@ test("a second mate preserves a provider-qualified explicit model", async () => 
 test("a second mate starts on its lane's configured tier, including after restart", async () => {
   await verifyMate([], "tier/weaker-orchestrator", "tier/weaker-orchestrator");
 });
+
+test("home set gives an existing lane new Pi arguments, and its restart starts the mate with them", async () => {
+  scratch.addLane("cnp", {
+    url: cardd.url,
+    token: cardd.addLane("cnp", "main"),
+    args: settingsArgs(h),
+  });
+  const fleet = (...args: string[]): string =>
+    scratch.fleet(args, { ...h.piEnv("mate"), HERDR_SESSION: lab.name });
+
+  assert.match(fleet("up", "cnp"), /cnp: started/);
+  assert.deepEqual(await startsOn(), ["tier/orchestrator"]);
+  assert.equal(
+    h.events.some((event) => event["type"] === "fleet_connected"),
+    false,
+    "the probe was loaded before the arguments were set",
+  );
+
+  const args = [...settingsArgs(h), "-e", PROBE, "--model", "tier/weaker-orchestrator"];
+  assert.match(
+    fleet("home", "set", "cnp", "--args", JSON.stringify(args)),
+    /cnp: set args\. Restart the lane/,
+  );
+  assert.match(fleet("restart", "cnp"), /cnp: started/);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "the restarted mate to join");
+  assert.deepEqual(await startsOn(), ["tier/orchestrator", "tier/weaker-orchestrator"]);
+});

@@ -4,6 +4,8 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,6 +20,7 @@ import {
   isRecord,
   LANE_FILE,
   mateStartArgs,
+  parseLaneConfig,
   readLaneConfig,
   type LaneConfig,
 } from "./lane-config.ts";
@@ -78,27 +81,64 @@ export function laneHomes(root: string): LaneHome[] {
     });
 }
 
-export function provision(root: string, config: LaneConfig): string {
+const stoppedFile = (home: string): string => join(home, "state", "stopped");
+const HELD_AT_CREATION = "held since the home was made\n";
+const startsFile = (home: string): string => join(home, "state", "starts");
+
+const canonical = (path: string): string => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+
+function isWorktreeOf(root: string, home: string): boolean {
+  const here = canonical(home);
+  return git(root, "worktree", "list", "--porcelain")
+    .split("\n")
+    .some((line) => line.startsWith("worktree ") && canonical(line.slice(9)) === here);
+}
+
+export function provision(root: string, config: LaneConfig, hold = false): string {
   const home = homeOf(root, config.lane);
-  if (existsSync(home)) throw new Error(`${home} already exists`);
-  git(root, "worktree", "add", "--detach", home, "HEAD");
-  if (existsSync(join(root, "node_modules")))
-    symlinkSync(join(root, "node_modules"), join(home, "node_modules"));
-  writeLaneConfig(home, config);
+  if (!existsSync(home)) git(root, "worktree", "add", "--detach", home, "HEAD");
+  else if (!isWorktreeOf(root, home))
+    throw new Error(`${home} exists and is not a worktree of ${root}`);
+  const modules = join(root, "node_modules");
+  if (existsSync(modules) && !existsSync(join(home, "node_modules")))
+    symlinkSync(modules, join(home, "node_modules"));
   mkdirSync(join(home, "data"), { recursive: true });
   mkdirSync(join(home, "state"), { recursive: true });
+  if (hold) writeFileSync(stoppedFile(home), HELD_AT_CREATION);
+  writeLaneConfig(home, config);
   return home;
+}
+
+function replaceFile(file: string, text: string): void {
+  const next = `${file}.next`;
+  writeFileSync(next, text, { mode: 0o600 });
+  renameSync(next, file);
 }
 
 export function writeLaneConfig(home: string, config: LaneConfig): void {
   mkdirSync(join(home, "config"), { recursive: true });
-  writeFileSync(join(home, LANE_FILE), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  replaceFile(join(home, LANE_FILE), `${JSON.stringify(config, null, 2)}\n`);
+}
+
+export function reconfigure(
+  home: string,
+  changes: { readonly args?: readonly string[]; readonly workerArgs?: readonly string[] },
+): void {
+  const file = join(home, LANE_FILE);
+  const current: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (!isRecord(current)) throw new Error(`${file} is not a JSON object`);
+  const next = { ...current, ...changes };
+  parseLaneConfig(file, next);
+  replaceFile(file, `${JSON.stringify(next, null, 2)}\n`);
 }
 
 const herdr = (args: readonly string[]): Promise<Record<string, unknown>> => herdrOn("local", args);
-
-const stoppedFile = (home: string): string => join(home, "state", "stopped");
-const startsFile = (home: string): string => join(home, "state", "starts");
 
 function heldReason(home: string): string | undefined {
   try {

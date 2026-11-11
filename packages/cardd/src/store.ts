@@ -90,6 +90,8 @@ export function addLane(
     throw new Error(`${lane.name} is the form of a worker session, so it cannot name a lane`);
   }
   const token = transaction(db, () => {
+    if (db.prepare("SELECT 1 FROM lanes WHERE name = ?").get(lane.name) !== undefined)
+      throw new Error(`lane ${lane.name} is already in the registry: lane list shows it`);
     const token = tokenFor(db, "mate", lane.name);
     db.prepare("INSERT INTO lanes (name, home, parent) VALUES (?, ?, ?)").run(
       lane.name,
@@ -147,6 +149,10 @@ export function addProject(
     repo: string | null;
   },
 ): void {
+  if (db.prepare("SELECT 1 FROM projects WHERE name = ?").get(project.name) !== undefined)
+    throw new Error(
+      `project ${project.name} is already in the registry: project list shows it. project clone adds a host's clone, and project repo, delivery, and yolo change the rest`,
+    );
   db.prepare(
     "INSERT INTO projects (name, delivery, clones, yolo, repo) VALUES (?, ?, ?, ?, ?)",
   ).run(
