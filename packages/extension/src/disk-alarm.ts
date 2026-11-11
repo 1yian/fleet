@@ -1,6 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { HostUnreachable } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import {
@@ -18,12 +16,11 @@ const ALARM_PERCENT = 75;
 
 const TIDY_EVERY_MS = 60 * 60_000;
 const DIRECTORY_CHECKS = 3;
-const QUEUE_WAIT_MS = Number(process.env["FLEET_DISK_QUEUE_WAIT_MS"]) || 30 * 60_000;
 export const DISK_MESSAGE = "fleet-disk";
-const ALARMS_FILE = join("state", "disk-alarms.json");
+export const DISK_CLEARED = "fleet-disk-cleared";
 const METRICS: readonly Metric[] = ["inodes", "space"];
 
-export type Ask = (host: string, args: readonly string[]) => Promise<string>;
+type Ask = (host: string, args: readonly string[]) => Promise<string>;
 
 export interface Alert {
   readonly text: string;
@@ -31,15 +28,9 @@ export interface Alert {
   readonly crossing?: string;
 }
 
-interface Queued {
-  readonly id: string;
-  readonly at: number;
-}
-
 interface Memory {
   readonly held: Set<string>;
   readonly unlisted: Map<string, number>;
-  readonly queued: Map<string, Queued>;
 }
 
 interface Crossing {
@@ -61,24 +52,6 @@ const gigabytes = (bytes: number): string => `${(bytes / 2 ** 30).toFixed(1)} GB
 const amount = (value: number, metric: Metric): string =>
   metric === "inodes" ? `${count(value)} inodes` : gigabytes(value);
 
-function readHeld(home: string): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(join(home, ALARMS_FILE), "utf8"));
-    return new Set(Array.isArray(parsed) ? parsed.filter((key) => typeof key === "string") : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveHeld(home: string, held: ReadonlySet<string>): void {
-  try {
-    mkdirSync(join(home, "state"), { recursive: true });
-    writeFileSync(join(home, ALARMS_FILE), JSON.stringify([...held].sort()));
-  } catch {
-    return;
-  }
-}
-
 function parseLine(line: string): unknown {
   try {
     return JSON.parse(line);
@@ -87,51 +60,53 @@ function parseLine(line: string): unknown {
   }
 }
 
-function crossingIdOf(entry: unknown): string | undefined {
-  if (!isRecord(entry) || entry["type"] !== "custom_message") return undefined;
-  if (entry["customType"] !== DISK_MESSAGE) return undefined;
-  const details = entry["details"];
-  const id = isRecord(details) ? details["crossing"] : undefined;
-  return typeof id === "string" ? id : undefined;
+function recordedCrossing(entry: unknown): { key: string; said: boolean } | undefined {
+  if (!isRecord(entry)) return undefined;
+  const said = entry["type"] === "custom_message" && entry["customType"] === DISK_MESSAGE;
+  const cleared = entry["type"] === "custom" && entry["customType"] === DISK_CLEARED;
+  if (!said && !cleared) return undefined;
+  const body = entry[said ? "details" : "data"];
+  const key = isRecord(body) ? body["crossing"] : undefined;
+  return typeof key === "string" ? { key, said } : undefined;
 }
 
-export function announcedIn(file: string | undefined): Set<string> {
-  const ids = new Set<string>();
-  if (file === undefined) return ids;
-  let text: string;
+function textOf(file: string): string {
   try {
-    text = readFileSync(file, "utf8");
+    return readFileSync(file, "utf8");
   } catch {
-    return ids;
+    return "";
   }
-  for (const line of text.split("\n")) {
-    if (!line.includes(DISK_MESSAGE)) continue;
-    const id = crossingIdOf(parseLine(line));
-    if (id !== undefined) ids.add(id);
+}
+
+export function replayHeld(sessionFile: string | undefined): Set<string> {
+  const held = new Set<string>();
+  const lines = sessionFile === undefined ? [] : textOf(sessionFile).split("\n");
+  for (const found of lines.filter((line) => line.includes("fleet-disk")).map(parseLine)) {
+    const crossing = recordedCrossing(found);
+    if (crossing?.said === true) held.add(crossing.key);
+    else if (crossing !== undefined) held.delete(crossing.key);
   }
-  return ids;
+  return held;
 }
 
 function crossingsIn(
   host: string,
   uses: readonly FilesystemUse[],
-  { held, unlisted, queued }: Memory,
-): { fresh: Crossing[]; cleared: boolean } {
+  { held, unlisted }: Memory,
+): { fresh: Crossing[]; released: string[] } {
   const fresh: Crossing[] = [];
-  let cleared = false;
-  for (const use of uses) {
-    for (const metric of METRICS) {
-      const percent = percentUsed(use, metric);
-      if (percent === undefined) continue;
-      const key = [host, use.path, metric].join("|");
-      if (percent < ALARM_PERCENT) {
-        cleared = held.delete(key) || cleared;
-        unlisted.delete(key);
-        queued.delete(key);
-      } else if (!held.has(key)) fresh.push({ key, use, metric, percent });
-    }
+  const released: string[] = [];
+  const pairs = uses.flatMap((use) => METRICS.map((metric) => ({ use, metric })));
+  for (const { use, metric } of pairs) {
+    const percent = percentUsed(use, metric);
+    if (percent === undefined) continue;
+    const key = [host, use.path, metric].join("|");
+    if (percent < ALARM_PERCENT) {
+      if (held.delete(key)) released.push(key);
+      unlisted.delete(key);
+    } else if (!held.has(key)) fresh.push({ key, use, metric, percent });
   }
-  return { fresh, cleared };
+  return { fresh, released };
 }
 
 function sizesOf({ use, metric }: Crossing): string {
@@ -179,18 +154,24 @@ async function breakdownOf(
   }
 }
 
-export function diskWatch(
-  home: string,
-  ask: Ask,
-  send: (alert: Alert) => boolean,
-  announced: () => ReadonlySet<string>,
-  now: () => number = Date.now,
-): (host: string) => Promise<void> {
-  const memory: Memory = {
-    held: readHeld(home),
-    unlisted: new Map(),
-    queued: new Map(),
-  };
+export interface DiskWatch {
+  readonly ask: Ask;
+  readonly send: (alert: Alert) => boolean;
+  readonly clear: (crossing: string) => void;
+  readonly idle: () => boolean;
+  readonly held: ReadonlySet<string>;
+  readonly now?: () => number;
+}
+
+export function diskWatch({
+  ask,
+  send,
+  clear,
+  idle,
+  held,
+  now = Date.now,
+}: DiskWatch): (host: string) => Promise<void> {
+  const memory: Memory = { held: new Set(held), unlisted: new Map() };
   const tidied = new Map<string, number>();
   const unreadable = new Set<string>();
 
@@ -202,42 +183,27 @@ export function diskWatch(
     return report;
   };
 
-  const settle = (): void => {
-    const { held, queued } = memory;
-    if (queued.size === 0) return;
-    const seen = announced();
-    let changed = false;
-    for (const [key, { id }] of queued) {
-      if (!seen.has(id)) continue;
-      queued.delete(key);
-      held.add(key);
-      changed = true;
-    }
-    if (changed) saveHeld(home, held);
-  };
-
-  const waiting = (key: string): boolean => {
-    const sent = memory.queued.get(key);
-    return sent !== undefined && now() - sent.at < QUEUE_WAIT_MS;
-  };
-
   const announce = async (host: string, label: string, uses: readonly FilesystemUse[]) => {
-    settle();
-    const { fresh, cleared } = crossingsIn(host, uses, memory);
-    if (cleared) saveHeld(home, memory.held);
+    const { fresh, released } = crossingsIn(host, uses, memory);
+    for (const key of released) clear(key);
     for (const crossing of fresh) {
-      if (waiting(crossing.key)) continue;
+      if (!idle()) return;
       const found = await breakdownOf(ask, host, crossing);
       if (found === undefined) {
         const failed = (memory.unlisted.get(crossing.key) ?? 0) + 1;
         memory.unlisted.set(crossing.key, failed);
         if (failed < DIRECTORY_CHECKS) continue;
       }
-      const id = randomUUID();
-      const alert = { text: described(label, crossing, found), urgent: true, crossing: id };
+      if (!idle()) return;
+      const alert = {
+        text: described(label, crossing, found),
+        urgent: true,
+        crossing: crossing.key,
+      };
       if (!send(alert)) return;
       memory.unlisted.delete(crossing.key);
-      memory.queued.set(crossing.key, { id, at: now() });
+      memory.held.add(crossing.key);
+      return;
     }
   };
 

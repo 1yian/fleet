@@ -14,7 +14,6 @@ const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const TRANSPORT = fileURLToPath(new URL("../support/disk-transport.ts", import.meta.url));
 const INODES = 1_048_576;
 const GIB = 2 ** 30;
-const QUEUE_WAIT_MS = 20_000;
 const CROSSED = ["far|/tmp|inodes"];
 const ALARM = "[fleet] disk: far:";
 
@@ -52,7 +51,6 @@ beforeEach(async () => {
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "300",
-    FLEET_DISK_QUEUE_WAIT_MS: String(QUEUE_WAIT_MS),
   });
 });
 afterEach(async (t) => {
@@ -100,11 +98,6 @@ const untilProbes = (count: number): Promise<void> => untilCalls("probe", count)
 
 const afterProbes = (more: number): Promise<void> => untilProbes(probes() + more);
 
-const sessionText = (): string =>
-  readdirSync(join(h.dir, "sessions"))
-    .map((file) => readFileSync(join(h.dir, "sessions", file), "utf8"))
-    .join("\n");
-
 const alarmsOf = (turns: Turn[]): string[] =>
   turns
     .filter((turn) => turn.role === "user" && turn.text.includes("[fleet] disk: far:"))
@@ -122,14 +115,39 @@ async function untilAlarms(count: number): Promise<string[]> {
   }
 }
 
-const heldKeys = (): unknown[] => {
-  const file = join(here.root, "state", "disk-alarms.json");
-  if (!existsSync(file)) return [];
-  const held: unknown = JSON.parse(readFileSync(file, "utf8"));
-  return Array.isArray(held)
-    ? held.filter((key) => typeof key === "string" && key.startsWith("far|"))
+const sessionFiles = (): string[] => {
+  const folder = join(h.dir, "sessions");
+  return existsSync(folder)
+    ? readdirSync(folder)
+        .sort()
+        .map((file) => join(folder, file))
     : [];
 };
+
+const sessionText = (): string =>
+  sessionFiles()
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n");
+
+function crossingOf(line: string): { key: string; said: boolean } | undefined {
+  const [entry] = records([JSON.parse(line)]);
+  const [details] = records([entry?.["details"] ?? entry?.["data"]]);
+  const key = details?.["crossing"];
+  if (typeof key !== "string" || !key.startsWith("far|")) return undefined;
+  return { key, said: entry?.["customType"] === "fleet-disk" };
+}
+
+function replayed(file: string): string[] {
+  const held = new Set<string>();
+  const lines = readFileSync(file, "utf8").split("\n");
+  for (const found of lines.filter((line) => line.includes("fleet-disk")).map(crossingOf)) {
+    if (found?.said === true) held.add(found.key);
+    else if (found !== undefined) held.delete(found.key);
+  }
+  return [...held];
+}
+
+const heldKeys = (): string[] => sessionFiles().flatMap(replayed);
 
 async function until(check: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + WAIT_MS;
@@ -167,8 +185,10 @@ async function busyMain(): Promise<{ pane: string; release: () => void }> {
 
 async function crossWhileBusy(): Promise<void> {
   report({ inodes: 1_004_848, bytes: 46 * GIB });
-  await untilCalls("largest", 1);
-  await afterProbes(2);
+  await afterProbes(4);
+  assert.equal(callsOf("largest"), 0, "nothing is listed or sent while the turn runs");
+  assert.equal(sessionAlarms(), 0);
+  assert.deepEqual(heldKeys(), []);
 }
 
 test("main hears once when a host's filesystem passes 75%, and again only after it drops below and crosses again", async () => {
@@ -298,60 +318,88 @@ test("a main that stopped before the alarm reached it hears the alarm once after
   assert.deepEqual(heldKeys(), ["far|/tmp|inodes"]);
 });
 
-test("a main that stops while the alarm is only queued behind a running turn hears the alarm once after it restarts", async () => {
+test("a main that is stopped while its turn still runs and the crossing came meanwhile hears the alarm once after it restarts", async () => {
   const { pane, release } = await busyMain();
   await crossWhileBusy();
-  assert.deepEqual(heldKeys(), [], "a queued message is not a said crossing");
-  assert.equal(sessionAlarms(), 0);
 
   await stopMain(pane);
   release();
   await startMain(lab, here, h, true);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
   await untilSessionAlarms(1);
-  await untilHeld(CROSSED);
   await afterProbes(5);
   assert.equal(sessionAlarms(), 1);
   assert.deepEqual(heldKeys(), CROSSED);
 });
 
-test("a main that is busy when the crossing comes gets one alarm after its turn, not one for each check, and holds the crossing once it has it", async () => {
+test("a turn that outlasts many checks gets one alarm after it ends, and no listing or message while it runs", async () => {
   const { release } = await busyMain();
   await crossWhileBusy();
-  await afterProbes(2);
-  assert.deepEqual(heldKeys(), [], "a queued message is not a said crossing");
-  assert.equal(callsOf("largest"), 1, "the queued alarm is not queued again");
-  assert.equal(sessionAlarms(), 0);
 
   release();
   const [alarm] = await untilAlarms(1);
   assert.match(alarm ?? "", /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 96% of its inodes/);
-  await untilHeld(CROSSED);
+  await untilSessionAlarms(1);
   await afterProbes(5);
   assert.equal(sessionAlarms(), 1);
   assert.equal(callsOf("largest"), 1);
+  assert.deepEqual(heldKeys(), CROSSED);
 });
 
-test("an alarm that the captain drops by stopping main's turn is not lost: it is said again once the wait has passed, and once only", async () => {
+test("a captain who stops main's turn loses no alarm: the alarm comes once the turn is over", async () => {
   const { pane, release } = await busyMain();
   await crossWhileBusy();
-  assert.deepEqual(heldKeys(), []);
 
   await lab.press(pane, "esc");
   await h.waitFor(
     (e) => e["type"] === "settled" && e["aborted"] === true,
     "the turn to be aborted",
   );
-  await afterProbes(2);
-  assert.equal(sessionAlarms(), 0, "the stopped turn dropped the queued alarm");
-  assert.deepEqual(heldKeys(), [], "a dropped message is not a said crossing");
-
-  await untilSessionAlarms(1);
-  await untilHeld(CROSSED);
-  await afterProbes(5);
   release();
+  await untilSessionAlarms(1);
+  await afterProbes(5);
   assert.equal(sessionAlarms(), 1);
-  assert.equal(callsOf("largest"), 2);
+  assert.deepEqual(heldKeys(), CROSSED);
+});
+
+test("dropping below the alarm and crossing again gives two alarms in all, also across a restart in between", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  const pane = await startMain(lab, here, h);
+  await untilSessionAlarms(1);
+  report({ inodes: 600_000, bytes: 40 * GIB });
+  await untilHeld([]);
+
+  await stopMain(pane);
+  await startMain(lab, here, h, true);
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
+  await afterProbes(4);
+  assert.equal(sessionAlarms(), 1, "below the alarm after the restart, so nothing is said");
+
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await untilSessionAlarms(2);
+  await afterProbes(4);
+  assert.equal(sessionAlarms(), 2);
+  assert.deepEqual(heldKeys(), CROSSED);
+});
+
+test("a new session announces a crossing that is still over the alarm, once", async () => {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  const pane = await startMain(lab, here, h);
+  await untilSessionAlarms(1);
+
+  await stopMain(pane);
+  await startMain(lab, here, h);
+  await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the new session to connect");
+  await until(() => sessionFiles().length === 2, "the second session file");
+  await until(
+    () => sessionFiles().every((file) => readFileSync(file, "utf8").split(ALARM).length === 2),
+    "one alarm in each session",
+  );
+  await afterProbes(5);
+  const counts = sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
+  assert.deepEqual(counts, [1, 1]);
 });
 
 test("a host whose lanes cannot be kept up still has its disk use read, pruned, and alarmed", async () => {

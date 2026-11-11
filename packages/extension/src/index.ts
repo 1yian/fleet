@@ -286,7 +286,7 @@ function start(
   failures.register(pi);
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
   worker?.register(pi);
-  const lanes = lane === "main" ? registerLanes(pi, HOME(), link, sessionFile) : undefined;
+  const lanes = lane === "main" ? registerLanes(pi, HOME(), link, sessionFile, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
   appendRolePrompt(pi, role);
   if (role === "mate") {
