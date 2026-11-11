@@ -40,11 +40,12 @@ const settings = (): Settings => ({
 const isMessageOfHis = (entry: SessionEntry): boolean =>
   entry.type === "message" && entry.message.role === "user";
 
-function untilNextDate(cards: readonly BoardCard[] | undefined, now: number): number | undefined {
-  const dates = (cards ?? []).flatMap(({ datedWait }) =>
-    datedWait === null || datedWait.until <= now ? [] : [datedWait.until - now],
-  );
-  return dates.length === 0 ? undefined : Math.min(...dates) + LAPSE_SLACK_MS;
+function nextDateRefresh(cards: readonly BoardCard[], readAt: number): number | undefined {
+  const refreshes = cards.flatMap(({ datedWait }) => {
+    const at = datedWait === null ? 0 : datedWait.until + LAPSE_SLACK_MS;
+    return at > readAt ? [at] : [];
+  });
+  return refreshes.length === 0 ? undefined : Math.min(...refreshes);
 }
 
 function lastMessageAt(ctx: ExtensionContext): number {
@@ -56,6 +57,7 @@ function lastMessageAt(ctx: ExtensionContext): number {
 
 class Pane {
   private cards: readonly BoardCard[] | undefined;
+  private dateRefreshAt: number | undefined;
   private decisions = 0;
   private since: number;
   private silentSince: number | undefined;
@@ -103,11 +105,16 @@ class Pane {
     if (this.stopped) return;
     const { pollMs, silentMs } = this.rules;
     const retry = Math.ceil(silentMs / RETRIES_BEFORE_SILENT);
-    const poll = this.silentSince === undefined ? pollMs : Math.min(pollMs, retry);
-    const wait = Math.min(poll, untilNextDate(this.cards, Date.now()) ?? poll);
-    this.timer = setTimeout(() => {
-      this.refresh();
-    }, wait);
+    const answering = this.silentSince === undefined;
+    const poll = answering ? pollMs : Math.min(pollMs, retry);
+    const date =
+      answering && this.dateRefreshAt !== undefined ? this.dateRefreshAt - Date.now() : poll;
+    this.timer = setTimeout(
+      () => {
+        this.refresh();
+      },
+      Math.max(Math.min(poll, date), 0),
+    );
     this.timer.unref();
   }
 
@@ -125,9 +132,11 @@ class Pane {
 
   private async load(): Promise<void> {
     try {
+      const readAt = Date.now();
       const cards = await this.link.call("board", {}, DEADLINE_MS);
       this.decisions = (await decisionsOf(this.link, cards)).length;
       this.cards = cards;
+      this.dateRefreshAt = nextDateRefresh(cards, readAt);
       this.silentSince = undefined;
     } catch {
       this.silentSince ??= Date.now();
