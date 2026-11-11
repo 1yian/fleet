@@ -178,13 +178,21 @@ export const sidebarOf = async (lab: HerdrLab): Promise<string[]> =>
     String(each["label"]),
   );
 
+const PANE_GONE = /"code":\s*"pane_not_found"/;
+
 async function attemptPanes(lab: HerdrLab): Promise<{ attempt: string; pi: number | undefined }[]> {
   const panes = records((await lab.run(["pane", "list"]))["panes"]);
   const found = [];
   for (const pane of panes) {
     const attempt = /\.worktrees\/([^/]+)$/.exec(String(pane["cwd"]))?.[1];
     if (attempt === undefined) continue;
-    const info = await lab.run(["pane", "process-info", "--pane", String(pane["pane_id"])]);
+    const info = await lab
+      .run(["pane", "process-info", "--pane", String(pane["pane_id"])])
+      .catch((error: unknown) => {
+        if (error instanceof Error && PANE_GONE.test(error.message)) return undefined;
+        throw error;
+      });
+    if (info === undefined) continue;
     const processInfo = records([info["process_info"]])[0];
     const runsPi = records(processInfo?.["foreground_processes"]).some(
       (each) => each["argv0"] === "pi" || each["name"] === "pi",

@@ -146,6 +146,15 @@ test("main is told once when cardd refuses new connections, and once when it rec
   assert.equal(probeLines(h.callsOf("mate").at(-1) ?? []).length, 2);
 });
 
+test("the alert does not forbid main from restarting cardd, and says when it may and to check the log after", async () => {
+  door.refusing = true;
+  const [alert = ""] = await lastTurns((lines) => lines.length >= 1, "the alert");
+  assert.match(alert, /Tell the captain\./);
+  assert.match(alert, /Restart cardd on its host only when a task needs it/);
+  assert.match(alert, /check its log after/);
+  assert.doesNotMatch(alert, /do not (restart|kill)/i);
+});
+
 test("a normal cardd restart does not alert main", async () => {
   const home = join(h.dir, "work");
   mkdirSync(join(home, "state"), { recursive: true });
