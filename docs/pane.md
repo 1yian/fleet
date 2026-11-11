@@ -2,7 +2,7 @@
 
 Main's Pi screen shows what needs the captain without a message in the chat. The status bar, the last line of the footer, carries it. The pane draws nothing above the editor, and when all is clear the status bar says so.
 
-Only main shows the decisions and the counts. A second mate's status bar has the board link and nothing else, because a second mate holds nothing for the captain.
+Only main shows the decisions and the counts. A second mate's status bar has the board link and no decisions or counts, because a second mate holds nothing for the captain.
 
 The chat stays silent about what waits. Main never tells the captain to type `/d` and never points him at the card. The role contract (`packages/extension/prompts/mate.md`, sections 7 and 8) owns when main may speak of a waiting decision: when he asks what waits, and for interruption 4. Neither case carries an instruction.
 
