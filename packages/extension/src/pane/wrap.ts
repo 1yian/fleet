@@ -11,7 +11,7 @@ const NUMBER_MARKER = /^\d{1,2}\.\s+/;
 export const plain = (text: string): string =>
   replaceControlCharacters(stripTerminalSequences(text));
 
-export function hanging(text: string, width: number, first: string, rest: string): string[] {
+function hanging(text: string, width: number, first: string, rest: string): string[] {
   const room = Math.max(1, width - visibleWidth(first));
   const rows = wrapTextWithAnsi(text, room);
   return (rows.length === 0 ? [""] : rows).map((row, at) => `${at === 0 ? first : rest}${row}`);
@@ -44,4 +44,19 @@ export function packed(pieces: readonly string[], width: number, gap: string): s
     } else row = joined;
   }
   return row === "" ? rows : [...rows, row];
+}
+
+interface Styles {
+  readonly word: (text: string) => string;
+  readonly quiet: (text: string) => string;
+}
+
+export function optionLines(label: string, room: number, tag: string, style: Styles): string[] {
+  const rows = hanging(label, room, "", "");
+  const tagged = tag !== "" && visibleWidth(rows.at(-1) ?? "") + visibleWidth(tag) <= room;
+  const lines = rows.map((row, index) => {
+    const suffix = tagged && index === rows.length - 1 ? style.quiet(tag) : "";
+    return `${style.word(row)}${suffix}`;
+  });
+  return tag === "" || tagged ? lines : [...lines, style.quiet(tag.trimStart())];
 }

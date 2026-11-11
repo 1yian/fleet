@@ -89,8 +89,8 @@ const FOOTER_ROWS = 3;
 const lead = (text: string): string => text.split(" ").slice(0, 3).join(" ");
 
 async function aimedAt(pane: string, what: string, shown: string): Promise<string> {
-  const screen = await lab.screenWhere(pane, what, onCard([`→ ${shown}`]));
-  keep(`13-short-narrow-${shown.replace(/\W+/g, "-")}`, screen);
+  const screen = await lab.screenWhere(pane, what, onCard([shown]));
+  keep(`13-short-narrow-${what.replace(/\W+/g, "-")}`, screen);
   const rows = rowsOf(screen.replace(/\n$/, ""));
   const card = cardRows(screen);
   const top = rows.findIndex((row) => CARD_TOP.test(row));
@@ -131,7 +131,7 @@ test("in a pane that is short and narrow at once, the whole selected option stay
   let screen = "";
   for (const step of walk) {
     if (step.keys.length > 0) await lab.herdr().press(pane, ...step.keys);
-    screen = await aimedAt(pane, `${step.shown} selected`, step.shown);
+    screen = await aimedAt(pane, `${step.shown} selected`, `→ ${step.shown}`);
     const text = squeezed(cardRows(screen).join("\n"));
     assert.ok(
       text.includes(squeezed(`c-${String(merge.id)} Repair the recording`)),
@@ -148,6 +148,74 @@ test("in a pane that is short and narrow at once, the whole selected option stay
     kind: "answer",
     body: SHORT_OPTION,
     choice: SHORT_OPTION,
+    approved: true,
+    source: "pane",
+  });
+});
+
+const TALL_OPTION =
+  "Merge and roll it out in the staged window with a 60-minute recording watch, then hand the dashboards to the on-call engineer";
+const ROWS_CUE = /rows (\d+)-(\d+)\/(\d+)/;
+
+function optionRows(screen: string): string[] {
+  const card = cardRows(screen).map((row) => row.trim());
+  const from = card.findIndex((row) => row.startsWith("▼")) + 1;
+  const to = card.findIndex((row) => row.startsWith("↑↓"));
+  return card.slice(from, to).map((row) => row.replace(/^→\s*/, ""));
+}
+
+test("an option taller than the short narrow pane can give scrolls inside itself row by row, and every row of it and its tag is reached", async () => {
+  const pane = await lab.openShortNarrowMain();
+  const merge = await lab.askedMerge(
+    pane,
+    TITLE,
+    { question: QUESTION, options: [TALL_OPTION, OTHER_OPTION], approves: [TALL_OPTION] },
+    1,
+  );
+  lab.answers(1);
+
+  await lab.herdr().submit(pane, "/d");
+  let screen = await aimedAt(pane, "the first rows of the tall option", "→ Merge and roll");
+  const cue = ROWS_CUE.exec(cardRows(screen).join("\n"));
+  assert.ok(cue !== null, `the hints say which rows of the option are shown:\n${screen}`);
+  let [first, last] = [Number(cue[1]), Number(cue[2])];
+  const total = Number(cue[3]);
+  assert.equal(first, 1, `the option opens at its first row:\n${screen}`);
+  assert.ok(total >= 3 && last < total, `the option is taller than its window:\n${screen}`);
+
+  const seen: string[] = [];
+  const take = (shot: string): void => {
+    for (const row of optionRows(shot)) if (!seen.includes(row)) seen.push(row);
+  };
+  take(screen);
+  while (last < total) {
+    await lab.herdr().press(pane, "down");
+    first += 1;
+    last += 1;
+    const rows = `rows ${String(first)}-${String(last)}/${String(total)}`;
+    screen = await aimedAt(pane, `the tall option at ${rows}`, rows);
+    take(screen);
+  }
+  assert.equal(
+    squeezed(seen.join("")),
+    squeezed(`${TALL_OPTION} (recommended)`),
+    `every row of the option and its tag was on screen at some step:\n${seen.join("\n")}`,
+  );
+
+  await lab.herdr().press(pane, "down");
+  await aimedAt(pane, "the next option", "→ Merge only, and");
+  await lab.herdr().press(pane, "up");
+  const back = `rows ${String(first)}-${String(last)}/${String(total)}`;
+  screen = await aimedAt(pane, "the tall option from below, at its end", back);
+  assert.ok(squeezed(screen).includes("(recommended)"), `its tag is on screen:\n${screen}`);
+
+  const tag = optionAt(screen, "(recommended)");
+  await lab.click(pane, tag.row, tag.column);
+  await lab.screenWhere(pane, "the card to clear", (each) => cardRows(each).length === 0);
+  assert.deepEqual(await lab.mergeAnswer(merge), {
+    kind: "answer",
+    body: TALL_OPTION,
+    choice: TALL_OPTION,
     approved: true,
     source: "pane",
   });
