@@ -1,4 +1,4 @@
-# The pane: counts, a strip, and the decision card
+# The pane: counts, a strip, the decision card, and /pulse
 
 Main's Pi screen shows what needs the captain without a message in the chat. Colored counts sit in the status line. One tinted row sits above the editor, and only while something needs attention. When all is clear the pane has no extra row.
 
@@ -77,24 +77,24 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 `/pulse` opens an overlay with every open card, quiet first. It is a pull view: it is drawn by `ctx.ui.custom`, so it never enters the chat or the model's context.
 
 ```
-╭─ Pulse · 36 open · quiet first ────────────╮
-│                                            │
-│ ● PARKED 6d  c-1187 cleo                   │
-│   crud run.app URL bypasses Cloud Armor    │
-│   cleo (mate) · running nothing · moved 6d │
-│   waits on an outside date: first hub use  │
-│   3 steps behind it, none started          │
-│                                            │
-│ ◆ YOU 4.4d  c-1051 fleet                   │
-│   Bitwarden login for the p620 browser     │
-│   moved 4.4d ago                           │
-│                                            │
-│ ▶ 24 running                    ⏎ expand   │
-│ ↑↓ move   ⏎ board link   esc close         │
-╰────────────────────────────────────────────╯
+╭─ Pulse · 36 open · quiet first ────────────────╮
+│                                                │
+│ ● PARKED 6d  c-1187 cleo                       │
+│   crud run.app URL bypasses Cloud Armor        │
+│   cleo (mate) · running nothing · moved 6d ago │
+│   waits on an outside date: first hub use      │
+│   3 steps behind it, none started              │
+│                                                │
+│ ◆ YOU 4.4d  c-1051 fleet                       │
+│   Bitwarden login for the p620 browser         │
+│   moved 4.4d ago                               │
+│                                                │
+│ ▶ 24 running                          ⏎ expand │
+│ ↑↓ move   ⏎ board link   esc close             │
+╰────────────────────────────────────────────────╯
 ```
 
-- Rows are sorted by who must be told (red, then amber), then by state (idle, parked, stalled, you, waiting), then oldest first. Running cards are one line. `⏎` on it opens their list, and each running card is then a row of its own: `↓` moves down it, `⏎` on a card shows its board link, and `⏎` on the count closes the list.
+- Rows are sorted by who must be told (red, then amber), then by state (broken, idle, parked, stalled, you, waiting), then oldest first. Running cards are one line. `⏎` on it opens their list, and each running card is then a row of its own: `↓` moves down it, `⏎` on a card shows its board link, and `⏎` on the count closes the list.
 - A row shows its state and how long it has held, the card, its lane, and its title. Every row adds when the card last moved and how many steps are behind it, if it has a hold that names some. A row that is not a Needs you row also adds who has it, what runs, and what it waits on. A Needs you row skips those three, because the captain has it.
 - `⏎` on a card closes the overlay and shows the card's board link. Where the terminal supports links, the card number is one too.
 - It reads the board when it opens. It does not refresh while open.
