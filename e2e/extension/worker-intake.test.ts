@@ -89,7 +89,7 @@ test("a job result whose turn the provider fails is not lost: its mate hears one
   );
 
   assert.ok((await h.waitForCall(3)).some((turn) => turn.text === RESULT));
-  await waitForTakenIn(fleet.cardd.db, "job-result");
+  await waitForTakenIn(fleet.cardd.db, { kind: "job-result" });
   assert.ok(due.id > heard.id);
   const entries = fleet.main.entries.map((push) => push.entry);
   assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
@@ -277,7 +277,7 @@ test("an acknowledgement that was lost with its connection is made again by the 
       2,
       "the assignment to be sent again",
     );
-    await waitForTakenIn(fleet.cardd.db, "comment");
+    await waitForTakenIn(fleet.cardd.db, { kind: "comment" });
     assert.equal(
       h.events.filter((e) => e["type"] === "message_end" && e["entryId"] === 1).length,
       2,

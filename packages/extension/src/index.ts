@@ -238,7 +238,8 @@ function start(
 ): void {
   enableCodemode(pi);
   const runInProgress = trackRun(pi);
-  const injected = new Set(idsInSessionFile(sessionFile));
+  const inFileAtStart = idsInSessionFile(sessionFile);
+  const injected = new Set(inFileAtStart);
   const injectedAgain = idsClearedOnSettle(pi);
   let unreadable: string | undefined;
   const maintenance: { queue?: MaintenanceQueue } = {};
@@ -315,7 +316,7 @@ function start(
     worker?.dispose();
     link.stop();
   });
-  registerIntake(pi, link);
+  registerIntake(pi, link, inFileAtStart);
   reportActivity(pi, link, () => (jobs?.waiting === true ? "waiting" : "idle"));
   link.start();
 }

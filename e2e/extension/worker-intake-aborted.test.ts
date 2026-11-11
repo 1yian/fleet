@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card } from "@fleet/protocol";
-import { isTaken, waitForTakenIn, workerDeliveryStates } from "../support/delivery-states.ts";
+import { deliveryStates, isTaken, waitForTakenIn } from "../support/delivery-states.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
 
@@ -74,10 +74,7 @@ test("a message whose run was aborted is taken in by the next settled run of the
     (event) => event["type"] === "settled" && event["aborted"] === true,
     "the aborted run to settle",
   );
-  assert.ok(
-    !workerDeliveryStates(fleet.cardd.db).some(isTaken),
-    "an aborted run took the assignment in",
-  );
+  assert.ok(!deliveryStates(fleet.cardd.db).some(isTaken), "an aborted run took the assignment in");
   held.open();
   pi.prompt("carry on");
   const resumed = await h.waitForCall(1, "default", 30_000);
@@ -109,7 +106,7 @@ test("a message whose run was aborted after a tool-use response is not taken in 
     (event) => event["type"] === "settled" && event["aborted"] === true,
     "the aborted run to settle",
   );
-  const states = workerDeliveryStates(fleet.cardd.db);
+  const states = deliveryStates(fleet.cardd.db);
   assert.ok(
     states.length > 0 && !states.some(isTaken),
     `an aborted run took the message in: ${JSON.stringify(states)}`,
@@ -129,9 +126,9 @@ const TASK_ENTRY = 1;
 const HALF_A_WINDOW = "lorem ipsum dolor ".repeat(16000);
 const TASK_TEXT = "run the tests";
 
-async function abortedAfterLongResponses(): Promise<Pi> {
+async function abortedAfterLongResponses(responses = 2): Promise<Pi> {
   const held = gate();
-  for (let call = 0; call < 2; call += 1)
+  for (let call = 0; call < responses; call += 1)
     h.onModel(() => ({
       tool: "report",
       text: HALF_A_WINDOW,
@@ -142,17 +139,14 @@ async function abortedAfterLongResponses(): Promise<Pi> {
     return { text: "the aborted turn should not finish" };
   });
   const pi = h.startPi("c-1-a1", env, [EXTENSION]);
-  await h.waitForCall(2, "default", 30_000);
+  await h.waitForCall(responses, "default", 30_000);
   pi.abort();
   await h.waitFor(
     (event) => event["type"] === "settled" && event["aborted"] === true,
     "the aborted run to settle",
   );
   held.open();
-  assert.ok(
-    !workerDeliveryStates(fleet.cardd.db).some(isTaken),
-    "an aborted run took the assignment in",
-  );
+  assert.ok(!deliveryStates(fleet.cardd.db).some(isTaken), "an aborted run took the assignment in");
   return pi;
 }
 
@@ -163,9 +157,14 @@ async function restartAndAsk(): Promise<void> {
   await h.waitForNth((event) => event["type"] === "settled", 2, "the restarted run to settle");
 }
 
+const SUMMARY_MARKER = "ONLY output the structured summary";
+const OVERFLOW = "prompt is too long: 300000 tokens > 200000 maximum";
+
 async function assertResentAndTakenIn(): Promise<void> {
-  const asked = h.calls.find((turns) =>
-    turns.some((turn) => turn.text === "an unrelated question"),
+  const asked = h.calls.findLast(
+    (turns) =>
+      turns.some((turn) => turn.text === "an unrelated question") &&
+      !turns.some((turn) => turn.text.includes(SUMMARY_MARKER)),
   );
   assert.ok(asked !== undefined, "the restarted model was never asked");
   assert.ok(
@@ -197,6 +196,16 @@ test("a message that compaction removed between a restart and its first request 
 
   await restartAndAsk();
   await h.waitFor((event) => event["type"] === "compacted", "the restarted run to compact first");
+  await assertResentAndTakenIn();
+});
+
+test("a message that compaction removed while a failed request was retried is resent, not taken in by the retry's run", async () => {
+  const pi = await abortedAfterLongResponses(1);
+  await pi.kill();
+  h.onModel(() => ({ fail: OVERFLOW }));
+
+  await restartAndAsk();
+  await h.waitFor((event) => event["type"] === "compacted", "the failed request to be compacted");
   await assertResentAndTakenIn();
 });
 

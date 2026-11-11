@@ -1,40 +1,33 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { fleetEntryId } from "./inbox.ts";
+import { fleetEntryId, idsInModelContext } from "./inbox.ts";
 import type { Link } from "./link.ts";
 
 const UNFINISHED: ReadonlySet<unknown> = new Set(["error", "aborted"]);
 
-export function registerIntake(pi: ExtensionAPI, link: Link): void {
-  const acknowledged = new Set<number>();
-  const heldInRun = new Set<number>();
-  const unanswered = new Set<number>();
+export function registerIntake(pi: ExtensionAPI, link: Link, inFile: readonly number[]): void {
+  const held = new Set<number>(inFile);
+  const unread = new Set<number>();
   let lastStop: unknown;
-  pi.on("context_with_system", (event) => {
-    for (const message of event.messages) {
-      const id = fleetEntryId(message);
-      if (id === undefined || acknowledged.has(id)) continue;
-      heldInRun.add(id);
-      unanswered.add(id);
-    }
-  });
-  pi.on("message_end", (event) => {
+  pi.on("message_end", (event, ctx) => {
     const delivered = fleetEntryId(event.message);
-    if (delivered !== undefined) acknowledged.delete(delivered);
+    if (delivered !== undefined) {
+      held.add(delivered);
+      unread.add(delivered);
+    }
     if (event.message.role !== "assistant") return;
     lastStop = event.message.stopReason;
-    if (UNFINISHED.has(lastStop)) return;
-    for (const entry of unanswered) link.read(entry);
-    unanswered.clear();
+    if (UNFINISHED.has(lastStop) || unread.size === 0) return;
+    const inContext = idsInModelContext(ctx.sessionManager);
+    for (const id of unread) if (inContext.has(id)) link.read(id);
+    unread.clear();
   });
-  pi.on("agent_settled", (event) => {
-    if (!event.aborted && !UNFINISHED.has(lastStop)) {
-      for (const id of heldInRun) {
-        link.ack(id);
-        acknowledged.add(id);
-      }
-    }
-    heldInRun.clear();
-    unanswered.clear();
+  pi.on("agent_settled", (event, ctx) => {
+    const finished = !event.aborted && !UNFINISHED.has(lastStop);
     lastStop = undefined;
+    if (!finished) return;
+    const inContext = idsInModelContext(ctx.sessionManager);
+    for (const id of held) if (inContext.has(id)) link.ack(id);
+    held.clear();
+    unread.clear();
   });
 }

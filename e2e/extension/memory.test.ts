@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
+import { waitForTakenIn } from "../support/delivery-states.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, optionalString, parseRecord, type JsonRecord } from "../support/json.ts";
@@ -200,6 +201,19 @@ test("with memory on, main yields silently and keeps idle and mid-turn fleet mes
     const leaf = tree.find((node) => node["l"] === 0 && String(node["text"]).includes(word));
     assert.ok(String(leaf?.["text"]).startsWith(`notification: ${NOTICE}`));
   }
+});
+
+test("with memory on, a notification that main answered is taken in, so it is not sent again", async () => {
+  installMemory();
+  for (let call = 0; call < 50; call += 1)
+    h.onModel((turns) => (isMains(turns) ? { tool: "yield" } : { text: "noted" }), "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+
+  await cleo.call("comment", { lane: "cleo", text: `Validation continues: ${IDLE_WORD}.` });
+  await h.waitFor((event) => event["type"] === "settled", "main's turn on the notification");
+
+  await waitForTakenIn(cardd.db, { role: "mate", session: "main", kind: "comment" });
 });
 
 test("a second mate whose home got memory from `fleet home memory` keeps a [fleet] message in its own memory", async (t) => {
