@@ -250,9 +250,10 @@ function deferOnBoard(
   hold: number,
   said: string,
   zone: string,
+  now: number,
 ): Deferred {
   requireCaptainsHold(db, card, hold);
-  const later = laterAt(said, Date.now(), zone);
+  const later = laterAt(said, now, zone);
   const facts = factsFrom(cardEntries(db, card.id));
   const base = rewritten(facts, facts.hold?.holder ?? "owner", later.until);
   const fields = { ...base, wait: { by: "later", text: said.trim() }, remaining: [] };
@@ -276,15 +277,17 @@ export function paneAnswer(
 export function paneLater(
   db: DatabaseSync,
   raw: unknown,
+  now: number,
 ): { readonly value: PaneLater; readonly notify: readonly string[] } {
   const { card: id, hold, said, zone } = check(OPS["pane.later"].args, raw);
-  const { notify, until, zone: used } = deferOnBoard(db, getCard(db, id), hold, said, zone);
+  const { notify, until, zone: used } = deferOnBoard(db, getCard(db, id), hold, said, zone, now);
   return { value: { card: getCard(db, id), until, zone: used }, notify };
 }
 
 export function boardAction(
   db: DatabaseSync,
   raw: unknown,
+  now: number,
 ): { readonly notify: string[]; readonly later?: LaterResult } {
   const { card: id, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);
@@ -293,6 +296,13 @@ export function boardAction(
     return { notify: answerOnBoard(db, card, action.hold, action.choice, written, "board") };
   }
   if (action.kind === "comment") return { notify: commentOnBoard(db, card, action.text) };
-  const { notify, until, zone } = deferOnBoard(db, card, action.hold, action.said, action.zone);
+  const { notify, until, zone } = deferOnBoard(
+    db,
+    card,
+    action.hold,
+    action.said,
+    action.zone,
+    now,
+  );
   return { notify, later: { until, zone } };
 }

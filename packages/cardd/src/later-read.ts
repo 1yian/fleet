@@ -112,11 +112,12 @@ const DAY_WORD = /^(?<day>\d{1,2})(?:st|nd|rd|th)?$/i;
 const YEAR = /^\d{4}$/;
 const FIXED_OFFSET = /^(?:utc|gmt)?(?<sign>[+-])(?<hours>\d{1,2})(?::(?<minutes>\d{2}))?$/i;
 const SLASH_ZONE = /^[A-Za-z]+(?:_[A-Za-z]+)*(?:\/[A-Za-z][^/]*)+$/;
-const SIGNED = /^[+-][A-Za-z0-9]/;
-const CAPITAL_OFFSET = /^[A-Z]{2,5}[+-]/;
 const CAPITALS = /^[A-Z]{2,5}$/;
 const UTC_WORD = /^(?:utc|gmt)/i;
 const TIME_INFO = /[\d:/]/;
+const EDGE_START = /^[,;!?()"“”]+/;
+const EDGE_END = /[,;!?()"“”.]+$/;
+const COLONS_END = /:+$/;
 const CONNECTING = new Set([
   "at",
   "on",
@@ -170,13 +171,16 @@ const group = (found: RegExpExecArray, name: string): string => found.groups?.[n
 const own = <T>(table: Readonly<Record<string, T>>, key: string): T | undefined =>
   Object.hasOwn(table, key) ? table[key] : undefined;
 
+function edgeTrimmed(token: string): string {
+  const trimmed = token.replace(EDGE_START, "").replace(EDGE_END, "");
+  const plain = /\d/.test(trimmed) ? trimmed : trimmed.replace(COLONS_END, "");
+  return /^[ap]\.m$/i.test(plain) ? plain.replace(".", "") : plain;
+}
+
 function tokensOf(said: string): string[] {
   return said
-    .replace(/\b([ap])\.m\.?/gi, "$1m")
-    .replace(/[,;!?()"“”]/g, " ")
-    .replace(/\.(?!\d)/g, " ")
-    .replace(/:(?!\d)/g, " ")
     .split(/\s+/)
+    .map(edgeTrimmed)
     .filter((each) => each !== "");
 }
 
@@ -353,14 +357,21 @@ function zoneNamed(token: string): string | undefined {
   return new Intl.DateTimeFormat("en", { timeZone: token }).resolvedOptions().timeZone;
 }
 
+function signedZone(token: string): boolean {
+  const at = token.search(/[+-]/);
+  if (at < 0) return false;
+  const prefix = token.slice(0, at);
+  if (prefix === "") return /[A-Za-z0-9]/.test(token.charAt(at + 1));
+  return own(ZONES, prefix.toLowerCase()) !== undefined || CAPITALS.test(prefix);
+}
+
 function zoneLike(token: string, positioned: boolean): boolean {
   const word = token.toLowerCase();
   return (
     own(ZONES, word) !== undefined ||
     own(CAPITAL_ZONES, token) !== undefined ||
     UTC_WORD.test(token) ||
-    SIGNED.test(token) ||
-    CAPITAL_OFFSET.test(token) ||
+    signedZone(token) ||
     SLASH_ZONE.test(token) ||
     (positioned && CAPITALS.test(token) && !CONNECTING.has(word) && !MONTH_WORD.test(token))
   );

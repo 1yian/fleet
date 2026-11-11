@@ -19,20 +19,12 @@ function instantIn(zone: string, date: string, clock: Clock): number {
   return Math.min(...real);
 }
 
-function civil(year: number, month: number, day: number, said: string): string {
+function civil(year: number, month: number, day: number): string | undefined {
   const date = `${String(year).padStart(4, "0")}-${two(month)}-${two(day)}`;
   const real = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(real.getTime()) || real.getUTCMonth() + 1 !== month || real.getUTCDate() !== day)
-    throw new Error(`"${said}" is not a date that exists.`);
-  return date;
-}
-
-function calendarDate(day: Extract<Day, { kind: "date" }>, today: string, said: string): string {
-  const thisYear = Number(today.slice(0, 4));
-  const date = civil(day.year ?? thisYear, day.month, day.day, said);
-  return day.year === undefined && date < today
-    ? civil(thisYear + 1, day.month, day.day, said)
-    : date;
+  const exists =
+    !Number.isNaN(real.getTime()) && real.getUTCMonth() + 1 === month && real.getUTCDate() === day;
+  return exists ? date : undefined;
 }
 
 interface Reading {
@@ -42,6 +34,27 @@ interface Reading {
   readonly clock: Clock | undefined;
   readonly day: Day | undefined;
   readonly weekday: Weekday | undefined;
+}
+
+const LEAP_SPAN = 8;
+
+function calendarDate(
+  day: Extract<Day, { kind: "date" }>,
+  reading: Reading,
+  today: string,
+): string {
+  const { said, zone, now, clock } = reading;
+  const thisYear = Number(today.slice(0, 4));
+  if (day.year !== undefined) {
+    const date = civil(day.year, day.month, day.day);
+    if (date === undefined) throw new Error(`"${said}" is not a date that exists.`);
+    return date;
+  }
+  for (let year = thisYear; year <= thisYear + LEAP_SPAN; year += 1) {
+    const date = civil(year, day.month, day.day);
+    if (date !== undefined && instantIn(zone, date, clock ?? MORNING) > now) return date;
+  }
+  throw new Error(`"${said}" is not a date that exists.`);
 }
 
 function weekdayDate(reading: Reading, today: string): string {
@@ -57,10 +70,10 @@ function weekdayDate(reading: Reading, today: string): string {
 }
 
 function dateOfReading(reading: Reading, today: string): string | undefined {
-  const { day, said } = reading;
+  const { day } = reading;
   if (day === undefined)
     return reading.weekday === undefined ? undefined : weekdayDate(reading, today);
-  if (day.kind === "date") return calendarDate(day, today, said);
+  if (day.kind === "date") return calendarDate(day, reading, today);
   return day.kind === "today" ? today : shiftDays(today, 1);
 }
 

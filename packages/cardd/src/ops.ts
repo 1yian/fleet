@@ -168,9 +168,9 @@ const HANDLERS: Record<OpName, Handler> = {
     requireMainsPane(db, session, "answers");
     return paneAnswer(db, raw);
   },
-  "pane.later": (db, session, raw) => {
+  "pane.later": (db, session, raw, timing) => {
     requireMainsPane(db, session, "later");
-    return paneLater(db, raw);
+    return paneLater(db, raw, timing.wall());
   },
   "card.new": (db, session, raw) => {
     const { lane, ...args } = check(OPS["card.new"].args, raw);

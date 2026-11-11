@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
   ActedSchema,
@@ -12,6 +14,7 @@ import {
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
+import { tempDir } from "../support/run-root.ts";
 
 const QUESTION = "Renew the certificate?";
 const OPTIONS = ["Now", "Next week"];
@@ -169,6 +172,10 @@ test("a zone in his words wins however he names it: an abbreviation, an offset, 
     ["Dec 31 2099 4:05PM UTC", "Asia/Tokyo", Date.UTC(2099, 11, 31, 16, 5), "UTC"],
     ["Dec 31 2099 4PM IN CET", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
     ["Dec 31 2099 4 PM CET", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
+    ["Dec 31 2099 4PM cet", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
+    ["Snooze until Dec 31 2099 4PM CST.", "UTC", Date.UTC(2099, 11, 31, 22), "America/Chicago"],
+    ["(Dec 31 2099, 4PM CET)", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
+    ["Dec 31 2099 4 p.m. CET.", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
     ["Dec 31 2099 4PM and constructor", "UTC", Date.UTC(2099, 11, 31, 16), "UTC"],
     [
       "I have not run it. Snooze until Dec 31 2099 4PM CST - thanks",
@@ -204,6 +211,56 @@ test("a zone in his words wins however he names it: an abbreviation, an offset, 
       else assert.equal(result.until, until, where);
     }
   }
+});
+
+async function pinnedAt(iso: string): Promise<void> {
+  await Promise.allSettled([cleo.close()]);
+  await fleet.cardd.stop();
+  const dir = tempDir("later-clock-");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "clock");
+  writeFileSync(file, iso);
+  fleet = await startFleet({ CARDD_CLOCK_FILE: file });
+}
+
+async function yearless(said: string): Promise<number> {
+  const read = await readOnBothSurfaces(said, "UTC");
+  assert.equal(read.board.until, read.pane.until, `${said} reads the same on both surfaces`);
+  return read.pane.until;
+}
+
+test("a date with no year is its next occurrence as a whole instant, and Feb 29 is the next leap year's, while an explicit past year and an impossible date are refused", async () => {
+  await pinnedAt("2026-11-20T17:00:00Z");
+  const cases: [string, number][] = [
+    ["Nov 20 4PM UTC", Date.UTC(2027, 10, 20, 16)],
+    ["Nov 20 UTC", Date.UTC(2027, 10, 20, 9)],
+    ["Nov 20 6PM UTC", Date.UTC(2026, 10, 20, 18)],
+    ["Nov 21 4PM UTC", Date.UTC(2026, 10, 21, 16)],
+    ["Feb 28 4PM UTC", Date.UTC(2027, 1, 28, 16)],
+    ["Feb 29 4PM UTC", Date.UTC(2028, 1, 29, 16)],
+  ];
+  for (const [said, expected] of cases) assert.equal(await yearless(said), expected, said);
+
+  const card = await asked("Impossible dates");
+  const before = await entries(card);
+  const refused: [string, RegExp][] = [
+    ["Nov 20 2025 4PM UTC", /in the past/],
+    ["Feb 30 4PM UTC", /not a date that exists/],
+    ["Apr 31 4PM UTC", /not a date that exists/],
+    ["Feb 29 2027 4PM UTC", /not a date that exists/],
+  ];
+  for (const [text, message] of refused) {
+    const outcome = await fromBoard(card, text, "UTC");
+    assert.equal(outcome.status, 400, text);
+    assert.match(outcome.error ?? "", message, text);
+    await assert.rejects(fromPane(card, text, "UTC"), { message }, text);
+  }
+  assert.deepEqual(await entries(card), before);
+});
+
+test("Feb 29 is found up to eight years ahead", async () => {
+  await pinnedAt("2096-03-01T00:00:00Z");
+  assert.equal(await yearless("Feb 29 4PM UTC"), Date.UTC(2104, 1, 29, 16));
 });
 
 test("connecting words in capitals are not zones: AT, ON, and the like hold the time he typed, the same from the board and from the pane", async () => {
@@ -285,6 +342,12 @@ test("text with no time is refused in place, with what he can say, and nothing i
     ["Dec 31 2099 4PM +2000", unknownZone("+2000")],
     ["Dec 31 2099 4PM Canadaa/Eastern", unknownZone("Canadaa/Eastern")],
     ["Dec 31 2099 4PM CET+2", unknownZone("CET+2")],
+    ["Dec 31 2099 4PM cet+abc", unknownZone("cet+abc")],
+    ["Dec 31 2099 4PM CET+", unknownZone("CET+")],
+    ["Dec 31 2099 4PM UTC+2:abc", unknownZone("UTC+2:abc")],
+    ["Dec 31 2099 4PM UTC+2.foo", unknownZone("UTC+2.foo")],
+    ["Dec 31 2099 4:PM UTC", /4:PM is not a time, a date, or a time zone/],
+    ["Dec 31 2099 4.PM UTC", /4\.PM is not a time, a date, or a time zone/],
     ["Dec 31 2099 4PM +abc", unknownZone("+abc")],
     ["Dec 31 2099 4PM IN IST", unknownZone("IST")],
     ["Dec 31 2099 4PM AT IST", unknownZone("IST")],
