@@ -1,10 +1,12 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
+import { CLOSING_OPS } from "./closing.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { ActivityMessage, LandingFields } from "./progress.ts";
+import { PROJECT_OPS } from "./projects.ts";
 import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
@@ -189,24 +191,7 @@ export const OPS = {
   },
   board: { roles: ["mate"], args: Type.Object({}), result: Type.Array(BoardCardSchema) },
   card: { roles: ["mate"], args: Type.Object({ card: Type.Integer() }), result: CardViewSchema },
-  "project.yolo": {
-    roles: ["mate"],
-    args: Type.Object({ project: Type.String({ minLength: 1 }), on: Type.Boolean() }),
-    result: Type.Object({ project: Type.String(), on: Type.Boolean() }),
-  },
-  projects: {
-    roles: ["mate"],
-    args: Type.Object({}),
-    result: Type.Array(
-      Type.Object({
-        name: Type.String(),
-        delivery: Type.String(),
-        base: Type.String(),
-        clones: Type.Array(Type.Object({ host: Type.String(), path: Type.String() })),
-        yolo: Type.Boolean(),
-      }),
-    ),
-  },
+  ...PROJECT_OPS,
   comment: {
     roles: ["mate"],
     args: Type.Object({
@@ -280,36 +265,7 @@ export const OPS = {
     }),
     result: CardSchema,
   },
-  "close.begin": {
-    roles: ["mate"],
-    args: Type.Object({
-      card: Type.Integer(),
-      landed: Type.Optional(Type.Boolean()),
-    }),
-    result: Type.Object({
-      mode: Type.Enum(["done", "dropped"]),
-      verify: Type.Boolean(),
-      land: Type.Boolean(),
-      attempts: Type.Array(
-        Type.Object({
-          session: Type.String(),
-          host: Type.String(),
-          clone: Type.String(),
-          branch: Type.String(),
-          base: Type.String(),
-          live: Type.Boolean(),
-        }),
-      ),
-      refresh: Type.Array(
-        Type.Object({
-          project: Type.String(),
-          host: Type.String(),
-          path: Type.String(),
-          base: Type.String(),
-        }),
-      ),
-    }),
-  },
+  ...CLOSING_OPS,
   "close.finish": {
     roles: ["mate"],
     args: Type.Object({
