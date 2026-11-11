@@ -4,6 +4,8 @@ Main's Pi screen shows what needs the captain without a message in the chat. Col
 
 Only main shows it. A second mate's screen does not, because a second mate holds nothing for the captain.
 
+The chat stays silent about what waits. Main never tells the captain to type `/d` and never points him at the card. Its role contract lets it speak of a waiting decision in two cases only: he asks what waits, and it answers plainly, or a decision stalls other work or has waited more than a day, and it says what stalls and why. Neither case carries an instruction.
+
 ## What it shows
 
 The status line carries the counts, worst first:
