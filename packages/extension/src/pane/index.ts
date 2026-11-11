@@ -69,8 +69,14 @@ class Pane {
     this.ctx = ctx;
     this.rules = rules;
     this.since = lastMessageAt(ctx);
-    this.decide = new Decide(link, ctx, () => {
-      this.refresh();
+    this.decide = new Decide(link, ctx, {
+      opened: () => {
+        this.paint();
+      },
+      closed: () => {
+        this.paint();
+        this.refresh();
+      },
     });
   }
 
@@ -174,7 +180,7 @@ class Pane {
       ui.setStatus(STATUS_KEY, status);
       this.status = status;
     }
-    const row = rowOf(glance.needs, now);
+    const row = this.decide.isOpen ? undefined : rowOf(glance.needs, now);
     const key = row === undefined ? "" : JSON.stringify(row);
     if (key === this.row) return;
     this.row = key;

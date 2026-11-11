@@ -28,31 +28,36 @@ The strip shows the worst need: broken first, then needs you, then stalled, olde
 
 ## The decision card
 
-`/d` opens the captain's decisions: the holds that wait on him. A click on the strip opens the same card, by the same code, so the two cannot differ. The card is an overlay with a rounded border. It shows one decision at a time, the oldest first:
+`/d` opens the captain's decisions: the holds that wait on him. A click on the strip opens the same card, by the same code, so the two cannot differ.
+
+The card is inline, the way Pi draws its own selectors. It takes the editor's place, between the chat and the footer, with a rule above and below. The chat stays in view above it. It is not a box that floats over the chat. The strip steps aside while the card is open, and the editor comes back, with whatever the captain had typed in it, when the card closes. The card shows one decision at a time, the oldest first:
 
 ```
-╭─ ◆ Decision 1 of 3 ●○○ ──────────────────────────────────────────────╮
-│                                                                      │
-│  c-12 Ship the scrollbar fix                                         │
-│                                                                      │
-│  1. Ship it? I recommend yes: the checks are green.                  │
-│     Report: /Users/yian/reports/c-12.md                              │
-│                                                                      │
-│  ▌ Ship it                                                recommended │
-│    Hold                                                              │
-│    My words…                                                         │
-│                                                                      │
-│  ↑↓ choose   ⏎ confirm   esc later                                   │
-╰──────────────────────────────────────────────────────────────────────╯
+── ◆ Decision 1 of 3 ●○○ ──────────────────────────────────────────────
+
+ c-12 Ship the scrollbar fix
+
+ Ship it? I recommend yes: the checks are green.
+ Report: /Users/yian/reports/c-12.md
+
+ → Ship it (recommended)
+   Hold
+   My words…
+
+ ↑↓ choose   ←→ decision   ⏎ select   type your own words   esc later
+──────────────────────────────────────────────────────────────────────
 ```
 
-- The text is the hold's question, and the choices are its options, with the first marked as the mate's recommendation. `My words…` opens a line for the captain's own words. A long question scrolls with PgUp and PgDn.
-- The card fits the pane down to 12 rows, in every state: choosing, typing his words, and after a refused answer. In a short pane it drops its blank rows first, then shows fewer lines of the question and fewer choices, but always at least one choice. The choices scroll with the selection, and the hint shows the place, such as `2/5`, while some are out of sight.
-- `⏎` answers the whole hold and the card moves to the next decision. `esc` closes the card and answers nothing. Typing `/d` again shows the first decision that is still open, so `/d` both starts and resumes.
-- The answer is the board's own action: the extension calls the `pane.answer` op with the card and the revision it showed. `cardd` refuses it when the card changed since. The card then shows the reason and reloads. Otherwise it is recorded as the captain's `answer`, with `source: "pane"`. Main gets `[fleet] captain on c-N (answer): <choice>`, the same line a board answer sends. Only main's session may call the op.
+- The text is the hold's question, and the choices are its options, with the first marked as the mate's recommendation. `My words…` is the last choice, and it is a line to type in. A long question scrolls with PgUp and PgDn, or with the wheel over the card.
+- The captain's own words never need a step. Typing a letter or pasting text anywhere on the card moves the pointer to `My words…` and puts the text there. `⏎` on that line answers with his words, and `esc` clears them. A pasted text of several lines becomes one line. Typing never answers with the highlighted choice.
+- `←` and `→` move between the decisions, around the ends, and skip the ones he already answered. They answer nothing. While there are words on the `My words…` line they move the text cursor instead. The dots in the title show the place: `●` is this decision, `○` is one still open, and `✓` is one he answered.
+- A click on a choice answers with it, as `⏎` does. A press with no release only moves the pointer to it. A click on `My words…` selects the line and answers nothing.
+- The card fits the pane down to 12 rows, in every state. It leaves the footer and two rows of chat. In a short pane it drops its blank rows first, then shows fewer lines of the question and fewer choices, but always at least one choice. The choices scroll with the selection, and the hint shows the place, such as `2/5`, while some are out of sight.
+- `⏎` answers the whole hold and the card moves to the next open decision. `esc` closes the card and answers nothing. Typing `/d` again shows the first decision that is still open, so `/d` both starts and resumes.
+- The answer is the board's own action: the extension calls the `pane.answer` op with the card and the revision it showed. `cardd` refuses it when the card changed since. The card then shows the reason and reads the decisions again. If the decision still waits, the card stays on it and keeps the words he typed. Otherwise it is recorded as the captain's `answer`, with `source: "pane"`, and his own words are the answer's text with `written: true`. Main gets `[fleet] captain on c-N (answer): <choice or words>`, the same line a board answer sends. Only main's session may call the op.
 - When nothing waits, `/d` says so in a notice and opens nothing.
 - The card is drawn by the extension and is never in the model's context. Main learns of an answer only from that `[fleet]` line.
-- A click needs Pi's fullscreen mode, the default, which routes the mouse to components. In regular mode the terminal keeps the mouse and only `/d` works.
+- A click needs Pi's fullscreen mode, the default, which routes the mouse to components. In regular mode the terminal keeps the mouse and only the keys work.
 
 ## What counts
 
@@ -74,7 +79,7 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 
 - It is not in the model's context. The counts, the strip, and the card are drawn with `ctx.ui.setStatus`, `ctx.ui.setWidget`, and `ctx.ui.custom`, which are not session messages. Main still learns state from the same `[fleet]` rows and the `board` tool as before.
 - It replaces nothing: not the editor (OptChat owns it), not the footer, and not the terminal title.
-- It has no image or animation. The only mouse use is the click on the strip.
+- It has no image or animation. The only mouse use is the click on the strip and, while the card is open, a click or the wheel on the card.
 
 ## How it stays current
 
@@ -82,6 +87,6 @@ The pane asks `cardd` for the board when the link connects, after every `[fleet]
 
 ## Evidence
 
-`e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, and sends a mouse click to the strip. It reads the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
+`e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, types words, and sends mouse presses and releases to the strip and to the choices. It reads the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
 
 `e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back.
