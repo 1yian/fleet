@@ -759,7 +759,7 @@ textarea:focus-visible {
   padding-top: 6px;
 }
 
-/* Words: Request changes, Your words */
+/* Words: Your words */
 .write {
   display: grid;
   gap: 6px;
