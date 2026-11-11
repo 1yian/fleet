@@ -253,6 +253,72 @@ test("a failed worker is broken, and a blocked one is stalled only once five min
   assert.ok(Date.now() - stalled.since >= 10 * MINUTE - MINUTE, "it ages from the report");
 });
 
+test("a card whose worker reported failed or blocked is quiet once its mate dates it on a running schedule, and loud again when the schedule goes or the date passes", async () => {
+  const schedule = check(
+    OPS["schedule.set"].result,
+    await cleo.call("schedule.set", {
+      to: "cleo",
+      at: "05:00",
+      timezone: "UTC",
+      text: "Check the build.",
+    }),
+  ).id;
+  const wait = { schedule, remaining: [] };
+
+  const blocked = await newCard(cleo, "Read the old invoices");
+  const stuck = await fleet.cardd.connect(await begin(cleo, blocked));
+  await stuck.call("report", { status: "blocked", text: "the run is waiting" });
+  ageCard(fleet.cardd, blocked, 10 * MINUTE);
+  await pulseWhere(blocked, (pulse) => pulse.state === "stalled");
+
+  const failed = await newCard(cleo, "Fix the Cleo rule");
+  const failing = await fleet.cardd.connect(await begin(cleo, failed));
+  await failing.call("report", { status: "failed", text: "the build is red" });
+  await pulseWhere(failed, (pulse) => pulse.state === "broken");
+
+  await park(blocked, wait);
+  await park(failed, wait);
+  const quiet = await Promise.all([blocked, failed].map((card) => onBoard(card)));
+  assert.deepEqual(
+    quiet.map(({ pulse }) => [pulse?.state, pulse?.notice]),
+    [
+      ["waiting", "none"],
+      ["waiting", "none"],
+    ],
+  );
+  const [first] = quiet;
+  assert.ok(first !== undefined);
+  assert.equal(waitsText(first).startsWith("waits on schedule"), true);
+
+  await cleo.call("schedule.remove", { id: schedule });
+  const lost = await Promise.all(
+    [blocked, failed].map((card) => pulseWhere(card, (pulse) => pulse.state === "parked")),
+  );
+  assert.deepEqual(
+    lost.map((pulse) => pulse.notice),
+    ["none", "none"],
+    "a watcher that is gone is an idle park, which is not yet a day old",
+  );
+
+  const lapsing = await newCard(cleo, "Check the ads budget");
+  const lapsed = await fleet.cardd.connect(await begin(cleo, lapsing));
+  const own = check(
+    OPS["schedule.set"].result,
+    await cleo.call("schedule.set", { to: "cleo", at: "06:00", timezone: "UTC", text: "Check." }),
+  ).id;
+  await lapsed.call("report", { status: "failed", text: "the run failed" });
+  await cleo.call("hold", {
+    card: lapsing.id,
+    question: "Wait for it?",
+    until: Date.now() + 1_500,
+    schedule: own,
+    remaining: [],
+  });
+  assert.equal((await onBoard(lapsing)).pulse?.state, "waiting");
+  const after = await pulseWhere(lapsing, (pulse) => pulse.state === "idle");
+  assert.equal(after.notice, "none", "the lapsed date leaves an idle card, not a stale failure");
+});
+
 test("the steps behind a held card show how many exist and how many started", async () => {
   const held = await newCard(cleo, "Crud ingress lock");
   const queued = await newCard(cleo, "Capacity proof");

@@ -35,6 +35,8 @@ The first row that fits wins.
 | `parked`  | A dated hold that nothing checks (a watcher, an outside date, the captain's later, or a watcher that is gone). Or a worker's pause. | The hold's age             |
 | `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker.                                             | `movedAt`                  |
 
+A hold ends a worker's report as an attention: `standing` shows `attention` only while a card has no open hold. So a card whose worker reported `blocked`, `stopped`, or `failed` and whose mate then dated it on a running job, schedule, or worker is `waiting` and quiet. When the watcher goes, it is an idle park, and when the date passes, it is idle. The report stays in the card's history.
+
 ## Who is told, and when
 
 | State                | Main is told               | The captain is told | Red          |
@@ -66,4 +68,4 @@ Sorting puts the louder notice first, then the state (idle, parked, stalled, you
 
 ## Evidence
 
-`e2e/cardd/pulse.test.ts` reads the pulse of a real `cardd` over each state, with cards aged by writing old times into the scratch database, and reads `behind` as a mate of another lane sees it. `e2e/cardd/neglect.test.ts` reads the reminders, and that the mate that owns a card is not told. `e2e/extension/pulse.test.ts` opens `/pulse` in a real Pi pane. `e2e/board/attention.test.ts` reads the strip and the card line in Chromium.
+`e2e/cardd/pulse.test.ts` reads the pulse of a real `cardd` over each state, with cards aged by writing old times into the scratch database, and reads `behind` as a mate of another lane sees it. `e2e/cardd/neglect.test.ts` reads the reminders, and that the mate that owns a card is not told. `e2e/cardd/pulse.test.ts` also dates blocked and failed cards on a schedule, then removes the schedule and lets a date pass. `e2e/extension/pulse.test.ts` opens `/pulse` in a real Pi pane. `e2e/board/attention.test.ts` reads the strip and the card line in Chromium.
