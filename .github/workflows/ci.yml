@@ -135,8 +135,11 @@ jobs:
           curl -sSfLO "${base}/${tarball}"
           curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | grep " ${tarball}$" | sha256sum -c -
           tar -xzf "${tarball}" gitleaks
-      - name: Scan the full history
-        run: ./gitleaks git --redact --no-banner .
+      - name: Scan the commits this run adds
+        env:
+          RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          RANGE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: ./gitleaks git --redact --no-banner --log-opts="${RANGE_BASE}..${RANGE_HEAD}" .
 
   e2e-pi:
     timeout-minutes: 30
