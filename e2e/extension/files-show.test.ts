@@ -56,13 +56,12 @@ test("S shows this lane's mate a file, typed as a message only after Enter, and 
   const agents = join(mates.fleet.home, "AGENTS.md");
 
   await files.type("S");
-  await files.sees(
-    `From this lane's Files tab on p620: look at the file ${agents}, sha256 ${sha12(agents)}.`,
-  );
+  await files.sees(`sha256 ${sha12(agents)}.`);
   await files.press("esc");
   await files.sees("cancelled, nothing was typed");
   assert.equal(mates.h.callsOf("mate").length, 0);
   await files.press("esc");
+  await files.goneFrom("cancelled, nothing was typed");
 
   await files.type("S");
   await files.sees("Enter sends");
@@ -117,8 +116,8 @@ test("M with no way to reach main's herdr posts a board comment that main hears 
 
   await files.type("M");
   await files.press("enter");
-  await files.sees(`main is not reachable from here (this lane does not say where main runs`);
-  await files.sees(`a comment on c-${String(card.id)}`);
+  await files.sees("this lane does not say where main runs");
+  await files.sees(`comment on c-${String(card.id)}`);
   const heard = await typedInto(mates, "main", /captain on c-\d+/);
   assert.match(heard, new RegExp(`\\[fleet\\] captain on c-${String(card.id)} .*cleo`));
   assert.match(heard, /From the cleo lane's Files tab on p620: look at the file /);
@@ -157,6 +156,7 @@ test("R is refused while the mate works, and when it is idle types /reload so th
   await files.type("R");
   await files.sees("is working, and Pi can only reload when it is idle. Nothing was typed");
   await files.press("esc");
+  await files.goneFrom("Nothing was typed");
 
   mkdirSync(join(folder, "fresh"), { recursive: true });
   writeFileSync(

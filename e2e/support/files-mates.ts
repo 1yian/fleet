@@ -31,7 +31,7 @@ function installYazi(folder: string, userHome: string, kind: "stub" | "real"): v
   const body =
     kind === "stub"
       ? 'echo "FILES-TAB-STUB in $1"\nexec sleep 3600'
-      : `export HOME='${userHome}'\nexec '${execFileSync("sh", ["-c", "command -v yazi"], { encoding: "utf8" }).trim()}' "$@"`;
+      : `export XDG_STATE_HOME='${join(userHome, ".local", "state")}'\nexec '${execFileSync("sh", ["-c", "command -v yazi"], { encoding: "utf8" }).trim()}' "$@"`;
   writeFileSync(wrapper, `#!/bin/sh\n${body}\n`);
   chmodSync(wrapper, 0o755);
 }

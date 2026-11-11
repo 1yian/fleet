@@ -50,9 +50,18 @@ export class FilesPane {
     const deadline = Date.now() + WAIT_MS;
     for (;;) {
       const screen = await this.screen();
-      const found = typeof text === "string" ? screen.includes(text) : text.test(screen);
+      const flat = screen.replaceAll("\n", "");
+      const found = typeof text === "string" ? flat.includes(text) : text.test(screen);
       if (found) return screen;
       assert.ok(Date.now() < deadline, `timed out waiting for ${what} on:\n${screen}`);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+
+  async goneFrom(text: string): Promise<void> {
+    const deadline = Date.now() + WAIT_MS;
+    while ((await this.screen()).replaceAll("\n", "").includes(text)) {
+      assert.ok(Date.now() < deadline, `timed out waiting for ${text} to go`);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
   }

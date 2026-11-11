@@ -6,7 +6,7 @@ import { herdr } from "../host.ts";
 import { gitOrNothing } from "./git.ts";
 import { mainMate, ownMate, routeToMain, type Mate } from "./mates.ts";
 import { resolved, skillRelative, under } from "./places.ts";
-import { confirm, pressAnyKey } from "./prompt.ts";
+import { clearScreen, confirm, pressAnyKey } from "./prompt.ts";
 import { scratchPath, workshopOf } from "./scratch-tree.ts";
 import type { World } from "./world.ts";
 
@@ -121,6 +121,7 @@ async function deliver(world: World, target: Target, text: string): Promise<stri
 }
 
 async function finish(run: () => Promise<string>): Promise<number> {
+  clearScreen();
   try {
     console.log(await run());
     await pressAnyKey();
