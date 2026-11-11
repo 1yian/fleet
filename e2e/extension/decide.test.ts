@@ -319,38 +319,104 @@ test("a question longer than the card scrolls with PgDn and PgUp, and the card s
   await screenWhere(pane, "the top again", onCard(["FIRST LINE", "more lines"], ["LAST LINE"]));
 });
 
-test("in a 12-row pane the card stays on screen and the choice that is selected is the one on screen", async () => {
+const FOUR_WAYS = ["Ship it", "Hold", "Wait a week", "Drop it"];
+
+const evidence = (tag: string): string =>
+  [
+    `${tag} FIRST LINE`,
+    ...Array.from({ length: 12 }, (_, at) => `Item ${String(at + 1)} of the evidence`),
+    `${tag} LAST LINE`,
+  ].join("\n");
+
+function insidePane(screen: string): void {
+  const rows = rowsOf(screen.replace(/\n$/, ""));
+  const top = rows.findIndex((row) => row.includes("╭"));
+  const height = cardRows(screen).length;
+  assert.ok(height > 0, `the whole card is on screen:\n${screen}`);
+  assert.ok(top >= 1, "the card keeps its top margin");
+  assert.ok(top + height <= rows.length - 1, "the card keeps its bottom margin");
+}
+
+test("in a 12-row pane the choices scroll with the selection and the box for his words fits", async () => {
   const pane = await openShortMain();
-  const middle = Array.from({ length: 12 }, (_, at) => `Item ${String(at + 1)} of the evidence`);
-  const question = ["FIRST LINE", ...middle, "LAST LINE"].join("\n");
-  const long = await askedMain(pane, "Long question", question, ["Ship it", "Hold"], 1);
+  const long = await askedMain(pane, "Long question", evidence("ONE"), FOUR_WAYS, 1);
   answers(1);
 
   await herdr().submit(pane, "/d");
   const first = await screenWhere(
     pane,
     "the card in the short pane",
-    onCard(["Decision 1 of 1", "FIRST LINE", "▌ Ship it", "esc later"], ["Hold"]),
+    onCard(
+      ["Decision 1 of 1", "ONE FIRST LINE", "▌ Ship it", "Wait a week", "esc later"],
+      ["Drop it"],
+    ),
   );
   keep("9-short-pane-first-choice", first);
-  const rows = rowsOf(first).length;
-  const top = rowsOf(first).findIndex((row) => row.includes("╭"));
-  assert.ok(top >= 1, "the card keeps its top margin");
-  assert.ok(top + cardRows(first).length <= rows - 1, "the card keeps its bottom margin");
+  insidePane(first);
 
-  await herdr().press(pane, "down");
-  const second = await screenWhere(
+  await herdr().press(pane, "down", "down", "down");
+  const fourth = await screenWhere(
     pane,
-    "the second choice",
-    onCard(["▌ Hold", "2/3", "esc later"], ["Ship it", "My words"]),
+    "the fourth choice",
+    onCard(["▌ Drop it", "4/5", "esc later"], ["Ship it", "My words"]),
   );
-  keep("9-short-pane-second-choice", second);
+  keep("9-short-pane-fourth-choice", fourth);
+  insidePane(fourth);
 
   await herdr().press(pane, "down");
-  await screenWhere(pane, "my words", onCard(["▌ My words…", "3/3", "esc later"], ["Hold"]));
+  const last = await screenWhere(
+    pane,
+    "my words",
+    onCard(["▌ My words…", "5/5", "esc later"], ["Ship it", "Hold"]),
+  );
+  insidePane(last);
 
-  await herdr().press(pane, "up", "enter");
+  await herdr().press(pane, "enter");
+  const writing = await screenWhere(
+    pane,
+    "the box for his words",
+    onCard(["Your words for", "⏎ send"]),
+  );
+  keep("9-short-pane-my-words", writing);
+  insidePane(writing);
+
+  await herdr().press(pane, "esc", "up", "up", "enter");
   await screenWhere(pane, "the answer", (screen) => cardRows(screen).length === 0);
-  assert.deepEqual(await answered(long), [{ body: "Hold", source: "pane", written: undefined }]);
-  await mainWasTold(2, long, "Hold");
+  assert.deepEqual(await answered(long), [
+    { body: "Wait a week", source: "pane", written: undefined },
+  ]);
+  await mainWasTold(2, long, "Wait a week");
+});
+
+test("in a 12-row pane a refusal of his own words keeps the note and the next decision on screen", async () => {
+  const pane = await openShortMain();
+  const ship = await askedMain(pane, "Scrollbar fix", evidence("SHIP"), FOUR_WAYS, 1);
+  await askedMain(pane, "Repository name", evidence("RENAME"), FOUR_WAYS, 2);
+  answers(3);
+
+  await herdr().submit(pane, "/d");
+  await screenWhere(pane, "the first decision", onCard(["Decision 1 of 2", "SHIP FIRST LINE"]));
+  await herdr().press(pane, "down", "down", "down", "down", "enter");
+  await screenWhere(pane, "the box for his words", onCard(["Your words for", "⏎ send"]));
+  const open = (await cardd.board()).holds.find((each) => each.card === ship.id);
+  assert.ok(open !== undefined, "the hold is open on the board");
+  assert.equal(await cardd.act(ship.id, { kind: "answer", hold: open.hold, choice: "Hold" }), 200);
+
+  await herdr().submit(pane, MY_WORDS);
+  const refused = await screenWhere(
+    pane,
+    "the refusal and the next decision",
+    onCard(
+      [
+        `c-${String(ship.id)} changed since you looked`,
+        "RENAME FIRST LINE",
+        "▌ Ship it",
+        "esc later",
+      ],
+      ["SHIP FIRST LINE"],
+    ),
+  );
+  keep("10-short-pane-refused", refused);
+  insidePane(refused);
+  assert.deepEqual(await answered(ship), [{ body: "Hold", source: "board", written: undefined }]);
 });

@@ -17,7 +17,8 @@ const RECOMMENDED = "recommended";
 const MAX_DOTS = 10;
 const MAX_BODY_ROWS = 16;
 const MIN_BODY_ROWS = 2;
-const FRAME_ROWS = 8;
+const FRAME_ROWS = 5;
+const SPACER_ROWS = 3;
 const WRITE_ROWS = 2;
 const BORDER_COLUMNS = 1;
 const PADDING = 2;
@@ -36,6 +37,12 @@ export interface CardDeps {
 }
 
 type Mode = "choose" | "write";
+
+interface Layout {
+  readonly spacers: number;
+  readonly body: number;
+  readonly picks: number;
+}
 
 const plain = (text: string): string => replaceControlCharacters(stripTerminalSequences(text));
 
@@ -121,16 +128,15 @@ export class DecisionCard implements Component, Focusable {
     this.row = (this.row + step + count) % count;
   }
 
-  private shownChoices(): readonly [number, number] {
-    const rows = this.pickRows();
-    const last = this.choices.length - rows;
-    const top = Math.max(this.row - rows + 1, Math.min(this.choiceTop, this.row));
+  private shownChoices(picks: number): number {
+    const last = this.choices.length - picks;
+    const top = Math.max(this.row - picks + 1, Math.min(this.choiceTop, this.row));
     this.choiceTop = Math.max(0, Math.min(last, top));
-    return [this.choiceTop, rows];
+    return this.choiceTop;
   }
 
   private page(step: number): void {
-    this.scroll = Math.max(0, this.scroll + step * this.bodyRows());
+    this.scroll = Math.max(0, this.scroll + step * this.layout().body);
   }
 
   private confirm(): void {
@@ -197,18 +203,16 @@ export class DecisionCard implements Component, Focusable {
     this.mode = "choose";
   }
 
-  private spare(): number {
-    const fixed = FRAME_ROWS + (this.note === undefined ? 0 : 1);
-    return Math.max(2, this.deps.rows() - fixed);
-  }
-
-  private pickRows(): number {
-    if (this.mode === "write") return WRITE_ROWS;
-    return Math.min(this.choices.length, Math.max(1, this.spare() - MIN_BODY_ROWS));
-  }
-
-  private bodyRows(): number {
-    return Math.max(1, Math.min(MAX_BODY_ROWS, this.spare() - this.pickRows()));
+  private layout(): Layout {
+    const free = this.deps.rows() - FRAME_ROWS - (this.note === undefined ? 0 : 1);
+    const picks =
+      this.mode === "write"
+        ? WRITE_ROWS
+        : Math.min(this.choices.length, Math.max(1, free - MIN_BODY_ROWS));
+    const left = free - picks;
+    const spacers = Math.max(0, Math.min(SPACER_ROWS, left - MIN_BODY_ROWS));
+    const body = Math.max(1, Math.min(MAX_BODY_ROWS, left - spacers));
+    return { spacers, body, picks };
   }
 
   render(width: number): string[] {
@@ -223,22 +227,24 @@ export class DecisionCard implements Component, Focusable {
     };
     const quiet = (text: string): string => line(theme.fg("muted", this.fit(text, inner)));
     const body = paragraphs(decision.question, inner);
-    const rows = this.bodyRows();
+    const layout = this.layout();
+    const rows = layout.body;
+    const spacer = (rank: number): string[] => (layout.spacers >= rank ? [line("")] : []);
     const top = Math.min(this.scroll, Math.max(0, body.length - rows));
     this.scroll = top;
     const shown = body.slice(top, top + rows).map(line);
     const lower = body.length - top - rows;
     const lines = [
       this.top(width),
-      line(""),
+      ...spacer(3),
       quiet(`c-${String(decision.card)} ${plain(decision.title)}`),
-      line(""),
+      ...spacer(1),
       ...shown,
       lower > 0 ? quiet(`▼ ${String(lower)} more lines, PgDn to read`) : line(""),
-      ...this.choiceRows(decision, inner).map(line),
-      line(""),
+      ...this.choiceRows(decision, inner, layout.picks).map(line),
+      ...spacer(2),
       ...(this.note === undefined ? [] : [line(theme.fg("warning", this.fit(this.note, inner)))]),
-      quiet(this.hint(body.length > rows)),
+      quiet(this.hint(body.length > rows, layout.picks)),
       edge(`${BORDER.corners[2]}${BORDER.across.repeat(width - 2)}${BORDER.corners[3]}`),
     ];
     return lines;
@@ -260,15 +266,15 @@ export class DecisionCard implements Component, Focusable {
     return `${edge(`${left}${BORDER.across}`)}${title}${edge(`${BORDER.across.repeat(room)}${right}`)}`;
   }
 
-  private choiceRows(decision: Decision, inner: number): string[] {
+  private choiceRows(decision: Decision, inner: number, picks: number): string[] {
     if (this.mode === "write") {
       const { theme } = this.deps;
       const typed = this.input.render(inner)[0] ?? "";
       return [theme.fg("muted", `Your words for c-${String(decision.card)}:`), typed];
     }
-    const [top, rows] = this.shownChoices();
+    const top = this.shownChoices(picks);
     return this.choices
-      .slice(top, top + rows)
+      .slice(top, top + picks)
       .map((label, at) => this.choice(label, top + at, inner));
   }
 
@@ -284,12 +290,12 @@ export class DecisionCard implements Component, Focusable {
     return chosen ? theme.style(row, { bg: theme.colors.userMessageBg }) : row;
   }
 
-  private hint(overflow: boolean): string {
+  private hint(overflow: boolean, picks: number): string {
     if (this.sending) return "sending…";
     if (this.mode === "write") return "⏎ send   esc back";
     const read = overflow ? "   PgUp/PgDn read" : "";
     const count = this.choices.length;
-    const place = this.pickRows() < count ? ` ${String(this.row + 1)}/${String(count)}` : "";
+    const place = picks < count ? ` ${String(this.row + 1)}/${String(count)}` : "";
     return `↑↓ choose${place}   ⏎ confirm${read}   esc later`;
   }
 }

@@ -47,7 +47,7 @@ The strip shows the worst need: broken first, then needs you, then stalled, olde
 ```
 
 - The text is the hold's question, and the choices are its options, with the first marked as the mate's recommendation. `My words…` opens a line for the captain's own words. A long question scrolls with PgUp and PgDn.
-- The card fits the pane down to 12 rows. In a short pane it shows fewer lines of the question, and at least one choice. The choices scroll with the selection, and the hint shows the place, such as `2/5`, while some are out of sight.
+- The card fits the pane down to 12 rows, in every state: choosing, typing his words, and after a refused answer. In a short pane it drops its blank rows first, then shows fewer lines of the question and fewer choices, but always at least one choice. The choices scroll with the selection, and the hint shows the place, such as `2/5`, while some are out of sight.
 - `⏎` answers the whole hold and the card moves to the next decision. `esc` closes the card and answers nothing. Typing `/d` again shows the first decision that is still open, so `/d` both starts and resumes.
 - The answer is the board's own action: the extension calls the `pane.answer` op with the card and the revision it showed. `cardd` refuses it when the card changed since, shows the reason on the card, and the card reloads. Otherwise it is recorded as the captain's `answer`, with `source: "pane"`. Main gets `[fleet] captain on c-N (answer): <choice>`, the same line a board answer sends. Only main's session may call the op.
 - When nothing waits, `/d` says so in a notice and opens nothing.
