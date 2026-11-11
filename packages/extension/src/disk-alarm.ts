@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { HostUnreachable } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import {
@@ -28,11 +27,6 @@ export interface Alert {
   readonly crossing?: string;
 }
 
-interface Memory {
-  readonly held: Set<string>;
-  readonly unlisted: Map<string, number>;
-}
-
 interface Crossing {
   readonly key: string;
   readonly use: FilesystemUse;
@@ -52,14 +46,6 @@ const gigabytes = (bytes: number): string => `${(bytes / 2 ** 30).toFixed(1)} GB
 const amount = (value: number, metric: Metric): string =>
   metric === "inodes" ? `${count(value)} inodes` : gigabytes(value);
 
-function parseLine(line: string): unknown {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return undefined;
-  }
-}
-
 function recordedCrossing(entry: unknown): { key: string; said: boolean } | undefined {
   if (!isRecord(entry)) return undefined;
   const said = entry["type"] === "custom_message" && entry["customType"] === DISK_MESSAGE;
@@ -70,19 +56,9 @@ function recordedCrossing(entry: unknown): { key: string; said: boolean } | unde
   return typeof key === "string" ? { key, said } : undefined;
 }
 
-function textOf(file: string): string {
-  try {
-    return readFileSync(file, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-export function replayHeld(sessionFile: string | undefined): Set<string> {
+function heldIn(entries: readonly unknown[]): Set<string> {
   const held = new Set<string>();
-  const lines = sessionFile === undefined ? [] : textOf(sessionFile).split("\n");
-  for (const found of lines.filter((line) => line.includes("fleet-disk")).map(parseLine)) {
-    const crossing = recordedCrossing(found);
+  for (const crossing of entries.map(recordedCrossing)) {
     if (crossing?.said === true) held.add(crossing.key);
     else if (crossing !== undefined) held.delete(crossing.key);
   }
@@ -92,7 +68,8 @@ export function replayHeld(sessionFile: string | undefined): Set<string> {
 function crossingsIn(
   host: string,
   uses: readonly FilesystemUse[],
-  { held, unlisted }: Memory,
+  held: ReadonlySet<string>,
+  unlisted: Map<string, number>,
 ): { fresh: Crossing[]; released: string[] } {
   const fresh: Crossing[] = [];
   const released: string[] = [];
@@ -102,7 +79,7 @@ function crossingsIn(
     if (percent === undefined) continue;
     const key = [host, use.path, metric].join("|");
     if (percent < ALARM_PERCENT) {
-      if (held.delete(key)) released.push(key);
+      if (held.has(key)) released.push(key);
       unlisted.delete(key);
     } else if (!held.has(key)) fresh.push({ key, use, metric, percent });
   }
@@ -159,7 +136,7 @@ export interface DiskWatch {
   readonly send: (alert: Alert) => boolean;
   readonly clear: (crossing: string) => void;
   readonly idle: () => boolean;
-  readonly held: ReadonlySet<string>;
+  readonly entries: () => readonly unknown[];
   readonly now?: () => number;
 }
 
@@ -168,10 +145,10 @@ export function diskWatch({
   send,
   clear,
   idle,
-  held,
+  entries,
   now = Date.now,
 }: DiskWatch): (host: string) => Promise<void> {
-  const memory: Memory = { held: new Set(held), unlisted: new Map() };
+  const unlisted = new Map<string, number>();
   const tidied = new Map<string, number>();
   const unreadable = new Set<string>();
 
@@ -184,14 +161,14 @@ export function diskWatch({
   };
 
   const announce = async (host: string, label: string, uses: readonly FilesystemUse[]) => {
-    const { fresh, released } = crossingsIn(host, uses, memory);
+    const { fresh, released } = crossingsIn(host, uses, heldIn(entries()), unlisted);
     for (const key of released) clear(key);
     for (const crossing of fresh) {
       if (!idle()) return;
       const found = await breakdownOf(ask, host, crossing);
       if (found === undefined) {
-        const failed = (memory.unlisted.get(crossing.key) ?? 0) + 1;
-        memory.unlisted.set(crossing.key, failed);
+        const failed = (unlisted.get(crossing.key) ?? 0) + 1;
+        unlisted.set(crossing.key, failed);
         if (failed < DIRECTORY_CHECKS) continue;
       }
       if (!idle()) return;
@@ -201,8 +178,7 @@ export function diskWatch({
         crossing: crossing.key,
       };
       if (!send(alert)) return;
-      memory.unlisted.delete(crossing.key);
-      memory.held.add(crossing.key);
+      unlisted.delete(crossing.key);
       return;
     }
   };

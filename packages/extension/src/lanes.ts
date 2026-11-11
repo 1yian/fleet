@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
-import { DISK_CLEARED, DISK_MESSAGE, diskWatch, replayHeld, type Alert } from "./disk-alarm.ts";
+import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
 import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
@@ -163,7 +163,6 @@ export function registerLanes(
   pi: ExtensionAPI,
   home: string,
   link: Link,
-  sessionFile: string | undefined,
   ctx: ExtensionContext,
 ): LaneStates | undefined {
   const config = readLaneConfig(home);
@@ -185,7 +184,7 @@ export function registerLanes(
       return reply((await withLanes(() => restartAll(config))).join("\n"));
     },
   });
-  keepRunning(pi, config, home, sessionFile, ctx);
+  keepRunning(pi, config, home, ctx);
   return async () => {
     const lanes: LaneRow[] = [];
     const unreachable: { host: string; error: string }[] = [];
@@ -253,7 +252,6 @@ function diskSayer(pi: ExtensionAPI, isDown: () => boolean): (alert: Alert) => b
 function diskWatcher(
   pi: ExtensionAPI,
   config: LaneConfig,
-  sessionFile: string | undefined,
   ctx: ExtensionContext,
   isDown: () => boolean,
 ): (host: string) => Promise<void> {
@@ -264,7 +262,7 @@ function diskWatcher(
       if (!isDown()) pi.appendEntry(DISK_CLEARED, { crossing });
     },
     idle: () => !isDown() && ctx.isIdle() && !ctx.hasPendingMessages(),
-    held: replayHeld(sessionFile),
+    entries: () => (isDown() ? [] : ctx.sessionManager.getEntries()),
   });
 }
 
@@ -272,7 +270,6 @@ function keepRunning(
   pi: ExtensionAPI,
   config: LaneConfig,
   home: string,
-  sessionFile: string | undefined,
   ctx: ExtensionContext,
 ): void {
   const unreachable = new Set<string>();
@@ -295,7 +292,7 @@ function keepRunning(
       tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
     }
   };
-  const watchDisk = diskWatcher(pi, config, sessionFile, ctx, isDown);
+  const watchDisk = diskWatcher(pi, config, ctx, isDown);
   const reportDown = (host: string, error: unknown): void => {
     if (unreachable.has(host)) return;
     unreachable.add(host);

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
+import { until, replayed, stopMain } from "../support/disk-session.ts";
 import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import { publishRecord, records, type JsonRecord } from "../support/json.ts";
+import { publishRecord, type JsonRecord } from "../support/json.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -129,33 +130,7 @@ const sessionText = (): string =>
     .map((file) => readFileSync(file, "utf8"))
     .join("\n");
 
-function crossingOf(line: string): { key: string; said: boolean } | undefined {
-  const [entry] = records([JSON.parse(line)]);
-  const [details] = records([entry?.["details"] ?? entry?.["data"]]);
-  const key = details?.["crossing"];
-  if (typeof key !== "string" || !key.startsWith("far|")) return undefined;
-  return { key, said: entry?.["customType"] === "fleet-disk" };
-}
-
-function replayed(file: string): string[] {
-  const held = new Set<string>();
-  const lines = readFileSync(file, "utf8").split("\n");
-  for (const found of lines.filter((line) => line.includes("fleet-disk")).map(crossingOf)) {
-    if (found?.said === true) held.add(found.key);
-    else if (found !== undefined) held.delete(found.key);
-  }
-  return [...held];
-}
-
 const heldKeys = (): string[] => sessionFiles().flatMap(replayed);
-
-async function until(check: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + WAIT_MS;
-  while (!check()) {
-    assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
 
 const sessionAlarms = (): number => sessionText().split(ALARM).length - 1;
 
@@ -181,6 +156,18 @@ async function busyMain(): Promise<{ pane: string; release: () => void }> {
   await lab.submit(pane, "hello");
   await h.waitForCall(0, "mate", WAIT_MS);
   return { pane, release: turn.open };
+}
+
+async function settledMain(): Promise<string> {
+  for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
+  const pane = await startMain(lab, here, h);
+  await h.waitFor((e) => e["type"] === "fleet_connected", "main to connect");
+  await untilProbes(2);
+  await lab.submit(pane, "hello");
+  await h.waitForNth((e) => e["type"] === "settled", 1, "the first turn to settle");
+  const [file] = sessionFiles();
+  assert.ok(file !== undefined, "the first turn wrote main's session file");
+  return file;
 }
 
 async function crossWhileBusy(): Promise<void> {
@@ -265,24 +252,6 @@ test("main names space when space is what crossed, and counts inodes and space s
   assert.equal(alarmsOf(lastCall()).length, 2);
 });
 
-async function stopMain(pane: string): Promise<void> {
-  const before = records([
-    (await lab.run(["pane", "process-info", "--pane", pane]))["process_info"],
-  ]);
-  const group = Number(before[0]?.["foreground_process_group_id"]);
-  const shell = Number(before[0]?.["shell_pid"]);
-  process.kill(-group, "SIGKILL");
-  const deadline = Date.now() + 30_000;
-  for (;;) {
-    const info = records([
-      (await lab.run(["pane", "process-info", "--pane", pane]))["process_info"],
-    ]);
-    if (Number(info[0]?.["foreground_process_group_id"]) === shell) break;
-    assert.ok(Date.now() < deadline, "the mate's pane did not return to its shell");
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-}
-
 test("a restarted main does not say again that a filesystem is still over the alarm", async () => {
   for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
   report({ inodes: 1_004_848, bytes: 46 * GIB });
@@ -290,7 +259,7 @@ test("a restarted main does not say again that a filesystem is still over the al
   await untilAlarms(1);
   await untilHeld(CROSSED);
 
-  await stopMain(pane);
+  await stopMain(lab, pane);
   await startMain(lab, here, h, true);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
   await afterProbes(5);
@@ -305,7 +274,7 @@ test("a main that stopped before the alarm reached it hears the alarm once after
   report({ inodes: 1_004_848, bytes: 46 * GIB });
   const pane = await startMain(lab, here, h);
   await untilCalls("largest", 1);
-  await stopMain(pane);
+  await stopMain(lab, pane);
   rmSync(hold);
   assert.equal(sessionText().includes("[fleet] disk: far:"), false);
 
@@ -322,7 +291,7 @@ test("a main that is stopped while its turn still runs and the crossing came mea
   const { pane, release } = await busyMain();
   await crossWhileBusy();
 
-  await stopMain(pane);
+  await stopMain(lab, pane);
   release();
   await startMain(lab, here, h, true);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
@@ -370,12 +339,45 @@ test("dropping below the alarm and crossing again gives two alarms in all, also 
   report({ inodes: 600_000, bytes: 40 * GIB });
   await untilHeld([]);
 
-  await stopMain(pane);
+  await stopMain(lab, pane);
   await startMain(lab, here, h, true);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the restarted main to connect");
   await afterProbes(4);
   assert.equal(sessionAlarms(), 1, "below the alarm after the restart, so nothing is said");
 
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await untilSessionAlarms(2);
+  await afterProbes(4);
+  assert.equal(sessionAlarms(), 2);
+  assert.deepEqual(heldKeys(), CROSSED);
+});
+
+test("an alarm that Pi could not write into main's session file is said again, and counts as said only once it is in the file", async () => {
+  const file = await settledMain();
+  chmodSync(file, 0o444);
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await untilCalls("largest", 3);
+  assert.equal(sessionAlarms(), 0);
+
+  chmodSync(file, 0o644);
+  await untilSessionAlarms(1);
+  await afterProbes(5);
+  assert.equal(sessionAlarms(), 1);
+  assert.deepEqual(heldKeys(), CROSSED);
+});
+
+test("a cleared entry that Pi could not write is tried again, so the next crossing is said and not held back", async () => {
+  const file = await settledMain();
+  report({ inodes: 1_004_848, bytes: 46 * GIB });
+  await untilSessionAlarms(1);
+  await h.waitForNth((e) => e["type"] === "settled", 2, "the alarm's turn to settle");
+  chmodSync(file, 0o444);
+  report({ inodes: 600_000, bytes: 40 * GIB });
+  await afterProbes(5);
+  assert.deepEqual(heldKeys(), CROSSED, "the file still holds the crossing");
+
+  chmodSync(file, 0o644);
+  await untilHeld([]);
   report({ inodes: 1_004_848, bytes: 46 * GIB });
   await untilSessionAlarms(2);
   await afterProbes(4);
@@ -389,7 +391,7 @@ test("a new session announces a crossing that is still over the alarm, once", as
   const pane = await startMain(lab, here, h);
   await untilSessionAlarms(1);
 
-  await stopMain(pane);
+  await stopMain(lab, pane);
   await startMain(lab, here, h);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the new session to connect");
   await until(() => sessionFiles().length === 2, "the second session file");
