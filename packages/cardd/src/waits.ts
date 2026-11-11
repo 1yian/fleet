@@ -7,8 +7,8 @@ import {
   type Wait,
 } from "@fleet/protocol";
 import { requireCaptainWords } from "./authority.ts";
-import type { Standing } from "./status.ts";
-import { mainLane, reachable, type Loaded, type Session } from "./store.ts";
+import { factsFrom, type Standing } from "./status.ts";
+import { cardEntries, mainLane, reachable, type Loaded, type Session } from "./store.ts";
 
 type Watching = Pick<DatedWait, "watch" | "what">;
 
@@ -72,19 +72,34 @@ const LANE_OF: Record<"job" | "schedule" | "worker", string> = {
   worker: "SELECT lane FROM cards WHERE id = ?",
 };
 
+export const canSee = (db: DatabaseSync, lane: string, owner: unknown): boolean =>
+  lane === mainLane(db) || owner === lane;
+
 function reaches(db: DatabaseSync, lane: string, wait: Extract<Wait, { id: number }>): boolean {
-  if (lane === mainLane(db)) return true;
-  return db.prepare(LANE_OF[wait.by]).get(wait.id)?.["lane"] === lane;
+  return canSee(db, lane, db.prepare(LANE_OF[wait.by]).get(wait.id)?.["lane"]);
 }
 
 const MATE = "mate:";
 
+const laneOfAuthor = (author: string): string | undefined =>
+  author.startsWith(MATE) ? author.slice(MATE.length) : undefined;
+
 function watching(db: DatabaseSync, wait: Wait | null, author: string): Watching {
   if (wait === null) return { watch: "none", what: "" };
   if (!("id" in wait)) return { watch: STATED[wait.by], what: wait.text };
-  const lane = author.startsWith(MATE) ? author.slice(MATE.length) : undefined;
+  const lane = laneOfAuthor(author);
   if (lane === undefined || !reaches(db, lane, wait)) return ABSENT[wait.by](wait.id);
   return CHECKED[wait.by](db, wait.id);
+}
+
+export function sightOf(db: DatabaseSync, lane: string, card: number, wait: DatedWait): DatedWait {
+  const hold = factsFrom(cardEntries(db, card)).hold;
+  const ref = hold?.wait;
+  if (hold === undefined || ref === null || ref === undefined || !("id" in ref)) return wait;
+  const author = laneOfAuthor(hold.author);
+  const watched = author !== undefined && reaches(db, author, ref);
+  if (!watched || reaches(db, lane, ref)) return wait;
+  return { ...wait, what: `a ${ref.by} in another lane (${wait.watch})` };
 }
 
 export function datedWait(db: DatabaseSync, standing: Standing): DatedWait | null {

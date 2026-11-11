@@ -9,11 +9,15 @@ const WaitSchema = Type.Union([
 ]);
 export type Wait = Static<typeof WaitSchema>;
 
-export const RemainingStepSchema = Type.Object({
-  card: Type.Integer(),
-  title: Type.String(),
-  status: Type.String(),
-});
+export const RemainingStepSchema = Type.Union([
+  Type.Object({
+    card: Type.Integer(),
+    title: Type.String(),
+    status: Type.String(),
+  }),
+  Type.Object({ card: Type.Integer(), elsewhere: Type.Literal(true) }),
+]);
+export type RemainingStep = Static<typeof RemainingStepSchema>;
 
 export const HOLD_WAIT_ARGS = {
   until: Type.Optional(

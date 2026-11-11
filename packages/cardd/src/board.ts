@@ -8,6 +8,7 @@ import {
   type Card,
   type CardView,
   type Entry,
+  type RemainingStep,
   type Thread,
 } from "@fleet/protocol";
 import { attemptsOf } from "./attempts.ts";
@@ -26,7 +27,7 @@ import {
   loadCards,
   type Loaded,
 } from "./store.ts";
-import { datedWait } from "./waits.ts";
+import { canSee, datedWait, sightOf } from "./waits.ts";
 
 export class StaleCard extends Error {}
 
@@ -106,16 +107,27 @@ function buildBoard(db: DatabaseSync, now: number): Board {
   return { cards, holds, schedules: allSchedules(db) };
 }
 
-function stepOf(db: DatabaseSync, id: number) {
-  const { title, status } = getCard(db, id);
-  return { card: id, title, status };
+export function boardFor(db: DatabaseSync, lane: string): BoardCard[] {
+  return boardView(db)
+    .cards.filter((card) => canSee(db, lane, card.lane))
+    .map((card) => seenBy(db, lane, card));
 }
 
-export function cardView(db: DatabaseSync, id: number): CardView {
+function seenBy(db: DatabaseSync, lane: string, card: BoardCard): BoardCard {
+  if (card.datedWait === null) return card;
+  return { ...card, datedWait: sightOf(db, lane, card.id, card.datedWait) };
+}
+
+function stepOf(db: DatabaseSync, lane: string, id: number): RemainingStep {
+  const { title, status, lane: owner } = getCard(db, id);
+  return canSee(db, lane, owner) ? { card: id, title, status } : { card: id, elsewhere: true };
+}
+
+export function cardView(db: DatabaseSync, id: number, lane: string): CardView {
   const each = loadCard(db, id);
   const { hold } = each.standing.facts;
   return {
-    card: boardCard(db, each),
+    card: seenBy(db, lane, boardCard(db, each)),
     hold:
       hold === undefined
         ? null
@@ -124,7 +136,7 @@ export function cardView(db: DatabaseSync, id: number): CardView {
             question: hold.question,
             options: [...hold.options],
             until: hold.until,
-            remaining: hold.remaining.map((id) => stepOf(db, id)),
+            remaining: hold.remaining.map((step) => stepOf(db, lane, step)),
           },
     attempts: attemptsOf(db, id),
     entries: each.entries,

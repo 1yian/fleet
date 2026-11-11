@@ -246,7 +246,11 @@ type Remaining = NonNullable<CardView["hold"]>["remaining"];
 const remainingOf = (steps: Remaining): string[] | string =>
   steps.length === 0
     ? "none"
-    : steps.map((each) => `c-${String(each.card)} ${each.title} (${each.status})`);
+    : steps.map((each) =>
+        "elsewhere" in each
+          ? `c-${String(each.card)} (another lane)`
+          : `c-${String(each.card)} ${each.title} (${each.status})`,
+      );
 
 function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
   const record: Record<string, unknown> = {

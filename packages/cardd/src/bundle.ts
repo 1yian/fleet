@@ -3,6 +3,7 @@ import { idlePark, waitLine, type DatedWait } from "@fleet/protocol";
 import { factsFrom, finishedOpen, type Standing } from "./status.ts";
 import { cardEntries, type Loaded, mainLane, parentOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
+import { sightOf } from "./waits.ts";
 
 export interface BundleMatch {
   readonly card: number;
@@ -79,11 +80,12 @@ function waitItem(db: DatabaseSync, loaded: Loaded, wait: DatedWait, now: number
   const { card, standing } = loaded;
   const { hold } = standing.facts;
   const question = firstLine(hold?.question ?? "");
-  const line = `c-${String(card.id)} ${card.title} - ${waitLine(wait, now)}: ${question}`;
+  const to = receiver(db, card, hold?.holder ?? "owner");
+  const line = `c-${String(card.id)} ${card.title} - ${waitLine(sightOf(db, to, card.id, wait), now)}: ${question}`;
   return {
     card: card.id,
     since: standing.since,
-    to: receiver(db, card, hold?.holder ?? "owner"),
+    to,
     line,
     group: idlePark(wait) ? "act" : "watched",
   };
