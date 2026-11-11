@@ -1,19 +1,18 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { WebSocket, WebSocketServer } from "ws";
 import { parseServerMessage, type Card } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
-import { gate, Harness, type Pi, type Turn } from "../support/harness.ts";
+import { waitForTakenIn } from "../support/delivery-states.ts";
+import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const RESULT = "[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 0: green";
-const AGAIN = `${RESULT} (sent again: the turn that got it ended before it was taken in)`;
 const ROUTING =
   "pi-tiers: no usable model for tier 'default' (anthropic/claude-opus-5-5 on anthropic: cooling, openai/gpt-5 on openai: cooling)";
 
@@ -52,13 +51,12 @@ afterEach(async (t) => {
 const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
 
-test("a job result whose turn the provider fails is not lost: its mate hears one incident, and the result is sent again once the worker recovers", async () => {
+test("a job result whose turn the provider fails is not lost: its mate hears one incident, and the recovered worker's run holds the result and takes it in", async () => {
   h.onModel(() => ({ tool: "run_long", args: { label: "tests", command: "echo green" } }));
   h.onModel(() => ({ text: "waiting for the tests" }));
   h.onModel(() => ({ fail: ROUTING }));
   h.onModel(() => ({ tool: "report", args: { status: "note", text: "alive" } }));
   h.onModel(() => ({ text: "recovered" }));
-  h.onModel(() => ({ text: "took the job result" }));
   h.startPi("c-1-a1", env, [EXTENSION]);
 
   assert.equal(lastUser(await h.waitForCall(2)), RESULT);
@@ -90,10 +88,16 @@ test("a job result whose turn the provider fails is not lost: its mate hears one
     "verification",
   );
 
-  assert.equal(lastUser(await h.waitForCall(5)), AGAIN);
+  assert.ok((await h.waitForCall(3)).some((turn) => turn.text === RESULT));
+  await waitForTakenIn(fleet.cardd.db, "job-result");
   assert.ok(due.id > heard.id);
   const entries = fleet.main.entries.map((push) => push.entry);
   assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
+  assert.equal(
+    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
+      .length,
+    0,
+  );
   assert.equal(
     h.calls
       .slice(0, 5)
@@ -163,196 +167,6 @@ test("a comment that arrives after the worker's connection dropped and came back
       .length,
     0,
   );
-});
-
-function workerDeliveryStates(): string[] {
-  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true });
-  try {
-    return db
-      .prepare(
-        "SELECT d.state AS state FROM deliveries d JOIN sessions s ON s.id = d.session WHERE s.role = 'worker' ORDER BY d.entry",
-      )
-      .all()
-      .map((row) => String(row["state"]));
-  } finally {
-    db.close();
-  }
-}
-
-const isTaken = (state: string): boolean => state === "acknowledged" || state === "confirmed";
-
-async function waitForTakenIn(): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    const states = workerDeliveryStates();
-    if (states.length > 0 && states.every(isTaken)) return;
-    assert.ok(
-      Date.now() < deadline,
-      `the resent message was not taken in: ${JSON.stringify(states)}`,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
-
-async function resentAfterRestart(): Promise<void> {
-  await fleet.cardd.restart();
-  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
-}
-
-const sentAgain = (turns: Turn[]): boolean =>
-  turns.some(
-    (turn) =>
-      turn.role === "user" &&
-      turn.text.includes("sent again: the turn that got it ended before it was taken in"),
-  );
-
-test("a message whose turn was aborted is resent after reconnect and taken in on the next settled run", async () => {
-  const held = gate();
-  h.onModel(async () => {
-    await held.wait;
-    return { text: "the aborted turn should not finish" };
-  });
-  h.onModel(() => ({ text: "took the assignment" }));
-  const pi = h.startPi("c-1-a1", env, [EXTENSION]);
-  await h.waitForCall(0, "default", 30_000);
-  pi.abort();
-  await h.waitFor(
-    (event) => event["type"] === "settled" && event["aborted"] === true,
-    "the aborted turn to settle",
-  );
-  await resentAfterRestart();
-  const again = await h.waitForCall(1, "default", 30_000);
-  assert.ok(sentAgain(again), JSON.stringify(again));
-  await h.waitFor(
-    (event) => event["type"] === "settled" && event["aborted"] !== true,
-    "the next run to settle",
-  );
-  held.open();
-  await waitForTakenIn();
-});
-
-test("a message whose run was aborted after a tool-use response is not taken in until a later run settles", async () => {
-  const held = gate();
-  h.onModel(() => ({ tool: "report", args: { status: "note", text: "reading the assignment" } }));
-  h.onModel(async () => {
-    await held.wait;
-    return { text: "the aborted turn should not finish" };
-  });
-  h.onModel(() => ({ text: "took the assignment" }));
-  const pi = h.startPi("c-1-a1", env, [EXTENSION]);
-  await h.waitForCall(1, "default", 30_000);
-  pi.abort();
-  await h.waitFor(
-    (event) => event["type"] === "settled" && event["aborted"] === true,
-    "the aborted run to settle",
-  );
-  const states = workerDeliveryStates();
-  assert.ok(
-    states.length > 0 && !states.some(isTaken),
-    `an aborted run took the message in: ${JSON.stringify(states)}`,
-  );
-  await resentAfterRestart();
-  const again = await h.waitForCall(2, "default", 30_000);
-  assert.ok(sentAgain(again), JSON.stringify(again));
-  await h.waitFor(
-    (event) => event["type"] === "settled" && event["aborted"] !== true,
-    "the next run to settle",
-  );
-  held.open();
-  await waitForTakenIn();
-});
-
-const TASK_ENTRY = 1;
-const HALF_A_WINDOW = "lorem ipsum dolor ".repeat(16000);
-const TASK_TEXT = "run the tests";
-
-async function abortedAfterLongResponses(): Promise<Pi> {
-  const held = gate();
-  for (let call = 0; call < 2; call += 1)
-    h.onModel(() => ({
-      tool: "report",
-      text: HALF_A_WINDOW,
-      args: { status: "note", text: "reading the assignment" },
-    }));
-  h.onModel(async () => {
-    await held.wait;
-    return { text: "the aborted turn should not finish" };
-  });
-  const pi = h.startPi("c-1-a1", env, [EXTENSION]);
-  await h.waitForCall(2, "default", 30_000);
-  pi.abort();
-  await h.waitFor(
-    (event) => event["type"] === "settled" && event["aborted"] === true,
-    "the aborted run to settle",
-  );
-  held.open();
-  assert.ok(!workerDeliveryStates().some(isTaken), "an aborted run took the assignment in");
-  return pi;
-}
-
-async function restartAndAsk(): Promise<void> {
-  const restarted = h.startPi("c-1-a1", env, [EXTENSION]);
-  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
-  restarted.prompt("an unrelated question");
-  await h.waitForNth((event) => event["type"] === "settled", 2, "the restarted run to settle");
-}
-
-async function assertResentAndTakenIn(): Promise<void> {
-  const asked = h.calls.find((turns) =>
-    turns.some((turn) => turn.text === "an unrelated question"),
-  );
-  assert.ok(asked !== undefined, "the restarted model was never asked");
-  assert.ok(
-    !asked.some((turn) => turn.text.includes(TASK_TEXT)),
-    "the restarted model held the assignment, so compaction did not remove it",
-  );
-  await h.waitForNth(
-    (event) => event["type"] === "message_end" && event["entryId"] === TASK_ENTRY,
-    2,
-    "the assignment the restarted model never held to be sent again",
-  );
-  await h.waitForNth((event) => event["type"] === "settled", 3, "the resent assignment to settle");
-  await waitForTakenIn();
-}
-
-test("a message that compaction removed before a restart is resent, not taken in by the restarted run", async () => {
-  const pi = await abortedAfterLongResponses();
-  pi.compact();
-  assert.equal((await pi.compactResponse())["success"], true);
-  await pi.kill();
-
-  await restartAndAsk();
-  await assertResentAndTakenIn();
-});
-
-test("a message that compaction removed between a restart and its first request is resent, not taken in by that run", async () => {
-  const pi = await abortedAfterLongResponses();
-  await pi.kill();
-
-  await restartAndAsk();
-  await h.waitFor((event) => event["type"] === "compacted", "the restarted run to compact first");
-  await assertResentAndTakenIn();
-});
-
-test("a worker that read a comment hands off in the same run, before the run settles", async () => {
-  h.onModel(async () => {
-    await fleet.main.call("comment", { card: card.id, text: "scope change: skip the tests" });
-    return { tool: "report", args: { status: "note", text: "running the tests" } };
-  });
-  h.onModel(() => ({
-    tool: "report",
-    args: { status: "blocked", text: "skipped the tests as asked" },
-  }));
-  h.onModel(() => ({ text: "handed off" }));
-  h.startPi("c-1-a1", env, [EXTENSION]);
-
-  const handoff = await fleet.main.waitForEntry(
-    (entry) => entry.kind === "report" && entry.fields["status"] === "blocked",
-    "main to hear the handoff the worker made after reading the comment",
-  );
-  assert.equal(handoff.body, "skipped the tests as asked");
-  const turns = (await h.waitForCall(2, "default", 30_000)).map((turn) => turn.text).join("\n");
-  assert.doesNotMatch(turns, /does not count yet/);
 });
 
 interface Proxy {
