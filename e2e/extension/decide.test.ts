@@ -147,6 +147,31 @@ test("a click on the strip opens exactly the card that /d opens", async () => {
   await lab.mainWasTold(2, ship, "Ship it");
 });
 
+test("entries that land on the card while it is open do not refuse the answer", async () => {
+  const pane = await lab.openMain();
+  const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
+  lab.answers(2);
+
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the decision", onCard(["Decision 1 of 1", SHIP, "→ Ship it"]));
+  const looked = await lab.revisionOf(ship);
+  await lab.cleo.call("comment", { card: ship.id, text: "CI is green again." });
+  await lab.cleo.call("comment", { card: ship.id, text: "The branch is rebased." });
+  assert.ok((await lab.revisionOf(ship)) > looked, "the card moved on after he looked");
+
+  await lab.herdr().press(pane, "enter");
+  const done = await lab.screenWhere(
+    pane,
+    "the answer to be taken",
+    (screen) => cardRows(screen).length === 0 && !screen.includes("nothing was recorded"),
+  );
+  keep("7a-unrelated-entries", done);
+  assert.deepEqual(await lab.answered(ship), [
+    { body: "Ship it", source: "pane", written: undefined },
+  ]);
+  await lab.mainWasTold(2, ship, "Ship it");
+});
+
 test("an answer to a decision that changed while the card was open is refused and the card moves on", async () => {
   const pane = await lab.openMain();
   const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
@@ -167,7 +192,7 @@ test("an answer to a decision that changed while the card was open is refused an
     pane,
     "the refusal and the next decision",
     onCard(
-      [`c-${String(ship.id)} changed since you looked`, "nothing was recorded", RENAME],
+      [`c-${String(ship.id)} is no longer waiting for your answer`, "nothing was recorded", RENAME],
       [SHIP],
     ),
   );
@@ -293,7 +318,7 @@ test("in a 12-row pane a refusal of his own words keeps the note and the next de
     "the refusal and the next decision",
     onCard(
       [
-        `c-${String(ship.id)} changed since you looked`,
+        `c-${String(ship.id)} is no longer waiting for your answer`,
         "RENAME FIRST LINE",
         "→ Ship it",
         "esc later",

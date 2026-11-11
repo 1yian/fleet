@@ -39,7 +39,7 @@ interface Handlers {
     choice: string,
     written: boolean,
   ) => Promise<boolean>;
-  readonly onLater: (card: number, until: number, reason: string) => void;
+  readonly onLater: (card: number, hold: number, until: number, reason: string) => void;
   readonly onDismiss: (card: number) => void;
 }
 
@@ -233,8 +233,8 @@ function Hold(props: CardProps & { readonly question: Question; readonly open: (
       showQuestion={!(question.merge && card.pr !== null)}
       onRead={props.open}
       onAnswer={(hold, choice, written) => props.onAnswer(card.id, hold, choice, written)}
-      onLater={(until, reason) => {
-        props.onLater(card.id, until, reason);
+      onLater={(hold, until, reason) => {
+        props.onLater(card.id, hold, until, reason);
       }}
     />
   );

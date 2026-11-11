@@ -95,15 +95,11 @@ test("the board refuses an answer to a hold that is still with main", async () =
   const card = check(CardSchema, await cleo.call("card.new", { title: "Ads", kind: "scout" }));
   await cleo.call("hold", { card: card.id, question: "Which channel?", options: ["search"] });
   const ask = await main.waitForEntry((entry) => entry.kind === "hold", "the hold");
-  const current = check(OPS.board.result, await cleo.call("board", {})).find(
-    (each) => each.id === card.id,
-  );
   const response = await fetch(`${http()}api/action`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       card: card.id,
-      revision: current?.revision,
       action: { kind: "answer", hold: ask.id, choice: "search" },
     }),
   });

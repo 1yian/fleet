@@ -66,7 +66,25 @@ test("Needs you shows a hold, and one click answers it", async () => {
   assert.deepEqual([answer.author, answer.body], ["captain", "v2"]);
 });
 
-test("a click on a card that changed since the captain looked is refused", async () => {
+test("a click on a hold goes through although other entries landed on the card since the captain looked", async () => {
+  const card = await question("Renew the certificate", ["now", "later"]);
+  await freezeBoardUntilAction(page, await cardd.board());
+  await page.goto(http());
+  await page.getByText("Renew the certificate?").waitFor();
+  const looked = (await cardd.board()).cards.find((each) => each.id === card.id)?.revision ?? 0;
+  await main.call("comment", { card: card.id, text: "The certificate is ready to renew." });
+  await main.call("comment", { card: card.id, text: "Renewal needs a maintenance window." });
+  const moved = (await cardd.board()).cards.find((each) => each.id === card.id)?.revision ?? 0;
+  assert.ok(moved > looked, "the card moved on after he looked");
+
+  await page.getByRole("button", { name: "now" }).click();
+  await page.getByText("Nothing for you").waitFor();
+  const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  assert.deepEqual([answer.author, answer.body], ["captain", "now"]);
+  assert.equal(await page.getByRole("alert").count(), 0);
+});
+
+test("a click on a hold that was put off since the captain looked is refused", async () => {
   const card = await question("Renew the certificate", ["now", "later"]);
   await freezeBoardUntilAction(page, await cardd.board());
   await page.goto(http());
@@ -80,7 +98,7 @@ test("a click on a card that changed since the captain looked is refused", async
 
   await page.getByRole("button", { name: "now" }).click();
   const stale = page.getByRole("article", { name: "Renew the certificate" }).getByRole("alert");
-  await stale.getByText(`#${String(card.id)} changed since you looked`).waitFor();
+  await stale.getByText(`c-${String(card.id)} is no longer waiting for your answer`).waitFor();
   await stale.getByText("Nothing was sent").waitFor();
   assert.equal(main.entries.filter(({ entry }) => entry.kind === "answer").length, 0);
   await stale.getByRole("button", { name: "Dismiss" }).click();

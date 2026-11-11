@@ -142,10 +142,16 @@ test("a card parked for over a day on a wait nothing checks is named once a day,
   assert.deepEqual(await reminderOn(cleo, parked), [], "the mate that holds it is not told");
 });
 
-test("a card the captain put off, which its own mate holds, is named for main after a day and not for its mate", async () => {
+test("a card the captain put off is named for main after a day and not for its mate", async () => {
   const later = await newCard(cleo, "Launch the referral page");
+  const question = "Launch it now?";
+  await cleo.call("hold", { card: later.id, question });
+  await fleet.main.call("hold", { card: later.id, question, to: "captain" });
+  const asked = (await fleet.cardd.board()).holds.find((each) => each.card === later.id);
+  assert.ok(asked !== undefined, "the captain is asked");
   const status = await fleet.cardd.act(later.id, {
     kind: "hold",
+    hold: asked.hold,
     until: Date.now() + 10 * HOUR,
     reason: "after the launch",
   });

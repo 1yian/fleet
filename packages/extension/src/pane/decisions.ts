@@ -6,7 +6,7 @@ const DEADLINE_MS = 10_000;
 export interface Decision {
   readonly card: number;
   readonly title: string;
-  readonly revision: number;
+  readonly hold: number;
   readonly question: string;
   readonly options: readonly string[];
 }
@@ -15,8 +15,8 @@ const needsYou = (card: BoardCard): boolean => card.status === "needs-you";
 
 function decisionOf({ card, hold }: CardView): Decision[] {
   if (!needsYou(card) || hold?.holder !== "captain") return [];
-  const { question, options } = hold;
-  return [{ card: card.id, title: card.title, revision: card.revision, question, options }];
+  const { entry, question, options } = hold;
+  return [{ card: card.id, title: card.title, hold: entry, question, options }];
 }
 
 export async function loadDecisions(link: Link): Promise<Decision[]> {
@@ -34,10 +34,10 @@ export async function answerDecision(
   choice: string,
   written: boolean,
 ): Promise<void> {
-  const { card, revision } = decision;
+  const { card, hold } = decision;
   await link.call(
     "pane.answer",
-    { card, revision, choice, ...(written ? { written } : {}) },
+    { card, hold, choice, ...(written ? { written } : {}) },
     DEADLINE_MS,
   );
 }

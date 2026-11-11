@@ -87,7 +87,7 @@ test("a refused answer that leaves the decision open keeps the words he typed", 
   const refused = await lab.screenWhere(
     pane,
     "the refusal with his words still on the card",
-    onCard([`c-${String(rename.id)} changed since you looked`, RENAMED, `→ ${MY_WORDS}`, "⏎ send"]),
+    onCard([`c-${String(rename.id)}'s decision changed`, RENAMED, `→ ${MY_WORDS}`, "⏎ send"]),
   );
   keep("12-refused-keeps-words", refused);
   assert.deepEqual(await lab.answered(rename), []);
@@ -119,7 +119,7 @@ test("a refused answer that adds an option keeps the pointer on his words, and t
       pane,
       "the refusal with the new option listed and the pointer on his words",
       onCard(
-        [`c-${String(rename.id)} changed since you looked`, "Postpone", `→ ${MY_WORDS}`, "⏎ send"],
+        [`c-${String(rename.id)}'s decision changed`, "Postpone", `→ ${MY_WORDS}`, "⏎ send"],
         ["→ Postpone"],
       ),
     ),

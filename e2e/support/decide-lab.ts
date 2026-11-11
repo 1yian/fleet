@@ -200,6 +200,12 @@ export class DecideLab {
       }));
   }
 
+  async revisionOf(card: Card): Promise<number> {
+    const found = (await this.cardd.board()).cards.find((each) => each.id === card.id);
+    if (found === undefined) throw new Error(`c-${String(card.id)} is not on the board`);
+    return found.revision;
+  }
+
   async mainWasTold(index: number, card: Card, text: string): Promise<void> {
     const turns = await this.h.waitForCall(index, "mate", WAIT_MS);
     const last = turns.at(-1)?.text ?? "";
