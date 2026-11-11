@@ -58,11 +58,9 @@ test("an older follow-up is resent after a newer steer reached the session file"
     (await again.waitForEntries(1)).map((entry) => entry.body),
     ["older follow-up"],
   );
-  assert.equal(again.welcome?.lowWater, older.id - 1);
   await again.close();
 
   const third = await fleet.cardd.connect(token, [older.id]);
-  assert.equal(third.welcome?.lowWater, newer.id);
   await fleet.main.call("board", {});
   assert.deepEqual(third.entries, []);
 });
@@ -106,4 +104,55 @@ test("a done report with an unread comment is refused until the comment is taken
   worker.ack(steer.id);
   await fleet.main.call("board", {});
   await worker.call("report", { status: "done", text: "finished with the sidebar" });
+});
+
+test("a done report is allowed once the worker read the comment, before its run settles", async () => {
+  const worker = await fleet.cardd.connect(token, [], false);
+  const [task] = await worker.waitForEntries(1);
+  assert.ok(task !== undefined);
+  worker.ack(task.id);
+  await comment("scope changed: also cover the sidebar");
+  const [, steer] = await worker.waitForEntries(2);
+  assert.ok(steer !== undefined);
+
+  await assert.rejects(
+    worker.call("report", { status: "done", text: "finished" }),
+    /does not count yet: you have 1 unread comment/,
+  );
+  worker.read(steer.id);
+  await worker.call("report", { status: "done", text: "finished with the sidebar" });
+});
+
+test("a restarted worker whose session file holds the comment may hand off at once", async () => {
+  const first = await fleet.cardd.connect(token, [], false);
+  const [task] = await first.waitForEntries(1);
+  assert.ok(task !== undefined);
+  await comment("scope changed: also cover the sidebar");
+  const [, steer] = await first.waitForEntries(2);
+  assert.ok(steer !== undefined);
+  await first.close();
+
+  const again = await fleet.cardd.connect(token, [task.id, steer.id], false);
+  await again.call("report", { status: "done", text: "finished with the sidebar" });
+});
+
+test("a restarted worker whose session file lacks the comment is sent it again and hands off after reading it", async () => {
+  const first = await fleet.cardd.connect(token, [], false);
+  const [task] = await first.waitForEntries(1);
+  assert.ok(task !== undefined);
+  await comment("scope changed: also cover the sidebar");
+  await first.waitForEntries(2);
+  await first.close();
+
+  const again = await fleet.cardd.connect(token, [task.id], false);
+  const steer = await again.waitForEntry(
+    (entry) => entry.body === "scope changed: also cover the sidebar",
+    "the comment to be sent again",
+  );
+  await assert.rejects(
+    again.call("report", { status: "done", text: "finished" }),
+    /does not count yet: you have 1 unread comment.*scope changed: also cover the sidebar/s,
+  );
+  again.read(steer.id);
+  await again.call("report", { status: "done", text: "finished with the sidebar" });
 });

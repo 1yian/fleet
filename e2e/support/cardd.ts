@@ -317,6 +317,7 @@ type Outgoing =
       maintenance?: boolean;
       running?: boolean;
     }
+  | { t: "read"; entry: number }
   | { t: "ack"; entry: number }
   | { t: "activity"; state: "running" | "idle" | "waiting"; progress?: boolean }
   | { t: "call"; id: number; op: string; args: unknown };
@@ -357,6 +358,10 @@ export class Session {
     if (typeof result === "number") throw new Error(`the connection closed with ${String(result)}`);
     if (!result.ok) throw new Error(result.error);
     return result.value;
+  }
+
+  read(entry: number): void {
+    this.send({ t: "read", entry });
   }
 
   ack(entry: number): void {

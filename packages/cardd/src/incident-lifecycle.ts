@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Status } from "@fleet/protocol";
+import { QUEUED_DELIVERY } from "./delivery-states.ts";
 import type { Kind, Mode, Phase } from "./incident-kinds.ts";
 import { isFinished, pausedNow } from "./status.ts";
 import { loadCard } from "./store.ts";
@@ -329,7 +330,7 @@ function writeControlled(db: DatabaseSync, actor: string, at: number): void {
     `UPDATE incidents SET control_at = ?
      WHERE actor = ? AND state = 'recovering' AND control_at IS NULL
        AND EXISTS (SELECT 1 FROM deliveries d WHERE d.session = incidents.actor
-         AND d.entry = incidents.recovery_entry AND d.state <> 'pending')`,
+         AND d.entry = incidents.recovery_entry AND d.state NOT IN (${QUEUED_DELIVERY}))`,
   ).run(at, actor);
 }
 

@@ -49,13 +49,9 @@ async function takenIn(session: string, count: number): Promise<void> {
     const deadline = Date.now() + 15_000;
     for (;;) {
       const rows = db
-        .prepare("SELECT state, intake FROM deliveries WHERE session = ? ORDER BY entry")
+        .prepare("SELECT state FROM deliveries WHERE session = ? ORDER BY entry")
         .all(session);
-      if (rows.length === count && rows.every((row) => row["intake"] === "taken")) {
-        assert.deepEqual(
-          rows.map((row) => row["state"]),
-          rows.map(() => "acknowledged"),
-        );
+      if (rows.length === count && rows.every((row) => row["state"] === "acknowledged")) {
         return;
       }
       assert.ok(Date.now() < deadline, `delivery was not acknowledged: ${JSON.stringify(rows)}`);

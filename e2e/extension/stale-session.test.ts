@@ -79,7 +79,7 @@ test("a session that cannot read cardd's board says it runs other code and how t
       const message: unknown = JSON.parse(Buffer.isBuffer(data) ? data.toString("utf8") : "null");
       if (typeof message !== "object" || message === null) return;
       if ("t" in message && message.t === "hello")
-        socket.send(JSON.stringify({ t: "welcome", session: "cnp", role: "mate", lowWater: 0 }));
+        socket.send(JSON.stringify({ t: "welcome", session: "cnp", role: "mate" }));
       if ("t" in message && message.t === "call" && "id" in message)
         socket.send(
           JSON.stringify({

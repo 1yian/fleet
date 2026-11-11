@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { CAPTAIN, howToAnswerWake, howToReply, type Entry } from "@fleet/protocol";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -28,6 +29,20 @@ export function idsInSessionFile(file: string | undefined): number[] {
     .filter((entry) => isRecord(entry) && entry["type"] === "custom_message")
     .map(fleetEntryId)
     .filter((id) => id !== undefined);
+}
+
+export function idsInModelContext(
+  session: ExtensionContext["sessionManager"],
+): ReadonlySet<number> {
+  return new Set(
+    session
+      .buildSessionProjection()
+      .entries.filter(({ messages }) => messages.length > 0)
+      .map(({ sourceEntry }) =>
+        sourceEntry.type === "custom_message" ? fleetEntryId(sourceEntry) : undefined,
+      )
+      .filter((id) => id !== undefined),
+  );
 }
 
 const field = (entry: Entry, key: string): string | undefined => {

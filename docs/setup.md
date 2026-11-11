@@ -417,7 +417,7 @@ Without `--plan`, the command prints the active plan and the plan waiting to sta
 - A wake dispatches no worker and makes no card. The mate decides what to do, inside the goal.
 - DST: a time that does not exist on a spring day fires when the clock first shows it or a later time. A time that happens twice on an autumn day fires once. A day is the calendar day in the plan's zone.
 - A wake whose time passed while `cardd` was down fires at the next check, once for each wake, with the other wakes due then. Only its latest slot is made up, never the earlier ones. When it is older than the newest time in the message, its purpose carries `[due <time>]`.
-- Restarts are safe. Each wake records the slots it covers on its own entry, so a restart of `cardd` or of the mate repeats none of them. A wake the mate had not taken in is delivered again at its next connect, as any message is.
+- Restarts are safe. Each wake records the slots it covers on its own entry, so a restart of `cardd` or of the mate repeats none of them. A wake the mate had not taken in is delivered again, at its next connect or by the two-minute chase, as any message is.
 
 A script, such as a guard that runs from cron, wakes the mate with a note:
 
@@ -435,7 +435,7 @@ Any mate, main included, can have `cardd` deliver a fixed message to main or to 
 
 - `schedule_set(to, at, timezone, text, on?, id?)` makes a schedule, or changes the one named by `id`. `at` is `HH:MM` on a 24-hour clock in the IANA `timezone`. Without `on` it repeats every day. `on` is a local date, `YYYY-MM-DD`, for a message that is delivered once and then removed. A past `on` time, or a date that does not exist such as 2027-02-30, is refused. A lane has at most 24 schedules.
 - `schedule_list()` shows a mate its own schedules, and main every lane's. `schedule_remove(id)` removes one, and it stops at once. A mate changes or removes only its own schedules.
-- `cardd` checks every 15 seconds. At the time it delivers `[fleet] scheduled message from <owner>: <text>`, with the text word for word, to the recipient. It is an ordinary message: the same resend-until-read delivery applies ([Persistent wakes](wake-plan.md)), and no reply is owed. For a second mate it lands on its lane card. For main it lands on a standing card named `scheduled-messages`, which `cardd` makes the first time.
+- `cardd` checks every 15 seconds. At the time it delivers `[fleet] scheduled message from <owner>: <text>`, with the text word for word, to the recipient. It is an ordinary message: the same resend-until-taken-in delivery applies ([Persistent wakes](wake-plan.md)), and no reply is owed. For a second mate it lands on its lane card. For main it lands on a standing card named `scheduled-messages`, which `cardd` makes the first time.
 - A time that passed while `cardd` was down is delivered at the next check, once, as with wakes. A restart repeats nothing.
 - The board lists every schedule in its rail, under Schedules, with its time, owner, recipient, and text.
 - An unknown recipient, a bad time zone, or a text that is empty or longer than 500 characters is refused with an error.

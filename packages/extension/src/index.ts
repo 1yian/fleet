@@ -211,6 +211,14 @@ function deliverAfterSync(
   );
 }
 
+function idsClearedOnSettle(pi: ExtensionAPI): Set<number> {
+  const ids = new Set<number>();
+  pi.on("agent_settled", () => {
+    ids.clear();
+  });
+  return ids;
+}
+
 function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["role"]): void {
   applyCachePolicy(role);
   applyCacheBreakLog(pi, ctx);
@@ -230,11 +238,9 @@ function start(
 ): void {
   enableCodemode(pi);
   const runInProgress = trackRun(pi);
-  const injected = new Set(idsInSessionFile(sessionFile));
-  const injectedAgain = new Set<number>();
-  pi.on("agent_settled", () => {
-    injectedAgain.clear();
-  });
+  const inFileAtStart = idsInSessionFile(sessionFile);
+  const injected = new Set(inFileAtStart);
+  const injectedAgain = idsClearedOnSettle(pi);
   let unreadable: string | undefined;
   const maintenance: { queue?: MaintenanceQueue } = {};
   const link = new Link({
@@ -310,7 +316,7 @@ function start(
     worker?.dispose();
     link.stop();
   });
-  registerIntake(pi, link);
+  registerIntake(pi, link, inFileAtStart);
   reportActivity(pi, link, () => (jobs?.waiting === true ? "waiting" : "idle"));
   link.start();
 }

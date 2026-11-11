@@ -234,7 +234,7 @@ test("a start announcement survives a hello that cardd never accepted", async ()
         socket.close(1011, "cardd went away before it answered");
         return;
       }
-      socket.send(JSON.stringify({ t: "welcome", session: "cleo", role: "mate", lowWater: 0 }));
+      socket.send(JSON.stringify({ t: "welcome", session: "cleo", role: "mate" }));
       if (hellos.length === 2) socket.close(1012, "cardd restarted");
     });
   });

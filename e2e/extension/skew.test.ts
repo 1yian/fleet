@@ -63,7 +63,7 @@ test("a mate that gets a server message it cannot read stays alive, says so once
   assert.equal(
     context,
     [
-      "[fleet] link: cardd sent a message this session cannot read (invalid : must have required properties session, role, lowWater). It may run other code than this extension. The session keeps reconnecting.",
+      "[fleet] link: cardd sent a message this session cannot read (invalid : must have required properties session, role). It may run other code than this extension. The session keeps reconnecting.",
       "Are you there?",
     ].join("\n"),
   );

@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { WebSocket, WebSocketServer } from "ws";
-import { parseServerMessage, type Card } from "@fleet/protocol";
+import { parseClientMessage, parseServerMessage, type Card } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { waitForTakenIn } from "../support/delivery-states.ts";
 import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
@@ -169,6 +170,9 @@ interface Proxy {
   readonly dropped: () => number;
   readonly held: () => boolean;
   readonly reconnect: () => void;
+  readonly cut: () => void;
+  readonly loseNextAck: () => void;
+  readonly acksLost: () => number;
   readonly release: () => void;
   readonly close: () => Promise<void>;
 }
@@ -180,12 +184,19 @@ async function proxyTo(upstream: string): Promise<Proxy> {
   let dropping = false;
   let welcomeHeld = false;
   let dropped = 0;
+  let losingAck = false;
+  let acksLost = 0;
   const heldFrames: { client: WebSocket; text: string }[] = [];
   server.on("connection", (client) => {
     const up = new WebSocket(upstream);
     const early: string[] = [];
     client.on("message", (data) => {
       const text = Buffer.isBuffer(data) ? data.toString("utf8") : "";
+      if (losingAck && parseClientMessage(text).t === "ack") {
+        losingAck = false;
+        acksLost += 1;
+        return;
+      }
       if (up.readyState === WebSocket.OPEN) up.send(text);
       else early.push(text);
     });
@@ -219,6 +230,13 @@ async function proxyTo(upstream: string): Promise<Proxy> {
     url: `ws://127.0.0.1:${String(port)}`,
     dropped: () => dropped,
     held: () => welcomeHeld,
+    cut: () => {
+      for (const client of server.clients) client.terminate();
+    },
+    loseNextAck: () => {
+      losingAck = true;
+    },
+    acksLost: () => acksLost,
     reconnect: () => {
       holding = true;
       dropping = true;
@@ -236,6 +254,34 @@ async function proxyTo(upstream: string): Promise<Proxy> {
     },
   };
 }
+
+test("an acknowledgement that was lost with its connection is made again by the next settled run that holds the resent message", async () => {
+  const proxy = await proxyTo(fleet.cardd.url);
+  proxy.loseNextAck();
+  h.onModel(() => ({ text: "took the assignment" }));
+  try {
+    h.startPi("c-1-a1", { ...env, FLEET_URL: proxy.url }, [EXTENSION]);
+    const deadline = Date.now() + 20_000;
+    while (proxy.acksLost() < 1) {
+      if (Date.now() > deadline) throw new Error("the worker never acknowledged its assignment");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    proxy.cut();
+    await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the worker to reconnect");
+    await h.waitForNth(
+      (e) => e["type"] === "message_end" && e["entryId"] === 1,
+      2,
+      "the assignment to be sent again",
+    );
+    await waitForTakenIn(fleet.cardd.db, { kind: "comment" });
+    assert.equal(
+      h.events.filter((e) => e["type"] === "message_end" && e["entryId"] === 1).length,
+      2,
+    );
+  } finally {
+    await proxy.close();
+  }
+});
 
 test("a run that ends between a running hello and its welcome leaves the worker idle, so a comment it never took in is sent again and flagged as missed", async () => {
   const proxy = await proxyTo(fleet.cardd.url);

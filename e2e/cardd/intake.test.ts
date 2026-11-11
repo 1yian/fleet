@@ -99,7 +99,7 @@ test("a comment a waiting worker never takes in is resent three times, then main
   await worker.close();
 });
 
-test("an assignment already in the worker's conversation after a restart is never resent or reported missed", async () => {
+test("an assignment a settled run took in is not resent or reported missed when the session file already holds it", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
   const main = fleet.main;
   const card = await newCard(cleo, "Users see one scrollbar");
@@ -107,6 +107,8 @@ test("an assignment already in the worker's conversation after a restart is neve
   const first = await fleet.cardd.connect(token, [], false);
   const [task] = await first.waitForEntries(1);
   const assignment = task?.id ?? 0;
+  first.ack(assignment);
+  await first.call("report", { status: "working", text: "read the assignment" });
   await first.close();
 
   const worker = await fleet.cardd.connect(token, [assignment], false);
@@ -123,6 +125,64 @@ test("an assignment already in the worker's conversation after a restart is neve
     ({ entry }) => entry.fields["condition"] === "missed" && entry.fields["entry"] === assignment,
   );
   assert.deepEqual(reports, []);
+  await worker.close();
+});
+
+test("a message left in the session file by an aborted turn is resent and taken in on the next settled run", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
+  const main = fleet.main;
+  const card = await newCard(cleo, "Users see one scrollbar");
+  const token = await begin(cleo, card);
+  const first = await fleet.cardd.connect(token, [], false);
+  const [task] = await first.waitForEntries(1);
+  const assignment = task?.id ?? 0;
+  await first.close();
+
+  const worker = await fleet.cardd.connect(token, [assignment], false);
+  await worker.waitForEntry(
+    (entry) => entry.id === assignment,
+    "the aborted assignment to be sent again",
+  );
+  assert.equal(worker.entries.find((push) => push.entry.id === assignment)?.again, true);
+  worker.ack(assignment);
+  await cleo.call("comment", { card: card.id, text: "use the v2 endpoint" });
+  await main.waitForEntry(
+    (entry) => entry.fields["condition"] === "missed" && entry.card === card.id,
+    "main to hear the later unread comment, after the intake window",
+  );
+
+  assert.equal(worker.entries.filter((push) => push.entry.id === assignment).length, 1);
+  assert.deepEqual(
+    main.entries.filter(
+      ({ entry }) => entry.fields["condition"] === "missed" && entry.fields["entry"] === assignment,
+    ),
+    [],
+  );
+  await worker.close();
+});
+
+test("a comment read in a run that never settled is sent again, and a handoff waits until it is read again", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], true);
+  const card = await newCard(cleo, "Users see one scrollbar");
+  const worker = await fleet.cardd.connect(await begin(cleo, card), [], false);
+  const [task] = await worker.waitForEntries(1);
+  worker.ack(task?.id ?? 0);
+  await cleo.call("comment", { card: card.id, text: "use the v2 endpoint" });
+  const steer = await worker.waitForEntry(
+    (entry) => entry.body === "use the v2 endpoint",
+    "the comment to reach the worker",
+  );
+  worker.read(steer.id);
+  await worker.waitForEntries(3);
+  assert.deepEqual(
+    worker.entries.slice(2, 3).map(({ entry, again }) => [entry.id, again]),
+    [[steer.id, true]],
+  );
+
+  await assert.rejects(
+    worker.call("report", { status: "blocked", text: "the v2 endpoint is down" }),
+    /does not count yet: you have 1 unread comment.*use the v2 endpoint/s,
+  );
   await worker.close();
 });
 

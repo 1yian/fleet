@@ -13,7 +13,7 @@ import {
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { MISSED_HEARTBEATS, runCheck, type JobLossGrace } from "./check.ts";
 import type { Timings } from "./timing.ts";
-import { acknowledge, confirm, toPush } from "./deliveries.ts";
+import { acknowledge, confirm, markRead, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
 import { adoptProcess } from "./incidents.ts";
 import { performOp } from "./ops.ts";
@@ -151,7 +151,8 @@ class Hub {
       if (message.t === "hello") {
         session = this.hello(socket, message);
         token = session === undefined ? undefined : message.token;
-      } else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
+      } else if (message.t === "read") markRead(this.db, live().id, message.entry);
+      else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
       else if (message.t === "activity") {
         if (setSessionState(this.db, live().id, message.state, message.progress === true))
           this.web.changed();
@@ -232,7 +233,7 @@ class Hub {
     }
     this.bySession.get(session.id)?.close(CLOSE_SUPERSEDED, "a newer connection took over");
     this.bySession.set(session.id, socket);
-    const { lowWater, reporters } = transaction(this.db, () => {
+    const reporters = transaction(this.db, () => {
       setSessionState(this.db, session.id, message.running === true ? "running" : "idle");
       adoptProcess(this.db, session.id, message.process);
       const told = adoptMaintenance(
@@ -241,10 +242,11 @@ class Hub {
         message.started === true,
         message.maintenance === true,
       );
-      return { lowWater: confirm(this.db, session.id, message.inFile), reporters: told };
+      confirm(this.db, session.id, message.inFile);
+      return told;
     });
     this.web.changed();
-    send(socket, { t: "welcome", session: session.id, role: session.role, lowWater });
+    send(socket, { t: "welcome", session: session.id, role: session.role });
     this.flush(session.id, true);
     for (const reporter of new Set(reporters)) this.flush(reporter, false);
     return session;
