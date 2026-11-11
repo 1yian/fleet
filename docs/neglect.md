@@ -60,7 +60,7 @@ The captain is told by the strip in main's pane and by the board's Attention str
 
 - Pi pane: `/pulse` opens an overlay with every open card, quiet first, running cards in one line. See [pane.md](pane.md).
 - Pi pane: the counts and the strip read `pulse` and nothing else. A notice of any kind counts, so an idle card past 4 hours is on main's pane as soon as main is told.
-- Board: an Attention strip above the lanes, and one line on each card with who has it, what runs, when it moved, and what it waits on.
+- Board: an Attention strip above the lanes, and one line on each card with who has it, what runs, when it moved, and what it waits on. The board is the captain's, so the strip and the line's alarm show only what the captain is told: a notice of `captain` or `urgent`, a broken or stalled state, and his own cards. An idle card between 4 and 24 hours is main's alone: the board's line for it says what is true and raises no alarm.
 
 Sorting puts the louder notice first, then the state (idle, parked, stalled, you, waiting, running), then the oldest.
 

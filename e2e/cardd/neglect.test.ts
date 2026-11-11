@@ -163,6 +163,28 @@ test("a card the captain put off, which its own mate holds, is named for main af
   assert.deepEqual(await reminderOn(cleo, later), [], "the mate that holds it is not told");
 });
 
+test("a hold dated again after it sat open for a day is named for main at the age of the hold, not of the date", async () => {
+  const held = await newCard(cleo, "Crud ingress card");
+  await cleo.call("hold", { card: held.id, question: "Wait for it?" });
+  ageCard(fleet.cardd, held, 24 * HOUR * SCALE + 2 * MINUTE);
+  await cleo.call("hold", {
+    card: held.id,
+    question: "Wait for it?",
+    until: Date.now() + HOUR,
+    outside: "the first real support hub interaction",
+    remaining: [],
+  });
+
+  const entry = await fleet.main.waitForEntry(
+    (each) => isReminder(each) && each.body.includes("parked for over a day"),
+    "the parked reminder",
+  );
+  assert.match(
+    entry.body,
+    new RegExp(`- c-${String(held.id)} Crud ingress card - waits on an outside date`),
+  );
+});
+
 test("a worker's pause past a day is listed for main with what to do, and not for its mate", async () => {
   const paused = await newCard(cleo, "Wait for the CI run");
   const worker = await fleet.cardd.connect(await begin(cleo, paused));

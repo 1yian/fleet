@@ -52,7 +52,9 @@ test("the Attention strip lists broken, parked, idle and your cards in that orde
   await park(parked);
   ageCard(cardd, parked, 4 * DAY);
   const idle = await newCard(main, "Port the invoices");
-  ageCard(cardd, idle, 5 * HOUR);
+  ageCard(cardd, idle, 25 * HOUR);
+  const mainsIdle = await newCard(main, "Port the ads");
+  ageCard(cardd, mainsIdle, 5 * HOUR);
   await main.call("card.new", { title: "Bitwarden login for the p620 browser", kind: "captain" });
   const running = await newCard(main, "Ship the scrollbar fix");
   const worker = await cardd.connect(await begin(main, running));
@@ -68,13 +70,18 @@ test("the Attention strip lists broken, parked, idle and your cards in that orde
   );
   assert.equal(await items.nth(0).locator(".what").textContent(), "Broken");
   assert.equal(await items.nth(1).locator(".what").textContent(), "Parked 4d");
-  assert.equal(await items.nth(2).locator(".what").textContent(), "Idle 5h");
+  assert.equal(await items.nth(2).locator(".what").textContent(), "Idle 1d");
   assert.equal(await items.nth(3).locator(".what").textContent(), "Waiting on you");
   assert.match(
     (await items.nth(1).locator(".why").textContent()) ?? "",
     /waits on an outside date: the first real support hub interaction · running nothing/,
   );
   assert.equal(await strip.getByText("Ship the scrollbar fix").count(), 0);
+  assert.equal(
+    await strip.getByText("Port the ads").count(),
+    0,
+    "a card idle for 5 hours is main's to hear about, not the captain's",
+  );
   assert.deepEqual(await strip.locator(".attention-chip").allTextContents(), [
     "1 broken",
     "1 idle",
@@ -85,8 +92,11 @@ test("the Attention strip lists broken, parked, idle and your cards in that orde
   const line = page.getByRole("article", { name: "Port the invoices" }).locator("p.pulse-line");
   assert.equal(
     await line.textContent(),
-    "Idle 5h · main · running nothing · moved 5h ago · waits on main",
+    "Idle 1d · main · running nothing · moved 1d ago · waits on main",
   );
+  const mains = page.getByRole("article", { name: "Port the ads" }).locator("p.pulse-line");
+  assert.equal(await mains.textContent(), "main · running nothing · moved 5h ago · waits on main");
+  assert.equal(await mains.locator("b").count(), 0, "main's notice raises no alarm on the board");
   const live = page
     .getByRole("article", { name: "Ship the scrollbar fix" })
     .locator("p.pulse-line");
@@ -115,7 +125,7 @@ test("the Attention strip lists broken, parked, idle and your cards in that orde
 test("the strip shows five and counts the rest", async () => {
   for (const title of ["One", "Two", "Three", "Four", "Five", "Six", "Seven"]) {
     const card = await newCard(main, `Port ${title}`);
-    ageCard(cardd, card, 5 * HOUR);
+    ageCard(cardd, card, 25 * HOUR);
   }
   await open();
   const strip = page.getByRole("region", { name: "Attention" });

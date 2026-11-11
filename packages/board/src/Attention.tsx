@@ -19,11 +19,10 @@ interface Flagged {
   readonly pulse: Pulse;
 }
 
-const flagged = (pulse: Pulse): boolean =>
-  pulse.state === "you" ||
-  pulse.state === "broken" ||
-  pulse.state === "stalled" ||
-  pulse.notice !== "none";
+export const alarming = ({ state, notice }: Pulse): boolean =>
+  state === "broken" || state === "stalled" || notice === "captain" || notice === "urgent";
+
+const flagged = (pulse: Pulse): boolean => pulse.state === "you" || alarming(pulse);
 
 function flaggedIn(cards: readonly BoardCard[]): Flagged[] {
   return cards

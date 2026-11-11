@@ -10,7 +10,7 @@ import {
   type Status,
 } from "@fleet/protocol";
 import { Ask } from "./Ask.tsx";
-import { heldText, toneOf } from "./Attention.tsx";
+import { alarming, heldText, toneOf } from "./Attention.tsx";
 import {
   age,
   doneLabel,
@@ -187,7 +187,7 @@ function PulseLine(props: { readonly card: BoardCard; readonly now: number }) {
       : [ownerText(pulse.owner), `running ${runningText(card)}`, moved];
   if (pulse.state !== "you" && pulse.state !== "running" && card.datedWait === null)
     parts.push(waitsText(card));
-  const loud = pulse.notice !== "none" || pulse.state === "broken" || pulse.state === "stalled";
+  const loud = alarming(pulse);
   return (
     <p className={loud ? `pulse-line ${toneOf(pulse)}` : "pulse-line"} data-state={pulse.state}>
       {loud ? (

@@ -101,9 +101,11 @@ function waitItem(
   const { hold } = standing.facts;
   const question = firstLine(hold?.question ?? "");
   const group = waitGroup(wait, pulse);
-  const to = group === "parked" ? mainLane(db) : receiver(db, card, hold?.holder ?? "owner");
+  const parked = group === "parked";
+  const to = parked ? mainLane(db) : receiver(db, card, hold?.holder ?? "owner");
+  const since = parked ? (pulse?.since ?? standing.since) : standing.since;
   const line = `c-${String(card.id)} ${card.title} - ${waitLine(sightOf(db, to, card.id, wait), now)}: ${question}`;
-  return { card: card.id, since: standing.since, to, line, group };
+  return { card: card.id, since, to, line, group };
 }
 
 function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefined, now: number) {
