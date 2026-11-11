@@ -10,7 +10,7 @@ export async function closeMerged(link: Link, entry: Entry): Promise<string> {
   const summary = `${typeof pr === "string" ? `PR ${pr} merged: ` : ""}${entry.body}`;
   try {
     const done = await close(link, { card: entry.card, text: summary, confirm: true });
-    return ` Closed automatically: ${done} Relay the outcome with the PR URL.`;
+    return ` Closed automatically: ${done}`;
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error);
     return ` Closing it automatically failed (${why}). Close it yourself with close(card, summary).`;
