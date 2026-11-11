@@ -151,9 +151,6 @@ test("g p picks a project clone with fzf and goes there, and g k goes to the ski
     "the header to name the clone",
   );
   await files.type("gk");
-  await files.sees(
-    new RegExp(`^${escaped(join(fleet.userHome, ".agents", "skills"))}(\\s.*)?$`, "m"),
-    "the header to name the released skills",
-  );
+  await files.sees(/^~\/\.agents\/skills\s*$/m, "the header to name the released skills");
   await files.sees("lavish");
 });
