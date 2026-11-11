@@ -138,6 +138,21 @@ test("a zone he names that the reader does not know is refused in the Later box 
   assert.equal(await region("Needs you").getByRole("article", { name: SIMPLE }).count(), 1);
 });
 
+test("two Later boxes open together each keep their own label, focus, and words", async () => {
+  const other = "Vehicle acquisition: a passed lead stops Cleo's emails";
+  await openLater(SIMPLE);
+  await openLater(other);
+  const first = until(SIMPLE);
+  const second = until(other);
+  assert.notEqual(await first.getAttribute("id"), await second.getAttribute("id"));
+
+  await first.click();
+  await later(other).getByText("Or say when").click();
+  await page.keyboard.type("tomorrow 9am");
+  assert.equal(await second.inputValue(), "tomorrow 9am");
+  assert.equal(await first.inputValue(), "");
+});
+
 test("a time in a zone he names holds the card, and the notice shows the resolved time and zone", async () => {
   await openLater(SIMPLE);
   await until(SIMPLE).fill("Dec 31 2099 4PM CET");

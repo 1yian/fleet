@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { MERGE_OPTIONS } from "@fleet/protocol";
 import { deviceZone, type Question } from "./format.ts";
 import { ClockIcon, PenIcon } from "./icons.tsx";
@@ -193,6 +193,7 @@ function Later(props: {
   readonly onLater: (said: string) => Promise<string | undefined>;
   readonly onCancel: () => void;
 }) {
+  const inputId = useId();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
@@ -231,11 +232,11 @@ function Later(props: {
           void send(text);
         }}
       >
-        <label className="write-prompt" htmlFor="later-until">
+        <label className="write-prompt" htmlFor={inputId}>
           Or say when
         </label>
         <input
-          id="later-until"
+          id={inputId}
           type="text"
           aria-label="Until when"
           autoFocus
