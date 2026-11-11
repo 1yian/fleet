@@ -238,6 +238,8 @@ test("a date with no year is its next occurrence as a whole instant, and Feb 29 
     ["Nov 21 4PM UTC", Date.UTC(2026, 10, 21, 16)],
     ["Feb 28 4PM UTC", Date.UTC(2027, 1, 28, 16)],
     ["Feb 29 4PM UTC", Date.UTC(2028, 1, 29, 16)],
+    ["Mar 8 2:30am America/New_York", Date.UTC(2027, 2, 8, 7, 30)],
+    ["3/8 2:30am America/New_York", Date.UTC(2027, 2, 8, 7, 30)],
   ];
   for (const [said, expected] of cases) assert.equal(await yearless(said), expected, said);
 
@@ -248,6 +250,11 @@ test("a date with no year is its next occurrence as a whole instant, and Feb 29 
     ["Feb 30 4PM UTC", /not a date that exists/],
     ["Apr 31 4PM UTC", /not a date that exists/],
     ["Feb 29 2027 4PM UTC", /not a date that exists/],
+    [
+      "Mar 8 2026 2:30am America/New_York",
+      /02:30 does not exist in America\/New_York on 2026-03-08/,
+    ],
+    ["Mar 14 2:30am America/New_York", /02:30 does not exist in America\/New_York on 2027-03-14/],
   ];
   for (const [text, message] of refused) {
     const outcome = await fromBoard(card, text, "UTC");

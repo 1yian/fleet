@@ -52,7 +52,8 @@ function calendarDate(
   }
   for (let year = thisYear; year <= thisYear + LEAP_SPAN; year += 1) {
     const date = civil(year, day.month, day.day);
-    if (date !== undefined && instantIn(zone, date, clock ?? MORNING) > now) return date;
+    if (date === undefined || date < today) continue;
+    if (instantIn(zone, date, clock ?? MORNING) > now) return date;
   }
   throw new Error(`"${said}" is not a date that exists.`);
 }
