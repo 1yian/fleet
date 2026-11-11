@@ -87,6 +87,7 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 │                                            │
 │ ◆ YOU 4.4d  c-1051 fleet                   │
 │   Bitwarden login for the p620 browser     │
+│   moved 4.4d ago                           │
 │                                            │
 │ ▶ 24 running                    ⏎ expand   │
 │ ↑↓ move   ⏎ board link   esc close         │
@@ -94,7 +95,7 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 ```
 
 - Rows are sorted by who must be told (red, then amber), then by state (idle, parked, stalled, you, waiting), then oldest first. Running cards are one line. `⏎` on it opens their list, and each running card is then a row of its own: `↓` moves down it, `⏎` on a card shows its board link, and `⏎` on the count closes the list.
-- A row shows its state and how long it has held, the card, its lane, and its title. Every row but a Needs you row adds who has it, what runs, when it last moved, what it waits on, and how many steps are behind it.
+- A row shows its state and how long it has held, the card, its lane, and its title. Every row adds when the card last moved and how many steps are behind it, if it has a hold that names some. A row that is not a Needs you row also adds who has it, what runs, and what it waits on. A Needs you row skips those three, because the captain has it.
 - `⏎` on a card closes the overlay and shows the card's board link. Where the terminal supports links, the card number is one too.
 - It reads the board when it opens. It does not refresh while open.
 - A long list scrolls with `↑` and `↓`. `esc` or `q` closes it.

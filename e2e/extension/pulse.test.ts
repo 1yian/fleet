@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
-import { ageCard } from "../support/fleet.ts";
+import { ageCard, oldDatedHold } from "../support/fleet.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
@@ -176,6 +176,32 @@ test("/pulse lists the neglected cards first, quiet first, with running cards in
     .join("\n");
   for (const text of ["quiet first", "PARKED", "IDLE 5h", "2 running", "⏎"])
     assert.ok(!context.includes(text), `the model's context holds ${text}:\n${context}`);
+});
+
+test("a Needs you row shows when the card last moved and the steps behind it, also for a captain hold whose date has passed", async () => {
+  const step = await card("Capacity proof");
+  const asked = await card("Pick the vendor");
+  oldDatedHold(cardd, asked, "captain", Date.now(), Date.now() - 1_000, [step.id]);
+  ageCard(cardd, asked, 5 * HOUR);
+  const pane = await openMain();
+  await screenWhere(pane, "the pane to count what is his", (screen) => screen.includes("◆ 1"));
+
+  await herdr().submit(pane, "/pulse");
+  const opened = await screenWhere(pane, "the overlay", (screen) =>
+    screen.includes("Pulse · 2 open · quiet first"),
+  );
+  keep("pulse-10-you-row", opened);
+  let last = -1;
+  for (const text of [
+    `c-${String(asked.id)}`,
+    "Pick the vendor",
+    "moved 5h ago",
+    "1 step behind it, none started",
+  ]) {
+    const found = at(opened, text);
+    assert.ok(found > last, `${text} is out of order:\n${opened}`);
+    last = found;
+  }
 });
 
 test("enter on a card shows its board link, and an empty board says so", async () => {

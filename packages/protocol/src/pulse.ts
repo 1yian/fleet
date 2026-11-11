@@ -66,6 +66,11 @@ export function ownerText({ kind, name, host }: Pulse["owner"]): string {
   return kind === "main" ? "main" : `${name} (mate)`;
 }
 
+export function behindText({ steps, started }: NonNullable<Pulse["behind"]>): string {
+  const count = `${String(steps)} ${steps === 1 ? "step" : "steps"}`;
+  return `${count} behind it, ${started === 0 ? "none started" : `${String(started)} started`}`;
+}
+
 export function runningText({ pulse, datedWait }: Pulsed): string {
   if (pulse?.running !== null && pulse?.running !== undefined) return pulse.running.what;
   return datedWait?.watch === "running" ? datedWait.what : "nothing";

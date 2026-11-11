@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import type { Card } from "@fleet/protocol";
 import type { Cardd, Session } from "../support/cardd.ts";
 import { ageCard, begin, newCard } from "../support/fleet.ts";
+import { until } from "../support/live-fleet.ts";
 import { boundBoardFile, openBoardPage, startBoardServer } from "../support/board.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
@@ -120,6 +121,59 @@ test("the Attention strip lists broken, parked, idle and your cards in that orde
     .click();
   await page.getByRole("heading", { name: "Port the invoices" }).waitFor();
   await page.waitForURL(`**/#/c-${String(idle.id)}`);
+});
+
+test("a card's line says what remains behind it, also on a Needs you card whose date has passed", async (context) => {
+  const first = await newCard(main, "Capacity proof");
+  const second = await newCard(main, "Caller list");
+  const waiting = await newCard(main, "Crud ingress lock");
+  await main.call("hold", {
+    card: waiting.id,
+    question: "Wait for the first hub use?",
+    until: Date.now() + 10 * DAY,
+    outside: "the first real support hub interaction",
+    remaining: [first.id, second.id],
+  });
+  const asked = await newCard(main, "Pick the vendor");
+  await main.call("hold", {
+    card: asked.id,
+    question: "Pick the vendor?",
+    until: Date.now() + 1_500,
+    outside: "the vendor's quote",
+    remaining: [first.id],
+  });
+  await until(async () => {
+    const found = (await cardd.board()).cards.find((card) => card.id === asked.id);
+    return found?.pulse?.state === "you" ? true : undefined;
+  }, "the date of the hold to pass");
+  await open();
+
+  const held = page.getByRole("article", { name: "Crud ingress lock" }).locator("p.pulse-line");
+  assert.equal(
+    await held.textContent(),
+    "you · running nothing · moved just now · 2 steps behind it, none started",
+  );
+  const yours = page.getByRole("article", { name: "Pick the vendor" }).locator("p.pulse-line");
+  assert.equal(
+    await yours.textContent(),
+    "waiting on you · moved just now · 1 step behind it, none started",
+  );
+  assert.equal(
+    await page
+      .getByRole("article", { name: "Capacity proof" })
+      .locator("p.pulse-line")
+      .textContent(),
+    "main · running nothing · moved just now · waits on main",
+    "a card with nothing behind it says nothing about steps",
+  );
+
+  const phone = await openBoardPage(context, browser, { width: 390, height: 844 });
+  await phone.goto(page.url());
+  await phone.getByRole("article", { name: "Pick the vendor" }).waitFor();
+  const overflow = await phone.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  assert.ok(overflow <= 0, `the lines overflow a phone by ${String(overflow)}px`);
 });
 
 test("the strip shows five and counts the rest", async () => {

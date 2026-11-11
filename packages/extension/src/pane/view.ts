@@ -8,7 +8,7 @@ import {
   type Color,
   type Component,
 } from "@earendil-works/pi-tui";
-import { ownerText, runningText, waitsText, type Pulse } from "@fleet/protocol";
+import { behindText, ownerText, runningText, waitsText, type Pulse } from "@fleet/protocol";
 import { kindOf } from "./glance.ts";
 import type { List, Listed } from "./list.ts";
 import { GLYPHS, plain, TONES } from "./look.ts";
@@ -28,9 +28,6 @@ function ago(ms: number): string {
   const hours = Math.floor(minutes / 60);
   return hours < 48 ? `${String(hours)}h` : `${String(Math.round((hours / 24) * 10) / 10)}d`;
 }
-
-const plural = (n: number, one: string, many: string): string =>
-  `${String(n)} ${n === 1 ? one : many}`;
 
 interface Look {
   readonly glyph: string;
@@ -59,20 +56,18 @@ function block(theme: Theme, listed: Listed, now: number, links: Links): string[
   const linked = getCapabilities().hyperlinks ? hyperlink(id, links.urlOf(card.id)) : id;
   const word = `${glyph} ${wordOf(pulse)} ${ago(now - pulse.since)}`;
   const head = `${theme.style(word, { fg: tone, bold: true })}  ${linked} ${plain(card.lane)}`;
-  const lines = [head, `  ${plain(card.title)}`];
-  if (pulse.state === "you") return [...lines, ""];
   const moved = ago(now - pulse.movedAt);
-  const who = `${ownerText(pulse.owner)} · running ${runningText(card)} · moved ${moved === "now" ? "just now" : `${moved} ago`}`;
-  lines.push(
-    theme.fg("muted", `  ${plain(who)}`),
-    theme.fg("muted", `  ${plain(waitsText(card))}`),
-  );
-  if (pulse.behind !== null) {
-    const { steps, started } = pulse.behind;
-    const state = started === 0 ? "none started" : `${String(started)} started`;
-    lines.push(theme.fg("muted", `  ${plural(steps, "step", "steps")} behind it, ${state}`));
-  }
-  return [...lines, ""];
+  const movedText = `moved ${moved === "now" ? "just now" : `${moved} ago`}`;
+  const details =
+    pulse.state === "you"
+      ? [movedText]
+      : [
+          `${ownerText(pulse.owner)} · running ${runningText(card)} · ${movedText}`,
+          waitsText(card),
+        ];
+  if (pulse.behind !== null) details.push(behindText(pulse.behind));
+  const rows = details.map((text) => theme.fg("muted", `  ${plain(text)}`));
+  return [head, `  ${plain(card.title)}`, ...rows, ""];
 }
 
 function runningLine(theme: Theme, listed: Listed): string {
