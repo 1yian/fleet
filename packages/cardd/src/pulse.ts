@@ -109,9 +109,11 @@ function silent({ loaded, activity, env }: Basis): Reading | undefined {
   return undefined;
 }
 
+const putOff = ({ wait }: Basis): boolean => wait?.watch === "later";
+
 function needOf(basis: Basis): Reading | undefined {
   const { card, standing } = basis.loaded;
-  if (card.status === "needs-you" || card.kind === "captain")
+  if (card.status === "needs-you" || (card.kind === "captain" && !putOff(basis)))
     return { state: "you", since: standing.since };
   return reported(basis) ?? silent(basis);
 }

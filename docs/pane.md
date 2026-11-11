@@ -74,7 +74,7 @@ Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane re
 | Item     | A card counts when                                                                                                                                                                    |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Decision | Its status is Needs you, and the `card` op still shows a hold that waits on the captain. These are the cards `/d` walks through.                                                      |
-| Own card | Its pulse state is `you` and its status is not Needs you: a card of the captain's own, with no hold on him. `/d` does not show it.                                                    |
+| Own card | Its pulse state is `you` and its status is not Needs you: a card of the captain's own, with no hold on him and no later of his own. `/d` does not show it.                            |
 | Broken   | A worker reported `failed`. Or a worker is not connected for 2 minutes while the card is Working or In review. Or a card has been parked for 3 days with nothing running or checking. |
 | Stalled  | A worker reported `blocked` or `stopped` 5 minutes ago, or a running worker has been silent for 5 minutes. Or a card has been idle for 4 hours, or parked for 24 hours.               |
 

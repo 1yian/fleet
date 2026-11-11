@@ -228,9 +228,10 @@ export class DecideLab {
     question: string,
     options: string[],
     count: number,
+    kind: Card["kind"] = "scout",
   ): Promise<Card> {
     const served = this.h.callsOf("mate").length;
-    const card = check(CardSchema, await this.cleo.call("card.new", { title, kind: "scout" }));
+    const card = check(CardSchema, await this.cleo.call("card.new", { title, kind }));
     this.h.onModel(
       () => ({ tool: "hold", args: { card: card.id, question, options, to: "captain" } }),
       "mate",

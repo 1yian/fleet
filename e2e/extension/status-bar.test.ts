@@ -195,6 +195,35 @@ test("a card the captain put off is neither counted nor on /d until its date, ho
   await lab.screenWhere(pane, "the put-off one", onCard(["Decision 2 of 2", VENDOR]));
 });
 
+test("a card of the captain's own that he put off is neither counted nor on /d until its date", async () => {
+  const pane = await lab.openMain();
+  await lab.screenWhere(pane, "the clear state", showing(["✓ clear"]));
+  const own = await lab.askedMain(pane, "Vendor contract", VENDOR, ["Acme", "Other"], 1, "captain");
+  const open = (await lab.cardd.board()).holds.find((each) => each.card === own.id);
+  assert.ok(open !== undefined, "the decision on his own card is open");
+  const action = {
+    kind: "hold",
+    hold: open.hold,
+    until: Date.now() + DAY_MS,
+    reason: "ask me again after the launch",
+  } as const;
+  assert.equal(await lab.cardd.act(own.id, action), 200);
+
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(
+    pane,
+    "nothing waiting",
+    showing(["Nothing is waiting for your decision."]),
+  );
+  const screen = await lab.screenWhere(
+    pane,
+    "no decision and no count",
+    showing(["✓ clear"], ["await", "◆"]),
+  );
+  keep("7-own-card-put-off", screen);
+  assert.match(statusRow(screen), /^✓ clear board$/);
+});
+
 const FULL = "2 decisions await you ● 1 ▲ 1 board";
 const WIDTHS = [
   { columns: 57, ratio: 0.5 },
