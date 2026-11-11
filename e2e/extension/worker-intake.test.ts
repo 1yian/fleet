@@ -262,6 +262,43 @@ test("a message whose run was aborted after a tool-use response is not taken in 
   await waitForTakenIn();
 });
 
+const TASK_ENTRY = 1;
+const BIG = "lorem ipsum dolor ".repeat(8000);
+
+test("a message that compaction left out of the restarted model's context is resent, not taken in by the restarted run", async () => {
+  const held = gate();
+  h.onModel(async () => {
+    await held.wait;
+    return { text: "the aborted turn should not finish" };
+  });
+  const pi = h.startPi("c-1-a1", env, [EXTENSION]);
+  await h.waitForCall(0, "default", 30_000);
+  pi.abort();
+  await h.waitFor(
+    (event) => event["type"] === "settled" && event["aborted"] === true,
+    "the aborted turn to settle",
+  );
+  pi.prompt(BIG);
+  await h.waitForNth((event) => event["type"] === "settled", 2, "the next run to settle");
+  pi.compact();
+  assert.equal((await pi.compactResponse())["success"], true);
+  await pi.kill();
+  held.open();
+
+  const restarted = h.startPi("c-1-a1", env, [EXTENSION]);
+  await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
+  restarted.prompt("an unrelated question");
+  await h.waitForNth((event) => event["type"] === "settled", 3, "the restarted run to settle");
+
+  await h.waitForNth(
+    (event) => event["type"] === "message_end" && event["entryId"] === TASK_ENTRY,
+    2,
+    "the assignment the restarted model never held to be sent again",
+  );
+  await h.waitForNth((event) => event["type"] === "settled", 4, "the resent assignment to settle");
+  await waitForTakenIn();
+});
+
 test("a worker that read a comment hands off in the same run, before the run settles", async () => {
   h.onModel(async () => {
     await fleet.main.call("comment", { card: card.id, text: "scope change: skip the tests" });

@@ -15,7 +15,7 @@ import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { watchMainCardd } from "./cardd-watch.ts";
 import { Failures } from "./failure.ts";
-import { format, idsInSessionFile } from "./inbox.ts";
+import { format, idsInModelContext, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
 import { Jobs, registerDropJob } from "./jobs.ts";
@@ -238,8 +238,7 @@ function start(
 ): void {
   enableCodemode(pi);
   const runInProgress = trackRun(pi);
-  const loaded = idsInSessionFile(sessionFile);
-  const injected = new Set(loaded);
+  const injected = new Set(idsInSessionFile(sessionFile));
   const injectedAgain = idsClearedOnSettle(pi);
   let unreadable: string | undefined;
   const maintenance: { queue?: MaintenanceQueue } = {};
@@ -316,7 +315,7 @@ function start(
     worker?.dispose();
     link.stop();
   });
-  registerIntake(pi, link, loaded);
+  registerIntake(pi, link, idsInModelContext(ctx.sessionManager));
   reportActivity(pi, link, () => (jobs?.waiting === true ? "waiting" : "idle"));
   link.start();
 }
