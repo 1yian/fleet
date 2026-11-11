@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { lstatSync, readdirSync, statfsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { records } from "./host.ts";
-import { hostDir } from "./scratch.ts";
+import { hostDir, tmpScratchDir } from "./scratch.ts";
 
 export type Metric = "inodes" | "space";
 
@@ -67,14 +67,24 @@ function useOf(roots: Roots): FilesystemUse {
   };
 }
 
+const isInside = (path: string, root: string): boolean => {
+  const from = relative(root, path);
+  return from !== "" && from !== ".." && !from.startsWith(`..${sep}`) && !isAbsolute(from);
+};
+
 export function watchedFilesystems(): FilesystemUse[] {
   const byDevice = new Map<number, Roots>();
-  for (const path of ["/tmp", tmpdir(), hostDir()]) {
+  const destination = tmpScratchDir();
+  for (const path of ["/tmp", tmpdir(), hostDir(), destination]) {
     try {
       const device = statSync(path).dev;
       const roots = byDevice.get(device);
       if (roots === undefined) byDevice.set(device, [path]);
-      else if (!roots.includes(path)) roots.push(path);
+      else if (
+        !roots.includes(path) &&
+        !(path === destination && roots.some((root) => isInside(path, root)))
+      )
+        roots.push(path);
     } catch {
       continue;
     }

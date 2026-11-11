@@ -6,6 +6,7 @@ import { refreshClonesInTurn } from "./clones.ts";
 import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
 import { CLOSE_SCRATCH_SCRIPT } from "./scratch.ts";
+import { describeMove, MOVE_SCRATCH_SCRIPT, MOVE_TIMEOUT_MS, parseMove } from "./scratch-move.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
   fileURLToPath(new URL("./archive.sh", import.meta.url)),
@@ -303,16 +304,45 @@ async function closeOnce(link: Link, request: CloseRequest): Promise<string> {
   }
 }
 
-async function clearScratch(hosts: ReadonlySet<string>, card: number): Promise<string[]> {
+interface Scratch {
+  readonly kept: readonly string[];
+  readonly moved: readonly string[];
+  readonly stayed: readonly string[];
+}
+
+const failedWith = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+async function moveOffTmp(
+  host: string,
+  card: number,
+): Promise<{ moved?: string; stayed?: string }> {
+  try {
+    const run = ["sh", "-c", MOVE_SCRATCH_SCRIPT, "scratch", String(card)];
+    const move = parseMove(await onHelper(host, run, MOVE_TIMEOUT_MS));
+    if (move === undefined) return {};
+    const line = `${host}:${describeMove(move)}`;
+    return move.kind === "moved" ? { moved: line } : { stayed: line };
+  } catch (error) {
+    return { stayed: `${host} (${failedWith(error)})` };
+  }
+}
+
+async function clearScratch(hosts: ReadonlySet<string>, card: number): Promise<Scratch> {
   const kept: string[] = [];
+  const moved: string[] = [];
+  const stayed: string[] = [];
   for (const host of hosts) {
     try {
       await onHelper(host, ["sh", "-c", CLOSE_SCRATCH_SCRIPT, "scratch", String(card)]);
     } catch (error) {
-      kept.push(`${host} (${error instanceof Error ? error.message : String(error)})`);
+      kept.push(`${host} (${failedWith(error)})`);
     }
+    const off = await moveOffTmp(host, card);
+    if (off.moved !== undefined) moved.push(off.moved);
+    if (off.stayed !== undefined) stayed.push(off.stayed);
   }
-  return kept;
+  return { kept, moved, stayed };
 }
 
 async function teardown(
@@ -360,7 +390,7 @@ function outcome(
     stopped,
     spared,
     scratch,
-  }: { stopped: readonly string[]; spared: readonly string[]; scratch: readonly string[] },
+  }: { stopped: readonly string[]; spared: readonly string[]; scratch: Scratch },
 ): string {
   const ended = stopped.length === 0 ? "" : ` Stopped leftover processes: ${stopped.join("; ")}.`;
   const shared = spared.length === 0 ? "" : ` Kept shared services: ${spared.join("; ")}.`;
@@ -371,6 +401,10 @@ function outcome(
       : ` Left in place: ${left.map((each) => `${each.host} ${each.session} (${each.reason})`).join("; ")}.`;
   const found = clones.length === 0 ? "" : ` Clones: ${clones.join("; ")}.`;
   const folder =
-    scratch.length === 0 ? "" : ` Scratch folder left in place: ${scratch.join("; ")}.`;
-  return `${ended}${shared}${kept}${stayed}${folder}${found}`;
+    scratch.kept.length === 0 ? "" : ` Scratch folder left in place: ${scratch.kept.join("; ")}.`;
+  const off =
+    scratch.moved.length === 0 ? "" : ` Scratch moved off /tmp: ${scratch.moved.join("; ")}.`;
+  const inTmp =
+    scratch.stayed.length === 0 ? "" : ` Scratch left in /tmp: ${scratch.stayed.join("; ")}.`;
+  return `${ended}${shared}${kept}${stayed}${folder}${off}${inTmp}${found}`;
 }

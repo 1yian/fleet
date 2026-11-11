@@ -161,3 +161,21 @@ test("scratch reports the use of the filesystems it writes to, and names the lar
   assert.equal(byInodes["partial"], false);
   assert.equal(typeof byInodes["filesystem"], "string");
 });
+
+test("the move destination inside the host folder is not a second root of the same filesystem, so the alarm names its bytes once", () => {
+  const dir = tempDir("fleet-host-dir-");
+  const moved = join(dir, "tmp-scratch", "fleet-c-7");
+  mkdirSync(moved, { recursive: true });
+  for (let index = 0; index < 5; index += 1) writeFileSync(join(moved, `f${String(index)}`), "x");
+
+  const report = parseRecord(fleet(["scratch", "--json"], { FLEET_HOST_DIR: dir }).trim());
+  const shared = records(report["filesystems"]).find((each) =>
+    Array.isArray(each["roots"]) ? each["roots"].includes(dir) : false,
+  );
+  assert.ok(shared !== undefined, "the host folder is a root of a reported filesystem");
+  assert.ok(Array.isArray(shared["roots"]));
+  assert.ok(
+    !shared["roots"].includes(join(dir, "tmp-scratch")),
+    "the destination under the host folder is covered by the host folder",
+  );
+});
