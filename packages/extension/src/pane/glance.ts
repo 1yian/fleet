@@ -21,6 +21,8 @@ export interface Limits {
   readonly lostMs: number;
 }
 
+export type ReportTimes = ReadonlyMap<number, number>;
+
 const WORKING: ReadonlySet<Status> = new Set(["working", "in-review"]);
 const DOWN: ReadonlySet<string> = new Set(["starting", "exited", "lost"]);
 
@@ -51,15 +53,28 @@ function liveNeed(card: BoardCard, now: number, limits: Limits): Need | undefine
   return undefined;
 }
 
-function reportedNeed(card: BoardCard, now: number, limits: Limits): Need | undefined {
-  if (card.attention === "failed") return need(card, "broken", "worker failed", card.updatedAt);
-  if (card.attention === null || now - card.updatedAt < limits.stallMs) return undefined;
-  return need(card, "stalled", `worker ${card.attention}`, card.updatedAt);
+function reportedNeed(
+  card: BoardCard,
+  now: number,
+  limits: Limits,
+  reports: ReportTimes,
+): Need | undefined {
+  const reported = reports.get(card.id);
+  if (card.attention === "failed")
+    return need(card, "broken", "worker failed", reported ?? card.updatedAt);
+  if (card.attention === null || reported === undefined || now - reported < limits.stallMs)
+    return undefined;
+  return need(card, "stalled", `worker ${card.attention}`, reported);
 }
 
-function needOf(card: BoardCard, now: number, limits: Limits): Need | undefined {
+function needOf(
+  card: BoardCard,
+  now: number,
+  limits: Limits,
+  reports: ReportTimes,
+): Need | undefined {
   if (card.status === "needs-you") return need(card, "needs-you", "needs you", card.updatedAt);
-  return reportedNeed(card, now, limits) ?? liveNeed(card, now, limits);
+  return reportedNeed(card, now, limits, reports) ?? liveNeed(card, now, limits);
 }
 
 const worstFirst = (a: Need, b: Need): number =>
@@ -73,9 +88,10 @@ export function glanceOf(
   now: number,
   since: number,
   limits: Limits,
+  reports: ReportTimes,
 ): Glance {
   return {
-    needs: cards.flatMap((card) => needOf(card, now, limits) ?? []).sort(worstFirst),
+    needs: cards.flatMap((card) => needOf(card, now, limits, reports) ?? []).sort(worstFirst),
     landed: cards.filter((card) => landedSince(card, since)).length,
   };
 }

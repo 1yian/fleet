@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { BoardCard } from "@fleet/protocol";
+import type { BoardCard, CardView } from "@fleet/protocol";
 import type { Link } from "../link.ts";
-import { glanceOf, unreachable, type Glance, type Limits } from "./glance.ts";
+import { glanceOf, unreachable, type Glance, type Limits, type ReportTimes } from "./glance.ts";
 import { chips, rowOf, strip } from "./look.ts";
 
 const STATUS_KEY = "fleet-attention";
@@ -31,6 +31,12 @@ const settings = (): Settings => ({
   },
 });
 
+const reportKey = (card: BoardCard): string => `${String(card.id)}:${String(card.revision)}`;
+
+const reportedAt = ({ card, entries }: CardView): number | undefined =>
+  entries.findLast((entry) => entry.kind === "report" && entry.fields["status"] === card.attention)
+    ?.createdAt;
+
 const isMessageOfHis = (entry: SessionEntry): boolean =>
   entry.type === "message" && entry.message.role === "user";
 
@@ -43,6 +49,7 @@ function lastMessageAt(ctx: ExtensionContext): number {
 
 class Pane {
   private cards: readonly BoardCard[] | undefined;
+  private readonly reported = new Map<string, number>();
   private since: number;
   private silentSince: number | undefined;
   private fetching = false;
@@ -107,7 +114,9 @@ class Pane {
 
   private async load(): Promise<void> {
     try {
-      this.cards = await this.link.call("board", {}, DEADLINE_MS);
+      const cards = await this.link.call("board", {}, DEADLINE_MS);
+      await this.learn(cards);
+      this.cards = cards;
       this.silentSince = undefined;
     } catch {
       this.silentSince ??= Date.now();
@@ -115,12 +124,39 @@ class Pane {
     this.paint();
   }
 
+  private async learn(cards: readonly BoardCard[]): Promise<void> {
+    const flagged = cards.filter((card) => card.attention !== null);
+    const current = new Set(flagged.map(reportKey));
+    for (const key of this.reported.keys()) if (!current.has(key)) this.reported.delete(key);
+    const unread = flagged.filter((card) => !this.reported.has(reportKey(card)));
+    await Promise.all(unread.map((card) => this.read(card)));
+  }
+
+  private async read(card: BoardCard): Promise<void> {
+    try {
+      const at = reportedAt(await this.link.call("card", { card: card.id }, DEADLINE_MS));
+      if (at !== undefined) this.reported.set(reportKey(card), at);
+    } catch {
+      return;
+    }
+  }
+
+  private reportTimes(cards: readonly BoardCard[]): ReportTimes {
+    return new Map(
+      cards.flatMap((card) => {
+        const at = this.reported.get(reportKey(card));
+        return at === undefined ? [] : [[card.id, at] as const];
+      }),
+    );
+  }
+
   private glance(now: number): Glance | undefined {
     const silent = this.silentSince;
     const down = silent !== undefined && now - silent >= this.rules.silentMs;
     if (down) return { needs: [unreachable(silent)], landed: 0 };
     if (this.cards === undefined) return undefined;
-    return glanceOf(this.cards, now, this.since, this.rules.limits);
+    const reports = this.reportTimes(this.cards);
+    return glanceOf(this.cards, now, this.since, this.rules.limits, reports);
   }
 
   private paint(): void {

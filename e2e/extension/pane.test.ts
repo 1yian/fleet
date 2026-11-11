@@ -19,6 +19,7 @@ const QUICK_LIMITS = {
   FLEET_PANE_LOST_MS: "2500",
   FLEET_PANE_SILENT_MS: "1500",
 };
+const STALL_MS = 5000;
 const STRIP_ROW = /^[◆●◇] \D/;
 const DRAWN_BORDER = /[─│┌┐└┘╭╮╰╯]/;
 const PANE_GLYPHS = ["◆", "●", "◇", "▲", "✓ clear"];
@@ -103,6 +104,24 @@ async function workerOf(card: Card): Promise<Session> {
   return cardd.connect(check(OPS["attempt.begin"].result, attempt).token);
 }
 
+async function cleoLandedCard(title: string): Promise<Card> {
+  const card = await cleoCard(title);
+  await cleo.call("close.begin", { card: card.id, landed: true });
+  await cleo.call("close.finish", {
+    card: card.id,
+    mode: "done",
+    text: "checked",
+    archives: [],
+    left: [],
+  });
+  return card;
+}
+
+async function cleoScoutOf(title: string): Promise<Card> {
+  const made = await cleo.call("card.new", { title, kind: "scout", project: "web" });
+  return check(CardSchema, made);
+}
+
 async function cleoShipCard(title: string): Promise<Card> {
   const made = await cleo.call("card.new", { title, kind: "ship", project: "web" });
   return check(CardSchema, made);
@@ -179,15 +198,7 @@ test("the strip shows the worst need first with the rest counted, the chips colo
   const quiet = await cleoShipCard("Port the calendar");
   const silent = await workerOf(quiet);
   silent.send({ t: "activity", state: "running" });
-  const done = await cleoCard("Check the ads budget");
-  await cleo.call("close.begin", { card: done.id, landed: true });
-  await cleo.call("close.finish", {
-    card: done.id,
-    mode: "done",
-    text: "checked",
-    archives: [],
-    left: [],
-  });
+  await cleoLandedCard("Check the ads budget");
 
   const busy = await screenWhere(
     pane,
@@ -254,4 +265,38 @@ test("the pane says only that cardd is not answering while it is down, and the c
   const back = await screenWhere(pane, "the failed worker again", showing([worker], ["cardd:"]));
   keep("7-cardd-back", back);
   assert.equal(stripRows(back).length, 1);
+});
+
+test("a card handed back long ago that then stops is not stalled until the limit has passed since it stopped", async () => {
+  const pane = await openMain({ ...QUICK_LIMITS, FLEET_PANE_STALL_MS: String(STALL_MS) });
+  await screenWhere(pane, "the clear state", showing(["✓ clear"]));
+
+  const handed = await cleoScoutOf("Check the ads budget");
+  const handedWorker = await workerOf(handed);
+  await handedWorker.call("report", { status: "done", text: "checked" });
+  const clock = await cleoScoutOf("Read the old invoices");
+  const clockWorker = await workerOf(clock);
+  await clockWorker.call("report", { status: "stopped", text: "out of time" });
+  await screenWhere(
+    pane,
+    "the clock card to stall, which proves the done report is older than the limit",
+    showing([`c-${String(clock.id)} Read the old invoices: worker stopped`, "◇ 1"]),
+  );
+  await clockWorker.call("report", { status: "working", text: "back at it" });
+  await screenWhere(pane, "the clock card to resume", showing(["✓ clear"], ["◇"]));
+
+  const stoppedAt = Date.now();
+  await handedWorker.call("report", { status: "stopped", text: "the run was aborted" });
+  await cleoLandedCard("Check the invoices");
+  const fresh = await screenWhere(pane, "the pane to read the stop", showing(["▲ 1"]));
+  keep("8-stopped-after-done", fresh);
+  assert.ok(!fresh.includes("◇"), `a card that stopped just now is stalled:\n${fresh}`);
+  assert.ok(fresh.includes("✓ clear"));
+  assert.deepEqual(stripRows(fresh), []);
+
+  const worker = `c-${String(handed.id)} Check the ads budget: worker stopped`;
+  const stalled = await screenWhere(pane, "the stall limit to pass", showing([worker, "◇ 1"]));
+  keep("9-stalled-after-the-limit", stalled);
+  assert.ok(Date.now() - stoppedAt >= STALL_MS, "it stalled before the limit passed");
+  assert.equal(stripRows(stalled).length, 1);
 });

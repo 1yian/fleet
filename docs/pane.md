@@ -26,11 +26,13 @@ The strip shows the worst need: broken first, then needs you, then stalled, olde
 
 ## What counts
 
-| Need      | A card counts when                                                                                                                                          |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Needs you | Its status is Needs you: a hold waits on the captain.                                                                                                       |
-| Broken    | A worker reported `failed`. Or a worker's session is not connected for 2 minutes (never connected, exited, or lost) while the card is Working or In review. |
-| Stalled   | A running worker has been silent for 5 minutes. Or a worker reported `blocked` or `stopped`, and 5 minutes have passed with no one resuming it.             |
+| Need      | A card counts when                                                                                                                                                |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Needs you | Its status is Needs you: a hold waits on the captain.                                                                                                             |
+| Broken    | A worker reported `failed`. Or a worker's session is not connected for 2 minutes (never connected, exited, or lost) while the card is Working or In review.       |
+| Stalled   | A running worker has been silent for 5 minutes. Or a worker reported `blocked` or `stopped`, and 5 minutes have passed since that report with no one resuming it. |
+
+A reported need counts its age from the report itself, not from the last change of the card's status. A card that its worker already handed back, and whose run then stops, is not stalled until 5 minutes after the stop. The pane reads that time with the `card` op once for each change of a card that has attention, so a long-lived board does not add a read for every card at every fetch. Step 4 may replace this with a field on the board.
 
 The two times are `cardd`'s own: `notConnected` and `stall` in the timed check. A reload or a brief disconnect is under both, so it does not flicker.
 
