@@ -256,6 +256,16 @@ export const OPS = {
     }),
     result: CardSchema,
   },
+  "pane.answer": {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      revision: Type.Integer(),
+      choice: Type.String({ minLength: 1 }),
+      written: Type.Optional(Type.Boolean()),
+    }),
+    result: CardSchema,
+  },
   release: {
     roles: ["mate"],
     args: Type.Object({
