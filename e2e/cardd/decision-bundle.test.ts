@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -121,4 +121,30 @@ test("a card held until a date drops out of the bundle, and comes back when the 
   );
   assert.ok(later.createdAt * 1000 >= until - 1000);
   assert.deepEqual(names(later).sort(), [kept, snoozed].map(name).sort());
+});
+
+test("a worker that waits on its mate cannot pause: it is refused and listed once it reports blocked, while a dated pause stays off the list", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const waiting = await newCard(cleo, "Waits on its mate");
+  const quota = await newCard(cleo, "Waits on a quota");
+  const waitingWorker = await fleet.cardd.connect(await begin(cleo, waiting));
+  const quotaWorker = await fleet.cardd.connect(await begin(cleo, quota));
+  const slot = { status: "paused", text: "waiting for you to relay the slot" };
+  await quotaWorker.call("report", {
+    status: "paused",
+    text: "the quota resets in an hour",
+    until: Date.now() + 3_600_000,
+  });
+
+  await assert.rejects(waitingWorker.call("report", slot), /report blocked instead/);
+  await assert.rejects(
+    waitingWorker.call("report", { ...slot, until: Date.now() - 1_000 }),
+    /report blocked instead/,
+  );
+  assert.equal(await status(cleo, waiting), "working");
+  await waitingWorker.call("report", { ...slot, status: "blocked" });
+
+  assert.deepEqual(names(await bundle(cleo, 1)), [name(waiting)]);
+  assert.deepEqual(names(await bundle(cleo, 2)), [name(waiting)]);
+  assert.equal(await status(cleo, quota), "paused");
 });

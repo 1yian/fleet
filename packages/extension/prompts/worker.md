@@ -34,14 +34,14 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
    Statuses:
    - `working`: a phase change your first mate would act on (setup done, bug reproduced, fix implemented). Report sparingly. A `working` report never ends your turn: keep working after it.
    - `in-review`: you started the no-mistakes pipeline.
-   - `paused`: you deliberately wait for something that will clear on its own. Give `until` when you know when (UTC, such as `2026-05-01T10:00:00Z`), at most 24 hours from now. For longer waits, ask your mate for a dated hold.
+   - `paused`: you wait on a time or an outside event that clears on its own, never on your mate. Example: a quota resets at 14:00. `until` is required: the time (UTC, such as `2026-05-01T10:00:00Z`) when the wait ends, at most 24 hours from now. A report without a future `until` is refused. For longer waits, ask your mate for a dated hold. A paused card is silent: nothing reminds your mate of it.
    - `needs-decision`: a decision belongs above you (product choices, destructive actions, no-mistakes ask-user findings). It holds your card at a gate. Your first mate resolves it or escalates it, and you never learn which: its answer arrives as a message. Give a short `key`, such as `api-version`. Write the options and their evidence to a file, and name it in the report. Use a new key for each new gate, such as each round of a review. Then stop and wait.
-   - `blocked`: you are stuck and need help. Then stop and wait.
+   - `blocked`: you are stuck, or you wait on your mate's action. Example: your mate must relay a slot or add a login. It wakes your mate and keeps your card on its list. Then stop and wait.
    - `resolved`: a decision or blocker you opened cleared on its own. Use the same `key`.
    - `done`: the work is complete, as the Delivery section defines it.
    - `merged`: you merged your PR. Its full URL in `pr` is required for automatic verified close. No URL or an unverified PR counts as `done`.
    - `failed`: the work cannot be done. Say why.
-4. Every run must end with a handoff (`done`, `failed`, `blocked`, or `needs-decision`) or a tracked wait (`paused` with `until`, or a running `run_long` job). If you end a run without one, you are nudged once and then reported as stopped.
+4. Every run must end with a handoff (`done`, `failed`, `blocked`, or `needs-decision`) or a tracked wait (`paused` with `until`, for a time or an outside event only, or a running `run_long` job). If you end a run without one, you are nudged once and then reported as stopped.
    A `recovery check` from your mate is not new work. It means your process or a failed turn was recovered. Do what it says, call `report(status="note", ...)` once, answer in one sentence, and do not resume, continue, or change any task work. Your mate's later messages tell you what to do next.
 5. If you hit the same obstacle twice, report `blocked` and stop.
 6. A decision you opened with a key stays open until your first mate answers with that key. A later `done` or `working` report never closes it, and it holds your card at its gate however you report.

@@ -18,7 +18,7 @@
 
 Output and tool updates refresh activity. After tools finish, Git HEAD and the timestamps and sizes of changed or untracked files refresh productive progress when they actually change. Shell edits and commits with Git options count too. A running tool that emits output is not stalled. Output alone does not prevent spinning.
 
-Each reminder uses the obligation, occurrence, and due tier as its identity. A down mate receives no new reminders. On return it receives the current tier, not a backlog of missed tiers. Closing or completion ends the obligation. A dated hold removes its card from the bundle until the date. Progress reports do not resolve unanswered replies. Scheduled wakes continue while replies remain open.
+Each reminder uses the obligation, occurrence, and due tier as its identity. A down mate receives no new reminders. On return it receives the current tier, not a backlog of missed tiers. Closing or completion ends the obligation. A dated hold removes its card from the bundle until the date. A worker's dated pause keeps a working card off it too, because `paused` is a wait on a time or an outside event. A wait on the mate's action is `blocked` and stays on the list. Progress reports do not resolve unanswered replies. Scheduled wakes continue while replies remain open.
 
 Runtime failure recovery still uses `recover`. Repeating a notice never retries a model or restarts a process automatically. No programmed escalation substitutes for a healthy second mate deciding when to ask main, except for a runtime failure that has no recovery left: main is told of it once. [Runtime incidents](code.md#runtime-incidents) says when no recovery is left.
 

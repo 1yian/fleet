@@ -39,6 +39,9 @@ const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
 const count = (turns: Turn[], text: string): number =>
   turns.filter((turn) => turn.text === text).length;
+const inAnHour = (): string => new Date(Date.now() + 3_600_000).toISOString();
+const toolResults = (turns: Turn[]): string[] =>
+  turns.filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
 const reports = (mate: Session): [unknown, string][] =>
   mate.entries.map(({ entry }: { entry: Entry }) => [entry.fields["status"], entry.body]);
 async function sessionFile(): Promise<string> {
@@ -112,7 +115,10 @@ test("a run that ends without a handoff gets one nudge, then files stopped", asy
 });
 
 test("a worker woken from a pause is nudged and stopped when it ends a run on a progress report", async () => {
-  h.onModel(() => ({ tool: "report", args: { status: "paused", text: "waiting for CI" } }));
+  h.onModel(() => ({
+    tool: "report",
+    args: { status: "paused", text: "waiting for CI", until: inAnHour() },
+  }));
   h.onModel(() => ({ text: "waiting" }));
   await worker("start");
   await h.waitFor((e) => e["type"] === "settled", "the paused run to settle");
@@ -133,6 +139,38 @@ test("a worker woken from a pause is nudged and stopped when it ends a run on a 
     ["working", "back at it"],
     ["stopped", "ended the run without a handoff: still nothing"],
   ]);
+});
+
+test("a worker that pauses with no date is refused and told to report blocked, which reaches its mate", async () => {
+  h.onModel(() => ({
+    tool: "report",
+    args: { status: "paused", text: "waiting for you to relay the slot" },
+  }));
+  h.onModel(() => ({
+    tool: "report",
+    args: { status: "blocked", text: "waiting for you to relay the slot" },
+  }));
+  h.onModel(() => ({ text: "waiting" }));
+  await worker("start");
+  await fleet.main.waitForEntries(1);
+
+  const refusal = toolResults(await h.waitForCall(1))[0] ?? "";
+  assert.match(refusal, /paused needs until/);
+  assert.match(refusal, /report blocked instead: that wakes your mate/);
+  assert.deepEqual(reports(fleet.main), [["blocked", "waiting for you to relay the slot"]]);
+  assert.equal(await status(fleet.main, card), "with-mate");
+});
+
+test("a worker that pauses on an outside event with a date is accepted and shows the card as paused", async () => {
+  h.onModel(() => ({
+    tool: "report",
+    args: { status: "paused", text: "quota resets in an hour", until: inAnHour() },
+  }));
+  h.onModel(() => ({ text: "waiting" }));
+  await worker("start");
+
+  assert.match(toolResults(await h.waitForCall(1))[0] ?? "", /^Reported paused/);
+  assert.equal(await status(fleet.main, card), "paused");
 });
 
 test("a worker that reports done and then working in the same run is nudged and stopped", async () => {
