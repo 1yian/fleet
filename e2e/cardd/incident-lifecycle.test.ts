@@ -47,7 +47,9 @@ function incidentRow(dbPath: string, card: number): Record<string, unknown> {
   const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 5000 });
   try {
     const row = db
-      .prepare("SELECT id, state, intent, generation, closed_at FROM incidents WHERE card = ?")
+      .prepare(
+        "SELECT id, state, intent, generation, closed_at FROM incidents WHERE card = ? ORDER BY id DESC",
+      )
       .get(card);
     if (row === undefined) throw new Error(`no incident for c-${String(card)}`);
     return row;
