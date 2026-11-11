@@ -388,7 +388,7 @@ Without `--plan`, the command prints the active plan and the plan waiting to sta
 - A wake dispatches no worker and makes no card. The mate decides what to do, inside the goal.
 - DST: a time that does not exist on a spring day fires when the clock first shows it or a later time. A time that happens twice on an autumn day fires once. A day is the calendar day in the plan's zone.
 - A wake whose time passed while `cardd` was down fires at the next check, once for each wake, with the other wakes due then. Only its latest slot is made up, never the earlier ones. When it is older than the newest time in the message, its purpose carries `[due <time>]`.
-- Restarts are safe. Each wake records the slots it covers on its own entry, so a restart of `cardd` or of the mate repeats none of them. A wake the mate had not taken in is delivered again at its next connect, as any message is.
+- Restarts are safe. Each wake records the slots it covers on its own entry, so a restart of `cardd` or of the mate repeats none of them. A wake the mate had not taken in is delivered again, at its next connect or by the two-minute chase, as any message is.
 
 A script, such as a guard that runs from cron, wakes the mate with a note:
 
