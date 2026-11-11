@@ -54,7 +54,8 @@ The card is inline, the way Pi draws its own selectors. It takes the editor's pl
 - A click on a choice answers with it, as `⏎` does. A press with no release only moves the pointer to it. A click on `My words…` selects the line and answers nothing.
 - The card fits the pane down to 12 rows, in every state. It leaves the footer and two rows of chat. In a short pane it drops its blank rows first, then shows fewer lines of the question and fewer choices, but always at least one choice. The choices scroll with the selection, and the hint shows the place, such as `2/5`, while some are out of sight.
 - `⏎` answers the whole hold and the card moves to the next open decision. `esc` closes the card and answers nothing. Typing `/d` again shows the first decision that is still open, so `/d` both starts and resumes.
-- The answer is the board's own action: the extension calls the `pane.answer` op with the card and the revision it showed. `cardd` refuses it when the card changed since. The card then shows the reason and reads the decisions again. If the decision still waits, the card stays on it and keeps the words he typed. The pointer stays on `My words…` if it was there, follows a choice by its label if the reloaded decision still has it, and otherwise goes back to the first choice. Otherwise it is recorded as the captain's `answer`, with `source: "pane"`, and his own words are the answer's text with `written: true`. Main gets `[fleet] captain on c-N (answer): <choice or words>`, the same line a board answer sends. Only main's session may call the op.
+- The answer is the board's own action: the extension calls the `pane.answer` op with the card and the revision it showed. `cardd` refuses it when the card changed since. Otherwise it is recorded as the captain's `answer`, with `source: "pane"`, and his own words are the answer's text with `written: true`. Main gets `[fleet] captain on c-N (answer): <choice or words>`, the same line a board answer sends. Only main's session may call the op.
+- After a refusal the card shows the reason and reads the decisions again. If the decision still waits, the card stays on it and keeps the words he typed. The pointer stays on `My words…` if it was there, follows a choice by its label if the reloaded decision still has it, and otherwise goes back to the first choice. If the decision no longer waits, the card moves to the next open one.
 - When nothing waits, `/d` says so in a notice and opens nothing.
 - The card is drawn by the extension and is never in the model's context. Main learns of an answer only from that `[fleet]` line.
 - A click needs Pi's fullscreen mode, the default, which routes the mouse to components. In regular mode the terminal keeps the mouse and only the keys work.
@@ -78,7 +79,7 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 ## What it does not do
 
 - It is not in the model's context. The counts, the strip, and the card are drawn with `ctx.ui.setStatus`, `ctx.ui.setWidget`, and `ctx.ui.custom`, which are not session messages. Main still learns state from the same `[fleet]` rows and the `board` tool as before.
-- It replaces nothing: not the editor (OptChat owns it), not the footer, and not the terminal title.
+- It replaces nothing: not the editor (OptChat owns it, and the card only stands in its place while it is open), not the footer, and not the terminal title.
 - It has no image or animation. The only mouse use is the click on the strip and, while the card is open, a click on its choices.
 
 ## How it stays current
@@ -87,6 +88,6 @@ The pane asks `cardd` for the board when the link connects, after every `[fleet]
 
 ## Evidence
 
-`e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, types words, and sends mouse presses and releases to the strip and to the choices. It reads the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
+`e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, and sends a mouse click to the strip. `e2e/extension/decide-input.test.ts` does the same for the words he types, the arrow keys, a mouse press and release on the choices, and the editor's text coming back when the card closes. They read the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
 
 `e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back.
