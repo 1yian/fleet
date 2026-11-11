@@ -24,9 +24,10 @@ export function registerIntake(pi: ExtensionAPI, link: Link, inFile: readonly nu
   pi.on("agent_settled", (event, ctx) => {
     const finished = !event.aborted && !UNFINISHED.has(lastStop);
     lastStop = undefined;
-    if (!finished) return;
-    const inContext = idsInModelContext(ctx.sessionManager);
-    for (const id of held) if (inContext.has(id)) link.ack(id);
+    if (finished) {
+      const inContext = idsInModelContext(ctx.sessionManager);
+      for (const id of held) if (inContext.has(id)) link.ack(id);
+    }
     held.clear();
     unread.clear();
   });

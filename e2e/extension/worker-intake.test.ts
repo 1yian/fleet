@@ -13,6 +13,7 @@ import { records } from "../support/json.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const RESULT = "[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 0: green";
+const AGAIN = `${RESULT} (sent again: the turn that got it ended before it was taken in)`;
 const ROUTING =
   "pi-tiers: no usable model for tier 'default' (anthropic/claude-opus-5-5 on anthropic: cooling, openai/gpt-5 on openai: cooling)";
 
@@ -51,12 +52,13 @@ afterEach(async (t) => {
 const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
 
-test("a job result whose turn the provider fails is not lost: its mate hears one incident, and the recovered worker's run holds the result and takes it in", async () => {
+test("a job result whose turn the provider fails is not lost: its mate hears one incident, and the result is sent again once the worker recovers", async () => {
   h.onModel(() => ({ tool: "run_long", args: { label: "tests", command: "echo green" } }));
   h.onModel(() => ({ text: "waiting for the tests" }));
   h.onModel(() => ({ fail: ROUTING }));
   h.onModel(() => ({ tool: "report", args: { status: "note", text: "alive" } }));
   h.onModel(() => ({ text: "recovered" }));
+  h.onModel(() => ({ text: "took the job result" }));
   h.startPi("c-1-a1", env, [EXTENSION]);
 
   assert.equal(lastUser(await h.waitForCall(2)), RESULT);
@@ -88,16 +90,10 @@ test("a job result whose turn the provider fails is not lost: its mate hears one
     "verification",
   );
 
-  assert.ok((await h.waitForCall(3)).some((turn) => turn.text === RESULT));
-  await waitForTakenIn(fleet.cardd.db, { kind: "job-result" });
+  assert.equal(lastUser(await h.waitForCall(5)), AGAIN);
   assert.ok(due.id > heard.id);
   const entries = fleet.main.entries.map((push) => push.entry);
   assert.equal(entries.filter((entry) => entry.fields["condition"] === "missed").length, 0);
-  assert.equal(
-    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
-      .length,
-    0,
-  );
   assert.equal(
     h.calls
       .slice(0, 5)

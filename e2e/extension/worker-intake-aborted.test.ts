@@ -60,13 +60,19 @@ test("a message whose turn was aborted is resent after reconnect and taken in on
   await waitForTakenIn(fleet.cardd.db);
 });
 
-test("a message whose run was aborted is taken in by the next settled run of the same process, and is not sent again", async () => {
+test("a message whose run was aborted is not taken in by a later run of the same process, and is sent again and taken in by the run that follows", async () => {
   const held = gate();
+  const resent = gate();
   h.onModel(async () => {
     await held.wait;
     return { text: "the aborted turn should not finish" };
   });
   h.onModel(() => ({ text: "carried on with the assignment" }));
+  h.onModel(() => ({ text: "nothing to hand off yet" }));
+  h.onModel(async () => {
+    await resent.wait;
+    return { text: "took the assignment" };
+  });
   const pi = h.startPi("c-1-a1", env, [EXTENSION]);
   await h.waitForCall(0, "default", 30_000);
   pi.abort();
@@ -74,21 +80,18 @@ test("a message whose run was aborted is taken in by the next settled run of the
     (event) => event["type"] === "settled" && event["aborted"] === true,
     "the aborted run to settle",
   );
-  assert.ok(!deliveryStates(fleet.cardd.db).some(isTaken), "an aborted run took the assignment in");
   held.open();
   pi.prompt("carry on");
   const resumed = await h.waitForCall(1, "default", 30_000);
   assert.ok(resumed.some((turn) => turn.role === "user" && turn.text.includes("run the tests")));
-  await h.waitFor(
-    (event) => event["type"] === "settled" && event["aborted"] !== true,
-    "the resumed run to settle",
+  const again = await h.waitForCall(3, "default", 30_000);
+  assert.ok(sentAgain(again), JSON.stringify(again));
+  assert.ok(
+    !deliveryStates(fleet.cardd.db).some(isTaken),
+    "the resumed run took in a message its aborted run held",
   );
+  resent.open();
   await waitForTakenIn(fleet.cardd.db);
-  assert.equal(
-    h.calls.flat().filter((turn) => turn.text.includes("sent again: the turn that got it ended"))
-      .length,
-    0,
-  );
 });
 
 test("a message whose run was aborted after a tool-use response is not taken in until a later run settles", async () => {
