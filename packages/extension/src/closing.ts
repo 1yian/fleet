@@ -5,6 +5,7 @@ import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
+import { CLOSE_SCRATCH_SCRIPT } from "./scratch.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
   fileURLToPath(new URL("./archive.sh", import.meta.url)),
@@ -302,6 +303,18 @@ async function closeOnce(link: Link, request: CloseRequest): Promise<string> {
   }
 }
 
+async function clearScratch(hosts: ReadonlySet<string>, card: number): Promise<string[]> {
+  const kept: string[] = [];
+  for (const host of hosts) {
+    try {
+      await onHelper(host, ["sh", "-c", CLOSE_SCRATCH_SCRIPT, "scratch", String(card)]);
+    } catch (error) {
+      kept.push(`${host} (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+  return kept;
+}
+
 async function teardown(
   link: Link,
   request: CloseRequest,
@@ -315,9 +328,11 @@ async function teardown(
   const stopped: string[] = [];
   const spared: string[] = [];
   const left: { session: string; host: string; reason: string }[] = [];
+  const retiredOn = new Set<string>();
   for (const attempt of plan.attempts) {
     try {
       const retired = await retire(attempt);
+      retiredOn.add(attempt.host);
       if (retired.archive !== null) archives.push(`${attempt.host}:${retired.archive}`);
       stopped.push(...retired.stopped);
       spared.push(...retired.spared);
@@ -328,19 +343,24 @@ async function teardown(
   }
   const finish = { card: id, mode: plan.mode, text, archives, left };
   const card = await link.call("close.finish", finish);
+  const scratch = await clearScratch(retiredOn, id);
   const hostsJustUnreachable = new Set(left.map((each) => each.host));
   const found = await refreshClonesInTurn(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
   const landing = moved === "" ? "" : ` ${moved}`;
-  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, { stopped, spared })}`;
+  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, { stopped, spared, scratch })}`;
 }
 
 function outcome(
   archives: readonly string[],
   left: readonly { session: string; host: string; reason: string }[],
   clones: readonly string[],
-  { stopped, spared }: { stopped: readonly string[]; spared: readonly string[] },
+  {
+    stopped,
+    spared,
+    scratch,
+  }: { stopped: readonly string[]; spared: readonly string[]; scratch: readonly string[] },
 ): string {
   const ended = stopped.length === 0 ? "" : ` Stopped leftover processes: ${stopped.join("; ")}.`;
   const shared = spared.length === 0 ? "" : ` Kept shared services: ${spared.join("; ")}.`;
@@ -350,5 +370,7 @@ function outcome(
       ? ""
       : ` Left in place: ${left.map((each) => `${each.host} ${each.session} (${each.reason})`).join("; ")}.`;
   const found = clones.length === 0 ? "" : ` Clones: ${clones.join("; ")}.`;
-  return `${ended}${shared}${kept}${stayed}${found}`;
+  const folder =
+    scratch.length === 0 ? "" : ` Scratch folder left in place: ${scratch.join("; ")}.`;
+  return `${ended}${shared}${kept}${stayed}${folder}${found}`;
 }

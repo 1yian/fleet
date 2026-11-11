@@ -1,9 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
+import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
 import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
@@ -158,7 +159,12 @@ async function act(
   return out.map((row) => describe(host, row)).join("\n");
 }
 
-export function registerLanes(pi: ExtensionAPI, home: string, link: Link): LaneStates | undefined {
+export function registerLanes(
+  pi: ExtensionAPI,
+  home: string,
+  link: Link,
+  ctx: ExtensionContext,
+): LaneStates | undefined {
   const config = readLaneConfig(home);
   if (config === undefined) return undefined;
   pi.registerTool({
@@ -178,7 +184,7 @@ export function registerLanes(pi: ExtensionAPI, home: string, link: Link): LaneS
       return reply((await withLanes(() => restartAll(config))).join("\n"));
     },
   });
-  keepRunning(pi, config, home);
+  keepRunning(pi, config, home, ctx);
   return async () => {
     const lanes: LaneRow[] = [];
     const unreachable: { host: string; error: string }[] = [];
@@ -221,7 +227,51 @@ async function costLines(config: LaneConfig): Promise<string[]> {
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
-function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
+function deliver(
+  pi: ExtensionAPI,
+  customType: string,
+  content: string,
+  urgent: boolean,
+  details?: Record<string, string>,
+): void {
+  pi.sendMessage(
+    { customType, content, display: true, ...(details === undefined ? {} : { details }) },
+    urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
+  );
+}
+
+function diskSayer(pi: ExtensionAPI, isDown: () => boolean): (alert: Alert) => boolean {
+  return ({ text, urgent, crossing }) => {
+    if (isDown()) return false;
+    const details = crossing === undefined ? undefined : { crossing };
+    deliver(pi, DISK_MESSAGE, `[fleet] disk: ${text}`, urgent, details);
+    return true;
+  };
+}
+
+function diskWatcher(
+  pi: ExtensionAPI,
+  config: LaneConfig,
+  ctx: ExtensionContext,
+  isDown: () => boolean,
+): (host: string) => Promise<void> {
+  return diskWatch({
+    ask: (host, args) => fleet(config, host, args),
+    send: diskSayer(pi, isDown),
+    clear: (crossing) => {
+      if (!isDown()) pi.appendEntry(DISK_CLEARED, { crossing });
+    },
+    idle: () => !isDown() && ctx.isIdle() && !ctx.hasPendingMessages(),
+    entries: () => (isDown() ? [] : ctx.sessionManager.getEntries()),
+  });
+}
+
+function keepRunning(
+  pi: ExtensionAPI,
+  config: LaneConfig,
+  home: string,
+  ctx: ExtensionContext,
+): void {
   const unreachable = new Set<string>();
   const unshared = new Set<string>();
   let ticking = false;
@@ -229,11 +279,7 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
   const isDown = (): boolean => shutDown;
   const tell = (lines: readonly string[], urgent: boolean): void => {
     if (lines.length === 0 || shutDown) return;
-    const content = `[fleet] lanes: ${lines.join("; ")}`;
-    pi.sendMessage(
-      { customType: "fleet-lanes", content, display: true },
-      urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
-    );
+    deliver(pi, "fleet-lanes", `[fleet] lanes: ${lines.join("; ")}`, urgent);
   };
   const share = async (host: string): Promise<void> => {
     try {
@@ -246,24 +292,37 @@ function keepRunning(pi: ExtensionAPI, config: LaneConfig, home: string): void {
       tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
     }
   };
+  const watchDisk = diskWatcher(pi, config, ctx, isDown);
+  const reportDown = (host: string, error: unknown): void => {
+    if (unreachable.has(host)) return;
+    unreachable.add(host);
+    const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
+    tell([`${host} ${why}: ${messageOf(error)}`], true);
+  };
+  const maintain = async (host: string): Promise<void> => {
+    await share(host);
+    const out = await rows(config, host, ["up", "--maintenance"]);
+    if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
+    const of = (action: string) => out.filter((row) => text(row, "action") === action);
+    tell(
+      of("started").map((row) => `${text(row, "lane")} started on ${host}`),
+      false,
+    );
+    const held = (row: Record<string, unknown>) =>
+      `${text(row, "lane")} on ${host} is held: ${text(row, "detail")}`;
+    tell(of("held").map(held), true);
+  };
   const checkHost = async (host: string): Promise<void> => {
     try {
-      await share(host);
-      const out = await rows(config, host, ["up", "--maintenance"]);
-      if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
-      const of = (action: string) => out.filter((row) => text(row, "action") === action);
-      tell(
-        of("started").map((row) => `${text(row, "lane")} started on ${host}`),
-        false,
-      );
-      const held = (row: Record<string, unknown>) =>
-        `${text(row, "lane")} on ${host} is held: ${text(row, "detail")}`;
-      tell(of("held").map(held), true);
+      await maintain(host);
     } catch (error) {
-      if (unreachable.has(host)) return;
-      unreachable.add(host);
-      const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-      tell([`${host} ${why}: ${messageOf(error)}`], true);
+      reportDown(host, error);
+      if (error instanceof HostUnreachable) return;
+    }
+    try {
+      await watchDisk(host);
+    } catch (error) {
+      reportDown(host, error);
     }
   };
   const dailyCost = async (): Promise<void> => {

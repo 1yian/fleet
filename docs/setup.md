@@ -171,6 +171,35 @@ A host-shared no-mistakes daemon is not a worker's process, even when a worker s
 
 The cleaner owner of the daemon is the host. Prefer starting it once from the host's own login with the daemon start command of no-mistakes, which installs it as a user service. Agent maintenance follows the scoped approval and evidence requirements in [worker rule 9](../packages/extension/prompts/worker.md#rules), coordinated by the [mate](../packages/extension/prompts/mate.md). Main owns rollout and must arrange a supported worker reload before maintenance so the executing worker uses the updated prompts and guard. Fleet's cleanup only preserves shared daemons; it does not administer them.
 
+## Scratch space and the disk alarm
+
+A host's `/tmp` can be a memory filesystem with a fixed number of files. On p620 it is a tmpfs with 1,048,576 inodes. It ran out on Nov 9 and broke test runs with `ENOSPC`, and it reached 96% again after that. So the fleet keeps its scratch space on disk, bounds it, and tells main when a filesystem fills.
+
+**The folder.** `~/.fleet` on each host, the folder that already holds `cards.db` and `app`. `FLEET_HOST_DIR` changes it. The fleet adds two things under it:
+
+- `scratch/c-<N>/` is card N's folder, with `tmp/` inside it. When the card is closed, the folder is renamed `scratch/c-<N>.closed-<epoch seconds>`, and its `tmp/` is gone.
+- `node-compile-cache/` is the Node compile cache.
+
+**What fills `/tmp`.** Two things, measured on p620 on Nov 10. Workers' evidence and scratch folders held 513,000 of the 618,000 inodes that `du` counted, in 427 `/tmp/fleet-*` folders (`/tmp/fleet-c-1300` alone had 88,000). The Node compile cache held about 335,000 more, which is what main's hand prune freed. Pi (`cli.js` and its extension loader, jiti), `tsc`, `eslint`, and `prettier` each call `module.enableCompileCache()` with no directory, which means `$TMPDIR/node-compile-cache`. An entry's name comes from the source path and content, so every worktree and every scratch copy of the repository adds new entries, and Node never removes one. `cardd` does not enable it. Nothing in this repository set it.
+
+**A worker's environment.** Dispatch makes `scratch/c-<N>/tmp` on the worker's host and starts the worker's herdr workspace with three variables (`herdr workspace create --env`):
+
+| Variable             | Value                                         |
+| -------------------- | --------------------------------------------- |
+| `FLEET_SCRATCH`      | `~/.fleet/scratch/c-<N>`, the evidence folder |
+| `TMPDIR`             | `~/.fleet/scratch/c-<N>/tmp`                  |
+| `NODE_COMPILE_CACHE` | `~/.fleet/node-compile-cache`                 |
+
+Pi, its extension cache, the worker's shell tools, `mktemp`, `npm`, `tsc`, `eslint`, and Chromium profiles then write on disk. A `run_long` job tab does not inherit the workspace's variables, so the extension passes the same three to the tab (`herdr tab create --env`). The worker contract tells the worker to put reports and evidence in `$FLEET_SCRATCH`. The end-to-end suite keeps its run folder in `/tmp` on purpose (`e2e/support/run-root.ts`: a short path for socket files) and removes it when it ends, also after a failed or killed run.
+
+**A mate's environment.** `fleet up`, `fleet restart`, and the relaunch after `/updatefleet` start Pi with `NODE_COMPILE_CACHE` set to the same cache. A main that the captain starts by hand does not get it: put `export NODE_COMPILE_CACHE="$HOME/.fleet/node-compile-cache"` in the shell profile that starts it.
+
+**A closed card.** When `close` has stopped every attempt of the card and cardd has recorded the close, it removes the card's `tmp/` and renames the card's folder to `c-<N>.closed-<epoch seconds>`, once for each host where it stopped an attempt of the card. The name is the mark: there is no file. A card with nothing but `tmp/` leaves no folder. A close that fails leaves the folder as it was, still `c-<N>`. The evidence stays under the closed name for 7 days after the close, then it goes. A folder called `c-<N>` is never removed, however old. Dispatching the card again brings its latest closed folder back as `c-<N>`, with its evidence and a new `tmp/`. A card that is closed while its host is unreachable, or when the host's scratch step cannot run, keeps its folder as `c-<N>`, and the close says so.
+
+**The tidy.** Main asks every host once an hour, with its minute check, to run `fleet scratch --tidy`. It removes compile cache files that nothing has written for 2 days. It removes each closed folder whose own name is 7 days old: it renames the folder to `.removing-<pid>-<id>`, then deletes it. It deletes the `.removing-*` folders that a crashed tidy left. It looks only at real folders with a closed name and never follows a link, and it never touches `c-<N>`, so it cannot take the folder of a card that dispatch is reopening. It is safe to run at any time and by hand.
+
+**The alarm.** Each minute, main reads the use of the filesystems that hold `/tmp`, the temp folder, and `~/.fleet` on every host (`fleet scratch --json`). When a filesystem passes 75% of its inodes or of its space, main gets one message that names the host, the filesystem, the percentage, and the five largest directories (by inodes for an inode alarm, by space for a space alarm). The directories come from every watched root on that filesystem together, so when `/tmp` and `~/.fleet` share a disk, the message can name `~/.fleet/scratch` or `~/.fleet/node-compile-cache` and the line reads `Largest under /tmp, ~/.fleet`. It says it once for each crossing. It says it again only after the filesystem has dropped below 75% and crossed it again. Main's session file is the record of what it has said: the message is in the file, and a `fleet-disk-cleared` entry in the file marks the use dropping below 75%. A restart that continues the session does not repeat the alarm, with one exception. Pi writes a brand-new session's file only when its first user or assistant message exists, so a main that is killed after it said the alarm but before that first message was written has no session file to continue, and says the alarm once more after the restart. That is a repeat, never a loss. A message that Pi could not write into the file is said again on a later check, and a cleared entry that it could not write is tried again. A new session (`/new`) starts with nothing said, so a crossing that is still over 75% is said again in it. Main says the alarm only while it is idle, so a turn that runs for a long time delays the alarm until it ends, and the captain stopping a turn cannot drop it. If the host cannot list its largest directories, main waits and asks again on the next checks. After 3 failed tries it says the crossing once without the directories, and the message says that the listing could not be read, because an alarm without the list is better than none. The check runs even when the host's lanes cannot be started. A host whose use cannot be read is named once, and again when it works.
+
 ## 3. Lanes and projects
 
 Run these once on the `cardd` host. The host names are the fleet's own: `maverick`, `p620`, and `cnp-devvm` for the CNP dev VM. They are the names in `cardd`'s `--hosts`, in `--clone`, and in main's `hosts`. The VM's machine hostname, `cx-devvm-01`, is never used in fleet settings.
@@ -524,23 +553,26 @@ A job's tab closes when the job finishes. Its result is in the `[fleet]` message
 
 The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
-| Command                                  | Does                                                                                        |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `fleet status [--json]`                  | Shows each lane on this host: running, down, or stopped.                                    |
-| `fleet up [lane]`                        | Starts each lane that does not run. A stopped lane stays stopped unless it is named.        |
-| `fleet stop <lane>`                      | Closes the lane's workspace and holds the lane.                                             |
-| `fleet restart [lane]`                   | Starts the mate again on its conversation. No lane means every lane that is not held.       |
-| `fleet arrange`                          | Puts this host's herdr sidebar in order (below).                                            |
-| `fleet update [--check]`                 | Updates this host's checkout and lane homes for `/updatefleet` (section 7).                 |
-| `fleet cardd --root R --db D [--check]`  | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).                     |
-| `fleet home add <lane> ...`              | Makes a lane's home. It takes `--token-file F\|-`, `--bws JSON`, or both (section 5).       |
-| `fleet home set <lane> ...`              | Changes a home's Pi `--args` and `--worker-args` (section 5).                               |
-| `fleet secrets [lane]`                   | Checks what Bitwarden serves each lane here, before an old file goes (below).               |
-| `fleet home memory <lane>`               | Turns on the lane's conversation memory (section 4).                                        |
-| `fleet shared --content B64 \| --absent` | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
-| `fleet wake <lane> <note> [--script N]`  | Wakes a second mate with a note, from a script (section 5).                                 |
-| `fleet cost`                             | Prints this host's last-24-hour usage rows as JSON. Main reads it for its daily cost line.  |
-| `fleet migrate [--undo]`                 | Moves the earlier layout into homes (below).                                                |
+| Command                                    | Does                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `fleet status [--json]`                    | Shows each lane on this host: running, down, or stopped.                                    |
+| `fleet up [lane]`                          | Starts each lane that does not run. A stopped lane stays stopped unless it is named.        |
+| `fleet stop <lane>`                        | Closes the lane's workspace and holds the lane.                                             |
+| `fleet restart [lane]`                     | Starts the mate again on its conversation. No lane means every lane that is not held.       |
+| `fleet arrange`                            | Puts this host's herdr sidebar in order (below).                                            |
+| `fleet update [--check]`                   | Updates this host's checkout and lane homes for `/updatefleet` (section 7).                 |
+| `fleet cardd --root R --db D [--check]`    | Updates and restarts `cardd`'s checkout for `/updatefleet` (section 7).                     |
+| `fleet home add <lane> ...`                | Makes a lane's home. It takes `--token-file F\|-`, `--bws JSON`, or both (section 5).       |
+| `fleet home set <lane> ...`                | Changes a home's Pi `--args` and `--worker-args` (section 5).                               |
+| `fleet secrets [lane]`                     | Checks what Bitwarden serves each lane here, before an old file goes (below).               |
+| `fleet home memory <lane>`                 | Turns on the lane's conversation memory (section 4).                                        |
+| `fleet shared --content B64 \| --absent`   | Makes every lane home here hold main's `captain-shared.md` (base64), or none. Main runs it. |
+| `fleet wake <lane> <note> [--script N]`    | Wakes a second mate with a note, from a script (section 5).                                 |
+| `fleet cost`                               | Prints this host's last-24-hour usage rows as JSON. Main reads it for its daily cost line.  |
+| `fleet scratch [--tidy] [--json]`          | Prints the use of the filesystems the fleet writes scratch to. `--tidy` tidies first.       |
+| `fleet scratch --open N`                   | Makes card N's scratch folder as dispatch does, and prints it and the compile cache.        |
+| `fleet scratch --largest PATH... [--by M]` | Prints the largest directories under the PATHs together, by `inodes` (default) or `space`.  |
+| `fleet migrate [--undo]`                   | Moves the earlier layout into homes (below).                                                |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 

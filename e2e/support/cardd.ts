@@ -165,6 +165,20 @@ export class Cardd {
     db.close();
   }
 
+  refuseCloseRecord(): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.exec(
+      "CREATE TRIGGER refuse_close_record BEFORE INSERT ON entries WHEN NEW.kind = 'cleanup' BEGIN SELECT RAISE(ABORT, 'entries refuse the close record'); END",
+    );
+    db.close();
+  }
+
+  endAttemptsByHand(card: number): void {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    db.prepare("UPDATE attempts SET state = 'ended' WHERE card = ?").run(card);
+    db.close();
+  }
+
   setRepo(project: string, repo: string): string {
     const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
     return execFileSync("node", args, {

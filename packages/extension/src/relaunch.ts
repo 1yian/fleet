@@ -2,6 +2,7 @@ import { quote } from "@fleet/protocol/route";
 import { herdr, shellIdle } from "./host.ts";
 import { readLaneConfig } from "./lane-config.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
+import { withCompileCache } from "./scratch.ts";
 
 const WAIT_MS = 60_000;
 const [pid = "", pane = "", home = "", ...args] = process.argv.slice(2);
@@ -29,7 +30,9 @@ async function relaunch(): Promise<void> {
   const direnv = process.env["FLEET_RELAUNCH_DIRENV"] ?? "";
   const resume = args.includes("--session-id") ? [] : ["--continue"];
   const pi = ["pi", ...resume, ...args];
-  const command = (direnv === "" ? pi : ["direnv", "exec", direnv, ...pi]).map(quote).join(" ");
+  const command = withCompileCache(direnv === "" ? pi : ["direnv", "exec", direnv, ...pi])
+    .map(quote)
+    .join(" ");
   await herdr("local", ["pane", "run", pane, `cd ${quote(home)} && ${command}`]);
 }
 

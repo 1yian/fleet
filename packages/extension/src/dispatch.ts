@@ -17,6 +17,7 @@ import {
   worktreeOf,
 } from "./host.ts";
 import { openWorkerWorkspace } from "./place.ts";
+import { OPEN_SCRATCH_SCRIPT, parseOpened, workerEnvironment } from "./scratch.ts";
 import type { Link } from "./link.ts";
 import { workerModelArgs } from "./lane-config.ts";
 
@@ -50,6 +51,11 @@ if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1
 fi
 git -C "$clone" worktree add -q --no-track -b "$branch" "$path" "$start"`;
 
+async function scratchEnvironment(host: string, card: number): Promise<string[]> {
+  const opened = await onHost(host, ["sh", "-c", OPEN_SCRATCH_SCRIPT, "scratch", String(card)]);
+  return workerEnvironment(parseOpened(opened));
+}
+
 async function worktreePane(
   host: string,
   plan: Plan,
@@ -72,11 +78,12 @@ async function worktreePane(
     const args = [plan.clone, path, plan.branch, plan.base, from];
     await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", ...args]);
   }
-  const root = await openWorkerWorkspace(host, path, {
-    id: card,
-    name: plan.name,
-    lane: plan.lane,
-  });
+  const root = await openWorkerWorkspace(
+    host,
+    path,
+    { id: card, name: plan.name, lane: plan.lane },
+    await scratchEnvironment(host, card),
+  );
   return { pane: root, path };
 }
 
