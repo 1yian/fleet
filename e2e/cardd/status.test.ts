@@ -122,7 +122,13 @@ test("a hold with a future date shows the card as waiting with its date, whateve
     const card = await newCard(cleo, `held after ${name}`);
     const worker = await fleet.cardd.connect(await begin(cleo, card));
     await worker.call("report", report);
-    await cleo.call("hold", { card: card.id, question: "Wait for the load balancer?", until });
+    await cleo.call("hold", {
+      card: card.id,
+      question: "Wait for the load balancer?",
+      until,
+      outside: "the load balancer cutover",
+      remaining: [],
+    });
     cards.push(card);
   }
   for (const card of cards) {

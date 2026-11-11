@@ -280,6 +280,8 @@ test("board shows a card held until a date as waiting with its date whatever its
         card: card.id,
         question: "Wait for the load balancer?",
         until: Date.now() + 2 * hour + 300_000,
+        outside: "the load balancer cutover",
+        remaining: [],
       });
   }
   const [board = ""] = await mainCalls([["board", { lane: "cleo" }]]);

@@ -145,6 +145,8 @@ test("a worker that reported blocked stops reading blocked when its mate holds t
     card,
     question: "Wait for the load balancer?",
     until: Date.now() + 3_600_000,
+    outside: "the load balancer cutover",
+    remaining: [],
   });
   await until(pane, "the dated hold to clear the block", (s) => s.status === "idle");
   await stays(pane, "idle");
