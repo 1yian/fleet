@@ -9,6 +9,7 @@ import {
   type Facts,
   type Swimlane,
 } from "./format.ts";
+import { Attention } from "./Attention.tsx";
 import { ChevronIcon, ClockIcon, StatusIcon, type Glyph } from "./icons.tsx";
 import { DoneRow, MateRow, TaskCard } from "./TaskCard.tsx";
 
@@ -235,22 +236,25 @@ export function Kanban(props: Props) {
     <DoneRow key={card.id} card={card} facts={facts.get(card.id)} now={now} onOpen={props.onOpen} />
   );
   return (
-    <div className={columns.merging.length === 0 ? "board-body no-merging" : "board-body"}>
-      <div className="swimlanes">
-        <Heads columns={columns} />
-        {lanes.length === 0 ? <p className="empty">Nothing is on the board.</p> : null}
-        {lanes.map((lane) => (
-          <Lane key={lane.project} lane={lane} render={cardOf} row={row} />
-        ))}
+    <>
+      <Attention cards={shown} now={now} onOpen={props.onOpen} />
+      <div className={columns.merging.length === 0 ? "board-body no-merging" : "board-body"}>
+        <div className="swimlanes">
+          <Heads columns={columns} />
+          {lanes.length === 0 ? <p className="empty">Nothing is on the board.</p> : null}
+          {lanes.map((lane) => (
+            <Lane key={lane.project} lane={lane} render={cardOf} row={row} />
+          ))}
+        </div>
+        <Rail
+          schedules={board.schedules}
+          columns={columns}
+          now={now}
+          row={row}
+          onOpen={props.onOpen}
+        />
       </div>
-      <Rail
-        schedules={board.schedules}
-        columns={columns}
-        now={now}
-        row={row}
-        onOpen={props.onOpen}
-      />
-    </div>
+    </>
   );
 }
 

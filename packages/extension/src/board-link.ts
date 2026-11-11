@@ -3,7 +3,7 @@ import { getCapabilities, hyperlink } from "@earendil-works/pi-tui";
 
 const BOARD_STATUS_KEY = "fleet-board";
 
-function boardUrl(carddUrl: string): string {
+export function boardUrl(carddUrl: string): string {
   return carddUrl.replace(/^ws/, "http").replace(/\/session$/, "/");
 }
 

@@ -19,6 +19,10 @@ export interface Timings {
   readonly finished: number;
   readonly waiting: number;
   readonly informing: number;
+  readonly idleMain: number;
+  readonly idleCaptain: number;
+  readonly parked: number;
+  readonly parkedUrgent: number;
   readonly keyCooldown: number;
   readonly keyAge: number;
   readonly stop: number;
@@ -46,6 +50,10 @@ export function timings(scale: number, wall: () => number = Date.now): Timings {
     finished: at(120),
     waiting: at(30),
     informing: at(24 * 60),
+    idleMain: at(4 * 60),
+    idleCaptain: at(24 * 60),
+    parked: at(24 * 60),
+    parkedUrgent: at(3 * 24 * 60),
     keyCooldown: at(0.5),
     keyAge: at(10),
     stop: at(4),

@@ -50,11 +50,12 @@ export function oldDatedHold(
   holder: Holder,
   opened: number,
   until: number,
+  remaining: readonly number[] = [],
 ): void {
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });
   try {
     const author = holder === "captain" ? "mate:main" : "mate:cleo";
-    const fields = { holder, options: [], merge: false, until, occurrence: 1 };
+    const fields = { holder, options: [], merge: false, until, occurrence: 1, remaining };
     db.prepare(
       "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, 'hold', 'Wait for it?', ?, ?)",
     ).run(card.id, author, JSON.stringify(fields), opened);
@@ -71,3 +72,26 @@ export const park = (
   more: Record<string, unknown> = OUTSIDE_DATE,
 ): Promise<unknown> =>
   mate.call("hold", { card: card.id, question, until: Date.now() + ms, ...more });
+
+export function ageCard(cardd: Cardd, card: Card, ms: number): void {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.exec("DROP TRIGGER IF EXISTS entries_no_update");
+    db.prepare("UPDATE entries SET created_at = created_at - ? WHERE card = ?").run(ms, card.id);
+    db.prepare("UPDATE cards SET created_at = created_at - ? WHERE id = ?").run(ms, card.id);
+  } finally {
+    db.close();
+  }
+}
+
+export function ageSession(cardd: Cardd, card: Card, ms: number): void {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.prepare(
+      `UPDATE sessions SET last_seen = last_seen - ?
+       WHERE attempt IN (SELECT id FROM attempts WHERE card = ?)`,
+    ).run(ms, card.id);
+  } finally {
+    db.close();
+  }
+}

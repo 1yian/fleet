@@ -81,6 +81,7 @@ class Hub {
     this.hosts = hosts;
     this.web = new Web(
       db,
+      timing,
       (session) => {
         this.flush(session, false);
       },

@@ -11,7 +11,11 @@ import {
 } from "@earendil-works/pi-tui";
 import { KINDS, type Glance, type Kind, type Need } from "./glance.ts";
 
-const GLYPHS: Readonly<Record<Kind, string>> = { broken: "●", "needs-you": "◆", stalled: "◇" };
+export const GLYPHS: Readonly<Record<Kind, string>> = {
+  broken: "●",
+  "needs-you": "◆",
+  stalled: "◇",
+};
 const LANDED_GLYPH = "▲";
 const CLEAR_TEXT = "✓ clear";
 const DECIDE_HINT = "/d";
@@ -20,7 +24,7 @@ const MINUTE_MS = 60_000;
 
 type Colors = Theme["colors"];
 
-const TONES: Readonly<Record<Kind, (colors: Colors) => Color>> = {
+export const TONES: Readonly<Record<Kind, (colors: Colors) => Color>> = {
   broken: (colors) => colors.error,
   "needs-you": (colors) => colors.warning,
   stalled: (colors) => mixColors(colors.warning, colors.error, 0.5),
@@ -34,7 +38,8 @@ function span(ms: number): string {
   return hours < 48 ? ` (${String(hours)}h)` : ` (${String(Math.floor(hours / 24))}d)`;
 }
 
-const plain = (text: string): string => replaceControlCharacters(stripTerminalSequences(text));
+export const plain = (text: string): string =>
+  replaceControlCharacters(stripTerminalSequences(text));
 
 const subject = (need: Need): string =>
   need.card === undefined ? need.title : `c-${String(need.card)} ${plain(need.title)}`;

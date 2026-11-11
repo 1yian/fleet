@@ -1,4 +1,4 @@
-import type { BoardCard, Status } from "@fleet/protocol";
+import type { BoardCard, Pulse } from "@fleet/protocol";
 
 export const KINDS = ["broken", "needs-you", "stalled"] as const;
 export type Kind = (typeof KINDS)[number];
@@ -16,23 +16,11 @@ export interface Glance {
   readonly landed: number;
 }
 
-export interface Limits {
-  readonly stallMs: number;
-  readonly lostMs: number;
+export function kindOf({ state, notice }: Pulse): Kind | undefined {
+  if (state === "you") return "needs-you";
+  if (state === "broken" || notice === "urgent") return "broken";
+  return state === "stalled" || notice !== "none" ? "stalled" : undefined;
 }
-
-export type ReportTimes = ReadonlyMap<number, number>;
-
-const WORKING: ReadonlySet<Status> = new Set(["working", "in-review"]);
-const DOWN: ReadonlySet<string> = new Set(["starting", "exited", "lost"]);
-
-const need = (card: BoardCard, kind: Kind, why: string, since: number): Need => ({
-  kind,
-  card: card.id,
-  title: card.title,
-  why,
-  since,
-});
 
 export const unreachable = (since: number): Need => ({
   kind: "broken",
@@ -42,39 +30,24 @@ export const unreachable = (since: number): Need => ({
   since,
 });
 
-function liveNeed(card: BoardCard, now: number, limits: Limits): Need | undefined {
-  const live = card.activity;
-  if (card.mate || live === null || !WORKING.has(card.status)) return undefined;
-  const quiet = now - live.at;
-  if (DOWN.has(live.state) && quiet >= limits.lostMs)
-    return need(card, "broken", "worker not connected", live.at);
-  if (live.state === "running" && quiet >= limits.stallMs)
-    return need(card, "stalled", "no output", live.at);
-  return undefined;
+const QUIET: Readonly<Partial<Record<Pulse["state"], string>>> = {
+  you: "needs you",
+  idle: "idle, nothing running",
+  parked: "parked, nothing running",
+};
+
+function whyOf(card: BoardCard, { state }: Pulse): string {
+  const quiet = QUIET[state];
+  if (quiet !== undefined) return quiet;
+  if (card.attention !== null) return `worker ${card.attention}`;
+  return state === "broken" ? "worker not connected" : "no output";
 }
 
-function reportedNeed(
-  card: BoardCard,
-  now: number,
-  limits: Limits,
-  reports: ReportTimes,
-): Need | undefined {
-  const reported = reports.get(card.id);
-  if (card.attention === "failed")
-    return need(card, "broken", "worker failed", reported ?? card.updatedAt);
-  if (card.attention === null || reported === undefined || now - reported < limits.stallMs)
-    return undefined;
-  return need(card, "stalled", `worker ${card.attention}`, reported);
-}
-
-function needOf(
-  card: BoardCard,
-  now: number,
-  limits: Limits,
-  reports: ReportTimes,
-): Need | undefined {
-  if (card.status === "needs-you") return need(card, "needs-you", "needs you", card.updatedAt);
-  return reportedNeed(card, now, limits, reports) ?? liveNeed(card, now, limits);
+function needOf(card: BoardCard): Need | undefined {
+  const { pulse } = card;
+  const kind = pulse === null ? undefined : kindOf(pulse);
+  if (pulse === null || kind === undefined) return undefined;
+  return { kind, card: card.id, title: card.title, why: whyOf(card, pulse), since: pulse.since };
 }
 
 const worstFirst = (a: Need, b: Need): number =>
@@ -83,15 +56,9 @@ const worstFirst = (a: Need, b: Need): number =>
 const landedSince = (card: BoardCard, since: number): boolean =>
   card.status === "done" && !card.mate && card.kind !== "standing" && card.updatedAt > since;
 
-export function glanceOf(
-  cards: readonly BoardCard[],
-  now: number,
-  since: number,
-  limits: Limits,
-  reports: ReportTimes,
-): Glance {
+export function glanceOf(cards: readonly BoardCard[], since: number): Glance {
   return {
-    needs: cards.flatMap((card) => needOf(card, now, limits, reports) ?? []).sort(worstFirst),
+    needs: cards.flatMap((card) => needOf(card) ?? []).sort(worstFirst),
     landed: cards.filter((card) => landedSince(card, since)).length,
   };
 }

@@ -57,7 +57,9 @@ test("finished reminders wait two hours, repeat every two hours, and never reach
   );
   assert.equal((await reminders()).length, 2);
   assert.deepEqual(
-    main.entries.filter(({ entry }) => entry.card === card.id && entry.author === "check"),
+    main.entries.filter(
+      ({ entry }) => entry.card === card.id && entry.fields["condition"] === "finished",
+    ),
     [],
   );
   await mate.call("close.finish", {

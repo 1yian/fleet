@@ -1,9 +1,17 @@
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { BoardCard, CardView } from "@fleet/protocol";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+  SessionEntry,
+} from "@earendil-works/pi-coding-agent";
+import type { BoardCard } from "@fleet/protocol";
+import { boardUrl } from "../board-link.ts";
 import type { Link } from "../link.ts";
 import { Decide } from "./decide.ts";
-import { glanceOf, unreachable, type Glance, type Limits, type ReportTimes } from "./glance.ts";
+import { glanceOf, unreachable, type Glance } from "./glance.ts";
+import { listOf } from "./list.ts";
 import { chips, rowOf, strip } from "./look.ts";
+import { PulseView } from "./view.ts";
 
 const STATUS_KEY = "fleet-attention";
 const STRIP_KEY = "fleet-strip";
@@ -15,7 +23,6 @@ const CARD_TOOLS: ReadonlySet<string> = new Set(["hold", "comment", "close", "di
 interface Settings {
   readonly pollMs: number;
   readonly silentMs: number;
-  readonly limits: Limits;
 }
 
 function number(name: string, fallback: number): number {
@@ -26,17 +33,7 @@ function number(name: string, fallback: number): number {
 const settings = (): Settings => ({
   pollMs: number("FLEET_PANE_POLL_MS", MINUTE_MS),
   silentMs: number("FLEET_PANE_SILENT_MS", 30_000),
-  limits: {
-    stallMs: number("FLEET_PANE_STALL_MS", 5 * MINUTE_MS),
-    lostMs: number("FLEET_PANE_LOST_MS", 2 * MINUTE_MS),
-  },
 });
-
-const reportKey = (card: BoardCard): string => `${String(card.id)}:${String(card.revision)}`;
-
-const reportedAt = ({ card, entries }: CardView): number | undefined =>
-  entries.findLast((entry) => entry.kind === "report" && entry.fields["status"] === card.attention)
-    ?.createdAt;
 
 const isMessageOfHis = (entry: SessionEntry): boolean =>
   entry.type === "message" && entry.message.role === "user";
@@ -50,7 +47,6 @@ function lastMessageAt(ctx: ExtensionContext): number {
 
 class Pane {
   private cards: readonly BoardCard[] | undefined;
-  private readonly reported = new Map<string, number>();
   private since: number;
   private silentSince: number | undefined;
   private fetching = false;
@@ -119,9 +115,7 @@ class Pane {
 
   private async load(): Promise<void> {
     try {
-      const cards = await this.link.call("board", {}, DEADLINE_MS);
-      await this.learn(cards);
-      this.cards = cards;
+      this.cards = await this.link.call("board", {}, DEADLINE_MS);
       this.silentSince = undefined;
     } catch {
       this.silentSince ??= Date.now();
@@ -129,39 +123,12 @@ class Pane {
     this.paint();
   }
 
-  private async learn(cards: readonly BoardCard[]): Promise<void> {
-    const flagged = cards.filter((card) => card.attention !== null);
-    const current = new Set(flagged.map(reportKey));
-    for (const key of this.reported.keys()) if (!current.has(key)) this.reported.delete(key);
-    const unread = flagged.filter((card) => !this.reported.has(reportKey(card)));
-    await Promise.all(unread.map((card) => this.read(card)));
-  }
-
-  private async read(card: BoardCard): Promise<void> {
-    try {
-      const at = reportedAt(await this.link.call("card", { card: card.id }, DEADLINE_MS));
-      if (at !== undefined) this.reported.set(reportKey(card), at);
-    } catch {
-      return;
-    }
-  }
-
-  private reportTimes(cards: readonly BoardCard[]): ReportTimes {
-    return new Map(
-      cards.flatMap((card) => {
-        const at = this.reported.get(reportKey(card));
-        return at === undefined ? [] : [[card.id, at] as const];
-      }),
-    );
-  }
-
   private glance(now: number): Glance | undefined {
     const silent = this.silentSince;
     const down = silent !== undefined && now - silent >= this.rules.silentMs;
     if (down) return { needs: [unreachable(silent)], landed: 0 };
     if (this.cards === undefined) return undefined;
-    const reports = this.reportTimes(this.cards);
-    return glanceOf(this.cards, now, this.since, this.rules.limits, reports);
+    return glanceOf(this.cards, this.since);
   }
 
   private paint(): void {
@@ -188,8 +155,43 @@ class Pane {
   }
 }
 
-export function showPane(pi: ExtensionAPI, link: Link, ctx: ExtensionContext): void {
+const OVERLAY = { width: "80%", minWidth: 56, maxHeight: "90%" } as const;
+const SHARE_OF_SCREEN = 0.9;
+
+async function showPulse(link: Link, ctx: ExtensionCommandContext, carddUrl: string) {
+  const cards = await link.call("board", {}, DEADLINE_MS).catch(() => undefined);
+  if (cards === undefined) {
+    ctx.ui.notify("cardd is not answering, so there is no pulse to show", "error");
+    return;
+  }
+  const base = boardUrl(carddUrl);
+  const links = { urlOf: (card: number): string => `${base}#/c-${String(card)}` };
+  const list = listOf(cards);
+  const picked = await ctx.ui.custom<number | undefined>(
+    (tui, theme, _keys, done) =>
+      new PulseView(
+        theme,
+        list,
+        links,
+        () => Math.floor(tui.terminal.rows * SHARE_OF_SCREEN),
+        done,
+      ),
+    { overlay: true, overlayOptions: OVERLAY },
+  );
+  if (picked !== undefined) ctx.ui.notify(`c-${String(picked)}: ${links.urlOf(picked)}`, "info");
+}
+
+export function showPane(
+  pi: ExtensionAPI,
+  link: Link,
+  ctx: ExtensionContext,
+  carddUrl: string,
+): void {
   if (!ctx.hasUI) return;
+  pi.registerCommand("pulse", {
+    description: "Every open card, quiet ones first. It stays out of the chat.",
+    handler: (_args, command) => showPulse(link, command, carddUrl),
+  });
   const rules = settings();
   const pane = new Pane(link, ctx, rules);
   const refresh = (): void => {

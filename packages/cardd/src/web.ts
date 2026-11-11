@@ -6,6 +6,7 @@ import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { getCard, transaction } from "./store.ts";
+import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
 
 const CHANGED_EVERY = 1000;
@@ -17,7 +18,7 @@ const TYPES: Readonly<Record<string, string>> = {
   ".json": "application/json",
 };
 
-const READS: Readonly<Record<string, (db: DatabaseSync) => unknown>> = {
+const READS: Readonly<Record<string, (db: DatabaseSync, timing: Timings) => unknown>> = {
   "/api/board": boardView,
   "/api/version": version,
 };
@@ -140,14 +141,17 @@ export class Web {
   private readonly db: DatabaseSync;
   private readonly flush: (session: string) => void;
   private readonly files: string | undefined;
+  private readonly timing: Timings;
 
   constructor(
     db: DatabaseSync,
+    timing: Timings,
     flush: (session: string) => void,
     files: string | undefined,
     access: Access | undefined,
   ) {
     this.db = db;
+    this.timing = timing;
     this.flush = flush;
     this.files = files === undefined ? undefined : resolve(files);
     this.access = access;
@@ -204,7 +208,7 @@ export class Web {
     const path = new URL(request.url ?? "/", "http://board").pathname;
     const card = /^\/api\/card\/(\d+)$/.exec(path)?.[1];
     const read = request.method === "GET" ? READS[path] : undefined;
-    if (read !== undefined) return read(this.db);
+    if (read !== undefined) return read(this.db, this.timing);
     if (request.method === "GET" && card !== undefined) return thread(this.db, Number(card));
     if (request.method === "POST" && path === "/api/action") return this.act(request);
     return undefined;
