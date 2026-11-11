@@ -3,6 +3,7 @@ import { CardName, DELIVERIES, OPS, type Card, type Schedule } from "@fleet/prot
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
+import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
 import { boardText, cardText, errorText, EXTRA_COLUMNS, SELECTIONS } from "./views.ts";
@@ -180,6 +181,36 @@ function registerSchedules(pi: ExtensionAPI, link: Link): void {
   });
 }
 
+const YIELD = "yield";
+const silent = { render: () => [], invalidate: () => undefined };
+
+function registerYield(pi: ExtensionAPI): void {
+  pi.registerTool({
+    name: YIELD,
+    label: "Yield",
+    description:
+      "Ends this turn silently when routine fleet notifications leave no update for the user. Finish required card actions and answer any reply owed with comment or hold first, in earlier blocks or in this one. Yield may share its block with them: the turn ends when the block finishes, whatever the other calls return, and a failed call shows its error only on the next turn. When the next step depends on a result, call yield in a later block. Write no chat text before or after it. Never use it instead of delivering outcomes, findings, review or merge requests, decisions, or real blockers.",
+    parameters: Type.Object({}),
+    execute: () => Promise.resolve({ content: [], details: {}, terminate: true }),
+    renderShell: "self",
+    renderCall: () => silent,
+    renderResult: () => silent,
+  });
+  let results: Record<string, unknown>[] = [];
+  let yielded = false;
+  pi.on("message_end", (event) => {
+    if (event.message.role !== "assistant") return;
+    results = [];
+    yielded = false;
+  });
+  pi.on("tool_execution_end", (event) => {
+    yielded ||= event.toolName === YIELD;
+    const result: unknown = event.result;
+    if (event.parentToolCallId === undefined && isRecord(result)) results.push(result);
+    if (yielded) for (const each of results) each["terminate"] = true;
+  });
+}
+
 export function registerMate(
   pi: ExtensionAPI,
   link: Link,
@@ -187,17 +218,7 @@ export function registerMate(
   lanes: LaneStates | undefined,
   main: boolean,
 ): void {
-  pi.registerTool({
-    name: "yield",
-    label: "Yield",
-    description:
-      "Ends this turn silently when routine fleet notifications leave no update for the user. First finish required card actions and answer any reply owed with comment or hold. Call yield alone, without chat text. Never use it instead of delivering outcomes, findings, review or merge requests, decisions, or real blockers.",
-    parameters: Type.Object({}),
-    execute: () => Promise.resolve({ content: [], details: {}, terminate: true }),
-    renderShell: "self",
-    renderCall: () => ({ render: () => [], invalidate: () => undefined }),
-    renderResult: () => ({ render: () => [], invalidate: () => undefined }),
-  });
+  registerYield(pi);
   pi.registerTool({
     name: "card_new",
     label: "New card",

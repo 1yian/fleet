@@ -116,6 +116,143 @@ test("main yields without chat or a tool placeholder, acknowledges the notificat
   await keep("2-meaningful-outcome", pane);
 });
 
+const NOTE = "Validation is still running, nothing for the captain.";
+const NOTE_CALL = { tool: "comment", args: { lane: "cleo", text: NOTE } };
+
+async function noteReaches(): Promise<void> {
+  const note = await cleo.waitForEntry((entry) => entry.body === NOTE, "main's comment to cleo");
+  assert.equal(note.author, "mate:main");
+}
+
+for (const [place, move] of [
+  ["a comment, then yield", { ...NOTE_CALL, alongside: [{ tool: "yield" }] }],
+  ["yield, then a comment", { tool: "yield", alongside: [NOTE_CALL] }],
+  [
+    "a comment, yield, then a board read",
+    { ...NOTE_CALL, alongside: [{ tool: "yield" }, { tool: "board" }] },
+  ],
+] as const) {
+  test(`${place} in one block ends the turn silently and delivers the comment`, async () => {
+    h.onModel(() => move, "mate");
+    h.onModel(() => ({ text: "." }), "mate");
+    const pane = await startMain(lab, scratch, h);
+    await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+    await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+    await settled();
+    await takenIn("main", 1);
+    await noteReaches();
+    assert.equal(
+      h.callsOf("mate").length,
+      1,
+      "the block must not ask the model for another message",
+    );
+    assert.deepEqual(await assistantText(), [""]);
+    await keep(`3-batched-yield-${place.replaceAll(" ", "-")}`, pane);
+  });
+}
+
+test("a card action that fails in the yield block still ends the turn silently and stays in the record", async () => {
+  h.onModel(
+    () => ({
+      tool: "comment",
+      args: { lane: "nobody", text: NOTE },
+      alongside: [{ tool: "yield" }],
+    }),
+    "mate",
+  );
+  h.onModel(() => ({ text: OUTCOME }), "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+  await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+  await settled();
+  assert.equal(h.callsOf("mate").length, 1, "a failed sibling must not buy a chat message");
+  assert.deepEqual(await assistantText(), [""]);
+
+  await cleo.call("comment", { lane: "cleo", text: "The parser fix is ready for review." });
+  await settled(2);
+  const turns = await h.waitForCall(1, "mate");
+  assert.ok(
+    turns.some((turn) => turn.role === "toolResult" && /nobody/i.test(turn.text)),
+    `the next turn never saw the failed comment: ${JSON.stringify(turns.slice(-4))}`,
+  );
+});
+
+test("a tool that is not fleet's in the yield block still ends the turn silently", async () => {
+  h.onModel(() => ({ tool: "slow_tool", alongside: [{ tool: "yield" }] }), "mate");
+  h.onModel(() => ({ text: "." }), "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+  await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+  await h.waitFor((event) => event["type"] === "tool_waiting", "the foreign tool");
+  h.releaseTool();
+  await settled();
+  await takenIn("main", 1);
+  assert.equal(h.callsOf("mate").length, 1, "the block must not ask the model for another message");
+  assert.deepEqual(await assistantText(), [""]);
+});
+
+test("a message that arrives while the yield block runs starts a new turn after the silent end", async () => {
+  h.onModel(() => ({ tool: "slow_tool", alongside: [{ tool: "yield" }] }), "mate");
+  h.onModel(() => ({ text: OUTCOME }), "mate");
+  const pane = await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+  await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+  await h.waitFor((event) => event["type"] === "tool_waiting", "the first tool");
+  await cleo.call("comment", { lane: "cleo", text: "The parser fix is ready for review." });
+  await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the mid-block comment");
+  h.releaseTool();
+  await settled();
+  await takenIn("main", 2);
+  const turns = await h.waitForCall(1, "mate");
+  assert.match(turns.at(-1)?.text ?? "", /The parser fix is ready for review/);
+  assert.equal(h.callsOf("mate").length, 2);
+  assert.deepEqual(await assistantText(), ["", OUTCOME]);
+  await screenWith(pane, "Captain, the parser fix is ready for review:");
+});
+
+const script = (...steps: string[]): string =>
+  steps.map((step) => `await tools.${step};`).join("\n");
+
+test("a yield inside a codemode script ends the turn silently and delivers the comment", async () => {
+  const code = script(`comment(${JSON.stringify({ lane: "cleo", text: NOTE })})`, "yield({})");
+  h.onModel(() => ({ tool: "codemode", args: { code } }), "mate");
+  h.onModel(() => ({ text: "." }), "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+  await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+  await settled();
+  await takenIn("main", 1);
+  await noteReaches();
+  assert.equal(h.callsOf("mate").length, 1, "a script that yields must not buy a chat message");
+  assert.deepEqual(await assistantText(), [""]);
+});
+
+test("a message that arrives while a codemode script yields starts a new turn after the silent end", async () => {
+  const code = script("slow_tool({})", "yield({})");
+  h.onModel(() => ({ tool: "codemode", args: { code } }), "mate");
+  h.onModel(() => ({ text: OUTCOME }), "mate");
+  const pane = await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+  await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+  await h.waitFor((event) => event["type"] === "tool_waiting", "the script's tool");
+  await cleo.call("comment", { lane: "cleo", text: "The parser fix is ready for review." });
+  await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the mid-script comment");
+  h.releaseTool();
+  await settled();
+  await takenIn("main", 2);
+  const turns = await h.waitForCall(1, "mate");
+  assert.match(turns.at(-1)?.text ?? "", /The parser fix is ready for review/);
+  assert.equal(h.callsOf("mate").length, 2);
+  assert.deepEqual(await assistantText(), ["", OUTCOME]);
+  await screenWith(pane, "Captain, the parser fix is ready for review:");
+});
+
 test("yield leaves a queued fleet outcome for the next model call", async () => {
   h.onModel(() => ({ tool: "slow_tool" }), "mate");
   h.onModel(() => ({ tool: "yield" }), "mate");
