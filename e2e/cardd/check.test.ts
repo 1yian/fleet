@@ -472,9 +472,7 @@ test("legacy done reports with an explicit merge marker do not query GitHub, and
 test("a worker that reconnects while its run_long job runs is not reported idle until the job ends", async () => {
   const busy = await newCard(fleet.main, "reconnects mid-job");
   const token = await begin(fleet.main, busy);
-  const first = await fleet.cardd.connect(token);
-  const [task] = await first.waitForEntries(1);
-  first.ack(task?.id ?? 0);
+  const first = await idle(token);
   const { job, heartbeatMs } = check(
     OPS["job.start"].result,
     await first.call("job.start", { label: "tests", command: "npm test" }),
@@ -488,9 +486,7 @@ test("a worker that reconnects while its run_long job runs is not reported idle 
     await fleet.cardd.connect(token);
 
     const control = await newCard(fleet.main, "idle control");
-    const controlWorker = await fleet.cardd.connect(await begin(fleet.main, control));
-    const [controlTask] = await controlWorker.waitForEntries(1);
-    controlWorker.ack(controlTask?.id ?? 0);
+    await idle(await begin(fleet.main, control));
     await reach(fleet.main, control, "worker-idle", 1);
     assert.deepEqual(await tiersOf(busy, "worker-idle"), []);
 
