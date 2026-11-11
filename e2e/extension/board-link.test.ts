@@ -5,8 +5,10 @@ import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { Harness } from "../support/harness.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
-const OSC8 = "\u001b]8;;";
-const ST = "\u001b\\";
+const ESC = "\u001b";
+const OSC8 = `${ESC}]8;;`;
+const ST = `${ESC}\\`;
+const SGR = new RegExp(`${ESC}\\[[\\d;]*m`, "g");
 
 let fleet: Fleet;
 let h: Harness;
@@ -24,7 +26,7 @@ const boardUrl = (): string => fleet.cardd.url.replace(/^ws/, "http").replace(/\
 const isBoardStatus = (event: Record<string, unknown>): boolean =>
   event["method"] === "setStatus" && event["statusKey"] === "fleet-board";
 
-test("main's status line links to the board, without the token", async () => {
+test("main's status line shows the word board as a link to the board, without the URL or the token", async () => {
   const pi = h.startPi(
     "main",
     {
@@ -36,12 +38,13 @@ test("main's status line links to the board, without the token", async () => {
     [EXTENSION],
   );
   const status = await pi.waitForUi(isBoardStatus, "the board link in the status line");
-  const url = boardUrl();
-  assert.equal(status["statusText"], `${OSC8}${url}${ST}${url}${OSC8}${ST}`);
+  const text = String(status["statusText"]);
+  assert.equal(text.replace(SGR, ""), `${OSC8}${boardUrl()}${ST}board${OSC8}${ST}`);
+  assert.equal(text.split(boardUrl()).length, 2, "the URL is only the link's target");
   assert.ok(!JSON.stringify(status).includes(fleet.mainToken));
 });
 
-test("a terminal without hyperlinks shows the plain board URL", async () => {
+test("a terminal without hyperlinks shows the word board and no URL", async () => {
   const pi = h.startPi(
     "main",
     {
@@ -52,8 +55,8 @@ test("a terminal without hyperlinks shows the plain board URL", async () => {
     },
     [EXTENSION],
   );
-  const status = await pi.waitForUi(isBoardStatus, "the board URL in the status line");
-  assert.equal(status["statusText"], boardUrl());
+  const status = await pi.waitForUi(isBoardStatus, "the word board in the status line");
+  assert.equal(String(status["statusText"]).replace(SGR, ""), "board");
 });
 
 test("a worker's status line has no board link", async () => {

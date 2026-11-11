@@ -7,14 +7,15 @@ import type {
 import type { BoardCard } from "@fleet/protocol";
 import { boardUrl } from "../board-link.ts";
 import type { Link } from "../link.ts";
+import { onStatusClick } from "../status-click.ts";
 import { Decide } from "./decide.ts";
-import { glanceOf, unreachable, type Glance } from "./glance.ts";
+import { decisionsOf } from "./decisions.ts";
+import { glanceOf } from "./glance.ts";
 import { listOf } from "./list.ts";
-import { chips, rowOf, strip } from "./look.ts";
+import { decisionsText, downStatus, statusOf } from "./look.ts";
 import { PulseView } from "./view.ts";
 
 const STATUS_KEY = "fleet-attention";
-const STRIP_KEY = "fleet-strip";
 const MINUTE_MS = 60_000;
 const DEADLINE_MS = 10_000;
 const RETRIES_BEFORE_SILENT = 3;
@@ -47,6 +48,7 @@ function lastMessageAt(ctx: ExtensionContext): number {
 
 class Pane {
   private cards: readonly BoardCard[] | undefined;
+  private decisions = 0;
   private since: number;
   private silentSince: number | undefined;
   private fetching = false;
@@ -54,7 +56,6 @@ class Pane {
   private stopped = false;
   private timer: NodeJS.Timeout | undefined;
   private status: string | undefined;
-  private row: string | undefined;
   private readonly link: Link;
   private readonly ctx: ExtensionContext;
   private readonly rules: Settings;
@@ -65,14 +66,8 @@ class Pane {
     this.ctx = ctx;
     this.rules = rules;
     this.since = lastMessageAt(ctx);
-    this.decide = new Decide(link, ctx, {
-      opened: () => {
-        this.paint();
-      },
-      closed: () => {
-        this.paint();
-        this.refresh();
-      },
+    this.decide = new Decide(link, ctx, () => {
+      this.refresh();
     });
   }
 
@@ -116,12 +111,14 @@ class Pane {
     this.stopped = true;
     clearTimeout(this.timer);
     ctx.ui.setStatus(STATUS_KEY, undefined);
-    ctx.ui.setWidget(STRIP_KEY, undefined);
+    onStatusClick(STATUS_KEY, undefined);
   }
 
   private async load(): Promise<void> {
     try {
-      this.cards = await this.link.call("board", {}, DEADLINE_MS);
+      const cards = await this.link.call("board", {}, DEADLINE_MS);
+      this.decisions = (await decisionsOf(this.link, cards)).length;
+      this.cards = cards;
       this.silentSince = undefined;
     } catch {
       this.silentSince ??= Date.now();
@@ -129,34 +126,34 @@ class Pane {
     this.paint();
   }
 
-  private glance(now: number): Glance | undefined {
+  private statusAt(now: number): { text: string; decisions: number } | undefined {
+    const { theme } = this.ctx.ui;
     const silent = this.silentSince;
-    const down = silent !== undefined && now - silent >= this.rules.silentMs;
-    if (down) return { needs: [unreachable(silent)], landed: 0 };
+    if (silent !== undefined && now - silent >= this.rules.silentMs)
+      return { text: downStatus(theme), decisions: 0 };
     if (this.cards === undefined) return undefined;
-    return glanceOf(this.cards, this.since);
+    const glance = glanceOf(this.cards, this.since);
+    return { text: statusOf(theme, glance, this.decisions), decisions: this.decisions };
   }
 
   private paint(): void {
-    const now = Date.now();
-    const glance = this.glance(now);
-    if (glance === undefined || this.stopped) return;
-    const { ui } = this.ctx;
-    const status = chips(ui.theme, glance);
-    if (status !== this.status) {
-      ui.setStatus(STATUS_KEY, status);
-      this.status = status;
+    const shown = this.statusAt(Date.now());
+    if (shown === undefined || this.stopped) return;
+    if (shown.text !== this.status) {
+      this.ctx.ui.setStatus(STATUS_KEY, shown.text);
+      this.status = shown.text;
     }
-    const row = this.decide.isOpen ? undefined : rowOf(glance.needs, now);
-    const key = row === undefined ? "" : JSON.stringify(row);
-    if (key === this.row) return;
-    this.row = key;
-    const open = (): void => {
-      void this.decide.open();
-    };
-    ui.setWidget(
-      STRIP_KEY,
-      row === undefined ? undefined : (_tui, theme) => strip(theme, row, open),
+    const waiting = decisionsText(shown.decisions);
+    onStatusClick(
+      STATUS_KEY,
+      waiting === undefined
+        ? undefined
+        : {
+            text: waiting,
+            act: () => {
+              void this.decide.open();
+            },
+          },
     );
   }
 }

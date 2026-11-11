@@ -19,8 +19,7 @@ function decisionOf({ card, hold }: CardView): Decision[] {
   return [{ card: card.id, title: card.title, hold: entry, question, options }];
 }
 
-export async function loadDecisions(link: Link): Promise<Decision[]> {
-  const cards = await link.call("board", {}, DEADLINE_MS);
+export async function decisionsOf(link: Link, cards: readonly BoardCard[]): Promise<Decision[]> {
   const waiting = cards.filter(needsYou).sort((a, b) => a.updatedAt - b.updatedAt);
   const views = await Promise.all(
     waiting.map((card) => link.call("card", { card: card.id }, DEADLINE_MS)),
@@ -34,6 +33,9 @@ export async function deferDecision(link: Link, decision: Decision, said: string
   const later = await link.call("pane.later", { card, hold, said, zone }, DEADLINE_MS);
   return laterLine(card, later, Date.now());
 }
+
+export const loadDecisions = async (link: Link): Promise<Decision[]> =>
+  decisionsOf(link, await link.call("board", {}, DEADLINE_MS));
 
 export async function answerDecision(
   link: Link,

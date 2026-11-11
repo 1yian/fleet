@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import {
+  awaitingAt,
   cardRows,
   DecideLab,
   inline,
@@ -11,7 +12,6 @@ import {
   RENAME,
   SHIP,
   showing,
-  stripRow,
 } from "../support/decide-lab.ts";
 
 const RENAMED = "Rename the repository to fleet-next?";
@@ -255,7 +255,8 @@ test("the card takes the editor's place and gives it back with the words he had 
 
   await lab.herdr().type(pane, DRAFT);
   const waiting = await lab.screenWhere(pane, "the draft in the editor", showing([DRAFT]));
-  await lab.click(pane, stripRow(waiting), 6);
+  const item = awaitingAt(waiting);
+  await lab.click(pane, item.row, item.column);
   const open = await lab.screenWhere(
     pane,
     "the card in the editor's place",
