@@ -11,7 +11,7 @@ let fleet: FilesFleet;
 let lab: HerdrLab;
 let files: FilesPane;
 beforeEach(async () => {
-  for (const tool of ["yazi", "nvim", "fzf"]) {
+  for (const tool of ["yazi", "ya", "nvim", "fzf"]) {
     execFileSync("sh", ["-c", `command -v ${tool}`]);
   }
   fleet = await FilesFleet.start();
@@ -139,4 +139,21 @@ test("a cut from a guarded place cannot be pasted anywhere", async () => {
   await files.sees("Guarded: paste refused");
   assert.ok(existsSync(join(fleet.home, "AGENTS.md")));
   assert.equal(existsSync(dataFile("AGENTS.md")), false);
+});
+
+test("g p picks a project clone with fzf and goes there, and g k goes to the skill folders", async () => {
+  await files.type("gp");
+  await files.sees("clone>");
+  await files.sees("clone fleet");
+  await files.press("enter");
+  await files.sees(
+    new RegExp(`^${escaped(fleet.clone)}(\\s.*)?$`, "m"),
+    "the header to name the clone",
+  );
+  await files.type("gk");
+  await files.sees(
+    new RegExp(`^${escaped(join(fleet.userHome, ".agents", "skills"))}(\\s.*)?$`, "m"),
+    "the header to name the released skills",
+  );
+  await files.sees("lavish");
 });

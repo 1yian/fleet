@@ -14,6 +14,10 @@ export class FilesPane {
     this.pane = pane;
   }
 
+  static attach(lab: HerdrLab, pane: string): FilesPane {
+    return new FilesPane(lab, pane);
+  }
+
   static async open(
     lab: HerdrLab,
     fleet: FilesFleet,

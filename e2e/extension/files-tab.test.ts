@@ -41,11 +41,7 @@ test("a reload of the mate and a second fleet up leave one Files tab, and its ru
   await until("the explorer", async () =>
     (await mates.lab.screen(pane)).includes("FILES-TAB-STUB") ? true : undefined,
   );
-  const mate = String(
-    (await mates.lab.run(["pane", "list", "--workspace", workspace]))["panes"] === undefined
-      ? ""
-      : "w1:p1",
-  );
+  const mate = await mates.matePane();
   await mates.lab.submit(mate, "/reload");
   mates.up();
   await new Promise((resolve) => setTimeout(resolve, 3000));
