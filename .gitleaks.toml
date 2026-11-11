@@ -11,3 +11,9 @@ description = "A made-up password that the e2e login fixtures type into a test p
 condition = "AND"
 paths = ['''^e2e/support/login-fixtures\.ts$''']
 regexes = ['''^Zx9-other-secret-b7e41c0d$''']
+
+[[allowlists]]
+description = "A made-up lane token that the home setup e2e test feeds to fleet home add, in the commit history"
+condition = "AND"
+paths = ['''^e2e/extension/home-setup\.test\.ts$''']
+regexes = ['''^-tok-3f9c2a71e8d44b0a$''']
