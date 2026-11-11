@@ -34,7 +34,11 @@ beforeEach(async () => {
   here = new Scratch();
   configureMain(here, cardd.url, cardd.addLane("main", undefined, here.root));
   ghostToken = cardd.addLane("ghost", "main");
-  lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
+  lab = await HerdrLab.start({
+    ...h.piEnv("mate"),
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    FLEET_STANDING_MS: "300",
+  });
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);
@@ -121,6 +125,34 @@ test("a worker whose last report was blocked reads blocked until a later working
   await stays(pane, "blocked");
   await mate.call("comment", { card, text: "access restored, carry on" });
   await until(pane, "a working report to clear the block", (s) => s.status === "idle");
+  await stays(pane, "idle");
+});
+
+test("a worker that reported blocked stops reading blocked when its mate holds the card until a date, and a later blocked report on the held card does not read blocked", async () => {
+  h.onModel(
+    () => ({ tool: "report", args: { status: "blocked", text: "waiting for the load balancer" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "waiting" }), "mate");
+  h.onModel(
+    () => ({ tool: "report", args: { status: "blocked", text: "still waiting for the balancer" } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "still waiting" }), "mate");
+  const { pane, mate, card } = await workerPane("blocked then held");
+  await until(pane, "the blocked report to block the worker", (s) => s.status === "blocked");
+  await mate.call("hold", {
+    card,
+    question: "Wait for the load balancer?",
+    until: Date.now() + 3_600_000,
+  });
+  await until(pane, "the dated hold to clear the block", (s) => s.status === "idle");
+  await stays(pane, "idle");
+  await mate.call("comment", { card, text: "report again when you know more" });
+  await mate.waitForEntry(
+    (entry) => entry.body === "still waiting for the balancer",
+    "the second blocked report",
+  );
   await stays(pane, "idle");
 });
 

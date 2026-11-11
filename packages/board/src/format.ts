@@ -154,28 +154,20 @@ export const glyphOf = (card: BoardCard, asked: boolean): Glyph =>
 
 export function needsFacts(card: BoardCard, today: number): boolean {
   if (card.mate) return false;
-  if (card.status === "waiting") return true;
   const landing = card.kind === "ship" && (card.status === "merging" || card.status === "done");
   return landing && (card.status === "merging" || card.updatedAt >= today);
 }
 
 export interface Facts {
-  readonly until: number | undefined;
   readonly approval: "you" | "automatic" | "other";
 }
 
 export function factsOf(entries: readonly Entry[]): Facts {
-  const until = entries.findLast(
-    (entry) => entry.kind === "hold" && typeof entry.fields["until"] === "number",
-  )?.fields["until"];
   const approved = entries.some(
     (entry) => entry.kind === "answer" && entry.fields["choice"] === MERGE_OPTIONS[0],
   );
   const asked = entries.some((entry) => entry.kind === "hold" && entry.fields["merge"] === true);
-  return {
-    until: typeof until === "number" ? until : undefined,
-    approval: approved ? "you" : asked ? "other" : "automatic",
-  };
+  return { approval: approved ? "you" : asked ? "other" : "automatic" };
 }
 
 export const prLabel = (url: string): string => {

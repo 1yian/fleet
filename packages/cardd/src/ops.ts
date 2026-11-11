@@ -41,6 +41,7 @@ import {
   cardEntries,
   getCard,
   listProjects,
+  loadCard,
   mainLane,
   setYolo,
   parentOf,
@@ -290,6 +291,11 @@ const HANDLERS: Record<OpName, Handler> = {
     value: session.card !== null && holdOf(db, getCard(db, session.card)) !== undefined,
     notify: [],
   }),
+  standing: (db, session) => {
+    if (session.card === null) throw new Error("only a worker on a card has a standing");
+    const { status, attention, until } = loadCard(db, session.card).standing;
+    return { value: { status, attention, until }, notify: [] };
+  },
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
