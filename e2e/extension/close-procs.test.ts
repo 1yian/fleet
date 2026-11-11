@@ -53,6 +53,7 @@ async function closeWithLeftover(
     cwd?: string;
     outside?: boolean;
     twice?: boolean;
+    merged?: string;
     env?: Record<string, string>;
   } = {},
 ): Promise<{ pid: number; result: string; results: string[] }> {
@@ -85,8 +86,21 @@ async function closeWithLeftover(
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(() => ({ tool: "bash", args: { command: start } }), "worker");
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "stack running" } }), "worker");
+  const { merged } = options;
+  if (merged !== undefined) {
+    parts.cardd.gh.setPr(merged, "MERGED");
+    h.onModel(
+      () => ({
+        tool: "report",
+        args: { status: "merged", text: "landed", pr: merged },
+      }),
+      "worker",
+    );
+    h.onModel(() => ({ text: "reported" }), "worker");
+  }
   const close = { tool: "close", args: { card: 1, summary: "Done." } };
   h.onModel(() => (options.twice === true ? { ...close, alongside: [close] } : close), "mate");
+  if (merged !== undefined) h.onModel(() => ({ text: "relayed" }), "mate");
   await connected(h);
   mate.prompt("run the stack");
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
@@ -176,6 +190,18 @@ test("close leaves a process that fleet started and that names a path inside the
   }));
 });
 
+const KEEP_RUNNING = 'exec node -e "setInterval(Function(), 1000)" "$1"';
+const HELPER_LOOKALIKE = "# Finds the host-shared services that a worker started";
+
+test("close still stops a leftover whose command line reads like one of fleet's own helpers", async () => {
+  const { pid, result } = await closeWithLeftover(KEEP_RUNNING, { arg: HELPER_LOOKALIKE });
+  assert.equal(alive(pid), false);
+  assert.match(
+    result,
+    new RegExp(` pid ${String(pid)} \\(.*Finds the host-shared.*\\) stopped by TERM`),
+  );
+});
+
 const stoppedPids = (text: string): string[] =>
   [
     ...(
@@ -228,4 +254,27 @@ test("a close that another close of the card beats says so instead of failing", 
   assert.equal(alive(pid), false);
   const closed = (await parts.cardd.thread(1)).entries.filter((each) => each.kind === "cleanup");
   assert.equal(closed.length, 1);
+});
+
+test("a merged report that closes a card on its own while the mate closes it stops only the leftover", async () => {
+  const pr = "https://github.com/acme/site/pull/381";
+  const { pid, results } = await closeWithLeftover(STUBBORN, { merged: pr });
+  const delivered = await until(
+    () =>
+      h
+        .callsOf("mate")
+        .flat()
+        .find((turn) => turn.role === "user" && /merged: landed/.test(turn.text)),
+    "the merged report to reach the mate",
+  );
+  const outcomes = [results.at(-1) ?? "", delivered.text];
+  for (const each of outcomes) assert.doesNotMatch(each, /Finds the host-shared|killed by/);
+  assert.match(outcomes[0] ?? "", /^c-1 is done\./);
+  assert.deepEqual(stoppedPids(outcomes[0] ?? ""), [String(pid)]);
+  assert.match(outcomes[1] ?? "", /Closed automatically: c-1 is done|c-1 is already done/);
+  assert.equal(alive(pid), false);
+  const closed = (await parts.cardd.thread(1)).entries.filter((each) => each.kind === "cleanup");
+  assert.equal(closed.length, 1);
+  assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
+  assert.equal(existsSync(`${clone}.worktrees/c-1-a1`), false);
 });
