@@ -5,6 +5,7 @@ import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { ActivityMessage, LandingFields } from "./progress.ts";
+import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
 import { Shown, STANDING_OPS, Status } from "./standing.ts";
@@ -18,6 +19,7 @@ export * from "./health.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./waits.ts";
+export * from "./pulse.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";
 export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
@@ -123,6 +125,7 @@ export const BoardCardSchema = Type.Object({
   replies: Type.Array(OwedReplySchema),
   ...Shown,
   datedWait: Nullable(DatedWaitSchema),
+  pulse: Nullable(PulseSchema),
 });
 export type BoardCard = Static<typeof BoardCardSchema>;
 

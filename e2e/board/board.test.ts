@@ -371,7 +371,10 @@ test("a request that cannot reach cardd shows a notice, and a refused reply stay
     .getByText(UNREACHABLE)
     .waitFor();
 
-  await page.getByRole("link", { name: /Pick the API version/ }).click();
+  await page
+    .getByRole("article", { name: "Pick the API version" })
+    .getByRole("link", { name: /Pick the API version/ })
+    .click();
   const composer = page.getByRole("textbox", { name: "Comment" });
   await composer.fill("I prefer v2 because");
   await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -416,7 +419,10 @@ test("nothing scrolls sideways, on a desktop or a phone, even with long unbroken
       .waitFor();
     assert.deepEqual(await sideways(page), [], `the board at ${String(viewport.width)} px`);
 
-    await page.getByRole("link", { name: /Pick the API version/ }).click();
+    await page
+      .getByRole("article", { name: "Pick the API version" })
+      .getByRole("link", { name: /Pick the API version/ })
+      .click();
     await page.getByRole("region", { name: "Waiting for you" }).getByText(url).waitFor();
     await page.getByRole("button", { name: "Your words" }).first().click();
     await page.getByRole("textbox", { name: "Your words" }).fill(url);

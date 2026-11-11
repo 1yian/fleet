@@ -109,6 +109,7 @@ test("a session that cannot read cardd's board says it runs other code and how t
                 attention: null,
                 until: null,
                 datedWait: null,
+                pulse: null,
                 activity: null,
               },
             ],

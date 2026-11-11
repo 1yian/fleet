@@ -175,12 +175,15 @@ const HANDLERS: Record<OpName, Handler> = {
     }
     return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
   },
-  board: (db, session) => ({ value: boardFor(db, session.lane), notify: [] }),
-  card: (db, session, raw) => {
+  board: (db, session, _raw, timing) => ({
+    value: boardFor(db, session.lane, timing),
+    notify: [],
+  }),
+  card: (db, session, raw, timing) => {
     const { card } = check(OPS.card.args, raw);
     if (session.lane !== mainLane(db) && getCard(db, card).lane !== session.lane)
       throw new Error(`c-${String(card)} is in another lane; ask main`);
-    return { value: cardView(db, card, session.lane), notify: [] };
+    return { value: cardView(db, card, session.lane, timing), notify: [] };
   },
   "project.yolo": (db, session, raw) => {
     if (session.lane !== mainLane(db))

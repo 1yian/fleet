@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { idlePark, waitLine, type DatedWait, type Entry } from "@fleet/protocol";
+import { idlePark, waitLine, type DatedWait, type Entry, type Pulse } from "@fleet/protocol";
 import { factsFrom, finishedOpen, type Standing } from "./status.ts";
 import { cardEntries, type Loaded, mainLane, parentOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
@@ -28,7 +28,10 @@ const firstLine = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
-type Group = "act" | "captain" | "watched";
+type Group = "act" | "captain" | "watched" | "parked";
+
+const DAILY: ReadonlySet<Group> = new Set(["watched", "parked"]);
+const acts = ({ group }: { readonly group: Group }): boolean => !DAILY.has(group);
 
 interface Item {
   readonly card: number;
@@ -82,7 +85,18 @@ function receiver(db: DatabaseSync, card: Loaded["card"], holder: string): strin
   return holder === "main" ? (parentOf(db, card.lane) ?? card.lane) : card.lane;
 }
 
-function waitItem(db: DatabaseSync, loaded: Loaded, wait: DatedWait, now: number): Item {
+function waitGroup(wait: DatedWait, pulse: Pulse | undefined): Group {
+  if (idlePark(wait)) return "act";
+  return pulse?.state === "parked" && pulse.notice !== "none" ? "parked" : "watched";
+}
+
+function waitItem(
+  db: DatabaseSync,
+  loaded: Loaded,
+  wait: DatedWait,
+  pulse: Pulse | undefined,
+  now: number,
+): Item {
   const { card, standing } = loaded;
   const { hold } = standing.facts;
   const question = firstLine(hold?.question ?? "");
@@ -93,22 +107,39 @@ function waitItem(db: DatabaseSync, loaded: Loaded, wait: DatedWait, now: number
     since: standing.since,
     to,
     line,
-    group: idlePark(wait) ? "act" : "watched",
+    group: waitGroup(wait, pulse),
   };
+}
+
+const IDLE_CARDS: ReadonlySet<string> = new Set(["queued", "working", "in-review"]);
+
+function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefined, now: number) {
+  if (pulse === undefined || pulse.notice === "none") return [];
+  const idle = pulse.state === "idle" && IDLE_CARDS.has(card.status);
+  if (!idle && !(pulse.state === "parked" && card.status === "paused")) return [];
+  const name = `c-${String(card.id)} ${card.title}`;
+  const since = idle ? pulse.movedAt : pulse.since;
+  const line = idle
+    ? `${name} - idle ${waited(now, since)}, nothing running and no stated reason`
+    : `${name} - paused ${waited(now, since)}, nothing checks what it waits for`;
+  const group: Group = idle ? "act" : "parked";
+  return [{ card: card.id, since, to: actingLane(db, card.id, card.lane), line, group }];
 }
 
 function openItems(
   db: DatabaseSync,
   cards: readonly Loaded[],
   waits: ReadonlyMap<number, DatedWait>,
+  pulses: ReadonlyMap<number, Pulse>,
   now: number,
 ): Item[] {
   return cards.flatMap((loaded) => {
     const wait = waits.get(loaded.card.id);
-    if (wait !== undefined) return [waitItem(db, loaded, wait, now)];
-    return loaded.standing.status === "needs-you"
-      ? [captainItem(db, loaded.card, loaded.standing, now)]
-      : mateItem(db, loaded, now);
+    const pulse = pulses.get(loaded.card.id);
+    if (wait !== undefined) return [waitItem(db, loaded, wait, pulse, now)];
+    if (loaded.standing.status === "needs-you")
+      return [captainItem(db, loaded.card, loaded.standing, now)];
+    return [...mateItem(db, loaded, now), ...neglectItem(db, loaded, pulse, now)];
   });
 }
 
@@ -146,17 +177,30 @@ const inGroup = (items: readonly Item[], wanted: Group): Item[] =>
 const plural = (n: number, one: string, many: string): string =>
   `${String(n)} ${n === 1 ? one : many}`;
 
+function leadOf(
+  acting: readonly Item[],
+  parked: readonly Item[],
+  watched: readonly Item[],
+): string {
+  if (acting.length > 0)
+    return `reminder: ${acting.length === 1 ? "1 card needs" : `${String(acting.length)} cards need`} a decision or action from you`;
+  if (parked.length > 0)
+    return `reminder: ${plural(parked.length, "card", "cards")} parked for over a day, nothing checks ${parked.length === 1 ? "what it waits" : "what they wait"} for`;
+  return `information: ${plural(watched.length, "dated wait", "dated waits")}, nothing needs action`;
+}
+
 function bundleText(items: readonly Item[]): string {
-  const acting = items.filter(({ group: each }) => each !== "watched");
   const watched = inGroup(items, "watched");
-  const lead =
-    acting.length === 0
-      ? `information: ${plural(watched.length, "dated wait", "dated waits")}, nothing needs action`
-      : `reminder: ${acting.length === 1 ? "1 card needs" : `${String(acting.length)} cards need`} a decision or action from you`;
+  const parked = inGroup(items, "parked");
+  const lead = leadOf(items.filter(acts), parked, watched);
   const sections = [
     ...group(
       "You can settle or close these yourself. Act on each now. A dated wait that says nothing is running is an idle park: start what it waits on, or clear the hold and act:",
       inGroup(items, "act"),
+    ),
+    ...group(
+      "Parked for more than a day on a wait that fleet cannot check. Start what it waits on, or clear the hold and act on it:",
+      parked,
     ),
     ...group(
       "Waiting on the captain. Do not list them in chat: they wait on the board. Your role contract says when one may interrupt him. Do not hold a card with a date to quiet it:",
@@ -174,15 +218,16 @@ export function bundleMatches(
   db: DatabaseSync,
   open: readonly Loaded[],
   waits: ReadonlyMap<number, DatedWait>,
+  pulses: ReadonlyMap<number, Pulse>,
   now: number,
   t: Timings,
 ): BundleMatch[] {
   const byMate = Map.groupBy(
-    openItems(db, open, waits, now).sort((a, b) => a.since - b.since || a.card - b.card),
+    openItems(db, open, waits, pulses, now).sort((a, b) => a.since - b.since || a.card - b.card),
     ({ to }) => to,
   );
   return [...byMate].flatMap(([to, items]): BundleMatch[] => {
-    const acting = items.filter(({ group: each }) => each !== "watched");
+    const acting = items.filter(acts);
     const [first] = acting.length > 0 ? acting : items;
     if (first === undefined || now - first.since < (acting.length > 0 ? t.waiting : t.informing))
       return [];
@@ -196,7 +241,7 @@ export function bundleMatches(
         condition: BUNDLE,
         text: bundleText(items),
         tier: last.count + 1,
-        fields: { to, watched: inGroup(items, "watched").length },
+        fields: { to, watched: items.filter((item) => !acts(item)).length },
       },
     ];
   });

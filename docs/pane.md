@@ -8,13 +8,13 @@ Only main shows it. A second mate's screen does not, because a second mate holds
 
 The status line carries the counts, worst first:
 
-| Count     | Meaning                                     | Color  |
-| --------- | ------------------------------------------- | ------ |
-| `● 2`     | Broken                                      | red    |
-| `◆ 3`     | Needs you                                   | yellow |
-| `◇ 1`     | Stalled                                     | orange |
-| `▲ 4`     | Landed since the captain's last message     | green  |
-| `✓ clear` | Nothing is broken, held for him, or stalled | muted  |
+| Count     | Meaning                                       | Color  |
+| --------- | --------------------------------------------- | ------ |
+| `● 2`     | Broken                                        | red    |
+| `◆ 3`     | Needs you                                     | yellow |
+| `◇ 1`     | Stalled, idle, or parked                      | orange |
+| `▲ 4`     | Landed since the captain's last message       | green  |
+| `✓ clear` | Nothing is broken, held for him, or neglected | muted  |
 
 The strip is one row above the editor, tinted with the color of its worst need. It starts with `●`, `◆`, or `◇`, names the card and why, and shows `+N more` at the right when there is more than one need:
 
@@ -56,19 +56,48 @@ The strip shows the worst need: broken first, then needs you, then stalled, olde
 
 ## What counts
 
-| Need      | A card counts when                                                                                                                                                |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Needs you | Its status is Needs you: a hold waits on the captain.                                                                                                             |
-| Broken    | A worker reported `failed`. Or a worker's session is not connected for 2 minutes (never connected, exited, or lost) while the card is Working or In review.       |
-| Stalled   | A running worker has been silent for 5 minutes. Or a worker reported `blocked` or `stopped`, and 5 minutes have passed since that report with no one resuming it. |
+Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane reads its state and notice and keeps no limit of its own.
 
-A reported need counts its age from the report itself, not from the last change of the card's status. A card that its worker already handed back, and that then reports `blocked`, is not stalled until 5 minutes after that report. [code.md](code.md) says how the pane reads that time.
+| Need      | A card counts when                                                                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Needs you | Its state is `you`: a hold waits on the captain, or it is his own card.                                                                                                               |
+| Broken    | A worker reported `failed`. Or a worker is not connected for 2 minutes while the card is Working or In review. Or a card has been parked for 3 days with nothing running or checking. |
+| Stalled   | A worker reported `blocked` or `stopped` 5 minutes ago, or a running worker has been silent for 5 minutes. Or a card has been idle for 24 hours, or parked for 24 hours.              |
 
-The two times are `cardd`'s own: `notConnected` and `stall` in the timed check. A reload or a brief disconnect is under both, so it does not flicker.
+An idle card that only main has been told about (4 to 24 hours) is not on the captain's screen. It is in `/pulse`.
+
+A reported need counts its age from the report itself, so a card that its worker already handed back, and that then reports `blocked`, is not stalled until 5 minutes after that report. The limits are `cardd`'s own (`timing.ts`), so `CARDD_TIMING_SCALE` scales them.
 
 When `cardd` has not answered for 30 seconds, the pane shows that alone as a broken need (`● cardd: not answering`), because every other count is no longer current. The counts return when `cardd` answers again.
 
 Landed counts the cards that ended Done since the captain's last message. His next message resets it. A message that is a command, such as `/calm`, is not a message. The count survives a reload because it starts from the last user message in the session.
+
+## /pulse
+
+`/pulse` opens an overlay with every open card, quiet first. It is a pull view: it is drawn by `ctx.ui.custom`, so it never enters the chat or the model's context.
+
+```
+╭─ Pulse · 36 open · quiet first ────────────╮
+│                                            │
+│ ● PARKED 6d  c-1187 cleo                   │
+│   crud run.app URL bypasses Cloud Armor    │
+│   cleo (mate) · running nothing · moved 6d │
+│   waits on an outside date: first hub use  │
+│   3 steps behind it, none started          │
+│                                            │
+│ ◆ YOU 4.4d  c-1051 fleet                   │
+│   Bitwarden login for the p620 browser     │
+│                                            │
+│ ▶ 24 running                    ⏎ expand   │
+│ ↑↓ move   ⏎ board link   esc close         │
+╰────────────────────────────────────────────╯
+```
+
+- Rows are sorted by who must be told (red, then amber), then by state (idle, parked, stalled, you, waiting), then oldest first. Running cards are one line. `⏎` on it opens their list.
+- A row shows its state and how long it has held, the card, its lane, and its title. A neglected row adds who has it, what runs, when it last moved, what it waits on, and how many steps are behind it.
+- `⏎` on a card closes the overlay and shows the card's board link. Where the terminal supports links, the card number is one too.
+- It reads the board when it opens. It does not refresh while open.
+- A long list scrolls with `↑` and `↓`. `esc` or `q` closes it.
 
 ## What it does not do
 
@@ -84,4 +113,4 @@ The pane asks `cardd` for the board when the link connects, after every `[fleet]
 
 `e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, and sends a mouse click to the strip. It reads the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
 
-`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back.
+`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, and that nothing reaches the model's context.

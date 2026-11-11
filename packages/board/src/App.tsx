@@ -10,7 +10,7 @@ import { TopBar } from "./TopBar.tsx";
 
 const TICK_MS = 30_000;
 
-function useBoard(changes: number, setNotice: (notice: string | undefined) => void) {
+function useBoard(changes: number, tick: number, setNotice: (notice: string | undefined) => void) {
   const [board, setBoard] = useState<Board | undefined>();
   const loads = useRef(0);
   const loadFailed = useRef(false);
@@ -32,7 +32,7 @@ function useBoard(changes: number, setNotice: (notice: string | undefined) => vo
   }, [setNotice]);
   useEffect(() => {
     refresh();
-  }, [changes, refresh]);
+  }, [changes, tick, refresh]);
   return { board, refresh };
 }
 
@@ -125,7 +125,7 @@ export function App() {
   const changes = useChanges();
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
-  const { board, refresh } = useBoard(changes, setNotice);
+  const { board, refresh } = useBoard(changes, now, setNotice);
   const [lane, setLane] = useState<string | undefined>();
   const { card: open, open: openCard, close } = useCardRoute();
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());

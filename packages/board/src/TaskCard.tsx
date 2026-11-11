@@ -1,6 +1,16 @@
 import type { MouseEvent } from "react";
-import { idlePark, waitText, type BoardCard, type DatedWait, type Status } from "@fleet/protocol";
+import {
+  idlePark,
+  ownerText,
+  runningText,
+  waitsText,
+  waitText,
+  type BoardCard,
+  type DatedWait,
+  type Status,
+} from "@fleet/protocol";
 import { Ask } from "./Ask.tsx";
+import { heldText, toneOf } from "./Attention.tsx";
 import {
   age,
   doneLabel,
@@ -10,6 +20,7 @@ import {
   liveOf,
   mergingLabel,
   prLabel,
+  since,
   withWho,
   type Facts,
   type Question,
@@ -165,6 +176,31 @@ export function WaitLine(props: { readonly wait: DatedWait; readonly now: number
   );
 }
 
+function PulseLine(props: { readonly card: BoardCard; readonly now: number }) {
+  const { card, now } = props;
+  const { pulse } = card;
+  if (pulse === null) return null;
+  const moved = `moved ${since(pulse.movedAt, now)}`;
+  const parts =
+    pulse.state === "you"
+      ? ["waiting on you", moved]
+      : [ownerText(pulse.owner), `running ${runningText(card)}`, moved];
+  if (pulse.state !== "you" && pulse.state !== "running" && card.datedWait === null)
+    parts.push(waitsText(card));
+  const loud = pulse.notice !== "none" || pulse.state === "broken" || pulse.state === "stalled";
+  return (
+    <p className={loud ? `pulse-line ${toneOf(pulse)}` : "pulse-line"} data-state={pulse.state}>
+      {loud ? (
+        <>
+          <b className="pulse-state">{heldText(pulse, now)}</b>
+          {" · "}
+        </>
+      ) : null}
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
 function IdRow({
   card,
   asked,
@@ -228,6 +264,7 @@ export function TaskCard(props: CardProps) {
         </p>
       ) : null}
       {card.datedWait === null ? null : <WaitLine wait={card.datedWait} now={now} />}
+      <PulseLine card={card} now={now} />
       <div className="meta">
         <StatusChip card={card} facts={facts} now={now} />
         <LiveChip card={card} now={now} />

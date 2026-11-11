@@ -4,8 +4,8 @@ import { activePlans } from "./plans.ts";
 import { dueSlots, type Slot } from "./schedule.ts";
 import { addEntry, laneCardOf, parentOf } from "./store.ts";
 
-const SCHEDULE = "schedule";
-const SCRIPT = "script";
+export const SCHEDULE = "schedule";
+export const SCRIPT = "script";
 
 const slotKey = ({ minute, purpose }: Slot): string => `${minute}|${purpose}`;
 

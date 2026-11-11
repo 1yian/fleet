@@ -17,6 +17,7 @@ import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } fro
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { firedSchedules } from "./schedules.ts";
+import { pulsesOf } from "./pulse.ts";
 import { datedWaits } from "./waits.ts";
 import { scheduledWakes } from "./wakes.ts";
 
@@ -429,6 +430,7 @@ function writeFindings(
 export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLossGrace): string[] {
   const open = loadOpenCards(db);
   const waits = datedWaits(db, open);
+  const pulses = pulsesOf(db, open, waits, t, now);
   const acting = new Set(
     open
       .filter(({ card, standing }) => {
@@ -447,7 +449,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
   ];
   const matches = [
     ...checks.filter((match) => acting.has(match.card)),
-    ...bundleMatches(db, open, waits, now, t),
+    ...bundleMatches(db, open, waits, pulses, now, t),
   ];
   clearStopped(db, now, matches);
   const notify = new Set<string>([

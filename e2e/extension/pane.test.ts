@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import { Cardd, type Session } from "../support/cardd.ts";
+import { ageCard, ageSession } from "../support/fleet.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
@@ -13,13 +14,8 @@ const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["PANE_EVIDENCE_DIR"];
 const EVENTS_ONLY = { FLEET_PANE_POLL_MS: "3600000" };
-const QUICK_LIMITS = {
-  FLEET_PANE_POLL_MS: "400",
-  FLEET_PANE_STALL_MS: "2500",
-  FLEET_PANE_LOST_MS: "2500",
-  FLEET_PANE_SILENT_MS: "1500",
-};
-const STALL_MS = 5000;
+const QUICK_LIMITS = { FLEET_PANE_POLL_MS: "400", FLEET_PANE_SILENT_MS: "1500" };
+const MINUTE = 60_000;
 const STRIP_ROW = /^[◆●◇] \D/;
 const DRAWN_BORDER = /[─│┌┐└┘╭╮╰╯]/;
 const PANE_GLYPHS = ["◆", "●", "◇", "▲", "✓ clear"];
@@ -198,6 +194,8 @@ test("the strip shows the worst need first with the rest counted, the chips colo
   const quiet = await cleoShipCard("Port the calendar");
   const silent = await workerOf(quiet);
   silent.send({ t: "activity", state: "running" });
+  await silent.call("standing", {});
+  ageSession(cardd, quiet, 6 * MINUTE);
   await cleoLandedCard("Check the ads budget");
 
   const busy = await screenWhere(
@@ -302,15 +300,17 @@ test("the pane says only that cardd is not answering while it is down, and the c
 });
 
 test("a card handed back long ago that then reports blocked is not stalled until the limit has passed since the report", async () => {
-  const pane = await openMain({ ...QUICK_LIMITS, FLEET_PANE_STALL_MS: String(STALL_MS) });
+  const pane = await openMain(QUICK_LIMITS);
   await screenWhere(pane, "the clear state", showing(["✓ clear"]));
 
   const handed = await cleoScoutOf("Check the ads budget");
   const handedWorker = await workerOf(handed);
   await handedWorker.call("report", { status: "done", text: "checked" });
+  ageCard(cardd, handed, 6 * MINUTE);
   const clock = await cleoScoutOf("Read the old invoices");
   const clockWorker = await workerOf(clock);
   await clockWorker.call("report", { status: "stopped", text: "out of time" });
+  ageCard(cardd, clock, 6 * MINUTE);
   await screenWhere(
     pane,
     "the clock card to stall, which proves the done report is older than the limit",
@@ -319,7 +319,6 @@ test("a card handed back long ago that then reports blocked is not stalled until
   await clockWorker.call("report", { status: "working", text: "back at it" });
   await screenWhere(pane, "the clock card to resume", showing(["✓ clear"], ["◇"]));
 
-  const reportedAt = Date.now();
   await handedWorker.call("report", { status: "blocked", text: "the run is waiting" });
   await cleoLandedCard("Check the invoices");
   const fresh = await screenWhere(pane, "the pane to read the stop", showing(["▲ 1"]));
@@ -328,9 +327,9 @@ test("a card handed back long ago that then reports blocked is not stalled until
   assert.ok(fresh.includes("✓ clear"));
   assert.deepEqual(stripRows(fresh), []);
 
+  ageCard(cardd, handed, 6 * MINUTE);
   const worker = `c-${String(handed.id)} Check the ads budget: worker blocked`;
   const stalled = await screenWhere(pane, "the stall limit to pass", showing([worker, "◇ 1"]));
   keep("9-stalled-after-the-limit", stalled);
-  assert.ok(Date.now() - reportedAt >= STALL_MS, "it stalled before the limit passed");
   assert.equal(stripRows(stalled).length, 1);
 });

@@ -303,7 +303,7 @@ function start(
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
     showBoardLink(ctx, url);
-    if (lane === "main") showPane(pi, link, ctx);
+    if (lane === "main") showPane(pi, link, ctx, url);
   }
   watchMainCardd(pi, link, { url, role, lane }, HOME());
   if (lane === "main") {
