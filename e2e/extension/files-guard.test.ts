@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check } from "@fleet/protocol";
@@ -124,6 +124,85 @@ test("check exits 1 and says why for a guarded path, and 0 for a private one", (
   assert.match(guarded.stderr, /guarded, tracked in the home of lane cleo/);
   assert.equal(fleet.files(["check", join(fleet.home, "data", "x.md")]).status, 0);
   assert.equal(fleet.files(["check", fleet.userHome]).status, 0);
+});
+
+test("with cardd down and no saved project list, a clone file is refused and not taken for a private one", async () => {
+  await fleet.cardd.stop();
+  const clone = join(fleet.clone, "AGENTS.md");
+  const refused = fleet.files(["check", clone]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /guarded, cardd cannot be reached and no earlier project list/);
+  assert.equal(fleet.files(["check", join(fleet.home, "data", "x.md")]).status, 0);
+  assert.equal(fleet.files(["check", join(fleet.home, "AGENTS.md")]).status, 1);
+  const edit = fleet.files(["edit", clone]);
+  assert.equal(edit.status, 1);
+  assert.match(edit.stderr, /no earlier project list/);
+  assert.equal(existsSync(`${fleet.clone}.worktrees/scratch`), false);
+  mkdirSync(join(fleet.home, "state", "files"), { recursive: true });
+  writeFileSync(join(fleet.home, "state", "files", "projects.json"), "{not json");
+  assert.equal(fleet.files(["check", clone]).status, 1);
+});
+
+test("with cardd down, the project list saved by an earlier run still guards the clone", async () => {
+  const clone = join(fleet.clone, "AGENTS.md");
+  assert.match(fleet.files(["check", clone]).stderr, /guarded, tracked in the fleet clone/);
+  await fleet.cardd.stop();
+  const again = fleet.files(["check", clone]);
+  assert.equal(again.status, 1);
+  assert.match(again.stderr, /guarded, tracked in the fleet clone/);
+});
+
+test("rename and create check where the file will land, not only where it is", () => {
+  const data = join(fleet.home, "data");
+  const note = join(data, "note.md");
+  writeFileSync(note, "mine\n");
+  const readme = join(fleet.home, "README.md");
+  const before = readFileSync(readme, "utf8");
+  const escape = fleet.files(["rename", note, join(data, "..", "README.md")]);
+  assert.equal(escape.status, 1);
+  assert.match(escape.stderr, /README\.md: guarded, tracked in the home of lane cleo/);
+  assert.equal(readFileSync(readme, "utf8"), before);
+  assert.equal(readFileSync(note, "utf8"), "mine\n");
+  const renamed = join(data, "renamed.md");
+  const moved = fleet.files(["rename", note, renamed]);
+  assert.equal(moved.status, 0, moved.stderr);
+  assert.equal(existsSync(note), false);
+  assert.equal(readFileSync(renamed, "utf8"), "mine\n");
+  writeFileSync(note, "second\n");
+  const taken = fleet.files(["rename", note, renamed]);
+  assert.equal(taken.status, 1);
+  assert.match(taken.stderr, /already exists/);
+  assert.equal(readFileSync(renamed, "utf8"), "mine\n");
+  assert.equal(
+    fleet.files(["rename", join(fleet.home, "AGENTS.md"), join(data, "a.md")]).status,
+    1,
+  );
+
+  const nested = join(data, "deep", "new.md");
+  assert.equal(fleet.files(["create", nested]).status, 0);
+  assert.equal(readFileSync(nested, "utf8"), "");
+  assert.equal(fleet.files(["create", `${join(data, "tree")}/`]).status, 0);
+  assert.ok(statSync(join(data, "tree")).isDirectory());
+  const outside = fleet.files(["create", join(data, "..", "fresh.md")]);
+  assert.equal(outside.status, 1);
+  assert.match(outside.stderr, /fresh\.md: guarded, tracked in the home of lane cleo/);
+  assert.equal(existsSync(join(fleet.home, "fresh.md")), false);
+  assert.match(fleet.files(["create", nested]).stderr, /already exists/);
+});
+
+test("a folder that holds a force-added tracked file is guarded whole, and so cannot be moved away", () => {
+  const folder = join(fleet.home, "data", "kept");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "tracked.md"), "t\n");
+  writeFileSync(join(folder, "loose.md"), "l\n");
+  git(fleet.home, "add", "-f", "data/kept/tracked.md");
+  assert.equal(fleet.files(["check", folder]).status, 1);
+  assert.equal(fleet.files(["check", join(folder, "tracked.md")]).status, 1);
+  assert.equal(fleet.files(["check", join(folder, "loose.md")]).status, 0);
+  const moved = fleet.files(["rename", folder, join(fleet.home, "data", "elsewhere")]);
+  assert.equal(moved.status, 1);
+  assert.match(moved.stderr, /guarded, tracked in the home of lane cleo/);
+  assert.equal(readFileSync(join(folder, "tracked.md"), "utf8"), "t\n");
 });
 
 test("roots lists the home, its private folders, the clone, the skill folders and the worktrees of the lane's own cards", async () => {

@@ -65,7 +65,7 @@ export class FilesFleet {
   }
 
   static async start(
-    options: { lane?: string; laneArgs?: readonly string[] } = {},
+    options: { lane?: string; laneArgs?: readonly string[]; delivery?: string } = {},
   ): Promise<FilesFleet> {
     const cardd = await Cardd.start();
     const scratch = new Scratch();
@@ -85,7 +85,7 @@ export class FilesFleet {
       host: HOST,
       args: options.laneArgs ?? [],
     });
-    cardd.addProject("fleet", { [HOST]: clone }, "acme/fleet", "direct-PR");
+    cardd.addProject("fleet", { [HOST]: clone }, "acme/fleet", options.delivery ?? "direct-PR");
     return new FilesFleet({ cardd, scratch, home, clone, remote, mainToken, laneToken });
   }
 

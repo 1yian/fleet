@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { quote } from "@fleet/protocol/route";
 import { filesSettings } from "../lane-config.ts";
-import { vimString } from "./editor.ts";
+import { guardBuffers } from "./editor.ts";
 import { launchWords } from "./invoke.ts";
 import type { World } from "./world.ts";
 
@@ -27,7 +27,7 @@ interface Key {
 }
 
 const GUARDED: readonly (readonly [string, string, string])[] = [
-  ["r", "rename --cursor=before_ext", "Rename (refused in a guarded place)"],
+  ["r", "rename", "Rename (refused in a guarded place)"],
   ["a", "create", "Create (refused in a guarded place)"],
   ["d", "remove", "Trash (refused in a guarded place)"],
   ["D", "remove --permanently", "Delete (refused in a guarded place)"],
@@ -111,9 +111,6 @@ function writeConfig(world: World, ff: string): string {
 const missing = (run: SpawnSyncReturns<Buffer>): boolean =>
   run.error !== undefined && "code" in run.error && run.error.code === "ENOENT";
 
-const NETRW_GUARD = (ff: string): string =>
-  `autocmd BufReadPost * call system([${vimString(ff)}, 'check', expand('<afile>:p')]) | if v:shell_error != 0 | setlocal readonly nomodifiable | endif`;
-
 const MISSING_NOTE =
   "fleet files: yazi, nvim and vim are not installed here. Install yazi and nvim (docs/setup.md, Files tab); the lane's files are still on disk";
 
@@ -128,7 +125,7 @@ export function launchExplorer(world: World): number {
   const yazi = spawnSync("yazi", [world.home], { stdio: "inherit", env });
   if (!missing(yazi)) return yazi.status ?? 1;
   for (const editor of ["nvim", "vim"]) {
-    const run = spawnSync(editor, ["-c", NETRW_GUARD(ff), world.home], { stdio: "inherit", env });
+    const run = spawnSync(editor, [...guardBuffers(), world.home], { stdio: "inherit", env });
     if (!missing(run)) return run.status ?? 1;
   }
   console.error(MISSING_NOTE);

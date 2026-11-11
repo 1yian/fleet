@@ -1,5 +1,6 @@
 import { editInScratch, pushScratch, resetScratch, scratchLines } from "./scratch-tree.ts";
-import { decide } from "./places.ts";
+import { createPath, renamePath } from "./mutate.ts";
+import { refusals } from "./places.ts";
 import { openFile } from "./editor.ts";
 import { rootsOf } from "./roots.ts";
 import { reload, show, type Target } from "./show.ts";
@@ -32,10 +33,7 @@ async function roots(world: World, args: readonly string[]): Promise<number> {
 }
 
 function check(world: World, args: readonly string[]): number {
-  const refused = args.flatMap((path) => {
-    const decision = decide(world, path);
-    return decision.editable ? [] : [`${path}: guarded, ${decision.why}`];
-  });
+  const refused = refusals(world, args);
   for (const line of refused) console.error(line);
   return refused.length === 0 ? 0 : 1;
 }
@@ -62,6 +60,18 @@ function shown(world: World, args: readonly string[]): Promise<number> {
 const HANDLERS: Record<string, Handler> = {
   roots,
   check,
+  rename: (world, args) => {
+    renamePath(
+      world,
+      needs(args, "rename needs a path"),
+      needs(args.slice(1), "rename needs a new path"),
+    );
+    return 0;
+  },
+  create: (world, args) => {
+    createPath(world, needs(args, "create needs a path"));
+    return 0;
+  },
   open: (world, args) => openFile(world, needs(args, "open needs a path")),
   edit: (world, args) => editInScratch(world, needs(args, "edit needs a path")),
   scratch,

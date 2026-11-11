@@ -3,16 +3,16 @@ import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { laneHomes } from "../homes.ts";
-import type { World } from "./world.ts";
+import { PROJECTS_UNAVAILABLE, type World } from "./world.ts";
 
-type Kind = "root" | "home" | "clone" | "worker" | "skill";
+type Kind = "root" | "home" | "clone" | "worker" | "skill" | "unknown";
 
 export type Decision =
   | { readonly editable: true }
   | { readonly editable: false; readonly kind: Kind; readonly why: string };
 
 interface Place {
-  readonly kind: Exclude<Kind, "skill">;
+  readonly kind: Exclude<Kind, "skill" | "unknown">;
   readonly real: string;
   readonly why: string;
 }
@@ -105,7 +105,15 @@ function enclosing(real: string, places: readonly Place[]): Place | undefined {
 function ignoredBy(place: Place, real: string): boolean {
   const inside = relative(place.real, real);
   if (inside === "") return false;
-  return spawnSync("git", ["-C", place.real, "check-ignore", "-q", "--", inside]).status === 0;
+  const ignored =
+    spawnSync("git", ["-C", place.real, "check-ignore", "-q", "--", inside]).status === 0;
+  if (!ignored) return false;
+  const tracked = spawnSync(
+    "git",
+    ["--literal-pathspecs", "-C", place.real, "ls-files", "-z", "--", inside],
+    { encoding: "utf8" },
+  );
+  return tracked.status === 0 && tracked.stdout === "";
 }
 
 export function decide(world: World, path: string): Decision {
@@ -117,7 +125,17 @@ export function decide(world: World, path: string): Decision {
       why: "in a released skill folder: skill text is edited only in the lane that owns the skills",
     };
   const place = enclosing(real, placesOf(world));
-  if (place === undefined) return { editable: true };
+  if (place === undefined)
+    return world.projectsKnown
+      ? { editable: true }
+      : { editable: false, kind: "unknown", why: PROJECTS_UNAVAILABLE };
   if (place.kind !== "worker" && ignoredBy(place, real)) return { editable: true };
   return { editable: false, kind: place.kind, why: place.why };
+}
+
+export function refusals(world: World, paths: readonly string[]): string[] {
+  return paths.flatMap((path) => {
+    const decision = decide(world, path);
+    return decision.editable ? [] : [`${path}: guarded, ${decision.why}`];
+  });
 }

@@ -181,3 +181,35 @@ test("R is refused while the mate works, and when it is idle types /reload so th
   );
   assert.equal(lastUserText(mates, "mate"), "think about it");
 });
+
+test("R is refused when the mate started working while its prompt was open, and types nothing", async () => {
+  requireTools();
+  mates = await FilesMates.start({ yazi: "real" });
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  mates.h.onModel(async () => {
+    await held;
+    return { text: "done thinking" };
+  }, "mate");
+  const files = await explorer(mates);
+  const matePane = await mates.matePane();
+
+  await files.type("R");
+  await files.sees("Enter types /reload");
+  await mates.lab.submit(matePane, "think about it");
+  await until("the mate to work", async () => {
+    const got = await mates?.lab.run(["pane", "get", matePane]);
+    const pane = got?.["pane"];
+    return typeof pane === "object" &&
+      pane !== null &&
+      Reflect.get(pane, "agent_status") === "working"
+      ? true
+      : undefined;
+  });
+  await files.press("enter");
+  await files.sees("is working, and Pi can only reload when it is idle. Nothing was typed");
+  release();
+  assert.equal(lastUserText(mates, "mate"), "think about it");
+});

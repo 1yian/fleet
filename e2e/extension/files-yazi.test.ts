@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { FilesFleet } from "../support/files-fleet.ts";
@@ -117,7 +124,8 @@ test("rename, create, copy and delete in an ignored place work", async () => {
   await files.hover("fresh.md");
   await files.type("r");
   await files.sees("Rename:");
-  await files.type("-renamed");
+  await files.press("backspace", "backspace", "backspace");
+  await files.type("-renamed.md");
   await files.press("enter");
   await eventually("the rename", () => existsSync(dataFile("fresh-renamed.md")));
   assert.equal(existsSync(dataFile("fresh.md")), false);
@@ -129,6 +137,33 @@ test("rename, create, copy and delete in an ignored place work", async () => {
   await files.sees("Trash");
   await files.type("y");
   await eventually("the delete", () => copies().length === 1);
+});
+
+test("rename is checked where the new name lands, so a name that leaves the folder for a tracked file is refused", async () => {
+  await goTo("gd", join(fleet.home, "data"));
+  await files.hover("note.md");
+  await files.type("r");
+  await files.sees("Rename:");
+  await files.press(..."note.md".split("").map(() => "backspace"));
+  await files.type("../README.md");
+  await files.press("enter");
+  await files.sees("Guarded: rename refused");
+  await files.sees("tracked in the home of lane cleo");
+  assert.equal(readFileSync(dataFile("note.md"), "utf8"), "private note\n");
+});
+
+test("paste is checked for the file it would make, so a name that is a link to a tracked file is refused", async () => {
+  const agents = join(fleet.home, "AGENTS.md");
+  const before = readFileSync(agents, "utf8");
+  writeFileSync(join(fleet.home, "state", "linked.md"), "from state\n");
+  symlinkSync(agents, dataFile("linked.md"));
+  await goTo("gs", join(fleet.home, "state"));
+  await files.hover("linked.md");
+  await files.type("y");
+  await goTo("gd", join(fleet.home, "data"));
+  await files.type("p");
+  await files.sees("Guarded: paste refused");
+  assert.equal(readFileSync(agents, "utf8"), before);
 });
 
 test("a cut from a guarded place cannot be pasted anywhere", async () => {

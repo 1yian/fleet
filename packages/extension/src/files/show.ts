@@ -7,7 +7,7 @@ import { gitOrNothing } from "./git.ts";
 import { mainMate, ownMate, routeToMain, type Mate } from "./mates.ts";
 import { resolved, skillRelative, under } from "./places.ts";
 import { clearScreen, confirm, pressAnyKey } from "./prompt.ts";
-import { scratchPath, workshopOf } from "./scratch-tree.ts";
+import { baseOf, scratchPath, workshopOf } from "./scratch-tree.ts";
 import type { World } from "./world.ts";
 
 export type Target = "lane" | "main";
@@ -24,13 +24,13 @@ function scratchFacts(world: World, real: string): string[] {
   const root = scratchPath(clone);
   const branch = gitOrNothing(root, "rev-parse", "--abbrev-ref", "HEAD") ?? "unknown";
   const commit = gitOrNothing(root, "rev-parse", `--short=${String(HASH_LENGTH)}`, "HEAD") ?? "";
-  const ahead = gitOrNothing(root, "rev-list", "--count", `origin/${clone.base}..HEAD`) ?? "0";
+  const ahead = gitOrNothing(root, "rev-list", "--count", `${baseOf(clone)}..HEAD`) ?? "0";
   const stat = (gitOrNothing(root, "diff", "--stat", "HEAD") ?? "")
     .split("\n")
     .filter(Boolean)
     .slice(0, STAT_LINES);
   return [
-    `It is in the scratch worktree on branch ${branch} at commit ${commit}, ${ahead} commits ahead of origin/${clone.base}.`,
+    `It is in the scratch worktree on branch ${branch} at commit ${commit}, ${ahead} commits ahead of ${baseOf(clone)}.`,
     ...(stat.length > 0 ? [`Uncommitted: ${stat.join("; ")}.`] : []),
   ];
 }
@@ -143,20 +143,22 @@ export function show(world: World, target: Target, path: string, lines?: string)
   });
 }
 
+async function idleMate(world: World, target: Target): Promise<Mate> {
+  const route = target === "main" ? routeToMain(world) : undefined;
+  if (route?.kind === "board") throw new Error(`cannot reload main from here: ${route.why}`);
+  const mate = route === undefined ? await ownMate(world) : await mainMate(route.host);
+  if (mate.status !== "idle")
+    throw new Error(
+      `the ${mate.lane} mate is ${mate.status}, and Pi can only reload when it is idle. Nothing was typed`,
+    );
+  return mate;
+}
+
 export function reload(world: World, target: Target): Promise<number> {
   return finish(async () => {
-    const route = target === "main" ? routeToMain(world) : undefined;
-    if (route?.kind === "board") throw new Error(`cannot reload main from here: ${route.why}`);
-    const mate = route === undefined ? await ownMate(world) : await mainMate(route.host);
-    if (mate.status !== "idle")
-      throw new Error(
-        `the ${mate.lane} mate is ${mate.status}, and Pi can only reload when it is idle. Nothing was typed`,
-      );
-    const note = await confirm(
-      `Enter types /reload into the ${mate.lane} mate, Esc cancels.`,
-      false,
-    );
+    const { lane } = await idleMate(world, target);
+    const note = await confirm(`Enter types /reload into the ${lane} mate, Esc cancels.`, false);
     if (note === undefined) return "cancelled, nothing was typed";
-    return typeInto(mate, "/reload");
+    return typeInto(await idleMate(world, target), "/reload");
   });
 }

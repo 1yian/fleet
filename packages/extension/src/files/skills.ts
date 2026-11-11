@@ -5,7 +5,7 @@ import { isRecord } from "../lane-config.ts";
 import { driftLine } from "./drift.ts";
 import { gitOrNothing } from "./git.ts";
 import { decide, resolved, skillFolders } from "./places.ts";
-import { standingOf, workshopOf } from "./scratch-tree.ts";
+import { baseOf, standingOf, workshopOf } from "./scratch-tree.ts";
 import type { World } from "./world.ts";
 
 interface Winner {
@@ -87,7 +87,7 @@ function workshopLines(world: World): string[] {
   const path = workshop.scratch;
   if (!existsSync(path)) return [`scratch: none yet, E makes ${path}`];
   const { branch, ahead, behind, dirty, merged } = standingOf(workshop.clone, path);
-  const base = `origin/${workshop.clone.base}`;
+  const base = baseOf(workshop.clone);
   return [
     `scratch: ${path} on ${branch}, ${String(ahead)} ahead and ${String(behind)} behind ${base}, ${String(dirty)} dirty files`,
     ...(merged && ahead > 0

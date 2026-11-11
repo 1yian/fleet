@@ -1,13 +1,16 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { ADD_WORKTREE, SYNC_FUNCTIONS } from "../clones.ts";
 import { editorArgs, runEditor } from "./editor.ts";
 import { git, gitOrNothing } from "./git.ts";
 import { decide, resolved, skillRelative } from "./places.ts";
-import type { LocalClone, World } from "./world.ts";
+import { PROJECTS_UNAVAILABLE, type LocalClone, type World } from "./world.ts";
 
 export const scratchPath = (clone: LocalClone): string => `${clone.path}.worktrees/scratch`;
+
+export const baseOf = (clone: LocalClone): string =>
+  clone.delivery === "local-only" ? clone.base : `origin/${clone.base}`;
 
 function normalizedRemote(url: string): string {
   const bare = url
@@ -72,9 +75,7 @@ function ensureScratch(world: World, clone: LocalClone): string {
   }
   const commit = git(path, "rev-parse", "--short=12", "HEAD");
   console.log(`creating the scratch worktree of ${clone.project}: ${path}`);
-  console.log(
-    `branch ${branch}, from ${from === "origin" ? "origin/" : ""}${clone.base} at ${commit}`,
-  );
+  console.log(`branch ${branch}, from ${baseOf(clone)} at ${commit}`);
   return path;
 }
 
@@ -86,27 +87,25 @@ interface Standing {
   readonly merged: boolean;
 }
 
+function holdsNothingNew(path: string, base: string): boolean {
+  const merged = gitOrNothing(path, "merge-tree", "--write-tree", base, "HEAD");
+  const tree = gitOrNothing(path, "rev-parse", `${base}^{tree}`);
+  return merged !== undefined && tree !== undefined && merged.split("\n")[0] === tree;
+}
+
 export function standingOf(clone: LocalClone, path: string): Standing {
   const branch = git(path, "rev-parse", "--abbrev-ref", "HEAD");
-  const base = `origin/${clone.base}`;
+  const base = baseOf(clone);
   const counts = gitOrNothing(path, "rev-list", "--left-right", "--count", `${base}...HEAD`);
   const [behind = 0, ahead = 0] = (counts ?? "0 0").split(/\s+/).map(Number);
   const dirty = git(path, "status", "--porcelain").split("\n").filter(Boolean).length;
-  const track = gitOrNothing(
-    path,
-    "for-each-ref",
-    "--format=%(upstream:track)",
-    `refs/heads/${branch}`,
-  );
-  const ancestor =
-    spawnSync("git", ["-C", path, "merge-base", "--is-ancestor", "HEAD", base]).status === 0;
-  return { branch, ahead, behind, dirty, merged: ancestor || track === "[gone]" };
+  return { branch, ahead, behind, dirty, merged: holdsNothingNew(path, base) };
 }
 
 function standingLine(clone: LocalClone, path: string): string {
   const { branch, ahead, behind, dirty, merged } = standingOf(clone, path);
   const state = merged ? "reset allowed" : "has commits that are not merged, reset refuses";
-  return `${clone.project}: ${path} on ${branch}, ${String(ahead)} ahead and ${String(behind)} behind origin/${clone.base}, ${String(dirty)} dirty files, ${state}`;
+  return `${clone.project}: ${path} on ${branch}, ${String(ahead)} ahead and ${String(behind)} behind ${baseOf(clone)}, ${String(dirty)} dirty files, ${state}`;
 }
 
 export function scratchLines(world: World): string[] {
@@ -144,7 +143,7 @@ export function resetScratch(world: World, project: string | undefined): string[
     if (dirty > 0) throw new Error(`${clone.project}: ${path} has ${String(dirty)} dirty files`);
     if (!merged) throw new Error(`${clone.project}: ${branch} has commits that are not merged`);
     const next = newBranch(world);
-    const start = clone.delivery === "local-only" ? clone.base : `origin/${clone.base}`;
+    const start = baseOf(clone);
     git(path, "switch", "--no-track", "-c", next, start);
     git(path, "branch", "-D", branch);
     return `${clone.project}: ${path} is on ${next} from ${start}, and ${branch} is deleted`;
@@ -212,7 +211,9 @@ function mappedTarget(world: World, path: string): Mapped {
   const clone = checkout === undefined ? undefined : cloneOfCheckout(world, checkout);
   if (checkout === undefined || clone === undefined)
     throw new Error(
-      "this host has no clone of the repository this file belongs to: register one first (docs/setup.md, section 3)",
+      world.projectsKnown
+        ? "this host has no clone of the repository this file belongs to: register one first (docs/setup.md, section 3)"
+        : PROJECTS_UNAVAILABLE,
     );
   const scratch = ensureScratch(world, clone);
   const target = join(scratch, relative(resolved(checkout), resolved(path)));
@@ -236,11 +237,16 @@ const REFUSED = {
 
 export function editInScratch(world: World, path: string): number {
   const decision = decide(world, path);
-  if (decision.editable) return runEditor(editorArgs(decision, path));
+  if (decision.editable) return runEditor(world, editorArgs(decision, path));
   if (decision.kind === "worker") return refuse(REFUSED.worker);
+  if (decision.kind === "unknown") return refuse(decision.why);
   const mapped = decision.kind === "skill" ? skillTarget(world, path) : mappedTarget(world, path);
   if (mapped === undefined) return refuse(REFUSED.skill);
-  return runEditor(editorArgs({ editable: true }, mapped.target, mapped.note), mapped.scratch);
+  return runEditor(
+    world,
+    editorArgs({ editable: true }, mapped.target, mapped.note),
+    mapped.scratch,
+  );
 }
 
 function refuse(reason: string): number {

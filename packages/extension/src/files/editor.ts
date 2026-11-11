@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
+import { launchPrefix } from "./invoke.ts";
 import { decide, type Decision } from "./places.ts";
 import type { World } from "./world.ts";
 
@@ -15,18 +16,27 @@ const FOLLOW_DISK = [
   "autocmd CursorHold,FocusGained,BufEnter * silent! checktime",
 ];
 
-export const vimString = (text: string): string => `'${text.replaceAll("'", "''")}'`;
+const vimString = (text: string): string => `'${text.replaceAll("'", "''")}'`;
 
 function statusLine(note: string): string[] {
   const line = `%f %m%r  ${note.replaceAll("%", "%%")}`;
   return ["-c", "set laststatus=2", "-c", `let &statusline = ${vimString(line)}`];
 }
 
+export function guardBuffers(): string[] {
+  const check = [...launchPrefix(), "files", "check"].map(vimString).join(", ");
+  return [
+    "-c",
+    `autocmd BufReadPost,BufNewFile * call system([${check}, expand('<afile>:p')]) | if v:shell_error != 0 | setlocal readonly nomodifiable | endif`,
+  ];
+}
+
 export function editorArgs(decision: Decision, path: string, scratchNote?: string): string[] {
   const banner = decision.editable
-    ? scratchNote === undefined
-      ? []
-      : statusLine(`SCRATCH, ${scratchNote}`)
+    ? [
+        ...(scratchNote === undefined ? [] : statusLine(`SCRATCH, ${scratchNote}`)),
+        ...guardBuffers(),
+      ]
     : [
         "-R",
         "-M",
@@ -67,10 +77,11 @@ function showMetadata(path: string, because: string): void {
   }
 }
 
-export function runEditor(args: readonly string[], cwd?: string): number {
+export function runEditor(world: World, args: readonly string[], cwd?: string): number {
   for (const editor of EDITORS) {
     const run = spawnSync(editor, args, {
       stdio: "inherit",
+      env: { ...process.env, FLEET_FILES_HOME: world.home },
       ...(cwd === undefined ? {} : { cwd }),
     });
     const missing = run.error !== undefined && "code" in run.error && run.error.code === "ENOENT";
@@ -90,5 +101,5 @@ export function openFile(world: World, path: string): number {
     showMetadata(path, because);
     return 0;
   }
-  return runEditor(editorArgs(decide(world, path), path));
+  return runEditor(world, editorArgs(decide(world, path), path));
 }

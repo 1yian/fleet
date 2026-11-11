@@ -150,7 +150,7 @@ test("scratch reset refuses dirty files and unmerged commits, and moves a merged
   assert.match(unmerged.stderr, new RegExp(`${old} has commits that are not merged`));
   assert.equal(branchOf(scratchOf()), old);
   fleet.files(["push"], {}, scratchOf());
-  const landed = landOnRemote(fleet.remote, "squash of mine");
+  const landed = landOnRemote(fleet.remote, "squash of mine", "dirty.md", "x\n");
   git(fleet.remote, "branch", "-D", old);
   const reset = fleet.files(["scratch", "reset"]);
   assert.equal(reset.status, 0, reset.stderr);
@@ -160,6 +160,49 @@ test("scratch reset refuses dirty files and unmerged commits, and moves a merged
   assert.equal(tip(scratchOf(), "HEAD"), landed);
   assert.equal(branches().includes(old), false);
   assert.match(reset.stdout, new RegExp(`is on ${fresh} from origin/main, and ${old} is deleted`));
+});
+
+test("scratch reset keeps a pushed branch whose remote branch was deleted without a merge", () => {
+  edit(agents());
+  const old = branchOf(scratchOf());
+  writeFileSync(join(scratchOf(), "work.md"), "work\n");
+  git(scratchOf(), "add", "work.md");
+  git(scratchOf(), "commit", "-q", "-m", "work");
+  const mine = tip(scratchOf(), "HEAD");
+  assert.equal(fleet.files(["push"], {}, scratchOf()).status, 0);
+  git(fleet.remote, "branch", "-D", old);
+  const reset = fleet.files(["scratch", "reset"]);
+  assert.equal(reset.status, 1);
+  assert.match(reset.stderr, new RegExp(`${old} has commits that are not merged`));
+  assert.equal(branchOf(scratchOf()), old);
+  assert.equal(tip(scratchOf(), "HEAD"), mine);
+  assert.ok(branches().includes(old));
+  assert.match(
+    fleet.files(["scratch"]).stdout,
+    /1 ahead and 0 behind origin\/main, 0 dirty files, has commits that are not merged, reset refuses/,
+  );
+});
+
+test("a local-only project's scratch starts from, is measured against, and resets onto its local base", async () => {
+  await fleet.stop();
+  fleet = await FilesFleet.start({ delivery: "local-only" });
+  git(fleet.clone, "commit", "-q", "--allow-empty", "-m", "local only work");
+  const local = tip(fleet.clone);
+  const run = edit(agents());
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, new RegExp(`from main at ${local.slice(0, 12)}`));
+  assert.equal(tip(scratchOf(), "HEAD"), local);
+  const old = branchOf(scratchOf());
+  assert.equal(
+    fleet.files(["scratch"]).stdout,
+    `fleet: ${scratchOf()} on ${old}, 0 ahead and 0 behind main, 0 dirty files, reset allowed\n`,
+  );
+  const reset = fleet.files(["scratch", "reset"]);
+  assert.equal(reset.status, 0, reset.stderr);
+  const fresh = branchOf(scratchOf());
+  assert.notEqual(fresh, old);
+  assert.equal(tip(scratchOf(), "HEAD"), local);
+  assert.match(reset.stdout, new RegExp(`is on ${fresh} from main, and ${old} is deleted`));
 });
 
 test("E says how far the scratch is ahead of the lane's checkout when the remote moved on", () => {
