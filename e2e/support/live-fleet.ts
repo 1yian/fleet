@@ -9,7 +9,7 @@ import { optionalString, records } from "./json.ts";
 import { addRemote, git, landOnRemote } from "./remote.ts";
 import { tempDir } from "./run-root.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "./scratch.ts";
-import { demandLowWater, dropLowWater, ownWorkspacePackages } from "./welcome-skew.ts";
+import { ownWorkspacePackages, type Skew } from "./protocol-skew.ts";
 
 const WAIT_MS = 120_000;
 export const NEW_CODE = "NEW-CODE-MARKER";
@@ -61,7 +61,7 @@ interface Parts {
 }
 
 export interface LiveOptions {
-  readonly olderWelcome?: boolean;
+  readonly olderCode?: Skew;
 }
 
 export class LiveFleet {
@@ -77,11 +77,11 @@ export class LiveFleet {
   readonly farHome: string;
   readonly site: string;
   readonly gates: string;
-  private readonly olderWelcome: boolean;
+  private readonly olderCode: Skew | undefined;
   mainPane = "";
 
-  private constructor(parts: Parts, olderWelcome: boolean) {
-    this.olderWelcome = olderWelcome;
+  private constructor(parts: Parts, olderCode: Skew | undefined) {
+    this.olderCode = olderCode;
     this.h = parts.h;
     this.cardd = parts.cardd;
     this.lab = parts.lab;
@@ -101,12 +101,13 @@ export class LiveFleet {
     options: LiveOptions = {},
   ): Promise<LiveFleet> {
     const here = new Scratch();
-    const olderWelcome = options.olderWelcome === true;
-    if (olderWelcome) {
+    const { olderCode } = options;
+    if (olderCode !== undefined) {
       ownWorkspacePackages(here.root);
-      demandLowWater(here.root);
+      olderCode.demand(here.root);
     }
-    const cardd = olderWelcome ? await Cardd.underKeepAlive(here.root) : await Cardd.start();
+    const cardd =
+      olderCode === undefined ? await Cardd.start() : await Cardd.underKeepAlive(here.root);
     const h = await Harness.start();
     const remote = addRemote(here.root);
     const p620 = new Scratch("fleet");
@@ -159,14 +160,15 @@ export class LiveFleet {
         site,
         gates,
       },
-      olderWelcome,
+      olderCode,
     );
   }
 
-  async restartOnNewerWelcome(): Promise<void> {
-    if (!this.olderWelcome) throw new Error("the fleet started on the newer welcome already");
+  async restartOnNewerCode(): Promise<void> {
+    if (this.olderCode === undefined)
+      throw new Error("the fleet started on the newer code already");
     await this.ghost.close();
-    dropLowWater(this.here.root);
+    this.olderCode.drop(this.here.root);
     await this.cardd.restartUnderKeepAlive();
     this.ghost = await this.cardd.connect(this.ghostToken);
   }

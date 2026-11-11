@@ -83,10 +83,6 @@ export class MaintenanceQueue {
     return true;
   }
 
-  readable(): void {
-    this.stalePane = undefined;
-  }
-
   receive(request: Maintenance): void {
     this.requests.set(request.id, request);
     this.later();

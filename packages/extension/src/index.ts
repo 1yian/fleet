@@ -263,7 +263,6 @@ function start(
     onMaintenance: (request) => maintenance.queue?.receive(request),
     onConnect: () => {
       unreadable = undefined;
-      maintenance.queue?.readable();
       pi.events.emit("fleet:connected", {});
       worker?.flush();
       failures.flush();
