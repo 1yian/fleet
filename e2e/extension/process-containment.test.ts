@@ -21,7 +21,11 @@ const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url)
 const DETECT = fileURLToPath(
   new URL("../../packages/extension/src/contain/detect.sh", import.meta.url),
 );
-const onSystemd = execFileSync("sh", [DETECT], { encoding: "utf8" }).trim() === "systemd";
+const detected = (env: NodeJS.ProcessEnv): string =>
+  execFileSync("sh", [DETECT], { encoding: "utf8", env }).trim();
+const onSystemd = detected(process.env) === "systemd";
+const noBus = tempDir("fleet-no-bus-");
+const cgroupWithoutBus = detected({ ...process.env, XDG_RUNTIME_DIR: noBus }) === "cgroup";
 
 const SERVER = `
 const { createServer } = require("node:net");
@@ -159,11 +163,11 @@ async function closeStopsJobServer(): Promise<void> {
 
 test("close stops a server that a run_long job detached from everything", closeStopsJobServer);
 
-describe("on a host without a systemd user bus", () => {
+describe("on a host without a systemd user bus", { skip: !cgroupWithoutBus }, () => {
   let runtime: string | undefined;
   before(() => {
     runtime = process.env["XDG_RUNTIME_DIR"];
-    process.env["XDG_RUNTIME_DIR"] = tempDir("fleet-no-bus-");
+    process.env["XDG_RUNTIME_DIR"] = noBus;
   });
   after(() => {
     if (runtime === undefined) delete process.env["XDG_RUNTIME_DIR"];
