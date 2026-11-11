@@ -92,7 +92,7 @@ function scriptDeliveredAssessment(report: string): void {
   }, "worker");
 }
 
-test("normal close delivers an unchanged scout after main coordinates a decision on its implementation, preserving its report", async () => {
+test("normal close delivers an unchanged scout once its decision is held for the captain, preserving its report", async () => {
   const report = join(scratch.parent, "reports", "assessment.md");
   scriptDeliveredAssessment(report);
   h.onModel(async () => {
@@ -111,21 +111,40 @@ test("normal close delivers an unchanged scout after main coordinates a decision
   }, "mate");
   h.onModel(
     () => ({
+      tool: "hold",
+      args: {
+        card: 3,
+        question: "Build the scrollbar fix or drop it?",
+        options: ["Build it", "Drop it"],
+      },
+    }),
+    "mate",
+  );
+  let decisionWithMain = "";
+  h.onModel(async () => {
+    decisionWithMain = (await cardd.thread(3)).card.status;
+    await main.call("hold", {
+      card: 3,
+      to: "captain",
+      question: "Build the scrollbar fix or drop it?",
+    });
+    return {
       tool: "close",
       args: {
         card: 2,
         summary: `Assessment delivered: ${report}`,
         next: { decision: 3 },
       },
-    }),
-    "mate",
-  );
+    };
+  }, "mate");
   h.onModel(() => ({ text: "closed" }), "mate");
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   mate.prompt("assess the lifecycle");
 
-  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+  const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "c-2 is done.");
+  assert.equal(decisionWithMain, "with-mate");
+  assert.equal((await cardd.thread(3)).card.status, "needs-you");
   const outcome = await main.waitForEntry(
     (entry) => entry.kind === "cleanup",
     "the delivered outcome",

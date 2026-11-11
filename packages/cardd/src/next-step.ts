@@ -1,13 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Card, Next } from "@fleet/protocol";
-import { factsFrom } from "./status.ts";
-import { cardEntries, reachable, type Session } from "./store.ts";
+import { reachable, type Session } from "./store.ts";
 
 export type NextStep =
   { readonly build: number } | { readonly decision: number } | { readonly drop: string };
 
 const ROUTES_HELP =
-  "Pass next with exactly one of build=<number of a ship card that carries the build, open or Done>, decision=<number of an open card whose decision waits on the captain: a hold on it that waits on him, or a captain-only card>, or drop=<why nothing is built>. Build directly when the captain already asked for the thing built, put a build-or-drop decision to him when he asked only for a plan, and drop when the findings make it moot";
+  "Pass next with exactly one of build=<number of a ship card that carries the build, open or Done>, decision=<number of an open card whose hold waits on the captain>, or drop=<why nothing is built>. Build directly when the captain already asked for the thing built, put a build-or-drop decision to him when he asked only for a plan, and drop when the findings make it moot";
 
 const named = (id: number): string => `c-${String(id)}`;
 
@@ -49,16 +48,15 @@ function requireBuild(db: DatabaseSync, session: Session, id: number): void {
 }
 
 function requireDecision(db: DatabaseSync, session: Session, id: number): void {
-  const { kind, status } = nameCard(db, session, "decision", id);
+  const { status } = nameCard(db, session, "decision", id);
   const card = named(id);
   if (status === "done" || status === "dropped")
     throw refusal("decision", id, `${card} is ${status}: a decision needs an open card`);
-  const waitsOnCaptain = factsFrom(cardEntries(db, id)).hold?.holder === "captain";
-  if (!waitsOnCaptain && kind !== "captain")
+  if (status !== "needs-you")
     throw refusal(
       "decision",
       id,
-      `${card} has no hold that waits on the captain and is not a captain-only card. Put the decision on a captain-only card (card_new) and hold it for him, then name that card`,
+      `${card} has no hold that waits on the captain now. Hold it first: card_new for the decision if no card carries it, then hold(card, question, options) for the captain (a second mate holds it for main, and main escalates it with to=captain), then name that card`,
     );
 }
 

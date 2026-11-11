@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { begin, newCard, OUTSIDE_DATE, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -11,6 +11,9 @@ beforeEach(async () => {
 afterEach(async () => {
   await fleet.cardd.stop();
 });
+
+const NOT_HELD =
+  "has no hold that waits on the captain now. Hold it first: card_new for the decision if no card carries it, then hold(card, question, options) for the captain (a second mate holds it for main, and main escalates it with to=captain), then name that card";
 
 const needsNext = (card: Card) =>
   new RegExp(
@@ -134,7 +137,7 @@ test("build names the ship card that carries it, open or already Done, and the t
   assert.deepEqual((await closeEntry(second)).fields["next"], { build: built.id });
 });
 
-test("decision names a hold that waits on the captain, or a captain-only card", async () => {
+test("decision names an open card whose hold waits on the captain, so it is on his list", async () => {
   const blocked = await newCard(fleet.main, "Build the file explorer");
   await fleet.main.call("hold", {
     card: blocked.id,
@@ -154,9 +157,54 @@ test("decision names a hold that waits on the captain, or a captain-only card", 
 
   const decision = await newCard(fleet.main, "Build the explorer or drop it?", "captain");
   const second = await deliveredScout();
+  const unheld = {
+    message: `next decision=${String(decision.id)}: c-${String(decision.id)} ${NOT_HELD}`,
+  };
+  await assert.rejects(
+    fleet.main.call("close.begin", { card: second.id, next: { decision: decision.id } }),
+    unheld,
+  );
+  await assert.rejects(
+    fleet.main.call("close.finish", {
+      card: second.id,
+      mode: "done",
+      text: "Plan delivered.",
+      archives: [],
+      left: [],
+      next: { decision: decision.id },
+    }),
+    unheld,
+  );
+  assert.equal(await status(fleet.main, second), "with-mate");
+  assert.equal(await status(fleet.main, decision), "queued");
+
+  await fleet.main.call("hold", {
+    card: decision.id,
+    question: "Build the explorer or drop it?",
+    options: ["Build it", "Drop it"],
+  });
+  assert.equal(await status(fleet.main, decision), "needs-you");
   await closeScout(fleet.main, second, { decision: decision.id });
   assert.equal(await status(fleet.main, second), "done");
   assert.deepEqual((await closeEntry(second)).fields["next"], { decision: decision.id });
+  assert.equal(await status(fleet.main, decision), "needs-you");
+});
+
+test("a decision whose hold is dated is not on the captain's list, so it is refused", async () => {
+  const dated = await newCard(fleet.main, "Build the file explorer after the freeze", "captain");
+  await fleet.main.call("hold", {
+    card: dated.id,
+    question: "Build it once the freeze ends?",
+    until: Date.now() + 86_400_000,
+    ...OUTSIDE_DATE,
+  });
+  assert.equal(await status(fleet.main, dated), "waiting");
+  const scout = await deliveredScout();
+  await assert.rejects(
+    fleet.main.call("close.begin", { card: scout.id, next: { decision: dated.id } }),
+    { message: `next decision=${String(dated.id)}: c-${String(dated.id)} ${NOT_HELD}` },
+  );
+  assert.equal(await status(fleet.main, scout), "with-mate");
 });
 
 test("drop closes Done with the reason on the thread", async () => {
@@ -198,7 +246,7 @@ test("a named card that does not exist is refused, and so is a blank reason", as
   assert.equal(await status(fleet.main, card), "with-mate");
 });
 
-test("a next step that carries nothing is refused: the wrong kind, a closed card, no captain's hold, or two routes", async () => {
+test("a next step that carries nothing is refused: the wrong kind, a closed card, no hold for the captain, or two routes", async () => {
   const card = await deliveredScout();
   const other = await newCard(fleet.main, "Another report", "scout");
   const ship = await newCard(fleet.main, "Build the file explorer");
@@ -209,7 +257,7 @@ test("a next step that carries nothing is refused: the wrong kind, a closed card
     message: `next build=${String(other.id)}: c-${String(other.id)} is a scout card, so it cannot carry a build: name a ship card`,
   });
   await assert.rejects(wait({ decision: ship.id }), {
-    message: `next decision=${String(ship.id)}: c-${String(ship.id)} has no hold that waits on the captain and is not a captain-only card. Put the decision on a captain-only card (card_new) and hold it for him, then name that card`,
+    message: `next decision=${String(ship.id)}: c-${String(ship.id)} ${NOT_HELD}`,
   });
   await assert.rejects(wait({ build: ship.id, drop: "moot" }), { message: needsNext(card) });
 
@@ -248,7 +296,7 @@ test("a second mate's hold that waits only on main is not a decision waiting on 
   await cleo.call("hold", { card: blocked.id, question: "Build it or drop it?" });
   await assert.rejects(
     cleo.call("close.begin", { card: scout.id, next: { decision: blocked.id } }),
-    { message: /has no hold that waits on the captain/ },
+    { message: /has no hold that waits on the captain now/ },
   );
 
   await fleet.main.call("hold", { card: blocked.id, to: "captain", question: "Build it?" });

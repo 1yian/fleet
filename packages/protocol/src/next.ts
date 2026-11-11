@@ -10,7 +10,7 @@ export const NextSchema = Type.Object({
   decision: Type.Optional(
     Type.Integer({
       description:
-        "The number of an open card that holds the decision for the captain: a hold on it that waits on him, or a captain-only card. For when he asked only for a plan",
+        "The number of an open card whose hold waits on the captain: the decision is on his list. For when he asked only for a plan",
     }),
   ),
   drop: Type.Optional(
