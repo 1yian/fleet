@@ -271,7 +271,8 @@ test("a title too wide for the strip is cut to one row and the count of the othe
   const tintAt = (text: string): string => {
     const before = painted.slice(0, painted.indexOf(text));
     const run = before.slice(before.lastIndexOf("\u001b[0m"));
-    return run.match(/\u001b\[48;[\d;]*m/)?.[0] ?? "none";
+    const tint = run.split("\u001b[").find((code) => code.startsWith("48;"));
+    return tint?.split("m")[0] ?? "none";
   };
   assert.notEqual(tintAt("c-"), "none", "the strip has a tint");
   assert.equal(tintAt("+1 more"), tintAt("c-"), "the tint stops where the title is cut");
