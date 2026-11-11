@@ -142,7 +142,7 @@ test("a card parked for over a day on a wait nothing checks is named once a day,
   assert.deepEqual(await reminderOn(cleo, parked), [], "the mate that holds it is not told");
 });
 
-test("a card the captain put off is named for main after a day and not for its mate", async () => {
+test("a card the captain put off is never named for action before its date, however old the hold, while a watcher nothing checks is", async () => {
   const later = await newCard(cleo, "Launch the referral page");
   const question = "Launch it now?";
   await cleo.call("hold", { card: later.id, question });
@@ -157,16 +157,20 @@ test("a card the captain put off is named for main after a day and not for its m
   });
   assert.equal(status, 200);
   ageCard(fleet.cardd, later, 24 * HOUR * SCALE + 2 * MINUTE);
+  const parked = await newCard(cleo, "Crud ingress card");
+  await park(parked, 24 * HOUR * SCALE + 2 * MINUTE);
 
   const { body } = await reminder(fleet.main);
   assert.match(
     body,
-    new RegExp(
-      `^reminder: 1 card parked for over a day, nothing checks what it waits for\\..*\\n- c-${String(later.id)} Launch the referral page - the captain said later: "in 10 hours"`,
-      "s",
-    ),
+    new RegExp(`^reminder: 1 card parked for over a day.*- c-${String(parked.id)} `, "s"),
   );
-  assert.deepEqual(await reminderOn(cleo, later), [], "the mate that holds it is not told");
+  assert.doesNotMatch(body, /Launch the referral page/);
+  const told = await reminderOn(cleo, later);
+  assert.ok(
+    told.every((entry) => entry.body.startsWith("information:")),
+    "the mate that holds it is told nothing to act on",
+  );
 });
 
 test("a hold dated again after it sat open for a day is named for main at the age of the hold, not of the date", async () => {

@@ -229,6 +229,7 @@ export class DecideLab {
     options: string[],
     count: number,
   ): Promise<Card> {
+    const served = this.h.callsOf("mate").length;
     const card = check(CardSchema, await this.cleo.call("card.new", { title, kind: "scout" }));
     this.h.onModel(
       () => ({ tool: "hold", args: { card: card.id, question, options, to: "captain" } }),
@@ -237,7 +238,7 @@ export class DecideLab {
     this.h.onModel(() => ({ text: SEEN }), "mate");
     await this.cleo.call("hold", { card: card.id, question: `${title}?`, options: ["Yes"] });
     await this.screenWhere(pane, `${String(count)} on the status bar`, showing([awaiting(count)]));
-    await this.h.waitForCall(count * 2 - 1, "mate", WAIT_MS);
+    await this.h.waitForCall(served + 1, "mate", WAIT_MS);
     return card;
   }
 

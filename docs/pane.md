@@ -80,6 +80,8 @@ Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane re
 
 A decision is never also broken, stalled, or an own card, and it is counted once, in the decisions item.
 
+A hold that the captain put off with his own later (`said`, or a board "later") is not a decision until its date, and is not broken, stalled, or parked either, however old the hold is: its pulse is `waiting`. So it is in neither the decisions item nor the counts, and `/d` skips it. At its date it is a decision again. The pane reads the board again just after the earliest date of any dated hold, so the item and `/d` agree the moment the date passes, and not up to a minute later.
+
 An idle card counts from 4 hours, when main is told. Only main shows this pane, so main sees it there, and `/pulse` says how long the card has been idle.
 
 A reported need counts its age from the report itself, so a card that its worker already handed back, and that then reports `blocked`, is not stalled until 5 minutes after that report. The limits are `cardd`'s own (`timing.ts`), so `CARDD_TIMING_SCALE` scales them.

@@ -13,6 +13,7 @@ import {
   showing,
 } from "../support/decide-lab.ts";
 import { FakeOpener } from "../support/fake-opener.ts";
+import { ageCard } from "../support/fleet.ts";
 
 const WAIT_MS = 30_000;
 const ESC = "\u001b";
@@ -145,6 +146,46 @@ test("answering on the card lowers the count behind it", async () => {
     (screen) => onCard(["Decision 2 of 2", RENAME])(screen) && screen.includes(awaiting(1)),
   );
   keep("5-card-over-one", second);
+});
+
+const DAY_MS = 86_400_000;
+const LATER_MS = 30_000;
+const VENDOR = "Pick the vendor?";
+
+test("a card the captain put off is neither counted nor on /d until its date, however old the hold, and returns in both at its date", async () => {
+  const pane = await lab.openMain();
+  await lab.screenWhere(pane, "the clear state", showing(["✓ clear"]));
+  const vendor = await lab.askedMain(pane, "Vendor", VENDOR, ["Acme", "Other"], 1);
+  const date = Date.now() + LATER_MS;
+  const action = { kind: "hold", until: date, reason: "ask me again after the launch" } as const;
+  assert.equal(await lab.cardd.act(vendor.id, action), 200);
+
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(
+    pane,
+    "nothing waiting",
+    showing(["Nothing is waiting for your decision."]),
+  );
+  keep("6-put-off", await lab.screenWhere(pane, "no decision", showing(["✓ clear"], ["await"])));
+
+  ageCard(lab.cardd, vendor, 6 * DAY_MS);
+  await lab.askedMain(pane, "Repository name", RENAME, ["Rename", "Keep"], 1);
+  const one = await lab.screenWhere(pane, "only the new decision", showing([awaiting(1)]));
+  keep("6-put-off-and-aged", one);
+  assert.match(statusRow(one), /^1 decision awaits you board$/, "the put-off card is not counted");
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the new decision alone", onCard(["Decision 1 of 1", RENAME]));
+  await lab.herdr().press(pane, "esc");
+  await lab.screenWhere(pane, "the card to close", (screen) => cardRows(screen).length === 0);
+  assert.ok(Date.now() < date, "the date came before the checks above were done");
+
+  const both = await lab.screenWhere(pane, "both decisions", showing([awaiting(2)]));
+  assert.ok(Date.now() >= date, "the put-off card is counted before its date");
+  keep("6-back-at-its-date", both);
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the card for both", onCard(["Decision 1 of 2", RENAME]));
+  await lab.herdr().press(pane, "right");
+  await lab.screenWhere(pane, "the put-off one", onCard(["Decision 2 of 2", VENDOR]));
 });
 
 const FULL = "2 decisions await you ● 1 ▲ 1 board";

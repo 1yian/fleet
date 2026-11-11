@@ -18,6 +18,7 @@ import { PulseView } from "./view.ts";
 const STATUS_KEY = "fleet-attention";
 const MINUTE_MS = 60_000;
 const DEADLINE_MS = 10_000;
+const LAPSE_SLACK_MS = 1_100;
 const RETRIES_BEFORE_SILENT = 3;
 const CARD_TOOLS: ReadonlySet<string> = new Set(["hold", "comment", "close", "dispatch"]);
 
@@ -38,6 +39,13 @@ const settings = (): Settings => ({
 
 const isMessageOfHis = (entry: SessionEntry): boolean =>
   entry.type === "message" && entry.message.role === "user";
+
+function untilNextDate(cards: readonly BoardCard[] | undefined, now: number): number | undefined {
+  const dates = (cards ?? []).flatMap(({ datedWait }) =>
+    datedWait === null || datedWait.until <= now ? [] : [datedWait.until - now],
+  );
+  return dates.length === 0 ? undefined : Math.min(...dates) + LAPSE_SLACK_MS;
+}
 
 function lastMessageAt(ctx: ExtensionContext): number {
   const last = ctx.sessionManager.getBranch().findLast(isMessageOfHis);
@@ -95,7 +103,8 @@ class Pane {
     if (this.stopped) return;
     const { pollMs, silentMs } = this.rules;
     const retry = Math.ceil(silentMs / RETRIES_BEFORE_SILENT);
-    const wait = this.silentSince === undefined ? pollMs : Math.min(pollMs, retry);
+    const poll = this.silentSince === undefined ? pollMs : Math.min(pollMs, retry);
+    const wait = Math.min(poll, untilNextDate(this.cards, Date.now()) ?? poll);
     this.timer = setTimeout(() => {
       this.refresh();
     }, wait);
