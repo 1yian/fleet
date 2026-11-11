@@ -132,7 +132,6 @@ export class DecisionCard implements Component, Focusable {
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (this.sending) return { handled: true };
-    if (event.type === "wheel") return this.wheel(event.wheelDelta ?? 0);
     return this.press(event);
   }
 
@@ -167,12 +166,6 @@ export class DecisionCard implements Component, Focusable {
     if (at < 0 || at >= this.shownPicks) return undefined;
     this.row = this.choiceTop + at;
     if (event.type === "click" && !this.writing) this.confirm();
-    return { handled: true };
-  }
-
-  private wheel(delta: number): TuiMouseEventResult | undefined {
-    if (!this.overflow || delta === 0) return undefined;
-    this.scroll = Math.max(0, this.scroll + delta);
     return { handled: true };
   }
 
@@ -291,10 +284,16 @@ export class DecisionCard implements Component, Focusable {
       if (!kept.has(decision.card)) deck.push({ decision, answered: false });
     const same = deck.findIndex((slot) => !slot.answered && slot.decision.card === refused.card);
     const first = deck.findIndex((slot) => !slot.answered);
+    const picked = this.writing ? undefined : this.choices[this.row];
     this.deck = deck;
     this.at = Math.max(0, same !== -1 ? same : landing !== -1 ? landing : first);
     if (same === -1) this.settle();
-    else this.row = Math.min(this.row, this.writeRow);
+    else this.row = this.follow(picked);
+  }
+
+  private follow(picked: string | undefined): number {
+    if (picked === undefined) return this.writeRow;
+    return Math.max(0, (this.current?.options ?? []).indexOf(picked));
   }
 
   private settle(): void {

@@ -97,6 +97,40 @@ test("a refused answer that leaves the decision open keeps the words he typed", 
   assert.deepEqual(await lab.answered(rename), [{ body: MY_WORDS, source: "pane", written: true }]);
 });
 
+test("a refused answer that adds an option keeps the pointer on his words, and the retry records them", async () => {
+  const pane = await lab.openMain();
+  const rename = await lab.askedMain(pane, "Repository name", RENAME, ["Rename", "Keep"], 1);
+  lab.answers(3);
+
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the decision", onCard(["Decision 1 of 1", RENAME]));
+  await lab.herdr().type(pane, MY_WORDS);
+  await lab.screenWhere(pane, "his words", onCard([`→ ${MY_WORDS}`]));
+  await lab.cleo.call("hold", {
+    card: rename.id,
+    question: RENAMED,
+    options: ["Rename", "Keep", "Postpone"],
+  });
+
+  await lab.herdr().press(pane, "enter");
+  keep(
+    "12-refused-new-option-keeps-pointer",
+    await lab.screenWhere(
+      pane,
+      "the refusal with the new option listed and the pointer on his words",
+      onCard(
+        [`c-${String(rename.id)} changed since you looked`, "Postpone", `→ ${MY_WORDS}`, "⏎ send"],
+        ["→ Postpone"],
+      ),
+    ),
+  );
+  assert.deepEqual(await lab.answered(rename), []);
+
+  await lab.herdr().press(pane, "enter");
+  await lab.screenWhere(pane, "the card to close", (screen) => cardRows(screen).length === 0);
+  assert.deepEqual(await lab.answered(rename), [{ body: MY_WORDS, source: "pane", written: true }]);
+});
+
 const CLEAN = "Delete the merged branches?";
 
 test("left and right move between the decisions without answering any, and answered ones are ticked", async () => {
