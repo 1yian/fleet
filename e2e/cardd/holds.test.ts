@@ -150,6 +150,58 @@ test("the captain's answer releases the whole hold, and the card moves on", asyn
   assert.equal((await entries(card)).filter((entry) => entry.kind === "answer").length, 1);
 });
 
+async function revisionOf(card: Card): Promise<number> {
+  const found = (await fleet.cardd.board()).cards.find((each) => each.id === card.id);
+  if (found === undefined) throw new Error(`c-${String(card.id)} is not on the board`);
+  return found.revision;
+}
+
+test("main's pane answers the captain's hold as the board does, tagged as the pane's, and no one else can", async () => {
+  const { card } = await laneCard();
+  await cleo.call("hold", ask(card));
+  await fleet.main.call("hold", ask(card, { to: "captain" }));
+  const revision = await revisionOf(card);
+
+  await assert.rejects(cleo.call("pane.answer", { card: card.id, revision, choice: "No" }), {
+    message: /only main's pane takes the captain's answers/,
+  });
+  await assert.rejects(
+    fleet.main.call("pane.answer", { card: card.id, revision: revision - 1, choice: "No" }),
+    { message: /c-\d+ changed since you looked, so nothing was recorded/ },
+  );
+  assert.deepEqual(await needsYou(), [card.id]);
+
+  await fleet.main.call("pane.answer", { card: card.id, revision, choice: "No" });
+  assert.equal(await status(cleo, card), "with-mate");
+  assert.deepEqual(await needsYou(), []);
+  const heard = await cleo.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  assert.deepEqual([heard.author, heard.body, heard.fields["source"]], ["captain", "No", "pane"]);
+  await fleet.main.waitForEntry((entry) => entry.kind === "answer", "the answer");
+  await assert.rejects(fleet.main.call("pane.answer", { card: card.id, revision, choice: "Yes" }), {
+    message: /changed since you looked/,
+  });
+  assert.equal((await entries(card)).filter((entry) => entry.kind === "answer").length, 1);
+});
+
+test("the captain's own words on a merge question from the pane ask for changes, as they do on the board", async () => {
+  const { card, worker } = await laneCard("Ads exports");
+  await worker.call("report", { status: "done", text: "PR ready", pr: PR });
+  await fleet.main.waitForEntry((entry) => entry.kind === "hold", "the merge hold");
+  await fleet.main.call("hold", { card: card.id, to: "captain", question: `Merge ${PR}?` });
+
+  const words = "Not before the audit";
+  const revision = await revisionOf(card);
+  await assert.rejects(fleet.main.call("pane.answer", { card: card.id, revision, choice: "Yes" }), {
+    message: /a merge question needs the choice/,
+  });
+  await fleet.main.call("pane.answer", { card: card.id, revision, choice: words, written: true });
+  const answer = (await entries(card)).find((entry) => entry.kind === "answer");
+  assert.deepEqual(
+    [answer?.body, answer?.fields["choice"], answer?.fields["written"], answer?.fields["source"]],
+    [words, MERGE_OPTIONS[1], true, "pane"],
+  );
+});
+
 test("a later gate holds the same card again, as its next occurrence", async () => {
   const { card } = await laneCard();
   await cleo.call("hold", ask(card));
