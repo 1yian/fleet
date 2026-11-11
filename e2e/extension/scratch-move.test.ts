@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -97,6 +99,24 @@ const holdFolder = async (): Promise<void> => {
   });
 };
 
+const shimmed = (tool: string, before: string): string => {
+  const real = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
+  const dir = tempDir("fleet-shim-");
+  writeFileSync(join(dir, tool), `#!/bin/sh\n${before}\nexec ${real} "$@"\n`, { mode: 0o755 });
+  return `${dir}:${process.env["PATH"] ?? ""}`;
+};
+
+async function restartLab(hostOverrides: Record<string, string>): Promise<void> {
+  await stopDispatchLab(parts);
+  await startLab(hostOverrides);
+}
+
+const parkedOf = (): string => {
+  const name = readdirSync(oldTmp).find((each) => each.startsWith("fleet-c-1.moved-"));
+  assert.notEqual(name, undefined, "the renamed original is kept");
+  return join(oldTmp, name ?? "");
+};
+
 const isRealFolder = (path: string): boolean => lstatSync(path).isDirectory();
 
 test("close moves the card's /tmp scratch to disk, leaves a symlink that resolves to the same files, and deletes nothing", async () => {
@@ -128,8 +148,7 @@ test("close moves the card's /tmp scratch to disk, leaves a symlink that resolve
 });
 
 test("with no folder set, the scratch goes under the host's fleet folder", async () => {
-  await stopDispatchLab(parts);
-  await startLab({ FLEET_TMP_SCRATCH_DIR: "" });
+  await restartLab({ FLEET_TMP_SCRATCH_DIR: "" });
   const result = await closeCard();
 
   const moved = join(home, ".fleet", "tmp-scratch", "fleet-c-1");
@@ -196,3 +215,90 @@ test(
     }
   },
 );
+
+test("a copy left behind by an earlier run with the same size and time but other bytes is not trusted", async () => {
+  const when = new Date("2026-01-02T03:04:05Z");
+  const stale = join(disk, ".moving-fleet-c-1");
+  mkdirSync(stale, { recursive: true });
+  writeFileSync(join(stale, "report.md"), "the evidence of card 2\n");
+  utimesSync(join(stale, "report.md"), when, when);
+  utimesSync(join(old, "report.md"), when, when);
+
+  const result = await closeCard();
+
+  const moved = join(disk, "fleet-c-1");
+  assert.equal(result, `c-1 is done. Scratch moved off /tmp: local:${old} moved to ${moved}.`);
+  assert.equal(readFileSync(join(moved, "report.md"), "utf8"), "the evidence of card 1\n");
+  assert.deepEqual(listing(old), SEEDED);
+});
+
+test("a process that enters the folder just before it is renamed aside is found there, and the folder goes back", async () => {
+  const marks = tempDir("fleet-marks-");
+  const pidFile = join(marks, "holder.pid");
+  const ready = join(marks, "holder.ready");
+  const enter = `case " $* " in *" ${old} "*) [ -e "${pidFile}" ] || { ( cd "${old}/notes" && : > "${ready}" && exec sleep 600 ) </dev/null >/dev/null 2>&1 & echo $! > "${pidFile}"; while [ ! -e "${ready}" ]; do :; done; } ;; esac`;
+  await restartLab({ PATH: shimmed("node", enter) });
+  try {
+    const result = await closeCard();
+
+    const pid = readFileSync(pidFile, "utf8").trim();
+    assert.equal(
+      result,
+      `c-1 is done. Scratch left in /tmp: local:${old} stays in place: held by a live process (pid ${pid}).`,
+    );
+    assert.equal(isRealFolder(old), true);
+    assert.deepEqual(listing(old), SEEDED);
+    assert.deepEqual(
+      listing(oldTmp).filter((name) => name.includes(".moved-")),
+      [],
+    );
+    assert.equal(existsSync(join(disk, "fleet-c-1")), false);
+  } finally {
+    if (existsSync(pidFile)) process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
+  }
+});
+
+test("a host whose /proc cannot be read skips the move, because an empty scan is not the same as nobody holding it", async () => {
+  const deny = `case "$1" in /proc/*/fd) echo "ls: cannot open directory '$1': Permission denied" >&2; exit 2 ;; esac`;
+  await restartLab({ PATH: shimmed("ls", deny) });
+  const result = await closeCard();
+
+  assert.equal(
+    result,
+    `c-1 is done. Scratch left in /tmp: local:${old} stays in place: cannot tell whether a process holds it (no readable /proc and no lsof).`,
+  );
+  assert.equal(isRealFolder(old), true);
+  assert.deepEqual(listing(old), SEEDED);
+  assert.equal(existsSync(join(disk, "fleet-c-1")), false);
+});
+
+test("when a late writer makes the old path again and the second copy fails, the original is kept beside it and named, not nested inside it", async () => {
+  const late = `[ -e "${old}" ] || { mkdir "${old}" && echo "a late write" > "${old}/late.txt"; echo "write failed: No space left on device" >&2; exit 11; }`;
+  await restartLab({ PATH: shimmed("rsync", late) });
+  const result = await closeCard();
+
+  const kept = parkedOf();
+  assert.equal(
+    result,
+    `c-1 is done. Scratch left in /tmp: local:${old} stays in place: it changed while it was copied, and a new ${old} appeared, so the original is kept as ${kept}.`,
+  );
+  assert.deepEqual(listing(old), ["late.txt"]);
+  assert.deepEqual(listing(kept), SEEDED);
+  assert.equal(existsSync(join(disk, "fleet-c-1")), false);
+});
+
+test("when a late writer makes the old path again before the link, the link does not go inside it and the original stays", async () => {
+  const moved = join(disk, "fleet-c-1");
+  const late = `case " $* " in *" ${moved} ${old} "*) mkdir "${old}" && echo "a late write" > "${old}/late.txt" ;; esac`;
+  await restartLab({ PATH: shimmed("node", late) });
+  const result = await closeCard();
+
+  const kept = parkedOf();
+  assert.equal(
+    result,
+    `c-1 is done. Scratch moved off /tmp: local:${old} moved to ${moved} (the path was made again during the move, so the original stays in ${kept}).`,
+  );
+  assert.deepEqual(listing(old), ["late.txt"]);
+  assert.deepEqual(listing(kept), SEEDED);
+  assert.deepEqual(listing(moved), SEEDED);
+});

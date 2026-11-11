@@ -19,29 +19,36 @@ skip() { say skipped "$1"; exit 0; }
 [ -L "$src" ] && exit 0
 [ -d "$src" ] || exit 0
 
-holder() {
+held() {
   if [ -d /proc/self ]; then
-    for d in /proc/[0-9]*; do
-      pid=${d#/proc/}
-      [ "$pid" = "$$" ] && continue
-      readlink "$d/cwd" "$d"/fd/* 2>/dev/null | awk -v p="$pid" -v r="$src" '
-        $0 == r || index($0, r "/") == 1 { print "pid " p; exit }'
-    done | head -n 1
-    grep -lF -- "$src/" /proc/[0-9]*/maps 2>/dev/null | head -n 1 | sed 's|^/proc/\([0-9]*\)/maps$|pid \1|'
+    {
+      for d in /proc/[0-9]*; do
+        pid=${d#/proc/}
+        [ "$pid" = "$$" ] && continue
+        readlink "$d/cwd" "$d"/fd/* 2>/dev/null | awk -v p="$pid" -v r="$1" '
+          $0 == r || index($0, r "/") == 1 { print "held by a live process (pid " p ")"; exit }'
+      done
+      grep -lF -- "$1/" /proc/[0-9]*/maps 2>/dev/null | sed 's|^/proc/\([0-9]*\)/maps$|held by a live process (pid \1)|'
+    } | head -n 1
   else
-    lsof -t +D "$src" 2>/dev/null | head -n 1 | sed 's/^/pid /'
+    lsof -w -t +D "$1" 2>&1 | awk '
+      /^[0-9]+$/ { print "held by a live process (pid " $0 ")"; exit }
+      NF { print "cannot tell whether a process holds it (" $0 ")"; exit }'
   fi
 }
 
-can_tell() { [ -d /proc/self ] || command -v lsof >/dev/null 2>&1; }
+can_tell() {
+  if [ -d /proc/self ]; then ls "/proc/$$/fd" >/dev/null 2>&1; else command -v lsof >/dev/null 2>&1; fi
+}
 
-held() { holder | head -n 1; }
+rename_dir() { node -e 'require("fs").renameSync(process.argv[1], process.argv[2])' "$1" "$2" 2>/dev/null; }
+link_dir() { node -e 'require("fs").symlinkSync(process.argv[1], process.argv[2])' "$1" "$2" 2>/dev/null; }
 
-can_tell || skip "cannot tell whether a process holds it (no /proc and no lsof)"
+can_tell || skip "cannot tell whether a process holds it (no readable /proc and no lsof)"
 command -v rsync >/dev/null 2>&1 || skip "rsync is not installed"
 
-in_use=$(held)
-[ -z "$in_use" ] || skip "held by a live process ($in_use)"
+in_use=$(held "$src")
+[ -z "$in_use" ] || skip "$in_use"
 
 uid=$(id -u)
 stuck=$(find "$src" \( ! -user "$uid" -o \( -type d ! -perm -u+w \) \) -print 2>/dev/null | head -n 1)
@@ -57,28 +64,25 @@ done
 stage=$root/.moving-$name
 
 if command -v ionice >/dev/null 2>&1; then low() { ionice -c2 -n7 nice -n 10 "$@"; }; else low() { nice -n 10 "$@"; }; fi
-copy() { low rsync -aH --numeric-ids --delete "$1/" "$stage/"; }
-differs() { rsync -aHn --numeric-ids --delete --itemize-changes "$1/" "$stage/" 2>&1 | head -n 1; }
+copy() { low rsync -aHc --numeric-ids --delete "$1/" "$stage/"; }
+differs() { rsync -aHcn --numeric-ids --delete --itemize-changes "$1/" "$stage/" 2>&1 | head -n 1; }
 
 copy "$src" >/dev/null 2>&1 || skip "the copy to $root failed"
 [ -z "$(differs "$src")" ] || skip "the copy to $root did not match the original"
 
-in_use=$(held)
-[ -z "$in_use" ] || skip "held by a live process during the copy ($in_use)"
-
 parked=$src.moved-$$
-[ ! -e "$parked" ] || skip "$parked exists"
-mv "$src" "$parked" 2>/dev/null || skip "cannot rename the original"
-if ! copy "$parked" >/dev/null 2>&1 || [ -n "$(differs "$parked")" ]; then
-  mv "$parked" "$src"
-  skip "it changed while it was copied"
-fi
-if [ -e "$dest" ] || [ -L "$dest" ] || ! mv "$stage" "$dest" 2>/dev/null; then
-  mv "$parked" "$src"
-  skip "cannot place the copy at $dest"
-fi
-if [ -e "$src" ] || [ -L "$src" ] || ! ln -s "$dest" "$src" 2>/dev/null; then
-  if [ ! -e "$src" ] && [ ! -L "$src" ]; then mv "$parked" "$src"; skip "cannot link $src to $dest"; fi
+undo() {
+  rename_dir "$parked" "$src" && skip "$1"
+  skip "$1, and a new $src appeared, so the original is kept as $parked"
+}
+
+rename_dir "$src" "$parked" || skip "cannot rename the original"
+in_use=$(held "$parked")
+[ -z "$in_use" ] || undo "$in_use"
+copy "$parked" >/dev/null 2>&1 && [ -z "$(differs "$parked")" ] || undo "it changed while it was copied"
+rename_dir "$stage" "$dest" || undo "cannot place the copy at $dest"
+if ! link_dir "$dest" "$src"; then
+  [ -e "$src" ] || [ -L "$src" ] || undo "cannot link $src to $dest"
   say moved "$dest${tab}the path was made again during the move, so the original stays in $parked"
   exit 0
 fi
