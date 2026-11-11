@@ -95,11 +95,15 @@ function exhausted(model: string, verdicts: readonly Verdict[]): string {
 export class AccountRotation {
   private readonly pi: ExtensionAPI;
   private readonly cooled = new Map<string, Cooled>();
+  private readonly failed = new Set<string>();
   private pin: Pin | undefined;
   private moved: string | undefined;
 
   constructor(pi: ExtensionAPI) {
     this.pi = pi;
+    pi.on("before_agent_start", () => {
+      this.failed.clear();
+    });
     pi.on("message_end", (event, ctx) => this.leave(event.message, ctx));
     pi.on("agent_before_settle", (event) => this.continueOn(event));
   }
@@ -145,6 +149,7 @@ export class AccountRotation {
       return undefined;
     const cooled: Cooled = { provider, reason, untilMs: Date.now() + cooldownMs(reason) };
     this.cooled.set(provider, cooled);
+    this.failed.add(provider);
     this.pi.appendEntry(COOLED_ENTRY, cooled);
     return cooled;
   }
@@ -155,7 +160,10 @@ export class AccountRotation {
   ): MessageEndEventResult | undefined {
     if (message.role !== "assistant") return undefined;
     this.moved = undefined;
-    if (message.stopReason !== "error") return undefined;
+    if (message.stopReason !== "error") {
+      this.failed.clear();
+      return undefined;
+    }
     const cooled = this.noteFailure(message.provider, message.model, message.errorMessage ?? "");
     const pin = this.pin;
     if (cooled === undefined || pin === undefined || ctx.model?.provider !== PROVIDER)
@@ -186,9 +194,12 @@ export class AccountRotation {
     if (!ctx.modelRegistry.hasConfiguredAuth(model)) return { provider, blocked: "no credentials" };
     if (avoided().has(provider)) return { provider, blocked: "avoided by the restart" };
     const cooled = this.cooled.get(provider);
-    if (cooled === undefined || cooled.untilMs <= Date.now()) return { provider, usable: model };
-    const until = new Date(cooled.untilMs).toISOString();
-    return { provider, blocked: `${cooled.reason} until ${until}` };
+    const now = Date.now();
+    if (cooled === undefined || (cooled.untilMs <= now && !this.failed.has(provider)))
+      return { provider, usable: model };
+    const until =
+      cooled.untilMs > now ? `until ${new Date(cooled.untilMs).toISOString()}` : "in this run";
+    return { provider, blocked: `${cooled.reason} ${until}` };
   }
 
   private route(request: ModelRouteRequest<Pin>, ctx: ExtensionContext): ModelRoute<Pin> {

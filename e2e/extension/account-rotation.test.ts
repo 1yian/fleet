@@ -19,9 +19,18 @@ let fleet: Fleet;
 let h: Harness;
 let card: Card;
 const agent = (): string => join(h.dir, "agent");
-function grouped(accounts: readonly string[]): void {
-  writeFileSync(join(agent(), "tiers.json"), JSON.stringify({ accounts: { claude: accounts } }));
+function grouped(accounts: readonly string[], cooldowns: Record<string, number> = {}): void {
+  writeFileSync(
+    join(agent(), "tiers.json"),
+    JSON.stringify({ accounts: { claude: accounts }, cooldowns }),
+  );
 }
+const SECOND = 1000;
+const SLOW_ANSWER = 1.2 * SECOND;
+const slowly = (failure: string) => async (): Promise<{ fail: string }> => {
+  await new Promise((resolve) => setTimeout(resolve, SLOW_ANSWER));
+  return { fail: failure };
+};
 beforeEach(async () => {
   fleet = await startFleet({ CARDD_TIMING_SCALE: "0.02" });
   h = await Harness.start();
@@ -112,6 +121,62 @@ test("a worker walks a chain of accounts that ran out of quota to the first that
     fleet.main.entries.filter(({ entry }) => isFailure(entry)),
     [],
   );
+});
+
+test("a worker does not go back to an account that ran out while a later account was slow to answer, and reaches the one that still serves", async () => {
+  grouped(["anthropic-2", "anthropic-3", "anthropic-4", "anthropic-5"], { usageLimitSeconds: 1 });
+  h.onModel(() => ({ fail: OUT_OF_QUOTA }));
+  h.onModel(slowly(OUT_OF_QUOTA));
+  h.onModel(() => ({ text: "carrying on from the third account" }));
+  (await dispatched())();
+  await fleet.main.waitForEntry(isStopped, "the worker to end its run");
+  assert.deepEqual(h.modelsOf("default").slice(0, 3), [
+    `anthropic-3/${MODEL}`,
+    `anthropic-2/${MODEL}`,
+    `anthropic-5/${MODEL}`,
+  ]);
+  assert.deepEqual(
+    fleet.main.entries.filter(({ entry }) => isFailure(entry)),
+    [],
+  );
+});
+
+test("an account that ran out is tried again after a turn that went through, once its cooldown is over", async () => {
+  grouped(["anthropic-2", "anthropic-3", "anthropic-4"], { usageLimitSeconds: 1 });
+  h.onModel(() => ({ fail: OUT_OF_QUOTA }));
+  h.onModel(() => ({ tool: "report", args: { status: "working", text: "on it" } }));
+  h.onModel(slowly(OUT_OF_QUOTA));
+  h.onModel(() => ({ text: "back on the first account" }));
+  (await dispatched())();
+  await fleet.main.waitForEntry(isStopped, "the worker to end its run");
+  assert.deepEqual(h.modelsOf("default").slice(0, 4), [
+    `anthropic-3/${MODEL}`,
+    `anthropic-2/${MODEL}`,
+    `anthropic-2/${MODEL}`,
+    `anthropic-3/${MODEL}`,
+  ]);
+  assert.deepEqual(
+    fleet.main.entries.filter(({ entry }) => isFailure(entry)),
+    [],
+  );
+});
+
+test("a new run tries again an account that ran out in the run before, once its cooldown is over", async () => {
+  grouped(["anthropic-2", "anthropic-3", "anthropic-4"], { usageLimitSeconds: 1 });
+  h.onModel(() => ({ fail: OUT_OF_QUOTA }));
+  h.onModel(slowly(OUT_OF_QUOTA));
+  h.onModel(() => ({ text: "back on the first account" }));
+  (await dispatched())();
+  const heard = await fleet.main.waitForEntry(isFailure, "the exhaustion to reach the mate");
+  assert.match(heard.body, /anthropic-3 \(out of quota in this run\)/);
+  assert.match(heard.body, /anthropic-2 \(out of quota until/);
+  await fleet.main.call("comment", { card: card.id, text: "try again", later: false });
+  const models = await callsOn(3);
+  assert.deepEqual(models.slice(0, 3), [
+    `anthropic-3/${MODEL}`,
+    `anthropic-2/${MODEL}`,
+    `anthropic-3/${MODEL}`,
+  ]);
 });
 
 test("a worker whose every account for the model ran out of quota fails once with the model and the accounts named", async () => {
