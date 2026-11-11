@@ -51,11 +51,21 @@ use_fallback_mirrors_when_archive_is_unreachable() {
   done | sudo tee "$MIRROR_LIST" >/dev/null
 }
 
+plan_packages() {
+  local report status=0
+  report=$(npx playwright install-deps --dry-run chromium 2>&1) || status=$?
+  echo "$report"
+  mapfile -t PACKAGES < <(sed -n 's/^  \([a-z0-9][a-z0-9.+:-]*\)$/\1/p' <<<"$report")
+  return "$status"
+}
+
 install_packages() {
   use_fallback_mirrors_when_archive_is_unreachable
   local options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120)
   if ((RETRY_ATTEMPT > 1)); then
     sudo apt-get update -q "${options[@]}" || true
+    plan_packages && return 0
+    ((${#PACKAGES[@]} > 0)) || return 1
   fi
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${options[@]}" "${PACKAGES[@]}"
 }
@@ -65,15 +75,11 @@ retry "Chromium download" npx playwright install chromium || {
   exit 1
 }
 
-status=0
-report=$(npx playwright install-deps --dry-run chromium 2>&1) || status=$?
-echo "$report"
-if ((status == 0)); then
+if plan_packages; then
   echo "Every system package for Chromium is installed, so apt is not needed."
   exit 0
 fi
 
-mapfile -t PACKAGES < <(sed -n 's/^  \([a-z0-9][a-z0-9.+:-]*\)$/\1/p' <<<"$report")
 if ((${#PACKAGES[@]} == 0)); then
   error "Playwright could not list the system packages that Chromium lacks (output above)."
   exit 1
