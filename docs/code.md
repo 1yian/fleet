@@ -311,6 +311,21 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `stow.ts` ends the command by waiting for `agent_settled`, then reloading. Pi allows `reload` only in a command handler. `sendMessage` returns before the turn starts, so `waitForIdle` right after it could return at once, which is why the command waits for the settle event it sets up first. A reload runs the extension factory again, so the link to cardd reconnects, and main checks the clones again on its first connection. The reload keeps the process id, because it is the same OS process.
 - `e2e/extension/standing.test.ts` gives its mates Pi's context files and built-in tools, which the other tests turn off, because `AGENTS.md` and the model's `write` are what it checks. Its stow tests set `FLEET_SUPERVISE_MS` to ten minutes, so only the stow can have published the shared file. It does not wait a fixed time: it waits for the probe's `session_start` event with reason `reload`.
 
+### Pane
+
+[pane.md](pane.md) owns what the captain sees. Inside:
+
+- `pane/glance.ts` is pure. `glanceOf` turns the board's cards into needs and a landed count. A card has at most one need, and the worst reading wins. A need is data (`kind`, `card`, `title`, `why`, `since`), and the screen text is made from it, so the status line and the strip cannot disagree.
+- The pane reads the `board` op that the `board` tool already reads, so it adds no cardd code. The cost is that cardd builds the whole board for each fetch. The pane fetches on events and once every 30 seconds, one fetch at a time: a request that arrives during a fetch asks for one more after it.
+- "Last moved" does not use `cards.last_activity`, which resets on every reconnect. `updatedAt` is the time the status last changed, replayed from the card's entries, so it moves only on a real entry. `activity.at` is the session's `last_seen`: each activity message sets it while the session runs, and for a lost session it is the moment of the loss. A stall means the running session has said nothing, not that the card has not moved. The neglect view reads real entries and `progress_at` for that.
+- The two limits, 2 minutes not connected and 5 minutes silent, are the timed check's `notConnected` and `stall`. They are copied, not shared, because cardd scales its own with `CARDD_TIMING_SCALE`. `FLEET_PANE_LOST_MS`, `FLEET_PANE_STALL_MS`, `FLEET_PANE_POLL_MS`, and `FLEET_PANE_SILENT_MS` let a test shorten them.
+- A lane that is down is not a need. The board cannot tell a lane that main stopped on purpose from one that died: a stopped mate's session is also lost. Main's own failures already reach the captain as a hold.
+- The pane paints only when the text changed. A widget factory replaces the component, so repainting each poll would redraw the strip for nothing. The strip component keeps no theme colors: it reads `theme.colors` on every render, so a theme change reaches it.
+- Card titles come from mates, so the strip removes control characters and terminal sequences before it draws one. A title with a newline or an escape would break the row or move the cursor.
+- `session_shutdown` clears the status and the widget, so a reload or a new session never leaves a count that no one refreshes. The new session paints again at its first connect.
+- The footer's chips row also starts with a glyph, so `e2e/extension/pane.test.ts` tells the strip from the chips by the character after the glyph: a digit is a chip.
+- The strip is a widget above the editor, under its own key, so Calm's boat draws beside it. Neither sets the title, and the editor stays with OptChat.
+
 ### Calm
 
 [calm.md](calm.md) owns what the captain sees. Inside:
