@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+  ftruncateSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { FilesFleet } from "../support/files-fleet.ts";
@@ -34,4 +42,22 @@ test("a tracked file opened from inside a writable editor session is read-only t
   await editor.type("ix");
   await editor.sees("E21: Cannot make changes");
   assert.equal(readFileSync(agents, "utf8"), before);
+});
+
+test("S shows the exact sha256 of a file too large to read into memory at once", async () => {
+  const big = join(fleet.home, "data", "huge.log");
+  const size = 2 * 1024 ** 3 + 1024 ** 2;
+  const fd = openSync(big, "w");
+  ftruncateSync(fd, size);
+  closeSync(fd);
+  const hash = createHash("sha256");
+  const zeros = Buffer.alloc(1024 ** 2);
+  for (let done = 0; done < size; done += zeros.length) hash.update(zeros);
+  const expected = hash.digest("hex").slice(0, 12);
+  const pane = await FilesPane.open(lab, fleet, {
+    command: `node '${fleet.scratch.launch}' files show lane '${big}'`,
+  });
+  await pane.sees(`sha256 ${expected}.`);
+  await pane.press("esc");
+  await pane.sees("cancelled, nothing was typed");
 });

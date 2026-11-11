@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -13,6 +14,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { FilesFleet } from "../support/files-fleet.ts";
 import { FilesPane } from "../support/files-pane.ts";
 import { HerdrLab } from "../support/herdr.ts";
+import { git } from "../support/remote.ts";
 
 let fleet: FilesFleet;
 let lab: HerdrLab;
@@ -164,6 +166,26 @@ test("paste is checked for the file it would make, so a name that is a link to a
   await files.type("p");
   await files.sees("Guarded: paste refused");
   assert.equal(readFileSync(agents, "utf8"), before);
+});
+
+test("paste into a folder that is not ignored is refused even when the pasted name is, so no unignored copy appears", async () => {
+  const exclude = git(
+    fleet.home,
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-path",
+    "info/exclude",
+  );
+  appendFileSync(exclude, ".env\n");
+  writeFileSync(join(fleet.home, ".env"), "SECRET=1\n");
+  await files.hover(".env");
+  await files.type("y");
+  await files.type("p");
+  await files.sees("Guarded: paste refused");
+  assert.deepEqual(
+    readdirSync(fleet.home).filter((name) => name.startsWith(".env")),
+    [".env"],
+  );
 });
 
 test("a cut from a guarded place cannot be pasted anywhere", async () => {

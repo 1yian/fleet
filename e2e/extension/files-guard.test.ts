@@ -91,7 +91,19 @@ test("a binary file and a file over 2 MiB show their metadata and never reach th
     assert.deepEqual(fleet.editorCalls(), []);
     assert.match(run.stdout, new RegExp(`not opened in a text editor: ${why}`));
     assert.match(run.stdout, /size \d+ bytes/);
+    const edited = fleet.files(["edit", path]);
+    assert.equal(edited.status, 0, edited.stderr);
+    assert.deepEqual(fleet.editorCalls(), []);
+    assert.match(edited.stdout, new RegExp(`not opened in a text editor: ${why}`));
   }
+  const tracked = join(fleet.home, "blob.bin");
+  writeFileSync(tracked, Buffer.from([0, 1, 2, 3]));
+  git(fleet.home, "add", "blob.bin");
+  const refused = fleet.files(["edit", tracked]);
+  assert.equal(refused.status, 0, refused.stderr);
+  assert.match(refused.stdout, /not opened in a text editor: a binary file/);
+  assert.deepEqual(fleet.editorCalls(), []);
+  assert.equal(existsSync(`${fleet.clone}.worktrees/scratch`), false);
 });
 
 test("a released skill file is read-only in every lane, by its path and not by its file mode", () => {

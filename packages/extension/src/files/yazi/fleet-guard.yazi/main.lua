@@ -56,7 +56,7 @@ local function targets(action, here)
 	if action ~= "paste" and action ~= "link" then
 		return here.selected
 	end
-	local list = {}
+	local list = { here.cwd }
 	for _, path in ipairs(here.yanked) do
 		list[#list + 1] = here.cwd .. "/" .. base_of(path)
 		if action == "paste" and here.cut then

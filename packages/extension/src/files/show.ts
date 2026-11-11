@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { callCardd, carddHttp } from "../cardd-call.ts";
 import { herdr } from "../host.ts";
@@ -15,8 +15,23 @@ export type Target = "lane" | "main";
 const HASH_LENGTH = 12;
 const STAT_LINES = 6;
 
-const hashOf = (path: string): string =>
-  createHash("sha256").update(readFileSync(path)).digest("hex").slice(0, HASH_LENGTH);
+const HASH_CHUNK_BYTES = 1024 * 1024;
+
+function hashOf(path: string): string {
+  const hash = createHash("sha256");
+  const chunk = Buffer.alloc(HASH_CHUNK_BYTES);
+  const fd = openSync(path, "r");
+  try {
+    let read = readSync(fd, chunk, 0, chunk.length, null);
+    while (read > 0) {
+      hash.update(chunk.subarray(0, read));
+      read = readSync(fd, chunk, 0, chunk.length, null);
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest("hex").slice(0, HASH_LENGTH);
+}
 
 function scratchFacts(world: World, real: string): string[] {
   const clone = world.clones.find((each) => under(real, resolved(scratchPath(each))));

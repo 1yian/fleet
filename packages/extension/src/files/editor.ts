@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { launchPrefix } from "./invoke.ts";
 import { decide, type Decision } from "./places.ts";
@@ -91,15 +91,18 @@ export function runEditor(world: World, args: readonly string[], cwd?: string): 
   return 1;
 }
 
-export function openFile(world: World, path: string): number {
+export function showInstead(path: string): number | undefined {
+  if (!existsSync(path)) return undefined;
   if (statSync(path).isDirectory()) {
     console.error(`fleet files: ${basename(path)} is a folder`);
     return 1;
   }
   const because = notTextBecause(path);
-  if (because !== undefined) {
-    showMetadata(path, because);
-    return 0;
-  }
-  return runEditor(world, editorArgs(decide(world, path), path));
+  if (because === undefined) return undefined;
+  showMetadata(path, because);
+  return 0;
+}
+
+export function openFile(world: World, path: string): number {
+  return showInstead(path) ?? runEditor(world, editorArgs(decide(world, path), path));
 }

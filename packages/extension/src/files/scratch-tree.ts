@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { ADD_WORKTREE, SYNC_FUNCTIONS } from "../clones.ts";
-import { editorArgs, runEditor } from "./editor.ts";
+import { editorArgs, runEditor, showInstead } from "./editor.ts";
 import { git, gitOrNothing, gitPaths } from "./git.ts";
 import { decide, resolved, skillRelative } from "./places.ts";
 import { PROJECTS_UNAVAILABLE, type LocalClone, type World } from "./world.ts";
@@ -256,6 +256,8 @@ const REFUSED = {
 };
 
 export function editInScratch(world: World, path: string): number {
+  const instead = showInstead(path);
+  if (instead !== undefined) return instead;
   const decision = decide(world, path);
   if (decision.editable) return runEditor(world, editorArgs(decision, path));
   if (decision.kind === "worker") return refuse(REFUSED.worker);
