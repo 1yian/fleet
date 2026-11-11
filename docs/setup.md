@@ -347,12 +347,12 @@ You do not start second mates by hand. Main starts them, and a held one starts w
 
 `fleet home set <lane>` changes the Pi arguments of a home that exists, without making it again. It takes only `--args` and `--worker-args`, each a JSON array of strings that replaces the whole list. Any other option, the credentials included, is refused with a message that says so: the other settings belong to `home add`, and an existing home's are edited in `config/lane.json`. It keeps the rest of `config/lane.json` (the token or `bws` block, `hosts`, `roots`, `tier`, and `cardd`), checks the result before it replaces the file, and replaces it by rename. A mate reads its settings when it starts, so a change applies after `lane(<lane>, "restart")` in main, or `fleet restart <lane>` on its host.
 
-The ystack lane's mate loads skills from its own scratch worktree ahead of the released install. Pi loads `--skill` paths after everything it finds by itself, and the first skill of a name wins, so the lane needs `--no-skills` (on Pi 1.5.2) and its three skill folders in order: the scratch worktree's, the released install's, and the home's own, which `--no-skills` would switch off. To set that on the existing home, whose scratch worktree is `data/ystack`, main runs this on maverick, and then restarts the lane. The paths are p620's own, so `$HOME` expands there, on p620's shell:
+The ystack lane's mate loads skills from its own scratch worktree ahead of the released install. Pi loads `--skill` paths after everything it finds by itself, and the first skill of a name wins, so the lane needs `--no-skills` (on Pi 1.5.2) and its two skill folders in order: the scratch worktree's, then the released install's. A lane home has no skill folder of its own. To set that on the existing home, whose scratch worktree is `data/ystack`, main runs this on maverick, and then restarts the lane. The paths are p620's own, so `$HOME` expands there, on p620's shell:
 
 ```sh
 ssh p620 sh <<'EOF'
 home=$HOME/.fleet/app.worktrees/lane-ystack
-$HOME/.fleet/app/bin/fleet home set ystack --args "[\"--no-skills\",\"--skill\",\"$home/data/ystack/skills\",\"--skill\",\"$HOME/.agents/skills\",\"--skill\",\"$home/.pi/skills\"]"
+$HOME/.fleet/app/bin/fleet home set ystack --args "[\"--no-skills\",\"--skill\",\"$home/data/ystack/skills\",\"--skill\",\"$HOME/.agents/skills\"]"
 EOF
 ```
 
