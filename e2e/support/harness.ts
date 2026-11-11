@@ -134,6 +134,18 @@ export class Pi {
     this.command({ type: "abort" });
   }
 
+  async state(): Promise<JsonRecord> {
+    const asked = this.responses.filter((record) => record["command"] === "get_state").length;
+    this.command({ type: "get_state" });
+    const response = await poll(
+      () => this.responses.filter((record) => record["command"] === "get_state")[asked],
+      "the session state",
+    );
+    const data = response["data"];
+    if (!isRecord(data)) throw new Error("the session state has no data");
+    return data;
+  }
+
   async kill(): Promise<void> {
     this.child.kill("SIGKILL");
     await this.exited;

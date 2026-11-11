@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
+import { AccountRotation } from "./account-rotation.ts";
 import { showBoardLink } from "./board-link.ts";
 import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
@@ -335,6 +336,7 @@ export default function fleet(pi: ExtensionAPI): void {
     type: "string",
     description: "Where to read this session's bws secrets, as JSON without any secret value",
   });
+  const rotation = new AccountRotation(pi);
   let started = false;
   let extensionsLoaded: () => void = () => undefined;
   const extensionsReady = new Promise<void>((resolve) => {
@@ -352,6 +354,7 @@ export default function fleet(pi: ExtensionAPI): void {
         ? []
         : await applyEnvSecrets(found.secrets.bws, found.secrets.env);
     announce(ctx, [...found.notes, ...applied]);
+    if (found.role === "worker") await rotation.adopt(ctx);
     start(
       pi,
       found,

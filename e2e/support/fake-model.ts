@@ -87,6 +87,19 @@ export default function fakeModel(pi: ExtensionAPI): void {
     fauxProvider({ provider: "fake", models: [{ id: "scripted" }] }),
     fauxProvider({ provider: "openai-codex", models: [{ id: "gpt-fixture" }] }),
     fauxProvider({
+      provider: "anthropic-2",
+      models: [{ id: "claude-fable-5-2", reasoning: true }],
+    }),
+    fauxProvider({
+      provider: "anthropic-3",
+      models: [{ id: "claude-fable-5-2", reasoning: true }],
+    }),
+    fauxProvider({ provider: "anthropic-4", models: [{ id: "claude-haiku-5-5" }] }),
+    fauxProvider({
+      provider: "anthropic-5",
+      models: [{ id: "claude-fable-5-2", reasoning: true }],
+    }),
+    fauxProvider({
       provider: "google-vertex",
       models: present("google-vertex", [{ id: "gemini-2.5-pro" }, { id: "gemini-3.8-flash" }]),
     }),

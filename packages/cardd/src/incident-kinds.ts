@@ -45,7 +45,7 @@ const KINDS: readonly (readonly [Kind, RegExp])[] = [
   ],
   [
     "router-cooldown",
-    /no usable model for tier|no model is available for tier|every model is cooling|all candidates (are )?excluded|cooldown/i,
+    /no usable model for tier|no usable account for|no model is available for tier|every model is cooling|all candidates (are )?excluded|cooldown/i,
   ],
   [
     "vendor-quota",
