@@ -4,6 +4,7 @@ import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
+import { NextSchema } from "./next.ts";
 import { ActivityMessage, LandingFields } from "./progress.ts";
 import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
@@ -17,6 +18,7 @@ export * from "./branch.ts";
 export * from "./cdp.ts";
 export * from "./health.ts";
 export * from "./http.ts";
+export * from "./next.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./waits.ts";
@@ -287,6 +289,7 @@ export const OPS = {
     args: Type.Object({
       card: Type.Integer(),
       landed: Type.Optional(Type.Boolean()),
+      next: Type.Optional(NextSchema),
     }),
     result: Type.Object({
       mode: Type.Enum(["done", "dropped"]),
@@ -318,6 +321,7 @@ export const OPS = {
       card: Type.Integer(),
       mode: Type.Enum(["done", "dropped"]),
       text: Type.String({ minLength: 1 }),
+      next: Type.Optional(NextSchema),
       archives: Type.Array(Type.String()),
       left: Type.Array(
         Type.Object({ session: Type.String(), host: Type.String(), reason: Type.String() }),

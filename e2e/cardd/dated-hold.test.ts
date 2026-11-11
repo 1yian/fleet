@@ -64,6 +64,7 @@ async function closed(mate: Session, title: string): Promise<Card> {
     card: card.id,
     mode: "done",
     text: title,
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { OpResult } from "@fleet/protocol";
+import type { Next, OpResult } from "@fleet/protocol";
 import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
@@ -247,11 +247,13 @@ interface CloseRequest {
   text: string;
   landed?: boolean | undefined;
   confirm?: boolean | undefined;
+  next?: Next | undefined;
 }
 
 interface Running {
   readonly landed: boolean | undefined;
   readonly confirm: boolean;
+  readonly next: string | undefined;
   readonly outcome: Promise<string>;
 }
 
@@ -266,8 +268,10 @@ const settled = (work: Promise<unknown>): Promise<void> =>
 export async function close(link: Link, request: CloseRequest): Promise<string> {
   const { card, landed } = request;
   const confirm = request.confirm === true;
+  const next = request.next === undefined ? undefined : JSON.stringify(request.next);
   for (let other = running.get(card); other !== undefined; other = running.get(card)) {
-    if (other.landed === landed && (other.confirm || !confirm)) return other.outcome;
+    if (other.landed === landed && other.next === next && (other.confirm || !confirm))
+      return other.outcome;
     await settled(other.outcome);
   }
   const outcome = (async () => {
@@ -277,12 +281,16 @@ export async function close(link: Link, request: CloseRequest): Promise<string> 
       running.delete(card);
     }
   })();
-  running.set(card, { landed, confirm, outcome });
+  running.set(card, { landed, confirm, next, outcome });
   return outcome;
 }
 
-const planOf = (link: Link, { card, landed }: CloseRequest) =>
-  link.call("close.begin", { card, ...(landed === undefined ? {} : { landed }) });
+const planOf = (link: Link, { card, landed, next }: CloseRequest) =>
+  link.call("close.begin", {
+    card,
+    ...(landed === undefined ? {} : { landed }),
+    ...(next === undefined ? {} : { next }),
+  });
 
 async function closedMeanwhile(link: Link, request: CloseRequest): Promise<boolean> {
   try {
@@ -350,7 +358,7 @@ async function teardown(
   request: CloseRequest,
   plan: OpResult<"close.begin">,
 ): Promise<string> {
-  const { card: id, text, confirm } = request;
+  const { card: id, text, confirm, next } = request;
   const moved = plan.land ? await landLocally(id, plan) : "";
   const warning = await unlandedWarning(id, plan, confirm === true);
   if (warning !== undefined) return warning;
@@ -371,7 +379,14 @@ async function teardown(
       left.push({ session: attempt.session, host: attempt.host, reason: error.message });
     }
   }
-  const finish = { card: id, mode: plan.mode, text, archives, left };
+  const finish = {
+    card: id,
+    mode: plan.mode,
+    text,
+    ...(next === undefined ? {} : { next }),
+    archives,
+    left,
+  };
   const card = await link.call("close.finish", finish);
   const scratch = await clearScratch(retiredOn, id);
   const hostsJustUnreachable = new Set(left.map((each) => each.host));

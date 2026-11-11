@@ -51,7 +51,7 @@ test("a worker whose process ends in its last turn after done leaves the card do
   assert.equal(await status(fleet.main, card), "with-mate");
   const plan = check(
     OPS["close.begin"].result,
-    await fleet.main.call("close.begin", { card: card.id }),
+    await fleet.main.call("close.begin", { card: card.id, next: { drop: "nothing to build" } }),
   );
   assert.equal(plan.mode, "done");
 });
@@ -79,7 +79,7 @@ test("a pane stop in the last turn after done leaves the card done and closable"
   assert.equal(await status(fleet.main, card), "with-mate");
   const plan = check(
     OPS["close.begin"].result,
-    await fleet.main.call("close.begin", { card: card.id }),
+    await fleet.main.call("close.begin", { card: card.id, next: { drop: "nothing to build" } }),
   );
   assert.equal(plan.mode, "done");
 });

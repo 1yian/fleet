@@ -192,6 +192,8 @@ function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: un
   if (merged) return "Close it now with close(card, summary).";
   if (kind === "ship" && delivery === "local-only")
     return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
+  if (kind === "scout")
+    return "Close it with close(card, summary, next=<build, decision, or drop>): the findings need a ship card that builds them, a decision of the captain's that waits on a card, or the reason that nothing is built. Use close(card, summary=<why>, landed=false) if it did not land.";
   if (kind !== "ship")
     return "Close it with close(card, summary), or close(card, summary=<why>, landed=false) if it did not land.";
   if (hasPr)

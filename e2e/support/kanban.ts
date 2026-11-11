@@ -190,6 +190,7 @@ async function seedClosed(cardd: Cardd, main: Session, leo: Session, cards: Card
     card: cards["scout"].id,
     mode: "done",
     text: "Scoped.",
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });

@@ -102,11 +102,13 @@ async function workerOf(card: Card): Promise<Session> {
 
 async function cleoLandedCard(title: string): Promise<Card> {
   const card = await cleoCard(title);
-  await cleo.call("close.begin", { card: card.id, landed: true });
+  const next = { drop: "nothing to build" };
+  await cleo.call("close.begin", { card: card.id, landed: true, next });
   await cleo.call("close.finish", {
     card: card.id,
     mode: "done",
     text: "checked",
+    next,
     archives: [],
     left: [],
   });

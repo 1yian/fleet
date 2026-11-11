@@ -168,6 +168,7 @@ test("a card is Done after its mate closes it, whatever its reports said", async
     card: card.id,
     mode: "done",
     text: "relayed",
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });

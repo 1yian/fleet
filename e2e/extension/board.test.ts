@@ -115,7 +115,15 @@ async function seed(): Promise<{ cleo: Session; worker: Session }> {
     ["Try the old banner", "dropped"],
   ] as const) {
     const card = await newCard(main, title, "scout");
-    await main.call("close.finish", { card: card.id, mode, text: title, archives: [], left: [] });
+    const next = mode === "done" ? { next: { drop: "nothing to build" } } : {};
+    await main.call("close.finish", {
+      card: card.id,
+      mode,
+      text: title,
+      ...next,
+      archives: [],
+      left: [],
+    });
   }
   const ads = check(
     OPS["card.new"].result,
@@ -214,6 +222,7 @@ test("second mates see only their own lane through board and cardd, including th
         card: closed.id,
         mode: "done",
         text: "Finished",
+        next: { drop: "nothing to build" },
         archives: [],
         left: [],
       });

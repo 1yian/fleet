@@ -66,6 +66,7 @@ test("finished reminders wait two hours, repeat every two hours, and never reach
     card: card.id,
     mode: "done",
     text: "read",
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });

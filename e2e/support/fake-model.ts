@@ -19,18 +19,34 @@ function controlUrl(): string {
   return url;
 }
 
-type ArgValue = string | number | boolean | readonly string[] | readonly number[];
+type Scalar = string | number;
+type ArgValue =
+  | string
+  | number
+  | boolean
+  | readonly string[]
+  | readonly number[]
+  | Readonly<Record<string, Scalar>>;
+
+const isScalar = (value: unknown): value is Scalar =>
+  typeof value === "string" || typeof value === "number";
+
+const isFlat = (value: unknown): value is Record<string, Scalar> =>
+  isRecord(value) && Object.values(value).every(isScalar);
+
+function argOf(item: unknown): ArgValue | undefined {
+  if (isScalar(item) || typeof item === "boolean" || isFlat(item)) return item;
+  if (!Array.isArray(item)) return undefined;
+  if (item.every((each) => typeof each === "string")) return item;
+  return item.every((each) => typeof each === "number") ? item : undefined;
+}
 
 function scalarArgs(value: unknown): Record<string, ArgValue> {
   if (!isRecord(value)) return {};
   const args: Record<string, ArgValue> = {};
   for (const [key, item] of Object.entries(value)) {
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean")
-      args[key] = item;
-    else if (Array.isArray(item) && item.every((each) => typeof each === "string"))
-      args[key] = item;
-    else if (Array.isArray(item) && item.every((each) => typeof each === "number"))
-      args[key] = item;
+    const arg = argOf(item);
+    if (arg !== undefined) args[key] = arg;
   }
   return args;
 }

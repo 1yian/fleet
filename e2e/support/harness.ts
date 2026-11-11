@@ -22,7 +22,15 @@ export interface Turn {
   readonly text: string;
 }
 type ToolArgs = Readonly<
-  Record<string, string | number | boolean | readonly string[] | readonly number[]>
+  Record<
+    string,
+    | string
+    | number
+    | boolean
+    | readonly string[]
+    | readonly number[]
+    | Readonly<Record<string, string | number>>
+  >
 >;
 export type Move = {
   readonly promptTokens?: number;

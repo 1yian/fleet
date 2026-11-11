@@ -143,13 +143,17 @@ test("a second mate's finished card reaches main with its summary, and its worke
     card: card.id,
     mode: "done",
     text: "Search ads convert best.",
+    next: { drop: "nothing to build" },
     archives: [],
     left: [],
   });
 
   assert.equal(await status(cleo, card), "done");
   const outcome = await fleet.main.waitForEntry((entry) => entry.kind === "cleanup", "the outcome");
-  assert.deepEqual([outcome.body, outcome.fields["outcome"]], ["Search ads convert best.", "done"]);
+  assert.deepEqual(
+    [outcome.body, outcome.fields["outcome"]],
+    ["Next: nothing is built, because nothing to build.\nSearch ads convert best.", "done"],
+  );
   await assert.rejects(worker.call("report", { status: "note", text: "late" }), {
     message: "the connection closed with 4001",
   });
@@ -241,7 +245,7 @@ test("a scout closes as Done once its worker reported done, with nothing for the
   await worker.call("report", { status: "done", text: "report written" });
   const plan = check(
     OPS["close.begin"].result,
-    await fleet.main.call("close.begin", { card: card.id }),
+    await fleet.main.call("close.begin", { card: card.id, next: { drop: "nothing to build" } }),
   );
   assert.deepEqual([plan.mode, plan.verify], ["done", false]);
   assert.deepEqual(plan.refresh, []);
@@ -262,7 +266,7 @@ test("a delivered scout keeps its completion across coordination comments, repli
     (entry) => entry.body === "Implementation belongs to other cards.",
     "main's coordination",
   );
-  const done = { card: card.id };
+  const done = { card: card.id, next: { drop: "implementation belongs to other cards" } };
   assert.equal(check(OPS["close.begin"].result, await cnp.call("close.begin", done)).mode, "done");
   await cnp.call("comment", {
     card: card.id,
@@ -311,6 +315,7 @@ test("a delivered scout keeps its completion across coordination comments, repli
     card: card.id,
     mode: "done",
     text: "Assessment delivered.",
+    next: done.next,
     archives: [],
     left: [],
   });
@@ -338,7 +343,7 @@ test("new worker input and incomplete handoffs still prevent normal close", asyn
 test("a stopped report after done changes nothing, and the card still closes", async () => {
   const card = await newCard(fleet.main, "Assess the lifecycle", "scout");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  const done = { card: card.id };
+  const done = { card: card.id, next: { drop: "nothing to build" } };
   await worker.call("report", { status: "done", text: "assessment delivered" });
   await worker.call("report", { status: "stopped", text: "stopped from the pane" });
 
