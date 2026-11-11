@@ -19,7 +19,7 @@ export interface Glance {
 export function kindOf({ state, notice }: Pulse): Kind | undefined {
   if (state === "you") return "needs-you";
   if (state === "broken" || notice === "urgent") return "broken";
-  return state === "stalled" || notice === "captain" ? "stalled" : undefined;
+  return state === "stalled" || notice !== "none" ? "stalled" : undefined;
 }
 
 export const unreachable = (since: number): Need => ({

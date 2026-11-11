@@ -17,6 +17,8 @@ A standing card (a lane home or a schedule holder) and a closed card have no pul
 | `waits`   | The captain, main, a mate, a date (see `datedWait`), a pause, or nothing stated.                     |
 | `behind`  | For a held card: how many open steps it names in `remaining`, and how many of them started.          |
 
+A lane's mate reads `behind` with every step in another lane counted as open and not started. The real count would show whether that card is queued, started, or closed, which `remaining` hides on purpose (`elsewhere`). Main and the board see the real count.
+
 `movedAt` never reads `cards.last_activity`, which every reconnect resets. A schedule's wake, a reminder, a restart note, a connect, and a lost job are not movement.
 
 ## States
@@ -46,7 +48,7 @@ The first row that fits wins.
 
 The limits are `idleMain`, `idleCaptain`, `parked`, and `parkedUrgent` in `timing.ts`, so `CARDD_TIMING_SCALE` scales them with the rest.
 
-Main is told in the 30 minute reminder (see Bundle in [code.md](code.md)):
+Main is told in the 30 minute reminder (see Bundle in [code.md](code.md)). The reminder for neglect goes to main for every lane, and never to the mate that owns the card:
 
 - An idle card past 4 hours is an item to act on, in the first group.
 - A card parked for over a day is in its own group: start what it waits on, or clear the hold. It rides the daily list, so it never starts a 30 minute list. A card whose hold names a dead watcher is an idle park and is listed for action at once, as before.
@@ -57,11 +59,11 @@ The captain is told by the strip in main's pane and by the board's Attention str
 ## Where it shows
 
 - Pi pane: `/pulse` opens an overlay with every open card, quiet first, running cards in one line. See [pane.md](pane.md).
-- Pi pane: the counts and the strip read `pulse` and nothing else.
+- Pi pane: the counts and the strip read `pulse` and nothing else. A notice of any kind counts, so an idle card past 4 hours is on main's pane as soon as main is told.
 - Board: an Attention strip above the lanes, and one line on each card with who has it, what runs, when it moved, and what it waits on.
 
 Sorting puts the louder notice first, then the state (idle, parked, stalled, you, waiting, running), then the oldest.
 
 ## Evidence
 
-`e2e/cardd/pulse.test.ts` reads the pulse of a real `cardd` over each state, with cards aged by writing old times into the scratch database. `e2e/cardd/neglect.test.ts` reads the reminders. `e2e/extension/pulse.test.ts` opens `/pulse` in a real Pi pane. `e2e/board/attention.test.ts` reads the strip and the card line in Chromium.
+`e2e/cardd/pulse.test.ts` reads the pulse of a real `cardd` over each state, with cards aged by writing old times into the scratch database, and reads `behind` as a mate of another lane sees it. `e2e/cardd/neglect.test.ts` reads the reminders, and that the mate that owns a card is not told. `e2e/extension/pulse.test.ts` opens `/pulse` in a real Pi pane. `e2e/board/attention.test.ts` reads the strip and the card line in Chromium.

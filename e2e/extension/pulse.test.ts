@@ -202,3 +202,91 @@ test("enter on a card shows its board link, and an empty board says so", async (
   keep("pulse-5-link", linked);
   assert.ok(!linked.includes("quiet first"), "the overlay closed");
 });
+
+test("a card idle past 4 hours, which only main is told about, counts on main's pane and shows in the strip", async () => {
+  const idle = await card("Port the invoices");
+  ageCard(cardd, idle, 5 * HOUR);
+  const pane = await openMain();
+  const strip = await screenWhere(
+    pane,
+    "the strip to name the idle card",
+    (screen) =>
+      screen.includes(`c-${String(idle.id)} Port the invoices: idle, nothing running (5h)`) &&
+      screen.includes("◇ 1"),
+  );
+  keep("pulse-6-idle-strip", strip);
+  assert.ok(!strip.includes("✓ clear"), "an idle card is not clear");
+});
+
+test("a watcher with line breaks and escapes stays on its row and the overlay keeps its frame", async () => {
+  const parked = await card("Crud ingress bypasses Cloud Armor");
+  await cleo.call("hold", {
+    card: parked.id,
+    question: "Wait for the first hub use?",
+    until: Date.now() + 10 * DAY,
+    watcher: "the hub log\nsecond line\u001b[31m red",
+    remaining: [],
+  });
+  ageCard(cardd, parked, 4 * DAY);
+  const pane = await openMain();
+  await screenWhere(pane, "the strip to name the card", (screen) => screen.includes("●"));
+
+  await herdr().submit(pane, "/pulse");
+  const opened = await screenWhere(pane, "the overlay", (screen) =>
+    screen.includes("Pulse · 1 open · quiet first"),
+  );
+  keep("pulse-7-multiline-watcher", opened);
+  assert.ok(
+    opened.includes("waits on the hub log second line red (fleet cannot check it)"),
+    `the watcher is not one row:\n${opened}`,
+  );
+
+  const rows = opened.split("\n");
+  const top = rows.findIndex((row) => row.includes("╭─ Pulse"));
+  const bottom = rows.findIndex((row, at) => at > top && row.includes("╰"));
+  const edge = Array.from(rows[top] ?? "");
+  const [left, right] = [edge.indexOf("╭"), edge.indexOf("╮")];
+  assert.ok(top >= 0 && bottom > top, `the overlay has no frame:\n${opened}`);
+  for (const row of rows.slice(top + 1, bottom)) {
+    const cells = Array.from(row);
+    assert.ok(cells[left] === "│" && cells[right] === "│", `the frame breaks at: ${row}`);
+  }
+});
+
+test("a long list of running cards scrolls inside the overlay, so every one can be reached and the frame stays", async () => {
+  const titles = Array.from(
+    { length: 40 },
+    (_, at) => `Worker card ${String(at + 1).padStart(2, "0")}`,
+  );
+  for (const title of titles) await running(title);
+  const pane = await openMain();
+  await screenWhere(pane, "the pane to load the board", (screen) => screen.includes("✓ clear"));
+  await herdr().submit(pane, "/pulse");
+  await screenWhere(pane, "the overlay", (screen) =>
+    screen.includes("Pulse · 40 open · quiet first"),
+  );
+  await herdr().press(pane, "enter");
+  const seen = new Set<string>();
+  const note = (screen: string): string => {
+    for (const title of titles) if (screen.includes(title)) seen.add(title);
+    return screen;
+  };
+  const top = await screenWhere(pane, "the list to open", (screen) =>
+    screen.includes("⏎ collapse"),
+  );
+  keep("pulse-8-running-top", note(top));
+
+  let pressed = 0;
+  while (pressed < titles.length) {
+    await herdr().press(pane, "down");
+    note(await herdr().screen(pane));
+    pressed += 1;
+  }
+  const end = await screenWhere(pane, "every running card to come into view", (screen) => {
+    note(screen);
+    return seen.size === titles.length;
+  });
+  keep("pulse-9-running-bottom", end);
+  assert.deepEqual([...seen].sort(), titles);
+  assert.ok(end.includes("esc close") && end.includes("╰"), `the frame is cut:\n${end}`);
+});

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Entry } from "@fleet/protocol";
+import { check, OPS, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, park, startFleet, type Fleet } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
@@ -25,8 +25,17 @@ const lists = (session: Session): Entry[] =>
 
 test("a mate with only dated waits hears no list on the 30 minute cadence, hears one information list after a day, and not again after a restart", async () => {
   const quota = await newCard(fleet.main, "Waits on the quota");
+  const schedule = check(
+    OPS["schedule.set"].result,
+    await fleet.main.call("schedule.set", {
+      to: "main",
+      at: "05:00",
+      timezone: "UTC",
+      text: "Check the quota.",
+    }),
+  ).id;
   const held = Date.now();
-  await park(fleet.main, quota, "Quota resets?", HOUR);
+  await park(fleet.main, quota, "Quota resets?", HOUR, { schedule, remaining: [] });
 
   const first = await until(() => lists(fleet.main)[0], "the information list");
   assert.ok(

@@ -183,9 +183,12 @@ function waitsOf(basis: Basis, state: PulseState, owner: Pulse["owner"]): Pulse[
   return owner.kind === "worker" ? "nothing" : owner.kind;
 }
 
-function behindOf({ loaded, env }: Basis): Pulse["behind"] {
-  const open = (loaded.standing.facts.hold?.remaining ?? []).flatMap((step) => {
-    const status = env.statusOf(step);
+export function behindOf(
+  remaining: readonly number[],
+  statusOf: Neglect["statusOf"],
+): Pulse["behind"] {
+  const open = remaining.flatMap((step) => {
+    const status = statusOf(step);
     return status === undefined || status === "done" || status === "dropped" ? [] : [status];
   });
   if (open.length === 0) return null;
@@ -219,7 +222,7 @@ export function pulseOf(
     movedAt: basis.moved,
     since: reading.since,
     waits: waitsOf(basis, reading.state, owner),
-    behind: behindOf(basis),
+    behind: behindOf(loaded.standing.facts.hold?.remaining ?? [], env.statusOf),
   };
 }
 

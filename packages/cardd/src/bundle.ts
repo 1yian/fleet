@@ -100,15 +100,10 @@ function waitItem(
   const { card, standing } = loaded;
   const { hold } = standing.facts;
   const question = firstLine(hold?.question ?? "");
-  const to = receiver(db, card, hold?.holder ?? "owner");
+  const group = waitGroup(wait, pulse);
+  const to = group === "parked" ? mainLane(db) : receiver(db, card, hold?.holder ?? "owner");
   const line = `c-${String(card.id)} ${card.title} - ${waitLine(sightOf(db, to, card.id, wait), now)}: ${question}`;
-  return {
-    card: card.id,
-    since: standing.since,
-    to,
-    line,
-    group: waitGroup(wait, pulse),
-  };
+  return { card: card.id, since: standing.since, to, line, group };
 }
 
 const IDLE_CARDS: ReadonlySet<string> = new Set(["queued", "working", "in-review"]);
@@ -123,7 +118,7 @@ function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefine
     ? `${name} - idle ${waited(now, since)}, nothing running and no stated reason`
     : `${name} - paused ${waited(now, since)}, nothing checks what it waits for`;
   const group: Group = idle ? "act" : "parked";
-  return [{ card: card.id, since, to: actingLane(db, card.id, card.lane), line, group }];
+  return [{ card: card.id, since, to: mainLane(db), line, group }];
 }
 
 function openItems(

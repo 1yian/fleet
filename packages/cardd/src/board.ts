@@ -9,13 +9,15 @@ import {
   type Card,
   type CardView,
   type Entry,
+  type Pulse,
   type RemainingStep,
+  type Status,
   type Thread,
 } from "@fleet/protocol";
 import { attemptsOf } from "./attempts.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
-import { neglectOf, pulseOf, type Neglect } from "./pulse.ts";
+import { behindOf, neglectOf, pulseOf, type Neglect } from "./pulse.ts";
 import { allSchedules } from "./schedules.ts";
 import { openReplies } from "./replies.ts";
 import { factsFrom, type Hold } from "./status.ts";
@@ -123,9 +125,20 @@ export function boardFor(db: DatabaseSync, lane: string, timing: Timings): Board
     .map((card) => seenBy(db, lane, card));
 }
 
+function stepsSeenBy(db: DatabaseSync, lane: string, card: BoardCard): Pulse | null {
+  const { pulse } = card;
+  if (pulse === null || card.holder === null) return pulse;
+  const remaining = factsFrom(cardEntries(db, card.id)).hold?.remaining ?? [];
+  const known = (step: number): Status => {
+    const { status, lane: owner } = getCard(db, step);
+    return canSee(db, lane, owner) ? status : "queued";
+  };
+  return { ...pulse, behind: behindOf(remaining, known) };
+}
+
 function seenBy(db: DatabaseSync, lane: string, card: BoardCard): BoardCard {
-  if (card.datedWait === null) return card;
-  return { ...card, datedWait: sightOf(db, lane, card.id, card.datedWait) };
+  const datedWait = card.datedWait === null ? null : sightOf(db, lane, card.id, card.datedWait);
+  return { ...card, datedWait, pulse: stepsSeenBy(db, lane, card) };
 }
 
 function stepOf(db: DatabaseSync, lane: string, id: number): RemainingStep {

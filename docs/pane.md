@@ -62,9 +62,9 @@ Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane re
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Needs you | Its state is `you`: a hold waits on the captain, or it is his own card.                                                                                                               |
 | Broken    | A worker reported `failed`. Or a worker is not connected for 2 minutes while the card is Working or In review. Or a card has been parked for 3 days with nothing running or checking. |
-| Stalled   | A worker reported `blocked` or `stopped` 5 minutes ago, or a running worker has been silent for 5 minutes. Or a card has been idle for 24 hours, or parked for 24 hours.              |
+| Stalled   | A worker reported `blocked` or `stopped` 5 minutes ago, or a running worker has been silent for 5 minutes. Or a card has been idle for 4 hours, or parked for 24 hours.               |
 
-An idle card that only main has been told about (4 to 24 hours) is not on the captain's screen. It is in `/pulse`.
+An idle card counts from 4 hours, when main is told. Only main shows this pane, so main sees it there, and its row says how long the card has been idle.
 
 A reported need counts its age from the report itself, so a card that its worker already handed back, and that then reports `blocked`, is not stalled until 5 minutes after that report. The limits are `cardd`'s own (`timing.ts`), so `CARDD_TIMING_SCALE` scales them.
 
@@ -93,7 +93,7 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 ╰────────────────────────────────────────────╯
 ```
 
-- Rows are sorted by who must be told (red, then amber), then by state (idle, parked, stalled, you, waiting), then oldest first. Running cards are one line. `⏎` on it opens their list.
+- Rows are sorted by who must be told (red, then amber), then by state (idle, parked, stalled, you, waiting), then oldest first. Running cards are one line. `⏎` on it opens their list, and each running card is then a row of its own: `↓` moves down it, `⏎` on a card shows its board link, and `⏎` on the count closes the list.
 - A row shows its state and how long it has held, the card, its lane, and its title. A neglected row adds who has it, what runs, when it last moved, what it waits on, and how many steps are behind it.
 - `⏎` on a card closes the overlay and shows the card's board link. Where the terminal supports links, the card number is one too.
 - It reads the board when it opens. It does not refresh while open.
@@ -113,4 +113,4 @@ The pane asks `cardd` for the board when the link connects, after every `[fleet]
 
 `e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, and sends a mouse click to the strip. It reads the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
 
-`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, and that nothing reaches the model's context.
+`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, that nothing reaches the model's context, the strip for a card idle past 4 hours, a watcher with line breaks, and a list of 40 running cards that scrolls inside the overlay.

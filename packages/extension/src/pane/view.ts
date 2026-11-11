@@ -42,7 +42,7 @@ function lookOf(theme: Theme, pulse: Pulse): Look {
   const kind = kindOf(pulse);
   if (kind !== undefined) return { glyph: GLYPHS[kind], tone: TONES[kind](colors) };
   if (pulse.state === "running") return { glyph: RUNNING_GLYPH, tone: colors.success };
-  return { glyph: QUIET_GLYPH, tone: pulse.notice === "main" ? colors.warning : colors.muted };
+  return { glyph: QUIET_GLYPH, tone: colors.muted };
 }
 
 const wordOf = (pulse: Pulse): string =>
@@ -63,7 +63,10 @@ function block(theme: Theme, listed: Listed, now: number, links: Links): string[
   if (pulse.state === "you") return [...lines, ""];
   const moved = ago(now - pulse.movedAt);
   const who = `${ownerText(pulse.owner)} · running ${runningText(card)} · moved ${moved === "now" ? "just now" : `${moved} ago`}`;
-  lines.push(theme.fg("muted", `  ${who}`), theme.fg("muted", `  ${waitsText(card)}`));
+  lines.push(
+    theme.fg("muted", `  ${plain(who)}`),
+    theme.fg("muted", `  ${plain(waitsText(card))}`),
+  );
   if (pulse.behind !== null) {
     const { steps, started } = pulse.behind;
     const state = started === 0 ? "none started" : `${String(started)} started`;
@@ -76,7 +79,7 @@ function runningLine(theme: Theme, listed: Listed): string {
   const { card, pulse } = listed;
   const { colors } = theme;
   const glyph = theme.style(RUNNING_GLYPH, { fg: colors.success });
-  const what = pulse.running === null ? "" : ` · ${pulse.running.what}`;
+  const what = pulse.running === null ? "" : ` · ${plain(pulse.running.what)}`;
   return `  ${glyph} c-${String(card.id)} ${plain(card.lane)}  ${plain(card.title)}${what}`;
 }
 
@@ -105,7 +108,9 @@ export class PulseView implements Component {
   }
 
   private get items(): number {
-    return this.list.rows.length + (this.list.running.length > 0 ? 1 : 0);
+    const { rows, running } = this.list;
+    if (running.length === 0) return rows.length;
+    return rows.length + 1 + (this.expanded ? running.length : 0);
   }
 
   handleInput(data: string): void {
@@ -116,9 +121,10 @@ export class PulseView implements Component {
   }
 
   private choose(): void {
-    const row = this.list.rows[this.selected];
-    if (row !== undefined) this.done(row.card.id);
-    else if (this.list.running.length > 0) this.expanded = !this.expanded;
+    const { rows, running } = this.list;
+    const picked = rows[this.selected] ?? running[this.selected - rows.length - 1];
+    if (picked !== undefined) this.done(picked.card.id);
+    else if (this.selected === rows.length && running.length > 0) this.expanded = !this.expanded;
   }
 
   invalidate(): void {
@@ -163,8 +169,8 @@ export class PulseView implements Component {
     const action = theme.fg("dim", this.expanded ? "⏎ collapse" : "⏎ expand");
     const gap = Math.max(1, width - 5 - visibleWidth(left) - visibleWidth(action));
     const summary = `${left}${" ".repeat(gap)}${action}`;
-    const rows = this.expanded ? running.map((each) => runningLine(theme, each)) : [];
-    return [[summary, ...rows]];
+    const rows = this.expanded ? running.map((each) => [runningLine(theme, each)]) : [];
+    return [[summary], ...rows];
   }
 
   private window(

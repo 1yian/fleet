@@ -264,6 +264,55 @@ test("the steps behind a held card show how many exist and how many started", as
   assert.deepEqual(pulse.behind, { steps: 2, started: 1 });
 });
 
+test("the steps behind a card that main holds count another lane's cards without showing whether they started or closed", async () => {
+  const silas = await fleet.cardd.connect(fleet.cardd.addLane("silas", "main"));
+  try {
+    const waiting = await newCard(silas, "Capacity proof", "scout");
+    const started = await newCard(silas, "Caller list");
+    await fleet.cardd.connect(await begin(silas, started));
+    const held = await newCard(cleo, "Crud ingress lock");
+    await cleo.call("hold", { card: held.id, question: "Wait for it?", to: "main" });
+    await fleet.main.call("hold", {
+      card: held.id,
+      question: "Wait for it?",
+      until: Date.now() + HOUR,
+      outside: "the first real interaction",
+      remaining: [waiting.id, started.id],
+    });
+
+    const behindFor = async (viewer: Session): Promise<Pulse["behind"] | undefined> => {
+      const board = check(OPS.board.result, await viewer.call("board", {}));
+      const view = check(OPS.card.result, await viewer.call("card", { card: held.id }));
+      const listed = board.find((card) => card.id === held.id)?.pulse?.behind;
+      assert.deepEqual(view.card.pulse?.behind, listed, "the card and the board agree");
+      return listed;
+    };
+    const mainSees = (steps: number, begun: number) =>
+      until(
+        async () => {
+          const behind = await behindFor(fleet.main);
+          return behind?.steps === steps && behind.started === begun ? behind : undefined;
+        },
+        `main to see ${String(steps)} steps, ${String(begun)} started`,
+      );
+
+    await mainSees(2, 1);
+    assert.deepEqual(await behindFor(cleo), { steps: 2, started: 0 });
+
+    await silas.call("close.finish", {
+      card: waiting.id,
+      mode: "done",
+      text: "finished",
+      archives: [],
+      left: [],
+    });
+    await mainSees(1, 1);
+    assert.deepEqual(await behindFor(cleo), { steps: 2, started: 0 });
+  } finally {
+    await silas.close();
+  }
+});
+
 test("a closed card and a lane card have no pulse", async () => {
   const done = await newCard(cleo, "Already finished", "scout");
   await cleo.call("close.finish", {
