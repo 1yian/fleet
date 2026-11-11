@@ -1,4 +1,5 @@
 import Type, { type Static } from "typebox";
+import { LaterFields } from "./later.ts";
 
 export const BoardActionSchema = Type.Object({
   card: Type.Integer(),
@@ -10,12 +11,7 @@ export const BoardActionSchema = Type.Object({
       written: Type.Optional(Type.Boolean()),
     }),
     Type.Object({ kind: Type.Literal("comment"), text: Type.String({ minLength: 1 }) }),
-    Type.Object({
-      kind: Type.Literal("hold"),
-      hold: Type.Integer(),
-      until: Type.Integer(),
-      reason: Type.String({ minLength: 1 }),
-    }),
+    Type.Object({ kind: Type.Literal("hold"), hold: Type.Integer(), ...LaterFields }),
   ]),
 });
 export type BoardAction = Static<typeof BoardActionSchema>;

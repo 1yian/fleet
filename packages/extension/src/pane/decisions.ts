@@ -1,4 +1,4 @@
-import type { BoardCard, CardView } from "@fleet/protocol";
+import { laterLine, type BoardCard, type CardView } from "@fleet/protocol";
 import type { Link } from "../link.ts";
 
 const DEADLINE_MS = 10_000;
@@ -26,6 +26,13 @@ export async function loadDecisions(link: Link): Promise<Decision[]> {
     waiting.map((card) => link.call("card", { card: card.id }, DEADLINE_MS)),
   );
   return views.flatMap(decisionOf);
+}
+
+export async function deferDecision(link: Link, decision: Decision, said: string): Promise<string> {
+  const { card, hold } = decision;
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const later = await link.call("pane.later", { card, hold, said, zone }, DEADLINE_MS);
+  return laterLine(card, later, Date.now());
 }
 
 export async function answerDecision(

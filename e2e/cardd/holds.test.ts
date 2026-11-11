@@ -432,8 +432,8 @@ test("a merge question withdrawn while the PR is reworked and asked again in the
   const putOff = {
     kind: "hold",
     hold: seen.hold,
-    until: Date.now() + 3_600_000,
-    reason: "later",
+    said: "in 1 hour",
+    zone: "UTC",
   } as const;
   assert.equal(await fleet.cardd.act(card.id, putOff), 409);
   await assert.rejects(

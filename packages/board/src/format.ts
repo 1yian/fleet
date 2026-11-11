@@ -47,6 +47,8 @@ export interface Columns {
   readonly mates: readonly BoardCard[];
 }
 
+export const deviceZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 export const startOfDay = (now: number): number => new Date(now).setHours(0, 0, 0, 0);
 
 export function arrange(

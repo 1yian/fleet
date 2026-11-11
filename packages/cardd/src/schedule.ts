@@ -33,13 +33,14 @@ export function localMinute(ms: number, timeZone: string): string {
 
 const dayStart = (date: string): Date => new Date(`${date}T00:00:00Z`);
 
-function shiftDays(date: string, days: number): string {
+export function shiftDays(date: string, days: number): string {
   const shifted = dayStart(date);
   shifted.setUTCDate(shifted.getUTCDate() + days);
   return shifted.toISOString().slice(0, 10);
 }
 
-const weekdayOf = (date: string): WakeDay => SUNDAY_FIRST[dayStart(date).getUTCDay()] ?? "sun";
+export const weekdayOf = (date: string): WakeDay =>
+  SUNDAY_FIRST[dayStart(date).getUTCDay()] ?? "sun";
 
 function latestSlot(at: string, days: readonly WakeDay[], nowMinute: string): string | undefined {
   const today = nowMinute.slice(0, 10);

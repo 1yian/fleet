@@ -2,6 +2,7 @@ import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
+import { LaterFields, LaterResult } from "./later.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { NextSchema } from "./next.ts";
@@ -19,6 +20,7 @@ export * from "./cdp.ts";
 export * from "./health.ts";
 export * from "./http.ts";
 export * from "./next.ts";
+export { ActedSchema, LATER_EXAMPLES, laterLine, type LaterResult } from "./later.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./waits.ts";
@@ -272,6 +274,11 @@ export const OPS = {
       written: Type.Optional(Type.Boolean()),
     }),
     result: CardSchema,
+  },
+  "pane.later": {
+    roles: ["mate"],
+    args: Type.Object({ card: Type.Integer(), hold: Type.Integer(), ...LaterFields }),
+    result: Type.Object({ card: CardSchema, ...LaterResult.properties }),
   },
   release: {
     roles: ["mate"],

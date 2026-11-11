@@ -218,12 +218,16 @@ export class Web {
     if (request.headers["content-type"]?.split(";")[0]?.trim() !== "application/json")
       throw new Error("board actions must be sent as application/json");
     const body: unknown = JSON.parse(await readBody(request));
-    const notify = transaction(this.db, () => boardAction(this.db, body));
+    const { notify, later } = transaction(this.db, () => boardAction(this.db, body));
     for (const session of notify) this.flush(session);
     this.changed(true);
     const id: unknown =
       typeof body === "object" && body !== null ? Reflect.get(body, "card") : undefined;
-    return { ok: true, card: typeof id === "number" ? getCard(this.db, id) : null };
+    return {
+      ok: true,
+      card: typeof id === "number" ? getCard(this.db, id) : null,
+      ...(later === undefined ? {} : { later }),
+    };
   }
 
   private serveFile(path: string, response: ServerResponse): void {

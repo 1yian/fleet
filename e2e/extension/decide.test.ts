@@ -47,7 +47,7 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
   const first = await lab.screenWhere(
     pane,
     "the first decision",
-    onCard(["Decision 1 of 2", SHIP, "Ship it", "Hold", "My words…", "esc later"], [RENAME]),
+    onCard(["Decision 1 of 2", SHIP, "Ship it", "Hold", "My words…", "esc close"], [RENAME]),
   );
   keep("2-first-decision", first);
   assert.ok(first.includes("recommended"), "the first option is the recommended one");
@@ -79,7 +79,7 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
   await lab.mainWasTold(4, ship, "Hold");
 
   await lab.herdr().press(pane, "down", "down");
-  await lab.screenWhere(pane, "the pointer on his words", onCard(["→ My words…", "esc later"]));
+  await lab.screenWhere(pane, "the pointer on his words", onCard(["→ My words…", "esc close"]));
   await lab.herdr().type(pane, MY_WORDS);
   keep(
     "3b-my-words",
@@ -256,7 +256,7 @@ test("in a 12-row pane the choices scroll with the selection and his words fit o
   const first = await lab.screenWhere(
     pane,
     "the card in the short pane",
-    onCard(["Decision 1 of 1", "ONE FIRST LINE", "→ Ship it", "esc later"], ["Drop it"]),
+    onCard(["Decision 1 of 1", "ONE FIRST LINE", "→ Ship it", "esc close"], ["Drop it"]),
   );
   keep("9-short-pane-first-choice", first);
   insidePane(first);
@@ -265,7 +265,7 @@ test("in a 12-row pane the choices scroll with the selection and his words fit o
   const fourth = await lab.screenWhere(
     pane,
     "the fourth choice",
-    onCard(["→ Drop it", "4/5", "esc later"], ["Ship it", "My words"]),
+    onCard(["→ Drop it", "4/6", "esc close"], ["Ship it", "My words"]),
   );
   keep("9-short-pane-fourth-choice", fourth);
   insidePane(fourth);
@@ -274,7 +274,7 @@ test("in a 12-row pane the choices scroll with the selection and his words fit o
   const last = await lab.screenWhere(
     pane,
     "my words",
-    onCard(["→ My words…", "5/5", "esc later"], ["Ship it", "Hold"]),
+    onCard(["→ My words…", "5/6", "esc close"], ["Ship it", "Hold"]),
   );
   insidePane(last);
 
@@ -304,7 +304,7 @@ test("in a 12-row pane a refusal of his own words keeps the note and the next de
   await lab.herdr().submit(pane, "/d");
   await lab.screenWhere(pane, "the first decision", onCard(["Decision 1 of 2", "SHIP FIRST LINE"]));
   await lab.herdr().press(pane, "down", "down", "down", "down");
-  await lab.screenWhere(pane, "his words row", onCard(["→ My words…", "5/5"]));
+  await lab.screenWhere(pane, "his words row", onCard(["→ My words…", "5/6"]));
   const open = (await lab.cardd.board()).holds.find((each) => each.card === ship.id);
   assert.ok(open !== undefined, "the hold is open on the board");
   assert.equal(
@@ -321,7 +321,7 @@ test("in a 12-row pane a refusal of his own words keeps the note and the next de
         `c-${String(ship.id)} is no longer waiting for your answer`,
         "RENAME FIRST LINE",
         "→ Ship it",
-        "esc later",
+        "esc close",
       ],
       ["SHIP FIRST LINE"],
     ),

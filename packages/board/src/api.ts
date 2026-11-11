@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import {
+  ActedSchema,
   BoardSchema,
   check,
   ThreadSchema,
   type Board,
   type BoardAction,
+  type LaterResult,
   type Thread,
 } from "@fleet/protocol";
 
@@ -19,22 +21,29 @@ export async function loadThread(card: number): Promise<Thread> {
   return check(ThreadSchema, await (await fetch(`/api/card/${String(card)}`)).json());
 }
 
-export async function act(action: BoardAction): Promise<string | undefined> {
+export interface Acted {
+  readonly error: string | undefined;
+  readonly later: LaterResult | undefined;
+}
+
+const refused = (error: string): Acted => ({ error, later: undefined });
+
+export async function act(action: BoardAction): Promise<Acted> {
   try {
     const response = await fetch("/api/action", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(action),
     });
-    if (response.ok) return undefined;
     const body: unknown = await response.json();
+    if (response.ok) return { error: undefined, later: check(ActedSchema, body).later };
     const error =
       typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
-    return typeof error === "string"
-      ? error
-      : `cardd refused the action (${String(response.status)})`;
+    return refused(
+      typeof error === "string" ? error : `cardd refused the action (${String(response.status)})`,
+    );
   } catch (error) {
-    return unreachable(error);
+    return refused(unreachable(error));
   }
 }
 

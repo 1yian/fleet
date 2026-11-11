@@ -26,7 +26,7 @@ interface Props {
   readonly onDraft: (text: string) => void;
   readonly onClose: () => void;
   readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
-  readonly onLater: (hold: number, until: number, reason: string) => void;
+  readonly onLater: (hold: number, said: string) => Promise<string | undefined>;
   readonly notice: string | undefined;
   readonly onDismiss: () => void;
   readonly onReply: (text: string) => Promise<boolean>;

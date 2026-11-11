@@ -103,6 +103,28 @@ textarea:focus-visible {
 .kanban .notice {
   margin: 10px 12px 0;
 }
+.notice.held {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: max-content;
+  max-width: min(640px, calc(100vw - 24px));
+  margin: 0;
+  transform: translateX(-50%);
+  background: #fff;
+  border-color: var(--line);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  font-size: 13px;
+}
+.notice.held .quiet {
+  flex: none;
+  white-space: nowrap;
+}
 .top {
   position: sticky;
   top: 0;
@@ -676,6 +698,9 @@ textarea:focus-visible {
   flex-direction: column;
   gap: 4px;
 }
+.later .write {
+  margin-top: 4px;
+}
 .later .quiet {
   align-self: flex-start;
 }
@@ -744,6 +769,7 @@ textarea:focus-visible {
   font-weight: 500;
 }
 .write textarea,
+.write input,
 .composer textarea {
   width: 100%;
   border: 1px solid #d4d4d8;
@@ -754,9 +780,16 @@ textarea:focus-visible {
   background: #fff;
   resize: vertical;
 }
-.write textarea:focus {
+.write textarea:focus,
+.write input:focus {
   outline: 2px solid #bfd3fb;
   border-color: var(--running);
+}
+.later-problem {
+  margin: 0;
+  color: var(--needs-ink);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .write-actions {
   display: flex;
@@ -1332,6 +1365,7 @@ kbd.esc {
   font-size: 14px;
 }
 .detail .write textarea,
+.detail .write input,
 .detail .write-actions button,
 .detail .write-prompt {
   font-size: 14px;

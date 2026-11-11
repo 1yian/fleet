@@ -152,8 +152,8 @@ test("a card the captain put off is named for main after a day and not for its m
   const status = await fleet.cardd.act(later.id, {
     kind: "hold",
     hold: asked.hold,
-    until: Date.now() + 10 * HOUR,
-    reason: "after the launch",
+    said: "in 10 hours",
+    zone: "UTC",
   });
   assert.equal(status, 200);
   ageCard(fleet.cardd, later, 24 * HOUR * SCALE + 2 * MINUTE);
@@ -162,7 +162,7 @@ test("a card the captain put off is named for main after a day and not for its m
   assert.match(
     body,
     new RegExp(
-      `^reminder: 1 card parked for over a day, nothing checks what it waits for\\..*\\n- c-${String(later.id)} Launch the referral page - the captain said later: "after the launch"`,
+      `^reminder: 1 card parked for over a day, nothing checks what it waits for\\..*\\n- c-${String(later.id)} Launch the referral page - the captain said later: "in 10 hours"`,
       "s",
     ),
   );
