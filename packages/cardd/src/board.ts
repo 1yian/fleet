@@ -8,6 +8,7 @@ import {
   type Card,
   type CardView,
   type Entry,
+  type RemainingStep,
   type Thread,
 } from "@fleet/protocol";
 import { attemptsOf } from "./attempts.ts";
@@ -26,6 +27,8 @@ import {
   loadCards,
   type Loaded,
 } from "./store.ts";
+import { entryFor } from "./bundle.ts";
+import { canSee, datedWait, sightOf } from "./waits.ts";
 
 export class StaleCard extends Error {}
 
@@ -70,6 +73,7 @@ function boardCard(db: DatabaseSync, { card, entries, standing }: Loaded): Board
     replies,
     attention: standing.attention,
     until: standing.until,
+    datedWait: datedWait(db, standing),
   };
 }
 
@@ -104,11 +108,27 @@ function buildBoard(db: DatabaseSync, now: number): Board {
   return { cards, holds, schedules: allSchedules(db) };
 }
 
-export function cardView(db: DatabaseSync, id: number): CardView {
+export function boardFor(db: DatabaseSync, lane: string): BoardCard[] {
+  return boardView(db)
+    .cards.filter((card) => canSee(db, lane, card.lane))
+    .map((card) => seenBy(db, lane, card));
+}
+
+function seenBy(db: DatabaseSync, lane: string, card: BoardCard): BoardCard {
+  if (card.datedWait === null) return card;
+  return { ...card, datedWait: sightOf(db, lane, card.id, card.datedWait) };
+}
+
+function stepOf(db: DatabaseSync, lane: string, id: number): RemainingStep {
+  const { title, status, lane: owner } = getCard(db, id);
+  return canSee(db, lane, owner) ? { card: id, title, status } : { card: id, elsewhere: true };
+}
+
+export function cardView(db: DatabaseSync, id: number, lane: string): CardView {
   const each = loadCard(db, id);
   const { hold } = each.standing.facts;
   return {
-    card: boardCard(db, each),
+    card: seenBy(db, lane, boardCard(db, each)),
     hold:
       hold === undefined
         ? null
@@ -117,9 +137,10 @@ export function cardView(db: DatabaseSync, id: number): CardView {
             question: hold.question,
             options: [...hold.options],
             until: hold.until,
+            remaining: hold.remaining.map((step) => stepOf(db, lane, step)),
           },
     attempts: attemptsOf(db, id),
-    entries: each.entries,
+    entries: each.entries.flatMap((entry) => entryFor(db, lane, entry) ?? []),
   };
 }
 
@@ -164,7 +185,8 @@ function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
 function deferOnBoard(db: DatabaseSync, card: Card, until: number, reason: string): string[] {
   if (until <= Date.now()) throw new Error("until must be in the future");
   const facts = factsFrom(cardEntries(db, card.id));
-  const fields = { ...rewritten(facts, facts.hold?.holder ?? "owner", until), reason };
+  const base = rewritten(facts, facts.hold?.holder ?? "owner", until);
+  const fields = { ...base, wait: { by: "later", text: reason }, remaining: [], reason };
   const body = facts.hold?.question ?? reason;
   const draft: Draft = { card: card.id, author: "captain", kind: "hold", body, fields };
   requireOpen(db, card);

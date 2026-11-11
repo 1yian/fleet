@@ -57,6 +57,8 @@ test("a card held until a date and a worker paused until a date show their dates
     card: held.card.id,
     question: "Wait for the load balancer?",
     until: Date.now() + 2 * DAY,
+    outside: "the load balancer cutover",
+    remaining: [],
   });
   const paused = await workerOn("Wait for the CI run");
   await paused.worker.call("report", {

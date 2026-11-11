@@ -1,4 +1,5 @@
-import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
+import { DatabaseSync } from "node:sqlite";
+import { CardSchema, check, OPS, type Card, type Holder } from "@fleet/protocol";
 import { Cardd, type Session } from "./cardd.ts";
 
 export interface Fleet {
@@ -40,3 +41,33 @@ export async function status(mate: Session, card: Card): Promise<Card["status"]>
   if (found === undefined) throw new Error(`card ${String(card.id)} is not on the board`);
   return found.status;
 }
+
+export const OUTSIDE_DATE = { outside: "a fixed date that needs no checking", remaining: [] };
+
+export function oldDatedHold(
+  cardd: Cardd,
+  card: Card,
+  holder: Holder,
+  opened: number,
+  until: number,
+): void {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    const author = holder === "captain" ? "mate:main" : "mate:cleo";
+    const fields = { holder, options: [], merge: false, until, occurrence: 1 };
+    db.prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, 'hold', 'Wait for it?', ?, ?)",
+    ).run(card.id, author, JSON.stringify(fields), opened);
+  } finally {
+    db.close();
+  }
+}
+
+export const park = (
+  mate: Session,
+  card: Card,
+  question: string,
+  ms: number,
+  more: Record<string, unknown> = OUTSIDE_DATE,
+): Promise<unknown> =>
+  mate.call("hold", { card: card.id, question, until: Date.now() + ms, ...more });

@@ -2,11 +2,14 @@ import {
   ATTENTIONS,
   HOLDERS,
   MERGE_OPTIONS,
+  parseCards,
+  parseWait,
   type Attention,
   type CardKind,
   type Entry,
   type Holder,
   type Status,
+  type Wait,
 } from "@fleet/protocol";
 
 type Stage = "queued" | "working" | "in-review" | "with-mate" | "merging" | "done" | "dropped";
@@ -20,6 +23,10 @@ export interface Hold {
   readonly keys: readonly string[];
   readonly fromWorker: boolean;
   readonly until: number | null;
+  readonly wait: Wait | null;
+  readonly remaining: readonly number[];
+  readonly openedAt: number;
+  readonly author: string;
   readonly entry: number;
 }
 
@@ -62,11 +69,15 @@ function holdFrom(tally: Tally, entry: Entry): void {
     options: textsOf(entry.fields["options"]),
     merge,
     until: typeof until === "number" ? until : null,
+    wait: parseWait(entry.fields["wait"]),
+    remaining: parseCards(entry.fields["remaining"]),
+    author: entry.author,
     entry: entry.id,
   };
   const open = tally.hold;
   if (open === undefined) {
-    tally.hold = { ...written, occurrence: ++tally.occurrences, keys: [], fromWorker: false };
+    const opened = { occurrence: ++tally.occurrences, openedAt: entry.createdAt };
+    tally.hold = { ...written, ...opened, keys: [], fromWorker: false };
     if (merge) tally.mergeApproved = false;
   } else tally.hold = { ...open, ...written };
 }
@@ -83,6 +94,10 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       keys: [key],
       fromWorker: true,
       until: null,
+      wait: null,
+      remaining: [],
+      openedAt: entry.createdAt,
+      author: entry.author,
       entry: entry.id,
     };
   } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };

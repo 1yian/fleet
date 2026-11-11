@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import type { Card } from "@fleet/protocol";
 import type { Cardd } from "../support/cardd.ts";
 import { type Session } from "../support/cardd.ts";
+import { OUTSIDE_DATE } from "../support/fleet.ts";
 import {
   boundBoardFile,
   freezeBoardUntilAction,
@@ -74,6 +75,7 @@ test("a click on a card that changed since the captain looked is refused", async
     card: card.id,
     question: "Renew the certificate?",
     until: Date.now() + 3_600_000,
+    ...OUTSIDE_DATE,
   });
 
   await page.getByRole("button", { name: "now" }).click();

@@ -1,4 +1,11 @@
-import type { BoardCard, CardView, Entry, Status } from "@fleet/protocol";
+import {
+  idlePark,
+  waitLine,
+  type BoardCard,
+  type CardView,
+  type Entry,
+  type Status,
+} from "@fleet/protocol";
 import { encode } from "@toon-format/toon";
 
 const ORDER = [
@@ -164,11 +171,31 @@ export function boardText(all: readonly BoardCard[], query: BoardQuery, header: 
     rows.length === 0
       ? `0 ${what}`
       : rows.map((card) => Object.fromEntries(columns.map((each) => [each, COLUMNS[each](card)])));
+  const dated = rows.flatMap((card) =>
+    card.datedWait === null ? [] : [{ card, wait: card.datedWait }],
+  );
+  if (dated.length > 0)
+    record["dated"] = dated.map(({ card, wait }) => ({
+      card: card.id,
+      waits: waitLine(wait, Date.now()),
+    }));
+  const idle = dated.filter(({ wait }) => idlePark(wait)).map(({ card }) => `c-${String(card.id)}`);
   return (
     encode(record) +
-    helpLines([...top.help, ...boardHelp(query, rows.length, closed.length, hidden)])
+    helpLines([
+      ...top.help,
+      ...boardHelp(query, rows.length, closed.length, hidden),
+      ...idleHelp(idle),
+    ])
   );
 }
+
+const idleHelp = (idle: readonly string[]): string[] =>
+  idle.length === 0
+    ? []
+    : [
+        `${idle.join(", ")} hold a date with nothing running for it: start what it waits on, or clear the hold and act`,
+      ];
 
 function boardHelp(query: BoardQuery, rows: number, closed: number, hidden: number): string[] {
   const help: string[] = [];
@@ -214,6 +241,17 @@ const firstLineOf = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
+type Remaining = NonNullable<CardView["hold"]>["remaining"];
+
+const remainingOf = (steps: Remaining): string[] | string =>
+  steps.length === 0
+    ? "none"
+    : steps.map((each) =>
+        "elsewhere" in each
+          ? `c-${String(each.card)} (another lane)`
+          : `c-${String(each.card)} ${each.title} (${each.status})`,
+      );
+
 function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
   const record: Record<string, unknown> = {
     card: {
@@ -245,6 +283,8 @@ function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
     question: clip(hold.question, 600),
     options: hold.options,
     ...(hold.until === null ? {} : { until: ago(hold.until) }),
+    ...(card.datedWait === null ? {} : { dated: waitLine(card.datedWait, Date.now()) }),
+    ...(hold.until === null ? {} : { remaining: remainingOf(hold.remaining) }),
   };
   return record;
 }

@@ -15,6 +15,7 @@ import {
   workerOf,
   type Session,
 } from "./store.ts";
+import { dating, type Dating } from "./waits.ts";
 
 interface Done {
   readonly value: unknown;
@@ -82,13 +83,19 @@ function requireMainsHold(card: Card, own: boolean, open: Hold | undefined): voi
 
 function isSame(
   open: Hold | undefined,
-  next: { holder: Holder; question: string; until: number | null; options: readonly string[] },
+  next: {
+    holder: Holder;
+    question: string;
+    until: number | null;
+    options: readonly string[];
+  } & Dating,
 ): boolean {
   return (
     open?.holder === next.holder &&
     open.question === next.question &&
     open.until === next.until &&
-    open.options.join("\n") === next.options.join("\n")
+    open.options.join("\n") === next.options.join("\n") &&
+    JSON.stringify([open.wait, open.remaining]) === JSON.stringify([next.wait, next.remaining])
   );
 }
 
@@ -129,6 +136,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const { card, own } = reachable(db, session, args.card);
   if (args.until !== undefined && args.until <= Date.now())
     throw new Error("until must be in the future");
+  const dated = dating(db, session, card.id, args);
   const facts = factsFrom(cardEntries(db, card.id));
   const open = facts.hold;
   requireMainsHold(card, own, open);
@@ -144,10 +152,11 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     question: args.question,
     until: base.until,
     options,
+    ...dated,
   });
   if (same && replyTo === undefined) return { value: card, notify: [] };
   const escalated = open !== undefined && target !== current;
-  const fields = { ...base, options, ...(escalated ? { escalated } : {}), replyTo };
+  const fields = { ...base, ...dated, options, ...(escalated ? { escalated } : {}), replyTo };
   const draft: Draft = {
     card: card.id,
     author: `mate:${session.lane}`,

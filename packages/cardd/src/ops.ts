@@ -10,7 +10,7 @@ import {
 import { requireCommentsRead } from "./deliveries.ts";
 import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
 import { dropLostJob, finishJob, ownJob, runningJobs, startJob, touchJob } from "./jobs.ts";
-import { boardView, cardView } from "./board.ts";
+import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
@@ -170,18 +170,12 @@ const HANDLERS: Record<OpName, Handler> = {
     }
     return { value: addCard(db, { ...args, lane: session.lane }), notify: [] };
   },
-  board: (db, session) => {
-    const main = session.lane === mainLane(db);
-    return {
-      value: boardView(db).cards.filter((card) => main || card.lane === session.lane),
-      notify: [],
-    };
-  },
+  board: (db, session) => ({ value: boardFor(db, session.lane), notify: [] }),
   card: (db, session, raw) => {
     const { card } = check(OPS.card.args, raw);
     if (session.lane !== mainLane(db) && getCard(db, card).lane !== session.lane)
       throw new Error(`c-${String(card)} is in another lane; ask main`);
-    return { value: cardView(db, card), notify: [] };
+    return { value: cardView(db, card, session.lane), notify: [] };
   },
   "project.yolo": (db, session, raw) => {
     if (session.lane !== mainLane(db))
