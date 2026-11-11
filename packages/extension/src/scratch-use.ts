@@ -3,7 +3,7 @@ import { lstatSync, readdirSync, statfsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { records } from "./host.ts";
-import { hostDir } from "./scratch.ts";
+import { hostDir, tmpScratchDir } from "./scratch.ts";
 
 export type Metric = "inodes" | "space";
 
@@ -69,7 +69,7 @@ function useOf(roots: Roots): FilesystemUse {
 
 export function watchedFilesystems(): FilesystemUse[] {
   const byDevice = new Map<number, Roots>();
-  for (const path of ["/tmp", tmpdir(), hostDir()]) {
+  for (const path of ["/tmp", tmpdir(), hostDir(), tmpScratchDir()]) {
     try {
       const device = statSync(path).dev;
       const roots = byDevice.get(device);

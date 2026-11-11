@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { ownHostName } from "./host.ts";
 import { OPEN_SCRATCH_SCRIPT, tidy } from "./scratch.ts";
+import { describeMove, MOVE_SCRATCH_SCRIPT, parseMove } from "./scratch-move.ts";
 import { breakdown, percentUsed, watchedFilesystems, type Metric } from "./scratch-use.ts";
 
 export interface ScratchOptions {
   readonly tidy: boolean;
   readonly open: string | undefined;
+  readonly move: string | undefined;
   readonly largest: readonly string[];
   readonly by: string | undefined;
   readonly json: boolean;
@@ -37,8 +39,17 @@ function openLines(card: string): string[] {
   return out.trim().split("\n");
 }
 
+function moveLines(card: string): string[] {
+  const out = execFileSync("sh", ["-c", MOVE_SCRATCH_SCRIPT, "scratch", card], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  return [describeMove(parseMove(out))];
+}
+
 export function scratchLines(options: ScratchOptions, now: number): string[] {
   if (options.open !== undefined) return openLines(options.open);
+  if (options.move !== undefined) return moveLines(options.move);
   if (options.largest.length > 0) {
     const found = breakdown(options.largest, metricOf(options.by), now);
     if (options.json) return [JSON.stringify(found)];

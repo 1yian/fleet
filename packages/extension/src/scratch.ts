@@ -25,6 +25,11 @@ export function hostDir(): string {
   return set !== undefined && set !== "" ? set : join(homedir(), ".fleet");
 }
 
+export const tmpScratchDir = (): string => {
+  const set = process.env["FLEET_TMP_SCRATCH_DIR"];
+  return set !== undefined && set !== "" ? set : join(hostDir(), "tmp-scratch");
+};
+
 const compileCacheDir = (): string => join(hostDir(), "node-compile-cache");
 
 const scratchRoot = (): string => join(hostDir(), "scratch");
