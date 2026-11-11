@@ -196,17 +196,18 @@ function registerYield(pi: ExtensionAPI): void {
     renderCall: () => silent,
     renderResult: () => silent,
   });
-  let block: ReadonlySet<string> = new Set();
+  let results: Record<string, unknown>[] = [];
+  let yielded = false;
   pi.on("message_end", (event) => {
     if (event.message.role !== "assistant") return;
-    const calls = event.message.content.filter((part) => part.type === "toolCall");
-    block = calls.some((call) => call.name === YIELD)
-      ? new Set(calls.map((call) => call.id))
-      : new Set();
+    results = [];
+    yielded = false;
   });
   pi.on("tool_execution_end", (event) => {
+    yielded ||= event.toolName === YIELD;
     const result: unknown = event.result;
-    if (block.has(event.toolCallId) && isRecord(result)) result["terminate"] = true;
+    if (event.parentToolCallId === undefined && isRecord(result)) results.push(result);
+    if (yielded) for (const each of results) each["terminate"] = true;
   });
 }
 

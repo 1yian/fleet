@@ -214,6 +214,45 @@ test("a message that arrives while the yield block runs starts a new turn after 
   await screenWith(pane, "Captain, the parser fix is ready for review:");
 });
 
+const script = (...steps: string[]): string =>
+  steps.map((step) => `await tools.${step};`).join("\n");
+
+test("a yield inside a codemode script ends the turn silently and delivers the comment", async () => {
+  const code = script(`comment(${JSON.stringify({ lane: "cleo", text: NOTE })})`, "yield({})");
+  h.onModel(() => ({ tool: "codemode", args: { code } }), "mate");
+  h.onModel(() => ({ text: "." }), "mate");
+  await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+  await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+  await settled();
+  await takenIn("main", 1);
+  await noteReaches();
+  assert.equal(h.callsOf("mate").length, 1, "a script that yields must not buy a chat message");
+  assert.deepEqual(await assistantText(), [""]);
+});
+
+test("a message that arrives while a codemode script yields starts a new turn after the silent end", async () => {
+  const code = script("slow_tool({})", "yield({})");
+  h.onModel(() => ({ tool: "codemode", args: { code } }), "mate");
+  h.onModel(() => ({ text: OUTCOME }), "mate");
+  const pane = await startMain(lab, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to connect");
+
+  await cleo.call("comment", { lane: "cleo", text: "Validation is still running." });
+  await h.waitFor((event) => event["type"] === "tool_waiting", "the script's tool");
+  await cleo.call("comment", { lane: "cleo", text: "The parser fix is ready for review." });
+  await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the mid-script comment");
+  h.releaseTool();
+  await settled();
+  await takenIn("main", 2);
+  const turns = await h.waitForCall(1, "mate");
+  assert.match(turns.at(-1)?.text ?? "", /The parser fix is ready for review/);
+  assert.equal(h.callsOf("mate").length, 2);
+  assert.deepEqual(await assistantText(), ["", OUTCOME]);
+  await screenWith(pane, "Captain, the parser fix is ready for review:");
+});
+
 test("yield leaves a queued fleet outcome for the next model call", async () => {
   h.onModel(() => ({ tool: "slow_tool" }), "mate");
   h.onModel(() => ({ tool: "yield" }), "mate");
