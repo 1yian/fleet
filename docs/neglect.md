@@ -25,17 +25,17 @@ A lane's mate reads `behind` with every step in another lane counted as open and
 
 The first row that fits wins.
 
-| State     | A card is in it when                                                                                                                | Counts from                |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `you`     | Its status is Needs you, or it is a card of the captain's own.                                                                      | The status change          |
-| `broken`  | A worker reported `failed`. Or its worker has not been connected for 2 minutes while the card is Working or In review.              | The report, or last seen   |
-| `stalled` | A worker reported `blocked` or `stopped` 5 minutes ago. Or its running worker has been silent for 5 minutes.                        | The report, or last output |
-| `running` | A turn or a job runs for it.                                                                                                        | `movedAt`                  |
-| `waiting` | A dated hold, and the job, schedule, or worker it names runs now.                                                                   | The hold's age             |
-| `parked`  | A dated hold that nothing checks (a watcher, an outside date, the captain's later, or a watcher that is gone). Or a worker's pause. | The hold's age             |
-| `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker.                                             | `movedAt`                  |
+| State     | A card is in it when                                                                                                      | Counts from                |
+| --------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `you`     | Its status is Needs you, or it is a card of the captain's own.                                                            | The status change          |
+| `broken`  | A worker reported `failed`. Or its worker has not been connected for 2 minutes while the card is Working or In review.    | The report, or last seen   |
+| `stalled` | A worker reported `blocked` or `stopped` 5 minutes ago. Or its running worker has been silent for 5 minutes.              | The report, or last output |
+| `running` | A turn or a job runs for it.                                                                                              | `movedAt`                  |
+| `waiting` | A dated hold, and the job, schedule, or worker it names runs now.                                                         | The hold's age             |
+| `parked`  | A dated hold that nothing checks (a watcher, an outside date, the captain's later, or an idle park). Or a worker's pause. | The hold's age             |
+| `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker.                                   | `movedAt`                  |
 
-A hold ends a worker's report as an attention: `standing` shows `attention` only while a card has no open hold. So a card whose worker reported `blocked`, `stopped`, or `failed` and whose mate then dated it on a running job, schedule, or worker is `waiting` and quiet. When the watcher goes, it is an idle park, and when the date passes, it is idle. The report stays in the card's history.
+A hold ends a worker's report as an attention: `standing` shows `attention` only while a card has no open hold. So a card whose worker reported `blocked`, `stopped`, or `failed` and whose mate then dated it on a running job, schedule, or worker is `waiting` and quiet. When the job, schedule, or worker it names goes, it is an idle park (a dated hold that names nothing is one too), and when the date passes, it is idle. The report stays in the card's history.
 
 ## Who is told, and when
 
@@ -50,10 +50,10 @@ A hold ends a worker's report as an attention: `standing` shows `attention` only
 
 The limits are `idleMain`, `idleCaptain`, `parked`, and `parkedUrgent` in `timing.ts`, so `CARDD_TIMING_SCALE` scales them with the rest.
 
-Main is told in the 30 minute reminder (see Bundle in [code.md](code.md)). The reminder for neglect goes to main for every lane, and never to the mate that owns the card:
+Main is told in the 30 minute reminder (see [The timed check](code.md#the-timed-check)). The reminder for neglect goes to main for every lane, and never to the mate that owns the card:
 
 - An idle card past 4 hours is an item to act on, in the first group. It is any card whose state is idle: Queued, Working, In review, With mate, or Merging, finished or not. Its mate keeps the reminders it already had. A card that main already has in its own list, such as a hold with main, is listed once.
-- A card parked for over a day is in its own group: start what it waits on, or clear the hold. It rides the daily list: it never starts a 30 minute list, and a 30 minute list for an action carries it only when the daily list is due, so it is not repeated every 30 minutes. A card whose hold names a dead watcher is an idle park and is listed for action at once, as before.
+- A card parked for over a day is in its own group: start what it waits on, or clear the hold. It rides the daily list: it never starts a 30 minute list, and a 30 minute list for an action carries it only when the daily list is due, so it is not repeated every 30 minutes. It ages from the hold's first opening, so dating the hold again does not restart it. An idle park is listed for action at once, as before.
 - A worker's pause past a day is in the same group.
 
 The captain is told by the strip in main's pane and by the board's Attention strip.
@@ -62,7 +62,7 @@ The captain is told by the strip in main's pane and by the board's Attention str
 
 - Pi pane: `/pulse` opens an overlay with every open card, quiet first, running cards in one line. See [pane.md](pane.md).
 - Pi pane: the counts and the strip read `pulse` and nothing else. A notice of any kind counts, so an idle card past 4 hours is on main's pane as soon as main is told.
-- Board: an Attention strip above the lanes, and one line on each card with who has it, what runs, when it moved, and what it waits on. The board is the captain's, so the strip and the line's alarm show only what the captain is told: a notice of `captain` or `urgent`, a broken or stalled state, and his own cards. An idle card between 4 and 24 hours is main's alone: the board's line for it says what is true and raises no alarm.
+- Board: an Attention strip above the lanes, and one line on each card with who has it, what runs, when it moved, and what it waits on. The board is the captain's, so the strip and the line's alarm show only what the captain is told: a notice of `captain` or `urgent`, or a broken or stalled state. The strip also lists his own cards. An idle card between 4 and 24 hours is main's alone: the board's line for it says what is true and raises no alarm.
 
 Sorting puts the louder notice first, then the state (idle, parked, stalled, you, waiting, running), then the oldest.
 
