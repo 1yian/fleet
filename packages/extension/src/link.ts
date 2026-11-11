@@ -1,5 +1,6 @@
 import {
   check,
+  CLOSE,
   OPS,
   parseServerMessage,
   type OpResult,
@@ -12,13 +13,11 @@ import {
 export type Push = Extract<ServerMessage, { t: "entry" }>;
 type Result = Extract<ServerMessage, { t: "result" }>;
 
-const CLOSE_NOT_LIVE = 4001;
-const CLOSE_SUPERSEDED = 4002;
-const CLOSE_UNREADABLE = 4003;
 const MAX_BACKOFF_MS = 10_000;
+const MAX_CLOSE_REASON = 100;
 
 function stopsForGood(code: number): boolean {
-  return code === CLOSE_NOT_LIVE || code === CLOSE_SUPERSEDED;
+  return code === CLOSE.notLive || code === CLOSE.superseded;
 }
 
 function checkResult<N extends OpName>(op: N, value: unknown): OpResult<N>;
@@ -39,6 +38,7 @@ export interface LinkOptions {
   readonly onConnect: () => void;
   readonly onMaintenance?: (request: Maintenance) => void;
   readonly onUnreadable: (error: string) => void;
+  readonly onUnreadableResult: () => void;
 }
 
 export class Link {
@@ -79,8 +79,9 @@ export class Link {
       try {
         message = parseServerMessage(String(event.data));
       } catch (error) {
-        this.options.onUnreadable(error instanceof Error ? error.message : String(error));
-        socket.close(CLOSE_UNREADABLE, "this session cannot read a message from cardd");
+        const why = error instanceof Error ? error.message : String(error);
+        this.options.onUnreadable(why);
+        socket.close(CLOSE.unreadable, why.slice(0, MAX_CLOSE_REASON));
         return;
       }
       this.receive(message);
@@ -121,6 +122,7 @@ export class Link {
           try {
             resolve(checkResult(op, result.value));
           } catch (error) {
+            this.options.onUnreadableResult();
             reject(new Error(unreadableResult(op, error), { cause: error }));
           }
       });

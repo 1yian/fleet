@@ -593,7 +593,7 @@ Main restarts itself only when it runs in a herdr pane. Otherwise the report say
 
 `cardd` reads the board's files from disk at each request, so a new board needs no restart. Without a `cardd` entry, the update does not touch `cardd`, and when it changes `packages/cardd` or `packages/protocol`, the report says that `cardd` still runs the old code.
 
-A mate that gets a message from `cardd` that it cannot read, as when `cardd` runs other code, does not crash. It says so once in its conversation and keeps reconnecting, so the update can bring `cardd` and the mates back onto one commit.
+A mate or worker that gets a message from `cardd` that it cannot read, as when `cardd` runs newer code than it loaded, does not crash. It says so once in its conversation, and `cardd` logs why once. Inside a herdr pane it then relaunches itself on the same conversation at its next safe point, so it loads the code on disk, and it does so at most once every 10 minutes. A process that cannot relaunch keeps reconnecting until `lane(<lane>, "restart")` or `restart_card` replaces it. `restart_card` also replaces the disconnected worker of a paused, finished, or waiting card, and resumes nothing.
 
 A host updates with the code it already has. A host whose checkout predates `fleet update` cannot take part, so update it once by hand: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`, then `fleet restart` on that host.
 

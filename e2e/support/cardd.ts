@@ -266,8 +266,19 @@ export class Cardd {
     this.child = child;
     this.supervised = true;
     let out = "";
-    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
+    child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
+      out += chunk;
+      this.output += chunk;
+    });
     this.url = await until(() => /listening on (\S+)/.exec(out)?.[1], "cardd to listen");
+  }
+
+  async restartUnderKeepAlive(): Promise<void> {
+    const listening = (): number => this.output.split("cardd listening on").length;
+    const before = listening();
+    const [command = "", ...args] = this.restartCommand;
+    execFileSync(command, args);
+    await until(() => (listening() > before ? true : undefined), "cardd to listen again");
   }
 
   private async boot(port = "0"): Promise<void> {

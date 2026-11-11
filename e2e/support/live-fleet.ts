@@ -9,6 +9,7 @@ import { optionalString, records } from "./json.ts";
 import { addRemote, git, landOnRemote } from "./remote.ts";
 import { tempDir } from "./run-root.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "./scratch.ts";
+import { demandLowWater, dropLowWater, ownWorkspacePackages } from "./welcome-skew.ts";
 
 const WAIT_MS = 120_000;
 export const NEW_CODE = "NEW-CODE-MARKER";
@@ -52,10 +53,15 @@ interface Parts {
   readonly p620: Scratch;
   readonly remote: string;
   readonly ghost: Session;
+  readonly ghostToken: string;
   readonly opsHome: string;
   readonly farHome: string;
   readonly site: string;
   readonly gates: string;
+}
+
+export interface LiveOptions {
+  readonly olderWelcome?: boolean;
 }
 
 export class LiveFleet {
@@ -65,14 +71,17 @@ export class LiveFleet {
   readonly here: Scratch;
   readonly p620: Scratch;
   readonly remote: string;
-  readonly ghost: Session;
+  ghost: Session;
+  readonly ghostToken: string;
   readonly opsHome: string;
   readonly farHome: string;
   readonly site: string;
   readonly gates: string;
+  private readonly olderWelcome: boolean;
   mainPane = "";
 
-  private constructor(parts: Parts) {
+  private constructor(parts: Parts, olderWelcome: boolean) {
+    this.olderWelcome = olderWelcome;
     this.h = parts.h;
     this.cardd = parts.cardd;
     this.lab = parts.lab;
@@ -80,16 +89,25 @@ export class LiveFleet {
     this.p620 = parts.p620;
     this.remote = parts.remote;
     this.ghost = parts.ghost;
+    this.ghostToken = parts.ghostToken;
     this.opsHome = parts.opsHome;
     this.farHome = parts.farHome;
     this.site = parts.site;
     this.gates = parts.gates;
   }
 
-  static async start(env: Record<string, string> = {}): Promise<LiveFleet> {
-    const cardd = await Cardd.start();
-    const h = await Harness.start();
+  static async start(
+    env: Record<string, string> = {},
+    options: LiveOptions = {},
+  ): Promise<LiveFleet> {
     const here = new Scratch();
+    const olderWelcome = options.olderWelcome === true;
+    if (olderWelcome) {
+      ownWorkspacePackages(here.root);
+      demandLowWater(here.root);
+    }
+    const cardd = olderWelcome ? await Cardd.underKeepAlive(here.root) : await Cardd.start();
+    const h = await Harness.start();
     const remote = addRemote(here.root);
     const p620 = new Scratch("fleet");
     git(p620.root, "remote", "add", "origin", remote);
@@ -112,7 +130,8 @@ export class LiveFleet {
     });
     const opsHome = here.addLane("ops", lane("ops"));
     const farHome = p620.addLane("far", lane("far"));
-    const ghost = await cardd.connect(cardd.addLane("ghost", "main"));
+    const ghostToken = cardd.addLane("ghost", "main");
+    const ghost = await cardd.connect(ghostToken);
     const site = join(tempDir("fleet-site-"), "site");
     mkdirSync(site, { recursive: true });
     git(site, "init", "-q", "-b", "main");
@@ -125,19 +144,31 @@ export class LiveFleet {
       FLEET_SUPERVISE_MS: "1000",
       ...env,
     });
-    return new LiveFleet({
-      h,
-      cardd,
-      lab,
-      here,
-      p620,
-      remote,
-      ghost,
-      opsHome,
-      farHome,
-      site,
-      gates,
-    });
+    return new LiveFleet(
+      {
+        h,
+        cardd,
+        lab,
+        here,
+        p620,
+        remote,
+        ghost,
+        ghostToken,
+        opsHome,
+        farHome,
+        site,
+        gates,
+      },
+      olderWelcome,
+    );
+  }
+
+  async restartOnNewerWelcome(): Promise<void> {
+    if (!this.olderWelcome) throw new Error("the fleet started on the newer welcome already");
+    await this.ghost.close();
+    dropLowWater(this.here.root);
+    await this.cardd.restartUnderKeepAlive();
+    this.ghost = await this.cardd.connect(this.ghostToken);
   }
 
   async startMain(): Promise<string> {

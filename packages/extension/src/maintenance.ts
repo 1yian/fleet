@@ -8,15 +8,27 @@ import { LEAVING } from "./worker.ts";
 
 const RELAUNCH = fileURLToPath(new URL("./relaunch.ts", import.meta.url));
 
+export const STALE_RELOAD_FLAG = "fleet-stale-reload";
+const STALE_RELOAD_ARG = `--${STALE_RELOAD_FLAG}=`;
+const STALE_RELOAD_GAP_MS = 10 * 60_000;
+
 export const ownPane = (): string | undefined => {
   const pane = process.env["HERDR_PANE_ID"];
   return pane === undefined || pane === "" ? undefined : pane;
 };
 
-export function relaunchSelf(ctx: ExtensionContext, pane: string): void {
-  const running = process.argv.slice(2).filter((arg) => arg !== "-c" && arg !== "--continue");
+function lastStaleReload(pi: ExtensionAPI): number {
+  const at = Number(pi.getFlag(STALE_RELOAD_FLAG));
+  return Number.isFinite(at) ? at : 0;
+}
+
+export function relaunchSelf(ctx: ExtensionContext, pane: string, staleAt?: number): void {
+  const running = process.argv
+    .slice(2)
+    .filter((arg) => arg !== "-c" && arg !== "--continue" && !arg.startsWith(STALE_RELOAD_ARG));
   const lane = readLaneConfig(process.cwd());
-  const args = lane === undefined ? running : mateRelaunchArgs(running, lane);
+  const kept = lane === undefined ? running : mateRelaunchArgs(running, lane);
+  const args = staleAt === undefined ? kept : [...kept, `${STALE_RELOAD_ARG}${String(staleAt)}`];
   const direnv = lane?.direnv;
   const helper = spawn(
     process.execPath,
@@ -39,6 +51,8 @@ export class MaintenanceQueue {
   private readonly ctx: ExtensionContext;
   private readonly mayHaveJobs: boolean;
   private readonly stow: (() => Promise<unknown>) | undefined;
+  private readonly lastStaleReload: number;
+  private stalePane: string | undefined;
 
   constructor(
     pi: ExtensionAPI,
@@ -52,9 +66,25 @@ export class MaintenanceQueue {
     this.ctx = ctx;
     this.mayHaveJobs = mayHaveJobs;
     this.stow = stow;
+    this.lastStaleReload = lastStaleReload(pi);
     pi.on("agent_settled", () => {
       this.later();
     });
+  }
+
+  reloadForStaleCode(): boolean {
+    const pane = ownPane();
+    if (pane === undefined) return false;
+    this.stalePane = pane;
+    const wait = Math.max(0, this.lastStaleReload + STALE_RELOAD_GAP_MS - Date.now());
+    setTimeout(() => {
+      this.later();
+    }, wait).unref();
+    return true;
+  }
+
+  readable(): void {
+    this.stalePane = undefined;
   }
 
   receive(request: Maintenance): void {
@@ -76,9 +106,21 @@ export class MaintenanceQueue {
     return this.mayHaveJobs && (await this.link.call("jobs", {})).length > 0;
   }
 
+  private relaunchForStaleCode(pane: string): void {
+    this.stalePane = undefined;
+    this.pi.events.emit(LEAVING, {});
+    relaunchSelf(this.ctx, pane, Date.now());
+  }
+
   private async perform(): Promise<void> {
     const request = this.requests.values().next().value;
-    if (this.busy || request === undefined || !this.safe()) return;
+    if (this.busy || !this.safe()) return;
+    if (this.stalePane !== undefined) {
+      if (Date.now() >= this.lastStaleReload + STALE_RELOAD_GAP_MS)
+        this.relaunchForStaleCode(this.stalePane);
+      return;
+    }
+    if (request === undefined) return;
     this.busy = true;
     try {
       if (await this.jobsRunning()) return;

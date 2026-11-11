@@ -227,7 +227,7 @@ export const quietSql = (state: string, attempt: string): string =>
   `(${state} IN ('idle', 'waiting')
     AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.attempt = ${attempt} AND ${runningJobSql("j.state")}))`;
 
-function connected(db: DatabaseSync, session: string): boolean {
+export function connected(db: DatabaseSync, session: string): boolean {
   const state = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
   return state === "idle" || state === "running" || state === "waiting";
 }
