@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { OpResult } from "@fleet/protocol";
 import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
-import { field, herdr, HostUnreachable, onHost, worktreeOf } from "./host.ts";
+import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
@@ -12,6 +12,7 @@ const ARCHIVE_SCRIPT = readFileSync(
 );
 
 const STOP_PROCS_SCRIPT = [
+  `helper_mark=${HELPER_MARK}`,
   SERVICE_SCRIPT,
   readFileSync(fileURLToPath(new URL("./stop-procs.sh", import.meta.url)), "utf8"),
 ].join("\n");
@@ -99,7 +100,7 @@ async function landLocally(card: number, plan: OpResult<"close.begin">): Promise
   if (newest === undefined) throw new Error(`c-${String(card)} has no branch to land`);
   const { host, clone, branch, base } = newest;
   try {
-    const moved = await onHost(host, [
+    const moved = await onHelper(host, [
       "sh",
       "-c",
       LAND_LOCALLY_SCRIPT,
@@ -128,7 +129,7 @@ async function unlandedCounts(attempt: Attempt): Promise<Unlanded> {
   const { host, clone, branch, base, session } = attempt;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
-  const out = await onHost(host, [
+  const out = await onHelper(host, [
     "sh",
     "-c",
     UNLANDED_COUNTS_SCRIPT,
@@ -215,16 +216,16 @@ async function retire(attempt: Attempt): Promise<Retired> {
     const workspace = field(tree, "open_workspace_id");
     if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
     const path = field(tree, "path") ?? "";
-    const found = await onHost(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
+    const found = await onHelper(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
     processes = processesOf(session, found + (await releaseAll(host, path)));
-    await onHost(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
-    await onHost(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
+    await onHelper(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
+    await onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
   const out = `${archiveDir}/${session}.tar.zst`;
   let archive = "";
   for (const each of drop) {
     archive = (
-      await onHost(host, [
+      await onHelper(host, [
         "sh",
         "-c",
         DELETE_ARCHIVED_BRANCH_SCRIPT,
@@ -239,20 +240,74 @@ async function retire(attempt: Attempt): Promise<Retired> {
   return { archive: archive === "" ? null : archive, ...processes };
 }
 
-export async function close(
+interface CloseRequest {
+  card: number;
+  text: string;
+  landed?: boolean | undefined;
+  confirm?: boolean | undefined;
+}
+
+interface Running {
+  readonly landed: boolean | undefined;
+  readonly confirm: boolean;
+  readonly outcome: Promise<string>;
+}
+
+const running = new Map<number, Running>();
+
+const settled = (work: Promise<unknown>): Promise<void> =>
+  work.then(
+    () => undefined,
+    () => undefined,
+  );
+
+export async function close(link: Link, request: CloseRequest): Promise<string> {
+  const { card, landed } = request;
+  const confirm = request.confirm === true;
+  for (let other = running.get(card); other !== undefined; other = running.get(card)) {
+    if (other.landed === landed && (other.confirm || !confirm)) return other.outcome;
+    await settled(other.outcome);
+  }
+  const outcome = (async () => {
+    try {
+      return await closeOnce(link, request);
+    } finally {
+      running.delete(card);
+    }
+  })();
+  running.set(card, { landed, confirm, outcome });
+  return outcome;
+}
+
+const planOf = (link: Link, { card, landed }: CloseRequest) =>
+  link.call("close.begin", { card, ...(landed === undefined ? {} : { landed }) });
+
+async function closedMeanwhile(link: Link, request: CloseRequest): Promise<boolean> {
+  try {
+    await planOf(link, request);
+    return false;
+  } catch (error) {
+    return error instanceof Error && / is already (done|dropped)$/.test(error.message);
+  }
+}
+
+async function closeOnce(link: Link, request: CloseRequest): Promise<string> {
+  const plan = await planOf(link, request);
+  try {
+    return await teardown(link, request, plan);
+  } catch (error) {
+    if (await closedMeanwhile(link, request))
+      return `c-${String(request.card)} was closed by another close at the same time, so there is nothing left to do.`;
+    throw error;
+  }
+}
+
+async function teardown(
   link: Link,
-  request: {
-    card: number;
-    text: string;
-    landed?: boolean | undefined;
-    confirm?: boolean | undefined;
-  },
+  request: CloseRequest,
+  plan: OpResult<"close.begin">,
 ): Promise<string> {
-  const { card: id, text, landed, confirm } = request;
-  const plan = await link.call("close.begin", {
-    card: id,
-    ...(landed === undefined ? {} : { landed }),
-  });
+  const { card: id, text, confirm } = request;
   const moved = plan.land ? await landLocally(id, plan) : "";
   const warning = await unlandedWarning(id, plan, confirm === true);
   if (warning !== undefined) return warning;

@@ -38,12 +38,12 @@ function toMessage(move: Record<string, unknown>): AssistantMessage {
     const thought = optionalString(move, "thinking");
     const thinking = thought === undefined ? [] : [fauxThinking(thought)];
     const note = text === undefined ? [] : [fauxText(text)];
-    return fauxAssistantMessage(
-      [...thinking, ...note, fauxToolCall(tool, scalarArgs(move["args"]))],
-      {
-        stopReason: "toolUse",
-      },
-    );
+    const alongside = Array.isArray(move["alongside"]) ? move["alongside"].filter(isRecord) : [];
+    const calls = [move, ...alongside].flatMap((each) => {
+      const name = optionalString(each, "tool");
+      return name === undefined ? [] : [fauxToolCall(name, scalarArgs(each["args"]))];
+    });
+    return fauxAssistantMessage([...thinking, ...note, ...calls], { stopReason: "toolUse" });
   }
   const thinking = optionalString(move, "thinking");
   const texts = move["texts"];

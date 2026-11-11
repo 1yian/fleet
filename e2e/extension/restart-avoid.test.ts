@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
   avoidSeenOf,
+  launchArgsOf,
   mateConnected as connected,
+  toolResults,
   startDispatchLab,
   stopDispatchLab,
   WORKER_WAIT_MS,
@@ -148,4 +152,78 @@ test("a restart cannot avoid the provider of the worker's explicit GPT model, le
   await h.waitForCall(1, "worker", WORKER_WAIT_MS);
   assert.ok(h.modelsOf("worker").length >= 2);
   for (const each of h.modelsOf("worker")) assert.equal(each, model);
+});
+
+test("the card's own mate re-pins an explicit-model worker to the router with restart_card, and the worker keeps its card, conversation, and branch", async () => {
+  const { h, mate, clone } = parts;
+  mkdirSync(join(h.dir, "agent"), { recursive: true });
+  writeFileSync(
+    join(h.dir, "agent", "models.json"),
+    JSON.stringify({ providers: { tier: { apiKey: "scripted" } } }),
+  );
+  const pinned = "openai-codex/gpt-fixture";
+  const task = "build the iOS onboarding screens";
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(
+    () => ({
+      tool: "dispatch",
+      args: {
+        title: "Onboarding screens",
+        name: "ios-onboarding",
+        kind: "ship",
+        project: "site",
+        intent: "Build the onboarding screens",
+        host: "local",
+        task,
+        model: pinned,
+      },
+    }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(
+    () => ({ tool: "restart_card", args: { card: 1, key: "a", model: "tier/quick" } }),
+    "mate",
+  );
+  h.onModel(() => ({ tool: "board", args: { card: 1 } }), "mate");
+  h.onModel(() => ({ text: "re-pinned" }), "mate");
+  for (let turn = 0; turn < 3; turn += 1) {
+    h.onModel(
+      () => ({ tool: "run_long", args: { label: `wait${String(turn)}`, command: "sleep 600" } }),
+      "worker",
+    );
+    h.onModel(() => ({ text: "waiting for the job" }), "worker");
+  }
+  const workerRuns = (): number => h.modelsOf("worker").length;
+  const nextWorkerCall = async (): Promise<void> => {
+    await h.waitForCall(workerRuns(), "worker", WORKER_WAIT_MS);
+  };
+  const launchedWith = (): string => readFileSync(launchArgsOf(h), "utf8");
+  await connected(h);
+
+  mate.prompt("ship the onboarding screens");
+  await seenCount(1);
+  await h.waitForCall(0, "worker", WORKER_WAIT_MS);
+  assert.equal(h.modelsOf("worker").at(0), pinned);
+  assert.match(launchedWith(), new RegExp(`--model\\n${pinned}\\n`));
+
+  await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+  mate.prompt("move the onboarding worker to the quick tier");
+  await seenCount(2);
+  while (h.modelsOf("worker").at(-1) !== "tier/quick") await nextWorkerCall();
+  assert.match(launchedWith(), /--model\ntier\/quick\n/);
+  assert.match(launchedWith(), /--session-id\nc-1-a1\n/);
+  const resumed = h.callsOf("worker").at(-1) ?? [];
+  assert.ok(
+    resumed.some((turn) => turn.role === "user" && turn.text.includes(task)),
+    "the restarted worker has its first task message in its conversation",
+  );
+  const view = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
+  assert.match(toolResults(view).join("\n"), /active,c-1-a1,tier\/quick/);
+  assert.deepEqual(
+    execFileSync("git", ["-C", clone, "branch", "--format=%(refname:short)"], { encoding: "utf8" })
+      .split("\n")
+      .filter((name) => name.endsWith("c-1-a1")),
+    ["c-1-a1"],
+  );
 });
