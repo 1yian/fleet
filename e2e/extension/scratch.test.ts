@@ -185,7 +185,7 @@ test("a close that cannot finish leaves the card's folder as it was, with no clo
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "ran them" } }), "worker");
   h.onModel(() => {
     whileOpen = withoutJiti(listing(card));
-    cardd.breakBrowserTabs();
+    cardd.refuseCloseRecord();
     return { tool: "close", args: { card: 1, summary: "Done." } };
   }, "mate");
   h.onModel(() => {
@@ -198,7 +198,7 @@ test("a close that cannot finish leaves the card's folder as it was, with no clo
   mate.prompt("run the tests");
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
 
-  assert.match(results.at(-1) ?? "", /browser_tabs/);
+  assert.match(results.at(-1) ?? "", /entries refuse the close record/);
   assert.doesNotMatch(results.at(-1) ?? "", /is done/);
   assert.ok(whileOpen.includes("tmp/clone.txt") && whileOpen.includes("report.md"));
   assert.deepEqual(afterClose, whileOpen);
