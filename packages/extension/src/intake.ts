@@ -18,6 +18,8 @@ export function registerIntake(pi: ExtensionAPI, link: Link): void {
     }
   });
   pi.on("message_end", (event) => {
+    const delivered = fleetEntryId(event.message);
+    if (delivered !== undefined) acknowledged.delete(delivered);
     if (event.message.role !== "assistant") return;
     lastStop = event.message.stopReason;
     if (UNFINISHED.has(lastStop)) return;
