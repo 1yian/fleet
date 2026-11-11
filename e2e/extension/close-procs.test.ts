@@ -202,6 +202,22 @@ test("close still stops a leftover whose command line reads like one of fleet's 
   );
 });
 
+const MARK_TEXT = " FLEET_HELPER=1 ";
+
+test("close still stops a leftover whose command line carries the helper mark as text", async () => {
+  const { pid, result } = await closeWithLeftover(KEEP_RUNNING, { arg: MARK_TEXT });
+  assert.equal(alive(pid), false);
+  assert.match(result, new RegExp(` pid ${String(pid)} \\(.*\\) stopped by TERM`));
+});
+
+test("close still stops a leftover whose parent's command line carries the helper mark as text", async () => {
+  const { pid, result } = await closeWithLeftover('node -e "setInterval(Function(), 1000)"', {
+    arg: MARK_TEXT,
+  });
+  assert.equal(alive(pid), false);
+  assert.match(result, new RegExp(` pid ${String(pid)} \\(.*\\) stopped by TERM`));
+});
+
 const stoppedPids = (text: string): string[] =>
   [
     ...(

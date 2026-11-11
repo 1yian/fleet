@@ -18,9 +18,14 @@ root=${1%/}
 
 marked() {
   if [ -r "/proc/$1/environ" ]; then
-    tr '\0' '\n' <"/proc/$1/environ" 2>/dev/null | grep -qx "$helper_mark=1"
+    { tr '\0' '\n' <"/proc/$1/environ"; } 2>/dev/null | grep -qx "$helper_mark=1"
   else
-    ps -Eww -o command= -p "$1" 2>/dev/null | grep -Eq " $helper_mark=1( |$)"
+    argv=$(ps -ww -o command= -p "$1" 2>/dev/null)
+    full=$(ps -Eww -o command= -p "$1" 2>/dev/null)
+    case $full in
+      "$argv"*) printf '%s\n' "${full#"$argv"}" | grep -Eq "(^| )$helper_mark=1( |$)" ;;
+      *) return 1 ;;
+    esac
   fi
 }
 
