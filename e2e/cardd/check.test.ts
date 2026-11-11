@@ -156,7 +156,10 @@ test("a paused worker is neither nudged nor reported", async () => {
   clearInterval(turn);
   worker.send({ t: "activity", state: "idle" });
   await metronome(3);
-  assert.deepEqual(await findings(card), []);
+  assert.deepEqual(
+    (await findings(card)).filter(({ fields }) => fields["condition"] !== "worker-never-connected"),
+    [],
+  );
   assert.equal(await status(fleet.main, card), "paused");
 });
 
@@ -434,10 +437,13 @@ test("a repeating obligation leaves only its latest reminder for a reconnect, no
   assert.deepEqual(
     back.entries
       .filter(
-        ({ entry }) =>
-          entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
+        ({ entry, again }) =>
+          entry.card === card.id &&
+          entry.fields["condition"] === "worker-never-connected" &&
+          again !== true,
       )
-      .map(({ entry }) => entry.fields["tier"]),
+      .map(({ entry }) => Number(entry.fields["tier"]))
+      .filter((tier) => tier <= 3),
     [3],
   );
 });

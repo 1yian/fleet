@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +55,7 @@ export class Cardd {
   url = "";
   private child: ChildProcess | undefined;
   private supervised = false;
+  private readonly processes = new Map<string, string>();
   private readonly env: NodeJS.ProcessEnv;
   output = "";
   errors = "";
@@ -232,9 +233,23 @@ export class Cardd {
   ): Promise<Session> {
     const session = new Session(new WebSocket(this.url), takesIn);
     await session.opened;
-    session.send(running ? { t: "hello", token, inFile, running } : { t: "hello", token, inFile });
+    session.send({
+      t: "hello",
+      token,
+      inFile,
+      process: this.processOf(token),
+      ...(running ? { running } : {}),
+    });
     await until(() => session.welcome ?? session.closeCode, "welcome or close");
     return session;
+  }
+
+  private processOf(token: string): string {
+    const known = this.processes.get(token);
+    if (known !== undefined) return known;
+    const created = randomUUID();
+    this.processes.set(token, created);
+    return created;
   }
 
   async restart(args?: readonly string[]): Promise<void> {
@@ -314,6 +329,7 @@ type Outgoing =
       t: "hello";
       token: string;
       inFile: readonly number[];
+      process: string;
       maintenance?: boolean;
       running?: boolean;
     }
