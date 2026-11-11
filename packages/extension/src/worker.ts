@@ -16,6 +16,8 @@ const HANDOFFS: ReadonlySet<string> = new Set([
 const BLOCKED_PANE = "blocked: reported";
 const STANDING_MS = Number(process.env["FLEET_STANDING_MS"]) || 15_000;
 const STANDING_DEADLINE_MS = 5_000;
+const EXIT_SIGNALS = ["SIGTERM", "SIGHUP"] as const;
+export const LEAVING = "fleet:leaving";
 const NUDGE =
   "[fleet] Your run is ending without a handoff. Report done, failed, blocked, or " +
   "needs-decision, or report paused with an until date if you wait on a time or an outside event. " +
@@ -75,6 +77,7 @@ export class WorkerRun {
   private unsent: string | undefined;
   private nudged = false;
   private recoveryCheck = false;
+  private leaving = false;
   private lastText = "";
   private paneEpoch = 0;
   private disposed = false;
@@ -156,6 +159,7 @@ export class WorkerRun {
     pi.on("input", () => {
       this.reset();
     });
+    this.watchForExit(pi);
     pi.on("message_end", (event) => {
       if (event.message.role === "assistant") this.lastText = textOf(event.message);
     });
@@ -177,12 +181,25 @@ export class WorkerRun {
       return { continue: true, entries: [nudge] };
     });
     pi.on("agent_settled", async (event) => {
+      if (this.leaving) return;
       if (!event.aborted && (this.failures.lastFailed || this.mayEnd())) return;
       const text = event.aborted
         ? "stopped from the pane"
         : `ended the run without a handoff: ${this.lastText}`;
       this.latest = { status: "stopped", until: undefined };
       await this.fileStopped(text.slice(0, 2000));
+    });
+  }
+
+  private watchForExit(pi: ExtensionAPI): void {
+    const leave = (): void => {
+      this.leaving = true;
+    };
+    for (const signal of EXIT_SIGNALS) process.on(signal, leave);
+    const unsubscribe = pi.events.on(LEAVING, leave);
+    pi.on("session_shutdown", () => {
+      for (const signal of EXIT_SIGNALS) process.off(signal, leave);
+      unsubscribe();
     });
   }
 
