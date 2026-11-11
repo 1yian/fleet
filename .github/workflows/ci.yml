@@ -139,7 +139,15 @@ jobs:
         env:
           RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           RANGE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: ./gitleaks git --redact --no-banner --log-opts="${RANGE_BASE}..${RANGE_HEAD}" .
+        run: |
+          git rev-parse --verify --quiet "${RANGE_HEAD}^{commit}" > /dev/null
+          if git rev-parse --verify --quiet "${RANGE_BASE}^{commit}" > /dev/null; then
+            range="${RANGE_BASE}..${RANGE_HEAD}"
+          else
+            echo "::warning::${RANGE_BASE} is not a commit here, scanning all history of ${RANGE_HEAD}"
+            range="${RANGE_HEAD}"
+          fi
+          ./gitleaks git --redact --no-banner --log-opts="${range}" .
 
   e2e-pi:
     timeout-minutes: 30
