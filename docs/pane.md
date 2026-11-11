@@ -32,7 +32,7 @@ The strip shows the worst need: broken first, then needs you, then stalled, olde
 | Broken    | A worker reported `failed`. Or a worker's session is not connected for 2 minutes (never connected, exited, or lost) while the card is Working or In review.       |
 | Stalled   | A running worker has been silent for 5 minutes. Or a worker reported `blocked` or `stopped`, and 5 minutes have passed since that report with no one resuming it. |
 
-A reported need counts its age from the report itself, not from the last change of the card's status. A card that its worker already handed back, and whose run then stops, is not stalled until 5 minutes after the stop. [code.md](code.md) says how the pane reads that time.
+A reported need counts its age from the report itself, not from the last change of the card's status. A card that its worker already handed back, and that then reports `blocked`, is not stalled until 5 minutes after that report. [code.md](code.md) says how the pane reads that time.
 
 The two times are `cardd`'s own: `notConnected` and `stall` in the timed check. A reload or a brief disconnect is under both, so it does not flicker.
 
