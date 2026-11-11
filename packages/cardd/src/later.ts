@@ -38,42 +38,58 @@ interface Reading {
 
 const LEAP_SPAN = 8;
 
+const noUpcoming = (said: string): Error =>
+  new Error(`"${said}" is already in the past. Say a later time.`);
+
+function firstUpcoming(reading: Reading, dates: readonly string[]): string | undefined {
+  const { zone, now, clock } = reading;
+  const time = clock ?? MORNING;
+  const local = localMinute(now, zone);
+  return dates.find(
+    (date) =>
+      `${date}T${two(time.hour)}:${two(time.minute)}` > local && instantIn(zone, date, time) > now,
+  );
+}
+
 function calendarDate(
   day: Extract<Day, { kind: "date" }>,
   reading: Reading,
   today: string,
 ): string {
-  const { said, zone, now, clock } = reading;
+  const { said } = reading;
   const thisYear = Number(today.slice(0, 4));
-  if (day.year !== undefined) {
-    const date = civil(day.year, day.month, day.day);
-    if (date === undefined) throw new Error(`"${said}" is not a date that exists.`);
-    return date;
-  }
-  for (let year = thisYear; year <= thisYear + LEAP_SPAN; year += 1) {
-    const date = civil(year, day.month, day.day);
-    if (date === undefined || date < today) continue;
-    if (instantIn(zone, date, clock ?? MORNING) > now) return date;
-  }
-  throw new Error(`"${said}" is not a date that exists.`);
+  const years =
+    day.year === undefined
+      ? Array.from({ length: LEAP_SPAN + 1 }, (_, ahead) => thisYear + ahead)
+      : [day.year];
+  const dates = years
+    .map((year) => civil(year, day.month, day.day))
+    .filter((date) => date !== undefined);
+  if (dates.length === 0) throw new Error(`"${said}" is not a date that exists.`);
+  if (day.year !== undefined) return dates[0] ?? today;
+  const found = firstUpcoming(reading, dates);
+  if (found === undefined) throw noUpcoming(said);
+  return found;
 }
 
-function weekdayDate(reading: Reading, today: string): string {
-  const { weekday, clock, now, zone } = reading;
-  if (weekday === undefined) return today;
-  const first = clock === undefined || weekday.next ? 1 : 0;
-  for (let ahead = first; ahead <= 7; ahead += 1) {
-    const date = shiftDays(today, ahead);
-    if (weekdayOf(date) === weekday.name && instantIn(zone, date, clock ?? MORNING) > now)
-      return date;
-  }
-  return today;
+function weekdayDate(reading: Reading, weekday: Weekday, today: string): string {
+  const first = reading.clock === undefined || weekday.next ? 1 : 0;
+  const dates = Array.from({ length: 8 - first }, (_, at) => shiftDays(today, first + at)).filter(
+    (date) => weekdayOf(date) === weekday.name,
+  );
+  const found = firstUpcoming(reading, dates);
+  if (found === undefined) throw noUpcoming(reading.said);
+  return found;
 }
 
-function dateOfReading(reading: Reading, today: string): string | undefined {
-  const { day } = reading;
-  if (day === undefined)
-    return reading.weekday === undefined ? undefined : weekdayDate(reading, today);
+function dateOfReading(reading: Reading, today: string): string {
+  const { day, weekday } = reading;
+  if (day === undefined) {
+    if (weekday !== undefined) return weekdayDate(reading, weekday, today);
+    const found = firstUpcoming(reading, [today, shiftDays(today, 1)]);
+    if (found === undefined) throw noUpcoming(reading.said);
+    return found;
+  }
   if (day.kind === "date") return calendarDate(day, reading, today);
   return day.kind === "today" ? today : shiftDays(today, 1);
 }
@@ -90,14 +106,9 @@ function resolve(reading: Reading): number {
   const { zone, now, clock, said } = reading;
   const today = localMinute(now, zone).slice(0, 10);
   const date = dateOfReading(reading, today);
-  const time = clock ?? MORNING;
-  if (date === undefined) {
-    const soonest = instantIn(zone, today, time);
-    return soonest > now ? soonest : instantIn(zone, shiftDays(today, 1), time);
-  }
   requireWeekday(reading, date);
-  const until = instantIn(zone, date, time);
-  if (until <= now) throw new Error(`"${said}" is already in the past. Say a later time.`);
+  const until = instantIn(zone, date, clock ?? MORNING);
+  if (until <= now) throw noUpcoming(said);
   return until;
 }
 

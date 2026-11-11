@@ -223,8 +223,8 @@ async function pinnedAt(iso: string): Promise<void> {
   fleet = await startFleet({ CARDD_CLOCK_FILE: file });
 }
 
-async function yearless(said: string): Promise<number> {
-  const read = await readOnBothSurfaces(said, "UTC");
+async function yearless(said: string, zone = "UTC"): Promise<number> {
+  const read = await readOnBothSurfaces(said, zone);
   assert.equal(read.board.until, read.pane.until, `${said} reads the same on both surfaces`);
   return read.pane.until;
 }
@@ -268,6 +268,33 @@ test("a date with no year is its next occurrence as a whole instant, and Feb 29 
 test("Feb 29 is found up to eight years ahead", async () => {
   await pinnedAt("2096-03-01T00:00:00Z");
   assert.equal(await yearless("Feb 29 4PM UTC"), Date.UTC(2104, 1, 29, 16));
+});
+
+test("a wall time already passed today, this year, or this week is never converted, so a daylight-saving gap that has gone by never refuses the next occurrence", async () => {
+  await pinnedAt("2027-03-14T16:00:00Z");
+  const cases: [string, number][] = [
+    ["2:30am America/New_York", Date.UTC(2027, 2, 15, 6, 30)],
+    ["Mar 14 2:30am America/New_York", Date.UTC(2028, 2, 14, 6, 30)],
+    ["Sunday 2:30am America/New_York", Date.UTC(2027, 2, 21, 6, 30)],
+  ];
+  for (const [said, expected] of cases) assert.equal(await yearless(said), expected, said);
+
+  await pinnedAt("2027-03-13T12:00:00Z");
+  const card = await asked("A time that does not exist");
+  const before = await entries(card);
+  const refused = [
+    "Mar 14 2027 2:30am America/New_York",
+    "Mar 14 2:30am America/New_York",
+    "Sunday 2:30am America/New_York",
+  ];
+  for (const text of refused) {
+    const message = /02:30 does not exist in America\/New_York on 2027-03-14/;
+    const outcome = await fromBoard(card, text, "UTC");
+    assert.equal(outcome.status, 400, text);
+    assert.match(outcome.error ?? "", message, text);
+    await assert.rejects(fromPane(card, text, "UTC"), { message }, text);
+  }
+  assert.deepEqual(await entries(card), before);
 });
 
 test("connecting words in capitals are not zones: AT, ON, and the like hold the time he typed, the same from the board and from the pane", async () => {
