@@ -8,6 +8,7 @@ const STATUS_KEY = "fleet-attention";
 const STRIP_KEY = "fleet-strip";
 const MINUTE_MS = 60_000;
 const DEADLINE_MS = 10_000;
+const RETRIES_BEFORE_SILENT = 3;
 const CARD_TOOLS: ReadonlySet<string> = new Set(["hold", "comment", "close", "dispatch"]);
 
 interface Settings {
@@ -22,7 +23,7 @@ function number(name: string, fallback: number): number {
 }
 
 const settings = (): Settings => ({
-  pollMs: number("FLEET_PANE_POLL_MS", 30_000),
+  pollMs: number("FLEET_PANE_POLL_MS", MINUTE_MS),
   silentMs: number("FLEET_PANE_SILENT_MS", 30_000),
   limits: {
     stallMs: number("FLEET_PANE_STALL_MS", 5 * MINUTE_MS),
@@ -47,6 +48,7 @@ class Pane {
   private fetching = false;
   private again = false;
   private stopped = false;
+  private timer: NodeJS.Timeout | undefined;
   private status: string | undefined;
   private row: string | undefined;
   private readonly link: Link;
@@ -69,11 +71,26 @@ class Pane {
     this.fetching = true;
     const settle = (): void => {
       this.fetching = false;
-      if (!this.again) return;
+      if (!this.again) {
+        this.schedule();
+        return;
+      }
       this.again = false;
       this.refresh();
     };
     this.load().then(settle, settle);
+  }
+
+  schedule(): void {
+    clearTimeout(this.timer);
+    if (this.stopped) return;
+    const { pollMs, silentMs } = this.rules;
+    const retry = Math.ceil(silentMs / RETRIES_BEFORE_SILENT);
+    const wait = this.silentSince === undefined ? pollMs : Math.min(pollMs, retry);
+    this.timer = setTimeout(() => {
+      this.refresh();
+    }, wait);
+    this.timer.unref();
   }
 
   heard(at: number): void {
@@ -83,6 +100,7 @@ class Pane {
 
   stop(ctx: ExtensionContext): void {
     this.stopped = true;
+    clearTimeout(this.timer);
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setWidget(STRIP_KEY, undefined);
   }
@@ -132,17 +150,14 @@ export function showPane(pi: ExtensionAPI, link: Link, ctx: ExtensionContext): v
   };
   pi.events.on("fleet:connected", refresh);
   pi.events.on("fleet:delivered", refresh);
-  pi.on("agent_settled", refresh);
   pi.on("tool_execution_end", (event) => {
     if (CARD_TOOLS.has(event.toolName)) pane.refresh();
   });
   pi.on("input", (event) => {
     if (event.source === "interactive") pane.heard(Date.now());
   });
-  const timer = setInterval(refresh, rules.pollMs);
-  timer.unref();
   pi.on("session_shutdown", (_event, ended) => {
-    clearInterval(timer);
     pane.stop(ended);
   });
+  pane.schedule();
 }

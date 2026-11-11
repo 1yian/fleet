@@ -46,7 +46,7 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 
 ## How it stays current
 
-The pane asks `cardd` for the board when the link connects, after every `[fleet]` row, after a run settles, after main's `hold`, `comment`, `close`, or `dispatch`, and every 30 seconds. The 30 seconds catch what sends no row: a worker that goes quiet, or a hold whose date passes.
+The pane asks `cardd` for the board when the link connects, after every `[fleet]` row, after main's `hold`, `comment`, `close`, or `dispatch`, and a minute after its last ask. The minute catches what sends no row: a worker that goes quiet, or a hold whose date passes. While `cardd` does not answer, it asks every 10 seconds.
 
 ## Evidence
 

@@ -12,7 +12,8 @@ import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["PANE_EVIDENCE_DIR"];
-const PANE_ENV = {
+const EVENTS_ONLY = { FLEET_PANE_POLL_MS: "3600000" };
+const QUICK_LIMITS = {
   FLEET_PANE_POLL_MS: "400",
   FLEET_PANE_STALL_MS: "2500",
   FLEET_PANE_LOST_MS: "2500",
@@ -24,7 +25,7 @@ const PANE_GLYPHS = ["◆", "●", "◇", "▲", "✓ clear"];
 
 let cardd: Cardd;
 let h: Harness;
-let lab: HerdrLab;
+let opened: HerdrLab | undefined;
 let scratch: Scratch;
 let cleo: Session;
 beforeEach(async () => {
@@ -34,24 +35,33 @@ beforeEach(async () => {
   scratch = new Scratch();
   configureMain(scratch, cardd.url, cardd.addLane("main", undefined, scratch.root));
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-  lab = await HerdrLab.start({
-    ...h.piEnv("mate"),
-    ...PANE_ENV,
-    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
-  });
 });
 afterEach(async (t) => {
-  await lab.printIfFailed(t);
-  const stopped = await Promise.allSettled([cleo.close(), lab.stop(), h.stop(), cardd.stop()]);
+  await opened?.printIfFailed(t);
+  const stopped = await Promise.allSettled([cleo.close(), opened?.stop(), h.stop(), cardd.stop()]);
   scratch.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
+function herdr(): HerdrLab {
+  if (opened === undefined) throw new Error("the herdr lab is not open");
+  return opened;
+}
+
+async function openMain(settings: Record<string, string>): Promise<string> {
+  opened = await HerdrLab.start({
+    ...h.piEnv("mate"),
+    ...settings,
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+  });
+  return startMain(opened, scratch, h);
+}
+
 async function screenWhere(pane: string, what: string, ready: (screen: string) => boolean) {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const screen = await lab.screen(pane);
+    const screen = await herdr().screen(pane);
     if (ready(screen)) return screen;
     assert.ok(Date.now() < deadline, `timed out waiting for ${what}:\n${screen}`);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -72,7 +82,7 @@ const showing =
     shown.every((text) => screen.includes(text)) && !hidden.some((text) => screen.includes(text));
 
 async function reload(pane: string, nth: number): Promise<void> {
-  await lab.submit(pane, "/probe-reload");
+  await herdr().submit(pane, "/probe-reload");
   await h.waitForNth((e) => e["type"] === "session" && e["reason"] === "reload", nth, "a reload");
 }
 
@@ -118,7 +128,7 @@ test("the pane shows no strip when all is clear, a strip and a count while the c
   );
   h.onModel(() => ({ text: ESCALATED }), "mate");
   h.onModel(() => ({ text: NOTED }), "mate");
-  const pane = await startMain(lab, scratch, h);
+  const pane = await openMain(EVENTS_ONLY);
 
   const clear = await screenWhere(pane, "the clear state", showing(["✓ clear"]));
   keep("1-clear", clear);
@@ -160,7 +170,7 @@ test("the pane shows no strip when all is clear, a strip and a count while the c
 });
 
 test("the strip shows the worst need first with the rest counted, the chips colour each kind, and landed work counts until the captain writes", async () => {
-  const pane = await startMain(lab, scratch, h);
+  const pane = await openMain(QUICK_LIMITS);
   await screenWhere(pane, "the clear state", showing(["✓ clear"]));
 
   const failing = await cleoShipCard("Fix the Cleo\nrule\u001b[31m");
@@ -192,7 +202,7 @@ test("the strip shows the worst need first with the rest counted, the chips colo
   );
   keep("4-broken-stalled-landed", busy);
   assert.equal(stripRows(busy).length, 1);
-  const colored = await lab.coloredScreen(pane);
+  const colored = await herdr().coloredScreen(pane);
   keep("4-broken-stalled-landed.ansi", colored);
   const chipRow = colored.split("\n").find((row) => row.includes("◇ 1")) ?? "";
   const colorOf = (chip: string): string =>
@@ -209,7 +219,7 @@ test("the strip shows the worst need first with the rest counted, the chips colo
   );
   assert.equal(stripRows(reloaded).length, 1);
 
-  await lab.submit(pane, QUESTION);
+  await herdr().submit(pane, QUESTION);
   const heard = await screenWhere(pane, "the landing count to reset", showing([QUESTION], ["▲"]));
   keep("5-after-his-message", heard);
   assert.equal(stripRows(heard).length, 1);
@@ -224,7 +234,7 @@ test("the strip shows the worst need first with the rest counted, the chips colo
 });
 
 test("the pane says so when cardd stops answering, and the strip goes once it answers again", async () => {
-  const pane = await startMain(lab, scratch, h);
+  const pane = await openMain(QUICK_LIMITS);
   await screenWhere(pane, "the clear state", showing(["✓ clear"]));
 
   await cardd.stop();
