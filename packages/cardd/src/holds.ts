@@ -217,10 +217,9 @@ interface Answer {
 }
 
 function requireOffered(card: Card, open: Hold, choice: string | undefined): void {
-  const offered = [...new Set([...open.options, ...open.approves])];
-  if (choice === undefined || offered.includes(choice)) return;
+  if (choice === undefined || open.options.includes(choice)) return;
   throw new Error(
-    `choice must be one of the options of c-${String(card.id)}'s merge question: ${offered.join(" | ")}`,
+    `choice must be one of the options of c-${String(card.id)}'s merge question: ${open.options.join(" | ")}`,
   );
 }
 

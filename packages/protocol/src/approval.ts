@@ -11,10 +11,15 @@ export const ApprovesArg = Type.Optional(
 
 type Fields = Readonly<Record<string, unknown>>;
 
+const stringsOf = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : []);
+
 export function approvesOf(fields: Fields): string[] {
+  const options = stringsOf(fields["options"]);
+  const legacy = fields["merge"] === true ? [APPROVE_MERGE] : [];
   const named = fields["approves"];
-  if (Array.isArray(named)) return named.map(String).filter((option) => option !== "");
-  return fields["merge"] === true ? [APPROVE_MERGE] : [];
+  return stringsOf(Array.isArray(named) ? named : legacy).filter((option) =>
+    options.includes(option),
+  );
 }
 
 export function approvedBy(fields: Fields): boolean {

@@ -44,12 +44,16 @@ const deferred = (hold: Hold, now: number): boolean => hold.until !== null && ho
 const askingCaptain = (hold: Hold, now: number): boolean =>
   hold.holder === "captain" && !deferred(hold, now);
 
+const sameList = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((each, at) => each === b[at]);
+
 const sameHold = (a: Hold, b: Hold): boolean =>
   a.occurrence === b.occurrence &&
   a.holder === b.holder &&
   a.question === b.question &&
-  a.options.length === b.options.length &&
-  a.options.every((option, at) => option === b.options[at]);
+  a.merge === b.merge &&
+  sameList(a.options, b.options) &&
+  sameList(a.approves, b.approves);
 
 function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
   const entries = cardEntries(db, card.id);

@@ -1,6 +1,7 @@
 import {
   replaceControlCharacters,
   stripTerminalSequences,
+  truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
@@ -14,6 +15,13 @@ export function hanging(text: string, width: number, first: string, rest: string
   const room = Math.max(1, width - visibleWidth(first));
   const rows = wrapTextWithAnsi(text, room);
   return (rows.length === 0 ? [""] : rows).map((row, at) => `${at === 0 ? first : rest}${row}`);
+}
+
+export function bounded(text: string, width: number, limit: number): string[] {
+  const rows = hanging(text, width, "", "");
+  if (rows.length <= limit) return rows;
+  const last = rows[limit - 1] ?? "";
+  return [...rows.slice(0, limit - 1), truncateToWidth(`${last}…`, width, "…")];
 }
 
 export function paragraphs(text: string, width: number): string[] {

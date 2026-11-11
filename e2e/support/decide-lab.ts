@@ -78,12 +78,17 @@ export function optionAt(screen: string, label: string): { row: number; column: 
   return { row, column: (rowsOf(screen)[row]?.indexOf(label) ?? 0) + 1 };
 }
 
+const paneIdOf = (pane: unknown): string => String(records([pane])[0]?.["pane_id"]);
+
 const mouseAt = (row: number, column: number): string => `${String(column)};${String(row + 1)}`;
 
 export interface Shape {
   readonly direction: "down" | "right";
   readonly ratio: number;
 }
+
+const SHORT: Shape = { direction: "down", ratio: 0.65 };
+const NARROW: Shape = { direction: "right", ratio: 0.68 };
 
 export class DecideLab {
   readonly cardd: Cardd;
@@ -147,21 +152,25 @@ export class DecideLab {
     return this.opened;
   }
 
-  async openMain(env: Record<string, string> = {}, shape?: Shape): Promise<string> {
+  async openMain(env: Record<string, string> = {}, ...shapes: readonly Shape[]): Promise<string> {
     const lab = await this.openLab(env);
-    if (shape !== undefined) await this.shape(lab, shape);
+    if (shapes.length > 0) await this.shape(lab, shapes);
     return startMain(lab, this.scratch, this.h);
   }
 
   openShortMain(): Promise<string> {
-    return this.openMain({}, { direction: "down", ratio: 0.65 });
+    return this.openMain({}, SHORT);
   }
 
   openNarrowMain(): Promise<string> {
-    return this.openMain({}, { direction: "right", ratio: 0.68 });
+    return this.openMain({}, NARROW);
   }
 
-  private async shape(lab: HerdrLab, { direction, ratio }: Shape): Promise<void> {
+  openShortNarrowMain(): Promise<string> {
+    return this.openMain({}, SHORT, NARROW);
+  }
+
+  private async shape(lab: HerdrLab, shapes: readonly Shape[]): Promise<void> {
     const made = await lab.run([
       "workspace",
       "create",
@@ -171,9 +180,21 @@ export class DecideLab {
       "1stmate",
       "--no-focus",
     ]);
-    const root = String(records([made["root_pane"]])[0]?.["pane_id"]);
-    await lab.run(["pane", "split", root, "--direction", direction, "--ratio", String(ratio)]);
-    await lab.run(["pane", "close", root]);
+    const panes = [paneIdOf(made["root_pane"])];
+    for (const { direction, ratio } of shapes) {
+      const from = panes.at(-1) ?? "";
+      const split = await lab.run([
+        "pane",
+        "split",
+        from,
+        "--direction",
+        direction,
+        "--ratio",
+        String(ratio),
+      ]);
+      panes.push(paneIdOf(split["pane"]));
+    }
+    for (const old of panes.slice(0, -1).reverse()) await lab.run(["pane", "close", old]);
   }
 
   async screenWhere(pane: string, what: string, ready: (screen: string) => boolean) {

@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { LATER_EXAMPLES, laidOut } from "@fleet/protocol";
 import type { Decision } from "./decisions.ts";
-import { hanging, packed, paragraphs, plain } from "./wrap.ts";
+import { bounded, hanging, packed, paragraphs, plain } from "./wrap.ts";
 
 const WRITE_LABEL = "My words…";
 const LATER_LABEL = "Later…";
@@ -20,7 +20,9 @@ const RECOMMENDED = "(recommended)";
 const MAX_DOTS = 10;
 const MAX_BODY_ROWS = 16;
 const MIN_BODY_ROWS = 2;
-const FRAME_ROWS = 5;
+const FRAME_ROWS = 3;
+const OVERDRAW_ROWS = 1;
+const TIGHTER_LIMITS = [2, 1];
 const SPACER_ROWS = 3;
 const PADDING = 1;
 const RULE = "─";
@@ -47,13 +49,21 @@ interface Slot {
   readonly answered: boolean;
 }
 
-interface Layout {
+interface Shape {
+  readonly title: readonly string[];
+  readonly note: readonly string[];
+  readonly hints: number;
+  readonly limit: number;
+}
+
+interface Layout extends Shape {
   readonly spacers: number;
   readonly body: number;
   readonly picks: number;
-  readonly title: readonly string[];
-  readonly note: readonly string[];
 }
+
+const chromeOf = (shape: Shape): number =>
+  FRAME_ROWS + shape.title.length + shape.note.length + shape.hints;
 
 const oneLine = (data: string): string =>
   data.includes(PASTE_START) ? data.replace(/\s*[\r\n]+\s*/g, " ") : data;
@@ -344,23 +354,37 @@ export class DecisionCard implements Component, Focusable {
     this.when.setValue("");
   }
 
-  private layout(): Layout {
+  private shaped(limit: number): Shape {
     const { theme } = this.deps;
     const decision = this.current;
     const name = `c-${String(decision?.card ?? 0)} ${plain(decision?.title ?? "")}`;
-    const title = hanging(name, this.inner, "", "").map((row) => theme.fg("muted", row));
+    const title = bounded(name, this.inner, limit).map((row) => theme.fg("muted", row));
     const note =
       this.note === undefined
         ? []
-        : hanging(this.note, this.inner, "", "").map((row) => theme.fg("warning", row));
-    const chrome = FRAME_ROWS + title.length - 1 + note.length + this.hintLines(true).length - 1;
-    const free = this.deps.rows() - chrome;
-    const wanted = this.heights().reduce((sum, each) => sum + each, 0);
-    const picks = Math.min(wanted, Math.max(1, free - MIN_BODY_ROWS));
+        : bounded(this.note, this.inner, limit).map((row) => theme.fg("warning", row));
+    return { title, note, hints: Math.min(limit, this.hintLines(true).length), limit };
+  }
+
+  private layout(): Layout {
+    const heights = this.heights();
+    const own = heights[this.row] ?? 1;
+    const budget = this.deps.rows();
+    const reach = budget + OVERDRAW_ROWS;
+    let shape = this.shaped(Infinity);
+    for (const limit of TIGHTER_LIMITS) {
+      if (chromeOf(shape) + MIN_BODY_ROWS + own <= budget) break;
+      shape = this.shaped(limit);
+    }
+    const chrome = chromeOf(shape);
+    const free = budget - chrome;
+    const wanted = heights.reduce((sum, each) => sum + each, 0);
+    const owned = Math.min(own, Math.max(1, reach - chrome - 1));
+    const picks = Math.min(wanted, Math.max(owned, free - MIN_BODY_ROWS));
     const left = free - picks;
     const spacers = Math.max(0, Math.min(SPACER_ROWS, left - MIN_BODY_ROWS));
     const body = Math.max(1, Math.min(MAX_BODY_ROWS, left - spacers));
-    return { spacers, body, picks, title, note };
+    return { ...shape, spacers, body, picks };
   }
 
   render(width: number): string[] {
@@ -394,7 +418,7 @@ export class DecisionCard implements Component, Focusable {
       ...picks.map(line),
       ...spacer(2),
       ...layout.note.map(line),
-      ...this.hintLines(false).map(line),
+      ...this.hintLines(false).slice(0, layout.limit).map(line),
       theme.fg("border", RULE.repeat(width)),
     ];
   }
@@ -430,15 +454,17 @@ export class DecisionCard implements Component, Focusable {
     const top = this.window(picks);
     const rows: string[] = [];
     const owners: number[] = [];
-    for (let at = top; at < this.choices.length && rows.length < picks; at += 1) {
-      for (const row of this.choiceLines(at, inner)) {
-        if (rows.length >= picks) break;
-        rows.push(row);
-        owners.push(at);
-      }
+    let shown = 0;
+    for (let at = top; at < this.choices.length; at += 1) {
+      const lines = this.choiceLines(at, inner);
+      if (rows.length > 0 && rows.length + lines.length > picks) break;
+      const kept = lines.slice(0, picks - rows.length);
+      rows.push(...kept);
+      owners.push(...kept.map(() => at));
+      shown += 1;
     }
     this.pickRows = owners;
-    this.shownChoices = new Set(owners).size;
+    this.shownChoices = shown;
     return rows;
   }
 

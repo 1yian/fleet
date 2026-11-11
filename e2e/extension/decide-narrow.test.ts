@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { cardRows, DecideLab, keep, onCard } from "../support/decide-lab.ts";
+import {
+  CARD_TOP,
+  cardRows,
+  DecideLab,
+  keep,
+  onCard,
+  optionAt,
+  rowsOf,
+} from "../support/decide-lab.ts";
 
 let lab: DecideLab;
 beforeEach(async () => {
@@ -57,13 +65,90 @@ test("in a narrow pane the question, the title, the options, and the hints wrap 
   assert.ok(text.includes(squeezed("(recommended)")), `the recommendation tag is kept:\n${first}`);
   assert.ok(text.includes(squeezed("esc later")), `the hints are kept:\n${first}`);
 
-  await lab.herdr().press(pane, "down", "enter");
+  const words = optionAt(first, "My words…");
+  await lab.click(pane, words.row, words.column);
+  const writing = await lab.screenWhere(pane, "his words line selected", onCard(["→ My words…"]));
+  assert.equal((await lab.cardd.board()).holds.length, 1, "a click on his words answers nothing");
+
+  const tail = optionAt(writing, "until the captain says so");
+  await lab.click(pane, tail.row, tail.column);
   await lab.screenWhere(pane, "the card to clear", (screen) => cardRows(screen).length === 0);
   assert.deepEqual(await lab.mergeAnswer(merge), {
     kind: "comment",
     body: OTHER_OPTION,
     choice: OTHER_OPTION,
     approved: undefined,
+    source: "pane",
+  });
+});
+
+const SHORT_OPTION = "Merge and roll it out in the staged window";
+const PANE_ROWS = 12;
+const FOOTER_ROWS = 3;
+
+const lead = (text: string): string => text.split(" ").slice(0, 3).join(" ");
+
+async function aimedAt(pane: string, what: string, shown: string): Promise<string> {
+  const screen = await lab.screenWhere(pane, what, onCard([`→ ${shown}`]));
+  keep(`13-short-narrow-${shown.replace(/\W+/g, "-")}`, screen);
+  const rows = rowsOf(screen.replace(/\n$/, ""));
+  const card = cardRows(screen);
+  const top = rows.findIndex((row) => CARD_TOP.test(row));
+  assert.ok(card.length > 0, `the card's top and bottom rules are both on screen:\n${screen}`);
+  assert.equal(rows.length, PANE_ROWS, `the pane is ${String(PANE_ROWS)} rows:\n${screen}`);
+  assert.ok(
+    top + card.length + FOOTER_ROWS <= PANE_ROWS,
+    `the card leaves the footer on screen:\n${screen}`,
+  );
+  assert.ok(top >= 1, `the card leaves a row of the chat above it:\n${screen}`);
+  assert.match(rows.slice(top + card.length).join("\n"), /http:\/\/127\.0\.0\.1:\d+/);
+  const text = squeezed(card.join("\n"));
+  assert.ok(text.includes("↑↓choose"), `the hint row is kept:\n${screen}`);
+  return screen;
+}
+
+test("in a pane that is short and narrow at once, the whole selected option stays on screen with the footer and the hints as the pointer walks the options", async () => {
+  const pane = await lab.openShortNarrowMain();
+  const merge = await lab.askedMerge(
+    pane,
+    TITLE,
+    { question: QUESTION, options: [SHORT_OPTION, OTHER_OPTION], approves: [SHORT_OPTION] },
+    1,
+  );
+  lab.answers(1);
+
+  await lab.herdr().submit(pane, "/d");
+  const walk: { keys: string[]; shown: string; whole: string[] }[] = [
+    { keys: [], shown: lead(SHORT_OPTION), whole: [SHORT_OPTION, "(recommended)", "⏎ select"] },
+    { keys: ["down"], shown: lead(OTHER_OPTION), whole: [OTHER_OPTION, "⏎ select"] },
+    { keys: ["down"], shown: "My words…", whole: ["3/3"] },
+    {
+      keys: ["up", "up"],
+      shown: lead(SHORT_OPTION),
+      whole: [SHORT_OPTION, "(recommended)", "⏎ select"],
+    },
+  ];
+  let screen = "";
+  for (const step of walk) {
+    if (step.keys.length > 0) await lab.herdr().press(pane, ...step.keys);
+    screen = await aimedAt(pane, `${step.shown} selected`, step.shown);
+    const text = squeezed(cardRows(screen).join("\n"));
+    assert.ok(
+      text.includes(squeezed(`c-${String(merge.id)} Repair the recording`)),
+      `the title is kept, cut with an ellipsis:\n${screen}`,
+    );
+    for (const part of step.whole)
+      assert.ok(text.includes(squeezed(part)), `${part} is whole on the card:\n${screen}`);
+  }
+
+  const tail = optionAt(screen, "(recommended)");
+  await lab.click(pane, tail.row, tail.column);
+  await lab.screenWhere(pane, "the card to clear", (each) => cardRows(each).length === 0);
+  assert.deepEqual(await lab.mergeAnswer(merge), {
+    kind: "answer",
+    body: SHORT_OPTION,
+    choice: SHORT_OPTION,
+    approved: true,
     source: "pane",
   });
 });
