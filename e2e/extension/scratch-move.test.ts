@@ -236,7 +236,7 @@ test("a process that enters the folder just before it is renamed aside is found 
   const marks = tempDir("fleet-marks-");
   const pidFile = join(marks, "holder.pid");
   const ready = join(marks, "holder.ready");
-  const enter = `case " $* " in *" ${old} "*) [ -e "${pidFile}" ] || { ( cd "${old}/notes" && : > "${ready}" && exec sleep 600 ) </dev/null >/dev/null 2>&1 & echo $! > "${pidFile}"; while [ ! -e "${ready}" ]; do :; done; } ;; esac`;
+  const enter = `case " $* " in *" ${old} "*) [ -e "${pidFile}" ] || { ( cd "${old}/notes" && : > "${ready}" && exec sleep 600 ) </dev/null >/dev/null 2>&1 3>&- & echo $! > "${pidFile}"; while [ ! -e "${ready}" ]; do :; done; } ;; esac`;
   await restartLab({ PATH: shimmed("node", enter) });
   try {
     const result = await closeCard();
@@ -280,7 +280,7 @@ test("when a late writer makes the old path again and the second copy fails, the
   const kept = parkedOf();
   assert.equal(
     result,
-    `c-1 is done. Scratch left in /tmp: local:${old} stays in place: it changed while it was copied, and a new ${old} appeared, so the original is kept as ${kept}.`,
+    `c-1 is done. Scratch left in /tmp: local:${old} stays in place: it changed while it was copied, and ${old} is taken, so the original is kept as ${kept}.`,
   );
   assert.deepEqual(listing(old), ["late.txt"]);
   assert.deepEqual(listing(kept), SEEDED);
@@ -301,4 +301,23 @@ test("when a late writer makes the old path again before the link, the link does
   assert.deepEqual(listing(old), ["late.txt"]);
   assert.deepEqual(listing(kept), SEEDED);
   assert.deepEqual(listing(moved), SEEDED);
+});
+
+test("a stop signal while the original is renamed aside puts it back, and close names it", async () => {
+  const marks = tempDir("fleet-marks-");
+  const stop = `[ -e "${old}" ] || [ -e "${marks}/stopped" ] || { : > "${marks}/stopped"; kill -TERM "$PPID"; }`;
+  await restartLab({ PATH: shimmed("rsync", stop) });
+  const result = await closeCard();
+
+  assert.equal(
+    result,
+    `c-1 is done. Scratch left in /tmp: local:${old} stays in place: it was stopped before it finished.`,
+  );
+  assert.equal(isRealFolder(old), true);
+  assert.deepEqual(listing(old), SEEDED);
+  assert.deepEqual(
+    listing(oldTmp).filter((name) => name.includes(".moved-")),
+    [],
+  );
+  assert.equal(existsSync(join(disk, "fleet-c-1")), false);
 });

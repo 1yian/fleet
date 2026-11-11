@@ -6,6 +6,7 @@
 #   skipped <old path> <reason>
 # Usage: sh -c "$(cat move-scratch.sh)" scratch <card>
 set -u
+exec 3>&1
 case ${1:-} in "" | *[!0-9]*) echo "not a card number: ${1:-}" >&2; exit 1 ;; esac
 name=fleet-c-$1
 src=${FLEET_TMP_SOURCE_DIR:-/tmp}/$name
@@ -13,7 +14,7 @@ root=${FLEET_TMP_SCRATCH_DIR:-${FLEET_HOST_DIR:-$HOME/.fleet}/tmp-scratch}
 case $root in /*) ;; *) root=$PWD/$root ;; esac
 tab=$(printf '\t')
 
-say() { printf '%s%s%s%s%s\n' "$1" "$tab" "$src" "$tab" "$2"; }
+say() { printf '%s%s%s%s%s\n' "$1" "$tab" "$src" "$tab" "$2" >&3; }
 skip() { say skipped "$1"; exit 0; }
 
 [ -L "$src" ] && exit 0
@@ -72,10 +73,12 @@ copy "$src" >/dev/null 2>&1 || skip "the copy to $root failed"
 
 parked=$src.moved-$$
 undo() {
-  rename_dir "$parked" "$src" && skip "$1"
-  skip "$1, and a new $src appeared, so the original is kept as $parked"
+  trap - TERM HUP INT
+  [ ! -d "$parked" ] || rename_dir "$parked" "$src" || skip "$1, and $src is taken, so the original is kept as $parked"
+  skip "$1"
 }
 
+trap 'undo "it was stopped before it finished"' TERM HUP INT
 rename_dir "$src" "$parked" || skip "cannot rename the original"
 in_use=$(held "$parked")
 [ -z "$in_use" ] || undo "$in_use"
@@ -86,6 +89,7 @@ if ! link_dir "$dest" "$src"; then
   say moved "$dest${tab}the path was made again during the move, so the original stays in $parked"
   exit 0
 fi
+trap '' TERM HUP INT
 if rm -rf "$parked" 2>/dev/null && [ ! -e "$parked" ]; then
   say moved "$dest"
 else
