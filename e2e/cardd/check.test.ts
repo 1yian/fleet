@@ -256,7 +256,7 @@ test("reminders to a mate that is down wait for it, and then one reminder for th
   assert.equal(resumed.filter((tier) => tier <= Number(first.fields["tier"])).length, 1);
 });
 
-test("a finished card its mate leaves open is reminded each tier until it is closed, and main is not programmatically told", async () => {
+test("a finished card its mate leaves open is reminded each tier until it is closed, and main gets no finished reminder of it", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const card = await newCard(cleo, "Which ads convert?", "scout");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
@@ -281,7 +281,9 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
   const sent = await tiersOf(card, "finished");
   assert.deepEqual(sent, inOrder(sent));
   assert.deepEqual(
-    fleet.main.entries.filter(({ entry }) => entry.author === "check" && entry.card === card.id),
+    fleet.main.entries.filter(
+      ({ entry }) => entry.card === card.id && entry.fields["condition"] === "finished",
+    ),
     [],
   );
 

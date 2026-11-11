@@ -50,8 +50,8 @@ The limits are `idleMain`, `idleCaptain`, `parked`, and `parkedUrgent` in `timin
 
 Main is told in the 30 minute reminder (see Bundle in [code.md](code.md)). The reminder for neglect goes to main for every lane, and never to the mate that owns the card:
 
-- An idle card past 4 hours is an item to act on, in the first group.
-- A card parked for over a day is in its own group: start what it waits on, or clear the hold. It rides the daily list, so it never starts a 30 minute list. A card whose hold names a dead watcher is an idle park and is listed for action at once, as before.
+- An idle card past 4 hours is an item to act on, in the first group. It is any card whose state is idle: Queued, Working, In review, With mate, or Merging, finished or not. Its mate keeps the reminders it already had. A card that main already has in its own list, such as a hold with main, is listed once.
+- A card parked for over a day is in its own group: start what it waits on, or clear the hold. It rides the daily list: it never starts a 30 minute list, and a 30 minute list for an action carries it only when the daily list is due, so it is not repeated every 30 minutes. A card whose hold names a dead watcher is an idle park and is listed for action at once, as before.
 - A worker's pause past a day is in the same group.
 
 The captain is told by the strip in main's pane and by the board's Attention strip.

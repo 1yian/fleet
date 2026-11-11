@@ -106,11 +106,9 @@ function waitItem(
   return { card: card.id, since: standing.since, to, line, group };
 }
 
-const IDLE_CARDS: ReadonlySet<string> = new Set(["queued", "working", "in-review"]);
-
 function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefined, now: number) {
   if (pulse === undefined || pulse.notice === "none") return [];
-  const idle = pulse.state === "idle" && IDLE_CARDS.has(card.status);
+  const idle = pulse.state === "idle";
   if (!idle && !(pulse.state === "parked" && card.status === "paused")) return [];
   const name = `c-${String(card.id)} ${card.title}`;
   const since = idle ? pulse.movedAt : pulse.since;
@@ -134,7 +132,9 @@ function openItems(
     if (wait !== undefined) return [waitItem(db, loaded, wait, pulse, now)];
     if (loaded.standing.status === "needs-you")
       return [captainItem(db, loaded.card, loaded.standing, now)];
-    return [...mateItem(db, loaded, now), ...neglectItem(db, loaded, pulse, now)];
+    const mate = mateItem(db, loaded, now);
+    const neglect = neglectItem(db, loaded, pulse, now);
+    return [...mate, ...neglect.filter(({ to }) => mate.every((item) => item.to !== to))];
   });
 }
 
@@ -228,15 +228,17 @@ export function bundleMatches(
       return [];
     const last = lastBundle(db, to);
     if (now - last.at < t.waiting) return [];
-    if (acting.length === 0 && now - last.informed < t.informing) return [];
+    const due = now - last.informed >= t.informing;
+    if (acting.length === 0 && !due) return [];
+    const listed = due ? items : items.filter(({ group: each }) => each !== "parked");
     return [
       {
         card: first.card,
         lane: to,
         condition: BUNDLE,
-        text: bundleText(items),
+        text: bundleText(listed),
         tier: last.count + 1,
-        fields: { to, watched: items.filter((item) => !acts(item)).length },
+        fields: { to, watched: due ? listed.filter((item) => !acts(item)).length : 0 },
       },
     ];
   });
