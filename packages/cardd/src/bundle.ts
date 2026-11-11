@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
-import { idlePark, waitLine, type DatedWait } from "@fleet/protocol";
+import { idlePark, waitLine, type DatedWait, type Entry } from "@fleet/protocol";
 import { factsFrom, finishedOpen, type Standing } from "./status.ts";
 import { cardEntries, type Loaded, mainLane, parentOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
-import { sightOf } from "./waits.ts";
+import { canSee, sightOf } from "./waits.ts";
 
 export interface BundleMatch {
   readonly card: number;
@@ -39,6 +39,11 @@ interface Item {
 }
 
 const BUNDLE = "decisions";
+
+export const readableBy = (db: DatabaseSync, lane: string, entry: Entry): boolean =>
+  entry.author !== "check" ||
+  entry.fields["condition"] !== BUNDLE ||
+  canSee(db, lane, entry.fields["to"]);
 
 function captainItem(
   db: DatabaseSync,

@@ -27,6 +27,7 @@ import {
   loadCards,
   type Loaded,
 } from "./store.ts";
+import { readableBy } from "./bundle.ts";
 import { canSee, datedWait, sightOf } from "./waits.ts";
 
 export class StaleCard extends Error {}
@@ -139,7 +140,7 @@ export function cardView(db: DatabaseSync, id: number, lane: string): CardView {
             remaining: hold.remaining.map((step) => stepOf(db, lane, step)),
           },
     attempts: attemptsOf(db, id),
-    entries: each.entries,
+    entries: each.entries.filter((entry) => readableBy(db, lane, entry)),
   };
 }
 
