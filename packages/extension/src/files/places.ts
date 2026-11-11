@@ -12,12 +12,15 @@ export type Decision =
   | { readonly editable: false; readonly kind: Kind; readonly why: string };
 
 interface Place {
-  readonly kind: Exclude<Kind, "skill" | "unknown">;
+  readonly kind: Exclude<Kind, "unknown">;
   readonly real: string;
   readonly why: string;
 }
 
 const WORKER_FOLDER = /^c-\d+-a\d+$/;
+
+const SKILL_WHY =
+  "in a released skill folder: skill text is edited only in the lane that owns the skills";
 
 export const under = (path: string, folder: string): boolean =>
   path === folder || path.startsWith(folder.endsWith(sep) ? folder : folder + sep);
@@ -93,7 +96,10 @@ function placesOf(world: World): Place[] {
     real: resolved(path),
     why: `tracked in the ${project} clone`,
   }));
-  return [...workers, ...homes, root, ...clones];
+  const skills = skillFolders()
+    .filter((folder) => existsSync(folder))
+    .map((folder) => ({ kind: "skill" as const, real: resolved(folder), why: SKILL_WHY }));
+  return [...workers, ...homes, root, ...clones, ...skills];
 }
 
 function enclosing(real: string, places: readonly Place[]): Place | undefined {
@@ -118,13 +124,12 @@ function ignoredBy(place: Place, real: string): boolean {
 
 export function decide(world: World, path: string): Decision {
   const real = resolved(path);
-  if (skillRelative(path) !== undefined)
-    return {
-      editable: false,
-      kind: "skill",
-      why: "in a released skill folder: skill text is edited only in the lane that owns the skills",
-    };
-  const place = enclosing(real, placesOf(world));
+  if (skillRelative(path) !== undefined) return { editable: false, kind: "skill", why: SKILL_WHY };
+  const places = placesOf(world);
+  const held = places.find((place) => place.real !== real && under(place.real, real));
+  if (held !== undefined)
+    return { editable: false, kind: held.kind, why: `contains ${held.real}, ${held.why}` };
+  const place = enclosing(real, places);
   if (place === undefined)
     return world.projectsKnown
       ? { editable: true }

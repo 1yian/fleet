@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check } from "@fleet/protocol";
 import { FilesFleet } from "../support/files-fleet.ts";
@@ -205,6 +205,33 @@ test("a folder that holds a force-added tracked file is guarded whole, and so ca
   assert.equal(readFileSync(join(folder, "tracked.md"), "utf8"), "t\n");
 });
 
+test("a folder that holds a worker worktree, a clone, a lane home or a skill folder is guarded whole, so it cannot be deleted or moved away", () => {
+  const worker = join(`${fleet.clone}.worktrees`, "c-7-a1");
+  git(fleet.clone, "worktree", "add", "-q", "-b", "c-7-a1", worker);
+  mkdirSync(join(fleet.userHome, ".pi", "agent", "skills"), { recursive: true });
+  const holders = [
+    `${fleet.clone}.worktrees`,
+    fleet.scratch.parent,
+    dirname(fleet.home),
+    join(fleet.userHome, ".pi", "agent"),
+  ];
+  for (const folder of holders) {
+    const run = fleet.files(["check", folder]);
+    assert.equal(run.status, 1, `${folder} should be guarded`);
+    assert.match(run.stderr, /guarded, contains /);
+  }
+  const moved = fleet.files([
+    "rename",
+    `${fleet.clone}.worktrees`,
+    join(fleet.home, "data", "moved"),
+  ]);
+  assert.equal(moved.status, 1);
+  assert.match(moved.stderr, /guarded, contains .*c-7-a1/);
+  assert.ok(existsSync(join(worker, "AGENTS.md")));
+  mkdirSync(join(fleet.home, "data", "empty"), { recursive: true });
+  assert.equal(fleet.files(["check", join(fleet.home, "data", "empty")]).status, 0);
+});
+
 test("roots lists the home, its private folders, the clone, the skill folders and the worktrees of the lane's own cards", async () => {
   const mate = await fleet.cardd.connect(fleet.laneToken);
   const card = check(
@@ -236,5 +263,21 @@ test("roots lists the home, its private folders, the clone, the skill folders an
   assert.equal(rows.get("skills released"), join(fleet.userHome, ".agents", "skills"));
   assert.equal(rows.get(`worker fleet c-${String(card.id)}-a1`), mine);
   assert.equal(rows.has("worker fleet c-999-a1"), false);
+  await mate.close();
+});
+
+test("roots in main lists only main's own cards' workers, and not another lane's", async () => {
+  const mate = await fleet.cardd.connect(fleet.laneToken);
+  const card = check(
+    CardSchema,
+    await mate.call("card.new", { title: "cleo's card", kind: "scout", project: "fleet" }),
+  );
+  const name = `c-${String(card.id)}-a1`;
+  git(fleet.clone, "worktree", "add", "-q", "-b", "c-cleo", join(`${fleet.clone}.worktrees`, name));
+  assert.match(fleet.files(["roots"]).stdout, new RegExp(`worker fleet ${name}\t`));
+  const asMain = fleet.files(["roots"], { FLEET_FILES_HOME: fleet.scratch.root });
+  assert.equal(asMain.status, 0, asMain.stderr);
+  assert.match(asMain.stdout, /clone fleet\t/);
+  assert.doesNotMatch(asMain.stdout, /worker fleet/);
   await mate.close();
 });

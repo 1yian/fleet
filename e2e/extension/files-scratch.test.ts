@@ -205,6 +205,29 @@ test("a local-only project's scratch starts from, is measured against, and reset
   assert.match(reset.stdout, new RegExp(`is on ${fresh} from main, and ${old} is deleted`));
 });
 
+test("E makes a scratch for a local-only repository that has no origin at all", () => {
+  const solo = join(fleet.scratch.parent, "solo");
+  execFileSync("git", ["init", "-q", "-b", "main", solo]);
+  writeFileSync(join(solo, "README.md"), "solo\n");
+  git(solo, "add", "README.md");
+  git(solo, "commit", "-q", "-m", "readme");
+  fleet.cardd.addProject("solo", { p620: solo }, undefined, "local-only");
+  const scratch = `${solo}.worktrees/scratch`;
+  const run = edit(join(solo, "README.md"));
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, new RegExp(`from main at ${tip(solo).slice(0, 12)}`));
+  assert.equal(tip(scratch, "HEAD"), tip(solo));
+  assert.equal(fleet.editorCalls()[0]?.args.at(-1), join(scratch, "README.md"));
+  const old = branchOf(scratch);
+  assert.equal(
+    fleet.files(["scratch"]).stdout,
+    `solo: ${scratch} on ${old}, 0 ahead and 0 behind main, 0 dirty files, reset allowed\n`,
+  );
+  const reset = fleet.files(["scratch", "reset", "solo"]);
+  assert.equal(reset.status, 0, reset.stderr);
+  assert.match(reset.stdout, new RegExp(`from main, and ${old} is deleted`));
+});
+
 test("E says how far the scratch is ahead of the lane's checkout when the remote moved on", () => {
   landOnRemote(fleet.remote, "elsewhere");
   edit(agents());

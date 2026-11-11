@@ -16,7 +16,8 @@ const WORKER_FOLDER = /^c-(\d+)-a\d+$/;
 
 async function cardsOfLane(world: World): Promise<Set<number>> {
   try {
-    return new Set((await callCardd(world.lane, "board", {})).map((card) => card.id));
+    const board = await callCardd(world.lane, "board", {});
+    return new Set(board.filter((card) => card.lane === world.lane.lane).map((card) => card.id));
   } catch {
     return new Set();
   }

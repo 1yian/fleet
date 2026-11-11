@@ -29,7 +29,17 @@ function originOf(dir: string): string | undefined {
   return url === undefined ? undefined : normalizedRemote(url);
 }
 
+function repositoryOf(dir: string): string | undefined {
+  const common = gitOrNothing(dir, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  return common === undefined ? undefined : resolved(common);
+}
+
 function cloneOfCheckout(world: World, inside: string): LocalClone | undefined {
+  const repository = repositoryOf(inside);
+  const same = world.clones.find(
+    (clone) => repository !== undefined && repositoryOf(clone.path) === repository,
+  );
+  if (same !== undefined) return same;
   const origin = originOf(inside);
   if (origin === undefined) return undefined;
   return world.clones.find((clone) => originOf(clone.path) === origin);
