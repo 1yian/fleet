@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card } from "@fleet/protocol";
 import { endLiveAttempts } from "./attempts.ts";
 import { requireOrdinary } from "./change.ts";
+import { closeCardIncidents } from "./incident-lifecycle.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import {
@@ -156,7 +157,9 @@ export function closeFinish(
     { card: args.card, landed: args.mode === "done" },
     closeCheck,
   );
-  endLiveAttempts(db, card.id, Date.now());
+  const now = Date.now();
+  closeCardIncidents(db, card.id, now);
+  endLiveAttempts(db, card.id, now);
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
   const closed = { outcome: args.mode, archives: args.archives, left: args.left };

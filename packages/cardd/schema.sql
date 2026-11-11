@@ -8,7 +8,8 @@ CREATE INDEX entries_cleanup ON entries (card) WHERE kind = 'cleanup';
 
 CREATE UNIQUE INDEX one_live_attempt ON attempts (card) WHERE state IN ('starting', 'active');
 
-CREATE UNIQUE INDEX one_live_incident ON incidents (actor) WHERE state IN ('open', 'recovering', 'blocked');
+CREATE UNIQUE INDEX one_live_incident ON incidents (actor)
+  WHERE state IN ('open', 'recovering', 'blocked');
 
 CREATE UNIQUE INDEX one_mate_per_lane ON sessions (lane) WHERE role = 'mate';
 
@@ -104,7 +105,7 @@ CREATE TABLE findings (
   cleared_at INTEGER
 ) STRICT;
 
-CREATE TABLE incidents (
+CREATE TABLE "incidents" (
   id INTEGER PRIMARY KEY,
   actor TEXT NOT NULL REFERENCES sessions (id),
   card INTEGER NOT NULL REFERENCES cards (id),
@@ -114,8 +115,15 @@ CREATE TABLE incidents (
   classification TEXT NOT NULL,
   error TEXT NOT NULL,
   source TEXT NOT NULL,
-  intent TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('open', 'recovering', 'blocked', 'verified', 'cleared', 'superseded')),
+  intent TEXT NOT NULL CHECK (
+    intent IN (
+      'working', 'paused', 'completed', 'closed', 'queued', 'with-mate', 'needs-you', 'waiting',
+      'merging'
+    )
+  ),
+  state TEXT NOT NULL CHECK (
+    state IN ('open', 'recovering', 'blocked', 'verified', 'cleared', 'superseded')
+  ),
   count INTEGER NOT NULL DEFAULT 1,
   retries INTEGER NOT NULL DEFAULT 0,
   replacements INTEGER NOT NULL DEFAULT 0,

@@ -8,16 +8,18 @@ import {
   type Mode,
   type Phase,
 } from "./incident-kinds.ts";
+import { applyIncident, insertOpened, intentOf, recoveryOffered } from "./incident-lifecycle.ts";
 import {
+  currentIntent,
   generationOf,
   incidentById,
   incidentFrom,
   liveIncident,
+  roleOf,
   type Incident,
 } from "./incident-store.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
-import { isFinished, pausedNow } from "./status.ts";
-import { addCard, addEntry, laneCardOf, loadCard, parentOf, type Session } from "./store.ts";
+import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
 interface Recovery {
@@ -36,16 +38,6 @@ interface Recovery {
 interface Done {
   readonly value: unknown;
   readonly notify: readonly string[];
-}
-
-export function intentOf(db: DatabaseSync, card: number, role: "mate" | "worker"): string {
-  if (role === "mate") return "working";
-  const { card: own, entries, standing } = loadCard(db, card);
-  if (own.status === "done" || own.status === "dropped") return "closed";
-  const now = Date.now();
-  if (pausedNow(standing, now)) return "paused";
-  if (isFinished(entries)) return "completed";
-  return ["working", "in-review", "merging"].includes(own.status) ? "working" : own.status;
 }
 
 function cardOfActor(db: DatabaseSync, session: Session, error: string): number {
@@ -82,30 +74,26 @@ export function openIncident(
     retries: 0,
     replacements: 0,
   };
-  const state = remaining(draft).length === 0 ? "blocked" : "open";
-  const { lastInsertRowid } = db
-    .prepare(
-      `INSERT INTO incidents (actor, card, parent, generation, phase, classification, error, source,
-         intent, state, eligible_at, first_at, last_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      actor.id,
-      actor.card,
-      parent,
-      generation,
-      seen.phase,
-      kind,
-      seen.error,
-      seen.source,
-      intent,
-      state,
-      eligible,
-      Date.now(),
-      Date.now(),
-    );
-  const inc = incidentById(db, Number(lastInsertRowid));
+  const at = Date.now();
+  const id = insertOpened(db, {
+    actor: actor.id,
+    card: actor.card,
+    parent,
+    generation,
+    phase: seen.phase,
+    classification: kind,
+    error: seen.error,
+    source: seen.source,
+    intent,
+    eligibleAt: eligible,
+    recoverable: remaining(draft).length > 0,
+    at,
+  });
+  const inc = incidentById(db, id);
   if (inc === undefined) throw new Error("the incident was not saved");
-  const notify = silent ? [] : tell(db, inc, actor.role, describe(inc, labelOf(inc, actor.role)));
+  const notify = silent
+    ? []
+    : tell(db, inc, actor.role, describe(db, inc, labelOf(inc, actor.role)));
   return { inc, notify };
 }
 
@@ -121,14 +109,24 @@ function failRecovery(
     inc.phase === "turn" || inc.phase === "compaction" ? classify(error) : inc.classification;
   const eligible = eligibleAt(kind, error, inc.retries, t.wall(), t, resumeAt);
   const next = { ...inc, classification: kind, eligibleAt: eligible };
-  const state = remaining(next).length === 0 ? "blocked" : "open";
-  db.prepare(
-    `UPDATE incidents SET state = ?, classification = ?, error = ?, eligible_at = ?, due_told = 0,
-       count = count + 1, last_at = ?, recovery_key = NULL, recovery_deadline = NULL
-     WHERE id = ?`,
-  ).run(state, kind, error, eligible, Date.now(), inc.id);
-  const after = incidentById(db, inc.id) ?? inc;
-  const body = `recovery of incident ${String(inc.id)} (${inc.recoveryMode ?? "retry"}) did not verify: ${error}. ${state === "blocked" ? "No recovery is left within its bounds: it needs intervention." : nextStep(after)}`;
+  const recoverable = remaining(next).length > 0;
+  applyIncident(
+    db,
+    inc,
+    {
+      type: "recovery-failed",
+      recoverable,
+      classification: kind,
+      error,
+      eligibleAt: eligible,
+    },
+    Date.now(),
+  );
+  const after = incidentById(db, inc.id) ?? { ...inc, classification: kind, eligibleAt: eligible };
+  const left = recoverable
+    ? nextStep(db, after)
+    : "No recovery is left within its bounds: it needs intervention.";
+  const body = `recovery of incident ${String(inc.id)} (${inc.recoveryMode ?? "retry"}) did not verify: ${error}. ${left}`;
   return tell(db, after, role, body);
 }
 
@@ -148,10 +146,7 @@ export function reportFailure(
     };
   }
   if (live !== undefined) {
-    db.prepare("UPDATE incidents SET count = count + 1, last_at = ? WHERE id = ?").run(
-      Date.now(),
-      live.id,
-    );
+    applyIncident(db, live, { type: "repeated" }, Date.now());
     return {
       value: { incident: live.id, opened: false, classification: live.classification },
       notify: [],
@@ -185,10 +180,7 @@ function verifyCompaction(db: DatabaseSync, live: Incident, role: "mate" | "work
     .prepare("SELECT 1 FROM deliveries WHERE session = ? AND entry = ? AND state <> 'pending'")
     .get(live.actor, live.recoveryEntry ?? 0);
   if (reached === undefined) return { value: { cleared: false }, notify: [] };
-  db.prepare("UPDATE incidents SET state = 'verified', closed_at = ? WHERE id = ?").run(
-    Date.now(),
-    live.id,
-  );
+  applyIncident(db, live, { type: "verified" }, Date.now());
   const body = `incident ${String(live.id)} recovered (${live.recoveryMode ?? ""}): ${live.actor} compacted its conversation successfully. Its conversation, branch, and work are as they were.`;
   return { value: { cleared: true }, notify: tell(db, live, role, body, true) };
 }
@@ -205,10 +197,7 @@ export function clearFailure(
     return live.phase === "compaction"
       ? verifyCompaction(db, live, session.role)
       : { value: { cleared: false }, notify: [] };
-  db.prepare("UPDATE incidents SET state = 'cleared', closed_at = ? WHERE id = ?").run(
-    Date.now(),
-    live.id,
-  );
+  applyIncident(db, live, { type: "cleared" }, Date.now());
   addEntry(
     db,
     {
@@ -293,9 +282,9 @@ export function requireCurrent(db: DatabaseSync, inc: Incident, generation: numb
     throw new Error(
       `incident ${String(inc.id)} is about process generation ${String(inc.generation)}, but the actor is on ${String(current)} and you named ${String(generation)}: read the card again`,
     );
-  const intent = intentOf(db, inc.card, roleOf(db, inc.actor));
+  const intent = currentIntent(db, inc);
   if (intent !== "working") throw new Error(`the card is ${intent}: recovery never resumes it`);
-  if (inc.intent !== "working" && inc.intent !== "merging")
+  if (!recoveryOffered(inc.intent))
     throw new Error(`the card was ${inc.intent}: recovery never resumes it`);
 }
 
@@ -349,22 +338,26 @@ export function recover(
   const fields = { for: plan.role, recovery: inc.id, ...(compaction ? { compaction } : {}) };
   const draft = { card: inc.card, author: `mate:${session.lane}`, kind: "comment", body, fields };
   const entry = addEntry(db, draft, live ? [inc.actor] : []);
-  db.prepare(
-    `UPDATE incidents SET state = 'recovering', recovery_key = ?, recovery_mode = ?, recovery_entry = ?,
-       recovery_deadline = ?, control_at = NULL, due_told = 1,
-       retries = retries + ?, replacements = replacements + ?
-     WHERE id = ? AND state = 'open'`,
-  ).run(args.key, args.mode, entry, Date.now() + t.verify, live ? 1 : 0, live ? 0 : 1, inc.id);
+  applyIncident(
+    db,
+    inc,
+    {
+      type: "recovery-started",
+      key: args.key,
+      mode: args.mode,
+      entry,
+      deadline: Date.now() + t.verify,
+      retry: live,
+    },
+    Date.now(),
+  );
   return { value: plan, notify: live ? [inc.actor] : [] };
 }
 
 function reconnected(db: DatabaseSync, session: string): void {
   const live = liveIncident(db, session);
   if (live === undefined || (live.phase !== "lost" && live.phase !== "startup")) return;
-  db.prepare("UPDATE incidents SET state = 'cleared', closed_at = ? WHERE id = ?").run(
-    Date.now(),
-    live.id,
-  );
+  applyIncident(db, live, { type: "reconnected" }, Date.now());
 }
 
 export function adoptProcess(db: DatabaseSync, session: string, process: string | undefined): void {
@@ -388,28 +381,14 @@ export function adoptProcess(db: DatabaseSync, session: string, process: string 
       ).run(session, live.recoveryEntry, Date.now());
     return;
   }
-  db.prepare("UPDATE incidents SET state = 'superseded', closed_at = ? WHERE id = ?").run(
-    Date.now(),
-    live.id,
-  );
+  applyIncident(db, live, { type: "process-changed" }, Date.now());
 }
 
 const CONTROL_OPS: ReadonlySet<string> = new Set(["report", "comment", "board"]);
 
 export function noteControl(db: DatabaseSync, session: string, op: string): void {
   if (!CONTROL_OPS.has(op)) return;
-  db.prepare(
-    `UPDATE incidents SET control_at = ?
-     WHERE actor = ? AND state = 'recovering' AND control_at IS NULL
-       AND EXISTS (SELECT 1 FROM deliveries d WHERE d.session = incidents.actor
-         AND d.entry = incidents.recovery_entry AND d.state <> 'pending')`,
-  ).run(Date.now(), session);
-}
-
-function roleOf(db: DatabaseSync, actor: string): "mate" | "worker" {
-  return db.prepare("SELECT role FROM sessions WHERE id = ?").get(actor)?.["role"] === "mate"
-    ? "mate"
-    : "worker";
+  applyIncident(db, undefined, { type: "controlled", actor: session }, Date.now());
 }
 
 function answeredAndActed(db: DatabaseSync, inc: Incident, acted: boolean): boolean {
@@ -427,10 +406,7 @@ export function reconcileIncidents(db: DatabaseSync, now: number, t: Timings): s
     const inc = incidentFrom(row);
     const role = roleOf(db, inc.actor);
     if (answeredAndActed(db, inc, row["control_at"] !== null)) {
-      db.prepare("UPDATE incidents SET state = 'verified', closed_at = ? WHERE id = ?").run(
-        now,
-        inc.id,
-      );
+      applyIncident(db, inc, { type: "verified" }, now);
       const body = `incident ${String(inc.id)} recovered (${inc.recoveryMode ?? ""}): ${inc.actor} answered the recovery check and acted. Its conversation, branch, and work are as they were.`;
       notify.push(...tell(db, inc, role, body));
     } else if (Number(row["recovery_deadline"]) < now) {
@@ -452,9 +428,14 @@ export function reconcileIncidents(db: DatabaseSync, now: number, t: Timings): s
     .all(t.wall());
   for (const row of due) {
     const inc = incidentFrom(row);
-    db.prepare("UPDATE incidents SET due_told = 1 WHERE id = ?").run(inc.id);
     const modes = remaining(inc);
-    if (modes.length === 0 || (inc.intent !== "working" && inc.intent !== "merging")) continue;
+    const current = currentIntent(db, inc);
+    if (modes.length === 0 || !recoveryOffered(inc.intent)) {
+      applyIncident(db, inc, { type: "due-told" }, t.wall());
+      continue;
+    }
+    if (current !== "working") continue;
+    applyIncident(db, inc, { type: "due-told" }, t.wall());
     const body = `incident ${String(inc.id)} is eligible for recovery now: restart_card(card=${String(inc.card)}, incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")}).`;
     notify.push(...tell(db, inc, roleOf(db, inc.actor), body));
   }
@@ -491,5 +472,5 @@ export function watchdogIncident(
     true,
   );
   const ids = `Incident ${String(made.inc.id)}, process generation ${String(made.inc.generation)}.`;
-  return `${ids} ${nextStep(made.inc)}`;
+  return `${ids} ${nextStep(db, made.inc)}`;
 }

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { exhaustion, remaining } from "./incident-kinds.ts";
+import { liveStateSql, recoveryOffered } from "./incident-lifecycle.ts";
 import { incidentFrom, type Incident } from "./incident-store.ts";
 import { FAILURE_OF, stamp } from "./incident-text.ts";
 import { addEntry, transaction } from "./store.ts";
@@ -58,7 +59,7 @@ export async function keepingRefusals<T>(db: DatabaseSync, work: () => Promise<T
 const LIVE_OF_WORKERS_IN_SECOND_LANES = `SELECT i.* FROM incidents i
   JOIN sessions s ON s.id = i.actor AND s.role = 'worker'
   JOIN lanes l ON l.name = i.parent
-  WHERE i.state IN ('open', 'recovering', 'blocked') AND l.parent IS NOT NULL`;
+  WHERE i.state IN (${liveStateSql()}) AND l.parent IS NOT NULL`;
 
 function whyNoRecovery(db: DatabaseSync, inc: Incident): string | undefined {
   if (inc.state === "blocked") return exhaustion(inc);
@@ -79,8 +80,7 @@ export function unrecoverable(db: DatabaseSync): Unrecoverable[] {
     .map(incidentFrom)
     .flatMap((incident) => {
       const { parent: lane } = incident;
-      if (lane === null || (incident.intent !== "working" && incident.intent !== "merging"))
-        return [];
+      if (lane === null || !recoveryOffered(incident.intent)) return [];
       const reason = whyNoRecovery(db, incident);
       return reason === undefined ? [] : [{ incident, lane, reason }];
     });

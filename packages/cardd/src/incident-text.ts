@@ -1,14 +1,17 @@
 import type { DatabaseSync } from "node:sqlite";
 import { remaining } from "./incident-kinds.ts";
-import type { Incident } from "./incident-store.ts";
+import { recoveryOffered } from "./incident-lifecycle.ts";
+import { currentIntent, type Incident } from "./incident-store.ts";
 import { addEntry } from "./store.ts";
 
 export const stamp = (ms: number): string => new Date(ms).toISOString();
 
-export function nextStep(inc: Incident): string {
+export function nextStep(db: DatabaseSync, inc: Incident): string {
   const modes = remaining(inc);
-  if (inc.intent !== "working" && inc.intent !== "merging")
-    return `Its card is ${inc.intent}, so recovery is not offered and nothing is resumed.`;
+  const current = currentIntent(db, inc);
+  const held = current === "working" ? inc.intent : current;
+  if (!recoveryOffered(held))
+    return `Its card is ${held}, so recovery is not offered and nothing is resumed.`;
   if (modes.length === 0)
     return `Restarting is not a repair for ${inc.classification}: it needs intervention, not recovery.`;
   const when = inc.eligibleAt === null ? "." : `, eligible at ${stamp(inc.eligibleAt)}.`;
@@ -22,12 +25,12 @@ export const FAILURE_OF: Readonly<Record<Incident["phase"], string>> = {
   lost: "its process stopped without a final event",
 };
 
-export function describe(inc: Incident, label: string): string {
+export function describe(db: DatabaseSync, inc: Incident, label: string): string {
   const what = FAILURE_OF[inc.phase];
   const cause = inc.phase === "turn" || inc.phase === "compaction" ? `: ${inc.error}` : "";
   const end = cause.endsWith(".") ? "" : ".";
   const ids = `Incident ${String(inc.id)}, process generation ${String(inc.generation)}.`;
-  return `runtime failure: ${label} ${what}${cause}${end} Classified ${inc.classification}. ${ids} ${nextStep(inc)}`;
+  return `runtime failure: ${label} ${what}${cause}${end} Classified ${inc.classification}. ${ids} ${nextStep(db, inc)}`;
 }
 
 export function labelOf(inc: Incident, role: "mate" | "worker"): string {
