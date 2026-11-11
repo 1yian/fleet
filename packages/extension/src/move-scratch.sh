@@ -4,14 +4,16 @@
 # else one line of tab-separated fields:
 #   moved   <old path> <new path> [<what stays behind>]
 #   skipped <old path> <reason>
+# The destination root is "tmpScratch" in host.json in the host folder, and tmp-scratch under the
+# host folder when the file or the key is not there.
 # Usage: sh -c "$(cat move-scratch.sh)" scratch <card>
 set -u
 exec 3>&1
 case ${1:-} in "" | *[!0-9]*) echo "not a card number: ${1:-}" >&2; exit 1 ;; esac
 name=fleet-c-$1
 src=${FLEET_TMP_SOURCE_DIR:-/tmp}/$name
-root=${FLEET_TMP_SCRATCH_DIR:-${FLEET_HOST_DIR:-$HOME/.fleet}/tmp-scratch}
-case $root in /*) ;; *) root=$PWD/$root ;; esac
+host=${FLEET_HOST_DIR:-$HOME/.fleet}
+settings=$host/host.json
 tab=$(printf '\t')
 
 say() { printf '%s%s%s%s%s\n' "$1" "$tab" "$src" "$tab" "$2" >&3; }
@@ -19,6 +21,32 @@ skip() { say skipped "$1"; exit 0; }
 
 [ -L "$src" ] && exit 0
 [ -d "$src" ] || exit 0
+
+destination() {
+  node -e '
+    const file = process.argv[1];
+    const fail = (why) => { console.log(file + " is not usable: " + why); process.exit(1); };
+    let text;
+    try { text = require("fs").readFileSync(file, "utf8"); }
+    catch (error) {
+      if (error.code === "ENOENT") process.exit(0);
+      console.log(file + " cannot be read: " + error.message);
+      process.exit(1);
+    }
+    let settings;
+    try { settings = JSON.parse(text); } catch { fail("it is not valid JSON"); }
+    if (typeof settings !== "object" || settings === null || Array.isArray(settings)) fail("it must be a JSON object");
+    const unknown = Object.keys(settings).filter((name) => name !== "tmpScratch");
+    if (unknown.length > 0) fail("unknown setting " + unknown.map((name) => JSON.stringify(name)).join(", "));
+    const root = settings.tmpScratch;
+    if (root === undefined) process.exit(0);
+    if (typeof root !== "string" || !root.startsWith("/")) fail("\"tmpScratch\" must be an absolute path");
+    console.log(root);
+  ' "$1"
+}
+
+root=$(destination "$settings" 2>/dev/null) || skip "${root:-cannot read $settings}"
+root=${root:-$host/tmp-scratch}
 
 held() {
   if [ -d /proc/self ]; then
