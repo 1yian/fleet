@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { ADD_WORKTREE, SYNC_FUNCTIONS } from "../clones.ts";
 import { editorArgs, runEditor } from "./editor.ts";
@@ -170,7 +170,8 @@ export function resetScratch(world: World, project: string | undefined): string[
 }
 
 export function pushScratch(world: World, inside: string): string {
-  const root = gitOrNothing(inside, "rev-parse", "--show-toplevel");
+  const folder = existsSync(inside) && !statSync(inside).isDirectory() ? dirname(inside) : inside;
+  const root = gitOrNothing(folder, "rev-parse", "--show-toplevel");
   const clone = world.clones.find(
     (each) => root !== undefined && resolved(root) === resolved(scratchPath(each)),
   );

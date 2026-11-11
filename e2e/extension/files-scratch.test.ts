@@ -228,19 +228,39 @@ test("E makes a scratch for a local-only repository that has no origin at all", 
   assert.match(reset.stdout, new RegExp(`from main, and ${old} is deleted`));
 });
 
-test("scratch reset again and again in the same second always lands on a new branch", () => {
+test("scratch reset takes a new name when the timestamp name is already a branch", () => {
   edit(agents());
-  const seen = new Set([branchOf(scratchOf())]);
-  for (let round = 0; round < 3; round += 1) {
-    const reset = fleet.files(["scratch", "reset"]);
-    assert.equal(reset.status, 0, reset.stderr);
-    seen.add(branchOf(scratchOf()));
+  const old = branchOf(scratchOf());
+  for (let ahead = 0; ahead < 30; ahead += 1) {
+    const stamp = new Date(Date.now() + ahead * 1000)
+      .toISOString()
+      .replace(/\.\d+Z$/, "")
+      .replace(/[-:]/g, "")
+      .replace("T", "-");
+    const name = `scratch/p620-${stamp}`;
+    if (!branches().includes(name)) git(fleet.clone, "branch", name, "main");
   }
-  assert.equal(seen.size, 4);
-  assert.deepEqual(
-    branches().filter((name) => name.startsWith("scratch/")),
-    [branchOf(scratchOf())],
-  );
+  const reset = fleet.files(["scratch", "reset"]);
+  assert.equal(reset.status, 0, reset.stderr);
+  const fresh = branchOf(scratchOf());
+  assert.notEqual(fresh, old);
+  assert.match(fresh, /^scratch\/p620-\d{8}-\d{6}-2$/);
+  assert.equal(branches().includes(old), false);
+});
+
+test("P on a hovered file in the scratch pushes the scratch branch", () => {
+  edit(agents());
+  const branch = branchOf(scratchOf());
+  writeFileSync(join(scratchOf(), "work.md"), "work\n");
+  git(scratchOf(), "add", "work.md");
+  git(scratchOf(), "commit", "-q", "-m", "work");
+  const pushed = fleet.files(["push", join(scratchOf(), "work.md")]);
+  assert.equal(pushed.status, 0, pushed.stderr);
+  assert.match(pushed.stdout, new RegExp(`pushed ${branch} to origin/${branch}`));
+  assert.equal(git(fleet.remote, "rev-parse", branch), tip(scratchOf(), "HEAD"));
+  const outside = fleet.files(["push", join(fleet.home, "AGENTS.md")]);
+  assert.equal(outside.status, 1);
+  assert.match(outside.stderr, /this is not a scratch worktree/);
 });
 
 test("E says how far the scratch is ahead of the lane's checkout when the remote moved on", () => {
