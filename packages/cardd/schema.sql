@@ -28,7 +28,7 @@ CREATE TABLE attempts (
   session_file TEXT,
   branch TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL, branch_named INTEGER NOT NULL DEFAULT 1 CHECK (branch_named IN (0, 1)),
+  updated_at INTEGER NOT NULL, branch_named INTEGER NOT NULL DEFAULT 1 CHECK (branch_named IN (0, 1)), model TEXT,
   UNIQUE (card, n)
 ) STRICT;
 

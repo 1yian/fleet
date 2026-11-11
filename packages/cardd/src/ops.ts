@@ -106,8 +106,13 @@ const REWORK: ReadonlySet<ReportStatus> = new Set([
 
 const MAX_PAUSE_MS = 24 * 60 * 60 * 1000;
 
-function requireShortPause(status: ReportStatus, until: number | undefined): void {
-  if (status === "paused" && until !== undefined && until > Date.now() + MAX_PAUSE_MS)
+function requireDatedPause(status: ReportStatus, until: number | undefined): void {
+  if (status !== "paused") return;
+  if (until === undefined || until <= Date.now())
+    throw new Error(
+      "paused needs until, a time in the future when the wait ends: a quota reset, a third party, a CI run, or a date. If you wait on your mate's action, report blocked instead: that wakes your mate, and paused does not",
+    );
+  if (until > Date.now() + MAX_PAUSE_MS)
     throw new Error(
       "paused until must be within 24 hours from now; ask your mate for a dated hold for longer waits",
     );
@@ -299,7 +304,7 @@ const HANDLERS: Record<OpName, Handler> = {
   report: (db, session, raw, _timing, note, _closeCheck, emptyBranch) => {
     const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
-    requireShortPause(args.status, args.until);
+    requireDatedPause(args.status, args.until);
     requireCommentsRead(db, session.id, args.status);
     const card = openCardWithPr(db, session.card, args.pr);
     if (args.replyTo !== undefined) requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);

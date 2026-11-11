@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
+import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
 import { forwardedEnvironment } from "./scratch.ts";
@@ -113,12 +114,9 @@ export class Jobs {
         "--no-focus",
         ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
-      await herdr("local", [
-        "pane",
-        "run",
-        rootPane(created),
-        `node ${quote(WRAPPER)} ${quote(file)}`,
-      ]);
+      const pane = rootPane(created);
+      await joinContained("local", pane, process.cwd());
+      await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
     } catch (error) {
       rmSync(file, { force: true });
       this.running.delete(job);

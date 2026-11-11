@@ -164,13 +164,16 @@ function resultOf(stdout: string, host: string, name: string): Record<string, un
   return isRecord(reply["result"]) ? reply["result"] : {};
 }
 
-export async function onHost(
+export const HELPER_MARK = "FLEET_HELPER";
+
+async function run(
   host: string,
   argv: readonly string[],
-  timeout = 600_000,
+  timeout: number,
+  spawned: readonly string[],
 ): Promise<string> {
   const via = transport(host);
-  const [file = "", ...rest] = routed(via, argv);
+  const [file = "", ...rest] = routed(via, spawned);
   return new Promise((resolve, reject) => {
     runOnTransport(file, rest, { timeout, maxBuffer: 16 * 1024 * 1024 }, (error, out, err) => {
       if (error === null) resolve(out);
@@ -181,6 +184,15 @@ export async function onHost(
     });
   });
 }
+
+export const onHost = (host: string, argv: readonly string[], timeout = 600_000): Promise<string> =>
+  run(host, argv, timeout, argv);
+
+export const onHelper = (
+  host: string,
+  argv: readonly string[],
+  timeout = 600_000,
+): Promise<string> => run(host, argv, timeout, ["env", `${HELPER_MARK}=1`, ...argv]);
 
 const FLEET_ON_ROOT = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
 

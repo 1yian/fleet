@@ -16,7 +16,7 @@ export class AvoidRefused extends Error {
 
   constructor(card: number, model: string, provider: string, incident?: Incident) {
     super(
-      `c-${String(card)} was dispatched on ${model} and a restart keeps that model, so it cannot avoid ${provider}: restart without avoid, or start new work on another model`,
+      `c-${String(card)} is pinned to ${model} and a restart keeps that model, so it cannot avoid ${provider}: restart without avoid, or pin a model from another provider`,
     );
     this.card = card;
     this.model = model;

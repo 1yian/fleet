@@ -42,6 +42,7 @@ const AttemptsSchema = Type.Array(
     host: Type.String(),
     state: Type.String(),
     branch: Type.Union([Type.String(), Type.Null()]),
+    model: Type.Union([Type.String(), Type.Null()]),
   }),
 );
 
@@ -50,7 +51,7 @@ export const attemptsOf = (db: DatabaseSync, card: number): CardView["attempts"]
     AttemptsSchema,
     json(
       db,
-      `SELECT json_object('n', n, 'host', host, 'state', state, 'branch', branch) AS j
+      `SELECT json_object('n', n, 'host', host, 'state', state, 'branch', branch, 'model', model) AS j
        FROM attempts WHERE card = ? ORDER BY n DESC`,
       card,
     ),
@@ -263,10 +264,10 @@ export function beginAttempt(
   const token = tokenFor(db, "worker", session);
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO attempts (card, n, host, state, branch, branch_named, created_at, updated_at)
-       VALUES (?, ?, ?, 'starting', ?, 0, ?, ?)`,
+      `INSERT INTO attempts (card, n, host, state, branch, branch_named, model, created_at, updated_at)
+       VALUES (?, ?, ?, 'starting', ?, 0, ?, ?, ?)`,
     )
-    .run(card.id, n, request.host, place.branch, now, now);
+    .run(card.id, n, request.host, place.branch, request.model ?? null, now, now);
   db.prepare(
     `INSERT INTO sessions (id, role, lane, attempt, host, token_hash, state)
      VALUES (?, 'worker', ?, ?, ?, ?, 'starting')`,
@@ -276,7 +277,7 @@ export function beginAttempt(
     author: `mate:${card.lane}`,
     kind: "comment",
     body,
-    fields: { task: true, ...(request.model === undefined ? {} : { model: request.model }) },
+    fields: { task: true },
   };
   addEntry(db, task, [session]);
   return {
@@ -294,9 +295,7 @@ export function beginAttempt(
 function attemptModel(db: DatabaseSync, session: string): { model?: string } {
   const row = db
     .prepare(
-      `SELECT json_extract(e.fields, '$.model') AS model
-       FROM entries e JOIN deliveries d ON d.entry = e.id
-       WHERE d.session = ? AND json_extract(e.fields, '$.task') = 1 ORDER BY e.id LIMIT 1`,
+      "SELECT a.model AS model FROM sessions s JOIN attempts a ON a.id = s.attempt WHERE s.id = ?",
     )
     .get(session);
   const model = row?.["model"];
@@ -308,6 +307,22 @@ function attemptModel(db: DatabaseSync, session: string): { model?: string } {
 export function liveAttemptModel(db: DatabaseSync, card: number): string | undefined {
   const live = liveAttempt(db, card);
   return live === undefined ? undefined : attemptModel(db, name(card, live.n)).model;
+}
+
+export function repinAttempt(
+  db: DatabaseSync,
+  card: number,
+  model: string,
+): { previous: string | undefined } {
+  const live = liveAttempt(db, card);
+  if (live === undefined) throw new Error(`c-${String(card)} has no live attempt to re-pin`);
+  const previous = attemptModel(db, name(card, live.n)).model;
+  db.prepare("UPDATE attempts SET model = ?, updated_at = ? WHERE id = ?").run(
+    model,
+    Date.now(),
+    live.id,
+  );
+  return { previous };
 }
 
 export function resumeAttempt(db: DatabaseSync, card: Card): Begun {
