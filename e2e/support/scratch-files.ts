@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -64,6 +64,17 @@ export const tidyByHand = (hostDir: string): Record<string, unknown> =>
     fleet(["scratch", "--tidy", "--json"], { FLEET_HOST_DIR: hostDir }).trim().split("\n").at(-1) ??
       "",
   );
+
+export function setHostSettings(hostDir: string, settings: Record<string, unknown>): string {
+  mkdirSync(hostDir, { recursive: true });
+  const file = join(hostDir, "host.json");
+  writeFileSync(file, JSON.stringify(settings));
+  return file;
+}
+
+export const clearHostSettings = (hostDir: string): void => {
+  rmSync(join(hostDir, "host.json"), { force: true });
+};
 
 export const nameOf = (path: string): string => path.split("/").at(-1) ?? "";
 

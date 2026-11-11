@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   lstatSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -9,7 +10,8 @@ import {
   type Dirent,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { isRecord } from "./lane-config.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -25,10 +27,57 @@ export function hostDir(): string {
   return set !== undefined && set !== "" ? set : join(homedir(), ".fleet");
 }
 
-export const tmpScratchDir = (): string => {
-  const set = process.env["FLEET_TMP_SCRATCH_DIR"];
-  return set !== undefined && set !== "" ? set : join(hostDir(), "tmp-scratch");
-};
+const HOST_SETTINGS_FILE = "host.json";
+const HOST_SETTING_NAMES = ["tmpScratch"];
+
+interface HostSettings {
+  readonly tmpScratch?: string;
+}
+
+function textOf(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw new Error(
+      `${file} cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+}
+
+function parsedSettings(file: string, text: string): Record<string, unknown> {
+  let settings: unknown;
+  try {
+    settings = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${file} is not usable: it is not valid JSON`, { cause: error });
+  }
+  if (!isRecord(settings)) throw new Error(`${file} is not usable: it must be a JSON object`);
+  return settings;
+}
+
+function readHostSettings(file: string): HostSettings {
+  const text = textOf(file);
+  if (text === undefined) return {};
+  const settings = parsedSettings(file, text);
+  const unknown = Object.keys(settings).filter((name) => !HOST_SETTING_NAMES.includes(name));
+  if (unknown.length > 0)
+    throw new Error(
+      `${file} is not usable: unknown setting ${unknown.map((name) => JSON.stringify(name)).join(", ")}`,
+    );
+  const { tmpScratch } = settings;
+  if (tmpScratch === undefined) return {};
+  if (typeof tmpScratch !== "string" || !isAbsolute(tmpScratch))
+    throw new Error(`${file} is not usable: "tmpScratch" must be an absolute path`);
+  return { tmpScratch };
+}
+
+export const tmpScratchDir = (): string =>
+  readHostSettings(join(hostDir(), HOST_SETTINGS_FILE)).tmpScratch ??
+  join(hostDir(), "tmp-scratch");
 
 const compileCacheDir = (): string => join(hostDir(), "node-compile-cache");
 

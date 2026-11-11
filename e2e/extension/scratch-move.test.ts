@@ -25,7 +25,13 @@ import {
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
 import { tempDir } from "../support/run-root.ts";
-import { DISPATCH, fleet, listing } from "../support/scratch-files.ts";
+import {
+  clearHostSettings,
+  DISPATCH,
+  fleet,
+  listing,
+  setHostSettings,
+} from "../support/scratch-files.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
 const SEEDED = [
@@ -48,7 +54,6 @@ const hostEnv = (): Record<string, string> => ({
   HOME: home,
   FLEET_HOST_DIR: "",
   FLEET_TMP_SOURCE_DIR: oldTmp,
-  FLEET_TMP_SCRATCH_DIR: disk,
 });
 
 async function startLab(hostOverrides: Record<string, string>): Promise<void> {
@@ -70,6 +75,7 @@ beforeEach(async () => {
   writeFileSync(join(old, "notes", "deep", "log.txt"), "a deep file\n");
   writeFileSync(join(old, "tool.sh"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
   symlinkSync("report.md", join(old, "via-link.txt"));
+  setHostSettings(join(home, ".fleet"), { tmpScratch: disk });
   await startLab({});
 });
 
@@ -147,8 +153,8 @@ test("close moves the card's /tmp scratch to disk, leaves a symlink that resolve
   );
 });
 
-test("with no folder set, the scratch goes under the host's fleet folder", async () => {
-  await restartLab({ FLEET_TMP_SCRATCH_DIR: "" });
+test("with no host setting, the scratch goes under the host's fleet folder", async () => {
+  clearHostSettings(join(home, ".fleet"));
   const result = await closeCard();
 
   const moved = join(home, ".fleet", "tmp-scratch", "fleet-c-1");

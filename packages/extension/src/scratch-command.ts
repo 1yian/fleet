@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { ownHostName } from "./host.ts";
-import { OPEN_SCRATCH_SCRIPT, tidy } from "./scratch.ts";
+import { OPEN_SCRATCH_SCRIPT, tidy, tmpScratchDir } from "./scratch.ts";
 import { describeMove, MOVE_SCRATCH_SCRIPT, parseMove } from "./scratch-move.ts";
 import { breakdown, percentUsed, watchedFilesystems, type Metric } from "./scratch-use.ts";
 
@@ -59,7 +59,14 @@ export function scratchLines(options: ScratchOptions, now: number): string[] {
   }
   const tidied = options.tidy ? tidy(now) : undefined;
   if (options.json)
-    return [JSON.stringify({ host: ownHostName(), tidied, filesystems: watchedFilesystems() })];
+    return [
+      JSON.stringify({
+        host: ownHostName(),
+        tidied,
+        tmpScratch: tmpScratchDir(),
+        filesystems: watchedFilesystems(),
+      }),
+    ];
   const removed =
     tidied === undefined
       ? []
@@ -70,5 +77,5 @@ export function scratchLines(options: ScratchOptions, now: number): string[] {
               : `closed card folders ${tidied.cards.join(", ")}`
           }`,
         ];
-  return [...removed, ...describeUse()];
+  return [...removed, ...describeUse(), `old /tmp scratch moves to ${tmpScratchDir()}`];
 }
