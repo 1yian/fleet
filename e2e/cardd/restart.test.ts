@@ -132,6 +132,7 @@ for (const [name, rest] of Object.entries(resting)) {
     );
 
     await worker.lose();
+    await fleet.cardd.waitForSessionLost(`c-${String(card.id)}-a1`);
     const plan = await restart("reconnect");
 
     assert.deepEqual(

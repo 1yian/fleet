@@ -173,6 +173,22 @@ export class Cardd {
     db.close();
   }
 
+  private sessionState(session: string): unknown {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    try {
+      return db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
+    } finally {
+      db.close();
+    }
+  }
+
+  async waitForSessionLost(session: string): Promise<void> {
+    await until(
+      () => (this.sessionState(session) === "lost" ? true : undefined),
+      `${session} to be lost`,
+    );
+  }
+
   endAttemptsByHand(card: number): void {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     db.prepare("UPDATE attempts SET state = 'ended' WHERE card = ?").run(card);
