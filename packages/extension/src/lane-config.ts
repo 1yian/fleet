@@ -29,6 +29,7 @@ export interface LaneConfig {
 export interface FilesConfig {
   readonly roots: readonly string[];
   readonly previews: boolean;
+  readonly main?: string;
 }
 
 export const LANE_FILE = join("config", "lane.json");
@@ -130,20 +131,26 @@ function carddConfig(file: string, value: unknown): CarddConfig | undefined {
   return { host, root, db, restart: command };
 }
 
+const absoluteFolders = (roots: unknown): string[] | undefined => {
+  if (roots === undefined) return [];
+  const listed = strings(roots);
+  return Array.isArray(roots) && listed.length === roots.length && listed.every(isAbsolute)
+    ? listed
+    : undefined;
+};
+
+const hostName = (main: unknown): boolean =>
+  main === undefined || (typeof main === "string" && main !== "");
+
 function filesConfig(file: string, value: unknown): FilesConfig | undefined {
   if (value === undefined) return undefined;
-  const { roots, previews = true } = isRecord(value) ? value : {};
-  const listed = strings(roots);
-  if (
-    !isRecord(value) ||
-    typeof previews !== "boolean" ||
-    (roots !== undefined && (!Array.isArray(roots) || listed.length !== roots.length)) ||
-    !listed.every((each) => isAbsolute(each))
-  )
+  const { roots, previews = true, main } = isRecord(value) ? value : {};
+  const listed = absoluteFolders(roots);
+  if (!isRecord(value) || typeof previews !== "boolean" || listed === undefined || !hostName(main))
     throw new Error(
-      `${file}: "files" takes an optional "roots" list of absolute folders and an optional boolean "previews"`,
+      `${file}: "files" takes an optional "roots" list of absolute folders, an optional boolean "previews", and an optional "main", the name of the host where main's herdr runs`,
     );
-  return { roots: listed, previews };
+  return { roots: listed, previews, ...(typeof main === "string" ? { main } : {}) };
 }
 
 const NEEDS = `needs "lane", "url", and a "token" or a "bws" block`;

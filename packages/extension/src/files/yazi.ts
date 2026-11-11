@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 import { quote } from "@fleet/protocol/route";
 import { filesSettings } from "../lane-config.ts";
 import { vimString } from "./editor.ts";
+import { launchWords } from "./invoke.ts";
 import type { World } from "./world.ts";
 
-const LAUNCH = fileURLToPath(new URL("../launch.ts", import.meta.url));
 const GUARD_PLUGIN = fileURLToPath(new URL("./yazi/fleet-guard.yazi", import.meta.url));
 
 const stateDir = (home: string): string => join(home, "state", "files");
@@ -15,7 +15,7 @@ const stateDir = (home: string): string => join(home, "state", "files");
 function writeWrapper(home: string): string {
   const file = join(stateDir(home), "bin", "ff");
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(LAUNCH)} files "$@"\n`);
+  writeFileSync(file, `#!/bin/sh\nexec ${launchWords("files")} "$@"\n`);
   chmodSync(file, 0o755);
   return file;
 }

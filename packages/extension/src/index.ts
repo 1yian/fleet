@@ -44,6 +44,8 @@ import { registerRestart } from "./restart.ts";
 import { registerQuestions } from "./questions.ts";
 import { standingRules } from "./standing.ts";
 import { registerStow } from "./stow.ts";
+import { ensureFilesTab } from "./files/tab.ts";
+import { recordSkills } from "./files/skills.ts";
 import { titleMate } from "./titles.ts";
 import { registerUpdate } from "./updating.ts";
 import { WorkerRun } from "./worker.ts";
@@ -382,6 +384,10 @@ export default function fleet(pi: ExtensionAPI): void {
       ctx,
       extensionsReady,
     );
-    if (found.lane !== undefined) titleMate(pi, found.lane).catch(() => undefined);
+    if (found.lane !== undefined) {
+      titleMate(pi, found.lane).catch(() => undefined);
+      ensureFilesTab(HOME()).catch(() => undefined);
+      recordSkills(pi, HOME());
+    }
   });
 }

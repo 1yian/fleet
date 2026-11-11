@@ -2,6 +2,7 @@ import { editInScratch, pushScratch, resetScratch, scratchLines } from "./scratc
 import { decide } from "./places.ts";
 import { openFile } from "./editor.ts";
 import { rootsOf } from "./roots.ts";
+import { reload, show, type Target } from "./show.ts";
 import { skillsTable } from "./skills.ts";
 import { goto, pick } from "./navigate.ts";
 import { launchExplorer } from "./yazi.ts";
@@ -46,6 +47,18 @@ function scratch(world: World, args: readonly string[]): number {
   return lines(resetScratch(world, project));
 }
 
+function targetOf(args: readonly string[]): Target {
+  const [target] = args;
+  if (target !== "lane" && target !== "main") throw new Error("fleet files show|reload lane|main");
+  return target;
+}
+
+function shown(world: World, args: readonly string[]): Promise<number> {
+  const [, path, flag, lines] = args;
+  if (path === undefined) throw new Error("fleet files show lane|main <path> [--lines 12-20]");
+  return show(world, targetOf(args), path, flag === "--lines" ? lines : undefined);
+}
+
 const HANDLERS: Record<string, Handler> = {
   roots,
   check,
@@ -53,6 +66,8 @@ const HANDLERS: Record<string, Handler> = {
   edit: (world, args) => editInScratch(world, needs(args, "edit needs a path")),
   scratch,
   push: (world, args) => lines([pushScratch(world, args.at(0) ?? process.cwd())]),
+  show: shown,
+  reload: (world, args) => reload(world, targetOf(args)),
   skills: (world) => lines(skillsTable(world)),
   goto: (world, args) => goto(world, needs(args, "goto needs a folder name")),
   pick: (world, args) => pick(world, needs(args, "pick needs clone or worktree")),
