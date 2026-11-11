@@ -62,6 +62,11 @@ interface Config {
 const EXTENSION = fileURLToPath(import.meta.url);
 const HOME = (): string => process.cwd();
 
+async function filesSetup(pi: ExtensionAPI, home: string): Promise<void> {
+  await ensureFilesTab(home).catch(() => undefined);
+  recordSkills(pi, home);
+}
+
 function forwardedBws(text: string | undefined): BwsConfig | undefined {
   if (text === undefined || text === "") return undefined;
   const parsed: unknown = JSON.parse(text);
@@ -386,8 +391,7 @@ export default function fleet(pi: ExtensionAPI): void {
     );
     if (found.lane !== undefined) {
       titleMate(pi, found.lane).catch(() => undefined);
-      ensureFilesTab(HOME()).catch(() => undefined);
-      recordSkills(pi, HOME());
+      filesSetup(pi, HOME()).catch(() => undefined);
     }
   });
 }
