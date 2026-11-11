@@ -15,7 +15,7 @@ const FOLLOW_DISK = [
   "autocmd CursorHold,FocusGained,BufEnter * silent! checktime",
 ];
 
-const vimString = (text: string): string => `'${text.replaceAll("'", "''")}'`;
+export const vimString = (text: string): string => `'${text.replaceAll("'", "''")}'`;
 
 function statusLine(note: string): string[] {
   const line = `%f %m%r  ${note.replaceAll("%", "%%")}`;

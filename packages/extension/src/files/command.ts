@@ -3,6 +3,8 @@ import { decide } from "./places.ts";
 import { openFile } from "./editor.ts";
 import { rootsOf } from "./roots.ts";
 import { skillsTable } from "./skills.ts";
+import { goto, pick } from "./navigate.ts";
+import { launchExplorer } from "./yazi.ts";
 import { loadWorld, type World } from "./world.ts";
 
 type Handler = (world: World, args: readonly string[]) => Promise<number> | number;
@@ -50,16 +52,19 @@ const HANDLERS: Record<string, Handler> = {
   open: (world, args) => openFile(world, needs(args, "open needs a path")),
   edit: (world, args) => editInScratch(world, needs(args, "edit needs a path")),
   scratch,
-  push: (world, args) => lines([pushScratch(world, args[0] ?? process.cwd())]),
+  push: (world, args) => lines([pushScratch(world, args.at(0) ?? process.cwd())]),
   skills: (world) => lines(skillsTable(world)),
+  goto: (world, args) => goto(world, needs(args, "goto needs a folder name")),
+  pick: (world, args) => pick(world, needs(args, "pick needs clone or worktree")),
 };
 
 export async function runFiles(args: readonly string[]): Promise<number> {
   const [verb, ...rest] = args;
   try {
     const world = await loadWorld();
-    const handler = verb === undefined ? undefined : HANDLERS[verb];
-    if (handler === undefined) throw new Error(`fleet files: unknown command ${verb ?? ""}`);
+    if (verb === undefined) return launchExplorer(world);
+    const handler = HANDLERS[verb];
+    if (handler === undefined) throw new Error(`fleet files: unknown command ${verb}`);
     return await handler(world, rest);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
