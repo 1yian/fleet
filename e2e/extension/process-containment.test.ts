@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,10 @@ import type { Harness, Pi } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
+const DETECT = fileURLToPath(
+  new URL("../../packages/extension/src/contain/detect.sh", import.meta.url),
+);
+const onSystemd = execFileSync("sh", [DETECT], { encoding: "utf8" }).trim() === "systemd";
 
 const SERVER = `
 const { createServer } = require("node:net");
@@ -165,4 +170,50 @@ describe("on a host without a systemd user bus", () => {
     else process.env["XDG_RUNTIME_DIR"] = runtime;
   });
   test("close stops a server that a run_long job detached from everything", closeStopsJobServer);
+});
+
+describe("when systemd stops answering mid-run", { skip: !onSystemd }, () => {
+  const bin = tempDir("fleet-systemctl-");
+  const broken = join(bin, "broken");
+  let path: string | undefined;
+  before(() => {
+    const real = execFileSync("sh", ["-c", "command -v systemctl"], { encoding: "utf8" }).trim();
+    const shim = [
+      "#!/bin/sh",
+      `case "$*" in *show-environment*) exec '${real}' "$@";; esac`,
+      `if [ -e '${broken}' ]; then exit 1; fi`,
+      `exec '${real}' "$@"`,
+      "",
+    ].join("\n");
+    writeFileSync(join(bin, "systemctl"), shim);
+    chmodSync(join(bin, "systemctl"), 0o755);
+    path = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${path ?? ""}`;
+  });
+  after(() => {
+    if (path === undefined) delete process.env["PATH"];
+    else process.env["PATH"] = path;
+  });
+
+  test("run_long fails and its command never runs", async () => {
+    const ran = join(h.dir, "job-ran");
+    h.onModel(() => ({ tool: "board", args: {} }), "mate");
+    h.onModel(() => ({ tool: "dispatch", args: dispatchStep }), "mate");
+    h.onModel(() => ({ text: "dispatched" }), "mate");
+    h.onModel(() => ({ tool: "bash", args: { command: `touch '${broken}'` } }), "worker");
+    h.onModel(
+      () => ({ tool: "run_long", args: { label: "serve", command: `touch '${ran}'` } }),
+      "worker",
+    );
+    h.onModel(() => ({ tool: "bash", args: { command: `rm -f '${broken}'` } }), "worker");
+    h.onModel(() => ({ tool: "report", args: { status: "done", text: "finished" } }), "worker");
+    h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Done." } }), "mate");
+    await connected(h);
+    mate.prompt("run the job");
+    const worker = toolResults(await h.waitForCall(3, "worker", WORKER_WAIT_MS));
+    assert.match(worker[1] ?? "", /could not tell whether fleet-worker-.* exists/);
+    const mateResults = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
+    assert.match(mateResults.at(-1) ?? "", /^c-1 is done\./);
+    assert.equal(existsSync(ran), false);
+  });
 });
