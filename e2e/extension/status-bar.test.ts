@@ -157,7 +157,14 @@ test("a card the captain put off is neither counted nor on /d until its date, ho
   await lab.screenWhere(pane, "the clear state", showing(["✓ clear"]));
   const vendor = await lab.askedMain(pane, "Vendor", VENDOR, ["Acme", "Other"], 1);
   const date = Date.now() + LATER_MS;
-  const action = { kind: "hold", until: date, reason: "ask me again after the launch" } as const;
+  const open = (await lab.cardd.board()).holds.find((each) => each.card === vendor.id);
+  assert.ok(open !== undefined, "the vendor decision is open");
+  const action = {
+    kind: "hold",
+    hold: open.hold,
+    until: date,
+    reason: "ask me again after the launch",
+  } as const;
   assert.equal(await lab.cardd.act(vendor.id, action), 200);
 
   await lab.herdr().submit(pane, "/d");

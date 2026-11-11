@@ -165,7 +165,8 @@ test("a card the captain put off is never named for action before its date, howe
     body,
     new RegExp(`^reminder: 1 card parked for over a day.*- c-${String(parked.id)} `, "s"),
   );
-  assert.doesNotMatch(body, /Launch the referral page/);
+  const [toAct = ""] = body.split("Dated waits with something running");
+  assert.doesNotMatch(toAct, /Launch the referral page/);
   const told = await reminderOn(cleo, later);
   assert.ok(
     told.every((entry) => entry.body.startsWith("information:")),
