@@ -1,5 +1,5 @@
 import type { Delivery, OpResult } from "@fleet/protocol";
-import { SYNC_FUNCTIONS } from "./clones.ts";
+import { ADD_WORKTREE } from "./clones.ts";
 import { contain, releaseAll } from "./containment.ts";
 import { extensionOn } from "./extension-path.ts";
 import { fleetArgs } from "./fleet-args.ts";
@@ -29,27 +29,6 @@ export interface Launch {
 }
 
 type Plan = OpResult<"attempt.begin">;
-
-const ADD_WORKTREE = `${SYNC_FUNCTIONS}
-set -eu
-clone=$1 path=$2 branch=$3 base=$4 from=$5
-if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
-  git -C "$clone" worktree add -q "$path" "$branch"
-  exit 0
-fi
-start=$base
-if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1; then
-  if ! fetch_origin "$clone"; then
-    echo "could not fetch origin in $clone, so the worker would start from a stale base: $(fetch_reason)" >&2
-    exit 1
-  fi
-  start=origin/$base
-  if ! git -C "$clone" rev-parse -q --verify "refs/remotes/$start^{commit}" >/dev/null; then
-    echo "origin of $clone has no branch $base to start from" >&2
-    exit 1
-  fi
-fi
-git -C "$clone" worktree add -q --no-track -b "$branch" "$path" "$start"`;
 
 async function scratchEnvironment(host: string, card: number): Promise<string[]> {
   const opened = await onHost(host, ["sh", "-c", OPEN_SCRATCH_SCRIPT, "scratch", String(card)]);

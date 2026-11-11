@@ -21,7 +21,13 @@ import { registerIntake } from "./intake.ts";
 import { Jobs, registerDropJob } from "./jobs.ts";
 import { enableCodemode } from "./codemode.ts";
 import type { Bws, BwsConfig } from "./bws.ts";
-import { bwsConfig, readLaneConfig, workerPiArgs, type LaneConfig } from "./lane-config.ts";
+import {
+  bwsConfig,
+  exportHosts,
+  readLaneConfig,
+  workerPiArgs,
+  type LaneConfig,
+} from "./lane-config.ts";
 import { applyEnvSecrets, bwsFor, laneToken } from "./lane-secrets.ts";
 import { Link, type Push } from "./link.ts";
 import { showPane } from "./pane/index.ts";
@@ -53,12 +59,6 @@ interface Config {
 
 const EXTENSION = fileURLToPath(import.meta.url);
 const HOME = (): string => process.cwd();
-
-function exportHosts(lane: LaneConfig): void {
-  process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
-  process.env["FLEET_HOST"] ??= lane.host ?? "";
-  process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
-}
 
 function forwardedBws(text: string | undefined): BwsConfig | undefined {
   if (text === undefined || text === "") return undefined;

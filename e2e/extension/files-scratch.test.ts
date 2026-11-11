@@ -1,0 +1,202 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, test } from "node:test";
+import { FilesFleet } from "../support/files-fleet.ts";
+import { refreshClone } from "../support/refresh.ts";
+import { git, landOnRemote, tip } from "../support/remote.ts";
+
+let fleet: FilesFleet;
+beforeEach(async () => {
+  fleet = await FilesFleet.start();
+});
+afterEach(async () => {
+  await fleet.stop();
+});
+
+const scratchOf = (): string => `${fleet.clone}.worktrees/scratch`;
+const agents = (): string => join(fleet.home, "AGENTS.md");
+const branchOf = (dir: string): string => git(dir, "rev-parse", "--abbrev-ref", "HEAD");
+const branches = (): string[] =>
+  git(fleet.clone, "branch", "--format=%(refname:short)").split("\n").filter(Boolean);
+
+function edit(path: string): { status: number; stdout: string; stderr: string } {
+  fleet.forgetEditorCalls();
+  return fleet.files(["edit", path]);
+}
+
+test("E on a tracked file in a lane home opens the same file in a new scratch worktree off origin/main", () => {
+  const run = edit(agents());
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(existsSync(scratchOf()));
+  assert.match(branchOf(scratchOf()), /^scratch\/p620-\d{8}-\d{6}$/);
+  assert.equal(tip(scratchOf(), "HEAD"), tip(fleet.remote));
+  assert.throws(() => git(scratchOf(), "rev-parse", "--abbrev-ref", "@{upstream}"));
+  const start = tip(scratchOf(), "HEAD").slice(0, 12);
+  assert.match(run.stdout, new RegExp(`creating the scratch worktree of fleet: ${scratchOf()}`));
+  assert.match(
+    run.stdout,
+    new RegExp(`branch ${branchOf(scratchOf())}, from origin/main at ${start}`),
+  );
+  const call = fleet.editorCalls().at(0);
+  assert.equal(call?.cwd, scratchOf());
+  assert.equal(call.args.at(-1), join(scratchOf(), "AGENTS.md"));
+  assert.equal(call.args.includes("-R"), false);
+  assert.match(
+    call.args.find((arg) => arg.startsWith("let &statusline")) ?? "",
+    /SCRATCH, scratch\/p620-/,
+  );
+  assert.equal(
+    readFileSync(agents(), "utf8"),
+    readFileSync(join(scratchOf(), "AGENTS.md"), "utf8"),
+  );
+});
+
+test("a second E reuses the scratch, and E on a private file just opens it", () => {
+  edit(agents());
+  const first = branchOf(scratchOf());
+  const again = edit(join(fleet.home, "README.md"));
+  assert.equal(again.stdout, "");
+  assert.equal(branchOf(scratchOf()), first);
+  assert.equal(fleet.editorCalls()[0]?.args.at(-1), join(scratchOf(), "README.md"));
+  const note = join(fleet.home, "data", "note.md");
+  writeFileSync(note, "mine\n");
+  const run = edit(note);
+  assert.equal(run.stdout, "");
+  assert.equal(fleet.editorCalls()[0]?.args.at(-1), note);
+  assert.equal(fleet.editorCalls()[0]?.cwd, process.cwd());
+});
+
+test("the update check, lane discovery and the clone refresh never see a scratch worktree, and a change on the remote moves the clone and not the scratch", () => {
+  edit(agents());
+  const scratchBranch = branchOf(scratchOf());
+  const scratchHead = tip(scratchOf(), "HEAD");
+  const env = { ...process.env, ...fleet.env() };
+  const update = execFileSync("node", [fleet.scratch.launch, "update", "--check"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.deepEqual(JSON.parse(update), { state: "ready", root: fleet.scratch.root });
+  const secrets = execFileSync("node", [fleet.scratch.launch, "secrets"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.deepEqual(
+    secrets
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split(":")[0]),
+    ["main", "cleo"],
+  );
+  assert.match(refreshClone(fleet.clone), /already current/);
+  const landed = landOnRemote(fleet.remote, "elsewhere");
+  const refreshed = refreshClone(fleet.clone);
+  assert.doesNotMatch(refreshed, /STUCK/);
+  assert.equal(tip(fleet.clone), landed);
+  assert.equal(tip(scratchOf(), "HEAD"), scratchHead);
+  assert.equal(branchOf(scratchOf()), scratchBranch);
+  assert.ok(branches().includes(scratchBranch));
+});
+
+test("a merged scratch branch whose remote branch is deleted survives the clone refresh while the scratch holds it", () => {
+  edit(agents());
+  const branch = branchOf(scratchOf());
+  writeFileSync(join(scratchOf(), "work.md"), "work\n");
+  git(scratchOf(), "add", "work.md");
+  git(scratchOf(), "commit", "-q", "-m", "work");
+  const pushed = fleet.files(["push"], {}, scratchOf());
+  assert.equal(pushed.status, 0, pushed.stderr);
+  assert.match(pushed.stdout, new RegExp(`pushed ${branch} to origin/${branch}`));
+  assert.equal(git(fleet.remote, "rev-parse", branch), tip(scratchOf(), "HEAD"));
+  assert.equal(git(scratchOf(), "rev-parse", "--abbrev-ref", "@{upstream}"), `origin/${branch}`);
+  git(fleet.remote, "branch", "-D", branch);
+  const refreshed = refreshClone(fleet.clone);
+  assert.doesNotMatch(refreshed, /STUCK/);
+  assert.ok(branches().includes(branch));
+});
+
+test("scratch lists each scratch with its branch, how far it is from origin, its dirty files and whether reset is allowed", () => {
+  assert.match(fleet.files(["scratch"]).stdout, /no scratch worktree on this host yet/);
+  edit(agents());
+  const branch = branchOf(scratchOf());
+  writeFileSync(join(scratchOf(), "dirty.md"), "x\n");
+  landOnRemote(fleet.remote, "elsewhere");
+  git(scratchOf(), "fetch", "-q", "origin");
+  const listed = fleet.files(["scratch"]).stdout;
+  assert.equal(
+    listed,
+    `fleet: ${scratchOf()} on ${branch}, 0 ahead and 1 behind origin/main, 1 dirty files, reset allowed\n`,
+  );
+  git(scratchOf(), "add", "dirty.md");
+  git(scratchOf(), "commit", "-q", "-m", "mine");
+  assert.match(
+    fleet.files(["scratch"]).stdout,
+    /1 ahead and 1 behind origin\/main, 0 dirty files, has commits that are not merged, reset refuses/,
+  );
+});
+
+test("scratch reset refuses dirty files and unmerged commits, and moves a merged scratch onto a fresh branch off origin/main", () => {
+  edit(agents());
+  const old = branchOf(scratchOf());
+  writeFileSync(join(scratchOf(), "dirty.md"), "x\n");
+  const dirty = fleet.files(["scratch", "reset"]);
+  assert.equal(dirty.status, 1);
+  assert.match(dirty.stderr, /has 1 dirty files/);
+  git(scratchOf(), "add", "dirty.md");
+  git(scratchOf(), "commit", "-q", "-m", "mine");
+  const unmerged = fleet.files(["scratch", "reset"]);
+  assert.equal(unmerged.status, 1);
+  assert.match(unmerged.stderr, new RegExp(`${old} has commits that are not merged`));
+  assert.equal(branchOf(scratchOf()), old);
+  fleet.files(["push"], {}, scratchOf());
+  const landed = landOnRemote(fleet.remote, "squash of mine");
+  git(fleet.remote, "branch", "-D", old);
+  const reset = fleet.files(["scratch", "reset"]);
+  assert.equal(reset.status, 0, reset.stderr);
+  const fresh = branchOf(scratchOf());
+  assert.notEqual(fresh, old);
+  assert.match(fresh, /^scratch\/p620-/);
+  assert.equal(tip(scratchOf(), "HEAD"), landed);
+  assert.equal(branches().includes(old), false);
+  assert.match(reset.stdout, new RegExp(`is on ${fresh} from origin/main, and ${old} is deleted`));
+});
+
+test("E says how far the scratch is ahead of the lane's checkout when the remote moved on", () => {
+  landOnRemote(fleet.remote, "elsewhere");
+  edit(agents());
+  const status = fleet.editorCalls()[0]?.args.find((arg) => arg.startsWith("let &statusline"));
+  assert.match(status ?? "", /1 commits ahead of this lane''s checkout/);
+});
+
+test("E refuses a worker's worktree, a released skill outside the skills lane, and a repository with no clone on this host, and makes no scratch", () => {
+  const worker = join(`${fleet.clone}.worktrees`, "c-7-a1");
+  git(fleet.clone, "worktree", "add", "-q", "-b", "c-7-a1", worker);
+  const refusedWorker = edit(join(worker, "AGENTS.md"));
+  assert.equal(refusedWorker.status, 1);
+  assert.match(
+    refusedWorker.stderr,
+    /a worker owns this worktree. S shows a file to this lane's mate/,
+  );
+  const skill = edit(join(fleet.userHome, ".agents", "skills", "lavish", "SKILL.md"));
+  assert.equal(skill.status, 1);
+  assert.match(
+    skill.stderr,
+    /skills are edited in the lane that owns them. M sends a request to main/,
+  );
+  git(
+    fleet.scratch.root,
+    "remote",
+    "set-url",
+    "origin",
+    join(fleet.scratch.parent, "elsewhere.git"),
+  );
+  const unknown = edit(agents());
+  assert.equal(unknown.status, 1);
+  assert.match(
+    unknown.stderr,
+    /this host has no clone of the repository this file belongs to: register one first/,
+  );
+  assert.equal(existsSync(scratchOf()), false);
+  assert.deepEqual(fleet.editorCalls(), []);
+});

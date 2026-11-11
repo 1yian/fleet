@@ -23,6 +23,12 @@ export interface LaneConfig {
   readonly workerArgs: readonly string[];
   readonly direnv?: string;
   readonly cardd?: CarddConfig;
+  readonly files?: FilesConfig;
+}
+
+export interface FilesConfig {
+  readonly roots: readonly string[];
+  readonly previews: boolean;
 }
 
 export const LANE_FILE = join("config", "lane.json");
@@ -124,6 +130,22 @@ function carddConfig(file: string, value: unknown): CarddConfig | undefined {
   return { host, root, db, restart: command };
 }
 
+function filesConfig(file: string, value: unknown): FilesConfig | undefined {
+  if (value === undefined) return undefined;
+  const { roots, previews = true } = isRecord(value) ? value : {};
+  const listed = strings(roots);
+  if (
+    !isRecord(value) ||
+    typeof previews !== "boolean" ||
+    (roots !== undefined && (!Array.isArray(roots) || listed.length !== roots.length)) ||
+    !listed.every((each) => isAbsolute(each))
+  )
+    throw new Error(
+      `${file}: "files" takes an optional "roots" list of absolute folders and an optional boolean "previews"`,
+    );
+  return { roots: listed, previews };
+}
+
 const NEEDS = `needs "lane", "url", and a "token" or a "bws" block`;
 
 function credentials(file: string, config: Json): { token?: string; bws?: BwsConfig } {
@@ -145,6 +167,7 @@ export function parseLaneConfig(file: string, config: unknown): LaneConfig {
   const folder = direnvFolder(file, config["direnv"]);
   const cardd = carddConfig(file, config["cardd"]);
   const own = ownHost(file, config["host"]);
+  const files = filesConfig(file, config["files"]);
   return {
     lane,
     url,
@@ -157,7 +180,17 @@ export function parseLaneConfig(file: string, config: unknown): LaneConfig {
     workerArgs: strings(config["workerArgs"]),
     ...(folder === undefined ? {} : { direnv: folder }),
     ...(cardd === undefined ? {} : { cardd }),
+    ...(files === undefined ? {} : { files }),
   };
+}
+
+export const filesSettings = (lane: LaneConfig): FilesConfig =>
+  lane.files ?? { roots: [], previews: true };
+
+export function exportHosts(lane: LaneConfig): void {
+  process.env["FLEET_HOSTS"] ??= JSON.stringify(lane.hosts);
+  process.env["FLEET_HOST"] ??= lane.host ?? "";
+  process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
 }
 
 export function readLaneConfig(home: string): LaneConfig | undefined {
