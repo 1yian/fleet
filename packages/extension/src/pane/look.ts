@@ -73,8 +73,9 @@ function paint(theme: Theme, row: Row, width: number): string {
   const { colors } = theme;
   const tone = TONES[row.kind](colors);
   const right = row.more === 0 ? "" : `+${String(row.more)} more `;
-  const room = Math.max(0, width - 3 - visibleWidth(right));
-  const text = truncateToWidth(row.text, room);
+  const gap = right === "" ? 0 : 1;
+  const room = Math.max(0, width - 3 - visibleWidth(right) - gap);
+  const text = stripTerminalSequences(truncateToWidth(row.text, room));
   const pad = " ".repeat(Math.max(0, width - 3 - visibleWidth(text) - visibleWidth(right)));
   const glyph = theme.style(GLYPHS[row.kind], { fg: tone, bold: true });
   const tint = mixColors(colors.userMessageBg, tone, TINT);

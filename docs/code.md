@@ -323,6 +323,7 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - A lane that is down is not a need. The board cannot tell a lane that main stopped on purpose from one that died: a stopped mate's session is also lost. Main's own failures already reach the captain as a hold.
 - The pane paints only when the text changed. A widget factory replaces the component, so repainting each poll would redraw the strip for nothing. The strip component keeps no theme colors: it reads `theme.colors` on every render, so a theme change reaches it.
 - Card titles come from mates, so the strip removes control characters and terminal sequences before it draws one. A title with a newline or an escape would break the row or move the cursor.
+- `truncateToWidth` ends its text with a full reset. A reset ends the strip's tint for the rest of the row. The strip removes that reset from a cut title and keeps one column between the cut and `+N more`. So the tint covers the whole row, and the ellipsis does not touch the count.
 - `session_shutdown` clears the status and the widget, so a reload or a new session never leaves a count that no one refreshes. The new session paints again at its first connect.
 - The footer's chips row also starts with a glyph, so `e2e/extension/pane.test.ts` tells the strip from the chips by the character after the glyph: a digit is a chip.
 - The strip is a widget above the editor, under its own key, so Calm's boat draws beside it. Neither sets the title, and the editor stays with OptChat.

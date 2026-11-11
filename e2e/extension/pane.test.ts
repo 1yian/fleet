@@ -244,6 +244,39 @@ test("the strip shows the worst need first with the rest counted, the chips colo
   assert.equal(stripRows(again).length, 1);
 });
 
+test("a title too wide for the strip is cut to one row and the count of the others stays apart from it", async () => {
+  const pane = await openMain(QUICK_LIMITS);
+  await screenWhere(pane, "the clear state", showing(["✓ clear"]));
+
+  const wide = await cleoShipCard(
+    "長いタイトル of a card title that cannot fit one row ".repeat(6),
+  );
+  await (await workerOf(wide)).call("report", { status: "failed", text: "the build is red" });
+  const other = await cleoShipCard("Port the calendar");
+  await (await workerOf(other)).call("report", { status: "failed", text: "also red" });
+
+  const cut = await screenWhere(pane, "two broken cards", showing(["● 2"]));
+  keep("10-wide-title-cut", cut);
+  const [row, ...rest] = stripRows(cut);
+  assert.equal(rest.length, 0, `the strip is more than one row:\n${cut}`);
+  assert.ok(
+    row?.startsWith(`● c-${String(wide.id)} 長いタイトル`),
+    `the strip row is ${String(row)}`,
+  );
+  assert.match(row ?? "", /\.\.\. \+1 more$/, "the cut title does not run into the count");
+
+  const colored = await herdr().coloredScreen(pane);
+  keep("10-wide-title-cut.ansi", colored);
+  const painted = colored.split("\n").find((line) => line.includes("+1 more")) ?? "";
+  const tintAt = (text: string): string => {
+    const before = painted.slice(0, painted.indexOf(text));
+    const run = before.slice(before.lastIndexOf("\u001b[0m"));
+    return run.match(/\u001b\[48;[\d;]*m/)?.[0] ?? "none";
+  };
+  assert.notEqual(tintAt("c-"), "none", "the strip has a tint");
+  assert.equal(tintAt("+1 more"), tintAt("c-"), "the tint stops where the title is cut");
+});
+
 test("the pane says only that cardd is not answering while it is down, and the counts return once it answers", async () => {
   const pane = await openMain(QUICK_LIMITS);
   await screenWhere(pane, "the clear state", showing(["✓ clear"]));
