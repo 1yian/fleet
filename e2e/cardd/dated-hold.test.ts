@@ -280,6 +280,20 @@ test("a worker whose Pi has exited is not a watcher: its hold reads gone, and a 
   );
 });
 
+test("a worker that was dispatched but never connected is not a watcher, and one that connects becomes one", async () => {
+  const watched = await newCard(cleo, "Watched card");
+  const token = await begin(cleo, watched);
+  await assert.rejects(
+    cleo.call("hold", date(await newCard(cleo, "Waiter"), { worker: watched.id, remaining: [] })),
+    { message: /needs a watcher that runs now, and the worker of c-\d+ is not running/ },
+  );
+
+  await fleet.cardd.connect(token);
+  const waiter = await newCard(cleo, "Second waiter");
+  await cleo.call("hold", date(waiter, { worker: watched.id, remaining: [] }));
+  assert.equal((await waitOf(waiter))?.watch, "running");
+});
+
 test("a mate can watch only its own lane's job, schedule, and worker, and a refusal tells nothing about them", async () => {
   const quinn = await fleet.cardd.connect(fleet.cardd.addLane("quinn", "main"));
   const build = await newCard(cleo, "Build card");

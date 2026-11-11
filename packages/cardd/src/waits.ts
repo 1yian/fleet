@@ -47,7 +47,7 @@ function workerWatch(db: DatabaseSync, card: number): Watching {
     .prepare(
       `SELECT 1 FROM sessions s JOIN attempts a ON a.id = s.attempt
        WHERE a.card = ? AND a.state IN ('starting', 'active')
-         AND s.state IN ('starting', 'idle', 'running', 'waiting')`,
+         AND s.state IN ('idle', 'running', 'waiting')`,
     )
     .get(card);
   return connected === undefined ? ABSENT.worker(card) : alive(`the worker of c-${String(card)}`);
