@@ -68,6 +68,7 @@ async function readOnBothSurfaces(said: string, zone: string) {
   const acted = await fromBoard(board, said, zone);
   assert.equal(acted.status, 200, `${said}: ${acted.error ?? ""}`);
   const fromTheBoard = check(ActedSchema, acted.body).later;
+  assert.ok(fromTheBoard, `${said}: the board action says what it read`);
   const fromThePane = await fromPane(pane, said, zone);
   return {
     board: fromTheBoard,
@@ -174,12 +175,51 @@ test("a zone in his words wins however he names it: an abbreviation, an offset, 
     ["2099-12-31 16:00 -08:00", "UTC", Date.UTC(2100, 0, 1, 0), "-08:00"],
     ["Dec 31 2099 4PM Europe/Paris", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
     ["Jul 4 2099 4PM west coast", "UTC", Date.UTC(2099, 6, 4, 16), "UTC"],
+    ["Dec 31 2099 4PM Canada/Eastern", "UTC", Date.UTC(2099, 11, 31, 21), "America/Toronto"],
+    ["Dec 31 2099 4PM US/Pacific", "UTC", Date.UTC(2100, 0, 1, 0), "America/Los_Angeles"],
+    ["Dec 31 2099 4PM Etc/GMT-5", "UTC", Date.UTC(2099, 11, 31, 11), "Etc/GMT-5"],
+    ["Dec 31 2099 4PM UTC", "Asia/Tokyo", Date.UTC(2099, 11, 31, 16), "UTC"],
+    ["in 2 hours UTC", "Asia/Tokyo", 0, "UTC"],
     ["Nov 1 2099 1:30am America/New_York", "UTC", Date.UTC(2099, 10, 1, 5, 30), "America/New_York"],
   ];
   for (const [said, screen, until, zone] of named) {
+    const before = Date.now();
     const read = await readOnBothSurfaces(said, screen);
-    assert.deepEqual(read.board, { until, zone }, `${said} from the board on a ${screen} screen`);
-    assert.deepEqual(read.pane, { until, zone }, `${said} from the pane on a ${screen} screen`);
+    for (const [surface, result] of [
+      ["board", read.board],
+      ["pane", read.pane],
+    ] as const) {
+      const where = `${said} from the ${surface} on a ${screen} screen`;
+      assert.equal(result.zone, zone, where);
+      if (until === 0) assert.ok(Math.abs(result.until - before - 120 * MINUTE) < MINUTE, where);
+      else assert.equal(result.until, until, where);
+    }
+  }
+});
+
+test("connecting words in capitals are not zones: AT, ON, and the like hold the time he typed, the same from the board and from the pane", async () => {
+  const day = 24 * 60 * MINUTE;
+  const startOfToday = Math.floor(Date.now() / day) * day;
+  const phrases: [string, (until: number) => boolean][] = [
+    ["Dec 31 2099 4PM ON", (until) => until === Date.UTC(2099, 11, 31, 16)],
+    ["4PM ON Dec 31 2099", (until) => until === Date.UTC(2099, 11, 31, 16)],
+    ["Dec 31 2099 AT 4PM", (until) => until === Date.UTC(2099, 11, 31, 16)],
+    ["TOMORROW 9AM", (until) => until === startOfToday + day + 9 * 60 * MINUTE],
+    ["tomorrow AT 4PM", (until) => until === startOfToday + day + 16 * 60 * MINUTE],
+    [
+      "Friday AT 4PM",
+      (until) => {
+        const at = new Date(until);
+        return at.getUTCDay() === 5 && at.getUTCHours() === 16 && until < startOfToday + 9 * day;
+      },
+    ],
+  ];
+  for (const [said, right] of phrases) {
+    const read = await readOnBothSurfaces(said, "UTC");
+    assert.ok(right(read.board.until), `${said} from the board`);
+    assert.ok(right(read.pane.until), `${said} from the pane`);
+    assert.equal(read.board.zone, "UTC");
+    assert.equal(read.pane.zone, "UTC");
   }
 });
 
@@ -230,6 +270,13 @@ test("text with no time is refused in place, with what he can say, and nothing i
     ["25:00", /not a time of day/],
     ["4pm America/Nowhere", unknownZone("America/Nowhere")],
     ["Dec 31 2099 4PM CHT", unknownZone("CHT")],
+    ["Dec 31 2099 4PM GMT+abc", unknownZone("GMT+abc")],
+    ["Dec 31 2099 4PM +05:3", unknownZone("+05:3")],
+    ["Dec 31 2099 4PM UTC+2:75", unknownZone("UTC+2:75")],
+    ["Dec 31 2099 4PM +2000", unknownZone("+2000")],
+    ["Dec 31 2099 4PM Canadaa/Eastern", unknownZone("Canadaa/Eastern")],
+    ["in 2 hours IST", unknownZone("IST")],
+    ["in 2 hours CHT", unknownZone("CHT")],
     ["Nov 20 2099 CHT", unknownZone("CHT")],
     ["4PM IST", unknownZone("IST")],
     ["4PM UTC+25", unknownZone("UTC+25")],

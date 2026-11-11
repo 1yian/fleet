@@ -165,6 +165,17 @@ test("a zone the reader does not know stays on the Later row with what to use, r
 
   await lab.herdr().press(pane, "esc");
   await lab.screenWhere(pane, "the words cleared", onCard(["→ Later…", "type until when"]));
+  await lab.herdr().type(pane, "Dec 31 2099 4PM GMT+abc");
+  await lab.herdr().press(pane, "enter");
+  await lab.screenWhere(
+    pane,
+    "the refusal of the part of the zone it cannot read, with his words kept",
+    onCard(["GMT+abc is not a time zone the reader knows", "→ Dec 31 2099 4PM GMT+abc"]),
+  );
+  assert.deepEqual(await captainHolds(ship), []);
+
+  await lab.herdr().press(pane, "esc");
+  await lab.screenWhere(pane, "the words cleared again", onCard(["→ Later…", "type until when"]));
   await lab.herdr().type(pane, "Dec 31 2099 4PM CET");
   await lab.herdr().press(pane, "enter");
   keep(

@@ -127,6 +127,15 @@ test("a zone he names that the reader does not know is refused in the Later box 
   assert.equal(await box.inputValue(), "Dec 31 2099 4PM CHT");
   assert.deepEqual(await entriesOf(idOf("simple")), before);
   assert.equal(await region("Needs you").getByRole("article", { name: SIMPLE }).count(), 1);
+
+  await box.fill("Dec 31 2099 4PM GMT+abc");
+  await box.press("Enter");
+  await problem
+    .getByText("GMT+abc is not a time zone the reader knows", { exact: false })
+    .waitFor();
+  assert.equal(await box.inputValue(), "Dec 31 2099 4PM GMT+abc");
+  assert.deepEqual(await entriesOf(idOf("simple")), before);
+  assert.equal(await region("Needs you").getByRole("article", { name: SIMPLE }).count(), 1);
 });
 
 test("a time in a zone he names holds the card, and the notice shows the resolved time and zone", async () => {

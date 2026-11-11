@@ -95,11 +95,9 @@ const WEEKDAYS: Readonly<Record<string, WakeDay>> = {
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const MONTH =
   "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
-const AREA = "america|europe|asia|africa|australia|pacific|atlantic|indian|antarctica|arctic|etc";
-const SEGMENT = "[a-z]+(?:[_-][a-z]+)*(?:[+-]\\d{1,2})?";
+const SLASHED = "(?<![\\w./:@-])[a-z]+(?:_[a-z]+)*(?:/[a-z][^\\s/]*)+";
 const UNITS = "sec|second|min|minute|hr|hour|day|wk|week";
 const COUNT = "a|an|half an|\\d{1,4}";
-const OFFSET = "[+-]\\s*\\d{1,2}(?::\\d+)?";
 const AFTER_TIME = "(?<=(?:\\d:\\d{2}|[ap]m|noon|midnight)\\s*)";
 
 const RELATIVE = new RegExp(`\\bin\\s+(?<count>${COUNT})\\s*(?<unit>(?:${UNITS})s?)\\b`, "i");
@@ -108,11 +106,33 @@ const ANOTHER_AMOUNT = new RegExp(
   "i",
 );
 const ZONE = new RegExp(
-  `\\b(?:(?:${AREA})(?:/${SEGMENT}){1,2}|(?:utc|gmt)\\s*${OFFSET}|(?-i:${Object.keys(CAPITAL_ZONES).join("|")})|${Object.keys(ZONES).join("|")})\\b|${AFTER_TIME}[+-]\\d{1,2}:\\d{2}\\b`,
+  `${SLASHED}|\\b(?:utc|gmt)(?:\\s*[+-]\\S*|\\S*)|\\b(?:(?-i:${Object.keys(CAPITAL_ZONES).join("|")})|${Object.keys(ZONES).join("|")})\\b|${AFTER_TIME}[+-]\\d\\S*`,
   "i",
 );
 const FIXED_OFFSET = /^(?:utc|gmt)?\s*(?<sign>[+-])\s*(?<hours>\d{1,2})(?::(?<minutes>\d{2}))?$/i;
 const SHOUTED_ZONE = /^\s*(?<token>[A-Z]{2,5})(?![A-Za-z0-9])/;
+const CONNECTING = new Set([
+  "at",
+  "on",
+  "by",
+  "of",
+  "in",
+  "to",
+  "the",
+  "and",
+  "or",
+  "am",
+  "pm",
+  "next",
+  "until",
+  "for",
+  "from",
+  "this",
+  "that",
+  "with",
+  "ok",
+]);
+const MONTH_WORD = new RegExp(`^(?:${MONTH})$`, "i");
 const MERIDIEM = /\b(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<half>[ap])m\b/i;
 const TWENTY_FOUR = /\b(?<hour>\d{1,2}):(?<minute>\d{2})\b/i;
 const NOON = /\b(?<word>noon|midnight)\b/i;
@@ -166,7 +186,8 @@ class Rest {
   shoutedZone(): string | undefined {
     for (const end of this.ends) {
       const token = SHOUTED_ZONE.exec(this.text.slice(end))?.groups?.["token"];
-      if (token !== undefined) return token;
+      if (token !== undefined && !CONNECTING.has(token.toLowerCase()) && !MONTH_WORD.test(token))
+        return token;
     }
     return undefined;
   }
@@ -207,7 +228,7 @@ function zoneNamed(token: string): string | undefined {
   if (known !== undefined) return known;
   const offset = FIXED_OFFSET.exec(token);
   if (offset !== null) return fixedOffset(offset);
-  if (timeZoneProblem(token) !== undefined) return undefined;
+  if (!token.includes("/") || timeZoneProblem(token) !== undefined) return undefined;
   return new Intl.DateTimeFormat("en", { timeZone: token }).resolvedOptions().timeZone;
 }
 
@@ -394,14 +415,14 @@ export function laterAt(said: string, now: number, zone: string): LaterResult {
   const clock = clockIn(rest, said);
   const day = dayIn(rest, said);
   const weekday = weekdayIn(rest);
+  const shouted = rest.shoutedZone();
+  if (shouted !== undefined) throw new Error(unknownZone(shouted));
   const found = [clock, day, weekday].some((each) => each !== undefined);
   if (ahead !== undefined) {
     if (found) throw new Error(`"${said}" gives both a time ahead and a time of day. Say one.`);
     return { until: now + ahead, zone: named ?? zone };
   }
   if (!found) throw new Error(`No time in "${said}". Say when, such as ${LATER_EXAMPLES}.`);
-  const shouted = rest.shoutedZone();
-  if (shouted !== undefined) throw new Error(unknownZone(shouted));
   const used = named ?? zone;
   return { until: resolve({ said, zone: used, now, clock, day, weekday }), zone: used };
 }
