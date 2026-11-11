@@ -113,6 +113,55 @@ test("a zone in his words wins over the zone of his browser", async () => {
   assert.deepEqual(hold.fields["wait"], { by: "later", text: "Dec 31 2099 4PM CST" });
 });
 
+test("a zone he names that the reader does not know is refused in the Later box with what to use, and what he typed stays there", async () => {
+  await openLater(SIMPLE);
+  const box = until(SIMPLE);
+  const before = await entriesOf(idOf("simple"));
+  await box.fill("Dec 31 2099 4PM CHT");
+  await box.press("Enter");
+
+  const problem = later(SIMPLE).getByRole("alert");
+  await problem.getByText("CHT is not a time zone the reader knows", { exact: false }).waitFor();
+  await problem.getByText("Europe/Paris", { exact: false }).waitFor();
+  await problem.getByText("UTC+2", { exact: false }).waitFor();
+  assert.equal(await box.inputValue(), "Dec 31 2099 4PM CHT");
+  assert.deepEqual(await entriesOf(idOf("simple")), before);
+  assert.equal(await region("Needs you").getByRole("article", { name: SIMPLE }).count(), 1);
+});
+
+test("a time in a zone he names holds the card, and the notice shows the resolved time and zone", async () => {
+  await openLater(SIMPLE);
+  await until(SIMPLE).fill("Dec 31 2099 4PM CET");
+  await until(SIMPLE).press("Enter");
+  await region("Up next").getByRole("article", { name: SIMPLE }).waitFor();
+  await page
+    .getByRole("status")
+    .getByText(
+      `c-${String(idOf("simple"))} comes back to you Thu, Dec 31, 2099, 4:00 PM GMT+1 (Europe/Paris)`,
+      { exact: true },
+    )
+    .waitFor();
+  const paris = await lastHold(idOf("simple"));
+  assert.equal(paris.fields["until"], Date.UTC(2099, 11, 31, 15, 0));
+  assert.deepEqual(paris.fields["wait"], { by: "later", text: "Dec 31 2099 4PM CET" });
+
+  const title = "Vehicle acquisition: a passed lead stops Cleo's emails";
+  await openLater(title);
+  await until(title).fill("Dec 31 2099 4PM UTC+2");
+  await until(title).press("Enter");
+  await region("Up next").getByRole("article", { name: title }).waitFor();
+  await page
+    .getByRole("status")
+    .getByText(
+      `c-${String(idOf("question"))} comes back to you Thu, Dec 31, 2099, 4:00 PM GMT+2 (+02:00)`,
+      { exact: true },
+    )
+    .waitFor();
+  const offset = await lastHold(idOf("question"));
+  assert.equal(offset.fields["until"], Date.UTC(2099, 11, 31, 14, 0));
+  assert.deepEqual(offset.fields["wait"], { by: "later", text: "Dec 31 2099 4PM UTC+2" });
+});
+
 test("text with no time is refused in the Later box, and what he typed stays there", async () => {
   await openLater(SIMPLE);
   const box = until(SIMPLE);

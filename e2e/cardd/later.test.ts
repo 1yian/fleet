@@ -57,6 +57,24 @@ async function fromPane(card: Card, said: string, zone: string) {
   return check(OPS["pane.later"].result, await fleet.main.call("pane.later", args));
 }
 
+const unknownZone = (token: string): RegExp =>
+  new RegExp(
+    `${token.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")} is not a time zone the reader knows\\. Use a city such as Europe/Paris, an offset such as UTC\\+2, or one of ET, CT, MT, PT\\.`,
+  );
+
+async function readOnBothSurfaces(said: string, zone: string) {
+  const board = await asked(`Board reads ${said} in ${zone}`);
+  const pane = await asked(`Pane reads ${said} in ${zone}`);
+  const acted = await fromBoard(board, said, zone);
+  assert.equal(acted.status, 200, `${said}: ${acted.error ?? ""}`);
+  const fromTheBoard = check(ActedSchema, acted.body).later;
+  const fromThePane = await fromPane(pane, said, zone);
+  return {
+    board: fromTheBoard,
+    pane: { until: fromThePane.until, zone: fromThePane.zone },
+  };
+}
+
 async function untilOf(said: string, zone: string): Promise<number> {
   const card = await asked(`Read ${said} in ${zone}`);
   return (await fromPane(card, said, zone)).until;
@@ -129,6 +147,42 @@ test("a bare time is read in the zone of the screen he typed on, a zone in his w
   assert.equal(await untilOf(`${clock(now + 120 * MINUTE)} UTC`, "Asia/Tokyo"), nextTime);
 });
 
+test("a zone in his words wins however he names it: an abbreviation, an offset, or a city, the same from the board and from the pane", async () => {
+  const named: [string, string, number, string][] = [
+    ["Dec 31 2099 4PM CET", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
+    ["Jul 4 2099 4PM CEST", "UTC", Date.UTC(2099, 6, 4, 14), "Europe/Paris"],
+    ["Dec 31 2099 4PM EET", "UTC", Date.UTC(2099, 11, 31, 14), "Europe/Athens"],
+    ["Jul 4 2099 4PM EEST", "UTC", Date.UTC(2099, 6, 4, 13), "Europe/Athens"],
+    ["Dec 31 2099 4PM WET", "UTC", Date.UTC(2099, 11, 31, 16), "Europe/Lisbon"],
+    ["Jul 4 2099 4PM WEST", "UTC", Date.UTC(2099, 6, 4, 15), "Europe/Lisbon"],
+    ["Jul 4 2099 4PM BST", "Asia/Tokyo", Date.UTC(2099, 6, 4, 15), "Europe/London"],
+    ["Dec 31 2099 4PM JST", "UTC", Date.UTC(2099, 11, 31, 7), "Asia/Tokyo"],
+    ["Dec 31 2099 4PM KST", "UTC", Date.UTC(2099, 11, 31, 7), "Asia/Seoul"],
+    ["Jul 4 2099 4PM AEST", "UTC", Date.UTC(2099, 6, 4, 6), "Australia/Sydney"],
+    ["Dec 31 2099 4PM AEST", "UTC", Date.UTC(2099, 11, 31, 5), "Australia/Sydney"],
+    ["Dec 31 2099 4PM AEDT", "UTC", Date.UTC(2099, 11, 31, 5), "Australia/Sydney"],
+    ["Jul 4 2099 4PM NZST", "UTC", Date.UTC(2099, 6, 4, 4), "Pacific/Auckland"],
+    ["Dec 31 2099 4PM NZDT", "UTC", Date.UTC(2099, 11, 31, 3), "Pacific/Auckland"],
+    ["Jul 4 2099 4PM CST", "UTC", Date.UTC(2099, 6, 4, 21), "America/Chicago"],
+    ["Dec 31 2099 4PM UTC+2", "UTC", Date.UTC(2099, 11, 31, 14), "+02:00"],
+    ["Dec 31 2099 4PM utc +2", "UTC", Date.UTC(2099, 11, 31, 14), "+02:00"],
+    ["Dec 31 2099 4PM GMT-5", "Asia/Tokyo", Date.UTC(2099, 11, 31, 21), "-05:00"],
+    ["Dec 31 2099 4PM GMT-3:30", "UTC", Date.UTC(2099, 11, 31, 19, 30), "-03:30"],
+    ["Dec 31 2099 4PM UTC+14", "UTC", Date.UTC(2099, 11, 31, 2), "+14:00"],
+    ["Dec 31 2099 4PM UTC-12", "UTC", Date.UTC(2100, 0, 1, 4), "-12:00"],
+    ["Dec 31 2099 4PM +05:30", "UTC", Date.UTC(2099, 11, 31, 10, 30), "+05:30"],
+    ["2099-12-31 16:00 -08:00", "UTC", Date.UTC(2100, 0, 1, 0), "-08:00"],
+    ["Dec 31 2099 4PM Europe/Paris", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
+    ["Jul 4 2099 4PM west coast", "UTC", Date.UTC(2099, 6, 4, 16), "UTC"],
+    ["Nov 1 2099 1:30am America/New_York", "UTC", Date.UTC(2099, 10, 1, 5, 30), "America/New_York"],
+  ];
+  for (const [said, screen, until, zone] of named) {
+    const read = await readOnBothSurfaces(said, screen);
+    assert.deepEqual(read.board, { until, zone }, `${said} from the board on a ${screen} screen`);
+    assert.deepEqual(read.pane, { until, zone }, `${said} from the pane on a ${screen} screen`);
+  }
+});
+
 test("the words he types read as a day, a weekday, a date, or a time ahead", async () => {
   const phrases = [
     "tomorrow",
@@ -174,12 +228,28 @@ test("text with no time is refused in place, with what he can say, and nothing i
     ["in 2 hours at 4pm", /both a time ahead and a time of day/],
     ["in 0 hours", /no time ahead/],
     ["25:00", /not a time of day/],
-    ["4pm America/Nowhere", /not an IANA time zone/],
+    ["4pm America/Nowhere", unknownZone("America/Nowhere")],
+    ["Dec 31 2099 4PM CHT", unknownZone("CHT")],
+    ["Nov 20 2099 CHT", unknownZone("CHT")],
+    ["4PM IST", unknownZone("IST")],
+    ["4PM UTC+25", unknownZone("UTC+25")],
+    ["4PM GMT+2:75", unknownZone("GMT+2:75")],
+    ["4PM UTC-12:30", unknownZone("UTC-12:30")],
+    ["4PM UTC+14:15", unknownZone("UTC+14:15")],
+    ["4PM +05:75", unknownZone("+05:75")],
+    [
+      "Mar 8 2099 2:30am America/New_York",
+      /02:30 does not exist in America\/New_York on 2099-03-08/,
+    ],
+    ["in 2 hours and 30 minutes", /more than one amount of time.*in 150 minutes/],
+    ["in 1 day 3 hours", /more than one amount of time.*in 150 minutes/],
+    ["in an hour and a half", /more than one amount of time.*in 150 minutes/],
   ];
   for (const [text, message] of refused) {
     const outcome = await fromBoard(card, text, "UTC");
     assert.equal(outcome.status, 400, text);
     assert.match(outcome.error ?? "", message, text);
+    await assert.rejects(fromPane(card, text, "UTC"), { message }, text);
   }
   const outcome = await fromBoard(card, "9am", "Mars/Base");
   assert.match(outcome.error ?? "", /not an IANA time zone/);

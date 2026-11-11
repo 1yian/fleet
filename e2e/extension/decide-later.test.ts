@@ -143,6 +143,50 @@ test("text with no time stays on the Later row with the refusal, records nothing
   );
 });
 
+test("a zone the reader does not know stays on the Later row with what to use, records nothing, and a zone he names holds with the time it reads", async () => {
+  const pane = await lab.openMain();
+  const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
+
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the decision", onCard(["Decision 1 of 1", SHIP, "Later…"]));
+  await lab.herdr().press(pane, "down", "down", "down");
+  await lab.herdr().type(pane, "Dec 31 2099 4PM CHT");
+  await lab.herdr().press(pane, "enter");
+  keep(
+    "later-7-zone-refused",
+    await lab.screenWhere(
+      pane,
+      "the zone refusal with his words kept",
+      onCard(["CHT is not a time zone the reader knows", "→ Dec 31 2099 4PM CHT", "⏎ hold"]),
+    ),
+  );
+  assert.deepEqual(await captainHolds(ship), []);
+  assert.equal((await lab.cardd.board()).holds.length, 1, "it still waits for him");
+
+  await lab.herdr().press(pane, "esc");
+  await lab.screenWhere(pane, "the words cleared", onCard(["→ Later…", "type until when"]));
+  await lab.herdr().type(pane, "Dec 31 2099 4PM CET");
+  await lab.herdr().press(pane, "enter");
+  keep(
+    "later-8-zone-held",
+    await lab.screenWhere(
+      pane,
+      "the card to close with the time and zone it reads",
+      (screen) =>
+        cardRows(screen).length === 0 &&
+        showing([
+          `c-${String(ship.id)} comes back to you Thu, Dec 31, 2099, 4:00 PM GMT+1 (Europe/Paris)`,
+        ])(screen),
+    ),
+  );
+  assert.deepEqual(await captainHolds(ship), [
+    {
+      until: Date.UTC(2099, 11, 31, 15, 0),
+      wait: { by: "later", text: "Dec 31 2099 4PM CET" },
+    },
+  ]);
+});
+
 test("every kind of decision keeps his own words and Later: one with options, one with none, and a merge question", async () => {
   const pane = await lab.openMain();
   const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);

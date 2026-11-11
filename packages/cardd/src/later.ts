@@ -6,6 +6,8 @@ const SECOND = 1000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+const two = (n: number): string => String(n).padStart(2, "0");
+
 interface Clock {
   readonly hour: number;
   readonly minute: number;
@@ -52,6 +54,22 @@ const ZONES: Readonly<Record<string, string>> = {
   hst: "Pacific/Honolulu",
   utc: "UTC",
   gmt: "UTC",
+  cet: "Europe/Paris",
+  cest: "Europe/Paris",
+  eet: "Europe/Athens",
+  eest: "Europe/Athens",
+  bst: "Europe/London",
+  jst: "Asia/Tokyo",
+  kst: "Asia/Seoul",
+  aest: "Australia/Sydney",
+  aedt: "Australia/Sydney",
+  nzst: "Pacific/Auckland",
+  nzdt: "Pacific/Auckland",
+};
+
+const CAPITAL_ZONES: Readonly<Record<string, string>> = {
+  WET: "Europe/Lisbon",
+  WEST: "Europe/Lisbon",
 };
 
 const WEEKDAYS: Readonly<Record<string, WakeDay>> = {
@@ -78,40 +96,55 @@ const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "
 const MONTH =
   "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
 const AREA = "america|europe|asia|africa|australia|pacific|atlantic|indian|antarctica|arctic|etc";
-const SEGMENT = "[a-z]+(?:[_-][a-z]+)*";
+const SEGMENT = "[a-z]+(?:[_-][a-z]+)*(?:[+-]\\d{1,2})?";
+const UNITS = "sec|second|min|minute|hr|hour|day|wk|week";
+const COUNT = "a|an|half an|\\d{1,4}";
+const OFFSET = "[+-]\\s*\\d{1,2}(?::\\d+)?";
+const AFTER_TIME = "(?<=(?:\\d:\\d{2}|[ap]m|noon|midnight)\\s*)";
 
-const RELATIVE = new RegExp(
-  `\\bin\\s+(?<count>a|an|half an|\\d{1,4})\\s*(?<unit>(?:sec|second|min|minute|hr|hour|day|wk|week)s?)\\b`,
+const RELATIVE = new RegExp(`\\bin\\s+(?<count>${COUNT})\\s*(?<unit>(?:${UNITS})s?)\\b`, "i");
+const ANOTHER_AMOUNT = new RegExp(
+  `\\b(?:(?:a|an|half an)\\s+|\\d{1,4}\\s*)(?:${UNITS})s?\\b|\\bhalf\\b`,
+  "i",
 );
 const ZONE = new RegExp(
-  `\\b(?:(?:${AREA})(?:/${SEGMENT}){1,2}|${Object.keys(ZONES).join("|")})\\b`,
+  `\\b(?:(?:${AREA})(?:/${SEGMENT}){1,2}|(?:utc|gmt)\\s*${OFFSET}|(?-i:${Object.keys(CAPITAL_ZONES).join("|")})|${Object.keys(ZONES).join("|")})\\b|${AFTER_TIME}[+-]\\d{1,2}:\\d{2}\\b`,
+  "i",
 );
-const MERIDIEM = /\b(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<half>[ap])m\b/;
-const TWENTY_FOUR = /\b(?<hour>\d{1,2}):(?<minute>\d{2})\b/;
-const NOON = /\b(?<word>noon|midnight)\b/;
-const ISO_DATE = /\b(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})\b/;
-const SLASH_DATE = /\b(?<month>\d{1,2})\/(?<day>\d{1,2})(?:\/(?<year>\d{4}|\d{2}))?\b/;
+const FIXED_OFFSET = /^(?:utc|gmt)?\s*(?<sign>[+-])\s*(?<hours>\d{1,2})(?::(?<minutes>\d{2}))?$/i;
+const SHOUTED_ZONE = /^\s*(?<token>[A-Z]{2,5})(?![A-Za-z0-9])/;
+const MERIDIEM = /\b(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<half>[ap])m\b/i;
+const TWENTY_FOUR = /\b(?<hour>\d{1,2}):(?<minute>\d{2})\b/i;
+const NOON = /\b(?<word>noon|midnight)\b/i;
+const ISO_DATE = /\b(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})\b/i;
+const SLASH_DATE = /\b(?<month>\d{1,2})\/(?<day>\d{1,2})(?:\/(?<year>\d{4}|\d{2}))?\b/i;
 const MONTH_FIRST = new RegExp(
   `\\b(?<name>${MONTH})\\s+(?<day>\\d{1,2})(?:st|nd|rd|th)?\\b(?:\\s+(?<year>\\d{4})\\b)?`,
+  "i",
 );
 const DAY_FIRST = new RegExp(
   `\\b(?<day>\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(?<name>${MONTH})\\b(?:\\s+(?<year>\\d{4})\\b)?`,
+  "i",
 );
-const WEEKDAY = new RegExp(`\\b(?<next>next\\s+)?(?<name>${Object.keys(WEEKDAYS).join("|")})\\b`);
-const TOMORROW = /\btomorrow\b/;
-const TODAY = /\btoday\b/;
+const WEEKDAY = new RegExp(
+  `\\b(?<next>next\\s+)?(?<name>${Object.keys(WEEKDAYS).join("|")})\\b`,
+  "i",
+);
+const TOMORROW = /\btomorrow\b/i;
+const TODAY = /\btoday\b/i;
 
-const group = (found: RegExpExecArray, name: string): string => found.groups?.[name] ?? "";
+const group = (found: RegExpExecArray, name: string): string =>
+  (found.groups?.[name] ?? "").toLowerCase();
 
 class Rest {
   private text: string;
   private readonly said: string;
+  private readonly ends: number[] = [];
 
   constructor(said: string) {
     this.said = said;
     this.text = said
-      .toLowerCase()
-      .replace(/\b([ap])\.m\.?/g, "$1m")
+      .replace(/\b([ap])\.m\.?/gi, "$1m")
       .replace(/[,;!?()"“”]/g, " ")
       .replace(/\.(?!\d)/g, " ");
   }
@@ -121,8 +154,21 @@ class Rest {
     if (found === null) return undefined;
     const end = found.index + found[0].length;
     this.text = `${this.text.slice(0, found.index)}${" ".repeat(found[0].length)}${this.text.slice(end)}`;
+    this.ends.push(end);
     if (pattern.test(this.text)) throw new Error(`"${this.said}" names two ${what}. Say one.`);
     return found;
+  }
+
+  holds(pattern: RegExp): boolean {
+    return pattern.test(this.text);
+  }
+
+  shoutedZone(): string | undefined {
+    for (const end of this.ends) {
+      const token = SHOUTED_ZONE.exec(this.text.slice(end))?.groups?.["token"];
+      if (token !== undefined) return token;
+    }
+    return undefined;
   }
 }
 
@@ -134,19 +180,43 @@ function amount(count: string): number {
 function span(rest: Rest, said: string): number | undefined {
   const found = rest.take(RELATIVE, "durations");
   if (found === undefined) return undefined;
+  if (rest.holds(ANOTHER_AMOUNT))
+    throw new Error(
+      `"${said}" gives more than one amount of time. Say one amount, such as in 150 minutes.`,
+    );
   const unit = group(found, "unit").replace(/s$/, "");
   const ms = Math.round(amount(group(found, "count")) * (UNIT_MS[unit] ?? 0));
   if (ms <= 0) throw new Error(`"${said}" is no time ahead. Say a time in the future.`);
   return ms;
 }
 
+const unknownZone = (token: string): string =>
+  `${token} is not a time zone the reader knows. Use a city such as Europe/Paris, an offset such as UTC+2, or one of ET, CT, MT, PT.`;
+
+function fixedOffset(found: RegExpExecArray): string | undefined {
+  const minutes = Number(group(found, "minutes"));
+  const total = Number(group(found, "hours")) * 60 + minutes;
+  const signed = group(found, "sign") === "-" ? -total : total;
+  if (minutes > 45 || minutes % 15 !== 0 || signed < -12 * 60 || signed > 14 * 60) return undefined;
+  const sign = signed < 0 ? "-" : "+";
+  return `${sign}${two(Math.trunc(Math.abs(signed) / 60))}:${two(Math.abs(signed) % 60)}`;
+}
+
+function zoneNamed(token: string): string | undefined {
+  const known = ZONES[token.toLowerCase()] ?? CAPITAL_ZONES[token];
+  if (known !== undefined) return known;
+  const offset = FIXED_OFFSET.exec(token);
+  if (offset !== null) return fixedOffset(offset);
+  if (timeZoneProblem(token) !== undefined) return undefined;
+  return new Intl.DateTimeFormat("en", { timeZone: token }).resolvedOptions().timeZone;
+}
+
 function zoneIn(rest: Rest): string | undefined {
   const found = rest.take(ZONE, "time zones");
   if (found === undefined) return undefined;
-  const zone = ZONES[found[0]] ?? found[0];
-  const problem = timeZoneProblem(zone);
-  if (problem !== undefined) throw new Error(problem);
-  return new Intl.DateTimeFormat("en", { timeZone: zone }).resolvedOptions().timeZone;
+  const zone = zoneNamed(found[0]);
+  if (zone === undefined) throw new Error(unknownZone(found[0]));
+  return zone;
 }
 
 function clockOf(hour: number, minute: number, shown: string): Clock {
@@ -231,15 +301,20 @@ function dayIn(rest: Rest, said: string): Day | undefined {
   return named[0];
 }
 
-const two = (n: number): string => String(n).padStart(2, "0");
-
 function offsetAt(zone: string, ms: number): number {
   return Date.parse(`${localMinute(ms, zone)}:00Z`) - Math.floor(ms / MINUTE) * MINUTE;
 }
 
 function instantIn(zone: string, date: string, clock: Clock): number {
   const wall = Date.parse(`${date}T${two(clock.hour)}:${two(clock.minute)}:00Z`);
-  return wall - offsetAt(zone, wall - offsetAt(zone, wall));
+  const real = [wall - offsetAt(zone, wall - DAY), wall - offsetAt(zone, wall + DAY)].filter(
+    (at) => at + offsetAt(zone, at) === wall,
+  );
+  if (real.length === 0)
+    throw new Error(
+      `${two(clock.hour)}:${two(clock.minute)} does not exist in ${zone} on ${date}, because the clocks skip it. Say a time before or after it.`,
+    );
+  return Math.min(...real);
 }
 
 function civil(year: number, month: number, day: number, said: string): string {
@@ -325,6 +400,8 @@ export function laterAt(said: string, now: number, zone: string): LaterResult {
     return { until: now + ahead, zone: named ?? zone };
   }
   if (!found) throw new Error(`No time in "${said}". Say when, such as ${LATER_EXAMPLES}.`);
+  const shouted = rest.shoutedZone();
+  if (shouted !== undefined) throw new Error(unknownZone(shouted));
   const used = named ?? zone;
   return { until: resolve({ said, zone: used, now, clock, day, weekday }), zone: used };
 }
