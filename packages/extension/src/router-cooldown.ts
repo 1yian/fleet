@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import Value from "typebox/value";
 import { CooldownFileSchema, TiersStateSchema } from "@fleet/protocol";
+import { readTiersConfig } from "./tiers-config.ts";
 
 const COOLING = /(?:^|[(,]\s*)([^\s,()]+\/[^\s,()]+)(?: on [^\s:,()]+)?: cooling/g;
 
@@ -16,7 +17,7 @@ function readJson(path: string): unknown {
 }
 
 function stateDir(agentDir: string): string {
-  const raw = readJson(process.env["PI_TIERS_CONFIG"] ?? join(agentDir, "tiers.json"));
+  const raw = readTiersConfig();
   const dir = Value.Check(TiersStateSchema, raw) ? raw.stateDir : undefined;
   if (dir === undefined) return join(agentDir, "tiers");
   return dir === "~" || dir.startsWith("~/") ? join(homedir(), dir.slice(1)) : dir;

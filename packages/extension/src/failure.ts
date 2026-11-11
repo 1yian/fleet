@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { accountResumeAt } from "./account-rotation.ts";
 import { Blockage, failureLabel } from "./blockage.ts";
 import { compactionFailed, compactionSucceeded } from "./compaction-backoff.ts";
 import type { Link } from "./link.ts";
@@ -142,7 +143,7 @@ export class Failures {
     const blockage = this.blockage;
     const since = blockage?.now ?? 0;
     const phase = compaction ? ({ phase: "compaction" } as const) : {};
-    const resumeAt = routerResumeAt(error);
+    const resumeAt = routerResumeAt(error) ?? accountResumeAt(error);
     const resume = resumeAt === undefined ? {} : { resumeAt };
     this.link.call("incident.report", { error, ...phase, ...resume }).then(
       () => {

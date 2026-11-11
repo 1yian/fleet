@@ -29,7 +29,7 @@ const DispatchParams = Type.Object({
     Type.String({
       ...OPS["attempt.begin"].args.properties.model,
       description:
-        "Explicit provider/model for this worker, kept through restarts. For writing or reviewing non-English text, choose the newest suitable GPT from the model catalog via openai-codex. Omit for the lane's normal worker selection",
+        "Explicit provider/model for this worker, kept through restarts. On one account of a tiers.json account group it pins the model, not the account: the worker moves to another account of the group that serves the same model when its own is throttled or out of quota. For writing or reviewing non-English text, choose the newest suitable GPT from the model catalog via openai-codex. Omit for the lane's normal worker selection",
     }),
   ),
   delivery: Type.Optional(
