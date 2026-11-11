@@ -128,6 +128,16 @@ test("a skill folder that links into a live git checkout is read-only through th
   symlinkSync(join(checkout, "skills", "axi"), join(fleet.released, "axi"));
   assert.equal(opened(join(fleet.userHome, ".agents", "skills", "axi", "SKILL.md")).guarded, true);
   assert.equal(opened(join(checkout, "skills", "axi", "SKILL.md")).guarded, true);
+  const held = fleet.files(["check", join(checkout, "skills")]);
+  assert.equal(held.status, 1);
+  assert.match(held.stderr, /guarded, contains .*axi/);
+  const moved = fleet.files([
+    "rename",
+    join(checkout, "skills"),
+    join(fleet.home, "data", "moved"),
+  ]);
+  assert.equal(moved.status, 1);
+  assert.ok(existsSync(join(checkout, "skills", "axi", "SKILL.md")));
 });
 
 test("check exits 1 and says why for a guarded path, and 0 for a private one", () => {

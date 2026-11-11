@@ -98,7 +98,8 @@ function placesOf(world: World): Place[] {
   }));
   const skills = skillFolders()
     .filter((folder) => existsSync(folder))
-    .map((folder) => ({ kind: "skill" as const, real: resolved(folder), why: SKILL_WHY }));
+    .flatMap((folder) => [folder, ...readdirSync(folder).map((name) => join(folder, name))])
+    .map((path) => ({ kind: "skill" as const, real: resolved(path), why: SKILL_WHY }));
   return [...workers, ...homes, root, ...clones, ...skills];
 }
 

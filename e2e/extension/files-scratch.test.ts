@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { FilesFleet } from "../support/files-fleet.ts";
@@ -261,6 +261,27 @@ test("P on a hovered file in the scratch pushes the scratch branch", () => {
   const outside = fleet.files(["push", join(fleet.home, "AGENTS.md")]);
   assert.equal(outside.status, 1);
   assert.match(outside.stderr, /this is not a scratch worktree/);
+});
+
+test("E opens a scratch copy that links back to a guarded file read-only, and shows metadata for a scratch copy that is binary", () => {
+  edit(agents());
+  const copy = join(scratchOf(), "AGENTS.md");
+  rmSync(copy);
+  symlinkSync(join(fleet.clone, "AGENTS.md"), copy);
+  const linked = edit(agents());
+  assert.equal(linked.status, 0, linked.stderr);
+  const call = fleet.editorCalls().at(0);
+  assert.ok(call !== undefined);
+  assert.ok(call.args.includes("-R") && call.args.includes("-M"));
+  assert.match(
+    call.args.find((arg) => arg.startsWith("let &statusline")) ?? "",
+    /GUARDED, tracked in the fleet clone/,
+  );
+  writeFileSync(join(scratchOf(), "README.md"), Buffer.from([0, 1, 2, 3]));
+  const binary = edit(join(fleet.home, "README.md"));
+  assert.equal(binary.status, 0, binary.stderr);
+  assert.match(binary.stdout, /not opened in a text editor: a binary file/);
+  assert.deepEqual(fleet.editorCalls(), []);
 });
 
 test("E says how far the scratch is ahead of the lane's checkout when the remote moved on", () => {

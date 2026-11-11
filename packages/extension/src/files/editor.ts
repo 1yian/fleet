@@ -31,7 +31,7 @@ export function guardBuffers(): string[] {
   ];
 }
 
-export function editorArgs(decision: Decision, path: string, scratchNote?: string): string[] {
+function editorArgs(decision: Decision, path: string, scratchNote?: string): string[] {
   const banner = decision.editable
     ? [
         ...(scratchNote === undefined ? [] : statusLine(`SCRATCH, ${scratchNote}`)),
@@ -77,7 +77,7 @@ function showMetadata(path: string, because: string): void {
   }
 }
 
-export function runEditor(world: World, args: readonly string[], cwd?: string): number {
+function runEditor(world: World, args: readonly string[], cwd?: string): number {
   for (const editor of EDITORS) {
     const run = spawnSync(editor, args, {
       stdio: "inherit",
@@ -103,6 +103,16 @@ export function showInstead(path: string): number | undefined {
   return 0;
 }
 
+export function openChecked(
+  world: World,
+  path: string,
+  decision: Decision,
+  scratchNote?: string,
+  cwd?: string,
+): number {
+  return showInstead(path) ?? runEditor(world, editorArgs(decision, path, scratchNote), cwd);
+}
+
 export function openFile(world: World, path: string): number {
-  return showInstead(path) ?? runEditor(world, editorArgs(decide(world, path), path));
+  return openChecked(world, path, decide(world, path));
 }
