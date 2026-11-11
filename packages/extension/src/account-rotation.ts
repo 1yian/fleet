@@ -1,6 +1,10 @@
 import type {
+  AgentBeforeSettleEvent,
+  AgentBeforeSettleEventResult,
   ExtensionAPI,
   ExtensionContext,
+  MessageEndEvent,
+  MessageEndEventResult,
   ModelRoute,
   ModelRouteRequest,
 } from "@earendil-works/pi-coding-agent";
@@ -12,6 +16,7 @@ import { readTiersConfig } from "./tiers-config.ts";
 const PROVIDER = "fleet";
 const MODEL_ID = "pinned";
 const COOLED_ENTRY = "fleet-account-cooled";
+const MOVED_ENTRY = "fleet-account-moved";
 const RATE_SECONDS = 600;
 const QUOTA_SECONDS = 3600;
 const MS = 1000;
@@ -91,14 +96,12 @@ export class AccountRotation {
   private readonly pi: ExtensionAPI;
   private readonly cooled = new Map<string, Cooled>();
   private pin: Pin | undefined;
+  private moved: string | undefined;
 
   constructor(pi: ExtensionAPI) {
     this.pi = pi;
-    pi.on("message_end", (event) => {
-      const { message } = event;
-      if (message.role === "assistant" && message.stopReason === "error")
-        this.noteFailure(message.provider, message.model, message.errorMessage ?? "");
-    });
+    pi.on("message_end", (event, ctx) => this.leave(event.message, ctx));
+    pi.on("agent_before_settle", (event) => this.continueOn(event));
   }
 
   async adopt(ctx: ExtensionContext): Promise<void> {
@@ -135,13 +138,46 @@ export class AccountRotation {
     }
   }
 
-  private noteFailure(provider: string, model: string, error: string): void {
+  private noteFailure(provider: string, model: string, error: string): Cooled | undefined {
     const reason = reasonOf(error);
     const pin = this.pin;
-    if (reason === undefined || pin?.model !== model || !pin.accounts.includes(provider)) return;
+    if (reason === undefined || pin?.model !== model || !pin.accounts.includes(provider))
+      return undefined;
     const cooled: Cooled = { provider, reason, untilMs: Date.now() + cooldownMs(reason) };
     this.cooled.set(provider, cooled);
     this.pi.appendEntry(COOLED_ENTRY, cooled);
+    return cooled;
+  }
+
+  private leave(
+    message: MessageEndEvent["message"],
+    ctx: ExtensionContext,
+  ): MessageEndEventResult | undefined {
+    if (message.role !== "assistant") return undefined;
+    this.moved = undefined;
+    if (message.stopReason !== "error") return undefined;
+    const cooled = this.noteFailure(message.provider, message.model, message.errorMessage ?? "");
+    const pin = this.pin;
+    if (cooled === undefined || pin === undefined || ctx.model?.provider !== PROVIDER)
+      return undefined;
+    const verdicts = pin.accounts.map((provider) => this.judge(provider, pin, ctx));
+    if (!verdicts.some((each) => "usable" in each))
+      return { message: { ...message, errorMessage: exhausted(pin.model, verdicts) } };
+    this.moved = `fleet: ${cooled.provider} is ${cooled.reason} for ${pin.model}; continuing on another account.`;
+    return { message: { ...message, errorMessage: this.moved } };
+  }
+
+  private continueOn(event: AgentBeforeSettleEvent): AgentBeforeSettleEventResult | undefined {
+    const content = this.moved;
+    if (content === undefined) return undefined;
+    this.moved = undefined;
+    const entry = {
+      type: "custom_message",
+      customType: MOVED_ENTRY,
+      content,
+      display: true,
+    } as const;
+    return { entries: [...event.entries, entry], continue: true };
   }
 
   private judge(provider: string, pin: Pin, ctx: ExtensionContext): Verdict {
