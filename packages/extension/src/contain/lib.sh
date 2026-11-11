@@ -1,6 +1,7 @@
-# Shared by every containment backend. A backend defines: backend_attach <pid>..., backend_members,
-# backend_adopt <pid>..., backend_signal <TERM|KILL>, backend_release. The script is lib.sh,
-# service.sh, one backend, then main.sh.
+# Shared by every containment backend. A backend defines: backend_attach <pid>..., backend_exists (0 when
+# the worker's unit exists, 1 when it does not, another status when that cannot be told), backend_members,
+# backend_adopt <pid>..., backend_signal <TERM|KILL>, backend_release. The script is lib.sh, service.sh, one
+# backend, then main.sh.
 set -u
 action=$1 worktree=${2%/}
 shift 2

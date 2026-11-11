@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
+import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
 
@@ -111,12 +112,9 @@ export class Jobs {
         tab,
         "--no-focus",
       ]);
-      await herdr("local", [
-        "pane",
-        "run",
-        rootPane(created),
-        `node ${quote(WRAPPER)} ${quote(file)}`,
-      ]);
+      const pane = rootPane(created);
+      await joinContained("local", pane, process.cwd());
+      await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
     } catch (error) {
       rmSync(file, { force: true });
       this.running.delete(job);

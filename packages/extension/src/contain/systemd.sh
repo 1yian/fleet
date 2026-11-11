@@ -58,6 +58,10 @@ backend_adopt() {
   )
 }
 
+backend_exists() {
+  cgroup_dir >/dev/null
+}
+
 backend_members() {
   dir=$(cgroup_dir)
   case $? in

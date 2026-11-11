@@ -52,11 +52,24 @@ async function run(
   ]);
 }
 
+const SHELL_WAIT_TRIES = 50;
+
+async function pidsIn(host: string, pane: string, tries: number): Promise<number[]> {
+  for (let attempt = 1; ; attempt++) {
+    const shell = await shellPid(host, pane);
+    const pids = [...(shell === undefined ? [] : [shell]), ...(await piPids(host, pane))];
+    if (pids.length > 0) return pids;
+    if (attempt >= tries) throw new Error(`no process to contain in pane ${pane} on ${host}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 export async function contain(host: string, pane: string, worktree: string): Promise<void> {
-  const shell = await shellPid(host, pane);
-  const pids = [...(shell === undefined ? [] : [shell]), ...(await piPids(host, pane))];
-  if (pids.length === 0) throw new Error(`no process to contain in pane ${pane} on ${host}`);
-  await run(host, "attach", worktree, pids);
+  await run(host, "attach", worktree, await pidsIn(host, pane, 1));
+}
+
+export async function joinContained(host: string, pane: string, worktree: string): Promise<void> {
+  await run(host, "join", worktree, await pidsIn(host, pane, SHELL_WAIT_TRIES));
 }
 
 export async function releaseAll(host: string, worktree: string): Promise<string> {
