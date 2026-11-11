@@ -157,6 +157,10 @@ export class DecideLab {
     return this.openMain({}, { direction: "down", ratio: 0.65 });
   }
 
+  openNarrowMain(): Promise<string> {
+    return this.openMain({}, { direction: "right", ratio: 0.68 });
+  }
+
   private async shape(lab: HerdrLab, { direction, ratio }: Shape): Promise<void> {
     const made = await lab.run([
       "workspace",

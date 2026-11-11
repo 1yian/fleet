@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
+import { check, OPS, type Card } from "@fleet/protocol";
 import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
 import type { Session } from "../support/cardd.ts";
 
@@ -112,7 +112,7 @@ const resting: Record<string, (worker: Session, card: Card) => Promise<unknown>>
       card: own.id,
       words: "yes, merge it",
       source: "chat",
-      choice: MERGE_OPTIONS[0],
+      choice: "Approve & merge",
     });
   },
   "waiting on the merge question": (worker) =>

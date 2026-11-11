@@ -2,11 +2,9 @@ import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import {
   Input,
   matchesKey,
-  replaceControlCharacters,
   stripTerminalSequences,
   truncateToWidth,
   visibleWidth,
-  wrapTextWithAnsi,
   type Component,
   type Focusable,
   type TuiMouseEvent,
@@ -14,6 +12,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { LATER_EXAMPLES, laidOut } from "@fleet/protocol";
 import type { Decision } from "./decisions.ts";
+import { hanging, packed, paragraphs, plain } from "./wrap.ts";
 
 const WRITE_LABEL = "My words…";
 const LATER_LABEL = "Later…";
@@ -52,31 +51,12 @@ interface Layout {
   readonly spacers: number;
   readonly body: number;
   readonly picks: number;
+  readonly title: readonly string[];
+  readonly note: readonly string[];
 }
 
 const oneLine = (data: string): string =>
   data.includes(PASTE_START) ? data.replace(/\s*[\r\n]+\s*/g, " ") : data;
-
-const plain = (text: string): string => replaceControlCharacters(stripTerminalSequences(text));
-
-const NUMBER_MARKER = /^\d{1,2}\.\s+/;
-
-function hanging(clean: string, width: number): string[] {
-  const marker = NUMBER_MARKER.exec(clean)?.[0];
-  if (marker === undefined) return wrapTextWithAnsi(clean, width);
-  const [first = "", ...rest] = wrapTextWithAnsi(
-    clean.slice(marker.length),
-    Math.max(1, width - marker.length),
-  );
-  return [`${marker}${first}`, ...rest.map((row) => `${" ".repeat(marker.length)}${row}`)];
-}
-
-function paragraphs(text: string, width: number): string[] {
-  return text.split("\n").flatMap((line) => {
-    const clean = plain(line).trimEnd();
-    return clean === "" ? [""] : hanging(clean, width);
-  });
-}
 
 export class DecisionCard implements Component, Focusable {
   readonly capturesViewportInput = true;
@@ -86,7 +66,9 @@ export class DecisionCard implements Component, Focusable {
   private scroll = 0;
   private choiceTop = 0;
   private firstPick = 0;
-  private shownPicks = 0;
+  private pickRows: readonly number[] = [];
+  private shownChoices = 0;
+  private inner = 80;
   private overflow = false;
   private sending = false;
   private note: string | undefined;
@@ -200,9 +182,9 @@ export class DecisionCard implements Component, Focusable {
   private press(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.button !== "left" || (event.type !== "press" && event.type !== "click"))
       return undefined;
-    const at = event.y - this.firstPick;
-    if (at < 0 || at >= this.shownPicks) return undefined;
-    this.row = this.choiceTop + at;
+    const choice = this.pickRows[event.y - this.firstPick];
+    if (choice === undefined) return undefined;
+    this.row = choice;
     if (event.type === "click" && this.kind === "option") this.confirm();
     return { handled: true };
   }
@@ -240,11 +222,18 @@ export class DecisionCard implements Component, Focusable {
     }
   }
 
-  private shownChoices(picks: number): number {
-    const last = this.choices.length - picks;
-    const top = Math.max(this.row - picks + 1, Math.min(this.choiceTop, this.row));
-    this.choiceTop = Math.max(0, Math.min(last, top));
-    return this.choiceTop;
+  private heights(): number[] {
+    return this.choices.map((_, at) => this.choiceLines(at, this.inner).length);
+  }
+
+  private window(picks: number): number {
+    const heights = this.heights();
+    const rowsFrom = (top: number): number =>
+      heights.slice(top, this.row + 1).reduce((sum, each) => sum + each, 0);
+    let top = Math.min(this.choiceTop, this.row);
+    while (top < this.row && rowsFrom(top) > picks) top += 1;
+    this.choiceTop = top;
+    return top;
   }
 
   private page(step: number): void {
@@ -356,19 +345,30 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private layout(): Layout {
-    const free = this.deps.rows() - FRAME_ROWS - (this.note === undefined ? 0 : 1);
-    const picks = Math.min(this.choices.length, Math.max(1, free - MIN_BODY_ROWS));
+    const { theme } = this.deps;
+    const decision = this.current;
+    const name = `c-${String(decision?.card ?? 0)} ${plain(decision?.title ?? "")}`;
+    const title = hanging(name, this.inner, "", "").map((row) => theme.fg("muted", row));
+    const note =
+      this.note === undefined
+        ? []
+        : hanging(this.note, this.inner, "", "").map((row) => theme.fg("warning", row));
+    const chrome = FRAME_ROWS + title.length - 1 + note.length + this.hintLines(true).length - 1;
+    const free = this.deps.rows() - chrome;
+    const wanted = this.heights().reduce((sum, each) => sum + each, 0);
+    const picks = Math.min(wanted, Math.max(1, free - MIN_BODY_ROWS));
     const left = free - picks;
     const spacers = Math.max(0, Math.min(SPACER_ROWS, left - MIN_BODY_ROWS));
     const body = Math.max(1, Math.min(MAX_BODY_ROWS, left - spacers));
-    return { spacers, body, picks };
+    return { spacers, body, picks, title, note };
   }
 
   render(width: number): string[] {
     const decision = this.current;
     if (decision === undefined) return [];
+    this.inner = Math.max(1, width - 2 * PADDING);
+    const { inner } = this;
     const { theme } = this.deps;
-    const inner = Math.max(1, width - 2 * PADDING);
     const line = (text: string): string => `${margin}${text}`;
     const quiet = (text: string): string => line(theme.fg("muted", this.fit(text, inner)));
     const body = paragraphs(laidOut(decision.question), inner);
@@ -382,20 +382,19 @@ export class DecisionCard implements Component, Focusable {
     const lines = [
       this.top(width),
       ...spacer(3),
-      quiet(`c-${String(decision.card)} ${plain(decision.title)}`),
+      ...layout.title.map(line),
       ...spacer(1),
       ...body.slice(top, top + rows).map(line),
       lower > 0 ? quiet(`▼ ${String(lower)} more lines, PgDn to read`) : "",
     ];
     this.firstPick = lines.length;
     const picks = this.choiceRows(inner, layout.picks);
-    this.shownPicks = picks.length;
     return [
       ...lines,
       ...picks.map(line),
       ...spacer(2),
-      ...(this.note === undefined ? [] : [line(theme.fg("warning", this.fit(this.note, inner)))]),
-      line(this.hint(inner)),
+      ...layout.note.map(line),
+      ...this.hintLines(false).map(line),
       theme.fg("border", RULE.repeat(width)),
     ];
   }
@@ -428,25 +427,42 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private choiceRows(inner: number, picks: number): string[] {
-    const top = this.shownChoices(picks);
-    return this.choices
-      .slice(top, top + picks)
-      .map((label, at) => this.choice(label, top + at, inner));
+    const top = this.window(picks);
+    const rows: string[] = [];
+    const owners: number[] = [];
+    for (let at = top; at < this.choices.length && rows.length < picks; at += 1) {
+      for (const row of this.choiceLines(at, inner)) {
+        if (rows.length >= picks) break;
+        rows.push(row);
+        owners.push(at);
+      }
+    }
+    this.pickRows = owners;
+    this.shownChoices = new Set(owners).size;
+    return rows;
   }
 
-  private choice(label: string, at: number, inner: number): string {
+  private choiceLines(at: number, inner: number): string[] {
     const { theme } = this.deps;
     const chosen = at === this.row;
     const pointer = chosen ? theme.fg("accent", POINTER) : " ".repeat(POINTER.length);
-    const room = inner - POINTER.length;
+    const gutter = " ".repeat(POINTER.length);
+    const room = Math.max(1, inner - POINTER.length);
     if (at === this.writeRow)
-      return `${pointer}${this.writeIn(chosen, room, this.input, WRITE_LABEL)}`;
+      return [`${pointer}${this.writeIn(chosen, room, this.input, WRITE_LABEL)}`];
     if (at === this.laterRow)
-      return `${pointer}${this.writeIn(chosen, room, this.when, LATER_LABEL)}`;
+      return [`${pointer}${this.writeIn(chosen, room, this.when, LATER_LABEL)}`];
     const tag = at === 0 && this.choices.length > 1 ? ` ${RECOMMENDED}` : "";
-    const text = this.fit(plain(label), room - visibleWidth(tag));
-    const word = chosen ? theme.fg("accent", text) : text;
-    return `${pointer}${word}${theme.fg("muted", tag)}`;
+    const label = plain(this.choices[at] ?? "");
+    const rows = hanging(label, room, "", "");
+    const tagged = tag !== "" && visibleWidth(rows.at(-1) ?? "") + visibleWidth(tag) <= room;
+    const alone = tag !== "" && !tagged ? [tag.trimStart()] : [];
+    const lines = rows.map((row, index) => {
+      const word = chosen ? theme.fg("accent", row) : row;
+      const suffix = tagged && index === rows.length - 1 ? theme.fg("muted", tag) : "";
+      return `${index === 0 ? pointer : gutter}${word}${suffix}`;
+    });
+    return [...lines, ...alone.map((row) => `${gutter}${theme.fg("muted", row)}`)];
   }
 
   private writeIn(chosen: boolean, room: number, line: Input, label: string): string {
@@ -457,19 +473,19 @@ export class DecisionCard implements Component, Focusable {
     return theme.fg("muted", this.fit(`${label} ${plain(typed)}`, room));
   }
 
-  private hint(inner: number): string {
+  private hintLines(widest: boolean): string[] {
     const { theme } = this.deps;
-    if (this.sending) return theme.fg("muted", "sending…");
-    const text = this.hints()
-      .map(([key, what]) => `${theme.fg("dim", key)}${theme.fg("muted", ` ${what}`)}`)
-      .join("   ");
-    return truncateToWidth(text, inner, "…");
+    if (this.sending) return [theme.fg("muted", "sending…")];
+    const pieces = this.hints(widest).map(
+      ([key, what]) => `${theme.fg("dim", key)}${theme.fg("muted", ` ${what}`)}`,
+    );
+    return packed(pieces, this.inner, "   ");
   }
 
-  private hints(): (readonly [string, string])[] {
+  private hints(widest: boolean): (readonly [string, string])[] {
     const { drafting, kind } = this;
     return [
-      ["↑↓", `choose${this.place()}`],
+      ["↑↓", `choose${this.place(widest)}`],
       ...(this.open > 1 && !drafting ? [["←→", "decision"] as const] : []),
       ...this.enter(drafting),
       ...(drafting ? [] : [["type", kind === "later" ? "until when" : "your own words"] as const]),
@@ -483,8 +499,9 @@ export class DecisionCard implements Component, Focusable {
     return this.kind === "option" ? [["⏎", "select"]] : [];
   }
 
-  private place(): string {
+  private place(widest: boolean): string {
     const count = this.choices.length;
-    return this.shownPicks < count ? ` ${String(this.row + 1)}/${String(count)}` : "";
+    if (!widest && this.shownChoices >= count) return "";
+    return ` ${String(widest ? count : this.row + 1)}/${String(count)}`;
   }
 }
