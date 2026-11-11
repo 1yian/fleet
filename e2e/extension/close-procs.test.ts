@@ -264,7 +264,7 @@ test("a merged report that closes a card on its own while the mate closes it sto
       h
         .callsOf("mate")
         .flat()
-        .find((turn) => turn.role === "user" && /merged: landed/.test(turn.text)),
+        .find((turn) => turn.role === "user" && turn.text.includes("merged: landed")),
     "the merged report to reach the mate",
   );
   const outcomes = [results.at(-1) ?? "", delivered.text];
