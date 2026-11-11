@@ -189,7 +189,7 @@ function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: un
   if (kind === "ship" && delivery === "local-only")
     return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   if (kind !== "ship")
-    return "Relay the findings, then close it with close(card, summary), or close(card, summary=<why>, landed=false) if it did not land.";
+    return "Close it with close(card, summary), or close(card, summary=<why>, landed=false) if it did not land.";
   if (hasPr)
     return "Once the merge is authorized (yolo on with green checks, or the captain's word for this PR), comment the worker to merge its PR and report it merged, then close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   return "Its work may have landed from another branch. Close it with close(card, summary): if close warns about commits or files not on the base branch and the work landed elsewhere, call close again with confirm=true. If it never landed and will not, close(card, summary=<why>, landed=false).";

@@ -22,7 +22,7 @@ After compaction, stow, or relaunch, reread this skill, the board, and the focus
 
 ## Present exactly one decision
 
-Give enough context to decide without opening a file:
+Give enough to decide in about 80 words. The full evidence, consequences, and scope stay in the hold's report file, so name its absolute path:
 
 - Name the project and the concrete choice. For a PR, include its full reported HTTPS URL.
 - Evidence: the relevant observed facts and their source. Distinguish verified facts, uncertainty, and missing evidence. Read the report, not just its title.
@@ -51,11 +51,11 @@ An approved action blocked by CI, credentials, a dependency, or an unavailable w
 
 ## Keep focus
 
-- Routine notifications: perform required card actions silently. Do not replace the current question with a status digest or another list. A newly ready PR still gets its required outcome announcement and full URL, but its approval joins the existing holds; do not add a second actionable approval question while the current one awaits an answer. If a mandatory outcome notice needs chat during the walkthrough, keep it brief and finish with the current question and the context needed to answer, not merely "that remains the active decision". Pure no-news wakes still yield; do not repeat the question on every wake. The offered question remains the focus.
+- Routine notifications: perform required card actions silently. Do not replace the current question with a status digest or another list. A newly ready PR's approval joins the existing holds: do not announce it, and do not add a second actionable approval question while the current one awaits an answer. If one of the four interruptions needs chat during the walkthrough, keep it brief and finish with the current question and the context needed to answer, not merely "that remains the active decision". Pure no-news wakes still yield; do not repeat the question on every wake. The offered question remains the focus.
 - Serious blockers and safety findings: escalate at once under the role contract. State whether they change the current choice. Once handled, return to the still-unresolved question, not the beginning of the walkthrough.
 - An unrelated captain request: answer it first, then resume the current question in the same response unless the captain pauses, changes scope, or stops the walkthrough. A notification is not such a request.
-- Pause or stop: record that presentation state on the existing focused thread or hold without altering decision authority or hiding holds. Resume only when asked; "afk" is a pause, not permission to clear anything. On return, offer the current decision rather than the role contract's whole-list catch-up. Still report urgent issues and required outcomes.
-- During an active walkthrough, this one-at-a-time presentation replaces reminder and catch-up decision lists. All mandatory safety escalations, replies, outcome reporting, and ownership rules remain in force.
+- Pause or stop: record that presentation state on the existing focused thread or hold without altering decision authority or hiding holds. Resume only when asked; "afk" is a pause, not permission to clear anything. On return, offer the current decision. Still raise the four interruptions.
+- During an active walkthrough, present one decision at a time and never a list. All mandatory safety escalations, replies, and ownership rules remain in force.
 
 ## Finish
 

@@ -275,8 +275,11 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
   assert.ok(reminder.createdAt - report.createdAt >= 7_200);
   assert.match(
     reminder.body,
-    new RegExp(`^reminder: ${name} is finished and still open \\(with-mate, \\d+ min\\)\\. Relay`),
+    new RegExp(
+      `^reminder: ${name} is finished and still open \\(with-mate, \\d+ min\\)\\. Close it with close\\(`,
+    ),
   );
+  assert.doesNotMatch(reminder.body, /relay/i);
   await reach(cleo, card, "finished", 2);
   await reach(cleo, card, "finished", 3);
   const sent = await tiersOf(card, "finished");

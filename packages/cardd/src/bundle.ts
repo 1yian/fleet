@@ -99,7 +99,7 @@ function bundleText(items: readonly Item[]): string {
       items.filter(({ captain }) => !captain),
     ),
     ...group(
-      "Waiting on the captain. If he wrote to you since your last list of these, bring them up again as one short list with your recommendation for each. If he did not, or he said afk, he is away: leave them for the catch-up. Do not hold a card with a date to quiet it:",
+      "Waiting on the captain. Do not list them in chat: they wait on the board. Your role contract says when one may interrupt him. Do not hold a card with a date to quiet it:",
       items.filter(({ captain }) => captain),
     ),
   ];
