@@ -57,6 +57,7 @@ export class DecisionCard implements Component, Focusable {
   private choiceTop = 0;
   private firstPick = 0;
   private pickRows: readonly number[] = [];
+  private pressed: number | undefined;
   private shownChoices = 0;
   private inner = 80;
   private overflow = false;
@@ -172,10 +173,15 @@ export class DecisionCard implements Component, Focusable {
   private press(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.button !== "left" || (event.type !== "press" && event.type !== "click"))
       return undefined;
-    const choice = this.pickRows[event.y - this.firstPick];
+    const clicking = event.type === "click";
+    const choice =
+      clicking && this.pressed !== undefined
+        ? this.pressed
+        : this.pickRows[event.y - this.firstPick];
+    this.pressed = clicking ? undefined : choice;
     if (choice === undefined) return undefined;
     this.point(choice);
-    if (event.type === "click" && this.kind === "option") this.confirm();
+    if (clicking && this.kind === "option") this.confirm();
     return { handled: true };
   }
 

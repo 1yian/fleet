@@ -220,3 +220,51 @@ test("an option taller than the short narrow pane can give scrolls inside itself
     source: "pane",
   });
 });
+
+const REFLOW_TITLE =
+  "Repair the recording egress group: protect m405, corrected template roll-forward for the staged window";
+const REFLOW_FIRST = "Merge and roll it out in the staged window";
+const REFLOW_SECOND = "Merge only, start no deploy";
+
+test("a press on an option reflows the card, and the release at the same place still answers that option", async () => {
+  const pane = await lab.openMidNarrowMain();
+  const merge = await lab.askedMerge(
+    pane,
+    REFLOW_TITLE,
+    { question: QUESTION, options: [REFLOW_FIRST, REFLOW_SECOND], approves: [REFLOW_FIRST] },
+    1,
+  );
+  lab.answers(1);
+
+  await lab.herdr().submit(pane, "/d");
+  const first = await lab.screenWhere(
+    pane,
+    "both options on the card",
+    onCard(["Decision 1 of 1", "→ Merge and roll", "(recommended)", "Merge only"]),
+  );
+  keep("14-press-before-reflow", first);
+  const second = optionAt(first, "Merge only");
+
+  await lab.mousePress(pane, second.row, second.column);
+  const pressed = await lab.screenWhere(
+    pane,
+    "the second option selected",
+    onCard(["→ Merge only"]),
+  );
+  keep("14-press-after-reflow", pressed);
+  assert.notEqual(
+    optionAt(pressed, "Merge only").row,
+    second.row,
+    `pressing the option reflows the card, so it is no longer under the pointer:\n${pressed}`,
+  );
+
+  await lab.mouseRelease(pane, second.row, second.column);
+  await lab.screenWhere(pane, "the card to clear", (screen) => cardRows(screen).length === 0);
+  assert.deepEqual(await lab.mergeAnswer(merge), {
+    kind: "comment",
+    body: REFLOW_SECOND,
+    choice: REFLOW_SECOND,
+    approved: undefined,
+    source: "pane",
+  });
+});
