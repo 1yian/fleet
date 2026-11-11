@@ -7,6 +7,7 @@ import { MODEL_PIN } from "./model.ts";
 import { ActivityMessage, LandingFields } from "./progress.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
+import { Shown, STANDING_OPS, Status } from "./standing.ts";
 import { PlanSchema } from "./wakes.ts";
 
 export * from "./address.ts";
@@ -18,6 +19,7 @@ export * from "./wakes.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";
 export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
+export { ATTENTIONS, STATUSES, type Attention, type Status } from "./standing.ts";
 export {
   JOB_RUNNING,
   jobIsRunning,
@@ -29,20 +31,6 @@ export {
   type JobState,
 } from "./jobs.ts";
 
-export const STATUSES = [
-  "queued",
-  "working",
-  "in-review",
-  "paused",
-  "with-mate",
-  "needs-you",
-  "merging",
-  "waiting",
-  "done",
-  "dropped",
-] as const;
-
-export const ATTENTIONS = ["blocked", "failed", "stopped"] as const;
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
@@ -53,8 +41,6 @@ export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only"] as const;
 const Delivery = Type.Enum(DELIVERIES);
 export type Delivery = Static<typeof Delivery>;
 
-const Status = Type.Enum(STATUSES);
-const Attention = Type.Enum(ATTENTIONS);
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
 export const CAPTAIN = "captain";
@@ -68,8 +54,6 @@ const ReplyTo = Type.Optional(
 export const Words = Type.String({ pattern: "\\S" });
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 
-export type Status = Static<typeof Status>;
-export type Attention = Static<typeof Attention>;
 export type CardKind = Static<typeof CardKind>;
 export const CardName = Type.String({
   pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -135,8 +119,7 @@ export const BoardCardSchema = Type.Object({
   mate: Type.Boolean(),
   holder: Nullable(Holder),
   replies: Type.Array(OwedReplySchema),
-  attention: Nullable(Attention),
-  pausedUntil: Nullable(Type.Integer()),
+  ...Shown,
 });
 export type BoardCard = Static<typeof BoardCardSchema>;
 
@@ -360,6 +343,7 @@ export const OPS = {
     result: Type.Boolean(),
   },
   ...SCHEDULE_OPS,
+  ...STANDING_OPS,
   ...INCIDENT_OPS,
   ...JOB_OPS,
   ...MAINTENANCE_OPS,

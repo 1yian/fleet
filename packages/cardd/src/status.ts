@@ -235,7 +235,7 @@ export interface Standing {
   readonly stage: Stage;
   readonly since: number;
   readonly attention: Attention | null;
-  readonly pausedUntil: number | null;
+  readonly until: number | null;
   readonly facts: Facts;
 }
 
@@ -247,6 +247,11 @@ function holdStatus(hold: Hold, now: number): Status {
 const pauseInForce = (until: number | null, now: number): boolean => (until ?? 0) > now;
 
 const RESTING: ReadonlySet<Stage> = new Set(["working", "in-review"]);
+
+function untilOf(status: Status, tally: Tally): number | null {
+  if (status === "paused") return tally.pausedUntil;
+  return status === "waiting" ? (tally.hold?.until ?? null) : null;
+}
 
 function statusAt(basis: Basis, tally: Tally, now: number): Status {
   if (isClosed(tally.stage)) return tally.stage;
@@ -301,26 +306,18 @@ export function standingFrom(basis: Basis, entries: readonly Entry[], now: numbe
   const { tally, status, since } = replay(basis, entries, now);
   const needsAttention =
     status === "with-mate" && tally.stage === "with-mate" && tally.hold === undefined;
-  const facts = factsOf(tally);
   return {
     status,
     stage: tally.stage,
     since,
     attention: needsAttention ? (tally.attention ?? null) : null,
-    pausedUntil: shownPause({ status, facts }),
-    facts,
+    until: untilOf(status, tally),
+    facts: factsOf(tally),
   };
 }
 
 export function pausedNow(standing: Standing, now: number): boolean {
   return pauseInForce(standing.facts.pausedUntil, now);
-}
-
-export function shownPause(standing: {
-  readonly status: Status;
-  readonly facts: Pick<Facts, "pausedUntil">;
-}): number | null {
-  return standing.status === "paused" ? standing.facts.pausedUntil : null;
 }
 
 export function resting(standing: Standing): boolean {

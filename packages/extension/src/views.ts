@@ -62,7 +62,7 @@ const deliveryOf = (card: BoardCard): string => {
 
 function statusOf(card: BoardCard): string {
   if (card.attention !== null) return `${card.status} (${card.attention})`;
-  if (card.pausedUntil !== null) return `${card.status} (${ago(card.pausedUntil)})`;
+  if (card.until !== null) return `${card.status} (${ago(card.until)})`;
   return card.status;
 }
 

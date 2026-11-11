@@ -44,11 +44,11 @@ test("a paused report shows the card as paused with its time, and the next worki
 
   await worker.call("report", { status: "paused", text: "CI runs until the hour", until });
   const paused = await onBoard(card);
-  assert.deepEqual([paused.status, paused.pausedUntil, paused.attention], ["paused", until, null]);
+  assert.deepEqual([paused.status, paused.until, paused.attention], ["paused", until, null]);
 
   await worker.call("report", { status: "working", text: "CI is green" });
   const resumed = await onBoard(card);
-  assert.deepEqual([resumed.status, resumed.pausedUntil], ["working", null]);
+  assert.deepEqual([resumed.status, resumed.until], ["working", null]);
 });
 
 test("a paused report whose time has passed shows the card as working again", async () => {
@@ -56,7 +56,7 @@ test("a paused report whose time has passed shows the card as working again", as
   await worker.call("report", { status: "paused", text: "a moment", until: Date.now() + 300 });
   assert.equal((await onBoard(card)).status, "paused");
   const resumed = await settled(card, (each) => each.status === "working");
-  assert.equal(resumed.pausedUntil, null);
+  assert.equal(resumed.until, null);
 });
 
 test("blocked, failed, and stopped reports show red attention, and a working report clears it", async () => {
@@ -107,6 +107,35 @@ test("an open hold wins over the last report, and the card goes to its mate when
   assert.deepEqual([answered.holder, answered.status], [null, "with-mate"]);
   await worker.call("report", { status: "working", text: "shipping" });
   assert.equal((await onBoard(card)).status, "working");
+});
+
+test("a hold with a future date shows the card as waiting with its date, whatever the worker last reported, and its end returns the card to its holder", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const lastReports = {
+    working: { status: "working", text: "carrying on" },
+    paused: { status: "paused", text: "CI runs", until: Date.now() + 3_600_000 },
+    blocked: { status: "blocked", text: "waiting for your decision on the load balancer" },
+  } as const;
+  const until = Date.now() + 2_000;
+  const cards: Card[] = [];
+  for (const [name, report] of Object.entries(lastReports)) {
+    const card = await newCard(cleo, `held after ${name}`);
+    const worker = await fleet.cardd.connect(await begin(cleo, card));
+    await worker.call("report", report);
+    await cleo.call("hold", { card: card.id, question: "Wait for the load balancer?", until });
+    cards.push(card);
+  }
+  for (const card of cards) {
+    const held = await onBoard(card);
+    assert.deepEqual(
+      [held.status, held.until, held.attention, held.holder],
+      ["waiting", until, null, "main"],
+    );
+  }
+  for (const card of cards) {
+    const back = await settled(card, (each) => each.status === "with-mate");
+    assert.deepEqual([back.until, back.attention, back.holder], [null, null, "main"]);
+  }
 });
 
 test("a timed-check finding leaves the status as the reports say", async () => {

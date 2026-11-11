@@ -116,7 +116,14 @@ function StatusChip(props: {
     return (
       <span className="chip">
         <ClockIcon />
-        {facts?.until === undefined ? "Later" : laterLabel(facts.until, now)}
+        {card.until === null ? "Later" : laterLabel(card.until, now)}
+      </span>
+    );
+  if (card.status === "paused" && card.until !== null)
+    return (
+      <span className="chip">
+        <ClockIcon />
+        paused until {laterLabel(card.until, now)}
       </span>
     );
   if (card.status === "merging") return <span className="chip ghost">{mergingLabel(facts)}</span>;
@@ -137,8 +144,8 @@ function OwedChip({ card }: { readonly card: BoardCard }) {
   );
 }
 
-function glanceOf(card: BoardCard, facts: Facts | undefined, now: number): string {
-  if (card.status === "waiting" && facts?.until !== undefined) return laterLabel(facts.until, now);
+function glanceOf(card: BoardCard, now: number): string {
+  if (card.status === "waiting" && card.until !== null) return laterLabel(card.until, now);
   if (card.status === "with-mate") return `with ${withWho(card)}`;
   if (card.activity !== null && card.status === "working") return liveOf(card.activity, now).text;
   if (card.pr !== null) return prLabel(card.pr);
@@ -203,7 +210,7 @@ export function TaskCard(props: CardProps) {
       <h3 className="t">
         <StatusIcon glyph={glyphOf(card, asked)} />
         <TitleLink card={card} onOpen={open} />
-        {asked ? null : <span className="glance">{glanceOf(card, facts, now)}</span>}
+        {asked ? null : <span className="glance">{glanceOf(card, now)}</span>}
       </h3>
       {card.status === "with-mate" && card.summary !== "" ? (
         <p className="latest">

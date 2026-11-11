@@ -66,7 +66,7 @@ function script(): void {
 interface Before {
   readonly pid: number;
   readonly file: string;
-  readonly pausedUntil: number | null;
+  readonly until: number | null;
 }
 
 async function before(worker: Worker): Promise<Before> {
@@ -74,7 +74,7 @@ async function before(worker: Worker): Promise<Before> {
   const cwd = realpathSync(worker.worktree);
   const event = await until(() => fleet.sessionEvents(cwd)[0], `${worker.session}'s session`);
   const card = await fleet.cardOf(worker.card);
-  return { pid, file: String(event["file"]), pausedUntil: card.pausedUntil };
+  return { pid, file: String(event["file"]), until: card.until };
 }
 
 async function onNewCode(worker: Worker, was: Before): Promise<void> {
@@ -96,8 +96,8 @@ async function onNewCode(worker: Worker, was: Before): Promise<void> {
   assert.equal(git(worker.worktree, "branch", "--show-current"), worker.branch);
   const card = await fleet.cardOf(worker.card);
   assert.equal(card.status, "paused");
-  assert.notEqual(card.pausedUntil, null);
-  if (was.pausedUntil !== null) assert.equal(card.pausedUntil, was.pausedUntil);
+  assert.notEqual(card.until, null);
+  if (was.until !== null) assert.equal(card.until, was.until);
 }
 
 async function asksWithNewCode(worker: Worker): Promise<void> {

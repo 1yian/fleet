@@ -54,5 +54,5 @@ test("a worker resumed from a pause by a comment is watched for idleness at once
   const shown = board.cards.find((each) => each.id === resumed.id);
   if (shown === undefined) throw new Error("the resumed card left the board");
   assert.equal(shown.status, "working");
-  assert.equal(shown.pausedUntil, null);
+  assert.equal(shown.until, null);
 });

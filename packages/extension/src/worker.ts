@@ -13,6 +13,9 @@ const HANDOFFS: ReadonlySet<string> = new Set([
   "blocked",
   "needs-decision",
 ]);
+const BLOCKED_PANE = "blocked: reported";
+const STANDING_MS = Number(process.env["FLEET_STANDING_MS"]) || 15_000;
+const STANDING_DEADLINE_MS = 5_000;
 const NUDGE =
   "[fleet] Your run is ending without a handoff. Report done, failed, blocked, or " +
   "needs-decision, or report paused with an until date if you wait on a time or an outside event. " +
@@ -73,6 +76,9 @@ export class WorkerRun {
   private nudged = false;
   private recoveryCheck = false;
   private lastText = "";
+  private paneEpoch = 0;
+  private disposed = false;
+  private recheck: ReturnType<typeof setTimeout> | undefined;
   private readonly link: Link;
   private readonly jobs: Jobs;
   private readonly failures: Failures;
@@ -90,8 +96,25 @@ export class WorkerRun {
     this.recoveryCheck = false;
   }
 
-  private owe(label: string | undefined): void {
-    this.failures.obligation(label);
+  dispose(): void {
+    this.disposed = true;
+    clearTimeout(this.recheck);
+  }
+
+  private async settlePane(fallback: boolean): Promise<void> {
+    const epoch = ++this.paneEpoch;
+    clearTimeout(this.recheck);
+    const blocked = await this.link.call("standing", {}, STANDING_DEADLINE_MS).then(
+      (shown) => shown.attention === "blocked",
+      () => fallback,
+    );
+    if (this.disposed || epoch !== this.paneEpoch) return;
+    this.failures.obligation(blocked ? BLOCKED_PANE : undefined);
+    if (!blocked) return;
+    this.recheck = setTimeout(() => {
+      void this.settlePane(true);
+    }, STANDING_MS);
+    this.recheck.unref();
   }
 
   checkingHealth(): void {
@@ -125,7 +148,7 @@ export class WorkerRun {
         };
         const card = await this.link.call("report", args);
         this.latest = { status: params.status, until };
-        this.owe(params.status === "blocked" ? "blocked: reported" : undefined);
+        await this.settlePane(params.status === "blocked");
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
       },
@@ -166,8 +189,8 @@ export class WorkerRun {
   private async fileStopped(text: string): Promise<void> {
     await this.link
       .call("report", { status: "stopped", text })
-      .then(() => {
-        this.owe(undefined);
+      .then(async () => {
+        await this.settlePane(false);
         return this.jobs.sync();
       })
       .catch(() => {
