@@ -32,15 +32,24 @@ async function shownTo(reader: Session, card: Card) {
     board: cards.find((each) => each.id === card.id)?.datedWait,
     card: view.card.datedWait,
     remaining: view.hold?.remaining,
+    wait: view.entries.findLast((entry) => entry.kind === "hold" && entry.author === "mate:main")
+      ?.fields["wait"],
   };
 }
 
-async function assertHidden(reader: Session, card: Card, what: string, step: Card): Promise<void> {
+async function assertHidden(reader: Session, card: Card, kind: string, step: Card): Promise<void> {
+  const what = `a ${kind} in another lane (running)`;
   const seen = await shownTo(reader, card);
   assert.deepEqual([seen.board?.watch, seen.board?.what], ["running", what]);
   assert.deepEqual([seen.card?.watch, seen.card?.what], ["running", what]);
   assert.deepEqual(seen.remaining, [{ card: step.id, elsewhere: true }]);
-  assert.doesNotMatch(JSON.stringify(seen), /secret|release|07:45|Tokyo/);
+  assert.deepEqual(seen.wait, { by: kind });
+  const pushed = await reader.waitForEntry(
+    (entry) => entry.card === card.id && entry.kind === "hold" && entry.author === "mate:main",
+    `the hold on c-${String(card.id)} delivered to its mate`,
+  );
+  assert.deepEqual(pushed.fields["wait"], { by: kind });
+  assert.doesNotMatch(JSON.stringify([seen, pushed]), /secret|release|07:45|Tokyo/);
 }
 
 test("a hold that main dates against another lane's job, schedule, and card shows its own mate only the kinds and states, while main and the web board see everything", async () => {
@@ -66,10 +75,12 @@ test("a hold that main dates against another lane's job, schedule, and card show
   const step = await newCard(quinn, "Quinn secret follow-up");
   const byJob = await newCard(cleo, "Cleo waits on a job");
   const bySchedule = await newCard(cleo, "Cleo waits on a schedule");
+  const byWorker = await newCard(cleo, "Cleo waits on a worker");
   try {
     for (const [card, ref] of [
       [byJob, { job }],
       [bySchedule, { schedule }],
+      [byWorker, { worker: build.id }],
     ] as const) {
       await cleo.call("hold", { card: card.id, question: "Can main decide?" });
       await fleet.main.call("hold", {
@@ -78,14 +89,16 @@ test("a hold that main dates against another lane's job, schedule, and card show
       });
     }
 
-    for (const [card, what] of [
-      [byJob, "a job in another lane (running)"],
-      [bySchedule, "a schedule in another lane (running)"],
+    for (const [card, kind] of [
+      [byJob, "job"],
+      [bySchedule, "schedule"],
+      [byWorker, "worker"],
     ] as const)
-      await assertHidden(cleo, card, what, step);
+      await assertHidden(cleo, card, kind, step);
 
     const full = await shownTo(fleet.main, byJob);
     assert.equal(full.board?.what, `job ${String(job)} (secret release build)`);
+    assert.deepEqual(full.wait, { by: "job", id: job });
     assert.deepEqual(full.remaining, [
       { card: step.id, title: "Quinn secret follow-up", status: "queued" },
     ]);

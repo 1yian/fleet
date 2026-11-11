@@ -2,7 +2,9 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   jobIsRunning,
   parseJobState,
+  parseWait,
   type DatedWait,
+  type Entry,
   type OpArgs,
   type Wait,
 } from "@fleet/protocol";
@@ -92,14 +94,23 @@ function watching(db: DatabaseSync, wait: Wait | null, author: string): Watching
   return CHECKED[wait.by](db, wait.id);
 }
 
+function concealed(db: DatabaseSync, lane: string, author: string, ref: Wait | null): boolean {
+  if (ref === null || !("id" in ref)) return false;
+  const writer = laneOfAuthor(author);
+  return writer !== undefined && reaches(db, writer, ref) && !reaches(db, lane, ref);
+}
+
 export function sightOf(db: DatabaseSync, lane: string, card: number, wait: DatedWait): DatedWait {
   const hold = factsFrom(cardEntries(db, card)).hold;
-  const ref = hold?.wait;
-  if (hold === undefined || ref === null || ref === undefined || !("id" in ref)) return wait;
-  const author = laneOfAuthor(hold.author);
-  const watched = author !== undefined && reaches(db, author, ref);
-  if (!watched || reaches(db, lane, ref)) return wait;
+  const ref = hold?.wait ?? null;
+  if (hold === undefined || ref === null || !concealed(db, lane, hold.author, ref)) return wait;
   return { ...wait, what: `a ${ref.by} in another lane (${wait.watch})` };
+}
+
+export function holdFor(db: DatabaseSync, lane: string, entry: Entry): Entry {
+  const ref = parseWait(entry.fields["wait"]);
+  if (ref === null || !concealed(db, lane, entry.author, ref)) return entry;
+  return { ...entry, fields: { ...entry.fields, wait: { by: ref.by } } };
 }
 
 export function datedWait(db: DatabaseSync, standing: Standing): DatedWait | null {

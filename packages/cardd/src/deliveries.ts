@@ -3,6 +3,7 @@ import { check, EntrySchema, PushedEntrySchema, type Entry } from "@fleet/protoc
 import type { Draft } from "./change.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { addEntry, ENTRY_JSON, json, mainLane } from "./store.ts";
+import { holdFor } from "./waits.ts";
 import type { Timings } from "./timing.ts";
 
 export interface Push {
@@ -86,8 +87,11 @@ export function toPush(
       .all(session)
       .map((row) => Number(row["entry"])),
   );
+  const lane = String(db.prepare("SELECT lane FROM sessions WHERE id = ?").get(session)?.["lane"]);
   const all = rows.map((row) => {
-    const { entry, name, again = false } = check(PushedEntrySchema, row);
+    const pushed = check(PushedEntrySchema, row);
+    const { name, again = false } = pushed;
+    const entry = holdFor(db, lane, pushed.entry);
     const push = {
       entry,
       name,
