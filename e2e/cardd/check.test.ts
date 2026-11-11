@@ -437,13 +437,11 @@ test("a repeating obligation leaves only its latest reminder for a reconnect, no
   assert.deepEqual(
     back.entries
       .filter(
-        ({ entry, again }) =>
-          entry.card === card.id &&
-          entry.fields["condition"] === "worker-never-connected" &&
-          again !== true,
+        ({ entry }) =>
+          entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
       )
-      .map(({ entry }) => Number(entry.fields["tier"]))
-      .filter((tier) => tier <= 3),
+      .filter(({ again }) => again !== true)
+      .map(({ entry }) => entry.fields["tier"]),
     [3],
   );
 });
