@@ -20,6 +20,18 @@ document.querySelector("#go").addEventListener("click", () => {
 });
 </script>`;
 
+const XHR = `<title>xhr</title><style>body{margin:0}input,button{display:block;width:240px;height:30px;margin:0}</style>
+<input id="user" autocomplete="off"><input id="pw" type="password" autocomplete="off"><button id="go" type="button">Sign in</button>
+<script>
+document.querySelector("#go").addEventListener("click", () => {
+  const field = document.querySelector("#pw");
+  const request = new XMLHttpRequest();
+  request.open("POST", "/api/done");
+  request.send("pw=" + field.value);
+  field.value = "";
+});
+</script>`;
+
 const NOTES = `<title>notes</title><p id="note">plain notes</p>`;
 
 const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled,x-sealed,x-built,x-held,x-nested{display:block;width:240px;height:30px}`;
@@ -106,6 +118,7 @@ const pagesFor = (port: number): ReadonlyMap<string, string> =>
   new Map([
     ["/login", LOGIN],
     ["/spa", spa("/api/login")],
+    ["/xhr", XHR],
     ["/echo", spa("/api/echo")],
     ["/holdecho", spa("/api/hold")],
     ["/autofocus", AUTOFOCUS],

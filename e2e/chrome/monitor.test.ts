@@ -296,3 +296,70 @@ test("a request that started while a password was typed stays hidden from a work
   lab.site.redirectLogins();
   captain.close();
 });
+
+test("a request that started while the guard could not see Chrome stays hidden once it can", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/spa", "spa");
+  assert.equal((await worker.call(tab.session, "Network.enable")).ok, true);
+  const before = worker.events.length;
+  relay.blindTheMonitor();
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return !reply.ok && reply.text.includes("not ready") ? true : undefined;
+  }, "the guard to say it cannot see Chrome");
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+  await captain.click("#go");
+  await until(
+    () => (lab.site.heldLogins() > 0 ? true : undefined),
+    "the login request to reach the site",
+  );
+  await until(async () => {
+    const field = await lab.chrome.evaluate(tab.target, "document.querySelector('#pw').value");
+    return field === "" ? true : undefined;
+  }, "the page to empty the field");
+
+  relay.restoreTheMonitor();
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return reply.ok ? true : undefined;
+  }, "the guard to see Chrome again");
+  const login = worker.events
+    .slice(before)
+    .find(
+      (event) =>
+        event.method === "Network.requestWillBeSent" &&
+        JSON.stringify(event).includes("/api/login"),
+    );
+  const params = login?.params;
+  const requestId =
+    typeof params === "object" && params !== null && "requestId" in params
+      ? String(params.requestId)
+      : "";
+  assert.notEqual(requestId, "", "the worker saw no login request");
+  const body = await worker.call(tab.session, "Network.getRequestPostData", { requestId });
+  assert.equal(body.ok, false);
+  assert.ok(!body.text.includes(SECRET));
+  const answer = await worker.call(tab.session, "Network.getResponseBody", { requestId });
+  assert.equal(answer.ok, false);
+  assert.match(answer.text, /captain.*password/i);
+
+  const seen = worker.events.length;
+  lab.site.redirectLogins();
+  const redirected = await until(
+    () =>
+      worker.events
+        .slice(seen)
+        .find(
+          (event) =>
+            event.method === "Network.requestWillBeSent" &&
+            JSON.stringify(event).includes("/api/done"),
+        ),
+    "the worker to see the redirect",
+  );
+  assert.ok(!JSON.stringify(redirected).includes(SECRET), "the password is in the redirect event");
+  captain.close();
+});

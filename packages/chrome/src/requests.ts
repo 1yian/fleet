@@ -1,4 +1,5 @@
 const KEPT = 2000;
+const UNPLACED = "";
 
 export class Requests {
   private readonly keys = new Map<string, Set<string>>();
@@ -8,16 +9,21 @@ export class Requests {
     if (this.flooded.has(page)) return;
     const held = this.keys.get(page) ?? new Set<string>();
     for (const key of keys) held.add(key);
-    if (held.size > KEPT) {
-      this.keys.delete(page);
-      this.flooded.add(page);
-      return;
+    for (const oldest of held) {
+      if (held.size <= KEPT) break;
+      if (page !== UNPLACED) {
+        this.keys.delete(page);
+        this.flooded.add(page);
+        return;
+      }
+      held.delete(oldest);
     }
     this.keys.set(page, held);
   }
 
   has(page: string, key: string): boolean {
-    if (page === "")
+    if (this.keys.get(UNPLACED)?.has(key) === true) return true;
+    if (page === UNPLACED)
       return this.flooded.size > 0 || [...this.keys.values()].some((x) => x.has(key));
     return this.flooded.has(page) || this.keys.get(page)?.has(key) === true;
   }

@@ -34,7 +34,11 @@ const ALLOWED_METHODS = new Set([
   "Runtime.removeBinding",
 ]);
 
-const REFUSED_ALWAYS = new Set(["Target.sendMessageToTarget", "Target.exposeDevToolsProtocol"]);
+const REFUSED_ALWAYS = new Set([
+  "Target.sendMessageToTarget",
+  "Target.exposeDevToolsProtocol",
+  "Network.replayXHR",
+]);
 
 const DROPPED_DOMAINS = new Set([
   "DOM",
@@ -82,6 +86,7 @@ const BODY_READERS = new Map<string, IdField>([
   ["Network.searchInResponseBody", ["requestId", "net"]],
   ["Network.streamResourceContent", ["requestId", "net"]],
   ["Network.getResponseBodyForInterception", ["interceptionId", "icpt"]],
+  ["Network.takeResponseBodyForInterceptionAsStream", ["interceptionId", "icpt"]],
   ["Fetch.getResponseBody", ["requestId", "fetch"]],
   ["Fetch.takeResponseBodyAsStream", ["requestId", "fetch"]],
 ]);

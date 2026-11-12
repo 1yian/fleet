@@ -202,3 +202,26 @@ test("a worker that joins after the field is empty still gets a pending redirect
   assert.ok(!body.text.includes(SECRET));
   captain.close();
 });
+
+test("a request that carried a typed password cannot be replayed past the guard", async () => {
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/xhr", "xhr");
+  assert.equal((await worker.call(tab.session, "Network.enable")).ok, true);
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+  await captain.click("#go");
+  const received = (): number => lab.site.submitted.filter((body) => body.includes(SECRET)).length;
+  const known = received();
+  await until(() => (received() > known ? true : undefined), "the site to receive the password");
+  const once = received();
+  await reads(worker, tab.session, "document.querySelector('#pw').value", '""');
+  const requestId = await until(() => requestOf(worker, "/api/done"), "the request to be seen");
+
+  const replay = await worker.call(tab.session, "Network.replayXHR", { requestId });
+  assert.equal(replay.ok, false);
+  assert.match(replay.text, /not available through the guard/);
+  await reads(worker, tab.session, "document.title", '"xhr"');
+  assert.equal(received(), once);
+  captain.close();
+});
