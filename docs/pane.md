@@ -1,6 +1,6 @@
 # The pane: the status bar, the decision card, and /pulse
 
-Main's Pi screen shows what needs the captain without a message in the chat. The status bar, the last line of the footer, carries it. The pane draws nothing above the editor, and when all is clear the status bar says so.
+Main's Pi screen shows what needs the captain without a message in the chat. The status bar, the last line of the footer, carries it. The pane draws nothing above the editor. When every count is zero, only the board link remains.
 
 Only main shows the decisions and the counts. A second mate's status bar has the board link and no decisions or counts, because a second mate holds nothing for the captain.
 
@@ -11,24 +11,25 @@ The chat stays silent about what waits. Main never tells the captain to type `/d
 The status bar is one line. The decisions come first, then the counts, then the board link:
 
 ```
-2 decisions await you ● 1 ◆ 1 ◇ 1 ▲ 3 board
+2 decisions await you · 1 broken · 1 for you · 1 stalled · 3 landed board
 ```
 
 | Item                    | Meaning                                                 | Color                  |
 | ----------------------- | ------------------------------------------------------- | ---------------------- |
 | `2 decisions await you` | Decisions that wait for the captain, and a click target | yellow                 |
-| `● 2`                   | Broken                                                  | red                    |
-| `◆ 1`                   | A card of his own, which waits on him                   | yellow                 |
-| `◇ 1`                   | Stalled, idle, or parked                                | orange                 |
-| `▲ 4`                   | Landed since the captain's last message                 | green                  |
-| `✓ clear`               | Nothing is broken, neglected, or waiting for him        | muted                  |
+| `2 broken`              | Broken                                                  | red word               |
+| `1 for you`             | A card of his own, which waits on him                   | yellow words           |
+| `1 stalled`             | Stalled, idle, or parked                                | orange word            |
+| `4 landed`              | Landed since the captain's last message                 | green word             |
 | `board`                 | A link to the board                                     | link color, underlined |
 
 The decisions item reads `1 decision awaits you` when one waits, `N decisions await you` when more do, and is absent when none do. It counts the decisions that `/d` walks through, and it is made from the same code, so the two cannot differ. A click on the item does what typing `/d` does (see [The decision card](#the-decision-card)).
 
 The word `board` is a link to the board. The status bar never shows the address. The target is the address of `cardd` with `http` for `ws`, which is the tailnet or local address that main's lane already uses. In a terminal that has hyperlinks (OSC 8), `board` is a terminal hyperlink. In Pi's fullscreen mode a click on it opens the board, and in the other terminals the terminal's own link click does (often Cmd-click or Ctrl-click). Where the terminal has no hyperlinks, `board` is plain text, and a click on it opens the board from the extension. Both open the link on the machine where Pi runs: `open` on macOS and `xdg-open` elsewhere.
 
-Pi cuts a status bar that is wider than the pane with a dim `...` at the right. The order keeps the decisions on screen the longest. The cache state goes first, then the board link, then the counts. The whole line `2 decisions await you ● 1 ▲ 1 board` needs 35 columns.
+Only non-zero counts appear. Color accents the words, not the numbers. No legend is needed to read the counts. The web board already labels its attention counts with words.
+
+In a narrow pane, whole items that do not fit are omitted. No count, word, decision sentence, or board link is cut in half. Earlier items have priority. A later item can still appear if it fits the remaining space. At 33 columns, `2 decisions await you · 1 broken` fits. At 39 columns, the board link fits after it too.
 
 ## The decision card
 

@@ -12,8 +12,11 @@ export const GLYPHS: Readonly<Record<Kind, string>> = {
   "needs-you": "◆",
   stalled: "◇",
 };
-const LANDED_GLYPH = "▲";
-const CLEAR_TEXT = "✓ clear";
+const LABELS: Readonly<Record<Kind, string>> = {
+  broken: "broken",
+  "needs-you": "for you",
+  stalled: "stalled",
+};
 const DOWN_TEXT = "cardd: not answering";
 
 type Colors = Theme["colors"];
@@ -33,7 +36,7 @@ export const decisionsText = (count: number): string | undefined => {
 };
 
 function chip(theme: Theme, kind: Kind, count: number): string {
-  return theme.style(`${GLYPHS[kind]} ${String(count)}`, { fg: TONES[kind](theme.colors) });
+  return `${String(count)} ${theme.style(LABELS[kind], { fg: TONES[kind](theme.colors) })}`;
 }
 
 export function statusOf(theme: Theme, glance: Glance, decisions: number): string {
@@ -42,10 +45,9 @@ export function statusOf(theme: Theme, glance: Glance, decisions: number): strin
     glance.counts[kind] === 0 ? [] : [chip(theme, kind, glance.counts[kind])],
   );
   const calling = waiting === undefined ? [] : [theme.fg("warning", waiting)];
-  const clear = waiting === undefined && raised.length === 0 ? [theme.fg("muted", CLEAR_TEXT)] : [];
   const landed =
-    glance.landed === 0 ? [] : [theme.fg("success", `${LANDED_GLYPH} ${String(glance.landed)}`)];
-  return [...calling, ...raised, ...clear, ...landed].join(" ");
+    glance.landed === 0 ? [] : [`${String(glance.landed)} ${theme.fg("success", "landed")}`];
+  return [...calling, ...raised, ...landed].join(" · ");
 }
 
 export const downStatus = (theme: Theme): string =>

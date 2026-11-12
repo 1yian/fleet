@@ -93,8 +93,13 @@ const ANSWER = "Nothing else is waiting.";
 const BANNER_REPLY = "The banner can go.";
 const TRANSCRIPT_BOTTOM = "\u001b[1;5F";
 const TRANSCRIPT_TOP = "\u001b[1;5H";
+const aboveFooter = (screen: string): string => {
+  const lines = screen.split("\n");
+  const rule = lines.map((line) => line.startsWith("───")).lastIndexOf(true);
+  return rule < 0 ? screen : lines.slice(0, rule).join("\n");
+};
 const present = (screen: string, text: string | RegExp): boolean =>
-  typeof text === "string" ? screen.includes(text) : text.test(screen);
+  typeof text === "string" ? screen.includes(text) : text.test(aboveFooter(screen));
 const showing =
   (shown: readonly (string | RegExp)[], hidden: readonly (string | RegExp)[] = []) =>
   (screen: string): boolean =>

@@ -92,7 +92,7 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
   const done = await lab.screenWhere(
     pane,
     "the last answer to clear the card and the count",
-    (screen) => cardRows(screen).length === 0 && showing(["✓ clear"], ["await"])(screen),
+    (screen) => cardRows(screen).length === 0 && showing(["board"], ["await"])(screen),
   );
   keep("4-all-answered", done);
   assert.deepEqual(await lab.answered(rename), [{ body: MY_WORDS, source: "pane", written: true }]);

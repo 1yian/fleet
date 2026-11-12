@@ -47,9 +47,48 @@ function handleMouse(this: object, event: TuiMouseEvent): TuiMouseEventResult | 
   return { handled: true };
 }
 
+function statusesOf(footer: object): string[] {
+  const data: unknown = Reflect.get(footer, "footerData");
+  const read: unknown =
+    typeof data === "object" && data !== null
+      ? Reflect.get(data, "getExtensionStatuses")
+      : undefined;
+  const found: unknown = typeof read === "function" ? Reflect.apply(read, data, []) : undefined;
+  if (!(found instanceof Map)) return [];
+  const statuses = new Map<string, string>();
+  for (const [key, text] of found) {
+    if (typeof key === "string" && typeof text === "string") statuses.set(key, text);
+  }
+  return [...statuses.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((key) =>
+      (statuses.get(key) ?? "")
+        .replace(/[\r\n\t]/g, " ")
+        .replace(/ +/g, " ")
+        .trim(),
+    );
+}
+
+function fitStatus(footer: object, width: number): string {
+  const items = statusesOf(footer).flatMap((status, at) =>
+    status
+      .split(" · ")
+      .map((text, inner) => ({ text, separator: inner === 0 ? (at === 0 ? "" : " ") : " · " })),
+  );
+  let fitted = "";
+  for (const item of items) {
+    const next = fitted + (fitted === "" ? "" : item.separator) + item.text;
+    if (visibleWidth(next) <= width) fitted = next;
+  }
+  return fitted;
+}
+
 function install(): void {
-  patchRender(FooterComponent.prototype, "FooterComponent", (footer, _width, lines) => {
+  patchRender(FooterComponent.prototype, "FooterComponent", (footer, width, lines) => {
     const rows = lines();
+    if (stripTerminalSequences(rows[STATUS_ROW] ?? "").endsWith("...")) {
+      rows[STATUS_ROW] = fitStatus(footer, width);
+    }
     drawn.set(footer, rows);
     return rows;
   });
