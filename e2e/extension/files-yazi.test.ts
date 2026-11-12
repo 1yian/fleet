@@ -60,7 +60,15 @@ test("the lane home shows hidden files, config, data and state, and g d g c g s 
 const withoutYazi = (): string =>
   (process.env["PATH"] ?? "")
     .split(delimiter)
-    .filter((dir) => dir !== "" && !existsSync(join(dir, "yazi")))
+    .filter((dir) => dir !== "")
+    .map((dir, index) => {
+      if (!existsSync(join(dir, "yazi"))) return dir;
+      const shim = join(tempDir("files-path-"), String(index));
+      mkdirSync(shim);
+      for (const entry of readdirSync(dir))
+        if (entry !== "yazi" && entry !== "ya") symlinkSync(join(dir, entry), join(shim, entry));
+      return shim;
+    })
     .join(delimiter);
 
 test("on a host with no yazi the tab fetches the pinned yazi once and shows parent, current and preview columns", async () => {
