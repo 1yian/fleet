@@ -21,9 +21,13 @@
         "support/leak-fixture.ts",
         "support/reaper.ts",
         "support/fake-no-mistakes.ts",
-        "support/chrome.ts",
+        "support/fake-xpra.ts",
+        "support/fake-attach-ssh.ts",
         "trial/*.ts"
       ]
+    },
+    "packages/chrome": {
+      "entry": ["src/guard.ts", "src/attach.ts", "src/xpra-host.ts"]
     },
     "packages/extension": {
       "entry": [

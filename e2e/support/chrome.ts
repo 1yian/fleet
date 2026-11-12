@@ -8,6 +8,7 @@ export interface Target {
   readonly type: string;
   readonly title: string;
   readonly url: string;
+  readonly parent: string;
 }
 
 export class StandInChrome {
@@ -19,10 +20,18 @@ export class StandInChrome {
     this.endpoint = endpoint;
   }
 
-  static async start(rules = "MAP *.example.test 127.0.0.1"): Promise<StandInChrome> {
-    const port = await freePort();
+  static async start(
+    rules = "MAP *.example.test 127.0.0.1",
+    extraArgs: readonly string[] = [],
+    fixedPort?: number,
+  ): Promise<StandInChrome> {
+    const port = fixedPort ?? (await freePort());
     const browser = await chromium.launch({
-      args: [`--remote-debugging-port=${String(port)}`, `--host-resolver-rules=${rules}`],
+      args: [
+        `--remote-debugging-port=${String(port)}`,
+        `--host-resolver-rules=${rules}`,
+        ...extraArgs,
+      ],
     });
     return new StandInChrome(browser, `http://127.0.0.1:${String(port)}`);
   }
@@ -35,6 +44,7 @@ export class StandInChrome {
       type: optionalString(each, "type") ?? "",
       title: optionalString(each, "title") ?? "",
       url: optionalString(each, "url") ?? "",
+      parent: optionalString(each, "parentId") ?? "",
     }));
   }
 
@@ -42,10 +52,22 @@ export class StandInChrome {
     return (await this.targets()).filter((target) => target.type === "page");
   }
 
-  async open(url: string): Promise<void> {
+  async open(url: string): Promise<string> {
     const cdp = await Cdp.connect(this.endpoint);
     try {
-      await cdp.send("Target.createTarget", { url });
+      const created = await cdp.send("Target.createTarget", { url });
+      const target = isRecord(created) ? optionalString(created, "targetId") : undefined;
+      if (target === undefined) throw new Error("the browser opened no tab");
+      return target;
+    } finally {
+      cdp.close();
+    }
+  }
+
+  async closeTab(target: string): Promise<void> {
+    const cdp = await Cdp.connect(this.endpoint);
+    try {
+      await cdp.send("Target.closeTarget", { targetId: target });
     } finally {
       cdp.close();
     }
@@ -79,7 +101,7 @@ async function attach(cdp: Cdp, target: string): Promise<string> {
   return sessionId;
 }
 
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);

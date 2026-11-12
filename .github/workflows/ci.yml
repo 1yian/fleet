@@ -29,6 +29,7 @@ jobs:
       cardd-e2e: ${{ steps.filter.outputs.cardd-e2e }}
       extension-e2e: ${{ steps.filter.outputs.extension-e2e }}
       board-e2e: ${{ steps.filter.outputs.board-e2e }}
+      chrome-e2e: ${{ steps.filter.outputs.chrome-e2e }}
     steps:
       - uses: actions/checkout@v7
       - id: filter
@@ -77,6 +78,16 @@ jobs:
               - "packages/**"
               - "e2e/support/**"
               - "e2e/extension/**"
+              - "package-lock.json"
+              - ".github/workflows/ci.yml"
+              - ".github/actions/**"
+            chrome-e2e:
+              - "packages/chrome/**"
+              - "packages/protocol/**"
+              - "bin/fleet-attach"
+              - "bin/fleet-chrome"
+              - "e2e/chrome/**"
+              - "e2e/support/**"
               - "package-lock.json"
               - ".github/workflows/ci.yml"
               - ".github/actions/**"
@@ -224,6 +235,23 @@ jobs:
         timeout-minutes: 15
       - run: node --test --test-timeout=300000 --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 "e2e/extension/**/*.test.ts"
 
+  e2e-chrome:
+    timeout-minutes: 30
+    needs: changes
+    if: needs.changes.outputs.chrome-e2e == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        uses: ./.github/actions/install-chromium
+        timeout-minutes: 15
+      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/chrome/**/*.test.ts"
+
   e2e-board:
     timeout-minutes: 30
     needs: changes
@@ -271,6 +299,7 @@ jobs:
         e2e-pi,
         e2e-cardd,
         e2e-extension,
+        e2e-chrome,
         e2e-board,
         tests-required,
       ]

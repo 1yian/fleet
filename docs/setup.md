@@ -690,6 +690,84 @@ Skill text is edited in one place: the ystack lane. Every other lane, and every 
 4. Before a lane that holds a very large tree gets the tab for good, run `fleet files` in it by hand and note how long the first listing of its biggest folder takes. If it stalls, set `"files": {"previews": false}` for that lane.
 5. In the ystack lane, nothing more is needed if its `args` already load the scratch worktree's `skills/` as in "Changing a lane's settings".
 
+## The host's Chrome and the captain's windows
+
+This is optional. It is for a host whose workers share one Chrome, as p620 does. The captain gets that Chrome's windows on his Mac as native windows, and workers keep driving it over DevTools on `127.0.0.1:9222`. Nothing here talks to `cardd`, and `/updatefleet` does not change it.
+
+The guard stops reads of a password that the captain typed natively, through the shared DevTools port, by habit and by ordinary tools. A worker who takes deliberate steps can still get it, for example by finding Chrome's real loopback port. A worker also cannot read the body of a form that it submits by navigation, because the guard hides every such body.
+
+The pieces, all in `packages/chrome` and run through `<checkout>/bin/fleet-chrome` on the host and `<checkout>/bin/fleet-attach` on the Mac:
+
+- **The guard** (`fleet-chrome guard`) listens on `127.0.0.1:9222` where Chrome did. Chrome moves to a port that it picks itself (`--remote-debugging-port=0`), and the guard finds it in `DevToolsActivePort` in the profile folder. While the captain types a password into a tab, the guard refuses the worker calls that read that tab and strips what he typed from the events and request bodies that workers see. A read that was let through before he typed is refused when its answer comes back after. A request that carried a typed password keeps its body and its answer hidden after the field is empty. The guard does not hide addresses: a password form that submits with GET puts the password in the address, and workers see addresses as they are. While the guard cannot see Chrome, as when it has just started or has lost its link, it refuses those reads too and says `The browser guard is not ready`. A tab that the guard has not finished looking at reads as `not ready` in the same way, as while the tab or one of its frames is loading. The guard looks into shadow roots, and it holds a page back for 10 s at most while it loads. What a page can still expose in the gaps is listed in [code.md](code.md#native-chrome-attach). Everything else works as before. The guard covers the shared DevTools port: it stops reads by habit and by tools that go through that port. It does not stop a worker that looks for Chrome's real loopback port on purpose.
+- **Xpra** (`fleet-chrome xpra`) shows the windows of Chrome's display. It listens on one unix socket (`$XDG_RUNTIME_DIR/xpra/<host>-<display>`, mode 600) and on no network port. The Mac reaches it through `ssh <host> xpra _proxy`. It starts only when the guard answers on 9222, and it stops when the guard stops, so there is no way to attach without the guard.
+- **The launcher** (`fleet-attach <host>`) checks over ssh that the guard answers, then runs the Xpra client with `--window-close=disconnect`. It checks again before every attach.
+
+The clipboard is off. Both ends must say yes for it to work: `fleet-chrome xpra --clipboard` on the host and `fleet-attach --clipboard` on the Mac. Without the flag, each end passes `--clipboard=no` to Xpra. Turning it on makes the captain's Mac clipboard readable on the host by every process of the desktop user, workers included, so anything he copies can be read. It is a decision for each host (change the unit's `ExecStart`) and for each attach (the launcher flag).
+
+What the captain sees: every window of the host's Chrome, including every worker's tabs, with Chrome's own tab strip and shortcuts. Closing a window, or Cmd+Q, leaves all windows and ends the launcher. Every tab keeps running on the host. Run `fleet-attach` again to come back. Two limits: the page follows the size of his window, so a worker's screenshots change when he resizes it, and text is soft on a Retina display because the host Chrome runs at device scale 1.
+
+### Rollout on a host, in this order
+
+The captain approves the host steps. Do them when no worker is using the browser (`board` shows it): step 3 restarts Chrome, which closes every open tab. Cookies and logins stay in the profile.
+
+1. **Install Xpra 6.5.x on the host**, where a non-interactive SSH session finds `xpra` (on p620, `nix profile install nixpkgs#xpra`, which puts it in `~/.nix-profile/bin`). Check that the display has no window manager of its own: `DISPLAY=:99 xprop -root _NET_SUPPORTING_WM_CHECK` must say `not found`. Xpra becomes the window manager of that display.
+2. **Update the checkout** on the host to a commit that has `bin/fleet-chrome` (section 7).
+3. **Move Chrome and start the guard.** In the host's `fleet-chrome.service`, change `--remote-debugging-port=9222` to `--remote-debugging-port=0`, and add `rm -f <profile>/DevToolsActivePort` to its `ExecStartPre` lines. Add this unit as `fleet-chrome-guard.service`, with the checkout's real path and the real profile folder:
+
+   ```ini
+   [Unit]
+   Description=Fleet shared browser guard
+   After=fleet-chrome.service
+
+   [Service]
+   Environment=PATH=%h/.nix-profile/bin:/usr/bin:/bin
+   ExecStart=<checkout>/bin/fleet-chrome guard --listen 127.0.0.1:9222 --chrome <profile>
+   Restart=always
+   RestartSec=2
+
+   [Install]
+   WantedBy=default.target
+   ```
+
+   Then `systemctl --user daemon-reload && systemctl --user restart fleet-chrome && systemctl --user enable --now fleet-chrome-guard`. Check that `curl -si http://127.0.0.1:9222/json/version` shows `x-fleet-guard: 1`, and that a worker's browser tool still opens a page.
+
+4. **Start Xpra.** Add `fleet-chrome-xpra.service`, with the host's display, and run `systemctl --user enable --now fleet-chrome-xpra`:
+
+   ```ini
+   [Unit]
+   Description=Fleet shared browser windows for the captain (Xpra)
+   After=fleet-xvfb.service fleet-chrome-guard.service
+
+   [Service]
+   Environment=PATH=%h/.nix-profile/bin:/usr/bin:/bin
+   ExecStart=<checkout>/bin/fleet-chrome xpra --display 99 --guard-port 9222 --xpra %h/.nix-profile/bin/xpra
+   Restart=always
+   RestartSec=5
+
+   [Install]
+   WantedBy=default.target
+   ```
+
+   The unit has no `--clipboard`, so the host's clipboard stays off. Check that `ss -lxp | grep xpra` lists one socket for the display, that `ss -ltnp | grep -i xpra` lists nothing, and that `stat -c %a /run/user/$(id -u)/xpra/<host>-99` says 600.
+
+5. **Install Xpra.app on the Mac**, the same 6.5 version (Homebrew's cask is disabled). Download `Xpra-arm64-6.5.5-r0.dmg` from https://www.xpra.org/stable/osx/arm64/ (sha1 `7438cf6e8f8295ef64769b4138f138fb783e3e25`), open it, and drag the app to Applications. If macOS says it is damaged, run `xattr -rd com.apple.quarantine /Applications/Xpra.app`. macOS may ask for permissions when the first window opens. They are the captain's to grant. Check that `ssh -o BatchMode=yes <host> true` answers with no prompt.
+6. **Attach.** On the Mac, in a checkout with `npm ci` done: `bin/fleet-attach <host> --display 99`. The windows appear in a few seconds. Open a login page, click its password field, and type. In a worker's browser tool, a read of that tab must now fail with `The captain is typing a password in this tab`. Then clear the field and click out of it. Reads stay refused while the cursor is in the field, and succeed again once it has left an empty field.
+
+To undo: on the Mac, stop `fleet-attach` and delete `/Applications/Xpra.app` and `~/.xpra`. On the host, `systemctl --user disable --now fleet-chrome-xpra fleet-chrome-guard`, change `--remote-debugging-port=0` back to `9222` in `fleet-chrome.service`, and `systemctl --user restart fleet-chrome` (this closes the tabs again).
+
+### What happens when something restarts
+
+| What stops                               | What the captain and workers see                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The Mac sleeps or the link drops         | The windows go. The launcher checks the guard and attaches again, after 1 s and then up to 10 s apart. The tabs are as he left them.                         |
+| The captain closes a window or quits     | All windows go and the launcher ends with 0. Chrome and every tab keep running.                                                                              |
+| The host's Xpra service restarts         | The launcher attaches again when Xpra is back.                                                                                                               |
+| The guard stops or crashes               | Within about 4 s the host stops Xpra. Workers get no DevTools port until the guard is back. The launcher waits, and attaches by itself once the guard is up. |
+| Chrome restarts                          | Its tabs are gone, as for any Chrome restart. The guard follows the new port and the new windows appear on the Mac.                                          |
+| `cardd` or a mate restarts or reconnects | Nothing changes. This path never touches `cardd`.                                                                                                            |
+
+`fleet-attach` options: `--display` (default 99), `--guard-port` (9222), `--xpra` (the client, by default the app in Applications), `--remote-xpra` (Xpra on the host, default `xpra`, a path as the host sees it, so spell out `/home/<user>/.nix-profile/bin/xpra` or quote it, because the Mac shell expands an unquoted `~` to a Mac path), `--clipboard` (share the clipboard, off by default, and only works when the host's Xpra was started with `--clipboard` too), `--ssh` (default `ssh`), and `--retry-ms` (1000). It ends with 99 when something other than the guard answers on the guard's port, and with Xpra's own exit code for a failure that waiting does not fix.
+
 ## Moving from the earlier layout
 
 Before this layout, main's home was `~/fleet-homes/main`, each mate's settings were in `~/.config/fleet/<lane>.json`, mates ran from `~/.fleet/app`, and `fleet up` started them. Migration only copies. It changes nothing in cardd, so every card, entry, and live worker stays. It never deletes an old home, an old conversation, or a record.
