@@ -85,6 +85,7 @@ jobs:
               - "packages/chrome/**"
               - "packages/protocol/**"
               - "bin/fleet-attach"
+              - "bin/fleet-chrome"
               - "e2e/chrome/**"
               - "e2e/support/chrome.ts"
               - "e2e/support/guard-lab.ts"

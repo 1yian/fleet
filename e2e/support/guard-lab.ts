@@ -279,6 +279,14 @@ export class GuardLab {
     return lab;
   }
 
+  get root(): string {
+    return this.scratch.root;
+  }
+
+  get guardPort(): number {
+    return this.port;
+  }
+
   async listening(): Promise<void> {
     await until(async () => {
       try {
