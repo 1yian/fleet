@@ -13,7 +13,8 @@ const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["DECIDE_EVIDENCE_DIR"];
 const RULE = /^─{20,}$/;
-export const CARD_TOP = /^── ◆ Decision \d+ of \d+/;
+export const CARD_TOP = /^── ◆ (Decision \d+ of \d+|Decisions)/;
+export const NOTHING = "Nothing is waiting for your decision.";
 export const SHIP = "Ship the scrollbar fix?";
 export const RENAME = "Rename the repository?";
 export const MY_WORDS = "Keep the old name until the move in March";
@@ -138,6 +139,7 @@ export class DecideLab {
     const front = env["PATH"] === undefined ? [] : [env["PATH"]];
     this.opened = await HerdrLab.start({
       ...this.h.piEnv("mate"),
+      FLEET_PANE_LIVE_MS: "3600000",
       ...this.env,
       FLEET_PANE_POLL_MS: "3600000",
       ...env,
@@ -224,12 +226,10 @@ export class DecideLab {
     });
   }
 
-  async askedMain(
-    pane: string,
+  async askedUnseen(
     title: string,
     question: string,
     options: string[],
-    count: number,
     kind: Card["kind"] = "scout",
   ): Promise<Card> {
     const served = this.h.callsOf("mate").length;
@@ -240,9 +240,32 @@ export class DecideLab {
     );
     this.h.onModel(() => ({ text: SEEN }), "mate");
     await this.cleo.call("hold", { card: card.id, question: `${title}?`, options: ["Yes"] });
-    await this.screenWhere(pane, `${String(count)} on the status bar`, showing([awaiting(count)]));
     await this.h.waitForCall(served + 1, "mate", WAIT_MS);
     return card;
+  }
+
+  async askedMain(
+    pane: string,
+    title: string,
+    question: string,
+    options: string[],
+    count: number,
+    kind: Card["kind"] = "scout",
+  ): Promise<Card> {
+    const card = await this.askedUnseen(title, question, options, kind);
+    await this.screenWhere(pane, `${String(count)} on the status bar`, showing([awaiting(count)]));
+    return card;
+  }
+
+  async askedAgain(card: Card, question: string, options: string[]): Promise<void> {
+    const served = this.h.callsOf("mate").length;
+    this.h.onModel(
+      () => ({ tool: "hold", args: { card: card.id, question, options, to: "captain" } }),
+      "mate",
+    );
+    this.h.onModel(() => ({ text: SEEN }), "mate");
+    await this.cleo.call("hold", { card: card.id, question: `${question}?`, options: ["Yes"] });
+    await this.h.waitForCall(served + 1, "mate", WAIT_MS);
   }
 
   async answered(card: Card): Promise<{ body: string; source: unknown; written: unknown }[]> {

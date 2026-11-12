@@ -2,18 +2,20 @@ import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent"
 import {
   Input,
   matchesKey,
-  replaceControlCharacters,
   stripTerminalSequences,
   truncateToWidth,
   visibleWidth,
-  wrapTextWithAnsi,
   type Component,
   type Focusable,
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 import { LATER_EXAMPLES } from "@fleet/protocol";
+import { merged, type Slot } from "./deck.ts";
 import type { Decision } from "./decisions.ts";
+import { plain } from "./look.ts";
+import { drawNothing } from "./rest.ts";
+import { oneLine, paragraphs } from "./text.ts";
 
 const WRITE_LABEL = "My words…";
 const LATER_LABEL = "Later…";
@@ -26,7 +28,6 @@ const SPACER_ROWS = 3;
 const PADDING = 1;
 const RULE = "─";
 const POINTER = "→ ";
-const PASTE_START = "\u001b[200~";
 const margin = " ".repeat(PADDING);
 
 export interface CardDeps {
@@ -37,33 +38,17 @@ export interface CardDeps {
   readonly send: (decision: Decision, choice: string, written: boolean) => Promise<void>;
   readonly later: (decision: Decision, said: string) => Promise<void>;
   readonly reload: () => Promise<readonly Decision[]>;
+  readonly refresh: () => void;
   readonly redraw: () => void;
   readonly close: () => void;
 }
 
 type Row = "option" | "words" | "later";
 
-interface Slot {
-  readonly decision: Decision;
-  readonly answered: boolean;
-}
-
 interface Layout {
   readonly spacers: number;
   readonly body: number;
   readonly picks: number;
-}
-
-const oneLine = (data: string): string =>
-  data.includes(PASTE_START) ? data.replace(/\s*[\r\n]+\s*/g, " ") : data;
-
-const plain = (text: string): string => replaceControlCharacters(stripTerminalSequences(text));
-
-function paragraphs(text: string, width: number): string[] {
-  return text.split("\n").flatMap((line) => {
-    const clean = plain(line).trimEnd();
-    return clean === "" ? [""] : wrapTextWithAnsi(clean, width);
-  });
 }
 
 export class DecisionCard implements Component, Focusable {
@@ -78,6 +63,7 @@ export class DecisionCard implements Component, Focusable {
   private overflow = false;
   private sending = false;
   private note: string | undefined;
+  private arrival: string | undefined;
   private focus = false;
   private readonly input: Input;
   private readonly when: Input;
@@ -145,6 +131,10 @@ export class DecisionCard implements Component, Focusable {
     return this.deck.filter((slot) => !slot.answered).length;
   }
 
+  private get clear(): boolean {
+    return this.open === 0;
+  }
+
   invalidate(): void {
     this.input.invalidate();
     this.when.invalidate();
@@ -152,13 +142,23 @@ export class DecisionCard implements Component, Focusable {
 
   handleInput(data: string): void {
     if (this.sending) return;
+    if (this.clear) {
+      if (this.confirms(data) || this.deps.keys.matches(data, "tui.select.cancel"))
+        this.deps.close();
+      return;
+    }
+    if (!this.confirms(data)) this.arrival = undefined;
     if (!this.choose(data) && !this.read(data) && !this.across(data)) this.type(data);
     this.deps.redraw();
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (this.sending) return { handled: true };
-    return this.press(event);
+    return this.clear ? undefined : this.press(event);
+  }
+
+  private confirms(data: string): boolean {
+    return this.deps.keys.matches(data, "tui.select.confirm") || data === "\n";
   }
 
   private choose(data: string): boolean {
@@ -166,7 +166,7 @@ export class DecisionCard implements Component, Focusable {
     if (keys.matches(data, "tui.select.cancel")) this.cancel();
     else if (keys.matches(data, "tui.select.up")) this.move(-1);
     else if (keys.matches(data, "tui.select.down")) this.move(1);
-    else if (keys.matches(data, "tui.select.confirm") || data === "\n") this.confirm();
+    else if (this.confirms(data)) this.confirm();
     else return false;
     return true;
   }
@@ -188,6 +188,7 @@ export class DecisionCard implements Component, Focusable {
   private press(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.button !== "left" || (event.type !== "press" && event.type !== "click"))
       return undefined;
+    if (event.type === "press") this.arrival = undefined;
     const at = event.y - this.firstPick;
     if (at < 0 || at >= this.shownPicks) return undefined;
     this.row = this.choiceTop + at;
@@ -240,6 +241,10 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private confirm(): void {
+    if (this.arrival !== undefined) {
+      this.arrival = undefined;
+      return;
+    }
     const { kind } = this;
     if (kind === "words") this.answer(this.words, true);
     else if (kind === "later") this.defer(this.when.getValue().trim());
@@ -265,68 +270,82 @@ export class DecisionCard implements Component, Focusable {
     this.deps.redraw();
     run(decision).then(
       () => {
-        this.sending = false;
-        this.next();
+        this.answered(decision);
       },
       (error: unknown) => {
-        this.refused(decision, error);
+        this.refused(error);
       },
     );
   }
 
-  private next(): void {
-    this.deck = this.deck.map((slot, place) =>
-      place === this.at ? { ...slot, answered: true } : slot,
+  private answered(decision: Decision): void {
+    this.deck = this.deck.map((slot) =>
+      slot.decision.card === decision.card && !slot.answered ? { ...slot, answered: true } : slot,
     );
     this.input.setValue("");
     this.when.setValue("");
-    if (this.open === 0) {
-      this.deps.close();
+    if (this.open > 0) {
+      this.sending = false;
+      this.turn(1);
+      this.deps.refresh();
+      this.deps.redraw();
       return;
     }
-    this.turn(1);
-    this.deps.redraw();
-  }
-
-  private refused(decision: Decision, error: unknown): void {
-    const why = error instanceof Error ? error.message : String(error);
-    this.note = plain(why);
     this.deps.reload().then(
       (fresh) => {
         this.sending = false;
-        this.reconcile(fresh, decision);
-        if (this.open === 0) this.deps.close();
-        else this.deps.redraw();
+        this.apply(fresh);
+        this.leaveIfClear();
       },
       () => {
         this.sending = false;
+        this.deps.close();
+      },
+    );
+  }
+
+  private refused(error: unknown): void {
+    const why = error instanceof Error ? error.message : String(error);
+    this.deps.reload().then(
+      (fresh) => {
+        this.sending = false;
+        this.apply(fresh);
+        this.arrival = undefined;
+        this.note = plain(why);
+        this.leaveIfClear();
+      },
+      () => {
+        this.sending = false;
+        this.note = plain(why);
         this.deps.redraw();
       },
     );
   }
 
-  private reconcile(fresh: readonly Decision[], refused: Decision): void {
-    const waiting = new Map(fresh.map((each) => [each.card, each]));
-    const kept = new Set<number>();
-    const deck: Slot[] = [];
-    let landing = -1;
-    this.deck.forEach((slot, place) => {
-      const decision = slot.answered ? slot.decision : waiting.get(slot.decision.card);
-      if (decision === undefined) return;
-      if (!slot.answered) kept.add(decision.card);
-      if (landing === -1 && !slot.answered && place >= this.at) landing = deck.length;
-      deck.push({ decision, answered: slot.answered });
-    });
-    for (const decision of fresh)
-      if (!kept.has(decision.card)) deck.push({ decision, answered: false });
-    const same = deck.findIndex((slot) => !slot.answered && slot.decision.card === refused.card);
-    const first = deck.findIndex((slot) => !slot.answered);
+  private leaveIfClear(): void {
+    if (this.clear) this.deps.close();
+    else this.deps.redraw();
+  }
+
+  sync(fresh: readonly Decision[]): void {
+    if (this.sending) return;
+    this.apply(fresh);
+    this.deps.redraw();
+  }
+
+  private apply(fresh: readonly Decision[]): void {
+    const before = this.current;
     const { kind } = this;
     const picked = kind === "option" ? this.choices[this.row] : undefined;
-    this.deck = deck;
-    this.at = Math.max(0, same !== -1 ? same : landing !== -1 ? landing : first);
-    if (same === -1) this.settle();
-    else this.row = this.follow(kind, picked);
+    const next = merged(this.deck, this.at, fresh);
+    this.deck = next.deck;
+    this.at = next.at;
+    if (!next.stayed) this.settle();
+    else if (this.current?.hold !== before?.hold) this.row = this.follow(kind, picked);
+    if (next.arrival !== undefined) {
+      this.arrival = next.arrival;
+      this.note = undefined;
+    }
   }
 
   private follow(kind: Row, picked: string | undefined): number {
@@ -344,7 +363,8 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private layout(): Layout {
-    const free = this.deps.rows() - FRAME_ROWS - (this.note === undefined ? 0 : 1);
+    const free =
+      this.deps.rows() - FRAME_ROWS - ((this.note ?? this.arrival) === undefined ? 0 : 1);
     const picks = Math.min(this.choices.length, Math.max(1, free - MIN_BODY_ROWS));
     const left = free - picks;
     const spacers = Math.max(0, Math.min(SPACER_ROWS, left - MIN_BODY_ROWS));
@@ -353,12 +373,13 @@ export class DecisionCard implements Component, Focusable {
   }
 
   render(width: number): string[] {
-    const decision = this.current;
-    if (decision === undefined) return [];
     const { theme } = this.deps;
     const inner = Math.max(1, width - 2 * PADDING);
     const line = (text: string): string => `${margin}${text}`;
     const quiet = (text: string): string => line(theme.fg("muted", this.fit(text, inner)));
+    const decision = this.current;
+    const warning = this.note ?? this.arrival;
+    if (this.clear || decision === undefined) return drawNothing(theme, this.top(width), width);
     const body = paragraphs(decision.question, inner);
     const layout = this.layout();
     const rows = layout.body;
@@ -382,7 +403,7 @@ export class DecisionCard implements Component, Focusable {
       ...lines,
       ...picks.map(line),
       ...spacer(2),
-      ...(this.note === undefined ? [] : [line(theme.fg("warning", this.fit(this.note, inner)))]),
+      ...(warning === undefined ? [] : [line(theme.fg("warning", this.fit(warning, inner)))]),
       line(this.hint(inner)),
       theme.fg("border", RULE.repeat(width)),
     ];
@@ -396,7 +417,7 @@ export class DecisionCard implements Component, Focusable {
     const { theme } = this.deps;
     const place = this.at;
     const total = this.deck.length;
-    const name = `Decision ${String(place + 1)} of ${String(total)}`;
+    const name = this.clear ? "Decisions" : `Decision ${String(place + 1)} of ${String(total)}`;
     const label = theme.style(name, { fg: theme.colors.accent, bold: true });
     const diamond = theme.style("◆", { fg: theme.colors.warning, bold: true });
     const title = ` ${diamond} ${label}${this.dots()} `;
@@ -407,9 +428,9 @@ export class DecisionCard implements Component, Focusable {
 
   private dots(): string {
     const { theme } = this.deps;
-    if (this.deck.length === 1 || this.deck.length > MAX_DOTS) return "";
+    if (this.deck.length <= 1 || this.deck.length > MAX_DOTS) return "";
     const marks = this.deck.map((slot, place) => {
-      if (place === this.at) return theme.fg("accent", "●");
+      if (place === this.at && !this.clear) return theme.fg("accent", "●");
       return slot.answered ? theme.fg("success", "✓") : theme.fg("muted", "○");
     });
     return ` ${marks.join("")}`;

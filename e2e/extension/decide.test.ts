@@ -9,6 +9,7 @@ import {
   inline,
   keep,
   MY_WORDS,
+  NOTHING,
   onCard,
   RENAME,
   rowsOf,
@@ -100,13 +101,10 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
   assert.deepEqual((await lab.cardd.board()).holds, []);
 
   await lab.herdr().submit(pane, "/d");
-  const none = await lab.screenWhere(
-    pane,
-    "the notice",
-    showing(["Nothing is waiting for your decision."]),
-  );
+  const none = await lab.screenWhere(pane, "the card that says nothing waits", onCard([NOTHING]));
   keep("5-none-waiting", none);
-  assert.deepEqual(cardRows(none), []);
+  await lab.herdr().press(pane, "esc");
+  await lab.screenWhere(pane, "the card to close", (screen) => cardRows(screen).length === 0);
 });
 
 test("a click on the decisions item opens exactly the card that /d opens", async () => {
@@ -163,36 +161,6 @@ test("entries that land on the card while it is open do not refuse the answer", 
     { body: "Ship it", source: "pane", written: undefined },
   ]);
   await lab.mainWasTold(2, ship, "Ship it");
-});
-
-test("an answer to a decision that changed while the card was open is refused and the card moves on", async () => {
-  const pane = await lab.openMain();
-  const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
-  await lab.askedMain(pane, "Repository name", RENAME, ["Rename", "Keep"], 2);
-  lab.answers(3);
-
-  await lab.herdr().submit(pane, "/d");
-  await lab.screenWhere(pane, "the first decision", onCard(["Decision 1 of 2", SHIP]));
-  const open = (await lab.cardd.board()).holds.find((each) => each.card === ship.id);
-  assert.ok(open !== undefined, "the hold is open on the board");
-  assert.equal(
-    await lab.cardd.act(ship.id, { kind: "answer", hold: open.hold, choice: "Hold" }),
-    200,
-  );
-
-  await lab.herdr().press(pane, "enter");
-  const refused = await lab.screenWhere(
-    pane,
-    "the refusal and the next decision",
-    onCard(
-      [`c-${String(ship.id)} is no longer waiting for your answer`, "nothing was recorded", RENAME],
-      [SHIP],
-    ),
-  );
-  keep("7-stale-answer", refused);
-  assert.deepEqual(await lab.answered(ship), [
-    { body: "Hold", source: "board", written: undefined },
-  ]);
 });
 
 test("a question longer than the card scrolls with PgDn and PgUp, and the card says how much is below", async () => {
@@ -288,7 +256,7 @@ test("in a 12-row pane the choices scroll with the selection and his words fit o
   await lab.mainWasTold(2, long, "Wait a week");
 });
 
-test("in a 12-row pane a refusal of his own words keeps the note and the next decision on screen", async () => {
+test("in a 12-row pane the next decision and the line that says why it is there stay on screen when the one he was on is put off", async () => {
   const pane = await lab.openShortMain();
   const ship = await lab.askedMain(pane, "Scrollbar fix", evidence("SHIP"), FOUR_WAYS, 1);
   await lab.askedMain(pane, "Repository name", evidence("RENAME"), FOUR_WAYS, 2);
@@ -301,17 +269,22 @@ test("in a 12-row pane a refusal of his own words keeps the note and the next de
   const open = (await lab.cardd.board()).holds.find((each) => each.card === ship.id);
   assert.ok(open !== undefined, "the hold is open on the board");
   assert.equal(
-    await lab.cardd.act(ship.id, { kind: "answer", hold: open.hold, choice: "Hold" }),
+    await lab.cardd.act(ship.id, {
+      kind: "hold",
+      hold: open.hold,
+      said: "in 2 hours",
+      zone: "UTC",
+    }),
     200,
   );
 
-  await lab.herdr().submit(pane, MY_WORDS);
-  const refused = await lab.screenWhere(
+  const moved = await lab.screenWhere(
     pane,
-    "the refusal and the next decision",
+    "the next decision and why it is there",
     onCard(
       [
-        `c-${String(ship.id)} is no longer waiting for your answer`,
+        "Decision 1 of 1",
+        "A new decision is on screen.",
         "RENAME FIRST LINE",
         "→ Ship it",
         "esc close",
@@ -319,9 +292,37 @@ test("in a 12-row pane a refusal of his own words keeps the note and the next de
       ["SHIP FIRST LINE"],
     ),
   );
+  keep("10-short-pane-moved-on", moved);
+  insidePane(moved);
+  assert.deepEqual(await lab.answered(ship), []);
+});
+
+test("in a 12-row pane a refusal of his own words keeps the note and his words on screen", async () => {
+  const pane = await lab.openShortMain();
+  const ship = await lab.askedMain(pane, "Scrollbar fix", evidence("SHIP"), FOUR_WAYS, 1);
+  lab.answers(2);
+
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the decision", onCard(["Decision 1 of 1", "SHIP FIRST LINE"]));
+  await lab.herdr().press(pane, "down", "down", "down", "down");
+  await lab.herdr().type(pane, MY_WORDS);
+  await lab.screenWhere(pane, "his words row", onCard([`→ ${MY_WORDS}`, "⏎ send"]));
+  await lab.cleo.call("hold", {
+    card: ship.id,
+    question: evidence("AUDIT"),
+    options: FOUR_WAYS,
+  });
+
+  await lab.herdr().press(pane, "enter");
+  const refused = await lab.screenWhere(
+    pane,
+    "the refusal with his words still on the card",
+    onCard(
+      [`c-${String(ship.id)}'s decision changed`, "AUDIT FIRST LINE", `→ ${MY_WORDS}`, "⏎ send"],
+      ["SHIP FIRST LINE"],
+    ),
+  );
   keep("10-short-pane-refused", refused);
   insidePane(refused);
-  assert.deepEqual(await lab.answered(ship), [
-    { body: "Hold", source: "board", written: undefined },
-  ]);
+  assert.deepEqual(await lab.answered(ship), []);
 });
