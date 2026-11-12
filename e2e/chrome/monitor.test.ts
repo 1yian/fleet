@@ -71,7 +71,7 @@ test("after the guard sees Chrome again, a frame that holds a typed password sta
   const inFrame = await worker.attach(frame);
   await framePassword(worker, inFrame);
   const captain = await Captain.at(lab.chrome, tab.target);
-  await captain.clickAt(20, 15);
+  await captain.clickIntoFrame(frame, "#pw", 20, 15);
   await captain.type(SECRET);
   await until(async () => {
     const reply = await worker.evaluate(inFrame, READ_PASSWORD);

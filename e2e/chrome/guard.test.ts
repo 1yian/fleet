@@ -324,7 +324,7 @@ test("a password typed into a cross-origin frame guards the whole tab and the fr
   const inFrame = await worker.attach(frame);
   await reads(worker, inFrame, "!!document.querySelector('#pw')", "true");
   const captain = await Captain.at(lab.chrome, tab.target);
-  await captain.clickAt(20, 15);
+  await captain.clickIntoFrame(frame, "#pw", 20, 15);
   await captain.type(SECRET);
 
   await until(async () => {

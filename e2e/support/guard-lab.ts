@@ -261,10 +261,12 @@ export class Worker {
 }
 
 export class Captain {
+  private readonly chrome: StandInChrome;
   private readonly cdp: Cdp;
   private readonly session: string;
 
-  private constructor(cdp: Cdp, session: string) {
+  private constructor(chrome: StandInChrome, cdp: Cdp, session: string) {
+    this.chrome = chrome;
     this.cdp = cdp;
     this.session = session;
   }
@@ -274,7 +276,7 @@ export class Captain {
     const attached = await cdp.send("Target.attachToTarget", { targetId: target, flatten: true });
     const session = isRecord(attached) ? optionalString(attached, "sessionId") : undefined;
     if (session === undefined) throw new Error("the captain's pointer found no tab");
-    return new Captain(cdp, session);
+    return new Captain(chrome, cdp, session);
   }
 
   async clickAt(x: number, y: number): Promise<void> {
@@ -285,6 +287,14 @@ export class Captain {
         { sessionId: this.session },
       );
     }
+  }
+
+  async clickIntoFrame(frame: string, selector: string, x: number, y: number): Promise<void> {
+    const focused = `document.activeElement === document.querySelector(${JSON.stringify(selector)})`;
+    await until(async () => {
+      await this.clickAt(x, y);
+      return (await this.chrome.evaluate(frame, focused)) === true ? true : undefined;
+    }, `the click to reach ${selector} in the frame`);
   }
 
   async click(selector: string): Promise<void> {
