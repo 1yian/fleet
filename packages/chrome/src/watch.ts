@@ -2,10 +2,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Cdp, type CdpEvent } from "@fleet/protocol";
 import Type from "typebox";
 import { Observer } from "./observer.ts";
-import { navigationUrl } from "./rules.ts";
 import { BINDING, PAGE_SCRIPT, RESCAN } from "./script.ts";
 import { Contexts, Targets, type Ref } from "./tracking.ts";
-import { Addresses } from "./urls.ts";
 import { record, shape, words } from "./wire.ts";
 
 export type Verdict = "clear" | "typed" | "unseen";
@@ -17,8 +15,6 @@ export interface Typing {
   settled(pageId: string): Promise<Verdict>;
   unplaced(): Verdict;
   epoch(ref: Ref): number;
-  mark(ref: Ref, url: string): void;
-  scrub(text: string): string;
 }
 
 const TargetInfo = Type.Object({ targetId: Type.String(), type: Type.String() });
@@ -61,7 +57,6 @@ export class Watch implements Typing {
   private readonly epochs = new Map<string, number>();
   private readonly injected = new Set<string>();
   private readonly observer: Observer;
-  private readonly addresses = new Addresses();
   private readonly targets = new Targets();
   private readonly contexts = new Contexts();
   private readonly waiters = new Set<() => void>();
@@ -119,12 +114,6 @@ export class Watch implements Typing {
       "Page.lifecycleEvent",
       (cdp, event) => {
         this.onLifecycle(cdp, event);
-      },
-    ],
-    [
-      "Page.frameRequestedNavigation",
-      (_cdp, event) => {
-        this.onRequested(event);
       },
     ],
     [
@@ -220,14 +209,6 @@ export class Watch implements Typing {
     return Math.max(typedAt, this.lostAt);
   }
 
-  mark(ref: Ref, url: string): void {
-    this.addresses.mark(ref.kind === "page" ? ref.id : "", url);
-  }
-
-  scrub(text: string): string {
-    return this.addresses.scrub(text);
-  }
-
   private async run(): Promise<void> {
     while (!this.stopped) {
       try {
@@ -250,7 +231,6 @@ export class Watch implements Typing {
       this.handlers.get(event.method)?.(cdp, event);
     });
     await cdp.send("Target.setDiscoverTargets", { discover: true });
-    this.addresses.keepOnly(new Set(this.pages.keys()));
     this.live = true;
     this.notify();
     console.error("guard: watching the browser");
@@ -313,7 +293,6 @@ export class Watch implements Typing {
     for (const session of this.pages.get(id)?.sessions ?? []) this.forget(session);
     this.pages.delete(id);
     this.epochs.delete(id);
-    this.addresses.forget(id);
     this.targets.remove(id);
     this.notify();
   }
@@ -351,13 +330,6 @@ export class Watch implements Typing {
     if (event.sessionId === undefined) return;
     this.contexts.drop(event.sessionId);
     this.notify();
-  }
-
-  private onRequested(event: CdpEvent): void {
-    const page = this.owners.get(event.sessionId ?? "");
-    const url = navigationUrl(event.method, event.params);
-    if (page !== undefined && url !== undefined && this.verdict(page) !== "clear")
-      this.addresses.mark(page, url);
   }
 
   private onLifecycle(cdp: Cdp, event: CdpEvent): void {

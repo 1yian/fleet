@@ -8,17 +8,14 @@ const AUTOFOCUS = LOGIN.replace(
   'autocomplete="off" autofocus><button',
 ).replace("<title>login</title>", "<title>autofocus</title>");
 
-const GET_LOGIN = LOGIN.replace(
-  'method="post" action="/submit"',
-  'method="get" action="/welcome"',
-).replace("<title>login</title>", "<title>getlogin</title>");
-
-const SPA = `<title>spa</title><style>body{margin:0}input,button{display:block;width:240px;height:30px;margin:0}</style>
+const spa = (
+  endpoint: string,
+): string => `<title>spa</title><style>body{margin:0}input,button{display:block;width:240px;height:30px;margin:0}</style>
 <input id="user" autocomplete="off"><input id="pw" type="password" autocomplete="off"><button id="go" type="button">Sign in</button>
 <script>
 document.querySelector("#go").addEventListener("click", () => {
   const field = document.querySelector("#pw");
-  fetch("/api/login", { method: "POST", headers: { "content-type": "text/plain" }, body: "pw=" + field.value });
+  fetch("${endpoint}", { method: "POST", headers: { "content-type": "text/plain" }, body: "pw=" + field.value });
   field.value = "";
 });
 </script>`;
@@ -108,8 +105,8 @@ const FRAME = `<style>body{margin:0}input{display:block;width:240px;height:30px;
 const pagesFor = (port: number): ReadonlyMap<string, string> =>
   new Map([
     ["/login", LOGIN],
-    ["/getlogin", GET_LOGIN],
-    ["/spa", SPA],
+    ["/spa", spa("/api/login")],
+    ["/echo", spa("/api/echo")],
     ["/autofocus", AUTOFOCUS],
     ["/closed", CLOSED],
     ["/filled", FILLED],
@@ -159,20 +156,31 @@ export class Site {
     const held: ServerResponse[] = [];
     const logins: ServerResponse[] = [];
     let port = 0;
+    const posts = new Map<string, (body: string, response: ServerResponse) => void>([
+      [
+        "/submit",
+        (body, response) => {
+          submitted.push(body);
+          response.end("<title>welcome</title>welcome");
+        },
+      ],
+      ["/api/login", (_body, response) => logins.push(response)],
+      ["/api/echo", (body, response) => response.end(`you sent ${body}`)],
+      [
+        "/api/done",
+        (body, response) => {
+          submitted.push(body);
+          response.end("ok");
+        },
+      ],
+    ]);
     const server = createServer((request, response) => {
       const path = request.url ?? "/";
       response.setHeader("content-type", "text/html");
-      if (request.method === "POST" && path === "/submit") {
+      const post = request.method === "POST" ? posts.get(path) : undefined;
+      if (post !== undefined) {
         void readBody(request).then((body) => {
-          submitted.push(body);
-          response.end("<title>welcome</title>welcome");
-        });
-      } else if (request.method === "POST" && path === "/api/login") {
-        void readBody(request).then(() => logins.push(response));
-      } else if (request.method === "POST" && path === "/api/done") {
-        void readBody(request).then((body) => {
-          submitted.push(body);
-          response.end("ok");
+          post(body, response);
         });
       } else if (path === "/held") {
         response.write(HELD);

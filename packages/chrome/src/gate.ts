@@ -1,8 +1,8 @@
 import Type from "typebox";
 import {
   allowedWhileTyped,
+  bodyReaderOf,
   droppedWhileTyped,
-  navigationUrl,
   refusedAlways,
   withoutBody,
 } from "./rules.ts";
@@ -38,7 +38,7 @@ const unseenMessage = (method: string): string =>
   `The browser guard is not ready for this tab, so ${method} is refused. Try again in a moment.`;
 
 const bodyMessage =
-  "The captain typed a password into this request, so its body is not available to a worker.";
+  "The captain typed a password into this request, so its body and its answer are not available to a worker.";
 
 const refusalReply = (wire: Wire, message: string): string =>
   JSON.stringify({
@@ -77,11 +77,6 @@ export class Gate {
   }
 
   reply(raw: string): string | undefined {
-    const out = this.screen(raw);
-    return out === undefined ? undefined : this.watch.scrub(out);
-  }
-
-  private screen(raw: string): string | undefined {
     const wire = parseWire(raw);
     if (wire === undefined) return raw;
     if (wire.id !== undefined) {
@@ -95,11 +90,8 @@ export class Gate {
 
   private refusal(wire: Wire, method: string, verdict: Verdict): string | undefined {
     if (refusedAlways(method)) return `${method} is not available through the guard.`;
-    if (
-      method === "Network.getRequestPostData" &&
-      this.secrets.has(wire.sessionId ?? "", words(record(wire.params), "requestId") ?? "")
-    )
-      return bodyMessage;
+    const body = bodyReaderOf(method, wire.params);
+    if (body !== undefined && this.secrets.has(wire.sessionId ?? "", body)) return bodyMessage;
     if (verdict === "clear" || allowedWhileTyped(method, wire.params)) return undefined;
     return verdict === "typed" ? typedMessage(method) : unseenMessage(method);
   }
@@ -185,11 +177,8 @@ export class Gate {
   }
 
   private screened(wire: Wire, method: string, raw: string): string | undefined {
-    const ref = this.refNow(wire.sessionId);
-    const armed = this.verdictNow(ref) !== "clear";
+    const armed = this.verdictNow(this.refNow(wire.sessionId)) !== "clear";
     if (armed && droppedWhileTyped(method)) return undefined;
-    const address = armed ? navigationUrl(method, wire.params) : undefined;
-    if (address !== undefined) this.watch.mark(ref, address);
     return this.cut(wire, method, raw, armed);
   }
 
