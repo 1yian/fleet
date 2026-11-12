@@ -85,7 +85,7 @@ async function cleoAsks(title: string): Promise<void> {
 }
 
 const FLEET_ROW = "[fleet] cleo on c-2 ship-the-scrollbar-fix (hold)";
-const TOOL_ROW = "board";
+const TOOL_ROW = /^[ \t]*board[ \t]*$/m;
 const NOTE = "Checking the board first.";
 const REPLY = "Cleo wants a decision on the scrollbar fix.";
 const CAPTAIN = "Any news for me?";
@@ -93,10 +93,12 @@ const ANSWER = "Nothing else is waiting.";
 const BANNER_REPLY = "The banner can go.";
 const TRANSCRIPT_BOTTOM = "\u001b[1;5F";
 const TRANSCRIPT_TOP = "\u001b[1;5H";
+const present = (screen: string, text: string | RegExp): boolean =>
+  typeof text === "string" ? screen.includes(text) : text.test(screen);
 const showing =
-  (shown: readonly string[], hidden: readonly string[] = []) =>
+  (shown: readonly (string | RegExp)[], hidden: readonly (string | RegExp)[] = []) =>
   (screen: string): boolean =>
-    shown.every((text) => screen.includes(text)) && !hidden.some((text) => screen.includes(text));
+    shown.every((text) => present(screen, text)) && !hidden.some((text) => present(screen, text));
 
 test("/calm hides fleet rows, tool rows, and working notes, keeps the conversation, and survives a restart", async () => {
   h.onModel(() => ({ tool: "board", text: NOTE }), "mate");

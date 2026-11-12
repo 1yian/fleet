@@ -73,16 +73,30 @@ export const park = (
 ): Promise<unknown> =>
   mate.call("hold", { card: card.id, question, until: Date.now() + ms, ...more });
 
-export function ageCard(cardd: Cardd, card: Card, ms: number): void {
+export function ageCards(cardd: Cardd, cards: readonly Card[], ms: number): void {
+  const ids = cards.map(({ id }) => id);
+  const marks = ids.map(() => "?").join(", ");
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });
   try {
     db.exec("DROP TRIGGER IF EXISTS entries_no_update");
-    db.prepare("UPDATE entries SET created_at = created_at - ? WHERE card = ?").run(ms, card.id);
-    db.prepare("UPDATE cards SET created_at = created_at - ? WHERE id = ?").run(ms, card.id);
+    db.exec("BEGIN IMMEDIATE");
+    db.prepare(`UPDATE entries SET created_at = created_at - ? WHERE card IN (${marks})`).run(
+      ms,
+      ...ids,
+    );
+    db.prepare(`UPDATE cards SET created_at = created_at - ? WHERE id IN (${marks})`).run(
+      ms,
+      ...ids,
+    );
+    db.exec("COMMIT");
   } finally {
     db.close();
   }
 }
+
+export const ageCard = (cardd: Cardd, card: Card, ms: number): void => {
+  ageCards(cardd, [card], ms);
+};
 
 export function ageSession(cardd: Cardd, card: Card, ms: number): void {
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });

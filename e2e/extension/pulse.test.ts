@@ -184,7 +184,9 @@ test("a Needs you row shows when the card last moved and the steps behind it, al
   oldDatedHold(cardd, asked, "captain", Date.now(), Date.now() - 1_000, [step.id]);
   ageCard(cardd, asked, 5 * HOUR);
   const pane = await openMain();
-  await screenWhere(pane, "the pane to count what is his", (screen) => screen.includes("◆ 1"));
+  await screenWhere(pane, "the pane to count the decision", (screen) =>
+    screen.includes("1 decision awaits you"),
+  );
 
   await herdr().submit(pane, "/pulse");
   const opened = await screenWhere(pane, "the overlay", (screen) =>
@@ -229,19 +231,22 @@ test("enter on a card shows its board link, and an empty board says so", async (
   assert.ok(!linked.includes("quiet first"), "the overlay closed");
 });
 
-test("a card idle past 4 hours, which only main is told about, counts on main's pane and shows in the strip", async () => {
+test("a card idle past 4 hours, which only main is told about, counts on main's pane and is named in /pulse", async () => {
   const idle = await card("Port the invoices");
   ageCard(cardd, idle, 5 * HOUR);
   const pane = await openMain();
-  const strip = await screenWhere(
-    pane,
-    "the strip to name the idle card",
-    (screen) =>
-      screen.includes(`c-${String(idle.id)} Port the invoices: idle, nothing running (5h)`) &&
-      screen.includes("◇ 1"),
+  const counted = await screenWhere(pane, "the status bar to count the idle card", (screen) =>
+    screen.includes("◇ 1"),
   );
-  keep("pulse-6-idle-strip", strip);
-  assert.ok(!strip.includes("✓ clear"), "an idle card is not clear");
+  keep("pulse-6-idle-count", counted);
+  assert.ok(!counted.includes("✓ clear"), "an idle card is not clear");
+  assert.ok(!counted.includes("Port the invoices"), "the status bar names no card");
+
+  await herdr().submit(pane, "/pulse");
+  const named = await screenWhere(pane, "the overlay to name the idle card", (screen) =>
+    screen.includes("Pulse · 1 open"),
+  );
+  assert.ok(named.includes(`c-${String(idle.id)}`) && named.includes("IDLE 5h"), named);
 });
 
 test("a watcher with line breaks and escapes stays on its row and the overlay keeps its frame", async () => {
@@ -255,7 +260,7 @@ test("a watcher with line breaks and escapes stays on its row and the overlay ke
   });
   ageCard(cardd, parked, 4 * DAY);
   const pane = await openMain();
-  await screenWhere(pane, "the strip to name the card", (screen) => screen.includes("●"));
+  await screenWhere(pane, "the status bar to count the card", (screen) => screen.includes("● 1"));
 
   await herdr().submit(pane, "/pulse");
   const opened = await screenWhere(pane, "the overlay", (screen) =>

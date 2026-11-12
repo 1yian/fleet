@@ -6,25 +6,16 @@ import { answerDecision, deferDecision, loadDecisions } from "./decisions.ts";
 const RESERVED_ROWS = 5;
 const NOTHING_WAITING = "Nothing is waiting for your decision.";
 
-export interface DecideEvents {
-  readonly opened: () => void;
-  readonly closed: () => void;
-}
-
 export class Decide {
   private showing = false;
   private readonly link: Link;
   private readonly ctx: ExtensionContext;
-  private readonly events: DecideEvents;
+  private readonly closed: () => void;
 
-  constructor(link: Link, ctx: ExtensionContext, events: DecideEvents) {
+  constructor(link: Link, ctx: ExtensionContext, closed: () => void) {
     this.link = link;
     this.ctx = ctx;
-    this.events = events;
-  }
-
-  get isOpen(): boolean {
-    return this.showing;
+    this.closed = closed;
   }
 
   async open(): Promise<void> {
@@ -37,7 +28,6 @@ export class Decide {
         ui.notify(NOTHING_WAITING, "info");
         return;
       }
-      this.events.opened();
       await ui.custom<undefined>(
         (tui, theme, keys, done) =>
           new DecisionCard({
@@ -66,7 +56,7 @@ export class Decide {
       );
     } finally {
       this.showing = false;
-      this.events.closed();
+      this.closed();
     }
   }
 }

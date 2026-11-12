@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CardSchema, check, type Card } from "@fleet/protocol";
+import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import { Cardd, type Session } from "./cardd.ts";
 import { Harness } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
@@ -12,7 +12,6 @@ import { configureMain, Scratch, startMain } from "./scratch.ts";
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["DECIDE_EVIDENCE_DIR"];
-const STRIP_ROW = /^[◆●◇] \D/;
 const RULE = /^─{20,}$/;
 export const CARD_TOP = /^── ◆ Decision \d+ of \d+/;
 export const SHIP = "Ship the scrollbar fix?";
@@ -26,8 +25,17 @@ export const showing =
     shown.every((text) => screen.includes(text)) && !hidden.some((text) => screen.includes(text));
 
 export const rowsOf = (screen: string): string[] => screen.split("\n");
-export const stripRow = (screen: string): number =>
-  rowsOf(screen).findIndex((row) => STRIP_ROW.test(row.trim()));
+
+export const awaiting = (count: number): string =>
+  count === 1 ? "1 decision awaits you" : `${String(count)} decisions await you`;
+
+const AWAITING = /\d+ decisions? awaits? you/;
+
+export function awaitingAt(screen: string): { row: number; column: number } {
+  const row = rowsOf(screen).findIndex((each) => AWAITING.test(each));
+  assert.ok(row >= 0, `no decisions item on the status bar:\n${screen}`);
+  return { row, column: (rowsOf(screen)[row]?.search(AWAITING) ?? 0) + 1 };
+}
 
 export function cardRows(screen: string): string[] {
   const rows = rowsOf(screen).map((row) => row.trimEnd());
@@ -60,7 +68,6 @@ export function inline(screen: string): void {
   const top = rows.findIndex((row) => CARD_TOP.test(row));
   const footer = rows[top + card.length] ?? "";
   assert.match(footer, /1stmate/, "the footer sits right under the card, as under the editor");
-  assert.ok(stripRow(screen) === -1, "the strip steps aside while the card is open");
 }
 
 export function optionAt(screen: string, label: string): { row: number; column: number } {
@@ -71,6 +78,11 @@ export function optionAt(screen: string, label: string): { row: number; column: 
 }
 
 const mouseAt = (row: number, column: number): string => `${String(column)};${String(row + 1)}`;
+
+export interface Shape {
+  readonly direction: "down" | "right";
+  readonly ratio: number;
+}
 
 export class DecideLab {
   readonly cardd: Cardd;
@@ -96,6 +108,7 @@ export class DecideLab {
 
   static async start(env: Record<string, string> = {}): Promise<DecideLab> {
     const cardd = await Cardd.start();
+    cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
     const h = await Harness.start();
     const scratch = new Scratch();
     configureMain(scratch, cardd.url, cardd.addLane("main", undefined, scratch.root));
@@ -121,22 +134,29 @@ export class DecideLab {
     return this.opened;
   }
 
-  private async openLab(): Promise<HerdrLab> {
+  private async openLab(env: Record<string, string>): Promise<HerdrLab> {
+    const front = env["PATH"] === undefined ? [] : [env["PATH"]];
     this.opened = await HerdrLab.start({
       ...this.h.piEnv("mate"),
       ...this.env,
       FLEET_PANE_POLL_MS: "3600000",
-      PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+      ...env,
+      PATH: [...front, BIN, process.env["PATH"] ?? ""].join(delimiter),
     });
     return this.opened;
   }
 
-  async openMain(): Promise<string> {
-    return startMain(await this.openLab(), this.scratch, this.h);
+  async openMain(env: Record<string, string> = {}, shape?: Shape): Promise<string> {
+    const lab = await this.openLab(env);
+    if (shape !== undefined) await this.shape(lab, shape);
+    return startMain(lab, this.scratch, this.h);
   }
 
-  async openShortMain(): Promise<string> {
-    const lab = await this.openLab();
+  openShortMain(): Promise<string> {
+    return this.openMain({}, { direction: "down", ratio: 0.65 });
+  }
+
+  private async shape(lab: HerdrLab, { direction, ratio }: Shape): Promise<void> {
     const made = await lab.run([
       "workspace",
       "create",
@@ -147,9 +167,8 @@ export class DecideLab {
       "--no-focus",
     ]);
     const root = String(records([made["root_pane"]])[0]?.["pane_id"]);
-    await lab.run(["pane", "split", root, "--direction", "down", "--ratio", "0.65"]);
+    await lab.run(["pane", "split", root, "--direction", direction, "--ratio", String(ratio)]);
     await lab.run(["pane", "close", root]);
-    return startMain(lab, this.scratch, this.h);
   }
 
   async screenWhere(pane: string, what: string, ready: (screen: string) => boolean) {
@@ -179,22 +198,50 @@ export class DecideLab {
     for (let each = 0; each < count; each += 1) this.h.onModel(() => ({ text: "Noted." }), "mate");
   }
 
+  async failedWorker(title: string): Promise<void> {
+    const made = await this.cleo.call("card.new", { title, kind: "ship", project: "web" });
+    const card = check(CardSchema, made);
+    const attempt = await this.cleo.call("attempt.begin", {
+      card: card.id,
+      host: "maverick",
+      task: "the task",
+    });
+    const worker = await this.cardd.connect(check(OPS["attempt.begin"].result, attempt).token);
+    await worker.call("report", { status: "failed", text: "the build is red" });
+  }
+
+  async landedCard(title: string): Promise<void> {
+    const card = check(CardSchema, await this.cleo.call("card.new", { title, kind: "scout" }));
+    const next = { drop: "nothing to build" };
+    await this.cleo.call("close.begin", { card: card.id, landed: true, next });
+    await this.cleo.call("close.finish", {
+      card: card.id,
+      mode: "done",
+      text: "checked",
+      next,
+      archives: [],
+      left: [],
+    });
+  }
+
   async askedMain(
     pane: string,
     title: string,
     question: string,
     options: string[],
     count: number,
+    kind: Card["kind"] = "scout",
   ): Promise<Card> {
-    const card = check(CardSchema, await this.cleo.call("card.new", { title, kind: "scout" }));
+    const served = this.h.callsOf("mate").length;
+    const card = check(CardSchema, await this.cleo.call("card.new", { title, kind }));
     this.h.onModel(
       () => ({ tool: "hold", args: { card: card.id, question, options, to: "captain" } }),
       "mate",
     );
     this.h.onModel(() => ({ text: SEEN }), "mate");
     await this.cleo.call("hold", { card: card.id, question: `${title}?`, options: ["Yes"] });
-    await this.screenWhere(pane, `${String(count)} on the strip`, showing([`◆ ${String(count)}`]));
-    await this.h.waitForCall(count * 2 - 1, "mate", WAIT_MS);
+    await this.screenWhere(pane, `${String(count)} on the status bar`, showing([awaiting(count)]));
+    await this.h.waitForCall(served + 1, "mate", WAIT_MS);
     return card;
   }
 

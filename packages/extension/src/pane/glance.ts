@@ -3,16 +3,8 @@ import type { BoardCard, Pulse } from "@fleet/protocol";
 export const KINDS = ["broken", "needs-you", "stalled"] as const;
 export type Kind = (typeof KINDS)[number];
 
-export interface Need {
-  readonly kind: Kind;
-  readonly card: number | undefined;
-  readonly title: string;
-  readonly why: string;
-  readonly since: number;
-}
-
 export interface Glance {
-  readonly needs: readonly Need[];
+  readonly counts: Readonly<Record<Kind, number>>;
   readonly landed: number;
 }
 
@@ -22,43 +14,21 @@ export function kindOf({ state, notice }: Pulse): Kind | undefined {
   return state === "stalled" || notice !== "none" ? "stalled" : undefined;
 }
 
-export const unreachable = (since: number): Need => ({
-  kind: "broken",
-  card: undefined,
-  title: "cardd",
-  why: "not answering",
-  since,
-});
+const isDecision = (card: BoardCard): boolean => card.status === "needs-you";
 
-const QUIET: Readonly<Partial<Record<Pulse["state"], string>>> = {
-  you: "needs you",
-  idle: "idle, nothing running",
-  parked: "parked, nothing running",
+const countedKind = (card: BoardCard): Kind | undefined => {
+  const kind = card.pulse === null ? undefined : kindOf(card.pulse);
+  return kind === "needs-you" && isDecision(card) ? undefined : kind;
 };
-
-function whyOf(card: BoardCard, { state }: Pulse): string {
-  const quiet = QUIET[state];
-  if (quiet !== undefined) return quiet;
-  if (card.attention !== null) return `worker ${card.attention}`;
-  return state === "broken" ? "worker not connected" : "no output";
-}
-
-function needOf(card: BoardCard): Need | undefined {
-  const { pulse } = card;
-  const kind = pulse === null ? undefined : kindOf(pulse);
-  if (pulse === null || kind === undefined) return undefined;
-  return { kind, card: card.id, title: card.title, why: whyOf(card, pulse), since: pulse.since };
-}
-
-const worstFirst = (a: Need, b: Need): number =>
-  KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || a.since - b.since;
 
 const landedSince = (card: BoardCard, since: number): boolean =>
   card.status === "done" && !card.mate && card.kind !== "standing" && card.updatedAt > since;
 
 export function glanceOf(cards: readonly BoardCard[], since: number): Glance {
+  const kinds = cards.flatMap((card) => countedKind(card) ?? []);
+  const count = (kind: Kind): number => kinds.filter((each) => each === kind).length;
   return {
-    needs: cards.flatMap((card) => needOf(card) ?? []).sort(worstFirst),
+    counts: { broken: count("broken"), "needs-you": count("needs-you"), stalled: count("stalled") },
     landed: cards.filter((card) => landedSince(card, since)).length,
   };
 }

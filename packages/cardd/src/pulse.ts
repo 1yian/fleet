@@ -49,6 +49,7 @@ const MOVEMENT: ReadonlySet<string> = new Set([
 ]);
 const AUTOMATIC: ReadonlySet<string> = new Set([SCHEDULE, SCRIPT]);
 const DOWN: ReadonlySet<string> = new Set(["starting", "exited", "lost"]);
+const COVERED: ReadonlySet<DatedWait["watch"]> = new Set(["running", "later"]);
 const WORKING: ReadonlySet<Status> = new Set(["working", "in-review"]);
 const WITH_WORKER: ReadonlySet<Status> = new Set(["working", "in-review", "merging", "paused"]);
 
@@ -108,9 +109,11 @@ function silent({ loaded, activity, env }: Basis): Reading | undefined {
   return undefined;
 }
 
+const putOff = ({ wait }: Basis): boolean => wait?.watch === "later";
+
 function needOf(basis: Basis): Reading | undefined {
   const { card, standing } = basis.loaded;
-  if (card.status === "needs-you" || card.kind === "captain")
+  if (card.status === "needs-you" || (card.kind === "captain" && !putOff(basis)))
     return { state: "you", since: standing.since };
   return reported(basis) ?? silent(basis);
 }
@@ -122,7 +125,7 @@ function readingOf(basis: Basis): Reading {
   if (need !== undefined) return need;
   if (running !== null) return { state: "running", since: moved };
   if (wait !== null)
-    return { state: wait.watch === "running" ? "waiting" : "parked", since: wait.since };
+    return { state: COVERED.has(wait.watch) ? "waiting" : "parked", since: wait.since };
   if (card.status === "paused") return { state: "parked", since: standing.since };
   return { state: "idle", since: moved };
 }

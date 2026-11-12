@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import {
+  awaiting,
+  awaitingAt,
   CARD_TOP,
   cardRows,
   DecideLab,
@@ -13,7 +15,6 @@ import {
   SEEN,
   SHIP,
   showing,
-  stripRow,
 } from "../support/decide-lab.ts";
 
 const PAGE_UP = "\u001b[5~";
@@ -35,13 +36,11 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
 
   const waiting = await lab.screenWhere(
     pane,
-    "both decisions on the strip",
-    showing(["◆ 2", SEEN]),
+    "both decisions on the status bar",
+    showing([awaiting(2), SEEN]),
   );
-  const row = stripRow(waiting);
-  assert.ok(row >= 0, `no strip row:\n${waiting}`);
-  assert.match(rowsOf(waiting)[row] ?? "", /\/d\s*$/, "the strip names /d");
-  keep("1-strip", waiting);
+  awaitingAt(waiting);
+  keep("1-status-bar", waiting);
 
   await lab.herdr().submit(pane, "/d");
   const first = await lab.screenWhere(
@@ -93,7 +92,7 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
   const done = await lab.screenWhere(
     pane,
     "the last answer to clear the card and the count",
-    (screen) => cardRows(screen).length === 0 && showing(["✓ clear"], ["◆"])(screen),
+    (screen) => cardRows(screen).length === 0 && showing(["✓ clear"], ["await"])(screen),
   );
   keep("4-all-answered", done);
   assert.deepEqual(await lab.answered(rename), [{ body: MY_WORDS, source: "pane", written: true }]);
@@ -110,13 +109,12 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
   assert.deepEqual(cardRows(none), []);
 });
 
-test("a click on the strip opens exactly the card that /d opens", async () => {
+test("a click on the decisions item opens exactly the card that /d opens", async () => {
   const pane = await lab.openMain();
   const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
   lab.answers(2);
-  const waiting = await lab.screenWhere(pane, "the strip", showing(["◆ 1", SEEN]));
-  const row = stripRow(waiting);
-  assert.ok(row >= 0, `no strip row:\n${waiting}`);
+  const waiting = await lab.screenWhere(pane, "the status bar", showing([awaiting(1), SEEN]));
+  const item = awaitingAt(waiting);
 
   await lab.herdr().submit(pane, "/d");
   const typed = cardRows(
@@ -125,14 +123,9 @@ test("a click on the strip opens exactly the card that /d opens", async () => {
   await lab.herdr().press(pane, "esc");
   await lab.screenWhere(pane, "the card to close", (screen) => cardRows(screen).length === 0);
 
-  const back = await lab.screenWhere(
-    pane,
-    "the strip to return",
-    (screen) => stripRow(screen) >= 0,
-  );
-  const strip = stripRow(back);
-  assert.equal(strip, row, "the strip is where it was");
-  await lab.click(pane, strip, 6);
+  const back = await lab.screenWhere(pane, "the item to stay", showing([awaiting(1)]));
+  assert.deepEqual(awaitingAt(back), item, "the item is where it was");
+  await lab.click(pane, item.row, item.column + 3);
   const clicked = await lab.screenWhere(
     pane,
     "the card for the click",

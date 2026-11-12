@@ -260,7 +260,7 @@ function deferOnBoard(
   const body = facts.hold?.question ?? `The captain put this off: ${said.trim()}`;
   const draft: Draft = { card: card.id, author: "captain", kind: "hold", body, fields };
   requireOpen(db, card);
-  const notify = hearers(db, card, null, [fields.holder]);
+  const notify = hearers(db, card, null, ["main"]);
   addEntry(db, draft, notify);
   return { notify, ...later };
 }
