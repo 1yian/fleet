@@ -2,6 +2,7 @@ import Type from "typebox";
 import {
   allowedWhileTyped,
   droppedWhileTyped,
+  documentPost,
   postKeys,
   readerKeys,
   refusedAlways,
@@ -188,6 +189,6 @@ export class Gate {
     const posts = postKeys(method, wire.params, session);
     const secret = this.watch.armed(ref) || keys.some((key) => this.watch.secret(ref, key));
     this.watch.taint(ref, secret ? [...keys, ...posts] : posts);
-    return secret || posts.length > 0 || verdict !== "clear";
+    return secret || documentPost(method, wire.params) || verdict !== "clear";
   }
 }

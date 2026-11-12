@@ -62,22 +62,34 @@ const DROPPED_EVENTS = new Set([
 type Scope = "net" | "fetch" | "icpt";
 type IdField = readonly [string, Scope];
 
-const REQUEST_FIELDS = new Map<string, readonly IdField[]>([
-  ["Network.requestWillBeSent", [["requestId", "net"]]],
+interface BodyEvent {
+  readonly ids: readonly IdField[];
+  readonly type: string;
+}
+
+const BODY_EVENTS = new Map<string, BodyEvent>([
+  ["Network.requestWillBeSent", { ids: [["requestId", "net"]], type: "type" }],
   [
     "Network.requestIntercepted",
-    [
-      ["interceptionId", "icpt"],
-      ["requestId", "net"],
-    ],
+    {
+      ids: [
+        ["interceptionId", "icpt"],
+        ["requestId", "net"],
+      ],
+      type: "resourceType",
+    },
   ],
   [
     "Fetch.requestPaused",
-    [
-      ["requestId", "fetch"],
-      ["networkId", "net"],
-    ],
+    {
+      ids: [
+        ["requestId", "fetch"],
+        ["networkId", "net"],
+      ],
+      type: "resourceType",
+    },
   ],
+  ["Fetch.authRequired", { ids: [["requestId", "fetch"]], type: "resourceType" }],
 ]);
 
 const BODY_READERS = new Map<string, IdField>([
@@ -112,13 +124,15 @@ export function readerKeys(method: string, params: unknown, session: string): st
   return method === "Network.getRequestPostData" ? [key, `${POST_FIRST}${key}`] : [key];
 }
 
-function documentPost(method: string, params: unknown): boolean {
+export function documentPost(method: string, params: unknown): boolean {
+  const event = BODY_EVENTS.get(method);
+  if (event === undefined) return false;
   const fields = record(params);
-  const type =
-    method === "Network.requestWillBeSent" ? words(fields, "type") : words(fields, "resourceType");
-  if (type !== "Document" || !REQUEST_FIELDS.has(method)) return false;
-  const verb = words(record(fields?.["request"]), "method");
-  return verb !== undefined && verb !== "GET";
+  const type = words(fields, event.type);
+  const main = words(fields, "requestId") === words(fields, "loaderId");
+  const document =
+    type === undefined ? main && words(fields, "requestId") !== undefined : type === "Document";
+  return document && words(record(fields?.["request"]), "method") !== "GET";
 }
 
 export function postKeys(method: string, params: unknown, session: string): string[] {
@@ -131,7 +145,7 @@ export function postKeys(method: string, params: unknown, session: string): stri
 
 export function requestKeys(method: string, params: unknown, session: string): string[] {
   const fields = record(params);
-  return (REQUEST_FIELDS.get(method) ?? []).flatMap(([field, scope]) => {
+  return (BODY_EVENTS.get(method)?.ids ?? []).flatMap(([field, scope]) => {
     const id = words(fields, field);
     return id === undefined ? [] : [keyOf(scope, id, session)];
   });
@@ -151,7 +165,7 @@ export function droppedWhileTyped(method: string): boolean {
 const BODY_FIELDS = new Set(["postData", "postDataEntries"]);
 
 export function withoutBody(method: string, params: unknown): Record<string, unknown> | undefined {
-  if (!REQUEST_FIELDS.has(method)) return undefined;
+  if (!BODY_EVENTS.has(method)) return undefined;
   const fields = record(params);
   const request = record(fields?.["request"]);
   if (fields === undefined || request === undefined) return undefined;

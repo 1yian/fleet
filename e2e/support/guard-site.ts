@@ -20,6 +20,11 @@ document.querySelector("#go").addEventListener("click", () => {
 });
 </script>`;
 
+const AUTH_LOGIN = LOGIN.replace('action="/submit"', 'action="/secure"').replace(
+  "<title>login</title>",
+  "<title>authlogin</title>",
+);
+
 const XHR = `<title>xhr</title><style>body{margin:0}input,button{display:block;width:240px;height:30px;margin:0}</style>
 <input id="user" autocomplete="off"><input id="pw" type="password" autocomplete="off"><button id="go" type="button">Sign in</button>
 <script>
@@ -119,6 +124,8 @@ const pagesFor = (port: number): ReadonlyMap<string, string> =>
     ["/login", LOGIN],
     ["/spa", spa("/api/login")],
     ["/xhr", XHR],
+    ["/authlogin", AUTH_LOGIN],
+    ["/authspa", spa("/api/auth")],
     ["/echo", spa("/api/echo")],
     ["/holdecho", spa("/api/hold")],
     ["/autofocus", AUTOFOCUS],
@@ -151,6 +158,7 @@ export class Site {
   private readonly held: ServerResponse[];
   private readonly logins: ServerResponse[];
   private readonly echoes: { response: ServerResponse; body: string }[];
+  private readonly challenges: ServerResponse[];
 
   private constructor(
     server: Server,
@@ -159,6 +167,7 @@ export class Site {
     held: ServerResponse[],
     logins: ServerResponse[],
     echoes: { response: ServerResponse; body: string }[],
+    challenges: ServerResponse[],
   ) {
     this.server = server;
     this.port = port;
@@ -166,6 +175,7 @@ export class Site {
     this.held = held;
     this.logins = logins;
     this.echoes = echoes;
+    this.challenges = challenges;
   }
 
   static async start(): Promise<Site> {
@@ -173,6 +183,7 @@ export class Site {
     const held: ServerResponse[] = [];
     const logins: ServerResponse[] = [];
     const echoes: { response: ServerResponse; body: string }[] = [];
+    const challenges: ServerResponse[] = [];
     let port = 0;
     const posts = new Map<string, (body: string, response: ServerResponse) => void>([
       [
@@ -185,6 +196,13 @@ export class Site {
       ["/api/login", (_body, response) => logins.push(response)],
       ["/api/echo", (body, response) => response.end(`you sent ${body}`)],
       ["/api/hold", (body, response) => echoes.push({ response, body })],
+      ["/api/auth", (_body, response) => challenges.push(response)],
+      [
+        "/secure",
+        (_body, response) => {
+          response.writeHead(401, { "www-authenticate": 'Basic realm="fleet"' }).end("denied");
+        },
+      ],
       [
         "/api/done",
         (body, response) => {
@@ -209,7 +227,7 @@ export class Site {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     port = typeof address === "object" && address !== null ? address.port : 0;
-    return new Site(server, port, submitted, held, logins, echoes);
+    return new Site(server, port, submitted, held, logins, echoes, challenges);
   }
 
   url(path: string, host = "one.test"): string {
@@ -226,6 +244,15 @@ export class Site {
 
   heldLogins(): number {
     return this.logins.length;
+  }
+
+  heldChallenges(): number {
+    return this.challenges.length;
+  }
+
+  challengeAll(): void {
+    for (const response of this.challenges.splice(0))
+      response.writeHead(401, { "www-authenticate": 'Basic realm="fleet"' }).end("denied");
   }
 
   heldEchoes(): number {
