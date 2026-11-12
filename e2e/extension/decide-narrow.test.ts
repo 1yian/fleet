@@ -52,7 +52,7 @@ test("in a narrow pane the question, the title, the options, and the hints wrap 
   const width = Math.max(...rows.map((row) => row.length));
   assert.ok(width < 60, `the pane is narrow (${String(width)} columns):\n${first}`);
   assert.ok(
-    !rows.some((row) => row.includes("…") && !row.includes("My words")),
+    !rows.some((row) => row.includes("…") && !row.includes("My words") && !row.includes("Later")),
     `a row is cut:\n${first}`,
   );
   for (const whole of [
@@ -63,7 +63,7 @@ test("in a narrow pane the question, the title, the options, and the hints wrap 
   ])
     assert.ok(text.includes(squeezed(whole)), `${whole} is whole on the card:\n${first}`);
   assert.ok(text.includes(squeezed("(recommended)")), `the recommendation tag is kept:\n${first}`);
-  assert.ok(text.includes(squeezed("esc later")), `the hints are kept:\n${first}`);
+  assert.ok(text.includes(squeezed("esc close")), `the hints are kept:\n${first}`);
 
   const words = optionAt(first, "My words…");
   await lab.click(pane, words.row, words.column);
@@ -121,9 +121,10 @@ test("in a pane that is short and narrow at once, the whole selected option stay
   const walk: { keys: string[]; shown: string; whole: string[] }[] = [
     { keys: [], shown: lead(SHORT_OPTION), whole: [SHORT_OPTION, "(recommended)", "⏎ select"] },
     { keys: ["down"], shown: lead(OTHER_OPTION), whole: [OTHER_OPTION, "⏎ select"] },
-    { keys: ["down"], shown: "My words…", whole: ["3/3"] },
+    { keys: ["down"], shown: "My words…", whole: ["3/4"] },
+    { keys: ["down"], shown: "Later…", whole: ["4/4"] },
     {
-      keys: ["up", "up"],
+      keys: ["up", "up", "up"],
       shown: lead(SHORT_OPTION),
       whole: [SHORT_OPTION, "(recommended)", "⏎ select"],
     },
@@ -308,7 +309,7 @@ test("in a pane about 14 columns wide no row of the card is wider than the pane,
     "↑↓ choose",
     "⏎ select",
     "type your own words",
-    "esc later",
+    "esc close",
   ])
     assert.ok(text.includes(squeezed(whole)), `${whole} is whole on the card:\n${screen}`);
 

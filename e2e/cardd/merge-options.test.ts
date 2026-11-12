@@ -195,12 +195,7 @@ test("a merge question whose approves changed since the captain looked refuses h
 
   const old = { kind: "answer", hold: seen, choice: "Proceed" } as const;
   assert.equal(await fleet.cardd.act(card.id, old), 409);
-  const putOff = {
-    kind: "hold",
-    hold: seen,
-    until: Date.now() + 3_600_000,
-    reason: "later",
-  } as const;
+  const putOff = { kind: "hold", hold: seen, said: "tomorrow", zone: "UTC" } as const;
   assert.equal(await fleet.cardd.act(card.id, putOff), 409);
   await assert.rejects(
     fleet.main.call("pane.answer", { card: card.id, hold: seen, choice: "Proceed" }),

@@ -12,7 +12,8 @@ import {
 } from "@earendil-works/pi-tui";
 import { LATER_EXAMPLES, laidOut } from "@fleet/protocol";
 import type { Decision } from "./decisions.ts";
-import { allocate, type Layout, type Shape } from "./layout.ts";
+import { merged, openAway, type Slot } from "./deck.ts";
+import { allocate, rowsInSight, windowTop, type Layout, type Shape } from "./layout.ts";
 import { bounded, optionLines, packed, paragraphs, plain } from "./wrap.ts";
 
 const WRITE_LABEL = "My words…";
@@ -38,11 +39,6 @@ export interface CardDeps {
 }
 
 type Row = "option" | "words" | "later";
-
-interface Slot {
-  readonly decision: Decision;
-  readonly answered: boolean;
-}
 
 const oneLine = (data: string): string =>
   data.includes(PASTE_START) ? data.replace(/\s*[\r\n]+\s*/g, " ") : data;
@@ -220,14 +216,10 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private turn(step: number): void {
-    const count = this.deck.length;
-    for (let away = 1; away < count; away += 1) {
-      const to = (((this.at + step * away) % count) + count) % count;
-      if (this.deck[to]?.answered !== false) continue;
-      this.at = to;
-      this.settle();
-      return;
-    }
+    const to = openAway(this.deck, this.at, step);
+    if (to === undefined) return;
+    this.at = to;
+    this.settle();
   }
 
   private heights(): number[] {
@@ -235,13 +227,8 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private window(picks: number): number {
-    const heights = this.heights();
-    const rowsFrom = (top: number): number =>
-      heights.slice(top, this.row + 1).reduce((sum, each) => sum + each, 0);
-    let top = Math.min(this.choiceTop, this.row);
-    while (top < this.row && rowsFrom(top) > picks) top += 1;
-    this.choiceTop = top;
-    return top;
+    this.choiceTop = windowTop(this.heights(), this.row, this.choiceTop, picks);
+    return this.choiceTop;
   }
 
   private page(step: number): void {
@@ -315,26 +302,12 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private reconcile(fresh: readonly Decision[], refused: Decision): void {
-    const waiting = new Map(fresh.map((each) => [each.card, each]));
-    const kept = new Set<number>();
-    const deck: Slot[] = [];
-    let landing = -1;
-    this.deck.forEach((slot, place) => {
-      const decision = slot.answered ? slot.decision : waiting.get(slot.decision.card);
-      if (decision === undefined) return;
-      if (!slot.answered) kept.add(decision.card);
-      if (landing === -1 && !slot.answered && place >= this.at) landing = deck.length;
-      deck.push({ decision, answered: slot.answered });
-    });
-    for (const decision of fresh)
-      if (!kept.has(decision.card)) deck.push({ decision, answered: false });
-    const same = deck.findIndex((slot) => !slot.answered && slot.decision.card === refused.card);
-    const first = deck.findIndex((slot) => !slot.answered);
     const { kind } = this;
     const picked = kind === "option" ? this.choices[this.row] : undefined;
-    this.deck = deck;
-    this.at = Math.max(0, same !== -1 ? same : landing !== -1 ? landing : first);
-    if (same === -1) this.settle();
+    const next = merged(this.deck, fresh, refused, this.at);
+    this.deck = next.deck;
+    this.at = next.at;
+    if (!next.same) this.settle();
     else {
       this.row = this.follow(kind, picked);
       this.offset = 0;
@@ -372,16 +345,6 @@ export class DecisionCard implements Component, Focusable {
     return allocate((limit) => this.shaped(limit), this.heights(), this.row, this.deps.rows());
   }
 
-  private reading(layout: Layout): string {
-    if (layout.hidden === 0) return "";
-    const first = Math.min(this.offset, layout.hidden) + 1;
-    const last = first + layout.picks - 1;
-    const total = layout.picks + layout.hidden;
-    return first === last
-      ? `${String(first)}/${String(total)}`
-      : `${String(first)}-${String(last)}/${String(total)}`;
-  }
-
   render(width: number): string[] {
     const decision = this.current;
     if (decision === undefined) return [];
@@ -413,7 +376,7 @@ export class DecisionCard implements Component, Focusable {
       ...picks.map(line),
       ...spacer(2),
       ...layout.note.map(line),
-      ...this.hintLines(false, this.reading(layout)).slice(0, layout.limit).map(line),
+      ...this.hintLines(false, rowsInSight(layout, this.offset)).slice(0, layout.limit).map(line),
       theme.fg("border", RULE.repeat(width)),
     ];
   }

@@ -45,3 +45,26 @@ export function allocate(
   const body = Math.max(1, Math.min(MAX_BODY_ROWS, left - spacers));
   return { ...shape, spacers, body, picks, hidden: Math.max(0, own - picks) };
 }
+
+export function windowTop(
+  heights: readonly number[],
+  row: number,
+  from: number,
+  picks: number,
+): number {
+  const rowsFrom = (top: number): number =>
+    heights.slice(top, row + 1).reduce((sum, each) => sum + each, 0);
+  let top = Math.min(from, row);
+  while (top < row && rowsFrom(top) > picks) top += 1;
+  return top;
+}
+
+export function rowsInSight(layout: Layout, offset: number): string {
+  if (layout.hidden === 0) return "";
+  const first = Math.min(offset, layout.hidden) + 1;
+  const last = first + layout.picks - 1;
+  const total = layout.picks + layout.hidden;
+  return first === last
+    ? `${String(first)}/${String(total)}`
+    : `${String(first)}-${String(last)}/${String(total)}`;
+}
