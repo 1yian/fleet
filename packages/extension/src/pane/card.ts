@@ -306,16 +306,17 @@ export class DecisionCard implements Component, Focusable {
 
   private refused(error: unknown): void {
     const why = error instanceof Error ? error.message : String(error);
-    this.note = plain(why);
     this.deps.reload().then(
       (fresh) => {
         this.sending = false;
         this.apply(fresh);
         this.arrival = undefined;
+        this.note = plain(why);
         this.leaveIfClear();
       },
       () => {
         this.sending = false;
+        this.note = plain(why);
         this.deps.redraw();
       },
     );
@@ -341,7 +342,10 @@ export class DecisionCard implements Component, Focusable {
     this.at = next.at;
     if (!next.stayed) this.settle();
     else if (this.current?.hold !== before?.hold) this.row = this.follow(kind, picked);
-    if (next.arrival !== undefined) this.arrival = next.arrival;
+    if (next.arrival !== undefined) {
+      this.arrival = next.arrival;
+      this.note = undefined;
+    }
   }
 
   private follow(kind: Row, picked: string | undefined): number {
