@@ -14,7 +14,8 @@ const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["DECIDE_EVIDENCE_DIR"];
 const STRIP_ROW = /^[◆●◇] \D/;
 const RULE = /^─{20,}$/;
-export const CARD_TOP = /^── ◆ Decision \d+ of \d+/;
+export const CARD_TOP = /^── ◆ (Decision \d+ of \d+|Decisions)/;
+export const NOTHING = "Nothing is waiting for your decision.";
 export const SHIP = "Ship the scrollbar fix?";
 export const RENAME = "Rename the repository?";
 export const MY_WORDS = "Keep the old name until the move in March";
@@ -24,6 +25,9 @@ export const showing =
   (shown: readonly string[], hidden: readonly string[] = []) =>
   (screen: string): boolean =>
     shown.every((text) => screen.includes(text)) && !hidden.some((text) => screen.includes(text));
+
+export const barShows = (count: number): ((screen: string) => boolean) =>
+  showing([`◆ ${String(count)}`]);
 
 export const rowsOf = (screen: string): string[] => screen.split("\n");
 export const stripRow = (screen: string): number =>
@@ -124,6 +128,7 @@ export class DecideLab {
   private async openLab(): Promise<HerdrLab> {
     this.opened = await HerdrLab.start({
       ...this.h.piEnv("mate"),
+      FLEET_PANE_LIVE_MS: "3600000",
       ...this.env,
       FLEET_PANE_POLL_MS: "3600000",
       PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
@@ -179,8 +184,7 @@ export class DecideLab {
     for (let each = 0; each < count; each += 1) this.h.onModel(() => ({ text: "Noted." }), "mate");
   }
 
-  async askedMain(
-    pane: string,
+  async askedUnseen(
     title: string,
     question: string,
     options: string[],
@@ -193,9 +197,30 @@ export class DecideLab {
     );
     this.h.onModel(() => ({ text: SEEN }), "mate");
     await this.cleo.call("hold", { card: card.id, question: `${title}?`, options: ["Yes"] });
-    await this.screenWhere(pane, `${String(count)} on the strip`, showing([`◆ ${String(count)}`]));
     await this.h.waitForCall(count * 2 - 1, "mate", WAIT_MS);
     return card;
+  }
+
+  async askedMain(
+    pane: string,
+    title: string,
+    question: string,
+    options: string[],
+    count: number,
+  ): Promise<Card> {
+    const card = await this.askedUnseen(title, question, options, count);
+    await this.screenWhere(pane, `${String(count)} on the strip`, barShows(count));
+    return card;
+  }
+
+  async askedAgain(card: Card, question: string, options: string[], calls: number): Promise<void> {
+    this.h.onModel(
+      () => ({ tool: "hold", args: { card: card.id, question, options, to: "captain" } }),
+      "mate",
+    );
+    this.h.onModel(() => ({ text: SEEN }), "mate");
+    await this.cleo.call("hold", { card: card.id, question: `${question}?`, options: ["Yes"] });
+    await this.h.waitForCall(calls + 1, "mate", WAIT_MS);
   }
 
   async answered(card: Card): Promise<{ body: string; source: unknown; written: unknown }[]> {

@@ -12,6 +12,7 @@ import { glanceOf, unreachable, type Glance } from "./glance.ts";
 import { listOf } from "./list.ts";
 import { chips, rowOf, strip } from "./look.ts";
 import { PulseView } from "./view.ts";
+import { Waiting } from "./waiting.ts";
 
 const STATUS_KEY = "fleet-attention";
 const STRIP_KEY = "fleet-strip";
@@ -23,6 +24,7 @@ const CARD_TOOLS: ReadonlySet<string> = new Set(["hold", "comment", "close", "di
 interface Settings {
   readonly pollMs: number;
   readonly silentMs: number;
+  readonly liveMs: number;
 }
 
 function number(name: string, fallback: number): number {
@@ -33,6 +35,7 @@ function number(name: string, fallback: number): number {
 const settings = (): Settings => ({
   pollMs: number("FLEET_PANE_POLL_MS", MINUTE_MS),
   silentMs: number("FLEET_PANE_SILENT_MS", 30_000),
+  liveMs: number("FLEET_PANE_LIVE_MS", 5_000),
 });
 
 const isMessageOfHis = (entry: SessionEntry): boolean =>
@@ -49,23 +52,26 @@ class Pane {
   private cards: readonly BoardCard[] | undefined;
   private since: number;
   private silentSince: number | undefined;
-  private fetching = false;
-  private again = false;
   private stopped = false;
   private timer: NodeJS.Timeout | undefined;
   private status: string | undefined;
   private row: string | undefined;
-  private readonly link: Link;
   private readonly ctx: ExtensionContext;
   private readonly rules: Settings;
+  private readonly waiting: Waiting;
   readonly decide: Decide;
 
   constructor(link: Link, ctx: ExtensionContext, rules: Settings) {
-    this.link = link;
     this.ctx = ctx;
     this.rules = rules;
     this.since = lastMessageAt(ctx);
-    this.decide = new Decide(link, ctx, {
+    this.waiting = new Waiting(link);
+    this.waiting.follow(({ cards }) => {
+      this.cards = cards;
+      this.silentSince = undefined;
+      this.paint();
+    });
+    const events = {
       opened: () => {
         this.paint();
       },
@@ -73,24 +79,14 @@ class Pane {
         this.paint();
         this.refresh();
       },
-    });
+    };
+    this.decide = new Decide(link, this.waiting, ctx, events, rules.liveMs);
   }
 
   refresh(): void {
     if (this.stopped) return;
-    if (this.fetching) {
-      this.again = true;
-      return;
-    }
-    this.fetching = true;
     const settle = (): void => {
-      this.fetching = false;
-      if (!this.again) {
-        this.schedule();
-        return;
-      }
-      this.again = false;
-      this.refresh();
+      this.schedule();
     };
     this.load().then(settle, settle);
   }
@@ -121,12 +117,11 @@ class Pane {
 
   private async load(): Promise<void> {
     try {
-      this.cards = await this.link.call("board", {}, DEADLINE_MS);
-      this.silentSince = undefined;
+      await this.waiting.read();
     } catch {
       this.silentSince ??= Date.now();
+      this.paint();
     }
-    this.paint();
   }
 
   private glance(now: number): Glance | undefined {

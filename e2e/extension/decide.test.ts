@@ -7,6 +7,7 @@ import {
   inline,
   keep,
   MY_WORDS,
+  NOTHING,
   onCard,
   RENAME,
   rowsOf,
@@ -101,13 +102,10 @@ test("/d opens the decisions one at a time, esc leaves them, and an answer or th
   assert.deepEqual((await lab.cardd.board()).holds, []);
 
   await lab.herdr().submit(pane, "/d");
-  const none = await lab.screenWhere(
-    pane,
-    "the notice",
-    showing(["Nothing is waiting for your decision."]),
-  );
+  const none = await lab.screenWhere(pane, "the card that says nothing waits", onCard([NOTHING]));
   keep("5-none-waiting", none);
-  assert.deepEqual(cardRows(none), []);
+  await lab.herdr().press(pane, "esc");
+  await lab.screenWhere(pane, "the card to close", (screen) => cardRows(screen).length === 0);
 });
 
 test("a click on the strip opens exactly the card that /d opens", async () => {
@@ -183,7 +181,12 @@ test("an answer to a decision that changed while the card was open is refused an
   const open = (await lab.cardd.board()).holds.find((each) => each.card === ship.id);
   assert.ok(open !== undefined, "the hold is open on the board");
   assert.equal(
-    await lab.cardd.act(ship.id, { kind: "answer", hold: open.hold, choice: "Hold" }),
+    await lab.cardd.act(ship.id, {
+      kind: "hold",
+      hold: open.hold,
+      said: "in 2 hours",
+      zone: "UTC",
+    }),
     200,
   );
 
@@ -197,9 +200,7 @@ test("an answer to a decision that changed while the card was open is refused an
     ),
   );
   keep("7-stale-answer", refused);
-  assert.deepEqual(await lab.answered(ship), [
-    { body: "Hold", source: "board", written: undefined },
-  ]);
+  assert.deepEqual(await lab.answered(ship), []);
 });
 
 test("a question longer than the card scrolls with PgDn and PgUp, and the card says how much is below", async () => {
@@ -308,7 +309,12 @@ test("in a 12-row pane a refusal of his own words keeps the note and the next de
   const open = (await lab.cardd.board()).holds.find((each) => each.card === ship.id);
   assert.ok(open !== undefined, "the hold is open on the board");
   assert.equal(
-    await lab.cardd.act(ship.id, { kind: "answer", hold: open.hold, choice: "Hold" }),
+    await lab.cardd.act(ship.id, {
+      kind: "hold",
+      hold: open.hold,
+      said: "in 2 hours",
+      zone: "UTC",
+    }),
     200,
   );
 
@@ -328,7 +334,5 @@ test("in a 12-row pane a refusal of his own words keeps the note and the next de
   );
   keep("10-short-pane-refused", refused);
   insidePane(refused);
-  assert.deepEqual(await lab.answered(ship), [
-    { body: "Hold", source: "board", written: undefined },
-  ]);
+  assert.deepEqual(await lab.answered(ship), []);
 });
