@@ -103,11 +103,30 @@ export function refusedAlways(method: string): boolean {
   return REFUSED_ALWAYS.has(method);
 }
 
-export function readerKey(method: string, params: unknown, session: string): string | undefined {
+const POST_FIRST = "post:";
+
+export function readerKeys(method: string, params: unknown, session: string): string[] {
   const field = BODY_READERS.get(method);
-  return field === undefined
-    ? undefined
-    : keyOf(field[1], words(record(params), field[0]) ?? "", session);
+  if (field === undefined) return [];
+  const key = keyOf(field[1], words(record(params), field[0]) ?? "", session);
+  return method === "Network.getRequestPostData" ? [key, `${POST_FIRST}${key}`] : [key];
+}
+
+function documentPost(method: string, params: unknown): boolean {
+  const fields = record(params);
+  const type =
+    method === "Network.requestWillBeSent" ? words(fields, "type") : words(fields, "resourceType");
+  if (type !== "Document" || !REQUEST_FIELDS.has(method)) return false;
+  const verb = words(record(fields?.["request"]), "method");
+  return verb !== undefined && verb !== "GET";
+}
+
+export function postKeys(method: string, params: unknown, session: string): string[] {
+  return documentPost(method, params)
+    ? requestKeys(method, params, session)
+        .filter((key) => key.startsWith("net:"))
+        .map((key) => `${POST_FIRST}${key}`)
+    : [];
 }
 
 export function requestKeys(method: string, params: unknown, session: string): string[] {

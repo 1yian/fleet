@@ -1,11 +1,12 @@
 import { parseArgs } from "node:util";
 import { serve } from "./serve.ts";
 import { loopbackAddress, upstreamOf } from "./upstream.ts";
+import { REQUESTS_KEPT } from "./requests.ts";
 import { PARSE_WAIT_MS } from "./tracking.ts";
 import { Watch } from "./watch.ts";
 
 const USAGE =
-  "usage: guard.ts --chrome <127.0.0.1:port | profile directory> [--listen 127.0.0.1:9222] [--parse-wait-ms 10000]";
+  "usage: guard.ts --chrome <127.0.0.1:port | profile directory> [--listen 127.0.0.1:9222] [--parse-wait-ms 10000] [--requests-kept 2000]";
 
 function listenAddress(spec: string): { host: string; port: number } {
   const address = loopbackAddress(spec) ?? (/^\[::1\]:\d{1,5}$/.test(spec) ? spec : undefined);
@@ -24,14 +25,17 @@ async function main(): Promise<void> {
       listen: { type: "string", default: "127.0.0.1:9222" },
       chrome: { type: "string" },
       "parse-wait-ms": { type: "string", default: String(PARSE_WAIT_MS) },
+      "requests-kept": { type: "string", default: String(REQUESTS_KEPT) },
     },
   });
   const parseWaitMs = Number(values["parse-wait-ms"]);
-  if (values.chrome === undefined || !Number.isInteger(parseWaitMs) || parseWaitMs <= 0)
+  const requestsKept = Number(values["requests-kept"]);
+  const counted = (value: number): boolean => Number.isInteger(value) && value > 0;
+  if (values.chrome === undefined || !counted(parseWaitMs) || !counted(requestsKept))
     throw new Error(USAGE);
   const { host, port } = listenAddress(values.listen);
   const upstream = upstreamOf(values.chrome);
-  const watch = new Watch(() => `http://${upstream()}`, parseWaitMs);
+  const watch = new Watch(() => `http://${upstream()}`, { parseWaitMs, requestsKept });
   watch.start();
   const served = await serve(host, port, upstream, watch);
   console.error(`guard: listening on ${host}:${String(port)} in front of ${values.chrome}`);

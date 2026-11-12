@@ -138,10 +138,11 @@ test("a submitted password is not in the worker's network log, and the next page
   await captain.type("captain");
   await captain.click("#pw");
   await captain.type(SECRET);
+  const known = lab.site.received(SECRET);
   await captain.press("Enter");
 
   await until(
-    () => (lab.site.submitted.some((body) => body.includes(SECRET)) ? true : undefined),
+    () => (lab.site.received(SECRET) > known ? true : undefined),
     "the site to receive the form",
   );
   const welcome = await until(async () => {

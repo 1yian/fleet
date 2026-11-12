@@ -34,6 +34,7 @@ test("a request that carried a typed password stays hidden after the field is em
   const captain = await Captain.at(lab.chrome, tab.target);
   await captain.click("#pw");
   await captain.type(SECRET);
+  const known = lab.site.received(SECRET);
   await captain.click("#go");
   await until(
     () => (lab.site.heldLogins() > 0 ? true : undefined),
@@ -43,7 +44,7 @@ test("a request that carried a typed password stays hidden after the field is em
 
   lab.site.redirectLogins();
   await until(
-    () => (lab.site.submitted.some((body) => body.includes(SECRET)) ? true : undefined),
+    () => (lab.site.received(SECRET) > known ? true : undefined),
     "the redirect to send the password again",
   );
   const requestsSince = (): { method: string; params: unknown }[] =>
@@ -175,6 +176,7 @@ test("a worker that joins after the field is empty still gets a pending redirect
   const captain = await Captain.at(lab.chrome, tab.target);
   await captain.click("#pw");
   await captain.type(SECRET);
+  const known = lab.site.received(SECRET);
   await captain.click("#go");
   await until(
     () => (lab.site.heldLogins() > 0 ? true : undefined),
@@ -188,7 +190,7 @@ test("a worker that joins after the field is empty still gets a pending redirect
   const before = second.events.length;
   lab.site.redirectLogins();
   await until(
-    () => (lab.site.submitted.some((body) => body.includes(SECRET)) ? true : undefined),
+    () => (lab.site.received(SECRET) > known ? true : undefined),
     "the redirect to send the password again",
   );
   const redirected = await until(
@@ -210,11 +212,13 @@ test("a request that carried a typed password cannot be replayed past the guard"
   const captain = await Captain.at(lab.chrome, tab.target);
   await captain.click("#pw");
   await captain.type(SECRET);
+  const known = lab.site.received(SECRET);
   await captain.click("#go");
-  const received = (): number => lab.site.submitted.filter((body) => body.includes(SECRET)).length;
-  const known = received();
-  await until(() => (received() > known ? true : undefined), "the site to receive the password");
-  const once = received();
+  await until(
+    () => (lab.site.received(SECRET) > known ? true : undefined),
+    "the site to receive the password",
+  );
+  const once = lab.site.received(SECRET);
   await reads(worker, tab.session, "document.querySelector('#pw').value", '""');
   const requestId = await until(() => requestOf(worker, "/api/done"), "the request to be seen");
 
@@ -222,6 +226,57 @@ test("a request that carried a typed password cannot be replayed past the guard"
   assert.equal(replay.ok, false);
   assert.match(replay.text, /not available through the guard/);
   await reads(worker, tab.session, "document.title", '"xhr"');
-  assert.equal(received(), once);
+  assert.equal(lab.site.received(SECRET), once);
   captain.close();
+});
+
+test("a form post that the browser sends again later gives a worker no body", async () => {
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/login", "login");
+  assert.equal((await worker.call(tab.session, "Network.enable")).ok, true);
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#user");
+  await captain.type("captain");
+  await captain.click("#pw");
+  await captain.type(SECRET);
+  const known = lab.site.received(SECRET);
+  await captain.press("Enter");
+  await until(
+    () => (lab.site.received(SECRET) > known ? true : undefined),
+    "the site to receive the form",
+  );
+  await reads(worker, tab.session, "document.title", '"welcome"');
+
+  const sent = lab.site.received(SECRET);
+  const before = worker.events.length;
+  assert.equal((await worker.call(tab.session, "Page.reload")).ok, true);
+  await until(
+    () => (lab.site.received(SECRET) > sent ? true : undefined),
+    "the browser to send the form again",
+  );
+  const again = await until(
+    () => worker.events.slice(before).find((event) => sentTo(event, "/submit") !== undefined),
+    "the worker to see the form sent again",
+  );
+  assert.ok(!JSON.stringify(again).includes(SECRET), "the password is in the event");
+  const requestId = sentTo(again, "/submit") ?? "";
+  const body = await worker.call(tab.session, "Network.getRequestPostData", { requestId });
+  assert.equal(body.ok, false);
+  assert.match(body.text, /captain.*password/i);
+  captain.close();
+});
+
+test("a worker's own POST with a body reads as usual when nothing was typed", async () => {
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/notes", "notes");
+  assert.equal((await worker.call(tab.session, "Network.enable")).ok, true);
+  const sent = await worker.evaluate(
+    tab.session,
+    "fetch('/api/done', { method: 'POST', body: 'greeting=hello' }).then((r) => r.text())",
+  );
+  assert.equal(sent.ok, true);
+  const requestId = await until(() => requestOf(worker, "/api/done"), "the post to be seen");
+  const body = await worker.call(tab.session, "Network.getRequestPostData", { requestId });
+  assert.equal(body.ok, true);
+  assert.ok(body.text.includes("greeting=hello"));
 });

@@ -226,7 +226,11 @@ export class GuardLab {
 
   static async start(
     chromeArgs: readonly string[] = [],
-    options: { readonly relay?: boolean; readonly parseWaitMs?: number } = {},
+    options: {
+      readonly relay?: boolean;
+      readonly parseWaitMs?: number;
+      readonly requestsKept?: number;
+    } = {},
   ): Promise<GuardLab> {
     const scratch = new Scratch("guard");
     const chrome = await StandInChrome.start("MAP *.test 127.0.0.1", chromeArgs);
@@ -237,8 +241,7 @@ export class GuardLab {
         ? await ChromeRelay.start(chrome.endpoint.replace("http://", ""))
         : undefined;
     const upstream = relay?.address ?? chrome.endpoint.replace("http://", "");
-    const guardArgs =
-      options.parseWaitMs === undefined ? [] : ["--parse-wait-ms", String(options.parseWaitMs)];
+    const guardArgs = guardOptions(options);
     const launch = (): ChildProcess => spawnGuard(scratch, port, upstream, guardArgs);
     const child = WITHOUT_GUARD ? undefined : launch();
     const lab = new GuardLab(chrome, site, scratch, port, launch, child, chromeArgs, relay);
@@ -327,6 +330,17 @@ export class GuardLab {
     await this.site.stop();
     this.scratch.dispose();
   }
+}
+
+function guardOptions(options: {
+  readonly parseWaitMs?: number;
+  readonly requestsKept?: number;
+}): string[] {
+  const named: [string, number | undefined][] = [
+    ["--parse-wait-ms", options.parseWaitMs],
+    ["--requests-kept", options.requestsKept],
+  ];
+  return named.flatMap(([flag, value]) => (value === undefined ? [] : [flag, String(value)]));
 }
 
 function spawnGuard(

@@ -3,7 +3,7 @@ import { Cdp, type CdpEvent } from "@fleet/protocol";
 import Type from "typebox";
 import { Observer } from "./observer.ts";
 import { Requests } from "./requests.ts";
-import { requestKeys } from "./rules.ts";
+import { postKeys, requestKeys } from "./rules.ts";
 import { BINDING, PAGE_SCRIPT, RESCAN } from "./script.ts";
 import { Contexts, Targets, type Ref, type Typing, type Verdict } from "./tracking.ts";
 import { record, shape, words } from "./wire.ts";
@@ -48,7 +48,7 @@ export class Watch implements Typing {
   private readonly epochs = new Map<string, number>();
   private readonly injected = new Set<string>();
   private readonly observer: Observer;
-  private readonly requests = new Requests();
+  private readonly requests: Requests;
   private readonly targets = new Targets();
   private readonly contexts = new Contexts();
   private readonly waiters = new Set<() => void>();
@@ -146,8 +146,9 @@ export class Watch implements Typing {
   private typedAt = 0;
   private current: Cdp | undefined;
 
-  constructor(endpoint: () => string, parseWaitMs: number) {
+  constructor(endpoint: () => string, options: { parseWaitMs: number; requestsKept: number }) {
     this.endpoint = endpoint;
+    this.requests = new Requests(options.requestsKept);
     this.observer = new Observer(
       {
         hold: (session) => {
@@ -160,7 +161,7 @@ export class Watch implements Typing {
         waiting: () => [...this.pages.values()].flatMap((page) => [...page.pending]),
         defaults: (session) => this.contexts.defaults(session),
       },
-      parseWaitMs,
+      options.parseWaitMs,
     );
   }
 
@@ -250,6 +251,7 @@ export class Watch implements Typing {
       this.handlers.get(event.method)?.(cdp, event);
     });
     await cdp.send("Target.setDiscoverTargets", { discover: true });
+    this.requests.promote(this.pages.keys());
     this.live = true;
     this.notify();
     console.error("guard: watching the browser");
@@ -354,8 +356,9 @@ export class Watch implements Typing {
 
   private onRequest(event: CdpEvent): void {
     const page = this.owners.get(event.sessionId ?? "");
-    if (page === undefined || !this.typedIn(page)) return;
-    this.requests.taint(page, requestKeys(event.method, event.params, ""));
+    if (page === undefined) return;
+    const keys = this.typedIn(page) ? requestKeys(event.method, event.params, "") : [];
+    this.requests.taint(page, [...keys, ...postKeys(event.method, event.params, "")]);
   }
 
   private onLifecycle(cdp: Cdp, event: CdpEvent): void {

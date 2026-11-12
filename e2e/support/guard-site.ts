@@ -220,6 +220,10 @@ export class Site {
     for (const response of this.held) response.write(HELD_ROOT);
   }
 
+  received(text: string): number {
+    return this.submitted.filter((body) => body.includes(text)).length;
+  }
+
   heldLogins(): number {
     return this.logins.length;
   }

@@ -8,13 +8,15 @@ const [dir = "", ...argv] = process.argv.slice(2);
 let rest = argv;
 while (rest[0] === "-o") rest = rest.slice(2);
 const [host = "", ...command] = rest;
-appendFileSync(join(dir, "ssh.jsonl"), `${JSON.stringify({ host, command: command.join(" ") })}\n`);
-
-if (existsSync(join(dir, "ssh-held"))) {
+const held = existsSync(join(dir, "ssh-held"));
+if (held)
   process.on("SIGTERM", () => {
     appendFileSync(join(dir, "ssh-terminated"), "x");
     process.exit(143);
   });
+appendFileSync(join(dir, "ssh.jsonl"), `${JSON.stringify({ host, command: command.join(" ") })}\n`);
+
+if (held) {
   setTimeout(() => process.exit(255), HELD_LONGEST_MS);
 } else {
   const child = spawn("sh", ["-c", command.join(" ")], { stdio: "inherit" });

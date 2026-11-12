@@ -2,7 +2,8 @@ import Type from "typebox";
 import {
   allowedWhileTyped,
   droppedWhileTyped,
-  readerKey,
+  postKeys,
+  readerKeys,
   refusedAlways,
   requestKeys,
   withoutBody,
@@ -88,8 +89,8 @@ export class Gate {
 
   private refusal(wire: Wire, method: string, verdict: Verdict, ref: Ref): string | undefined {
     if (refusedAlways(method)) return `${method} is not available through the guard.`;
-    const key = readerKey(method, wire.params, wire.sessionId ?? "");
-    if (key !== undefined && this.watch.secret(ref, key)) return bodyMessage;
+    const held = readerKeys(method, wire.params, wire.sessionId ?? "");
+    if (held.some((key) => this.watch.secret(ref, key))) return bodyMessage;
     if (verdict === "clear" || allowedWhileTyped(method, wire.params)) return undefined;
     return verdict === "typed" ? typedMessage(method) : unseenMessage(method);
   }
@@ -176,11 +177,17 @@ export class Gate {
     const ref = this.refNow(wire.sessionId);
     const verdict = this.verdictNow(ref);
     if (verdict !== "clear" && droppedWhileTyped(method)) return undefined;
-    const keys = requestKeys(method, wire.params, wire.sessionId ?? "");
-    const secret = this.watch.armed(ref) || keys.some((key) => this.watch.secret(ref, key));
-    if (secret) this.watch.taint(ref, keys);
-    if (!secret && verdict === "clear") return raw;
+    if (!this.hides(wire, method, ref, verdict)) return raw;
     const params = withoutBody(method, wire.params);
     return params === undefined ? raw : JSON.stringify({ ...wire, params });
+  }
+
+  private hides(wire: Wire, method: string, ref: Ref, verdict: Verdict): boolean {
+    const session = wire.sessionId ?? "";
+    const keys = requestKeys(method, wire.params, session);
+    const posts = postKeys(method, wire.params, session);
+    const secret = this.watch.armed(ref) || keys.some((key) => this.watch.secret(ref, key));
+    this.watch.taint(ref, secret ? [...keys, ...posts] : posts);
+    return secret || posts.length > 0 || verdict !== "clear";
   }
 }

@@ -1,28 +1,37 @@
-const KEPT = 2000;
+export const REQUESTS_KEPT = 2000;
 const UNPLACED = "";
 
 export class Requests {
   private readonly keys = new Map<string, Set<string>>();
   private readonly flooded = new Set<string>();
+  private readonly kept: number;
+
+  constructor(kept: number) {
+    this.kept = kept;
+  }
 
   taint(page: string, keys: readonly string[]): void {
-    if (this.flooded.has(page)) return;
+    if (keys.length === 0 || this.flooded.has(page)) return;
     const held = this.keys.get(page) ?? new Set<string>();
     for (const key of keys) held.add(key);
-    for (const oldest of held) {
-      if (held.size <= KEPT) break;
-      if (page !== UNPLACED) {
-        this.keys.delete(page);
-        this.flooded.add(page);
-        return;
-      }
-      held.delete(oldest);
+    if (held.size > this.kept) {
+      this.keys.delete(page);
+      this.flooded.add(page);
+      return;
     }
     this.keys.set(page, held);
   }
 
+  promote(pages: Iterable<string>): void {
+    if (!this.flooded.delete(UNPLACED)) return;
+    for (const page of pages) {
+      this.keys.delete(page);
+      this.flooded.add(page);
+    }
+  }
+
   has(page: string, key: string): boolean {
-    if (this.keys.get(UNPLACED)?.has(key) === true) return true;
+    if (this.flooded.has(UNPLACED) || this.keys.get(UNPLACED)?.has(key) === true) return true;
     if (page === UNPLACED)
       return this.flooded.size > 0 || [...this.keys.values()].some((x) => x.has(key));
     return this.flooded.has(page) || this.keys.get(page)?.has(key) === true;
