@@ -244,7 +244,11 @@ test("a Later made on the board lowers the count at once, with no /d and no poll
   assert.equal(await lab.cardd.act(vendor.id, action), 200);
 
   const one = await lab.screenWhere(pane, "only the other decision", showing([awaiting(1)]));
-  assert.match(statusRow(one), /^1 decision awaits you board$/, "the put-off card is still counted");
+  assert.match(
+    statusRow(one),
+    /^1 decision awaits you board$/,
+    "the put-off card is still counted",
+  );
 });
 
 const FULL = "2 decisions await you ● 1 ▲ 1 board";
