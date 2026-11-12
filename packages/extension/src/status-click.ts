@@ -47,16 +47,34 @@ function handleMouse(this: object, event: TuiMouseEvent): TuiMouseEventResult | 
   return { handled: true };
 }
 
-function fitStatus(text: string, width: number): string {
-  const items = text.split(" · ").flatMap((item, at) => {
-    const separator = at === 0 ? "" : " · ";
-    if (!stripTerminalSequences(item).endsWith(" board")) return [{ text: item, separator }];
-    const space = item.lastIndexOf(" ");
-    return [
-      { text: item.slice(0, space), separator },
-      { text: item.slice(space + 1), separator: " " },
-    ];
-  });
+function statusesOf(footer: object): string[] {
+  const data: unknown = Reflect.get(footer, "footerData");
+  const read: unknown =
+    typeof data === "object" && data !== null
+      ? Reflect.get(data, "getExtensionStatuses")
+      : undefined;
+  const found: unknown = typeof read === "function" ? Reflect.apply(read, data, []) : undefined;
+  if (!(found instanceof Map)) return [];
+  const statuses = new Map<string, string>();
+  for (const [key, text] of found) {
+    if (typeof key === "string" && typeof text === "string") statuses.set(key, text);
+  }
+  return [...statuses.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((key) =>
+      (statuses.get(key) ?? "")
+        .replace(/[\r\n\t]/g, " ")
+        .replace(/ +/g, " ")
+        .trim(),
+    );
+}
+
+function fitStatus(footer: object, width: number): string {
+  const items = statusesOf(footer).flatMap((status, at) =>
+    status
+      .split(" · ")
+      .map((text, inner) => ({ text, separator: inner === 0 ? (at === 0 ? "" : " ") : " · " })),
+  );
   let fitted = "";
   for (const item of items) {
     const next = fitted + (fitted === "" ? "" : item.separator) + item.text;
@@ -69,8 +87,7 @@ function install(): void {
   patchRender(FooterComponent.prototype, "FooterComponent", (footer, width, lines) => {
     const rows = lines();
     if (stripTerminalSequences(rows[STATUS_ROW] ?? "").endsWith("...")) {
-      const whole = lines(Math.max(width, 4096))[STATUS_ROW] ?? "";
-      rows[STATUS_ROW] = fitStatus(whole, width);
+      rows[STATUS_ROW] = fitStatus(footer, width);
     }
     drawn.set(footer, rows);
     return rows;

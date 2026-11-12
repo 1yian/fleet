@@ -82,7 +82,7 @@ test("a click beside the word board opens nothing", async () => {
   const link = boardAt(screen);
   await lab.click(pane, link.row, link.column + "board".length + 4);
   await lab.click(pane, link.row - 1, link.column);
-  await lab.click(pane, link.row, 1);
+  await lab.click(pane, link.row, link.column + "board".length);
   assert.deepEqual(opener.opened(), []);
   await lab.click(pane, link.row, link.column);
   assert.deepEqual(await opened(opener), [boardUrl()]);

@@ -25,12 +25,12 @@ function lines(value: unknown): string[] {
 export function patchRender(
   proto: object,
   name: string,
-  draw: (row: object, width: number, drawn: (atWidth?: number) => string[]) => string[],
+  draw: (row: object, width: number, drawn: () => string[]) => string[],
 ): void {
   once(name, () => {
     const original = methodOf(proto, "render");
     Reflect.set(proto, "render", function (this: object, width: number): string[] {
-      return draw(this, width, (atWidth = width) => lines(original(this, atWidth)));
+      return draw(this, width, () => lines(original(this, width)));
     });
   });
 }
