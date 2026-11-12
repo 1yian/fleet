@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import {
+  awaiting,
   CARD_TOP,
   cardRows,
   DecideLab,
@@ -101,7 +102,10 @@ async function aimedAt(pane: string, what: string, shown: string): Promise<strin
     `the card leaves the footer on screen:\n${screen}`,
   );
   assert.ok(top >= 1, `the card leaves a row of the chat above it:\n${screen}`);
-  assert.match(rows.slice(top + card.length).join("\n"), /http:\/\/127\.0\.0\.1:\d+/);
+  assert.ok(
+    rows.slice(top + card.length).includes(`${awaiting(1)} board`),
+    `the status bar is on screen below the card:\n${screen}`,
+  );
   const text = squeezed(card.join("\n"));
   assert.ok(text.includes("↑↓choose"), `the hint row is kept:\n${screen}`);
   return screen;

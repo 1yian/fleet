@@ -175,7 +175,11 @@ export class DecideLab {
   }
 
   openMidNarrowMain(): Promise<string> {
-    return this.openMain({}, { direction: "down", ratio: 0.52 }, { direction: "right", ratio: 0.61 });
+    return this.openMain(
+      {},
+      { direction: "down", ratio: 0.52 },
+      { direction: "right", ratio: 0.61 },
+    );
   }
 
   private async shape(lab: HerdrLab, shapes: readonly Shape[]): Promise<void> {
@@ -285,7 +289,6 @@ export class DecideLab {
     ask: { question: string; options: string[]; approves: string[] },
     count: number,
   ): Promise<Card> {
-    this.cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
     const card = check(
       CardSchema,
       await this.cleo.call("card.new", { title, kind: "ship", project: "web" }),
@@ -302,7 +305,11 @@ export class DecideLab {
     );
     this.h.onModel(() => ({ text: SEEN }), "mate");
     await worker.call("report", { status: "done", text: "PR green and ready", pr: PR });
-    await this.screenWhere(pane, `${String(count)} on the strip`, showing([`◆ ${String(count)}`]));
+    await this.screenWhere(
+      pane,
+      `${String(count)} on the status bar`,
+      showing([`${String(count)} decision`]),
+    );
     await this.h.waitForCall(count * 2 - 1, "mate", WAIT_MS);
     return card;
   }
