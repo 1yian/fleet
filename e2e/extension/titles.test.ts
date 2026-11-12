@@ -190,9 +190,19 @@ test("a second mate that starts in a workspace with the wrong label corrects it 
   await until("the workspace to read 2ndmate-cleo", labels, (now) => {
     return now.get(workspace) === "2ndmate-cleo";
   });
+  const filesTab = await until(
+    "the Files tab",
+    async () =>
+      records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]).find(
+        (each) => each["label"] === "Files",
+      ),
+    (found) => found !== undefined,
+  );
   const panes = await lab.run(["pane", "list", "--workspace", workspace]);
   assert.deepEqual(
-    records(panes["panes"]).map((each) => each["pane_id"]),
+    records(panes["panes"])
+      .filter((each) => each["tab_id"] !== filesTab?.["tab_id"])
+      .map((each) => each["pane_id"]),
     [pane],
   );
   await until(

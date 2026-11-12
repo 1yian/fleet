@@ -39,6 +39,8 @@ The fleet checks all of this on each host before it starts a mate, and before `/
 
 The check does not test that the cardd host is reachable over Tailscale. Mates reconnect to `cardd` by themselves while it restarts, so a mate must start when `cardd` is down, and a reachability test would be slow and flaky.
 
+`yazi`, `nvim`, and `fzf` are optional. They are for the Files tab (see [The Files tab](#the-files-tab)). A host without them starts its mates and shows the Files tab as a plain `nvim` or `vim` folder view, or, with no editor either, prints one line that says what to install. The tab is tested with `yazi` 26.5.6 and `nvim` 0.12. Yazi's `ya` command must be on the `PATH` next to `yazi`. `fzf` is only the picker behind `g p` and `g w`, which say so when it is missing. Install them from your package manager or, on a host with no nix, from the release binaries: https://github.com/sxyazi/yazi/releases.
+
 `lavish-axi` is optional. A host without it starts its mates and runs its workers with no problem reported. Install it (`npm install -g lavish-axi`, 0.1.80 or later) to let workers show review pages, so the fleet waits on the captain's feedback there. 0.1.80 is the first release whose `reply` confirms that the page took the answer. On a host where it is missing or older, a worker's `lavish-axi` command is not found, so the worker writes a plain Markdown report and reports `needs-decision` or `done` with its path.
 
 `bws` is optional too. A host without it, or a lane without a `bws` block in `config/lane.json`, reads every secret from the files and environment it always did. Install it (`bws` 2 or later, the Bitwarden Secrets Manager CLI, https://bitwarden.com/help/secrets-manager-cli/) on each host whose lanes should read from Bitwarden. See [Secrets from Bitwarden](#secrets-from-bitwarden-bws).
@@ -601,6 +603,7 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet scratch --open N`                   | Makes card N's scratch folder as dispatch does, and prints it and the compile cache.        |
 | `fleet scratch --move N`                   | Moves `/tmp/fleet-c-N` to disk and leaves a symlink, as close does (see Scratch space).     |
 | `fleet scratch --largest PATH... [--by M]` | Prints the largest directories under the PATHs together, by `inodes` (default) or `space`.  |
+| `fleet files [verb ...]`                   | Runs the Files tab's explorer in this lane's home, or one of its commands (The Files tab).  |
 | `fleet migrate [--undo]`                   | Moves the earlier layout into homes (below).                                                |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
@@ -625,6 +628,67 @@ Main restarts itself only when it runs in a herdr pane. Otherwise the report say
 A mate or worker that gets a message from `cardd` that it cannot read, as when `cardd` runs newer code than it loaded, does not crash. It says so once in its conversation, and `cardd` logs why once. Inside a herdr pane it then relaunches itself on the same conversation at its next safe point, so it loads the code on disk, and it does so at most once every 10 minutes. A process that cannot relaunch keeps reconnecting until `lane(<lane>, "restart")` or `restart_card` replaces it. `restart_card` also replaces the disconnected worker of a paused, finished, or waiting card, and resumes nothing.
 
 A host updates with the code it already has. A host whose checkout predates `fleet update` cannot take part, so update it once by hand: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`, then `fleet restart` on that host.
+
+## The Files tab
+
+Every mate's herdr workspace has a second tab named `Files`. It runs `fleet files` in the lane home, which starts Yazi with `nvim` as the editor. The tab is made when the mate starts, on the mate's own host, and a mate that finds the tab already there leaves it alone. When Yazi quits, the pane is a shell in the lane home, and `fleet files` brings the explorer back. Nothing about it goes through `cardd`, the board, or a link: it is a terminal on the host that has the files.
+
+### What it shows
+
+The lane home with `config/`, `data/`, and `state/` visible, and these places one key away:
+
+| Key   | Goes to                                                                              |
+| ----- | ------------------------------------------------------------------------------------ |
+| `g h` | The lane home                                                                        |
+| `g d` | `data/`                                                                              |
+| `g c` | `config/`                                                                            |
+| `g s` | `state/`                                                                             |
+| `g r` | `data/reports/`                                                                      |
+| `g p` | A picker of this host's project clones and scratch worktrees                         |
+| `g w` | A picker of the worker worktrees of this lane's cards and the scratch worktrees      |
+| `g k` | The skill folders. In the ystack lane, the scratch worktree's `skills/` comes first. |
+
+`fleet files roots` prints every place that the tab knows. Some have no key: the evidence folders of this lane's cards, and the folders that the lane adds. A lane can add folders in `config/lane.json` with `"files": {"roots": ["/absolute/folder"]}`. A lane whose folders are huge can turn the previews off with `"files": {"previews": false}`: Yazi then shows only the list and the current folder.
+
+### The guard
+
+An edit to a tracked file is never made in place. A file opens read-only in `nvim` (`-R -M`, with the reason in the status line) when it is:
+
+- tracked by git, or new and not ignored, in this checkout, in any lane home, or in a registered project clone on this host;
+- inside a worker's worktree, which its worker owns;
+- inside a released skill folder (`~/.agents/skills` or `~/.pi/agent/skills`), by the folder's real path and not by its file mode, so a skill that links into a live checkout is guarded through the link too.
+
+An ignored file, such as anything in `data/`, `config/`, or `state/`, opens writable. A folder counts as ignored only when it holds no tracked file, so a folder with a force-added file in it is guarded whole. A binary file, or one over 2 MiB, opens as a metadata screen, with Enter and with `E`. Every file that a session opens afterwards, with `:edit` or a split, gets the same check, so a tracked file opened from a writable session is read-only too.
+
+The keys that change files check every path that they would write or delete, not only the one under the cursor. Rename and create ask for the name in a prompt of the guard's own, then check the path that the name leads to, so `../README.md` is refused when `README.md` is tracked. Paste and link check the current folder and each file that they would make in it, because Yazi picks another name when a name is taken, and a paste of something cut from a guarded place is refused. Delete and rename check everything inside a folder, and a folder that holds a clone, a lane home, a worker worktree, or a skill folder is guarded whole, so it cannot be deleted or moved away. A refusal changes nothing and is a notice in Yazi that names the reason. `fleet files check <path>` prints the decision for a path and exits non-zero for a guarded one.
+
+The guard needs to know the project clones of this host, which it asks `cardd` for and saves in `state/files/projects.json`. When `cardd` cannot be reached and nothing is saved yet, it cannot tell a clone from a private folder, so it treats every path outside the lane homes and the fleet checkout as guarded, and says why.
+
+The guard is a seat belt for the captain's keys. It does not stop a program that writes the file by another route.
+
+### Scratch worktrees
+
+`E` on a guarded file opens the same file in the project's scratch worktree, `<clone>.worktrees/scratch`, on its own branch `scratch/<host>-<time>` made from `origin/<base>`. The scratch worktree is made the first time and kept. The fleet leaves it alone: `/updatefleet`'s check, the clone refresh, and a dispatched worker all ignore it, and lane homes do not list it. `fleet files scratch` lists each one with its branch, how far it is ahead of and behind the base, and its dirty files. `<base>` is `origin/<base>`, or the local `<base>` for a local-only project, and the scratch is made from it, measured against it, and reset onto it. `fleet files scratch reset` moves a scratch with no dirty files onto a fresh branch from the current base, but only when its branch is merged: when every file the branch changed already has the branch's content in the base, which a squash merge satisfies. The check uses only commands of the supported Git. A deleted remote branch is not evidence of a merge, so a branch that was pushed and then closed without a merge stays, and reset refuses. `P` pushes the scratch branch, and the pull request is yours to open: `gh pr create` in the scratch folder. To have a worker deliver it, press `M` and ask main (below). `E` checks the scratch copy that it opens the same way as the original, so a binary or large copy shows its metadata, and a copy that is a link to a guarded file opens read-only.
+
+### Show, Reload, and Main
+
+`S` types a message into this lane's mate as your own message, `M` types it into main, `R` reloads this lane's mate, and `Ctrl-r` reloads main. Each one first prints the whole text and waits. Enter sends it, Esc cancels, and nothing is typed without that Enter. You can add one line of your own before Enter. The text names the host, the absolute path, and the first 12 characters of the file's SHA-256. For a path in a scratch worktree it also names the branch, the commit, and the `git diff --stat` lines, and it never carries the file's content. A reload is typed only when herdr says the mate is `idle`, because Pi cannot reload while it works. A blocked mate is refused with the reason.
+
+`M` needs to reach main's herdr. Set `"files": {"main": "<host>"}` in `config/lane.json`, the name of the host where main runs. Main's own lane needs no setting: it types into main on this host. When the setting names this host, or a host in the lane's `hosts` map, `M` types into main's pane. In any other case `M` posts the text as the captain's comment on this lane's newest open card, which reaches main as `[fleet] captain on c-N (in <lane>'s lane)`, and says that it did. A lane with no open card has nothing to comment on, so `M` refuses and says so.
+
+### Skills
+
+Skill text is edited in one place: the ystack lane. Every other lane, and every host, reads the released install, read-only. In another lane, `E` on a skill makes no scratch worktree and says so: press `M` to ask main, which routes the request to the ystack lane. In the ystack lane, `E` on `~/.agents/skills/<name>/<file>` opens `<scratch>/skills/<name>/<file>`, and the lane's own Pi, which loads that folder ahead of the release (see "Changing a lane's settings"), sees the edit after `/reload`. The lane's args list the scratch worktree's `skills/` first, so the Files tab finds the workshop from them: a `--skill` folder that is the `skills/` of a git checkout of a registered project, other than the project's clone. The tab decides by those args and not by the lane's name, so any lane whose args load such a folder can edit skills in it.
+
+`fleet files skills` prints the winner of each skill name in this lane's Pi, where its file is, who can write it, the skills it hides, how far the scratch is ahead of and behind the base, and flags for the problems that matter: a scratch that is behind (it hides newer released text from this lane), a merged scratch branch, a skill folder that links into a live checkout, a skill in `~/.pi/agent/skills` that hides the released one of its name, and a host whose released install is older than the newest ystack tag. The mate writes `state/skills.json` when it starts or reloads, and the command reads it, so run it after the mate has started.
+
+### Rolling it out
+
+1. Merge the change and run `/updatefleet`. Every lane then has the new extension. Nothing in the protocol, `cardd`, or the database changes, so mates that run the earlier code keep working and reconnect as before. A lane gets its Files tab the next time its mate starts (`lane(<lane>, "restart")`), and a lane that has not restarted has none.
+2. Install `yazi`, `nvim`, and `fzf` on each host, or none of them (see Prerequisites). The CNP VM has no nix, so use the release binaries there.
+3. Set `"files": {"main": "<host>"}` in each lane's `config/lane.json` that should type into main's pane with `M`. A lane that does not set it uses the board comment.
+4. Before a lane that holds a very large tree gets the tab for good, run `fleet files` in it by hand and note how long the first listing of its biggest folder takes. If it stalls, set `"files": {"previews": false}` for that lane.
+5. In the ystack lane, nothing more is needed if its `args` already load the scratch worktree's `skills/` as in "Changing a lane's settings".
 
 ## Moving from the earlier layout
 
