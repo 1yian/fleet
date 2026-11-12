@@ -4,11 +4,13 @@ import { bodyOf, eventOf, requestIdOf } from "../support/events.ts";
 import { Captain, GuardLab, reads, until } from "../support/guard-lab.ts";
 
 const SECRET = "hunter2-secret-value";
+const KEPT = 20;
+const ORDINARY = KEPT + 5;
 
 let lab: GuardLab;
 
 before(async () => {
-  lab = await GuardLab.start([], { relay: true });
+  lab = await GuardLab.start([], { relay: true, requestsKept: KEPT });
   lab.relay?.omitNetworkIds();
 });
 after(async () => {
@@ -81,4 +83,31 @@ test("a redirect that Fetch pauses without a Network id carries no body once the
   assert.deepEqual(bodyOf(again), [undefined, undefined]);
   await worker.call(tab.session, "Fetch.disable");
   captain.close();
+});
+
+test("ordinary Fetch pauses of a tab with no password never make its response bodies unreadable", async () => {
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/notes", "notes");
+  const patterns = [{ urlPattern: "*/notes?n=*", requestStage: "Response" }];
+  assert.equal((await worker.call(tab.session, "Fetch.enable", { patterns })).ok, true);
+  const before = worker.events.length;
+  const fired = await worker.call(tab.session, "Runtime.evaluate", {
+    expression: `Promise.all(Array.from({ length: ${String(ORDINARY)} }, (_, n) => fetch('/notes?n=' + n)))`,
+    awaitPromise: false,
+  });
+  assert.equal(fired.ok, true);
+  const paused = (): string[] =>
+    worker.events
+      .slice(before)
+      .filter((event) => event.method === "Fetch.requestPaused")
+      .map(requestIdOf);
+  await until(
+    () => (paused().length >= ORDINARY ? true : undefined),
+    "every ordinary response to pause",
+  );
+  for (const requestId of paused()) {
+    const body = await worker.call(tab.session, "Fetch.getResponseBody", { requestId });
+    assert.equal(body.ok, true, `a response body was refused: ${body.text}`);
+  }
+  await worker.call(tab.session, "Fetch.disable");
 });

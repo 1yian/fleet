@@ -140,8 +140,18 @@ const BARE_FIRST = "bare:";
 
 export const bareKey = (key: string): string => `${BARE_FIRST}${key}`;
 
-export function bareKeys(keys: readonly string[]): string[] {
-  return keys.length > 0 && !keys.some((key) => key.startsWith("net:")) ? keys.map(bareKey) : [];
+function carriesBody(params: unknown): boolean {
+  const request = record(record(params)?.["request"]);
+  if (request === undefined) return false;
+  return (
+    [request["postData"], request["postDataEntries"]].some((body) => body !== undefined) ||
+    request["hasPostData"] === true
+  );
+}
+
+export function bareKeys(params: unknown, keys: readonly string[]): string[] {
+  const bare = keys.length > 0 && !keys.some((key) => key.startsWith("net:"));
+  return bare && carriesBody(params) ? keys.map(bareKey) : [];
 }
 
 export function postKeys(method: string, params: unknown, session: string): string[] {

@@ -190,7 +190,7 @@ export class Gate {
   private hides(wire: Wire, method: string, ref: Ref, verdict: Verdict): boolean {
     const session = wire.sessionId ?? "";
     const keys = requestKeys(method, wire.params, session);
-    const bare = bareKeys(keys);
+    const bare = bareKeys(wire.params, keys);
     const secret =
       this.watch.armed(ref) ||
       keys.some((key) => this.watch.secret(ref, key)) ||
