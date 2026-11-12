@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
 import {
+  awaiting,
   cardRows,
   DecideLab,
   keep,
@@ -33,7 +34,6 @@ async function captainHolds(card: Card): Promise<{ until: unknown; wait: unknown
 }
 
 async function mergeAskedMain(pane: string, count: number): Promise<Card> {
-  lab.cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
   const args = { title: "Ads exports", kind: "ship", project: "web" };
   const card = check(CardSchema, await lab.cleo.call("card.new", args));
   const begin = await lab.cleo.call("attempt.begin", {
@@ -49,7 +49,7 @@ async function mergeAskedMain(pane: string, count: number): Promise<Card> {
   );
   lab.h.onModel(() => ({ text: SEEN }), "mate");
   await worker.call("report", { status: "done", text: "PR ready", pr: PR });
-  await lab.screenWhere(pane, `${String(count)} on the strip`, showing([`◆ ${String(count)}`]));
+  await lab.screenWhere(pane, `${String(count)} on the status bar`, showing([awaiting(count)]));
   await lab.h.waitForCall(count * 2 - 1, "mate", WAIT_MS);
   return card;
 }

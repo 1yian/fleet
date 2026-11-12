@@ -150,6 +150,7 @@ test("answering on the card lowers the count behind it", async () => {
 
 const DAY_MS = 86_400_000;
 const LATER_MS = 30_000;
+const LATER = "in 30 seconds";
 const VENDOR = "Pick the vendor?";
 
 test("a card the captain put off is neither counted nor on /d until its date, however old the hold, and returns in both at its date", async () => {
@@ -162,8 +163,8 @@ test("a card the captain put off is neither counted nor on /d until its date, ho
   const action = {
     kind: "hold",
     hold: open.hold,
-    until: date,
-    reason: "ask me again after the launch",
+    said: LATER,
+    zone: "UTC",
   } as const;
   assert.equal(await lab.cardd.act(vendor.id, action), 200);
 
@@ -205,8 +206,8 @@ test("a card of the captain's own that he put off is neither counted nor on /d u
   const action = {
     kind: "hold",
     hold: open.hold,
-    until: date,
-    reason: "ask me again after the launch",
+    said: LATER,
+    zone: "UTC",
   } as const;
   assert.equal(await lab.cardd.act(own.id, action), 200);
 
