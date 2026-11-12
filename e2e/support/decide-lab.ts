@@ -212,11 +212,13 @@ export class DecideLab {
 
   async landedCard(title: string): Promise<void> {
     const card = check(CardSchema, await this.cleo.call("card.new", { title, kind: "scout" }));
-    await this.cleo.call("close.begin", { card: card.id, landed: true });
+    const next = { drop: "nothing to build" };
+    await this.cleo.call("close.begin", { card: card.id, landed: true, next });
     await this.cleo.call("close.finish", {
       card: card.id,
       mode: "done",
       text: "checked",
+      next,
       archives: [],
       left: [],
     });
