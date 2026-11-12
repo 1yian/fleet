@@ -1,5 +1,6 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
+import { ApprovesArg } from "./approval.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { LaterFields, LaterResult } from "./later.ts";
@@ -15,6 +16,8 @@ import { PlanSchema } from "./wakes.ts";
 import { DatedWaitSchema, HOLD_WAIT_ARGS, RemainingStepSchema } from "./waits.ts";
 
 export * from "./address.ts";
+export * from "./approval.ts";
+export { laidOut } from "./question.ts";
 export * from "./branch.ts";
 export * from "./cdp.ts";
 export * from "./health.ts";
@@ -43,8 +46,6 @@ export {
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
-
-export const MERGE_OPTIONS = ["Approve & merge", "Request changes"] as const;
 
 export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only"] as const;
 const Delivery = Type.Enum(DELIVERIES);
@@ -144,6 +145,8 @@ export const CardViewSchema = Type.Object({
       options: Type.Array(Type.String()),
       until: Nullable(Type.Integer()),
       remaining: Type.Array(RemainingStepSchema),
+      merge: Type.Optional(Type.Boolean()),
+      approves: Type.Optional(Type.Array(Type.String())),
     }),
   ),
   attempts: Type.Array(
@@ -254,6 +257,7 @@ export const OPS = {
             "Short answers to the whole hold, your recommendation first, such as 'Take all my recommendations'",
         }),
       ),
+      approves: ApprovesArg,
       to: Type.Optional(
         Type.Enum(["main", "captain"], {
           description:
@@ -432,6 +436,7 @@ export const BoardSchema = Type.Object({
       question: Type.String(),
       options: Type.Array(Type.String()),
       merge: Type.Boolean(),
+      author: Type.Optional(Type.String()),
     }),
   ),
   schedules: Type.Array(ScheduleSchema),

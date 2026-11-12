@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { MERGE_OPTIONS, type Board, type Card, type Entry } from "@fleet/protocol";
+import { type Board, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, OUTSIDE_DATE, startFleet, status, type Fleet } from "../support/fleet.ts";
 
 const PR = "https://github.com/acme/web/pull/7";
+const APPROVE = "Approve & merge";
 
 let fleet: Fleet;
 let cleo: Session;
@@ -195,7 +196,7 @@ test("a mate that answers an owed reply by asking the same thing again does not 
   assert.deepEqual([answer?.body, answer?.fields["source"]], ["Yes", "pane"]);
 });
 
-test("the captain's own words on a merge question from the pane ask for changes, as they do on the board", async () => {
+test("a pick or his own words on a merge question from the pane are never refused: they reach the mate, and only an approving option approves", async () => {
   const { card, worker } = await laneCard("Ads exports");
   await worker.call("report", { status: "done", text: "PR ready", pr: PR });
   await fleet.main.waitForEntry((entry) => entry.kind === "hold", "the merge hold");
@@ -203,14 +204,21 @@ test("the captain's own words on a merge question from the pane ask for changes,
 
   const words = "Not before the audit";
   const { hold } = await theHold();
-  await assert.rejects(fleet.main.call("pane.answer", { card: card.id, hold, choice: "Yes" }), {
-    message: /a merge question needs the choice/,
-  });
   await fleet.main.call("pane.answer", { card: card.id, hold, choice: words, written: true });
-  const answer = (await entries(card)).find((entry) => entry.kind === "answer");
+  const heard = (await entries(card)).filter((entry) => entry.author === "captain");
   assert.deepEqual(
-    [answer?.body, answer?.fields["choice"], answer?.fields["written"], answer?.fields["source"]],
-    [words, MERGE_OPTIONS[1], true, "pane"],
+    heard.map(({ kind, body, fields }) => [kind, body, fields["written"], fields["source"]]),
+    [["comment", words, true, "pane"]],
+  );
+  assert.equal(await status(cleo, card), "with-mate");
+  assert.deepEqual(await needsYou(), []);
+  await cleo.waitForEntry((entry) => entry.body === words, "his words");
+
+  await cleo.call("release", { card: card.id, words, source: "record" });
+  assert.equal(await status(cleo, card), "with-mate");
+  assert.equal(
+    (await entries(card)).findLast((entry) => entry.kind === "answer")?.fields["approved"],
+    false,
   );
 });
 
@@ -380,7 +388,7 @@ test("a merge question is part of the hold: it goes up through main, and is with
   });
   assert.equal(await status(cleo, card), "needs-you");
   const merge = await theHold();
-  assert.deepEqual(merge.options, [...MERGE_OPTIONS]);
+  assert.deepEqual(merge.options, [APPROVE]);
   assert.equal(merge.merge, true);
 
   await cleo.call("comment", { card: card.id, text: "Fix the failing check first." });
@@ -392,7 +400,7 @@ test("a merge question is part of the hold: it goes up through main, and is with
     await fleet.cardd.act(card.id, {
       kind: "answer",
       hold: merge.hold,
-      choice: MERGE_OPTIONS[0],
+      choice: APPROVE,
     }),
     409,
   );
@@ -401,7 +409,7 @@ test("a merge question is part of the hold: it goes up through main, and is with
   await fleet.main.call("hold", { card: card.id, to: "captain", question: `Merge ${PR}? Fixed.` });
   const again = await theHold();
   assert.equal(
-    await fleet.cardd.act(card.id, { kind: "answer", hold: again.hold, choice: MERGE_OPTIONS[0] }),
+    await fleet.cardd.act(card.id, { kind: "answer", hold: again.hold, choice: APPROVE }),
     200,
   );
   assert.equal(await status(cleo, card), "merging");
@@ -427,7 +435,7 @@ test("a merge question withdrawn while the PR is reworked and asked again in the
   assert.deepEqual([again.question, again.options], [seen.question, seen.options]);
   assert.notEqual(again.hold, seen.hold, "the hold is a newer entry");
 
-  const oldCard = { kind: "answer", hold: seen.hold, choice: MERGE_OPTIONS[0] } as const;
+  const oldCard = { kind: "answer", hold: seen.hold, choice: APPROVE } as const;
   assert.equal(await fleet.cardd.act(card.id, oldCard), 409);
   const putOff = {
     kind: "hold",
@@ -437,7 +445,7 @@ test("a merge question withdrawn while the PR is reworked and asked again in the
   } as const;
   assert.equal(await fleet.cardd.act(card.id, putOff), 409);
   await assert.rejects(
-    fleet.main.call("pane.answer", { card: card.id, hold: seen.hold, choice: MERGE_OPTIONS[0] }),
+    fleet.main.call("pane.answer", { card: card.id, hold: seen.hold, choice: APPROVE }),
     { message: /c-\d+'s decision changed, so nothing was recorded/ },
   );
   assert.deepEqual(await needsYou(), [card.id]);

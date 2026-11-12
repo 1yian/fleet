@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
-import { BoardActionSchema, check, MERGE_OPTIONS, OPS, type Entry } from "@fleet/protocol";
+import { BoardActionSchema, check, OPS, type Entry } from "@fleet/protocol";
 import type { Cardd } from "../support/cardd.ts";
 import { type Session } from "../support/cardd.ts";
 import {
@@ -358,46 +358,6 @@ test("Needs you: one click on an option answers, and the card goes to its owner"
   );
   assert.equal(await region("Needs you").getByRole("article").count(), 2);
   await page.getByText("2 for you").waitFor();
-});
-
-test("Needs you: Approve & merge moves the card to Merging as the captain's approval", async () => {
-  await open();
-  const title = "Board: thread as a story, steers fold away";
-  await card(title).getByRole("button", { name: MERGE_OPTIONS[0] }).click();
-  await region("Merging")
-    .getByRole("article", { name: title })
-    .getByText("you approved · landing")
-    .waitFor();
-  assert.equal(await region("Needs you").getByRole("article", { name: title }).count(), 0);
-  const answer = await last("merge", "answer");
-  assert.equal(answer.fields["choice"], MERGE_OPTIONS[0]);
-});
-
-test("Needs you: Request changes asks for words in the card, and sending sends them to the worker", async () => {
-  await open();
-  const title = "Board: thread as a story, steers fold away";
-  const asked = card(title);
-  await asked.getByRole("button", { name: MERGE_OPTIONS[1] }).click();
-  await asked.getByText("What should change before it merges?").waitFor();
-  assert.equal(
-    (await cardd.thread(fleet.cards["merge"]?.id ?? 0)).entries.some(
-      (entry) => entry.kind === "answer",
-    ),
-    false,
-  );
-  const send = asked.getByRole("button", { name: "Send answer" });
-  assert.equal(await send.isDisabled(), true);
-  await shoot("request-changes-1440");
-
-  await asked
-    .getByRole("textbox", { name: "Your words" })
-    .fill("Keep the CI failure line, but fold the rerun into it");
-  await send.click();
-  await region("In progress").getByRole("article", { name: title }).waitFor();
-  const answer = await last("merge", "answer");
-  assert.equal(answer.body, "Keep the CI failure line, but fold the rerun into it");
-  assert.equal(answer.fields["choice"], MERGE_OPTIONS[1]);
-  assert.equal(answer.fields["written"], true);
 });
 
 test("Needs you: Cancel closes the words box and leaves the options", async () => {

@@ -1,7 +1,8 @@
 import {
+  approvedBy,
+  approvesOf,
   ATTENTIONS,
   HOLDERS,
-  MERGE_OPTIONS,
   parseCards,
   parseWait,
   type Attention,
@@ -20,6 +21,7 @@ export interface Hold {
   readonly question: string;
   readonly options: readonly string[];
   readonly merge: boolean;
+  readonly approves: readonly string[];
   readonly keys: readonly string[];
   readonly fromWorker: boolean;
   readonly until: number | null;
@@ -68,6 +70,7 @@ function holdFrom(tally: Tally, entry: Entry): void {
     question: entry.body,
     options: textsOf(entry.fields["options"]),
     merge,
+    approves: approvesOf(entry.fields),
     until: typeof until === "number" ? until : null,
     wait: parseWait(entry.fields["wait"]),
     remaining: parseCards(entry.fields["remaining"]),
@@ -91,6 +94,7 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       question: entry.body,
       options: [],
       merge: false,
+      approves: [],
       keys: [key],
       fromWorker: true,
       until: null,
@@ -179,13 +183,12 @@ const REPORT_EFFECTS: Partial<Record<string, ReportEffect>> = {
   merged: done,
 };
 
-const mergeChoice = (entry: Entry): boolean => text(entry, "choice") === MERGE_OPTIONS[0];
-
 function answered(tally: Tally, entry: Entry): void {
   if (tally.hold?.merge === true) {
-    tally.mergeApproved = mergeChoice(entry);
+    tally.mergeApproved = approvedBy(entry.fields);
     tally.awaitingMerge = false;
-    moveTo(tally, tally.mergeApproved ? "merging" : "working");
+    if (tally.mergeApproved) moveTo(tally, "merging");
+    else handBack(tally);
   } else handBack(tally);
   tally.hold = undefined;
 }

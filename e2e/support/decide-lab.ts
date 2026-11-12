@@ -12,13 +12,14 @@ import { configureMain, Scratch, startMain } from "./scratch.ts";
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["DECIDE_EVIDENCE_DIR"];
-const RULE = /^─{20,}$/;
-export const CARD_TOP = /^── ◆ (Decision \d+ of \d+|Decisions)/;
+const RULE = /^─{10,}$/;
+export const CARD_TOP = { test: (row: string): boolean => row.startsWith("── ◆ Decision") };
 export const NOTHING = "Nothing is waiting for your decision.";
 export const SHIP = "Ship the scrollbar fix?";
 export const RENAME = "Rename the repository?";
 export const MY_WORDS = "Keep the old name until the move in March";
 export const SEEN = "I put it to you.";
+const PR = "https://github.com/acme/web/pull/2930";
 
 export const showing =
   (shown: readonly string[], hidden: readonly string[] = []) =>
@@ -78,12 +79,17 @@ export function optionAt(screen: string, label: string): { row: number; column: 
   return { row, column: (rowsOf(screen)[row]?.indexOf(label) ?? 0) + 1 };
 }
 
+const paneIdOf = (pane: unknown): string => String(records([pane])[0]?.["pane_id"]);
+
 const mouseAt = (row: number, column: number): string => `${String(column)};${String(row + 1)}`;
 
 export interface Shape {
   readonly direction: "down" | "right";
   readonly ratio: number;
 }
+
+const SHORT: Shape = { direction: "down", ratio: 0.65 };
+const NARROW: Shape = { direction: "right", ratio: 0.68 };
 
 export class DecideLab {
   readonly cardd: Cardd;
@@ -148,17 +154,37 @@ export class DecideLab {
     return this.opened;
   }
 
-  async openMain(env: Record<string, string> = {}, shape?: Shape): Promise<string> {
+  async openMain(env: Record<string, string> = {}, ...shapes: readonly Shape[]): Promise<string> {
     const lab = await this.openLab(env);
-    if (shape !== undefined) await this.shape(lab, shape);
+    if (shapes.length > 0) await this.shape(lab, shapes);
     return startMain(lab, this.scratch, this.h);
   }
 
   openShortMain(): Promise<string> {
-    return this.openMain({}, { direction: "down", ratio: 0.65 });
+    return this.openMain({}, SHORT);
   }
 
-  private async shape(lab: HerdrLab, { direction, ratio }: Shape): Promise<void> {
+  openNarrowMain(): Promise<string> {
+    return this.openMain({}, NARROW);
+  }
+
+  openShortNarrowMain(): Promise<string> {
+    return this.openMain({}, SHORT, NARROW);
+  }
+
+  openVeryNarrowMain(): Promise<string> {
+    return this.openMain({}, { direction: "right", ratio: 0.86 });
+  }
+
+  openMidNarrowMain(): Promise<string> {
+    return this.openMain(
+      {},
+      { direction: "down", ratio: 0.52 },
+      { direction: "right", ratio: 0.61 },
+    );
+  }
+
+  private async shape(lab: HerdrLab, shapes: readonly Shape[]): Promise<void> {
     const made = await lab.run([
       "workspace",
       "create",
@@ -168,9 +194,21 @@ export class DecideLab {
       "1stmate",
       "--no-focus",
     ]);
-    const root = String(records([made["root_pane"]])[0]?.["pane_id"]);
-    await lab.run(["pane", "split", root, "--direction", direction, "--ratio", String(ratio)]);
-    await lab.run(["pane", "close", root]);
+    const panes = [paneIdOf(made["root_pane"])];
+    for (const { direction, ratio } of shapes) {
+      const from = panes.at(-1) ?? "";
+      const split = await lab.run([
+        "pane",
+        "split",
+        from,
+        "--direction",
+        direction,
+        "--ratio",
+        String(ratio),
+      ]);
+      panes.push(paneIdOf(split["pane"]));
+    }
+    for (const old of panes.slice(0, -1).reverse()) await lab.run(["pane", "close", old]);
   }
 
   async screenWhere(pane: string, what: string, ready: (screen: string) => boolean) {
@@ -268,6 +306,39 @@ export class DecideLab {
     await this.h.waitForCall(served + 1, "mate", WAIT_MS);
   }
 
+  async askedMerge(
+    pane: string,
+    title: string,
+    ask: { question: string; options: string[]; approves: string[] },
+    count: number,
+    onStatusBar = true,
+  ): Promise<Card> {
+    const card = check(
+      CardSchema,
+      await this.cleo.call("card.new", { title, kind: "ship", project: "web" }),
+    );
+    const began = await this.cleo.call("attempt.begin", {
+      card: card.id,
+      host: "maverick",
+      task: title,
+    });
+    const worker = await this.cardd.connect(check(OPS["attempt.begin"].result, began).token);
+    this.h.onModel(
+      () => ({ tool: "hold", args: { card: card.id, to: "captain", ...ask } }),
+      "mate",
+    );
+    this.h.onModel(() => ({ text: SEEN }), "mate");
+    await worker.call("report", { status: "done", text: "PR green and ready", pr: PR });
+    if (onStatusBar)
+      await this.screenWhere(
+        pane,
+        `${String(count)} on the status bar`,
+        showing([awaiting(count)]),
+      );
+    await this.h.waitForCall(count * 2 - 1, "mate", WAIT_MS);
+    return card;
+  }
+
   async answered(card: Card): Promise<{ body: string; source: unknown; written: unknown }[]> {
     const { entries } = await this.cardd.thread(card.id);
     return entries
@@ -283,6 +354,33 @@ export class DecideLab {
     const found = (await this.cardd.board()).cards.find((each) => each.id === card.id);
     if (found === undefined) throw new Error(`c-${String(card.id)} is not on the board`);
     return found.revision;
+  }
+
+  async mergeAnswer(card: Card): Promise<{
+    kind: string;
+    body: string;
+    choice: unknown;
+    approved: unknown;
+    source: unknown;
+  }> {
+    const { entries } = await this.cardd.thread(card.id);
+    const heard = entries.findLast(
+      (entry) =>
+        entry.author === "captain" && (entry.kind === "answer" || entry.kind === "comment"),
+    );
+    if (heard === undefined) throw new Error(`c-${String(card.id)} has no answer from the captain`);
+    const { kind, body, fields } = heard;
+    return {
+      kind,
+      body,
+      choice: fields["choice"],
+      approved: fields["approved"],
+      source: fields["source"],
+    };
+  }
+
+  async statusOf(card: Card): Promise<string | undefined> {
+    return (await this.cardd.board()).cards.find((each) => each.id === card.id)?.status;
   }
 
   async mainWasTold(index: number, card: Card, text: string): Promise<void> {

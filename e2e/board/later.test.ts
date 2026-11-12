@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
-import { CardSchema, check, MERGE_OPTIONS, type Card, type Entry } from "@fleet/protocol";
+import { CardSchema, check, type Card, type Entry } from "@fleet/protocol";
 import type { Cardd, Session } from "../support/cardd.ts";
 import { boundBoardFile, openBoardPage, startBoardServer } from "../support/board.ts";
 import { seedKanban, type Kanban } from "../support/kanban.ts";
@@ -235,24 +235,24 @@ test("every kind of decision offers his own words and Later: a hold with options
   await page.reload();
   await card(bare.title).waitFor();
   const kinds = [
-    { title: SIMPLE, id: idOf("simple"), open: "Your words" },
-    { title: bare.title, id: bare.card.id, open: "Your words" },
+    { title: SIMPLE, id: idOf("simple"), heard: "answer" },
+    { title: bare.title, id: bare.card.id, heard: "answer" },
     {
       title: "Board: thread as a story, steers fold away",
       id: idOf("merge"),
-      open: MERGE_OPTIONS[1],
+      heard: "comment",
     },
   ];
   for (const kind of kinds) {
     const asked = card(kind.title);
     await asked.getByRole("button", { name: "Later" }).waitFor();
-    await asked.getByRole("button", { name: kind.open, exact: true }).click();
+    await asked.getByRole("button", { name: "Your words", exact: true }).click();
     const words = asked.getByRole("textbox", { name: "Your words" });
     await words.fill(`Neither: ask ${String(kind.id)} again after the audit`);
     await asked.getByRole("button", { name: "Send answer" }).click();
     await words.waitFor({ state: "detached" });
-    const answer = (await entriesOf(kind.id)).findLast((entry) => entry.kind === "answer");
-    assert.equal(answer?.body, `Neither: ask ${String(kind.id)} again after the audit`);
-    assert.equal(answer.fields["written"], true);
+    const heard = (await entriesOf(kind.id)).findLast((entry) => entry.kind === kind.heard);
+    assert.equal(heard?.body, `Neither: ask ${String(kind.id)} again after the audit`);
+    assert.equal(heard.fields["written"], true);
   }
 });

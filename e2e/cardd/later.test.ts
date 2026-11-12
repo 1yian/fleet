@@ -2,15 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import {
-  ActedSchema,
-  CardViewSchema,
-  check,
-  MERGE_OPTIONS,
-  OPS,
-  type Card,
-  type Entry,
-} from "@fleet/protocol";
+import { ActedSchema, CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
@@ -495,6 +487,6 @@ test("a merge question put off comes back as the same merge question with its ow
   const [back] = (await fleet.cardd.board()).holds;
   assert.deepEqual(
     [back?.question, back?.merge, back?.options],
-    [`Merge ${PR}?`, true, [...MERGE_OPTIONS]],
+    [`Merge ${PR}?`, true, ["Approve & merge"]],
   );
 });

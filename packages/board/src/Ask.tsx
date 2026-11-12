@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { MERGE_OPTIONS } from "@fleet/protocol";
+import { laidOut } from "@fleet/protocol";
 import { deviceZone, type Question } from "./format.ts";
 import { ClockIcon, PenIcon } from "./icons.tsx";
 import { Rich } from "./Rich.tsx";
@@ -51,7 +51,7 @@ function Question(props: { readonly text: string; readonly onRead: (() => void) 
   return (
     <div className="question">
       <p ref={box} className={clamp ? "ask-text clamped" : "ask-text"}>
-        <Rich text={props.text} />
+        <Rich text={laidOut(props.text)} />
       </p>
       {onRead !== undefined && clipped ? (
         <button type="button" className="read" onClick={onRead}>
@@ -68,7 +68,6 @@ function AskBody(props: Props) {
   const toOptions = (): void => {
     setMode("options");
   };
-  const changes = (option: string): boolean => question.merge && option === MERGE_OPTIONS[1];
   return (
     <>
       <div className="options">
@@ -78,8 +77,7 @@ function AskBody(props: Props) {
             key={option}
             className={index === 0 ? "option primary" : "option"}
             onClick={() => {
-              if (changes(option)) setMode("words");
-              else void props.onAnswer(question.hold, option, false);
+              void props.onAnswer(question.hold, option, false);
             }}
           >
             {option}
@@ -94,18 +92,16 @@ function AskBody(props: Props) {
       ) : null}
       {mode === "options" ? (
         <div className="ask-foot">
-          {question.merge ? null : (
-            <button
-              type="button"
-              className="quiet-action"
-              onClick={() => {
-                setMode("words");
-              }}
-            >
-              <PenIcon />
-              Your words
-            </button>
-          )}
+          <button
+            type="button"
+            className="quiet-action"
+            onClick={() => {
+              setMode("words");
+            }}
+          >
+            <PenIcon />
+            Your words
+          </button>
           <button
             type="button"
             className="quiet-action"
@@ -148,7 +144,6 @@ function Words(props: {
       void send();
     }
   };
-  const prompt = question.merge ? "What should change before it merges?" : "Your answer";
   return (
     <form
       className="write"
@@ -158,7 +153,7 @@ function Words(props: {
       }}
     >
       <label className="write-prompt" htmlFor={`words-${String(question.hold)}`}>
-        {prompt}
+        Your answer
       </label>
       <textarea
         id={`words-${String(question.hold)}`}
@@ -166,18 +161,14 @@ function Words(props: {
         autoFocus
         rows={3}
         value={text}
-        placeholder={question.merge ? "Say what to fix" : "Write your answer"}
+        placeholder="Write your answer"
         onChange={(event) => {
           setText(event.target.value);
         }}
         onKeyDown={key}
       />
       <div className="write-actions">
-        <p className="hint">
-          {question.merge
-            ? "Goes to main as your words, and the card goes back to the worker."
-            : "Goes to main as your words."}
-        </p>
+        <p className="hint">Goes to main as your words.</p>
         <button type="button" className="quiet" onClick={onCancel}>
           Cancel
         </button>

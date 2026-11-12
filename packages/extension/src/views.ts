@@ -252,6 +252,9 @@ const remainingOf = (steps: Remaining): string[] | string =>
           : `c-${String(each.card)} ${each.title} (${each.status})`,
       );
 
+const mergeOf = (hold: NonNullable<CardView["hold"]>): Record<string, unknown> =>
+  hold.merge === true ? { merge: true, approves: hold.approves ?? [] } : {};
+
 function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
   const record: Record<string, unknown> = {
     card: {
@@ -282,6 +285,7 @@ function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
     waits: hold.holder === "owner" ? card.lane : hold.holder,
     question: clip(hold.question, 600),
     options: hold.options,
+    ...mergeOf(hold),
     ...(hold.until === null ? {} : { until: ago(hold.until) }),
     ...(card.datedWait === null ? {} : { dated: waitLine(card.datedWait, Date.now()) }),
     ...(hold.until === null ? {} : { remaining: remainingOf(hold.remaining) }),

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { CardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
+import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import type { Cardd, Session } from "./cardd.ts";
 import { OUTSIDE_DATE } from "./fleet.ts";
 
@@ -159,7 +159,7 @@ async function seedOpen(
     card: approved.card.id,
     words: "yes, merge it",
     source: "chat",
-    choice: MERGE_OPTIONS[0],
+    choice: "Approve & merge",
   });
   cards["approved"] = approved.card;
   const auto = await ship(cardd, leo, "Leo: let date of birth be used on a call", "calls");
@@ -174,7 +174,7 @@ async function seedClosed(cardd: Cardd, main: Session, leo: Session, cards: Card
     card: merged.card.id,
     words: "yes, merge it",
     source: "chat",
-    choice: MERGE_OPTIONS[0],
+    choice: "Approve & merge",
   });
   await landed(cardd, main, merged.card, merged.worker, pr("fleet", 34));
   cards["merged"] = merged.card;
