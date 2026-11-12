@@ -126,7 +126,7 @@ test("scratch lists each scratch with its branch, how far it is from origin, its
   const listed = fleet.files(["scratch"]).stdout;
   assert.equal(
     listed,
-    `fleet: ${scratchOf()} on ${branch}, 0 ahead and 1 behind origin/main, 1 dirty files, reset allowed\n`,
+    `fleet: ${scratchOf()} on ${branch}, 0 ahead and 1 behind origin/main, 1 dirty files, reset refuses while the scratch is dirty\n`,
   );
   git(scratchOf(), "add", "dirty.md");
   git(scratchOf(), "commit", "-q", "-m", "mine");

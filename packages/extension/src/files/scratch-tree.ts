@@ -123,7 +123,12 @@ export function standingOf(clone: LocalClone, path: string): Standing {
 
 function standingLine(clone: LocalClone, path: string): string {
   const { branch, ahead, behind, dirty, merged } = standingOf(clone, path);
-  const state = merged ? "reset allowed" : "has commits that are not merged, reset refuses";
+  const state =
+    dirty > 0
+      ? "reset refuses while the scratch is dirty"
+      : merged
+        ? "reset allowed"
+        : "has commits that are not merged, reset refuses";
   return `${clone.project}: ${path} on ${branch}, ${String(ahead)} ahead and ${String(behind)} behind ${baseOf(clone)}, ${String(dirty)} dirty files, ${state}`;
 }
 

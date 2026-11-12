@@ -58,7 +58,7 @@ test("S shows this lane's mate a file, typed as a message only after Enter, and 
   await files.type("S");
   await files.sees(`sha256 ${sha12(agents)}.`);
   await files.press("esc");
-  await files.sees("cancelled, nothing was typed");
+  await files.sees(/^cancelled, nothing was typed/m, "the cancel result on a line of its own");
   assert.equal(mates.h.callsOf("mate").length, 0);
   await files.press("esc");
   await files.goneFrom("cancelled, nothing was typed");
@@ -67,7 +67,10 @@ test("S shows this lane's mate a file, typed as a message only after Enter, and 
   await files.sees("Enter sends");
   await files.type("check the intro");
   await files.press("enter");
-  await files.sees("typed into the pane of the cleo mate on p620");
+  await files.sees(
+    /^typed into the pane of the cleo mate on p620/m,
+    "the delivery result on a line of its own",
+  );
   const text = await typedInto(mates, "mate", /Files tab on p620/);
   assert.equal(
     text,
@@ -209,7 +212,10 @@ test("R is refused when the mate started working while its prompt was open, and 
       : undefined;
   });
   await files.press("enter");
-  await files.sees("is working, and Pi can only reload when it is idle. Nothing was typed");
+  await files.sees(
+    /^the cleo mate is working, and Pi can only reload when it is idle\. Nothing was typed/m,
+    "the refusal on a line of its own",
+  );
   release();
   assert.equal(lastUserText(mates, "mate"), "think about it");
 });

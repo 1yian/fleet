@@ -40,6 +40,7 @@ export function confirm(question: string, allowNote: boolean): Promise<string | 
       process.stdin.off("data", onData);
       process.stdin.setRawMode(false);
       process.stdin.pause();
+      process.stdout.write("\n");
       resolve(answer);
     };
     const onData = (data: Buffer): void => {
