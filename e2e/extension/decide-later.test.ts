@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
+import { CardSchema, check, OPS, type Card } from "@fleet/protocol";
 import {
   awaiting,
   cardRows,
@@ -206,17 +206,17 @@ test("every kind of decision keeps his own words and Later: one with options, on
   lab.answers(3);
 
   await lab.herdr().submit(pane, "/d");
-  const kinds: [Card, string, string[], string[]][] = [
-    [ship, SHIP, ["Ship it", "Hold"], ["Approve & merge"]],
-    [bare, LANE_ASK, [], ["Ship it", "Approve & merge"]],
-    [merge, MERGE_ASK, [...MERGE_OPTIONS], ["Ship it"]],
+  const kinds: [Card, string[], string[], string[]][] = [
+    [ship, [SHIP], ["Ship it", "Hold"], ["Approve & merge"]],
+    [bare, [LANE_ASK], [], ["Ship it", "Approve & merge"]],
+    [merge, ["Merge", `${PR}?`], ["Approve & merge"], ["Ship it"]],
   ];
   for (const [at, [card, question, options, absent]] of kinds.entries()) {
     const shown = await lab.screenWhere(
       pane,
       `decision ${String(at + 1)}`,
       onCard(
-        [`Decision ${String(at + 1)} of 3`, question, ...options, "My words…", "Later…"],
+        [`Decision ${String(at + 1)} of 3`, ...question, ...options, "My words…", "Later…"],
         absent,
       ),
     );
@@ -228,8 +228,16 @@ test("every kind of decision keeps his own words and Later: one with options, on
         ? cardRows(screen).length === 0
         : onCard([`Decision ${String(at + 2)} of 3`])(screen),
     );
-    assert.deepEqual(await lab.answered(card), [
-      { body: `${MY_WORDS} ${String(card.id)}`, source: "pane", written: true },
-    ]);
+    const said = `${MY_WORDS} ${String(card.id)}`;
+    if (at === 2) {
+      const heard = await lab.mergeAnswer(card);
+      assert.deepEqual(
+        [heard.kind, heard.body, heard.source, heard.approved],
+        ["comment", said, "pane", undefined],
+      );
+      assert.deepEqual(await lab.answered(card), []);
+    } else {
+      assert.deepEqual(await lab.answered(card), [{ body: said, source: "pane", written: true }]);
+    }
   }
 });

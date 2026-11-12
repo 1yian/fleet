@@ -15,6 +15,15 @@ export interface Merged {
   readonly arrival: string | undefined;
 }
 
+export function openAway(deck: readonly Slot[], at: number, step: number): number | undefined {
+  const count = deck.length;
+  for (let away = 1; away < count; away += 1) {
+    const to = (((at + step * away) % count) + count) % count;
+    if (deck[to]?.answered === false) return to;
+  }
+  return undefined;
+}
+
 function slotOf(old: Slot, now: Decision | undefined): Slot | undefined {
   const open: Slot | undefined = now === undefined ? undefined : { decision: now, answered: false };
   if (!old.answered) return open;

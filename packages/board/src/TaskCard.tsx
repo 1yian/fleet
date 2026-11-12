@@ -231,7 +231,7 @@ function Hold(props: CardProps & { readonly question: Question; readonly open: (
   return (
     <Ask
       question={question}
-      showQuestion={!(question.merge && card.pr !== null)}
+      showQuestion={!(question.merge && question.author === "fleet" && card.pr !== null)}
       onRead={props.open}
       onAnswer={(hold, choice, written) => props.onAnswer(card.id, hold, choice, written)}
       onLater={(hold, said) => props.onLater(card.id, hold, said)}

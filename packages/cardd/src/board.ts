@@ -2,7 +2,6 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   check,
   BoardActionSchema,
-  MERGE_OPTIONS,
   OPS,
   type Board,
   type BoardCard,
@@ -45,12 +44,16 @@ const deferred = (hold: Hold, now: number): boolean => hold.until !== null && ho
 const askingCaptain = (hold: Hold, now: number): boolean =>
   hold.holder === "captain" && !deferred(hold, now);
 
+const sameList = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((each, at) => each === b[at]);
+
 const sameHold = (a: Hold, b: Hold): boolean =>
   a.occurrence === b.occurrence &&
   a.holder === b.holder &&
   a.question === b.question &&
-  a.options.length === b.options.length &&
-  a.options.every((option, at) => option === b.options[at]);
+  a.merge === b.merge &&
+  sameList(a.options, b.options) &&
+  sameList(a.approves, b.approves);
 
 function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
   const entries = cardEntries(db, card.id);
@@ -148,8 +151,8 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
     const { hold } = each.standing.facts;
     const open = card.status !== "done" && card.status !== "dropped";
     if (open && hold !== undefined && askingCaptain(hold, now)) {
-      const { entry, question, options, merge } = hold;
-      holds.push({ card: card.id, hold: entry, question, options: [...options], merge });
+      const { entry, question, options, merge, author } = hold;
+      holds.push({ card: card.id, hold: entry, question, options: [...options], merge, author });
     }
     return card;
   });
@@ -197,6 +200,8 @@ export function cardView(db: DatabaseSync, id: number, lane: string, timing: Tim
             holder: hold.holder,
             question: hold.question,
             options: [...hold.options],
+            merge: hold.merge,
+            approves: [...hold.approves],
             until: hold.until,
             remaining: hold.remaining.map((step) => stepOf(db, lane, step)),
           },
@@ -219,8 +224,7 @@ function answerOnBoard(
   source: "board" | "pane",
 ): string[] {
   const open = requireCaptainsHold(db, card, hold);
-  const picked = written && open.merge ? MERGE_OPTIONS[1] : choice;
-  const args = { words: choice, source, choice: picked, ...(written ? { written } : {}) };
+  const args = { words: choice, source, choice, ...(written ? { written } : {}) };
   return [...answerHold(db, null, card, open, args).notify];
 }
 

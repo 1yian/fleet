@@ -326,3 +326,93 @@ test("in a 12-row pane a refusal of his own words keeps the note and his words o
   insidePane(refused);
   assert.deepEqual(await lab.answered(ship), []);
 });
+
+const ROLL_OPTIONS = ["Merge and roll", "Merge only", "Request changes"];
+const ROLL_QUESTION =
+  "Merge https://github.com/acme/web/pull/2930 , and then roll it out? Fix path C for the recording machines: removes the one Redis password line that crashes new machines at boot. Two separate steps: 1. Merge: starts no deploy (egress deploy is manual only). Recommend yes. 2. Staged roll-forward in the 06:00-11:00Z window with a 60-minute recording watch. Recommend yes. Know first: the alert is simpler than asked. Summary: p620:/tmp/fleet-c-1406/final-summary.md";
+const ROLL = {
+  question: ROLL_QUESTION,
+  options: ROLL_OPTIONS,
+  approves: ROLL_OPTIONS.slice(0, 2),
+};
+const ROLL_TITLE = "Repair the recording egress group";
+
+test("a merge question the mate wrote with his own options is laid out in lines, and the pick of an option that approves is accepted and approves the merge", async () => {
+  const pane = await lab.openMain();
+  const merge = await lab.askedMerge(pane, ROLL_TITLE, ROLL, 1);
+  lab.answers(2);
+
+  await lab.herdr().submit(pane, "/d");
+  const first = await lab.screenWhere(
+    pane,
+    "the merge question and his options",
+    onCard(["Decision 1 of 1", ...ROLL_OPTIONS, "(recommended)", "My words…"]),
+  );
+  keep("10-merge-question", first);
+  const rows = cardRows(first).map((row) => row.trim());
+  assert.ok(
+    rows.some((row) => row.endsWith("Two separate steps:")),
+    `the lead-in ends its paragraph:\n${first}`,
+  );
+  assert.ok(
+    rows.some((row) => row.startsWith("1. Merge: starts no deploy")),
+    `the first question starts a row:\n${first}`,
+  );
+  assert.ok(
+    rows.some((row) => row.startsWith("2. Staged roll-forward")),
+    `the second question starts a row:\n${first}`,
+  );
+  assert.ok(
+    cardRows(first).some((row) => /^ {4}\S/.test(row)),
+    `a wrapped question hangs under its number:\n${first}`,
+  );
+  assert.ok(
+    rows.includes("p620:/tmp/fleet-c-1406/final-summary.md"),
+    `the report path is alone on its row:\n${first}`,
+  );
+
+  await lab.herdr().press(pane, "down", "enter");
+  const done = await lab.screenWhere(
+    pane,
+    "the card to clear",
+    (screen) => cardRows(screen).length === 0,
+  );
+  keep("11-merge-approved", done);
+  const answer = await lab.mergeAnswer(merge);
+  assert.deepEqual(answer, {
+    kind: "answer",
+    body: "Merge only",
+    choice: "Merge only",
+    approved: true,
+    source: "pane",
+  });
+  assert.equal(await lab.statusOf(merge), "merging");
+  assert.deepEqual((await lab.cardd.board()).holds, []);
+});
+
+test("an option the merge question does not name in approves is accepted in the pane, approves nothing, and reaches main as an answer that stays open", async () => {
+  const pane = await lab.openMain();
+  const merge = await lab.askedMerge(pane, ROLL_TITLE, ROLL, 1);
+  lab.answers(2);
+
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the merge question", onCard(["Decision 1 of 1", "Request changes"]));
+  await lab.herdr().press(pane, "down", "down", "enter");
+  await lab.screenWhere(pane, "the card to clear", (screen) => cardRows(screen).length === 0);
+  assert.deepEqual(await lab.mergeAnswer(merge), {
+    kind: "comment",
+    body: "Request changes",
+    choice: "Request changes",
+    approved: undefined,
+    source: "pane",
+  });
+  assert.equal(await lab.statusOf(merge), "with-mate");
+  assert.deepEqual((await lab.cardd.board()).holds, []);
+  const turns = await lab.h.waitForCall(2, "mate", 60_000);
+  assert.match(
+    turns.at(-1)?.text ?? "",
+    new RegExp(
+      `^\\[fleet\\] captain on c-${String(merge.id)} .*\\(answer, still open\\): Request changes`,
+    ),
+  );
+});

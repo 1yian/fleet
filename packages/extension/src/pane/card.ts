@@ -4,30 +4,27 @@ import {
   matchesKey,
   stripTerminalSequences,
   truncateToWidth,
-  visibleWidth,
   type Component,
   type Focusable,
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { LATER_EXAMPLES } from "@fleet/protocol";
-import { merged, type Slot } from "./deck.ts";
+import { LATER_EXAMPLES, laidOut } from "@fleet/protocol";
+import { merged, openAway, type Slot } from "./deck.ts";
 import type { Decision } from "./decisions.ts";
+import { hintLines } from "./hints.ts";
+import { choiceLines } from "./options.ts";
+import { allocate, rowsInSight, windowTop, type Layout, type Shape } from "./layout.ts";
 import { plain } from "./look.ts";
 import { drawNothing } from "./rest.ts";
-import { oneLine, paragraphs } from "./text.ts";
+import { topRule } from "./rule.ts";
+import { oneLine } from "./text.ts";
+import { bounded, paragraphs } from "./wrap.ts";
 
 const WRITE_LABEL = "My words…";
 const LATER_LABEL = "Later…";
-const RECOMMENDED = "(recommended)";
-const MAX_DOTS = 10;
-const MAX_BODY_ROWS = 16;
-const MIN_BODY_ROWS = 2;
-const FRAME_ROWS = 5;
-const SPACER_ROWS = 3;
 const PADDING = 1;
 const RULE = "─";
-const POINTER = "→ ";
 const margin = " ".repeat(PADDING);
 
 export interface CardDeps {
@@ -45,21 +42,19 @@ export interface CardDeps {
 
 type Row = "option" | "words" | "later";
 
-interface Layout {
-  readonly spacers: number;
-  readonly body: number;
-  readonly picks: number;
-}
-
 export class DecisionCard implements Component, Focusable {
   readonly capturesViewportInput = true;
   private deck: readonly Slot[];
   private at = 0;
   private row = 0;
+  private offset = 0;
   private scroll = 0;
   private choiceTop = 0;
   private firstPick = 0;
-  private shownPicks = 0;
+  private pickRows: readonly number[] = [];
+  private pressed: number | undefined;
+  private shownChoices = 0;
+  private inner = 80;
   private overflow = false;
   private sending = false;
   private note: string | undefined;
@@ -185,14 +180,25 @@ export class DecisionCard implements Component, Focusable {
     return true;
   }
 
+  private pressedChoice(event: TuiMouseEvent): number | undefined {
+    const clicking = event.type === "click";
+    const choice =
+      clicking && this.pressed !== undefined
+        ? this.pressed
+        : this.pickRows[event.y - this.firstPick];
+    this.pressed = clicking ? undefined : choice;
+    return choice;
+  }
+
   private press(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.button !== "left" || (event.type !== "press" && event.type !== "click"))
       return undefined;
     if (event.type === "press") this.arrival = undefined;
-    const at = event.y - this.firstPick;
-    if (at < 0 || at >= this.shownPicks) return undefined;
-    this.row = this.choiceTop + at;
-    if (event.type === "click" && this.kind === "option") this.confirm();
+    const clicking = event.type === "click";
+    const choice = this.pressedChoice(event);
+    if (choice === undefined) return undefined;
+    this.point(choice);
+    if (clicking && this.kind === "option") this.confirm();
     return { handled: true };
   }
 
@@ -201,9 +207,21 @@ export class DecisionCard implements Component, Focusable {
     else this.deps.close();
   }
 
+  private point(row: number): void {
+    if (row !== this.row) this.offset = 0;
+    this.row = row;
+  }
+
   private move(step: number): void {
+    const { hidden } = this.layout();
+    const inside = Math.min(this.offset, hidden) + step;
+    if (inside >= 0 && inside <= hidden) {
+      this.offset = inside;
+      return;
+    }
     const count = this.choices.length;
     this.row = (this.row + step + count) % count;
+    this.offset = step < 0 ? Infinity : 0;
   }
 
   private sideways(step: number, data: string): void {
@@ -215,24 +233,22 @@ export class DecisionCard implements Component, Focusable {
     const line = this.typed;
     const before = line.getValue();
     line.handleInput(oneLine(data));
-    if (line.getValue() !== before && this.kind === "option") this.row = this.writeRow;
+    if (line.getValue() !== before && this.kind === "option") this.point(this.writeRow);
   }
 
   private turn(step: number): void {
-    const count = this.deck.length;
-    for (let away = 1; away < count; away += 1) {
-      const to = (((this.at + step * away) % count) + count) % count;
-      if (this.deck[to]?.answered !== false) continue;
-      this.at = to;
-      this.settle();
-      return;
-    }
+    const to = openAway(this.deck, this.at, step);
+    if (to === undefined) return;
+    this.at = to;
+    this.settle();
   }
 
-  private shownChoices(picks: number): number {
-    const last = this.choices.length - picks;
-    const top = Math.max(this.row - picks + 1, Math.min(this.choiceTop, this.row));
-    this.choiceTop = Math.max(0, Math.min(last, top));
+  private heights(): number[] {
+    return this.choices.map((_, at) => this.choiceLines(at, this.inner).length);
+  }
+
+  private window(picks: number): number {
+    this.choiceTop = windowTop(this.heights(), this.row, this.choiceTop, picks);
     return this.choiceTop;
   }
 
@@ -341,7 +357,10 @@ export class DecisionCard implements Component, Focusable {
     this.deck = next.deck;
     this.at = next.at;
     if (!next.stayed) this.settle();
-    else if (this.current?.hold !== before?.hold) this.row = this.follow(kind, picked);
+    else if (this.current?.hold !== before?.hold) {
+      this.row = this.follow(kind, picked);
+      this.offset = 0;
+    }
     if (next.arrival !== undefined) {
       this.arrival = next.arrival;
       this.note = undefined;
@@ -356,31 +375,39 @@ export class DecisionCard implements Component, Focusable {
 
   private settle(): void {
     this.row = 0;
+    this.offset = 0;
     this.scroll = 0;
     this.choiceTop = 0;
     this.input.setValue("");
     this.when.setValue("");
   }
 
+  private shaped(limit: number): Shape {
+    const { theme } = this.deps;
+    const decision = this.current;
+    const name = `c-${String(decision?.card ?? 0)} ${plain(decision?.title ?? "")}`;
+    const title = bounded(name, this.inner, limit).map((row) => theme.fg("muted", row));
+    const warning = this.note ?? this.arrival;
+    const note =
+      warning === undefined
+        ? []
+        : bounded(warning, this.inner, limit).map((row) => theme.fg("warning", row));
+    return { title, note, hints: Math.min(limit, this.hintsFor(true).length), limit };
+  }
+
   private layout(): Layout {
-    const free =
-      this.deps.rows() - FRAME_ROWS - ((this.note ?? this.arrival) === undefined ? 0 : 1);
-    const picks = Math.min(this.choices.length, Math.max(1, free - MIN_BODY_ROWS));
-    const left = free - picks;
-    const spacers = Math.max(0, Math.min(SPACER_ROWS, left - MIN_BODY_ROWS));
-    const body = Math.max(1, Math.min(MAX_BODY_ROWS, left - spacers));
-    return { spacers, body, picks };
+    return allocate((limit) => this.shaped(limit), this.heights(), this.row, this.deps.rows());
   }
 
   render(width: number): string[] {
+    this.inner = Math.max(1, width - 2 * PADDING);
+    const { inner } = this;
     const { theme } = this.deps;
-    const inner = Math.max(1, width - 2 * PADDING);
+    const decision = this.current;
+    if (this.clear || decision === undefined) return drawNothing(theme, this.top(width), width);
     const line = (text: string): string => `${margin}${text}`;
     const quiet = (text: string): string => line(theme.fg("muted", this.fit(text, inner)));
-    const decision = this.current;
-    const warning = this.note ?? this.arrival;
-    if (this.clear || decision === undefined) return drawNothing(theme, this.top(width), width);
-    const body = paragraphs(decision.question, inner);
+    const body = paragraphs(laidOut(decision.question), inner);
     const layout = this.layout();
     const rows = layout.body;
     const spacer = (rank: number): string[] => (layout.spacers >= rank ? [""] : []);
@@ -391,22 +418,36 @@ export class DecisionCard implements Component, Focusable {
     const lines = [
       this.top(width),
       ...spacer(3),
-      quiet(`c-${String(decision.card)} ${plain(decision.title)}`),
+      ...layout.title.map(line),
       ...spacer(1),
       ...body.slice(top, top + rows).map(line),
       lower > 0 ? quiet(`▼ ${String(lower)} more lines, PgDn to read`) : "",
     ];
     this.firstPick = lines.length;
-    const picks = this.choiceRows(inner, layout.picks);
-    this.shownPicks = picks.length;
+    const picks = this.choiceRows(inner, layout);
     return [
       ...lines,
       ...picks.map(line),
       ...spacer(2),
-      ...(warning === undefined ? [] : [line(theme.fg("warning", this.fit(warning, inner)))]),
-      line(this.hint(inner)),
+      ...layout.note.map(line),
+      ...this.hintsFor(false, rowsInSight(layout, this.offset)).slice(0, layout.limit).map(line),
       theme.fg("border", RULE.repeat(width)),
     ];
+  }
+
+  private hintsFor(widest: boolean, reading = ""): string[] {
+    const state = {
+      sending: this.sending,
+      kind: this.kind,
+      drafting: this.drafting,
+      open: this.open,
+      overflow: this.overflow,
+      choices: this.choices.length,
+      row: this.row,
+      shown: this.shownChoices,
+      inner: this.inner,
+    };
+    return hintLines(this.deps.theme, state, widest, reading);
   }
 
   private fit(text: string, width: number): string {
@@ -414,86 +455,35 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private top(width: number): string {
+    return topRule(this.deps.theme, width, this.deck, this.at, this.clear);
+  }
+
+  private choiceRows(inner: number, layout: Layout): string[] {
+    const { picks, hidden } = layout;
+    const top = this.window(picks);
+    const slid = Math.min(this.offset, hidden);
+    const rows: string[] = [];
+    const owners: number[] = [];
+    let shown = 0;
+    for (let at = top; at < this.choices.length; at += 1) {
+      const scrolled = at === this.row && hidden > 0;
+      const all = this.choiceLines(at, inner, scrolled ? slid : 0);
+      const lines = scrolled ? all.slice(slid, slid + picks) : all;
+      if (rows.length > 0 && rows.length + lines.length > picks) break;
+      rows.push(...lines);
+      owners.push(...lines.map(() => at));
+      shown += 1;
+    }
+    this.pickRows = owners;
+    this.shownChoices = shown;
+    return rows;
+  }
+
+  private choiceLines(at: number, inner: number, pointed = 0): string[] {
     const { theme } = this.deps;
-    const place = this.at;
-    const total = this.deck.length;
-    const name = this.clear ? "Decisions" : `Decision ${String(place + 1)} of ${String(total)}`;
-    const label = theme.style(name, { fg: theme.colors.accent, bold: true });
-    const diamond = theme.style("◆", { fg: theme.colors.warning, bold: true });
-    const title = ` ${diamond} ${label}${this.dots()} `;
-    const left = theme.fg("border", RULE.repeat(2));
-    const room = Math.max(0, width - 2 - visibleWidth(title));
-    return `${left}${title}${theme.fg("border", RULE.repeat(room))}`;
-  }
-
-  private dots(): string {
-    const { theme } = this.deps;
-    if (this.deck.length <= 1 || this.deck.length > MAX_DOTS) return "";
-    const marks = this.deck.map((slot, place) => {
-      if (place === this.at && !this.clear) return theme.fg("accent", "●");
-      return slot.answered ? theme.fg("success", "✓") : theme.fg("muted", "○");
-    });
-    return ` ${marks.join("")}`;
-  }
-
-  private choiceRows(inner: number, picks: number): string[] {
-    const top = this.shownChoices(picks);
-    return this.choices
-      .slice(top, top + picks)
-      .map((label, at) => this.choice(label, top + at, inner));
-  }
-
-  private choice(label: string, at: number, inner: number): string {
-    const { theme } = this.deps;
-    const chosen = at === this.row;
-    const pointer = chosen ? theme.fg("accent", POINTER) : " ".repeat(POINTER.length);
-    const room = inner - POINTER.length;
-    if (at === this.writeRow)
-      return `${pointer}${this.writeIn(chosen, room, this.input, WRITE_LABEL)}`;
-    if (at === this.laterRow)
-      return `${pointer}${this.writeIn(chosen, room, this.when, LATER_LABEL)}`;
-    const tag = at === 0 && this.choices.length > 1 ? ` ${RECOMMENDED}` : "";
-    const text = this.fit(plain(label), room - visibleWidth(tag));
-    const word = chosen ? theme.fg("accent", text) : text;
-    return `${pointer}${word}${theme.fg("muted", tag)}`;
-  }
-
-  private writeIn(chosen: boolean, room: number, line: Input, label: string): string {
-    const { theme } = this.deps;
-    const typed = line.getValue();
-    if (chosen) return line.render(room)[0] ?? "";
-    if (typed === "") return this.fit(label, room);
-    return theme.fg("muted", this.fit(`${label} ${plain(typed)}`, room));
-  }
-
-  private hint(inner: number): string {
-    const { theme } = this.deps;
-    if (this.sending) return theme.fg("muted", "sending…");
-    const text = this.hints()
-      .map(([key, what]) => `${theme.fg("dim", key)}${theme.fg("muted", ` ${what}`)}`)
-      .join("   ");
-    return truncateToWidth(text, inner, "…");
-  }
-
-  private hints(): (readonly [string, string])[] {
-    const { drafting, kind } = this;
-    return [
-      ["↑↓", `choose${this.place()}`],
-      ...(this.open > 1 && !drafting ? [["←→", "decision"] as const] : []),
-      ...this.enter(drafting),
-      ...(drafting ? [] : [["type", kind === "later" ? "until when" : "your own words"] as const]),
-      ...(this.overflow ? [["PgUp/PgDn", "read"] as const] : []),
-      ["esc", drafting ? "clear" : "close"],
-    ];
-  }
-
-  private enter(drafting: boolean): (readonly [string, string])[] {
-    if (drafting) return [["⏎", this.kind === "later" ? "hold" : "send"]];
-    return this.kind === "option" ? [["⏎", "select"]] : [];
-  }
-
-  private place(): string {
-    const count = this.choices.length;
-    return this.shownPicks < count ? ` ${String(this.row + 1)}/${String(count)}` : "";
+    const write = { line: this.input, label: WRITE_LABEL };
+    const later = { line: this.when, label: LATER_LABEL };
+    const rows = { theme, choices: this.choices, row: this.row, write, later };
+    return choiceLines(rows, at, inner, pointed);
   }
 }

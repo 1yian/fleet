@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { afterEach, beforeEach, test } from "node:test";
-import { BoardSchema, check, MERGE_OPTIONS, OPS, type Card } from "@fleet/protocol";
+import { BoardSchema, check, OPS, type Card } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { tempDir } from "../support/run-root.ts";
 import type { FakeGitHub } from "../support/github.ts";
 
 const PR = "https://github.com/acme/web/pull/7";
-const [APPROVE, CHANGES] = MERGE_OPTIONS;
+const APPROVE = "Approve & merge";
 
 let fleet: Fleet;
 let gh: FakeGitHub;
@@ -28,6 +28,7 @@ async function done(card: Card, pr = PR): Promise<Session> {
 }
 const approve = (card: Card, choice: string = APPROVE) =>
   fleet.main.call("release", { card: card.id, words: "yes, merge it", source: "chat", choice });
+const entries = async (card: Card) => (await fleet.cardd.thread(card.id)).entries;
 const holdFor = (card: Card, question: string) =>
   fleet.main.call("hold", { card: card.id, question, options: ["a", "b"] });
 async function merge(worker: Session, pr = PR): Promise<void> {
@@ -44,7 +45,7 @@ test("a done ship card asks the captain; approval, the worker's merge, and the m
   assert.equal(report.fields["pr"], PR);
   assert.equal((await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.pr, PR);
   await assert.rejects(approve(card, "sure"), {
-    message: `a merge question needs the choice "${APPROVE}" or "${CHANGES}"`,
+    message: `choice must be one of the options of c-${String(card.id)}'s merge question: ${APPROVE}`,
   });
 
   await approve(card);
@@ -82,11 +83,18 @@ test("a done ship card whose worker reported no PR reaches its mate, with no mer
   assert.equal(await status(fleet.main, card), "needs-you");
 });
 
-test("request changes sends the card back to the worker", async () => {
+test("a mate's record of the captain's words with no approving choice approves nothing, and the card waits on the mate", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   await done(card);
-  await approve(card, CHANGES);
-  assert.equal(await status(fleet.main, card), "working");
+  await fleet.main.call("release", {
+    card: card.id,
+    words: "not before the audit",
+    source: "chat",
+  });
+  assert.equal(await status(fleet.main, card), "with-mate");
+  assert.deepEqual((await fleet.cardd.board()).holds, []);
+  const answer = (await entries(card)).findLast((entry) => entry.kind === "answer");
+  assert.equal(answer?.fields["approved"], false);
 });
 
 test("a done report while another hold is open adds no second hold: the merge question follows its release", async () => {
@@ -198,24 +206,39 @@ test("an approval still stands after a later question takes the card back to the
   assert.deepEqual((await fleet.cardd.board()).holds, []);
 });
 
-test("the captain's own words on a merge question from the board ask for changes, and never approve", async () => {
+test("the captain's own words on a merge question from the board are never refused and never approve: they go to the mate", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   await done(card);
   const http = fleet.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
   const board = check(BoardSchema, await (await fetch(`${http}api/board`)).json());
   const question = board.holds.find((each) => each.card === card.id);
   assert.equal(question?.merge, true);
-  const revision = board.cards.find((each) => each.id === card.id)?.revision;
-  const action = { kind: "answer", hold: question.hold, choice: APPROVE, written: true };
+  const action = {
+    kind: "answer",
+    hold: question.hold,
+    choice: "Not before the audit",
+    written: true,
+  };
   const response = await fetch(`${http}api/action`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ card: card.id, revision, action }),
+    body: JSON.stringify({ card: card.id, action }),
   });
   assert.equal(response.status, 200);
 
-  assert.equal(await status(fleet.main, card), "working");
+  assert.equal(await status(fleet.main, card), "with-mate");
   assert.deepEqual((await fleet.cardd.board()).holds, []);
+  const heard = (await entries(card)).findLast((entry) => entry.kind === "comment");
+  assert.deepEqual(
+    [heard?.author, heard?.body, heard?.fields["written"], heard?.fields["answers"]],
+    ["captain", "Not before the audit", true, question.hold],
+  );
+  assert.equal(
+    (await entries(card)).some((entry) => entry.kind === "answer"),
+    false,
+  );
+  const view = check(OPS.card.result, await fleet.main.call("card", { card: card.id }));
+  assert.deepEqual([view.hold?.merge, view.hold?.approves], [true, [APPROVE]]);
 });
 
 test("a worker's merged report makes the open merge question moot, and the card closes as Done", async () => {

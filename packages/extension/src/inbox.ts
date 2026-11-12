@@ -99,6 +99,7 @@ function formatWake(entry: Entry): string {
 const LABELS: Readonly<Record<string, string>> = { cleanup: "close", release: "hold cleared" };
 
 const laneNote = (entry: Entry): string => {
+  if (typeof entry.fields["answers"] === "number") return " (answer, still open)";
   const lane = entry.author === "captain" ? field(entry, "lane") : undefined;
   return lane === undefined ? "" : ` (in ${lane}'s lane)`;
 };
