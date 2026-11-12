@@ -80,7 +80,7 @@ Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane re
 
 A decision is never also broken, stalled, or an own card, and it is counted once, in the decisions item.
 
-A hold that the captain put off with his own later (`said`, or a board "later") is not a decision until its date, and is not broken, stalled, or parked either, however old the hold is: its pulse is `waiting`. So it is in neither the decisions item nor the counts, and `/d` skips it. At its date it is a decision again. The pane reads the board again just after the earliest date of any dated hold, so the item and `/d` agree the moment the date passes, and not up to a minute later.
+A hold that the captain put off with his own later (`said`, or a board "later") is not a decision until its date, and is not broken, stalled, or parked either, however old the hold is: its pulse is `waiting`. So it is in neither the decisions item nor the counts, and `/d` skips it. At its date it is a decision again, in the item and in `/d` together (see [How it stays current](#how-it-stays-current)).
 
 An idle card counts from 4 hours, when main is told. Only main shows this pane, so main sees it there, and `/pulse` says how long the card has been idle.
 
@@ -127,11 +127,11 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 
 ## How it stays current
 
-The pane asks `cardd` for the board when the link connects, after every `[fleet]` row, after main's `hold`, `comment`, `close`, or `dispatch`, when the decision card closes, and a minute after its last ask. The minute catches what sends no row: a worker that goes quiet, or a hold whose date passes. While `cardd` does not answer, it asks every 10 seconds. Each ask also reads the hold of every card that waits for the captain, so the count is the number of decisions `/d` would show at that moment. An answer given in the pane or on the board reaches main as a `[fleet]` row, and that row lowers the count.
+The pane asks `cardd` for the board when the link connects, after every `[fleet]` row, after main's `hold`, `comment`, `close`, or `dispatch`, when the decision card closes, and a minute after its last ask. The minute catches what sends no row, such as a worker that goes quiet. The pane also asks just after the earliest date of any dated hold, so a hold whose date passes is counted the moment it passes, as `/d` shows it, and not up to a minute later. While `cardd` does not answer, it asks every 10 seconds. Each ask also reads the hold of every card that waits for the captain, so the count is the number of decisions `/d` would show at that moment. An answer given in the pane or on the board reaches main as a `[fleet]` row, and that row lowers the count.
 
 ## Evidence
 
-`e2e/extension/status-bar.test.ts` starts a real main in herdr against a real `cardd`. It reads the status bar for the word `board` and no address, clicks `board` with and without terminal hyperlinks and reads the address that a stand-in `xdg-open` received, and counts none, one, and several decisions as the captain answers them. It reads the status bar at 57, 39, and 33 columns and clicks the decisions item at each. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
+`e2e/extension/status-bar.test.ts` starts a real main in herdr against a real `cardd`. It reads the status bar for the word `board` and no address, clicks `board` with and without terminal hyperlinks and reads the address that a stand-in `xdg-open` received, and counts none, one, and several decisions as the captain answers them. It puts a card off with a dated later, a card of the captain's own included, and reads that it is neither counted nor on `/d` however old the hold, and that it returns in both at its date. It reads the status bar at 57, 39, and 33 columns and clicks the decisions item at each. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
 
 `e2e/extension/decision-silence.test.ts` starts a mate on main's lane and on a second mate's lane, reads the role contract that the model receives, and checks that it never names `/d` and keeps chat silent about waiting decisions.
 

@@ -195,16 +195,17 @@ test("a card the captain put off is neither counted nor on /d until its date, ho
   await lab.screenWhere(pane, "the put-off one", onCard(["Decision 2 of 2", VENDOR]));
 });
 
-test("a card of the captain's own that he put off is neither counted nor on /d until its date", async () => {
+test("a card of the captain's own that he put off is neither counted nor on /d until its date, and returns in both at its date", async () => {
   const pane = await lab.openMain();
   await lab.screenWhere(pane, "the clear state", showing(["✓ clear"]));
   const own = await lab.askedMain(pane, "Vendor contract", VENDOR, ["Acme", "Other"], 1, "captain");
+  const date = Date.now() + LATER_MS;
   const open = (await lab.cardd.board()).holds.find((each) => each.card === own.id);
   assert.ok(open !== undefined, "the decision on his own card is open");
   const action = {
     kind: "hold",
     hold: open.hold,
-    until: Date.now() + DAY_MS,
+    until: date,
     reason: "ask me again after the launch",
   } as const;
   assert.equal(await lab.cardd.act(own.id, action), 200);
@@ -222,6 +223,13 @@ test("a card of the captain's own that he put off is neither counted nor on /d u
   );
   keep("7-own-card-put-off", screen);
   assert.match(statusRow(screen), /^✓ clear board$/);
+  assert.ok(Date.now() < date, "the date came before the checks above were done");
+
+  const back = await lab.screenWhere(pane, "the decision back", showing([awaiting(1)]));
+  assert.ok(Date.now() >= date, "his own card is counted before its date");
+  keep("7-own-card-back-at-its-date", back);
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the card for his own card", onCard(["Decision 1 of 1", VENDOR]));
 });
 
 const FULL = "2 decisions await you ● 1 ▲ 1 board";

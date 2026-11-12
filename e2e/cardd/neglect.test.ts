@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { ageCard, begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { ageCard, ageCards, begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
 
 const SCALE = 0.01;
@@ -30,14 +30,17 @@ async function reminderOn(mate: Session, card: Card): Promise<Entry[]> {
   return view.entries.filter(isReminder);
 }
 
-async function park(card: Card, ms: number): Promise<void> {
-  await cleo.call("hold", {
+const watch = (card: Card): Promise<unknown> =>
+  cleo.call("hold", {
     card: card.id,
     question: "Wait for it?",
     until: Date.now() + HOUR,
     watcher: "the support hub log",
     remaining: [],
   });
+
+async function park(card: Card, ms: number): Promise<void> {
+  await watch(card);
   ageCard(fleet.cardd, card, ms);
 }
 
@@ -156,9 +159,9 @@ test("a card the captain put off is never named for action before its date, howe
     zone: "UTC",
   });
   assert.equal(status, 200);
-  ageCard(fleet.cardd, later, 24 * HOUR * SCALE + 2 * MINUTE);
   const parked = await newCard(cleo, "Crud ingress card");
-  await park(parked, 24 * HOUR * SCALE + 2 * MINUTE);
+  await watch(parked);
+  ageCards(fleet.cardd, [later, parked], 24 * HOUR * SCALE + 2 * MINUTE);
 
   const { body } = await reminder(fleet.main);
   assert.match(
