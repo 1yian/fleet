@@ -37,6 +37,15 @@ export class Requests {
     return this.flooded.has(page) || this.keys.get(page)?.has(key) === true;
   }
 
+  holds(page: string): boolean {
+    const real = (key: string): boolean => !key.startsWith("post:") && !key.startsWith("bare:");
+    const some = (held: Set<string> | undefined): boolean => [...(held ?? [])].some(real);
+    const unplaced = this.flooded.has(UNPLACED) || some(this.keys.get(UNPLACED));
+    if (page === UNPLACED)
+      return unplaced || this.flooded.size > 0 || [...this.keys.values()].some((x) => some(x));
+    return unplaced || this.flooded.has(page) || some(this.keys.get(page));
+  }
+
   forget(page: string): void {
     this.keys.delete(page);
     this.flooded.delete(page);

@@ -14,6 +14,7 @@ export class Observer {
   private readonly loads: Loads;
   private readonly busy = new Set<string>();
   private readonly enrolled = new Set<string>();
+  private readonly seen = new Set<string>();
   private readonly pages: Pages;
 
   constructor(pages: Pages, parseWaitMs: number) {
@@ -21,8 +22,8 @@ export class Observer {
     this.loads = new Loads(parseWaitMs);
   }
 
-  prepared(session: string): boolean {
-    return this.enrolled.has(session);
+  observed(session: string): boolean {
+    return this.seen.has(session);
   }
 
   hold(session: string): void {
@@ -62,6 +63,7 @@ export class Observer {
 
   forget(session: string): void {
     this.enrolled.delete(session);
+    this.seen.delete(session);
     this.busy.delete(session);
     this.scanner.forget(session);
     this.loads.forget(session);
@@ -69,6 +71,7 @@ export class Observer {
 
   clear(): void {
     this.enrolled.clear();
+    this.seen.clear();
     this.busy.clear();
     this.scanner.clear();
     this.loads.clear();
@@ -92,6 +95,7 @@ export class Observer {
         );
       const parsed = this.loads.overdue(session) || !this.loads.waiting(session);
       await this.scanner.scan(cdp, session);
+      this.seen.add(session);
       if (parsed && generation === this.loads.generation(session)) {
         this.loads.done(session);
         this.pages.release(session);

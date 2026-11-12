@@ -306,10 +306,7 @@ test("a read that waited while the captain typed and emptied the field is refuse
 test("a password typed into a cross-origin frame guards the whole tab and the frame", async () => {
   const worker = await lab.worker();
   const tab = await worker.open(lab.site.url("/embed"));
-  const frame = await until(async () => {
-    const found = (await lab.chrome.targets()).find((target) => target.type === "iframe");
-    return found?.id;
-  }, "the frame to become its own target");
+  const frame = await lab.frameOf(tab.target);
   const inFrame = await worker.attach(frame);
   await reads(worker, inFrame, "!!document.querySelector('#pw')", "true");
   const captain = await Captain.at(lab.chrome, tab.target);

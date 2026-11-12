@@ -1,31 +1,21 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { Cdp, type CdpEvent } from "@fleet/protocol";
-import Type from "typebox";
+import {
+  Attached,
+  Bound,
+  ContextCreated,
+  ContextDestroyed,
+  Created,
+  Destroyed,
+  Detached,
+  Lifecycle,
+} from "./events.ts";
 import { Observer } from "./observer.ts";
 import { Requests } from "./requests.ts";
 import { postKeys, requestKeys } from "./rules.ts";
 import { BINDING, PAGE_SCRIPT, RESCAN } from "./script.ts";
 import { Contexts, Targets, type Ref, type Typing, type Verdict } from "./tracking.ts";
 import { record, shape, words } from "./wire.ts";
-
-const TargetInfo = Type.Object({ targetId: Type.String(), type: Type.String() });
-const Created = Type.Object({ targetInfo: TargetInfo });
-const Destroyed = Type.Object({ targetId: Type.String() });
-const Attached = Type.Object({ sessionId: Type.String(), targetInfo: TargetInfo });
-const Detached = Type.Object({ sessionId: Type.String() });
-const ContextCreated = Type.Object({
-  context: Type.Object({
-    id: Type.Integer(),
-    auxData: Type.Optional(Type.Object({ isDefault: Type.Optional(Type.Boolean()) })),
-  }),
-});
-const ContextDestroyed = Type.Object({ executionContextId: Type.Integer() });
-const Lifecycle = Type.Object({ name: Type.Optional(Type.String()), frameId: Type.String() });
-const Bound = Type.Object({
-  name: Type.String(),
-  payload: Type.String(),
-  executionContextId: Type.Integer(),
-});
 
 const RETRY_MS = 1000;
 const TICK_MS = 2000;
@@ -219,6 +209,10 @@ export class Watch implements Typing {
     return this.requests.has(ref.kind === "page" ? ref.id : "", key);
   }
 
+  retains(ref: Ref): boolean {
+    return this.requests.holds(ref.kind === "page" ? ref.id : "");
+  }
+
   taint(ref: Ref, keys: readonly string[]): void {
     this.requests.taint(ref.kind === "page" ? ref.id : "", keys);
   }
@@ -227,7 +221,7 @@ export class Watch implements Typing {
     const page = this.pages.get(pageId);
     if (page?.own === undefined) return true;
     return [...page.sessions].some(
-      (session) => !this.observer.prepared(session) || this.contexts.typed(session),
+      (session) => !this.observer.observed(session) || this.contexts.typed(session),
     );
   }
 

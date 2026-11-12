@@ -85,6 +85,7 @@ const BODY_EVENTS = new Map<string, BodyEvent>([
       ids: [
         ["requestId", "fetch"],
         ["networkId", "net"],
+        ["redirectedRequestId", "fetch"],
       ],
       type: "resourceType",
     },
@@ -133,6 +134,14 @@ export function documentPost(method: string, params: unknown): boolean {
   const document =
     type === undefined ? main && words(fields, "requestId") !== undefined : type === "Document";
   return document && words(record(fields?.["request"]), "method") !== "GET";
+}
+
+const BARE_FIRST = "bare:";
+
+export const bareKey = (key: string): string => `${BARE_FIRST}${key}`;
+
+export function bareKeys(keys: readonly string[]): string[] {
+  return keys.length > 0 && !keys.some((key) => key.startsWith("net:")) ? keys.map(bareKey) : [];
 }
 
 export function postKeys(method: string, params: unknown, session: string): string[] {

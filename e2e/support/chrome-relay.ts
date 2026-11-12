@@ -24,6 +24,15 @@ interface Link {
   first: boolean;
 }
 
+function withoutNetworkId(text: string): string {
+  const message = parsed(text);
+  const params = message?.["params"];
+  if (message === undefined || !isRecord(params)) return text;
+  if (optionalString(message, "method") !== "Fetch.requestPaused") return text;
+  const rest = Object.fromEntries(Object.entries(params).filter(([key]) => key !== "networkId"));
+  return JSON.stringify({ ...message, params: rest });
+}
+
 const startsWatching = (message: JsonRecord): boolean =>
   optionalString(message, "method") === "Target.setDiscoverTargets";
 
@@ -52,6 +61,7 @@ export class ChromeRelay {
   private readonly objects = new HeldObjects();
   private readonly stalled: Duplex[] = [];
   private stalling = false;
+  private bare = false;
   private readonly lagging: (() => void)[] = [];
   private lagEvents = false;
   private blocking = false;
@@ -131,6 +141,10 @@ export class ChromeRelay {
   releaseWorkerEvents(): void {
     this.lagEvents = false;
     for (const send of this.lagging.splice(0)) send();
+  }
+
+  omitNetworkIds(): void {
+    this.bare = true;
   }
 
   holdHandshakes(): void {
@@ -246,8 +260,9 @@ export class ChromeRelay {
       for (const text of backlog) browser.send(text);
     });
     browser.on("message", (data: RawData) => {
-      const text = textOf(data);
-      if (link.monitor) this.observe(text);
+      const received = textOf(data);
+      if (link.monitor) this.observe(received);
+      const text = this.bare && !link.monitor ? withoutNetworkId(received) : received;
       const deliver = (): void => {
         if (client.readyState === WebSocket.OPEN) client.send(text);
       };

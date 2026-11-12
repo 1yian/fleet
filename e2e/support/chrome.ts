@@ -8,6 +8,7 @@ export interface Target {
   readonly type: string;
   readonly title: string;
   readonly url: string;
+  readonly parent: string;
 }
 
 export class StandInChrome {
@@ -43,6 +44,7 @@ export class StandInChrome {
       type: optionalString(each, "type") ?? "",
       title: optionalString(each, "title") ?? "",
       url: optionalString(each, "url") ?? "",
+      parent: optionalString(each, "parentId") ?? "",
     }));
   }
 
@@ -50,10 +52,13 @@ export class StandInChrome {
     return (await this.targets()).filter((target) => target.type === "page");
   }
 
-  async open(url: string): Promise<void> {
+  async open(url: string): Promise<string> {
     const cdp = await Cdp.connect(this.endpoint);
     try {
-      await cdp.send("Target.createTarget", { url });
+      const created = await cdp.send("Target.createTarget", { url });
+      const target = isRecord(created) ? optionalString(created, "targetId") : undefined;
+      if (target === undefined) throw new Error("the browser opened no tab");
+      return target;
     } finally {
       cdp.close();
     }

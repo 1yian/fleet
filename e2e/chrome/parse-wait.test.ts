@@ -26,7 +26,7 @@ async function openHeldPage(): Promise<{
     url: lab.site.url("/held"),
   });
   assert.equal(navigated.ok, true);
-  await lab.waitForTab("/held", "held");
+  await lab.waitForTab(tab.target, "held");
   return { worker, ...tab };
 }
 

@@ -65,10 +65,7 @@ test("after the guard sees Chrome again, a frame that holds a typed password sta
   assert.ok(relay, "the lab has no relay in front of Chrome");
   const worker = await lab.worker();
   const tab = await lab.openPage(worker, "/embed", "embed");
-  const frame = await until(async () => {
-    const found = (await lab.chrome.targets()).find((target) => target.type === "iframe");
-    return found?.id;
-  }, "the frame to become its own target");
+  const frame = await lab.frameOf(tab.target);
   const inFrame = await worker.attach(frame);
   await framePassword(worker, inFrame);
   const captain = await Captain.at(lab.chrome, tab.target);
@@ -157,7 +154,7 @@ async function startHeldPage(
     url: lab.site.url("/held"),
   });
   assert.equal(navigated.ok, true);
-  await lab.waitForTab("/held", "held");
+  await lab.waitForTab(tab.target, "held");
   await until(
     () => (relay.callsOf("DOM.getDocument") > scans ? true : undefined),
     "the guard to look at the page before its parse is done",
@@ -370,10 +367,7 @@ test("a request that starts while a frame is not yet prepared stays hidden once 
   assert.ok(relay, "the lab has no relay in front of Chrome");
   const worker = await lab.worker();
   const tab = await lab.openPage(worker, "/embedspa", "embedspa");
-  const frame = await until(async () => {
-    const found = (await lab.chrome.targets()).find((target) => target.type === "iframe");
-    return found?.id;
-  }, "the frame to become its own target");
+  const frame = await lab.frameOf(tab.target);
   const inFrame = await worker.attach(frame);
   assert.equal((await worker.call(inFrame, "Network.enable")).ok, true);
   const before = worker.events.length;

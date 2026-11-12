@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { Captain, GuardLab, reads, until, type Worker } from "../support/guard-lab.ts";
+import { bodyOf, eventOf, requestIdOf } from "../support/events.ts";
+import { Captain, GuardLab, reads, until } from "../support/guard-lab.ts";
 import { isRecord, optionalString } from "../support/json.ts";
 
 const SECRET = "hunter2-secret-value";
@@ -13,23 +14,6 @@ before(async () => {
 after(async () => {
   await lab.stop();
 });
-
-type Seen = Worker["events"][number];
-
-const eventOf = (worker: Worker, method: string, after: number, path: string): Seen | undefined =>
-  worker.events.slice(after).find((event) => {
-    const request = isRecord(event.params) ? event.params["request"] : undefined;
-    const url = isRecord(request) ? optionalString(request, "url") : undefined;
-    return event.method === method && url?.endsWith(path) === true;
-  });
-
-const requestIdOf = (event: Seen): string =>
-  isRecord(event.params) ? (optionalString(event.params, "requestId") ?? "") : "";
-
-function bodyOf(event: Seen): unknown {
-  const request = isRecord(event.params) ? event.params["request"] : undefined;
-  return isRecord(request) ? [request["postData"], request["postDataEntries"]] : undefined;
-}
 
 async function type(captain: Captain, user: boolean): Promise<void> {
   if (user) {
@@ -58,7 +42,7 @@ test("a form post that the browser sends again reaches a worker that intercepts 
   const before = worker.events.length;
   assert.equal((await worker.call(tab.session, "Page.reload")).ok, true);
   const paused = await until(
-    () => eventOf(worker, "Fetch.requestPaused", before, "/submit"),
+    () => eventOf(worker.events, "Fetch.requestPaused", before, "/submit"),
     "the repost to pause",
   );
   assert.ok(!JSON.stringify(paused).includes(SECRET), "the password is in the paused event");
@@ -78,14 +62,14 @@ test("an authentication challenge for a form post that the captain typed reaches
   const before = worker.events.length;
   await captain.press("Enter");
   const paused = await until(
-    () => eventOf(worker, "Fetch.requestPaused", before, "/secure"),
+    () => eventOf(worker.events, "Fetch.requestPaused", before, "/secure"),
     "the form post to pause",
   );
   assert.ok(!JSON.stringify(paused).includes(SECRET), "the password is in the paused event");
   const requestId = requestIdOf(paused);
   assert.equal((await worker.call(tab.session, "Fetch.continueRequest", { requestId })).ok, true);
   const challenge = await until(
-    () => eventOf(worker, "Fetch.authRequired", before, "/secure"),
+    () => eventOf(worker.events, "Fetch.authRequired", before, "/secure"),
     "the server's challenge",
   );
   assert.ok(!JSON.stringify(challenge).includes(SECRET), "the password is in the challenge");
@@ -107,7 +91,7 @@ test("an authentication challenge that comes after the field is empty still reac
   const before = worker.events.length;
   await captain.click("#go");
   const paused = await until(
-    () => eventOf(worker, "Fetch.requestPaused", before, "/api/auth"),
+    () => eventOf(worker.events, "Fetch.requestPaused", before, "/api/auth"),
     "the post to pause",
   );
   const requestId = requestIdOf(paused);
@@ -120,7 +104,7 @@ test("an authentication challenge that comes after the field is empty still reac
 
   lab.site.challengeAll();
   const challenge = await until(
-    () => eventOf(worker, "Fetch.authRequired", before, "/api/auth"),
+    () => eventOf(worker.events, "Fetch.authRequired", before, "/api/auth"),
     "the server's challenge",
   );
   assert.ok(!JSON.stringify(challenge).includes(SECRET), "the password is in the challenge");
@@ -145,7 +129,7 @@ test("Network interception hides the body of a form that the captain typed", asy
   const before = worker.events.length;
   await captain.press("Enter");
   const intercepted = await until(
-    () => eventOf(worker, "Network.requestIntercepted", before, "/submit"),
+    () => eventOf(worker.events, "Network.requestIntercepted", before, "/submit"),
     "the form post to be intercepted",
   );
   assert.ok(!JSON.stringify(intercepted).includes(SECRET), "the password is in the event");

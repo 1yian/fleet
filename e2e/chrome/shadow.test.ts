@@ -43,8 +43,8 @@ test("a password typed into a closed shadow root is guarded, and readable again 
 
 test("a password in a closed shadow root before the guard starts is guarded", async () => {
   await lab.stopGuard();
-  await lab.chrome.open(lab.site.url("/closed"));
-  const target = await lab.waitForTab("/closed", "closed");
+  const opened = await lab.chrome.open(lab.site.url("/closed"));
+  const target = await lab.waitForTab(opened, "closed");
   const captain = await Captain.at(lab.chrome, target);
   await captain.click("#login");
   await captain.type(SECRET);
@@ -69,8 +69,8 @@ test("a password in a closed shadow root before the guard starts is guarded", as
 
 test("a populated password in an open shadow root before the guard starts is guarded", async () => {
   await lab.stopGuard();
-  await lab.chrome.open(lab.site.url("/filled"));
-  const target = await lab.waitForTab("/filled", "filled");
+  const opened = await lab.chrome.open(lab.site.url("/filled"));
+  const target = await lab.waitForTab(opened, "filled");
 
   await lab.restartGuard();
   const worker = await lab.worker();
@@ -179,8 +179,8 @@ const PEEK_NESTED = "document.querySelector('x-nested').peek()";
 
 test("a password typed into an open root inside a closed root before the guard starts is guarded", async () => {
   await lab.stopGuard();
-  await lab.chrome.open(lab.site.url("/nested"));
-  const target = await lab.waitForTab("/nested", "nested");
+  const opened = await lab.chrome.open(lab.site.url("/nested"));
+  const target = await lab.waitForTab(opened, "nested");
   const captain = await Captain.at(lab.chrome, target);
   await captain.click("#x-nested");
   await captain.type(SECRET);

@@ -41,6 +41,25 @@ const NOTES = `<title>notes</title><p id="note">plain notes</p>`;
 
 const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled,x-sealed,x-built,x-held,x-nested{display:block;width:240px;height:30px}`;
 
+const CLOSED_SPA = `<title>closedspa</title><style>${FIELD_STYLE}x-closedspa{display:block;width:240px;height:60px}</style>
+<x-closedspa id="x-closedspa"></x-closedspa>
+<script>
+let field;
+customElements.define("x-closedspa", class extends HTMLElement {
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: "closed" });
+    root.innerHTML = '<style>input,button{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}</style><input type="password" autocomplete="off"><button type="button">Sign in</button>';
+    field = root.querySelector("input");
+    root.querySelector("button").addEventListener("click", () => {
+      fetch("/api/login", { method: "POST", headers: { "content-type": "text/plain" }, body: "pw=" + field.value });
+      field.value = "";
+    });
+  }
+});
+window.fieldValue = () => field.value;
+</script>`;
+
 const CLOSED = `<title>closed</title><style>${FIELD_STYLE}</style>
 <input id="user" autocomplete="off"><x-login id="login"></x-login>
 <script>
@@ -124,6 +143,7 @@ const pagesFor = (port: number): ReadonlyMap<string, string> =>
     ["/login", LOGIN],
     ["/spa", spa("/api/login")],
     ["/xhr", XHR],
+    ["/closedspa", CLOSED_SPA],
     ["/authlogin", AUTH_LOGIN],
     ["/authspa", spa("/api/auth")],
     ["/echo", spa("/api/echo")],

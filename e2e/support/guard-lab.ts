@@ -313,13 +313,22 @@ export class GuardLab {
     return tab;
   }
 
-  async waitForTab(url: string, title: string): Promise<string> {
+  async frameOf(page: string): Promise<string> {
     return until(async () => {
-      const found = (await this.chrome.pages()).find(
-        (page) => page.url === this.site.url(url) && page.title === title,
+      const found = (await this.chrome.targets()).find(
+        (target) => target.type === "iframe" && target.parent === page,
       );
       return found?.id;
-    }, `${url} to load`);
+    }, "the frame to become its own target");
+  }
+
+  async waitForTab(target: string, title: string): Promise<string> {
+    return until(async () => {
+      const found = (await this.chrome.pages()).find(
+        (page) => page.id === target && page.title === title,
+      );
+      return found?.id;
+    }, `${title} to load`);
   }
 
   async stop(): Promise<void> {

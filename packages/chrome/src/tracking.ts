@@ -186,5 +186,6 @@ export interface Typing {
   epoch(ref: Ref): number;
   armed(ref: Ref): boolean;
   secret(ref: Ref, key: string): boolean;
+  retains(ref: Ref): boolean;
   taint(ref: Ref, keys: readonly string[]): void;
 }
