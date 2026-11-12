@@ -3,7 +3,7 @@ import { request as httpRequest } from "node:http";
 import { after, before, test } from "node:test";
 import { chromium } from "playwright";
 import { isRecord, optionalString } from "../support/json.ts";
-import { Captain, GuardLab, until, type Worker } from "../support/guard-lab.ts";
+import { Captain, GuardLab, reads, until, type Worker } from "../support/guard-lab.ts";
 
 const SECRET = "hunter2-secret-value";
 const READ_PASSWORD = "document.querySelector('#pw').value";
@@ -20,18 +20,6 @@ after(async () => {
 
 const login = (worker: Worker): Promise<{ target: string; session: string }> =>
   lab.openPage(worker, "/login", "login");
-
-async function reads(
-  worker: Worker,
-  session: string,
-  expression: string,
-  text: string,
-): Promise<void> {
-  await until(async () => {
-    const reply = await worker.evaluate(session, expression);
-    return reply.ok && reply.text === text ? true : undefined;
-  }, `${expression} to read ${text}`);
-}
 
 const READS = [
   ["Runtime.evaluate", { expression: READ_PASSWORD, returnByValue: true }],

@@ -8,6 +8,21 @@ const AUTOFOCUS = LOGIN.replace(
   'autocomplete="off" autofocus><button',
 ).replace("<title>login</title>", "<title>autofocus</title>");
 
+const GET_LOGIN = LOGIN.replace(
+  'method="post" action="/submit"',
+  'method="get" action="/welcome"',
+).replace("<title>login</title>", "<title>getlogin</title>");
+
+const SPA = `<title>spa</title><style>body{margin:0}input,button{display:block;width:240px;height:30px;margin:0}</style>
+<input id="user" autocomplete="off"><input id="pw" type="password" autocomplete="off"><button id="go" type="button">Sign in</button>
+<script>
+document.querySelector("#go").addEventListener("click", () => {
+  const field = document.querySelector("#pw");
+  fetch("/api/login", { method: "POST", headers: { "content-type": "text/plain" }, body: "pw=" + field.value });
+  field.value = "";
+});
+</script>`;
+
 const NOTES = `<title>notes</title><p id="note">plain notes</p>`;
 
 const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled,x-sealed,x-built,x-held,x-nested{display:block;width:240px;height:30px}`;
@@ -93,6 +108,8 @@ const FRAME = `<style>body{margin:0}input{display:block;width:240px;height:30px;
 const pagesFor = (port: number): ReadonlyMap<string, string> =>
   new Map([
     ["/login", LOGIN],
+    ["/getlogin", GET_LOGIN],
+    ["/spa", SPA],
     ["/autofocus", AUTOFOCUS],
     ["/closed", CLOSED],
     ["/filled", FILLED],
@@ -121,17 +138,26 @@ export class Site {
   readonly port: number;
   private readonly server: Server;
   private readonly held: ServerResponse[];
+  private readonly logins: ServerResponse[];
 
-  private constructor(server: Server, port: number, submitted: string[], held: ServerResponse[]) {
+  private constructor(
+    server: Server,
+    port: number,
+    submitted: string[],
+    held: ServerResponse[],
+    logins: ServerResponse[],
+  ) {
     this.server = server;
     this.port = port;
     this.submitted = submitted;
     this.held = held;
+    this.logins = logins;
   }
 
   static async start(): Promise<Site> {
     const submitted: string[] = [];
     const held: ServerResponse[] = [];
+    const logins: ServerResponse[] = [];
     let port = 0;
     const server = createServer((request, response) => {
       const path = request.url ?? "/";
@@ -141,6 +167,13 @@ export class Site {
           submitted.push(body);
           response.end("<title>welcome</title>welcome");
         });
+      } else if (request.method === "POST" && path === "/api/login") {
+        void readBody(request).then(() => logins.push(response));
+      } else if (request.method === "POST" && path === "/api/done") {
+        void readBody(request).then((body) => {
+          submitted.push(body);
+          response.end("ok");
+        });
       } else if (path === "/held") {
         response.write(HELD);
         held.push(response);
@@ -149,7 +182,7 @@ export class Site {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     port = typeof address === "object" && address !== null ? address.port : 0;
-    return new Site(server, port, submitted, held);
+    return new Site(server, port, submitted, held, logins);
   }
 
   url(path: string, host = "one.test"): string {
@@ -158,6 +191,15 @@ export class Site {
 
   continueHeld(): void {
     for (const response of this.held) response.write(HELD_ROOT);
+  }
+
+  heldLogins(): number {
+    return this.logins.length;
+  }
+
+  redirectLogins(): void {
+    for (const response of this.logins.splice(0))
+      response.writeHead(307, { location: "/api/done" }).end();
   }
 
   release(): void {

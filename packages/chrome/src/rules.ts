@@ -95,3 +95,14 @@ export function withoutBody(method: string, params: unknown): Stripped | undefin
   );
   return { requestIds, params: { ...fields, request: rest } };
 }
+
+export function navigationUrl(method: string, params: unknown): string | undefined {
+  const fields = record(params);
+  if (method === "Page.frameRequestedNavigation")
+    return words(fields, "reason") === "formSubmissionGet" ? words(fields, "url") : undefined;
+  const document =
+    method === "Network.requestWillBeSent"
+      ? words(fields, "type") === "Document"
+      : method === "Fetch.requestPaused" && words(fields, "resourceType") === "Document";
+  return document ? words(record(fields?.["request"]), "url") : undefined;
+}

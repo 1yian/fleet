@@ -24,6 +24,18 @@ export async function until<T>(
   }
 }
 
+export async function reads(
+  worker: Worker,
+  session: string,
+  expression: string,
+  text: string,
+): Promise<void> {
+  await until(async () => {
+    const reply = await worker.evaluate(session, expression);
+    return reply.ok && reply.text === text ? true : undefined;
+  }, `${expression} to read ${text}`);
+}
+
 export interface Reply {
   readonly ok: boolean;
   readonly text: string;

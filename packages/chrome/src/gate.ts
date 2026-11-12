@@ -1,5 +1,12 @@
 import Type from "typebox";
-import { allowedWhileTyped, droppedWhileTyped, refusedAlways, withoutBody } from "./rules.ts";
+import {
+  allowedWhileTyped,
+  droppedWhileTyped,
+  navigationUrl,
+  refusedAlways,
+  withoutBody,
+} from "./rules.ts";
+import { Secrets } from "./secrets.ts";
 import { parseWire, record, shape, words, type Wire } from "./wire.ts";
 import type { Ref } from "./tracking.ts";
 import type { Typing, Verdict } from "./watch.ts";
@@ -23,7 +30,6 @@ interface Read {
 
 const OTHER: Ref = { kind: "other" };
 const UNKNOWN: Ref = { kind: "unknown" };
-const SECRETS_KEPT = 2000;
 
 const typedMessage = (method: string): string =>
   `The captain is typing a password in this tab, so ${method} is refused. Wait until the field is empty or the page has moved on, or ask the captain to finish.`;
@@ -45,7 +51,7 @@ export class Gate {
   private readonly origins = new Map<string, Origin>();
   private readonly asked = new Map<number, Origin>();
   private readonly reads = new Map<number, Read>();
-  private readonly secrets = new Set<string>();
+  private readonly secrets = new Secrets();
   private readonly watch: Typing;
   private readonly page: string | undefined;
 
@@ -71,6 +77,11 @@ export class Gate {
   }
 
   reply(raw: string): string | undefined {
+    const out = this.screen(raw);
+    return out === undefined ? undefined : this.watch.scrub(out);
+  }
+
+  private screen(raw: string): string | undefined {
     const wire = parseWire(raw);
     if (wire === undefined) return raw;
     if (wire.id !== undefined) {
@@ -86,7 +97,7 @@ export class Gate {
     if (refusedAlways(method)) return `${method} is not available through the guard.`;
     if (
       method === "Network.getRequestPostData" &&
-      this.secrets.has(this.secretKey(wire, wire.params))
+      this.secrets.has(wire.sessionId ?? "", words(record(wire.params), "requestId") ?? "")
     )
       return bodyMessage;
     if (verdict === "clear" || allowedWhileTyped(method, wire.params)) return undefined;
@@ -152,7 +163,9 @@ export class Gate {
   private track(wire: Wire, method: string): void {
     if (method === "Target.detachedFromTarget") {
       const session = shape(Detached, wire.params)?.sessionId;
-      if (session !== undefined) this.origins.delete(session);
+      if (session === undefined) return;
+      this.origins.delete(session);
+      this.secrets.forget(session);
       return;
     }
     const attached =
@@ -172,22 +185,20 @@ export class Gate {
   }
 
   private screened(wire: Wire, method: string, raw: string): string | undefined {
-    if (this.verdictNow(this.refNow(wire.sessionId)) === "clear") return raw;
-    if (droppedWhileTyped(method)) return undefined;
+    const ref = this.refNow(wire.sessionId);
+    const armed = this.verdictNow(ref) !== "clear";
+    if (armed && droppedWhileTyped(method)) return undefined;
+    const address = armed ? navigationUrl(method, wire.params) : undefined;
+    if (address !== undefined) this.watch.mark(ref, address);
+    return this.cut(wire, method, raw, armed);
+  }
+
+  private cut(wire: Wire, method: string, raw: string, armed: boolean): string {
     const stripped = withoutBody(method, wire.params);
     if (stripped === undefined) return raw;
-    for (const id of stripped.requestIds) this.keep(this.secretKey(wire, { requestId: id }));
+    const session = wire.sessionId ?? "";
+    if (armed) for (const id of stripped.requestIds) this.secrets.keep(session, id);
+    else if (!stripped.requestIds.some((id) => this.secrets.has(session, id))) return raw;
     return JSON.stringify({ ...wire, params: stripped.params });
-  }
-
-  private secretKey(wire: Wire, params: unknown): string {
-    return `${wire.sessionId ?? ""}:${words(record(params), "requestId") ?? ""}`;
-  }
-
-  private keep(key: string): void {
-    this.secrets.add(key);
-    if (this.secrets.size <= SECRETS_KEPT) return;
-    const oldest = this.secrets.values().next();
-    if (oldest.done !== true) this.secrets.delete(oldest.value);
   }
 }

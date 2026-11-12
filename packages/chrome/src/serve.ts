@@ -36,13 +36,16 @@ async function forwardJson(
   request: IncomingMessage,
   response: ServerResponse,
   upstream: string,
+  typing: Typing,
 ): Promise<void> {
   const answer = await fetch(`http://${upstream}${request.url ?? "/json"}`, {
     method: request.method ?? "GET",
     headers: { host: upstream },
     signal: AbortSignal.timeout(10_000),
   });
-  const body = (await answer.text()).replaceAll(upstream, request.headers.host ?? upstream);
+  const body = typing
+    .scrub(await answer.text())
+    .replaceAll(upstream, request.headers.host ?? upstream);
   response.writeHead(answer.status, {
     "content-type": answer.headers.get("content-type") ?? "application/json",
     [GUARD_HEADER]: "1",
@@ -60,6 +63,7 @@ function addressOf(upstreamOf: () => string): string | undefined {
 
 function handle(
   upstreamOf: () => string,
+  typing: Typing,
   request: IncomingMessage,
   response: ServerResponse,
 ): void {
@@ -77,7 +81,7 @@ function handle(
     plain(response, 502, "the browser's DevTools port is not known yet");
     return;
   }
-  forwardJson(request, response, upstream).catch((error: unknown) => {
+  forwardJson(request, response, upstream, typing).catch((error: unknown) => {
     plain(response, 502, `the browser did not answer: ${String(error)}`);
   });
 }
@@ -171,7 +175,7 @@ export async function serve(
 ): Promise<Served> {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME });
   const server = createServer((request, response) => {
-    handle(upstreamOf, request, response);
+    handle(upstreamOf, typing, request, response);
   });
   server.on("upgrade", (request, socket, head) => {
     const upstream = addressOf(upstreamOf);
