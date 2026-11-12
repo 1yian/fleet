@@ -12,7 +12,7 @@ import {
   showing,
 } from "../support/decide-lab.ts";
 
-const CLEAR = "✓ clear";
+const CLEAR = "board";
 const REWRITTEN = "Ship it only after the audit?";
 const NEW_ONE = "A new decision is on screen. Read it, then press ⏎.";
 const CHANGED = "changed. Read it, then press ⏎.";
