@@ -100,6 +100,20 @@ test("a session the host ended is attached again, a window the captain closed is
   });
 });
 
+test("an interrupt while the guard is being checked ends the launcher and attaches nothing", async () => {
+  await withAttach(async (attach) => {
+    attach.plan([{ stay: true }]);
+    attach.holdSsh();
+    const run = mac(attach);
+    await attach.waitForHostAsks(1);
+    run.child.kill("SIGTERM");
+    await until(() => (run.child.exitCode === null ? undefined : true), "the launcher to end");
+    assert.equal(await run.exit, 0);
+    assert.equal(attach.sshWasStopped(), true);
+    assert.equal(attach.xpraArguments().length, 0);
+  });
+});
+
 test("a failure that waiting will not fix stops the launcher with Xpra's own exit code", async () => {
   await withAttach(async (attach) => {
     attach.plan([{ exit: 5 }]);

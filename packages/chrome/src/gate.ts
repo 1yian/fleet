@@ -1,7 +1,8 @@
 import Type from "typebox";
 import { allowedWhileTyped, droppedWhileTyped, refusedAlways, withoutBody } from "./rules.ts";
 import { parseWire, record, shape, words, type Wire } from "./wire.ts";
-import type { Ref, Typing, Verdict } from "./watch.ts";
+import type { Ref } from "./tracking.ts";
+import type { Typing, Verdict } from "./watch.ts";
 
 export type Decision =
   { readonly send: string } | { readonly answer: string } | { readonly close: string };

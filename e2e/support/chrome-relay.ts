@@ -1,19 +1,40 @@
 import { createServer, type Server } from "node:http";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { freePort } from "./chrome.ts";
-import { isRecord, optionalString } from "./json.ts";
+import { isRecord, optionalNumber, optionalString, type JsonRecord } from "./json.ts";
 
 const textOf = (data: RawData): string =>
   new TextDecoder().decode(Array.isArray(data) ? Buffer.concat(data) : data);
 
-const opensWatching = (text: string): boolean => {
+const parsed = (text: string): JsonRecord | undefined => {
   try {
     const message: unknown = JSON.parse(text);
-    return isRecord(message) && optionalString(message, "method") === "Target.setDiscoverTargets";
+    return isRecord(message) ? message : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 };
+
+interface Link {
+  readonly client: WebSocket;
+  readonly forward: (text: string) => void;
+  monitor: boolean;
+  first: boolean;
+}
+
+const startsWatching = (message: JsonRecord): boolean =>
+  optionalString(message, "method") === "Target.setDiscoverTargets";
+
+function refuse(client: WebSocket, message: JsonRecord): void {
+  const session = optionalString(message, "sessionId");
+  client.send(
+    JSON.stringify({
+      id: optionalNumber(message, "id"),
+      ...(session === undefined ? {} : { sessionId: session }),
+      error: { code: -32000, message: "the relay refused this call" },
+    }),
+  );
+}
 
 export class ChromeRelay {
   readonly address: string;
@@ -21,7 +42,11 @@ export class ChromeRelay {
   private readonly sockets = new WebSocketServer({ noServer: true });
   private readonly chrome: string;
   private readonly monitors = new Set<WebSocket>();
+  private readonly frames = new Set<string>();
+  private readonly held: (() => void)[] = [];
+  private readonly failing = new Set<string>();
   private blocking = false;
+  private holding = false;
 
   private constructor(server: Server, port: number, chrome: string) {
     this.server = server;
@@ -62,6 +87,27 @@ export class ChromeRelay {
     this.blocking = false;
   }
 
+  holdFrames(): void {
+    this.holding = true;
+  }
+
+  heldFrameMessages(): number {
+    return this.held.length;
+  }
+
+  releaseFrames(): void {
+    this.holding = false;
+    for (const send of this.held.splice(0)) send();
+  }
+
+  failTheMonitor(method: string): void {
+    this.failing.add(method);
+  }
+
+  mendTheMonitor(): void {
+    this.failing.clear();
+  }
+
   async stop(): Promise<void> {
     for (const client of this.sockets.clients) client.terminate();
     this.server.closeAllConnections();
@@ -72,28 +118,78 @@ export class ChromeRelay {
     );
   }
 
+  private failsNow(message: JsonRecord): boolean {
+    const method = optionalString(message, "method");
+    return method !== undefined && this.failing.has(method);
+  }
+
+  private noteFrame(text: string): void {
+    if (!text.includes("Target.attachedToTarget")) return;
+    const message = parsed(text);
+    if (message === undefined || optionalString(message, "method") !== "Target.attachedToTarget")
+      return;
+    const params = message["params"];
+    if (!isRecord(params)) return;
+    const info = params["targetInfo"];
+    const session = optionalString(params, "sessionId");
+    if (isRecord(info) && optionalString(info, "type") === "iframe" && session !== undefined)
+      this.frames.add(session);
+  }
+
+  private fromClient(link: Link, text: string): void {
+    const message = parsed(text);
+    const opening = link.first;
+    link.first = false;
+    if (opening && message !== undefined && startsWatching(message)) {
+      if (this.blocking) {
+        link.client.terminate();
+        return;
+      }
+      link.monitor = true;
+      this.monitors.add(link.client);
+    }
+    if (!link.monitor || message === undefined) {
+      link.forward(text);
+      return;
+    }
+    if (this.failsNow(message)) {
+      refuse(link.client, message);
+      return;
+    }
+    if (this.holdsBack(message))
+      this.held.push(() => {
+        link.forward(text);
+      });
+    else link.forward(text);
+  }
+
+  private holdsBack(message: JsonRecord): boolean {
+    const session = optionalString(message, "sessionId");
+    return this.holding && session !== undefined && this.frames.has(session);
+  }
+
   private pipe(client: WebSocket, path: string): void {
     const browser = new WebSocket(`ws://${this.chrome}${path}`, { perMessageDeflate: false });
     const backlog: string[] = [];
-    let first = true;
+    const link: Link = {
+      client,
+      monitor: false,
+      first: true,
+      forward: (text) => {
+        if (browser.readyState === WebSocket.OPEN) browser.send(text);
+        else backlog.push(text);
+      },
+    };
     client.on("message", (data: RawData) => {
-      const text = textOf(data);
-      if (first && opensWatching(text)) {
-        if (this.blocking) {
-          client.terminate();
-          return;
-        }
-        this.monitors.add(client);
-      }
-      first = false;
-      if (browser.readyState === WebSocket.OPEN) browser.send(text);
-      else backlog.push(text);
+      this.fromClient(link, textOf(data));
     });
     browser.on("open", () => {
       for (const text of backlog) browser.send(text);
     });
     browser.on("message", (data: RawData) => {
-      if (client.readyState === WebSocket.OPEN) client.send(textOf(data));
+      const text = textOf(data);
+      if (link.monitor) this.noteFrame(text);
+      if (client.readyState === WebSocket.OPEN) client.send(text);
     });
     client.on("close", () => {
       this.monitors.delete(client);

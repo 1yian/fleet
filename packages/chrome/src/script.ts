@@ -1,7 +1,8 @@
 export const BINDING = "__fleetPw";
+export const RESCAN = "r";
 const FLAG = "__fleetGuard";
 
-export const ADOPT_ROOT = `function () { globalThis[${JSON.stringify(FLAG)}].adopt(this); }`;
+export const ADOPT_ROOT = `function () { globalThis[${JSON.stringify(FLAG)}]?.adopt(this); }`;
 
 export const PAGE_SCRIPT = `(() => {
   const flag = ${JSON.stringify(FLAG)};
@@ -73,6 +74,10 @@ export const PAGE_SCRIPT = `(() => {
       walk(root);
     }
   };
+  const rescan = () => {
+    const bind = globalThis[${JSON.stringify(BINDING)}];
+    if (typeof bind === "function") bind(${JSON.stringify(RESCAN)});
+  };
   Element.prototype.attachShadow = new Proxy(Element.prototype.attachShadow, {
     apply(target, self, args) {
       const root = Reflect.apply(target, self, args);
@@ -80,6 +85,16 @@ export const PAGE_SCRIPT = `(() => {
       return root;
     },
   });
+  for (const owner of [Element.prototype, ShadowRoot.prototype]) {
+    if (typeof owner.setHTMLUnsafe !== "function") continue;
+    owner.setHTMLUnsafe = new Proxy(owner.setHTMLUnsafe, {
+      apply(target, self, args) {
+        const result = Reflect.apply(target, self, args);
+        rescan();
+        return result;
+      },
+    });
+  }
   for (const name of [...FIELD_EVENTS, "pageshow", "visibilitychange"])
     addEventListener(name, touched, true);
   walk(document);

@@ -116,3 +116,61 @@ test("a populated password in an open shadow root that the page's markup declare
   assert.match(reply.text, REFUSED);
   await lab.chrome.closeTab(tab.target);
 });
+
+test("a password typed into a closed shadow root that the markup declares is guarded, and readable again once the field is empty", async () => {
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/sealed", "sealed");
+  const peek = "document.querySelector('x-sealed').peek()";
+  assert.equal((await worker.evaluate(tab.session, peek)).text, '""');
+  const captain = await Captain.at(lab.chrome, tab.target);
+
+  await captain.click("#x-sealed");
+  await captain.type(SECRET);
+  const refused = await until(async () => {
+    const reply = await worker.evaluate(tab.session, peek);
+    return reply.ok ? undefined : reply;
+  }, "the guard to refuse a read of the declared closed field");
+  assert.match(refused.text, REFUSED);
+  assert.ok(!refused.text.includes(SECRET));
+  const snapshot = await worker.call(tab.session, "DOMSnapshot.captureSnapshot", {
+    computedStyles: [],
+  });
+  assert.equal(snapshot.ok, false);
+  assert.match(snapshot.text, REFUSED);
+
+  await captain.erase(SECRET.length);
+  await captain.click("#user");
+  const emptied = await until(async () => {
+    const reply = await worker.evaluate(tab.session, peek);
+    return reply.ok ? reply : undefined;
+  }, "the read to work once the declared closed field is empty");
+  assert.equal(emptied.text, '""');
+  captain.close();
+  await lab.chrome.closeTab(tab.target);
+});
+
+test("a password typed into a closed shadow root that a loaded page builds with setHTMLUnsafe is guarded", async () => {
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/built", "built");
+  assert.equal((await worker.evaluate(tab.session, "build()")).ok, true);
+  const peek = "document.querySelector('x-built').peek()";
+  const captain = await Captain.at(lab.chrome, tab.target);
+
+  await captain.click("#x-built");
+  await captain.type(SECRET);
+  const refused = await until(async () => {
+    const reply = await worker.evaluate(tab.session, peek);
+    return reply.ok ? undefined : reply;
+  }, "the guard to refuse a read of the built closed field");
+  assert.match(refused.text, REFUSED);
+  assert.ok(!refused.text.includes(SECRET));
+
+  await captain.erase(SECRET.length);
+  await captain.click("#user");
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, peek);
+    return reply.ok && reply.text === '""' ? true : undefined;
+  }, "the read to work once the built closed field is empty");
+  captain.close();
+  await lab.chrome.closeTab(tab.target);
+});

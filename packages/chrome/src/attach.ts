@@ -80,7 +80,7 @@ function parse(): Options {
   };
 }
 
-function guardThere(options: Options): Promise<Reach> {
+function guardThere(options: Options, signal: AbortSignal): Promise<Reach> {
   const [command = "ssh", ...front] = options.ssh;
   return new Promise((resolve) => {
     const child = spawn(
@@ -103,14 +103,14 @@ function guardThere(options: Options): Promise<Reach> {
         "-",
         `http://127.0.0.1:${String(options.guardPort)}/json/version`,
       ],
-      { stdio: ["ignore", "pipe", "inherit"] },
+      { stdio: ["ignore", "pipe", "inherit"], signal },
     );
     let headers = "";
     child.stdout.on("data", (chunk: Buffer) => {
       headers += chunk.toString("utf8");
     });
     child.once("error", (error) => {
-      say(`cannot run ${command}: ${error.message}`);
+      if (!signal.aborted) say(`cannot run ${command}: ${error.message}`);
       resolve("unreachable");
     });
     child.once("close", (code) => {
@@ -199,7 +199,8 @@ class Launcher {
 
   private async once(): Promise<Step> {
     const { options } = this;
-    const reach = await guardThere(options);
+    const reach = await guardThere(options, this.stop.signal);
+    if (this.stop.signal.aborted) return { exit: 0 };
     if (reach === "unguarded") {
       say(
         `something answers on ${options.target} port ${String(options.guardPort)} that is not the guard, so nothing is attached. Start the guard there first.`,

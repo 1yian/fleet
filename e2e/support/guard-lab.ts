@@ -34,7 +34,7 @@ const AUTOFOCUS = LOGIN.replace(
 
 const NOTES = `<title>notes</title><p id="note">plain notes</p>`;
 
-const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled{display:block;width:240px;height:30px}`;
+const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled,x-sealed,x-built{display:block;width:240px;height:30px}`;
 
 const CLOSED = `<title>closed</title><style>${FIELD_STYLE}</style>
 <input id="user" autocomplete="off"><x-login id="login"></x-login>
@@ -49,6 +49,32 @@ customElements.define("x-login", class extends HTMLElement {
   }
 });
 window.fieldValue = () => field.value;
+</script>`;
+
+const SEALED_ELEMENT = (
+  tag: string,
+): string => `customElements.define("${tag}", class extends HTMLElement {
+  constructor() {
+    super();
+    this.internals = this.attachInternals();
+  }
+  peek() {
+    return this.internals.shadowRoot.querySelector("input").value;
+  }
+});`;
+
+const SEALED_MARKUP = (tag: string): string =>
+  `<${tag} id="${tag}"><template shadowrootmode="closed"><style>${FIELD_STYLE}</style><input type="password" autocomplete="off"></template></${tag}>`;
+
+const SEALED = `<title>sealed</title><style>${FIELD_STYLE}</style>
+<input id="user" autocomplete="off">${SEALED_MARKUP("x-sealed")}
+<script>${SEALED_ELEMENT("x-sealed")}</script>`;
+
+const BUILT = `<title>built</title><style>${FIELD_STYLE}</style>
+<input id="user" autocomplete="off"><div id="slot"></div>
+<script>
+${SEALED_ELEMENT("x-built")}
+window.build = () => document.querySelector("#slot").setHTMLUnsafe(${JSON.stringify(SEALED_MARKUP("x-built"))});
 </script>`;
 
 const DECLARED = `<title>declared</title><style>${FIELD_STYLE}</style>
@@ -74,6 +100,8 @@ const pagesFor = (port: number): ReadonlyMap<string, string> =>
     ["/closed", CLOSED],
     ["/filled", FILLED],
     ["/declared", DECLARED],
+    ["/sealed", SEALED],
+    ["/built", BUILT],
     [
       "/embed",
       `<title>embed</title><style>body{margin:0}iframe{display:block;border:0;width:300px;height:100px}</style><iframe id="inner" src="http://two.test:${String(port)}/frame"></iframe>`,

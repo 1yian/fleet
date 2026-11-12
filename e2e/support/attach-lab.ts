@@ -74,6 +74,14 @@ export class AttachLab {
     return existsSync(join(this.dir, "terminated"));
   }
 
+  holdSsh(): void {
+    writeFileSync(join(this.dir, "ssh-held"), "");
+  }
+
+  sshWasStopped(): boolean {
+    return existsSync(join(this.dir, "ssh-terminated"));
+  }
+
   attach(args: readonly string[]): Run {
     return this.start(join(this.repo, "bin", "fleet-attach"), [
       ...args,
