@@ -36,7 +36,10 @@ export function paragraphs(text: string, width: number): string[] {
 export function packed(pieces: readonly string[], width: number, gap: string): string[] {
   const rows: string[] = [];
   let row = "";
-  for (const piece of pieces) {
+  const fitted = pieces.flatMap((piece) =>
+    visibleWidth(piece) > width ? wrapTextWithAnsi(piece, Math.max(1, width)) : [piece],
+  );
+  for (const piece of fitted) {
     const joined = row === "" ? piece : `${row}${gap}${piece}`;
     if (row !== "" && visibleWidth(joined) > width) {
       rows.push(row);
@@ -58,5 +61,7 @@ export function optionLines(label: string, room: number, tag: string, style: Sty
     const suffix = tagged && index === rows.length - 1 ? style.quiet(tag) : "";
     return `${style.word(row)}${suffix}`;
   });
-  return tag === "" || tagged ? lines : [...lines, style.quiet(tag.trimStart())];
+  if (tag === "" || tagged) return lines;
+  const alone = wrapTextWithAnsi(tag.trimStart(), Math.max(1, room));
+  return [...lines, ...alone.map((row) => style.quiet(row))];
 }

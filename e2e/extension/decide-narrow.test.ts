@@ -268,3 +268,51 @@ test("a press on an option reflows the card, and the release at the same place s
     source: "pane",
   });
 });
+
+const PLAN_OPTION = "Merge and roll it out";
+const PLAN_OTHER = "Merge only";
+
+test("in a pane about 14 columns wide no row of the card is wider than the pane, and the hints and the tag are still whole", async () => {
+  const pane = await lab.openVeryNarrowMain();
+  const merge = await lab.askedMerge(
+    pane,
+    "Pick the plan",
+    { question: "Merge it?", options: [PLAN_OPTION, PLAN_OTHER], approves: [PLAN_OPTION] },
+    1,
+  );
+  lab.answers(1);
+
+  await lab.herdr().submit(pane, "/d");
+  const screen = await lab.screenWhere(
+    pane,
+    "the card in the very narrow pane",
+    onCard(["My words", "esc"]),
+  );
+  keep("15-very-narrow-pane", screen);
+  const rows = cardRows(screen);
+  const width = rows.at(-1)?.length ?? 0;
+  assert.ok(
+    width > 0 && width <= 16,
+    `the pane is very narrow (${String(width)} columns):\n${screen}`,
+  );
+  assert.deepEqual(
+    rows.filter((row) => row.length > width),
+    [],
+    `no row is wider than the pane:\n${screen}`,
+  );
+  const text = squeezed(rows.join("\n"));
+  for (const whole of [
+    PLAN_OPTION,
+    PLAN_OTHER,
+    "(recommended)",
+    "↑↓ choose",
+    "⏎ select",
+    "type your own words",
+    "esc later",
+  ])
+    assert.ok(text.includes(squeezed(whole)), `${whole} is whole on the card:\n${screen}`);
+
+  await lab.herdr().press(pane, "down", "enter");
+  await lab.screenWhere(pane, "the card to clear", (each) => cardRows(each).length === 0);
+  assert.equal((await lab.mergeAnswer(merge)).choice, PLAN_OTHER);
+});

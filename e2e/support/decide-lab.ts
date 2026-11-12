@@ -12,8 +12,8 @@ import { configureMain, Scratch, startMain } from "./scratch.ts";
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EVIDENCE = process.env["DECIDE_EVIDENCE_DIR"];
-const RULE = /^─{20,}$/;
-export const CARD_TOP = /^── ◆ Decision \d+ of \d+/;
+const RULE = /^─{10,}$/;
+export const CARD_TOP = /^── ◆ Decision\b/;
 export const SHIP = "Ship the scrollbar fix?";
 export const RENAME = "Rename the repository?";
 export const MY_WORDS = "Keep the old name until the move in March";
@@ -168,6 +168,10 @@ export class DecideLab {
 
   openShortNarrowMain(): Promise<string> {
     return this.openMain({}, SHORT, NARROW);
+  }
+
+  openVeryNarrowMain(): Promise<string> {
+    return this.openMain({}, { direction: "right", ratio: 0.86 });
   }
 
   openMidNarrowMain(): Promise<string> {

@@ -432,7 +432,7 @@ export class DecisionCard implements Component, Focusable {
     const title = ` ${diamond} ${label}${this.dots()} `;
     const left = theme.fg("border", RULE.repeat(2));
     const room = Math.max(0, width - 2 - visibleWidth(title));
-    return `${left}${title}${theme.fg("border", RULE.repeat(room))}`;
+    return truncateToWidth(`${left}${title}${theme.fg("border", RULE.repeat(room))}`, width, "");
   }
 
   private dots(): string {
