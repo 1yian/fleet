@@ -363,16 +363,13 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private layout(): Layout {
-    const free = this.deps.rows() - FRAME_ROWS - (this.warning === undefined ? 0 : 1);
+    const free =
+      this.deps.rows() - FRAME_ROWS - ((this.note ?? this.arrival) === undefined ? 0 : 1);
     const picks = Math.min(this.choices.length, Math.max(1, free - MIN_BODY_ROWS));
     const left = free - picks;
     const spacers = Math.max(0, Math.min(SPACER_ROWS, left - MIN_BODY_ROWS));
     const body = Math.max(1, Math.min(MAX_BODY_ROWS, left - spacers));
     return { spacers, body, picks };
-  }
-
-  private get warning(): string | undefined {
-    return this.note ?? this.arrival;
   }
 
   render(width: number): string[] {
@@ -381,6 +378,7 @@ export class DecisionCard implements Component, Focusable {
     const line = (text: string): string => `${margin}${text}`;
     const quiet = (text: string): string => line(theme.fg("muted", this.fit(text, inner)));
     const decision = this.current;
+    const warning = this.note ?? this.arrival;
     if (this.clear || decision === undefined) return drawNothing(theme, this.top(width), width);
     const body = paragraphs(decision.question, inner);
     const layout = this.layout();
@@ -405,9 +403,7 @@ export class DecisionCard implements Component, Focusable {
       ...lines,
       ...picks.map(line),
       ...spacer(2),
-      ...(this.warning === undefined
-        ? []
-        : [line(theme.fg("warning", this.fit(this.warning, inner)))]),
+      ...(warning === undefined ? [] : [line(theme.fg("warning", this.fit(warning, inner)))]),
       line(this.hint(inner)),
       theme.fg("border", RULE.repeat(width)),
     ];
