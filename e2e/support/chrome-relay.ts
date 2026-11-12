@@ -45,6 +45,8 @@ export class ChromeRelay {
   private readonly frames = new Set<string>();
   private readonly held: (() => void)[] = [];
   private readonly failing = new Set<string>();
+  private refused = 0;
+  private readonly calls = new Map<string, number>();
   private blocking = false;
   private holding = false;
 
@@ -104,6 +106,14 @@ export class ChromeRelay {
     this.failing.add(method);
   }
 
+  callsOf(method: string): number {
+    return this.calls.get(method) ?? 0;
+  }
+
+  refusedCalls(): number {
+    return this.refused;
+  }
+
   mendTheMonitor(): void {
     this.failing.clear();
   }
@@ -152,7 +162,10 @@ export class ChromeRelay {
       link.forward(text);
       return;
     }
+    const method = optionalString(message, "method");
+    if (method !== undefined) this.calls.set(method, this.callsOf(method) + 1);
     if (this.failsNow(message)) {
+      this.refused++;
       refuse(link.client, message);
       return;
     }

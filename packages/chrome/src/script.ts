@@ -112,6 +112,7 @@ export const PAGE_SCRIPT = `(() => {
       adopt: (root) => {
         if (!(root instanceof ShadowRoot)) return;
         register(root);
+        walk(root);
         refresh();
       },
     },

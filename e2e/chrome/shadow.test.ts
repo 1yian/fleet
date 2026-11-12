@@ -174,3 +174,36 @@ test("a password typed into a closed shadow root that a loaded page builds with 
   captain.close();
   await lab.chrome.closeTab(tab.target);
 });
+
+const PEEK_NESTED = "document.querySelector('x-nested').peek()";
+
+test("a password typed into an open root inside a closed root before the guard starts is guarded", async () => {
+  await lab.stopGuard();
+  await lab.chrome.open(lab.site.url("/nested"));
+  const target = await lab.waitForTab("/nested", "nested");
+  const captain = await Captain.at(lab.chrome, target);
+  await captain.click("#x-nested");
+  await captain.type(SECRET);
+
+  await lab.restartGuard();
+  const worker = await lab.worker();
+  const session = await worker.attach(target);
+  const reply = await worker.evaluate(session, PEEK_NESTED);
+  assert.equal(reply.ok, false);
+  assert.match(reply.text, REFUSED);
+  assert.ok(!reply.text.includes(SECRET));
+  const snapshot = await worker.call(session, "DOMSnapshot.captureSnapshot", {
+    computedStyles: [],
+  });
+  assert.equal(snapshot.ok, false);
+  assert.match(snapshot.text, REFUSED);
+
+  await captain.erase(SECRET.length);
+  await captain.click("#user");
+  await until(async () => {
+    const again = await worker.evaluate(session, PEEK_NESTED);
+    return again.ok && again.text === '""' ? true : undefined;
+  }, "the read to work once the nested field is empty");
+  captain.close();
+  await lab.chrome.closeTab(target);
+});

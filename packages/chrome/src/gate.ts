@@ -59,7 +59,9 @@ export class Gate {
     if (wire?.id === undefined || wire.method === undefined)
       return { close: "a DevTools message must have an id and a method" };
     const ref = await this.refFor(wire.sessionId);
-    const verdict = await this.verdictFor(ref);
+    const verdict = allowedWhileTyped(wire.method, wire.params)
+      ? "clear"
+      : await this.verdictFor(ref);
     const refusal = this.refusal(wire, wire.method, verdict);
     if (refusal !== undefined) return { answer: refusalReply(wire, refusal) };
     this.remember(wire, wire.id, wire.method);
@@ -122,18 +124,22 @@ export class Gate {
     return this.watch.settled(ref.id);
   }
 
-  private typedNow(ref: Ref): boolean {
-    if (ref.kind === "other") return false;
-    if (ref.kind === "unknown") return this.watch.unplaced() !== "clear";
-    return this.watch.verdict(ref.id) !== "clear";
+  private verdictNow(ref: Ref): Verdict {
+    if (ref.kind === "other") return "clear";
+    if (ref.kind === "unknown") return this.watch.unplaced();
+    return this.watch.verdict(ref.id);
   }
 
   private outdated(wire: Wire, id: number): string | undefined {
     const read = this.reads.get(id);
     this.reads.delete(id);
     if (read === undefined) return undefined;
-    if (this.watch.epoch(read.ref) === read.epoch && !this.typedNow(read.ref)) return undefined;
-    return refusalReply(wire, typedMessage(read.method));
+    const now = this.verdictNow(read.ref);
+    if (this.watch.epoch(read.ref) === read.epoch && now === "clear") return undefined;
+    return refusalReply(
+      wire,
+      now === "unseen" ? unseenMessage(read.method) : typedMessage(read.method),
+    );
   }
 
   private answered(wire: Wire, id: number): void {
@@ -166,7 +172,7 @@ export class Gate {
   }
 
   private screened(wire: Wire, method: string, raw: string): string | undefined {
-    if (!this.typedNow(this.refNow(wire.sessionId))) return raw;
+    if (this.verdictNow(this.refNow(wire.sessionId)) === "clear") return raw;
     if (droppedWhileTyped(method)) return undefined;
     const stripped = withoutBody(method, wire.params);
     if (stripped === undefined) return raw;

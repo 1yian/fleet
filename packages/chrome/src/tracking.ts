@@ -86,3 +86,61 @@ export class Contexts {
     this.defaultsBy.clear();
   }
 }
+
+const LOAD_FORCE_MS = 10_000;
+
+export class Loads {
+  private readonly generations = new Map<string, number>();
+  private readonly since = new Map<string, number>();
+  private readonly awaiting = new Map<string, Set<string>>();
+
+  mark(session: string): void {
+    if (!this.since.has(session)) this.since.set(session, Date.now());
+  }
+
+  invalidate(session: string): void {
+    this.generations.set(session, this.generation(session) + 1);
+    this.mark(session);
+  }
+
+  begin(session: string, frame: string): void {
+    this.invalidate(session);
+    this.since.set(session, Date.now());
+    const frames = this.awaiting.get(session) ?? new Set<string>();
+    frames.add(frame);
+    this.awaiting.set(session, frames);
+  }
+
+  parsed(session: string, frame: string): void {
+    this.awaiting.get(session)?.delete(frame);
+  }
+
+  generation(session: string): number {
+    return this.generations.get(session) ?? 0;
+  }
+
+  waiting(session: string): boolean {
+    return (this.awaiting.get(session)?.size ?? 0) > 0;
+  }
+
+  overdue(session: string): boolean {
+    const started = this.since.get(session);
+    return started !== undefined && Date.now() - started >= LOAD_FORCE_MS;
+  }
+
+  done(session: string): void {
+    this.since.delete(session);
+    this.awaiting.delete(session);
+  }
+
+  forget(session: string): void {
+    this.done(session);
+    this.generations.delete(session);
+  }
+
+  clear(): void {
+    this.generations.clear();
+    this.since.clear();
+    this.awaiting.clear();
+  }
+}

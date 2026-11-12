@@ -18,9 +18,7 @@ function closedRoots(node: unknown, found: number[] = []): number[] {
 }
 
 export class Scanner {
-  private readonly adopted = new Map<string, Set<number>>();
   private readonly tails = new Map<string, Promise<void>>();
-  private readonly failed = new Set<string>();
 
   scan(cdp: Cdp, session: string): Promise<void> {
     const run = (this.tails.get(session) ?? Promise.resolve()).then(() =>
@@ -37,41 +35,32 @@ export class Scanner {
     return run;
   }
 
-  rescan(cdp: Cdp, session: string): void {
-    this.scan(cdp, session).then(
-      () => {
-        this.failed.delete(session);
-      },
-      (error: unknown) => {
-        this.failed.add(session);
-        console.error(`guard: cannot look for closed shadow roots: ${String(error)}`);
-      },
-    );
-  }
-
-  retry(cdp: Cdp): void {
-    for (const session of [...this.failed]) if (!this.tails.has(session)) this.rescan(cdp, session);
-  }
-
-  navigated(session: string): void {
-    this.adopted.delete(session);
+  async parsed(cdp: Cdp, session: string, contexts: readonly number[]): Promise<boolean> {
+    if (contexts.length === 0) return false;
+    for (const contextId of contexts) {
+      const state = await cdp
+        .send(
+          "Runtime.evaluate",
+          { expression: "document.readyState", contextId, returnByValue: true },
+          { sessionId: session },
+        )
+        .catch(() => undefined);
+      const value = record(record(state)?.["result"])?.["value"];
+      if (typeof value !== "string" || value === "loading") return false;
+    }
+    return true;
   }
 
   forget(session: string): void {
-    this.adopted.delete(session);
-    this.failed.delete(session);
+    this.tails.delete(session);
   }
 
   clear(): void {
-    this.adopted.clear();
     this.tails.clear();
-    this.failed.clear();
   }
 
   private async inspect(cdp: Cdp, session: string): Promise<void> {
     const on = { sessionId: session };
-    const adopted = this.adopted.get(session) ?? new Set<number>();
-    this.adopted.set(session, adopted);
     await cdp.send("DOM.enable", {}, on);
     try {
       const root = record(await cdp.send("DOM.getDocument", { depth: -1, pierce: true }, on))?.[
@@ -79,7 +68,6 @@ export class Scanner {
       ];
       if (record(root) === undefined) throw new Error("the page gave no document");
       for (const backendNodeId of closedRoots(root)) {
-        if (adopted.has(backendNodeId)) continue;
         const resolved = record(await cdp.send("DOM.resolveNode", { backendNodeId }, on));
         const objectId = words(record(resolved?.["object"]), "objectId");
         if (objectId === undefined) throw new Error("a closed shadow root cannot be reached");
@@ -92,7 +80,6 @@ export class Scanner {
         );
         if (called?.["exceptionDetails"] !== undefined)
           throw new Error("a closed shadow root was not handed to the page script");
-        adopted.add(backendNodeId);
       }
     } finally {
       await cdp.send("DOM.disable", {}, on).catch(() => undefined);

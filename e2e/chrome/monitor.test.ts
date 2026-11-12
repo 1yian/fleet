@@ -119,3 +119,104 @@ test("a tab stays unseen while the guard cannot finish looking at it, and reads 
     return reply.ok && reply.text === "2" ? true : undefined;
   }, "the read to work once the guard has looked at the tab");
 });
+
+test("a tab that navigates stays unseen while the guard cannot finish its look after the parse", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/login", "login");
+  const before = relay.refusedCalls();
+  relay.failTheMonitor("DOM.getDocument");
+  const navigated = await worker.call(tab.session, "Page.navigate", {
+    url: lab.site.url("/notes"),
+  });
+  assert.equal(navigated.ok, true);
+  await until(
+    () => (relay.refusedCalls() >= before + 2 ? true : undefined),
+    "the guard to fail its look after the parse and to try again",
+  );
+  const blocked = await worker.evaluate(tab.session, "document.title");
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.text, /not ready/);
+
+  relay.mendTheMonitor();
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return reply.ok && reply.text === '"notes"' ? true : undefined;
+  }, "the read to work once the guard has looked at the new page");
+});
+
+async function startHeldPage(
+  relay: NonNullable<typeof lab.relay>,
+  worker: Worker,
+): Promise<{ target: string; session: string }> {
+  const tab = await worker.open("about:blank");
+  const scans = relay.callsOf("DOM.getDocument");
+  const navigated = await worker.call(tab.session, "Page.navigate", {
+    url: lab.site.url("/held"),
+  });
+  assert.equal(navigated.ok, true);
+  await lab.waitForTab("/held", "held");
+  await until(
+    () => (relay.callsOf("DOM.getDocument") > scans ? true : undefined),
+    "the guard to look at the page before its parse is done",
+  );
+  return tab;
+}
+
+test("a closed root that the parse builds after the guard's look is guarded while the page is still loading", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await startHeldPage(relay, worker);
+  lab.site.continueHeld();
+  await until(async () => {
+    const built = await lab.chrome.evaluate(tab.target, "!!document.querySelector('#x-held')");
+    return built === true ? true : undefined;
+  }, "the page to build the closed root");
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#x-held");
+  await captain.type(SECRET);
+
+  const early = await worker.evaluate(tab.session, "document.title");
+  assert.equal(early.ok, false);
+  assert.match(early.text, /not ready|captain.*password/i);
+  assert.ok(!early.text.includes(SECRET));
+  const snapshot = await worker.call(tab.session, "DOMSnapshot.captureSnapshot", {
+    computedStyles: [],
+  });
+  assert.equal(snapshot.ok, false);
+  assert.ok(!snapshot.text.includes(SECRET));
+  lab.site.release();
+  const looked = await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return !reply.ok && REFUSED.test(reply.text) ? reply : undefined;
+  }, "the guard to see the password typed into the page once its parse is done");
+  assert.ok(!looked.text.includes(SECRET));
+
+  await captain.erase(SECRET.length);
+  await captain.click("#user");
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return reply.ok && reply.text === '"held"' ? true : undefined;
+  }, "the read to work once the page is done and the field is empty");
+  captain.close();
+  await lab.chrome.closeTab(tab.target);
+});
+
+test("a page that never finishes its parse does not keep workers out for ever", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await startHeldPage(relay, worker);
+
+  const early = await worker.evaluate(tab.session, "document.title");
+  assert.equal(early.ok, false);
+  assert.match(early.text, /not ready/);
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return reply.ok && reply.text === '"held"' ? true : undefined;
+  }, "the guard to look into the page that never finishes loading");
+  lab.site.release();
+  await lab.chrome.closeTab(tab.target);
+});

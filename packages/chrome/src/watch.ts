@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { Cdp, type CdpEvent } from "@fleet/protocol";
 import Type from "typebox";
-import { Scanner } from "./roots.ts";
+import { Observer } from "./observer.ts";
 import { BINDING, PAGE_SCRIPT, RESCAN } from "./script.ts";
 import { Contexts, Targets, type Ref } from "./tracking.ts";
 import { record, shape, words } from "./wire.ts";
@@ -29,7 +29,7 @@ const ContextCreated = Type.Object({
   }),
 });
 const ContextDestroyed = Type.Object({ executionContextId: Type.Integer() });
-const Lifecycle = Type.Object({ name: Type.String() });
+const Lifecycle = Type.Object({ name: Type.Optional(Type.String()), frameId: Type.String() });
 const Bound = Type.Object({
   name: Type.String(),
   payload: Type.String(),
@@ -46,6 +46,7 @@ const LOADED = new Set(["DOMContentLoaded", "load"]);
 interface Page {
   readonly sessions: Set<string>;
   readonly pending: Set<string>;
+  own: string | undefined;
 }
 
 type Handler = (cdp: Cdp, event: CdpEvent) => void;
@@ -55,8 +56,17 @@ export class Watch implements Typing {
   private readonly owners = new Map<string, string>();
   private readonly epochs = new Map<string, number>();
   private readonly injected = new Set<string>();
-  private readonly prepared = new Set<string>();
-  private readonly scanner = new Scanner();
+  private readonly observer = new Observer({
+    hold: (session) => {
+      this.owned(session)?.pending.add(session);
+    },
+    release: (session) => {
+      this.owned(session)?.pending.delete(session);
+      this.notify();
+    },
+    waiting: () => [...this.pages.values()].flatMap((page) => [...page.pending]),
+    defaults: (session) => this.contexts.defaults(session),
+  });
   private readonly targets = new Targets();
   private readonly contexts = new Contexts();
   private readonly waiters = new Set<() => void>();
@@ -117,9 +127,21 @@ export class Watch implements Typing {
       },
     ],
     [
-      "Page.frameNavigated",
+      "Page.frameStartedLoading",
+      (_cdp, event) => {
+        this.onStarted(event);
+      },
+    ],
+    [
+      "Page.frameStoppedLoading",
       (cdp, event) => {
-        this.onNavigated(cdp, event);
+        this.onLifecycle(cdp, event);
+      },
+    ],
+    [
+      "Page.frameNavigated",
+      (_cdp, event) => {
+        this.onNavigated(event);
       },
     ],
   ]);
@@ -155,7 +177,7 @@ export class Watch implements Typing {
 
   verdict(pageId: string): Verdict {
     const page = this.pages.get(pageId);
-    if (page === undefined || page.pending.size > 0) return "unseen";
+    if (page?.own === undefined || page.pending.size > 0) return "unseen";
     return [...page.sessions].some((session) => this.contexts.typed(session)) ? "typed" : "clear";
   }
 
@@ -203,7 +225,7 @@ export class Watch implements Typing {
     this.notify();
     console.error("guard: watching the browser");
     const tick = setInterval(() => {
-      this.scanner.retry(cdp);
+      this.observer.retry(cdp);
     }, TICK_MS);
     try {
       await closed;
@@ -217,8 +239,7 @@ export class Watch implements Typing {
     this.lostAt = ++this.clock;
     this.epochs.clear();
     this.injected.clear();
-    this.prepared.clear();
-    this.scanner.clear();
+    this.observer.clear();
     this.pages.clear();
     this.owners.clear();
     this.targets.clear();
@@ -273,7 +294,6 @@ export class Watch implements Typing {
       return;
     this.targets.frame(attached.targetInfo.targetId, page);
     this.adopt(page, attached.sessionId);
-    this.pages.get(page)?.pending.add(attached.sessionId);
     void this.prepareFrame(cdp, page, attached.sessionId);
   }
 
@@ -303,26 +323,32 @@ export class Watch implements Typing {
   }
 
   private onLifecycle(cdp: Cdp, event: CdpEvent): void {
-    const name = shape(Lifecycle, event.params)?.name;
-    if (name !== undefined && LOADED.has(name) && event.sessionId !== undefined)
-      this.rescan(cdp, event.sessionId);
+    const lifecycle = shape(Lifecycle, event.params);
+    if (event.sessionId === undefined || lifecycle === undefined) return;
+    if (lifecycle.name === undefined || LOADED.has(lifecycle.name))
+      this.observer.parsed(cdp, event.sessionId, lifecycle.frameId);
   }
 
-  private onNavigated(cdp: Cdp, event: CdpEvent): void {
-    if (event.sessionId === undefined) return;
-    this.scanner.navigated(event.sessionId);
-    this.rescan(cdp, event.sessionId);
+  private onStarted(event: CdpEvent): void {
+    const frame = shape(Lifecycle, event.params)?.frameId;
+    if (event.sessionId !== undefined && frame !== undefined && this.owned(event.sessionId))
+      this.observer.started(event.sessionId, frame);
   }
 
-  private rescan(cdp: Cdp, session: string): void {
-    if (this.prepared.has(session)) this.scanner.rescan(cdp, session);
+  private onNavigated(event: CdpEvent): void {
+    if (event.sessionId !== undefined && this.owned(event.sessionId))
+      this.observer.navigated(event.sessionId);
+  }
+
+  private owned(session: string): Page | undefined {
+    return this.pages.get(this.owners.get(session) ?? "");
   }
 
   private onBound(cdp: Cdp, event: CdpEvent): void {
     const call = shape(Bound, event.params);
     if (call?.name !== BINDING || event.sessionId === undefined) return;
     if (call.payload === RESCAN) {
-      this.rescan(cdp, event.sessionId);
+      this.observer.rescan(cdp, event.sessionId);
       return;
     }
     const typed = call.payload === "1";
@@ -341,6 +367,7 @@ export class Watch implements Typing {
   private adopt(page: string, session: string): void {
     this.owners.set(session, page);
     this.pages.get(page)?.sessions.add(session);
+    this.observer.hold(session);
   }
 
   private forget(session: string): void {
@@ -349,42 +376,40 @@ export class Watch implements Typing {
     this.owners.delete(session);
     page?.sessions.delete(session);
     page?.pending.delete(session);
+    if (page?.own === session) page.own = undefined;
     this.contexts.drop(session);
     this.injected.delete(session);
-    this.prepared.delete(session);
-    this.scanner.forget(session);
+    this.observer.forget(session);
   }
 
   private async attachPage(cdp: Cdp, id: string): Promise<void> {
-    const page: Page = { sessions: new Set(), pending: new Set([id]) };
+    const page: Page = { sessions: new Set(), pending: new Set(), own: undefined };
     this.pages.set(id, page);
-    let session: string | undefined;
-    const seen = await this.persist(
+    await this.persist(
       cdp,
       `tab ${id}`,
       () => this.pages.get(id) === page,
       async () => {
-        if (session === undefined) {
+        if (page.own === undefined) {
           const attached = await cdp.send("Target.attachToTarget", { targetId: id, flatten: true });
-          session = words(record(attached), "sessionId");
+          const session = words(record(attached), "sessionId");
           if (session === undefined) throw new Error("the tab did not attach");
+          page.own = session;
           this.adopt(id, session);
         }
-        await this.prepare(cdp, session);
+        await this.prepare(cdp, page.own);
       },
     );
-    if (seen) page.pending.delete(id);
     this.notify();
   }
 
   private async prepareFrame(cdp: Cdp, pageId: string, session: string): Promise<void> {
-    const seen = await this.persist(
+    await this.persist(
       cdp,
       "a frame",
       () => this.owners.get(session) === pageId,
       () => this.prepare(cdp, session),
     );
-    if (seen) this.pages.get(pageId)?.pending.delete(session);
     this.notify();
   }
 
@@ -393,17 +418,16 @@ export class Watch implements Typing {
     what: string,
     alive: () => boolean,
     work: () => Promise<void>,
-  ): Promise<boolean> {
+  ): Promise<void> {
     while (cdp.open && alive()) {
       try {
         await work();
-        return true;
+        return;
       } catch (error) {
         console.error(`guard: cannot see ${what} yet, trying again: ${String(error)}`);
         await sleep(RETRY_MS);
       }
     }
-    return false;
   }
 
   private async prepare(cdp: Cdp, sessionId: string): Promise<void> {
@@ -427,7 +451,6 @@ export class Watch implements Typing {
       );
       if (ran?.["exceptionDetails"] !== undefined) throw new Error("the page script did not run");
     }
-    this.prepared.add(sessionId);
-    await this.scanner.scan(cdp, sessionId);
+    await this.observer.enrol(cdp, sessionId);
   }
 }

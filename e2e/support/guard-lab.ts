@@ -1,5 +1,5 @@
 import { type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { Cdp } from "@fleet/protocol";
 import { ChromeRelay } from "./chrome-relay.ts";
@@ -34,7 +34,7 @@ const AUTOFOCUS = LOGIN.replace(
 
 const NOTES = `<title>notes</title><p id="note">plain notes</p>`;
 
-const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled,x-sealed,x-built{display:block;width:240px;height:30px}`;
+const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled,x-sealed,x-built,x-held,x-nested{display:block;width:240px;height:30px}`;
 
 const CLOSED = `<title>closed</title><style>${FIELD_STYLE}</style>
 <input id="user" autocomplete="off"><x-login id="login"></x-login>
@@ -77,6 +77,27 @@ ${SEALED_ELEMENT("x-built")}
 window.build = () => document.querySelector("#slot").setHTMLUnsafe(${JSON.stringify(SEALED_MARKUP("x-built"))});
 </script>`;
 
+const HELD = `<title>held</title><style>${FIELD_STYLE}</style>
+<input id="user" autocomplete="off">
+`;
+
+const HELD_ROOT = `${SEALED_MARKUP("x-held")}
+`;
+
+const NESTED = `<title>nested</title><style>${FIELD_STYLE}</style>
+<input id="user" autocomplete="off"><x-nested id="x-nested"><template shadowrootmode="closed"><style>${FIELD_STYLE}</style><div id="inner"><template shadowrootmode="open"><style>${FIELD_STYLE}</style><input type="password" autocomplete="off"></template></div></template></x-nested>
+<script>
+customElements.define("x-nested", class extends HTMLElement {
+  constructor() {
+    super();
+    this.internals = this.attachInternals();
+  }
+  peek() {
+    return this.internals.shadowRoot.querySelector("#inner").shadowRoot.querySelector("input").value;
+  }
+});
+</script>`;
+
 const DECLARED = `<title>declared</title><style>${FIELD_STYLE}</style>
 <div><template shadowrootmode="open"><input type="password" value="declared-secret"></template></div>`;
 
@@ -102,6 +123,7 @@ const pagesFor = (port: number): ReadonlyMap<string, string> =>
     ["/declared", DECLARED],
     ["/sealed", SEALED],
     ["/built", BUILT],
+    ["/nested", NESTED],
     [
       "/embed",
       `<title>embed</title><style>body{margin:0}iframe{display:block;border:0;width:300px;height:100px}</style><iframe id="inner" src="http://two.test:${String(port)}/frame"></iframe>`,
@@ -122,15 +144,18 @@ export class Site {
   readonly submitted: string[];
   readonly port: number;
   private readonly server: Server;
+  private readonly held: ServerResponse[];
 
-  private constructor(server: Server, port: number, submitted: string[]) {
+  private constructor(server: Server, port: number, submitted: string[], held: ServerResponse[]) {
     this.server = server;
     this.port = port;
     this.submitted = submitted;
+    this.held = held;
   }
 
   static async start(): Promise<Site> {
     const submitted: string[] = [];
+    const held: ServerResponse[] = [];
     let port = 0;
     const server = createServer((request, response) => {
       const path = request.url ?? "/";
@@ -140,16 +165,27 @@ export class Site {
           submitted.push(body);
           response.end("<title>welcome</title>welcome");
         });
+      } else if (path === "/held") {
+        response.write(HELD);
+        held.push(response);
       } else response.end(pagesFor(port).get(path) ?? NOTES);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     port = typeof address === "object" && address !== null ? address.port : 0;
-    return new Site(server, port, submitted);
+    return new Site(server, port, submitted, held);
   }
 
   url(path: string, host = "one.test"): string {
     return `http://${host}:${String(this.port)}${path}`;
+  }
+
+  continueHeld(): void {
+    for (const response of this.held) response.write(HELD_ROOT);
+  }
+
+  release(): void {
+    for (const response of this.held.splice(0)) response.end("<p>done</p>");
   }
 
   async stop(): Promise<void> {
