@@ -56,17 +56,7 @@ export class Watch implements Typing {
   private readonly owners = new Map<string, string>();
   private readonly epochs = new Map<string, number>();
   private readonly injected = new Set<string>();
-  private readonly observer = new Observer({
-    hold: (session) => {
-      this.owned(session)?.pending.add(session);
-    },
-    release: (session) => {
-      this.owned(session)?.pending.delete(session);
-      this.notify();
-    },
-    waiting: () => [...this.pages.values()].flatMap((page) => [...page.pending]),
-    defaults: (session) => this.contexts.defaults(session),
-  });
+  private readonly observer: Observer;
   private readonly targets = new Targets();
   private readonly contexts = new Contexts();
   private readonly waiters = new Set<() => void>();
@@ -139,6 +129,12 @@ export class Watch implements Typing {
       },
     ],
     [
+      "Page.frameDetached",
+      (cdp, event) => {
+        this.onLifecycle(cdp, event);
+      },
+    ],
+    [
       "Page.frameNavigated",
       (_cdp, event) => {
         this.onNavigated(event);
@@ -152,8 +148,22 @@ export class Watch implements Typing {
   private typedAt = 0;
   private current: Cdp | undefined;
 
-  constructor(endpoint: () => string) {
+  constructor(endpoint: () => string, parseWaitMs: number) {
     this.endpoint = endpoint;
+    this.observer = new Observer(
+      {
+        hold: (session) => {
+          this.owned(session)?.pending.add(session);
+        },
+        release: (session) => {
+          this.owned(session)?.pending.delete(session);
+          this.notify();
+        },
+        waiting: () => [...this.pages.values()].flatMap((page) => [...page.pending]),
+        defaults: (session) => this.contexts.defaults(session),
+      },
+      parseWaitMs,
+    );
   }
 
   start(): void {

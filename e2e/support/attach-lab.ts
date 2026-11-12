@@ -13,6 +13,8 @@ export interface Step {
   readonly exit?: number;
   readonly stay?: boolean;
   readonly say?: string;
+  readonly pieces?: readonly string[];
+  readonly to?: "stdout" | "stderr";
 }
 
 export interface Run {
@@ -72,6 +74,10 @@ export class AttachLab {
 
   xpraWasStopped(): boolean {
     return existsSync(join(this.dir, "terminated"));
+  }
+
+  releasePiece(call: number, piece: number): void {
+    writeFileSync(join(this.dir, `release-${String(call)}-${String(piece)}`), "");
   }
 
   holdSsh(): void {

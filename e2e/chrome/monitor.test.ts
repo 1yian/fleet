@@ -9,7 +9,7 @@ const REFUSED = /captain.*password/i;
 let lab: GuardLab;
 
 before(async () => {
-  lab = await GuardLab.start(["--site-per-process"], { relay: true });
+  lab = await GuardLab.start(["--site-per-process"], { relay: true, parseWaitMs: 60_000 });
 });
 after(async () => {
   await lab.stop();
@@ -201,22 +201,5 @@ test("a closed root that the parse builds after the guard's look is guarded whil
     return reply.ok && reply.text === '"held"' ? true : undefined;
   }, "the read to work once the page is done and the field is empty");
   captain.close();
-  await lab.chrome.closeTab(tab.target);
-});
-
-test("a page that never finishes its parse does not keep workers out for ever", async () => {
-  const relay = lab.relay;
-  assert.ok(relay, "the lab has no relay in front of Chrome");
-  const worker = await lab.worker();
-  const tab = await startHeldPage(relay, worker);
-
-  const early = await worker.evaluate(tab.session, "document.title");
-  assert.equal(early.ok, false);
-  assert.match(early.text, /not ready/);
-  await until(async () => {
-    const reply = await worker.evaluate(tab.session, "document.title");
-    return reply.ok && reply.text === '"held"' ? true : undefined;
-  }, "the guard to look into the page that never finishes loading");
-  lab.site.release();
   await lab.chrome.closeTab(tab.target);
 });

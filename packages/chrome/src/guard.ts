@@ -1,10 +1,11 @@
 import { parseArgs } from "node:util";
 import { serve } from "./serve.ts";
 import { loopbackAddress, upstreamOf } from "./upstream.ts";
+import { PARSE_WAIT_MS } from "./tracking.ts";
 import { Watch } from "./watch.ts";
 
 const USAGE =
-  "usage: guard.ts --chrome <127.0.0.1:port | profile directory> [--listen 127.0.0.1:9222]";
+  "usage: guard.ts --chrome <127.0.0.1:port | profile directory> [--listen 127.0.0.1:9222] [--parse-wait-ms 10000]";
 
 function listenAddress(spec: string): { host: string; port: number } {
   const address = loopbackAddress(spec) ?? (/^\[::1\]:\d{1,5}$/.test(spec) ? spec : undefined);
@@ -19,12 +20,18 @@ function listenAddress(spec: string): { host: string; port: number } {
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
-    options: { listen: { type: "string", default: "127.0.0.1:9222" }, chrome: { type: "string" } },
+    options: {
+      listen: { type: "string", default: "127.0.0.1:9222" },
+      chrome: { type: "string" },
+      "parse-wait-ms": { type: "string", default: String(PARSE_WAIT_MS) },
+    },
   });
-  if (values.chrome === undefined) throw new Error(USAGE);
+  const parseWaitMs = Number(values["parse-wait-ms"]);
+  if (values.chrome === undefined || !Number.isInteger(parseWaitMs) || parseWaitMs <= 0)
+    throw new Error(USAGE);
   const { host, port } = listenAddress(values.listen);
   const upstream = upstreamOf(values.chrome);
-  const watch = new Watch(() => `http://${upstream()}`);
+  const watch = new Watch(() => `http://${upstream()}`, parseWaitMs);
   watch.start();
   const served = await serve(host, port, upstream, watch);
   console.error(`guard: listening on ${host}:${String(port)} in front of ${values.chrome}`);

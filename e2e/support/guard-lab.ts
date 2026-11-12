@@ -350,7 +350,7 @@ export class GuardLab {
   readonly relay: ChromeRelay | undefined;
   private readonly scratch: Scratch;
   private readonly port: number;
-  private readonly upstream: string;
+  private readonly launch: () => ChildProcess;
   private child: ChildProcess | undefined;
   private readonly workers: Worker[] = [];
 
@@ -359,7 +359,7 @@ export class GuardLab {
     site: Site,
     scratch: Scratch,
     port: number,
-    upstream: string,
+    launch: () => ChildProcess,
     child: ChildProcess | undefined,
     chromeArgs: readonly string[],
     relay: ChromeRelay | undefined,
@@ -369,7 +369,7 @@ export class GuardLab {
     this.site = site;
     this.scratch = scratch;
     this.port = port;
-    this.upstream = upstream;
+    this.launch = launch;
     this.child = child;
     this.relay = relay;
     this.proxy = `http://127.0.0.1:${String(port)}`;
@@ -378,7 +378,7 @@ export class GuardLab {
 
   static async start(
     chromeArgs: readonly string[] = [],
-    options: { readonly relay?: boolean } = {},
+    options: { readonly relay?: boolean; readonly parseWaitMs?: number } = {},
   ): Promise<GuardLab> {
     const scratch = new Scratch("guard");
     const chrome = await StandInChrome.start("MAP *.test 127.0.0.1", chromeArgs);
@@ -389,8 +389,11 @@ export class GuardLab {
         ? await ChromeRelay.start(chrome.endpoint.replace("http://", ""))
         : undefined;
     const upstream = relay?.address ?? chrome.endpoint.replace("http://", "");
-    const child = WITHOUT_GUARD ? undefined : spawnGuard(scratch, port, upstream);
-    const lab = new GuardLab(chrome, site, scratch, port, upstream, child, chromeArgs, relay);
+    const guardArgs =
+      options.parseWaitMs === undefined ? [] : ["--parse-wait-ms", String(options.parseWaitMs)];
+    const launch = (): ChildProcess => spawnGuard(scratch, port, upstream, guardArgs);
+    const child = WITHOUT_GUARD ? undefined : launch();
+    const lab = new GuardLab(chrome, site, scratch, port, launch, child, chromeArgs, relay);
     if (!WITHOUT_GUARD) await lab.listening();
     return lab;
   }
@@ -416,7 +419,7 @@ export class GuardLab {
 
   async restartGuard(): Promise<void> {
     await this.stopGuard();
-    this.child = spawnGuard(this.scratch, this.port, this.upstream);
+    this.child = this.launch();
     await this.listening();
   }
 
@@ -478,11 +481,16 @@ export class GuardLab {
   }
 }
 
-function spawnGuard(scratch: Scratch, port: number, upstream: string): ChildProcess {
+function spawnGuard(
+  scratch: Scratch,
+  port: number,
+  upstream: string,
+  extra: readonly string[],
+): ChildProcess {
   const entry = join(scratch.root, "packages", "chrome", "src", "guard.ts");
   return spawnGuarded(
     "node",
-    [entry, "--listen", `127.0.0.1:${String(port)}`, "--chrome", upstream],
+    [entry, "--listen", `127.0.0.1:${String(port)}`, "--chrome", upstream, ...extra],
     { stdio: ["ignore", "ignore", "inherit"] },
   );
 }

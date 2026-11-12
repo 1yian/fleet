@@ -114,6 +114,30 @@ test("an interrupt while the guard is being checked ends the launcher and attach
   });
 });
 
+test("a host's goodbye that arrives in pieces is still taken for the host ending the session", async () => {
+  await withAttach(async (attach) => {
+    attach.plan([
+      { pieces: ["server requested discon", "nect:\n server shutdown"], to: "stderr", exit: 0 },
+      { pieces: ["server requested ", "disconnect:\n server shutdown"], to: "stdout", exit: 0 },
+      { exit: 0 },
+    ]);
+    const run = mac(attach);
+    await until(
+      () => (run.output().includes("server requested discon") ? true : undefined),
+      "the first piece of the goodbye",
+    );
+    attach.releasePiece(0, 1);
+    await until(
+      () => (run.output().split("server requested ").length > 2 ? true : undefined),
+      "the first piece of the second goodbye",
+    );
+    attach.releasePiece(1, 1);
+    assert.equal(await run.exit, 0);
+    assert.equal(attach.xpraArguments().length, 3);
+    assert.equal(run.output().match(/host ended the session/g)?.length, 2);
+  });
+});
+
 test("a failure that waiting will not fix stops the launcher with Xpra's own exit code", async () => {
   await withAttach(async (attach) => {
     attach.plan([{ exit: 5 }]);

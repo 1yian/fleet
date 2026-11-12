@@ -87,12 +87,19 @@ export class Contexts {
   }
 }
 
-const LOAD_FORCE_MS = 10_000;
+export const PARSE_WAIT_MS = 10_000;
+
+const PROBED = "";
 
 export class Loads {
   private readonly generations = new Map<string, number>();
   private readonly since = new Map<string, number>();
-  private readonly awaiting = new Map<string, Set<string>>();
+  private readonly awaiting = new Map<string, Map<string, number>>();
+  private readonly parseWaitMs: number;
+
+  constructor(parseWaitMs: number) {
+    this.parseWaitMs = parseWaitMs;
+  }
 
   mark(session: string): void {
     if (!this.since.has(session)) this.since.set(session, Date.now());
@@ -106,13 +113,19 @@ export class Loads {
   begin(session: string, frame: string): void {
     this.invalidate(session);
     this.since.set(session, Date.now());
-    const frames = this.awaiting.get(session) ?? new Set<string>();
-    frames.add(frame);
+    this.record(session, frame);
+  }
+
+  private record(session: string, frame: string): void {
+    const frames = this.awaiting.get(session) ?? new Map<string, number>();
+    frames.set(frame, Date.now());
     this.awaiting.set(session, frames);
   }
 
   parsed(session: string, frame: string): void {
-    this.awaiting.get(session)?.delete(frame);
+    const frames = this.awaiting.get(session);
+    frames?.delete(frame);
+    if (frames?.size === 0) this.awaiting.delete(session);
   }
 
   generation(session: string): number {
@@ -120,21 +133,38 @@ export class Loads {
   }
 
   waiting(session: string): boolean {
-    return (this.awaiting.get(session)?.size ?? 0) > 0;
+    return this.awaiting.has(session);
+  }
+
+  awaitingEvents(session: string): boolean {
+    const frames = this.awaiting.get(session);
+    return frames !== undefined && [...frames.keys()].some((frame) => frame !== PROBED);
+  }
+
+  probed(session: string, parsed: boolean): void {
+    if (parsed) this.parsed(session, PROBED);
+    else if (!this.awaiting.get(session)?.has(PROBED)) this.record(session, PROBED);
+  }
+
+  loading(): string[] {
+    return [...this.awaiting.keys()];
   }
 
   overdue(session: string): boolean {
+    const waited = (started: number): boolean => Date.now() - started >= this.parseWaitMs;
+    const frames = this.awaiting.get(session);
+    if (frames !== undefined) return [...frames.values()].every(waited);
     const started = this.since.get(session);
-    return started !== undefined && Date.now() - started >= LOAD_FORCE_MS;
+    return started !== undefined && waited(started);
   }
 
   done(session: string): void {
     this.since.delete(session);
-    this.awaiting.delete(session);
   }
 
   forget(session: string): void {
-    this.done(session);
+    this.since.delete(session);
+    this.awaiting.delete(session);
     this.generations.delete(session);
   }
 

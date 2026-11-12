@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { headersNameTheGuard, type Guarding } from "./marker.ts";
@@ -143,9 +144,15 @@ function runXpra(options: Options, adopt: (child: ChildProcess) => void): Promis
     });
     adopt(child);
     let byServer = false;
-    const forward = (stream: NodeJS.WriteStream) => (chunk: Buffer) => {
-      stream.write(chunk);
-      if (chunk.toString("utf8").includes(SERVER_ENDED)) byServer = true;
+    const forward = (stream: NodeJS.WriteStream) => {
+      const decoder = new StringDecoder("utf8");
+      let tail = "";
+      return (chunk: Buffer) => {
+        stream.write(chunk);
+        const text = tail + decoder.write(chunk);
+        if (text.includes(SERVER_ENDED)) byServer = true;
+        tail = text.slice(-(SERVER_ENDED.length - 1));
+      };
     };
     child.stdout.on("data", forward(process.stdout));
     child.stderr.on("data", forward(process.stderr));

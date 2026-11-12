@@ -11,13 +11,14 @@ export interface Pages {
 
 export class Observer {
   private readonly scanner = new Scanner();
-  private readonly loads = new Loads();
+  private readonly loads: Loads;
   private readonly busy = new Set<string>();
   private readonly enrolled = new Set<string>();
   private readonly pages: Pages;
 
-  constructor(pages: Pages) {
+  constructor(pages: Pages, parseWaitMs: number) {
     this.pages = pages;
+    this.loads = new Loads(parseWaitMs);
   }
 
   hold(session: string): void {
@@ -45,7 +46,8 @@ export class Observer {
   }
 
   retry(cdp: Cdp): void {
-    for (const session of [...this.pages.waiting()])
+    const sessions = new Set([...this.pages.waiting(), ...this.loads.loading()]);
+    for (const session of sessions)
       if (this.enrolled.has(session) && !this.busy.has(session)) this.look(cdp, session);
   }
 
@@ -79,10 +81,12 @@ export class Observer {
     this.busy.add(session);
     try {
       const generation = this.loads.generation(session);
-      const parsed =
-        this.loads.overdue(session) ||
-        (!this.loads.waiting(session) &&
-          (await this.scanner.parsed(cdp, session, this.pages.defaults(session))));
+      if (!this.loads.awaitingEvents(session))
+        this.loads.probed(
+          session,
+          await this.scanner.parsed(cdp, session, this.pages.defaults(session)),
+        );
+      const parsed = this.loads.overdue(session) || !this.loads.waiting(session);
       await this.scanner.scan(cdp, session);
       if (parsed && generation === this.loads.generation(session)) {
         this.loads.done(session);
