@@ -102,9 +102,11 @@ function workshopLines(world: World): string[] {
 function liveCheckoutFlags(): string[] {
   const [agents = "", piAgent = ""] = skillFolders();
   const user = existsSync(piAgent)
-    ? readdirSync(piAgent).map(
-        (name) => `flag: ${join(piAgent, name)} shadows the released skill of the same name here`,
-      )
+    ? readdirSync(piAgent)
+        .filter((name) => existsSync(join(agents, name)))
+        .map(
+          (name) => `flag: ${join(piAgent, name)} shadows the released skill of the same name here`,
+        )
     : [];
   const live = existsSync(agents)
     ? readdirSync(agents).flatMap((name) => {

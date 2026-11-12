@@ -71,6 +71,19 @@ test("in the ystack lane a released skill edits in the scratch, and the lane's o
   const table = m.fleet.files(["skills"]);
   assert.match(table.stdout, new RegExp(`lavish: ${edited.replaceAll("/", "\\/")} \\[writable\\]`));
   assert.match(table.stdout, /shadows: .*\.agents\/skills\/lavish\/SKILL\.md \[read-only/);
+  const userSkills = join(m.fleet.userHome, ".pi", "agent", "skills");
+  for (const name of ["lavish", "personal"]) {
+    mkdirSync(join(userSkills, name), { recursive: true });
+    writeFileSync(join(userSkills, name, "SKILL.md"), skillText(name));
+  }
+  const flags = m.fleet.files(["skills"]).stdout;
+  assert.match(
+    flags,
+    new RegExp(
+      `flag: ${join(userSkills, "lavish").replaceAll("/", "\\/")} shadows the released skill`,
+    ),
+  );
+  assert.doesNotMatch(flags, /personal shadows/);
   assert.match(
     table.stdout,
     /scratch: .* on scratch\/p620-start, 0 ahead and 0 behind origin\/main/,
