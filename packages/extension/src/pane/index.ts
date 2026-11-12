@@ -5,14 +5,13 @@ import type {
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { BoardCard } from "@fleet/protocol";
-import { boardUrl } from "../board-link.ts";
 import type { Link } from "../link.ts";
-import { onStatusClick } from "../status-click.ts";
+import { onStatusClick, type StatusClick } from "../status-click.ts";
+import { showCards } from "./cards.ts";
 import { Decide } from "./decide.ts";
-import { glanceOf } from "./glance.ts";
-import { listOf } from "./list.ts";
-import { decisionsText, downStatus, statusOf } from "./look.ts";
-import { PulseView } from "./view.ts";
+import { glanceOf, type Glance } from "./glance.ts";
+import { listOf, listOfCounted, listOfLanded, type List } from "./list.ts";
+import { COUNTED, downStatus, itemsOf, statusOf, type Counted } from "./look.ts";
 import { Waiting } from "./waiting.ts";
 
 const STATUS_KEY = "fleet-attention";
@@ -57,22 +56,34 @@ function lastMessageAt(ctx: ExtensionContext): number {
   return stamp === undefined ? Date.now() : Date.parse(stamp);
 }
 
+interface Shown {
+  readonly text: string;
+  readonly clicks: ReadonlyMap<Counted, StatusClick>;
+}
+
+function setClicks(clicks: ReadonlyMap<Counted, StatusClick>): void {
+  for (const key of COUNTED) onStatusClick(`${STATUS_KEY}/${key}`, clicks.get(key));
+}
+
 class Pane {
   private cards: readonly BoardCard[] | undefined;
   private dateRefreshAt: number | undefined;
   private decisions = 0;
   private since: number;
+  private listing = false;
   private silentSince: number | undefined;
   private stopped = false;
   private timer: NodeJS.Timeout | undefined;
   private status: string | undefined;
   private readonly ctx: ExtensionContext;
+  private readonly carddUrl: string;
   private readonly rules: Settings;
   private readonly waiting: Waiting;
   readonly decide: Decide;
 
-  constructor(link: Link, ctx: ExtensionContext, rules: Settings) {
+  constructor(link: Link, ctx: ExtensionContext, carddUrl: string, rules: Settings) {
     this.ctx = ctx;
+    this.carddUrl = carddUrl;
     this.rules = rules;
     this.since = lastMessageAt(ctx);
     this.waiting = new Waiting(link);
@@ -129,7 +140,7 @@ class Pane {
     this.stopped = true;
     clearTimeout(this.timer);
     ctx.ui.setStatus(STATUS_KEY, undefined);
-    onStatusClick(STATUS_KEY, undefined);
+    setClicks(new Map());
   }
 
   private async load(): Promise<void> {
@@ -141,14 +152,26 @@ class Pane {
     }
   }
 
-  private statusAt(now: number): { text: string; decisions: number } | undefined {
+  private statusAt(now: number): Shown | undefined {
     const { theme } = this.ctx.ui;
     const silent = this.silentSince;
     if (silent !== undefined && now - silent >= this.rules.silentMs)
-      return { text: downStatus(theme), decisions: 0 };
+      return { text: downStatus(theme), clicks: new Map() };
     if (this.cards === undefined) return undefined;
     const glance = glanceOf(this.cards, this.since);
-    return { text: statusOf(theme, glance, this.decisions), decisions: this.decisions };
+    const items = itemsOf(theme, glance, this.decisions);
+    const clicks = new Map(
+      items.map(({ key, text }) => [
+        key,
+        {
+          text,
+          act: () => {
+            this.open(key, glance, text);
+          },
+        },
+      ]),
+    );
+    return { text: statusOf(items), clicks };
   }
 
   private paint(): void {
@@ -158,23 +181,32 @@ class Pane {
       this.ctx.ui.setStatus(STATUS_KEY, shown.text || undefined);
       this.status = shown.text;
     }
-    const waiting = decisionsText(shown.decisions);
-    onStatusClick(
-      STATUS_KEY,
-      waiting === undefined
-        ? undefined
-        : {
-            text: waiting,
-            act: () => {
-              void this.decide.open();
-            },
-          },
-    );
+    setClicks(shown.clicks);
+  }
+
+  private open(key: Counted, glance: Glance, text: string): void {
+    if (key === "decisions") {
+      void this.decide.open();
+      return;
+    }
+    if (this.listing) return;
+    this.listing = true;
+    const failed = (error: unknown): void => {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.ctx.ui.notify(`The list could not be shown: ${reason}`, "error");
+    };
+    showCards(this.ctx, listOfCount(glance, key, text), this.carddUrl)
+      .catch(failed)
+      .finally(() => {
+        this.listing = false;
+      });
   }
 }
 
-const OVERLAY = { width: "80%", minWidth: 56, maxHeight: "90%" } as const;
-const SHARE_OF_SCREEN = 0.9;
+function listOfCount(glance: Glance, key: Exclude<Counted, "decisions">, text: string): List {
+  if (key === "landed") return listOfLanded(glance.landed, `${text} · since your last message`);
+  return listOfCounted(glance.cards[key], text);
+}
 
 async function showPulse(link: Link, ctx: ExtensionCommandContext, carddUrl: string) {
   const cards = await link.call("board", {}, DEADLINE_MS).catch(() => undefined);
@@ -182,21 +214,7 @@ async function showPulse(link: Link, ctx: ExtensionCommandContext, carddUrl: str
     ctx.ui.notify("cardd is not answering, so there is no pulse to show", "error");
     return;
   }
-  const base = boardUrl(carddUrl);
-  const links = { urlOf: (card: number): string => `${base}#/c-${String(card)}` };
-  const list = listOf(cards);
-  const picked = await ctx.ui.custom<number | undefined>(
-    (tui, theme, _keys, done) =>
-      new PulseView(
-        theme,
-        list,
-        links,
-        () => Math.floor(tui.terminal.rows * SHARE_OF_SCREEN),
-        done,
-      ),
-    { overlay: true, overlayOptions: OVERLAY },
-  );
-  if (picked !== undefined) ctx.ui.notify(`c-${String(picked)}: ${links.urlOf(picked)}`, "info");
+  await showCards(ctx, listOf(cards), carddUrl);
 }
 
 export function showPane(
@@ -211,7 +229,7 @@ export function showPane(
     handler: (_args, command) => showPulse(link, command, carddUrl),
   });
   const rules = settings();
-  const pane = new Pane(link, ctx, rules);
+  const pane = new Pane(link, ctx, carddUrl, rules);
   const refresh = (): void => {
     pane.refresh();
   };

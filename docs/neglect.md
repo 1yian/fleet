@@ -63,7 +63,7 @@ The captain is told by the counts in the status bar of main's pane and by the bo
 ## Where it shows
 
 - Pi pane: `/pulse` opens an overlay with every open card, quiet first, running cards in one line. See [pane.md](pane.md).
-- Pi pane: the counts in the status bar read `pulse` and nothing else. A notice of any kind counts, so an idle card past 4 hours is on main's pane as soon as main is told. `/pulse` names the cards behind the counts. A card that waits on the captain for a decision is counted apart, in the status bar's decisions item, as the same cards that `/d` shows.
+- Pi pane: the counts in the status bar read `pulse` and nothing else. A notice of any kind counts, so an idle card past 4 hours is on main's pane as soon as main is told. A click on a count lists the cards behind it, and `/pulse` lists every open card. A card that waits on the captain for a decision is counted apart, in the status bar's decisions item, as the same cards that `/d` shows.
 - Board: an Attention strip above the lanes, and one line on each card with who has it, what runs, when it moved, what it waits on, and how many steps are behind it. A Needs you card's line says when it moved and how many steps are behind it, so an expired captain hold with work left still shows what is left. The phone's compact rows still hide the line. The board is the captain's, so the strip and the line's alarm show only what the captain is told: a notice of `captain` or `urgent`, or a broken or stalled state. The strip also lists his own cards. An idle card between 4 and 24 hours is main's alone: the board's line for it says what is true and raises no alarm.
 
 Sorting puts the louder notice first, then the state (broken, idle, parked, stalled, you, waiting, running), then the oldest.

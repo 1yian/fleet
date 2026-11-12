@@ -1,4 +1,4 @@
-import "./run-root.ts";
+import { tempDir } from "./run-root.ts";
 
 const LIVE_ENVIRONMENT = [
   "FLEET_HOSTS",
@@ -23,3 +23,4 @@ const LIVE_ENVIRONMENT = [
 for (const name of LIVE_ENVIRONMENT) Reflect.deleteProperty(process.env, name);
 
 process.env["FLEET_TAILSCALE"] = "false";
+process.env["ELEMENT_HOME"] = tempDir("element-");

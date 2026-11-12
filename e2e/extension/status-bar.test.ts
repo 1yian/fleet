@@ -250,12 +250,12 @@ test("a Later made on the board lowers the count at once, with no /d and no poll
   );
 });
 
-test("counts name broken work, your own work, stalled work and landings without glyphs or zero counts", async () => {
+test("every count names the cards it counts, and his own tasks are not a second kind of you", async () => {
   const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });
   await lab.screenWhere(pane, "the board", showing(["board"]));
   await lab.cleo.call("card.new", { title: "Sign the contract", kind: "captain" });
-  const own = await lab.screenWhere(pane, "your work alone", showing(["1 for you"]));
-  assert.equal(statusRow(own), "1 for you board");
+  const own = await lab.screenWhere(pane, "his task alone", showing(["1 task of yours"]));
+  assert.equal(statusRow(own), "1 task of yours board");
   await lab.failedWorker("Fix the build");
   const idle = check(
     CardSchema,
@@ -266,22 +266,29 @@ test("counts name broken work, your own work, stalled work and landings without 
   const screen = await lab.screenWhere(
     pane,
     "every count in words",
-    showing(["1 broken", "1 for you", "1 stalled", "1 landed"]),
+    showing(["1 broken card", "1 task of yours", "1 stalled card", "1 landed card"]),
   );
-  assert.equal(statusRow(screen), "1 broken · 1 for you · 1 stalled · 1 landed board");
-  assert.doesNotMatch(statusRow(screen), /[●◆◇▲]|\b0\b/);
+  assert.equal(
+    statusRow(screen),
+    "1 broken card · 1 task of yours · 1 stalled card · 1 landed card board",
+  );
+  assert.doesNotMatch(statusRow(screen), /[●◆◇▲]|\b0\b|for you/);
   keep("counts-in-words", screen);
   keep("counts-in-words.ansi", await lab.herdr().coloredScreen(pane));
 });
 
-const FULL = "2 decisions await you · 1 broken · 1 landed board";
 const WIDTHS = [
-  { columns: 57, ratio: 0.5 },
-  { columns: 39, ratio: 0.65 },
-  { columns: 33, ratio: 0.7 },
+  {
+    columns: 66,
+    ratio: 0.4,
+    shown: "2 decisions await you · 1 broken card · 1 landed card board",
+  },
+  { columns: 57, ratio: 0.5, shown: "2 decisions await you · 1 broken card · 1 landed card" },
+  { columns: 39, ratio: 0.65, shown: "2 decisions await you · 1 broken card" },
+  { columns: 33, ratio: 0.7, shown: "2 decisions await you board" },
 ] as const;
 
-for (const { columns, ratio } of WIDTHS) {
+for (const { columns, ratio, shown } of WIDTHS) {
   test(`at ${String(columns)} columns the status bar stays on one row, keeps the decisions first and still opens the card`, async () => {
     const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" }, { direction: "right", ratio });
     await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
@@ -290,21 +297,14 @@ for (const { columns, ratio } of WIDTHS) {
     await lab.landedCard("Check the ads budget");
     lab.answers(2);
 
-    const screen = await lab.screenWhere(
-      pane,
-      "the whole status",
-      showing([awaiting(2), "1 broken"]),
-    );
+    const first = await lab.screenWhere(pane, "the decisions", showing([awaiting(2)]));
+    const item = awaitingAt(first);
+    await lab.click(pane, item.row, item.column);
+    const screen = await lab.screenWhere(pane, "the card", onCard(["Decision 1 of 2"]));
     keep(`narrow-${String(columns)}`, screen);
     const row = statusRow(screen);
     assert.ok(row.length <= columns, `the status bar is wider than the pane: ${row}`);
-    assert.ok(row.startsWith(awaiting(2)), `the decisions are not first: ${row}`);
-    if (FULL.length <= columns) assert.equal(row, FULL);
-    else assert.equal(row, `2 decisions await you · 1 broken${columns >= 38 ? " board" : ""}`);
+    assert.equal(row, shown);
     assert.doesNotMatch(row, /[●◆◇▲]|\.\.\.|\b0\b/);
-
-    const item = awaitingAt(screen);
-    await lab.click(pane, item.row, item.column);
-    await lab.screenWhere(pane, "the card", onCard(["Decision 1 of 2"]));
   });
 }

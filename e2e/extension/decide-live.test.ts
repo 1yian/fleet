@@ -31,6 +31,7 @@ const waitingCards = async (): Promise<number[]> =>
 test("/d with nothing waiting stays open, and a decision shows on it by itself when main puts it to him", async () => {
   const pane = await lab.openMain();
   await lab.screenWhere(pane, "main to read the board", showing([CLEAR]));
+  await lab.h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
 
   await lab.herdr().submit(pane, "/d");
   keep("live-1-nothing", await lab.screenWhere(pane, "the card on nothing", onCard([NOTHING])));
