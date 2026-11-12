@@ -2,6 +2,7 @@ import { type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { Cdp } from "@fleet/protocol";
+import { ChromeRelay } from "./chrome-relay.ts";
 import { StandInChrome, freePort } from "./chrome.ts";
 import { spawnGuarded } from "./guarded.ts";
 import { isRecord, optionalNumber, optionalString } from "./json.ts";
@@ -32,6 +33,53 @@ const AUTOFOCUS = LOGIN.replace(
 ).replace("<title>login</title>", "<title>autofocus</title>");
 
 const NOTES = `<title>notes</title><p id="note">plain notes</p>`;
+
+const FIELD_STYLE = `body{margin:0}input{display:block;box-sizing:border-box;width:240px;height:30px;margin:0}x-login,x-filled{display:block;width:240px;height:30px}`;
+
+const CLOSED = `<title>closed</title><style>${FIELD_STYLE}</style>
+<input id="user" autocomplete="off"><x-login id="login"></x-login>
+<script>
+let field;
+customElements.define("x-login", class extends HTMLElement {
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: "closed" });
+    root.innerHTML = '<style>${FIELD_STYLE}</style><input type="password" autocomplete="off">';
+    field = root.querySelector("input");
+  }
+});
+window.fieldValue = () => field.value;
+</script>`;
+
+const DECLARED = `<title>declared</title><style>${FIELD_STYLE}</style>
+<div><template shadowrootmode="open"><input type="password" value="declared-secret"></template></div>`;
+
+const FILLED = `<title>filled</title><style>${FIELD_STYLE}</style>
+<x-filled></x-filled>
+<script>
+customElements.define("x-filled", class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" }).innerHTML = '<input type="password" value="seeded-secret">';
+  }
+});
+</script>`;
+
+const FRAME = `<style>body{margin:0}input{display:block;width:240px;height:30px;margin:0}</style><input id="pw" type="password" autocomplete="off">`;
+
+const pagesFor = (port: number): ReadonlyMap<string, string> =>
+  new Map([
+    ["/login", LOGIN],
+    ["/autofocus", AUTOFOCUS],
+    ["/closed", CLOSED],
+    ["/filled", FILLED],
+    ["/declared", DECLARED],
+    [
+      "/embed",
+      `<title>embed</title><style>body{margin:0}iframe{display:block;border:0;width:300px;height:100px}</style><iframe id="inner" src="http://two.test:${String(port)}/frame"></iframe>`,
+    ],
+    ["/frame", FRAME],
+  ]);
 
 const readBody = (request: NodeJS.ReadableStream): Promise<string> =>
   new Promise((resolve) => {
@@ -64,17 +112,7 @@ export class Site {
           submitted.push(body);
           response.end("<title>welcome</title>welcome");
         });
-      } else if (path === "/login") response.end(LOGIN);
-      else if (path === "/autofocus") response.end(AUTOFOCUS);
-      else if (path === "/embed")
-        response.end(
-          `<title>embed</title><style>body{margin:0}iframe{display:block;border:0;width:300px;height:100px}</style><iframe id="inner" src="http://two.test:${String(port)}/frame"></iframe>`,
-        );
-      else if (path === "/frame")
-        response.end(
-          `<style>body{margin:0}input{display:block;width:240px;height:30px;margin:0}</style><input id="pw" type="password" autocomplete="off">`,
-        );
-      else response.end(NOTES);
+      } else response.end(pagesFor(port).get(path) ?? NOTES);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -245,8 +283,10 @@ export class GuardLab {
   private readonly chromeArgs: readonly string[];
   readonly guard: string;
   readonly proxy: string;
+  readonly relay: ChromeRelay | undefined;
   private readonly scratch: Scratch;
   private readonly port: number;
+  private readonly upstream: string;
   private child: ChildProcess | undefined;
   private readonly workers: Worker[] = [];
 
@@ -255,26 +295,38 @@ export class GuardLab {
     site: Site,
     scratch: Scratch,
     port: number,
+    upstream: string,
     child: ChildProcess | undefined,
     chromeArgs: readonly string[],
+    relay: ChromeRelay | undefined,
   ) {
     this.chrome = chrome;
     this.chromeArgs = chromeArgs;
     this.site = site;
     this.scratch = scratch;
     this.port = port;
+    this.upstream = upstream;
     this.child = child;
+    this.relay = relay;
     this.proxy = `http://127.0.0.1:${String(port)}`;
     this.guard = WITHOUT_GUARD ? chrome.endpoint : this.proxy;
   }
 
-  static async start(chromeArgs: readonly string[] = []): Promise<GuardLab> {
+  static async start(
+    chromeArgs: readonly string[] = [],
+    options: { readonly relay?: boolean } = {},
+  ): Promise<GuardLab> {
     const scratch = new Scratch("guard");
     const chrome = await StandInChrome.start("MAP *.test 127.0.0.1", chromeArgs);
     const site = await Site.start();
     const port = await freePort();
-    const child = WITHOUT_GUARD ? undefined : spawnGuard(scratch, port, chrome.endpoint);
-    const lab = new GuardLab(chrome, site, scratch, port, child, chromeArgs);
+    const relay =
+      options.relay === true && !WITHOUT_GUARD
+        ? await ChromeRelay.start(chrome.endpoint.replace("http://", ""))
+        : undefined;
+    const upstream = relay?.address ?? chrome.endpoint.replace("http://", "");
+    const child = WITHOUT_GUARD ? undefined : spawnGuard(scratch, port, upstream);
+    const lab = new GuardLab(chrome, site, scratch, port, upstream, child, chromeArgs, relay);
     if (!WITHOUT_GUARD) await lab.listening();
     return lab;
   }
@@ -300,7 +352,7 @@ export class GuardLab {
 
   async restartGuard(): Promise<void> {
     await this.stopGuard();
-    this.child = spawnGuard(this.scratch, this.port, this.chrome.endpoint);
+    this.child = spawnGuard(this.scratch, this.port, this.upstream);
     await this.listening();
   }
 
@@ -328,20 +380,45 @@ export class GuardLab {
     return worker;
   }
 
+  async openPage(
+    worker: Worker,
+    path: string,
+    title: string,
+  ): Promise<{ target: string; session: string }> {
+    const tab = await worker.open("about:blank");
+    const navigated = await worker.call(tab.session, "Page.navigate", { url: this.site.url(path) });
+    if (!navigated.ok) throw new Error(`${path} was refused: ${navigated.text}`);
+    await until(async () => {
+      const read = await worker.evaluate(tab.session, "document.title");
+      return read.text === JSON.stringify(title) ? true : undefined;
+    }, `${path} to load`);
+    return tab;
+  }
+
+  async waitForTab(url: string, title: string): Promise<string> {
+    return until(async () => {
+      const found = (await this.chrome.pages()).find(
+        (page) => page.url === this.site.url(url) && page.title === title,
+      );
+      return found?.id;
+    }, `${url} to load`);
+  }
+
   async stop(): Promise<void> {
     for (const worker of this.workers) worker.close();
     await this.stopGuard();
+    await this.relay?.stop();
     await this.chrome.stop();
     await this.site.stop();
     this.scratch.dispose();
   }
 }
 
-function spawnGuard(scratch: Scratch, port: number, chrome: string): ChildProcess {
+function spawnGuard(scratch: Scratch, port: number, upstream: string): ChildProcess {
   const entry = join(scratch.root, "packages", "chrome", "src", "guard.ts");
   return spawnGuarded(
     "node",
-    [entry, "--listen", `127.0.0.1:${String(port)}`, "--chrome", chrome.replace("http://", "")],
+    [entry, "--listen", `127.0.0.1:${String(port)}`, "--chrome", upstream],
     { stdio: ["ignore", "ignore", "inherit"] },
   );
 }

@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { Cdp, type CdpEvent } from "@fleet/protocol";
 import Type from "typebox";
+import { adoptClosedRoots } from "./roots.ts";
 import { BINDING, PAGE_SCRIPT } from "./script.ts";
 import { record, shape, words } from "./wire.ts";
 
@@ -16,7 +17,8 @@ export interface Typing {
   peek(targetId: string): Ref;
   verdict(pageId: string): Verdict;
   settled(pageId: string): Promise<Verdict>;
-  anyTyped(): boolean;
+  unplaced(): Verdict;
+  epoch(ref: Ref): number;
 }
 
 const TargetInfo = Type.Object({ targetId: Type.String(), type: Type.String() });
@@ -137,6 +139,7 @@ type Handler = (cdp: Cdp, event: CdpEvent) => void;
 export class Watch implements Typing {
   private readonly pages = new Map<string, Page>();
   private readonly owners = new Map<string, string>();
+  private readonly epochs = new Map<string, number>();
   private readonly targets = new Targets();
   private readonly contexts = new Contexts();
   private readonly waiters = new Set<() => void>();
@@ -192,6 +195,10 @@ export class Watch implements Typing {
     ],
   ]);
   private stopped = false;
+  private live = false;
+  private clock = 0;
+  private lostAt = 0;
+  private typedAt = 0;
   private current: Cdp | undefined;
 
   constructor(endpoint: () => string) {
@@ -230,8 +237,15 @@ export class Watch implements Typing {
     return this.verdict(pageId);
   }
 
-  anyTyped(): boolean {
-    return [...this.pages.keys()].some((id) => this.verdict(id) === "typed");
+  unplaced(): Verdict {
+    if (!this.live) return "unseen";
+    return [...this.pages.keys()].some((id) => this.verdict(id) === "typed") ? "typed" : "clear";
+  }
+
+  epoch(ref: Ref): number {
+    if (ref.kind === "other") return 0;
+    const typedAt = ref.kind === "page" ? (this.epochs.get(ref.id) ?? 0) : this.typedAt;
+    return Math.max(typedAt, this.lostAt);
   }
 
   private async run(): Promise<void> {
@@ -256,11 +270,16 @@ export class Watch implements Typing {
       this.handlers.get(event.method)?.(cdp, event);
     });
     await cdp.send("Target.setDiscoverTargets", { discover: true });
+    this.live = true;
+    this.notify();
     console.error("guard: watching the browser");
     await closed;
   }
 
   private reset(): void {
+    this.live = false;
+    this.lostAt = ++this.clock;
+    this.epochs.clear();
     this.pages.clear();
     this.owners.clear();
     this.targets.clear();
@@ -303,6 +322,7 @@ export class Watch implements Typing {
     if (id === undefined) return;
     for (const session of this.pages.get(id)?.sessions ?? []) this.forget(session);
     this.pages.delete(id);
+    this.epochs.delete(id);
     this.targets.remove(id);
     this.notify();
   }
@@ -345,8 +365,17 @@ export class Watch implements Typing {
   private onBound(event: CdpEvent): void {
     const call = shape(Bound, event.params);
     if (call?.name !== BINDING || event.sessionId === undefined) return;
-    this.contexts.bound(event.sessionId, call.executionContextId, call.payload === "1");
+    const typed = call.payload === "1";
+    this.contexts.bound(event.sessionId, call.executionContextId, typed);
+    if (typed) this.armed(event.sessionId);
     this.notify();
+  }
+
+  private armed(session: string): void {
+    const now = ++this.clock;
+    const page = this.owners.get(session);
+    if (page !== undefined) this.epochs.set(page, now);
+    this.typedAt = now;
   }
 
   private adopt(page: string, session: string): void {
@@ -403,5 +432,6 @@ export class Watch implements Typing {
         .send("Runtime.evaluate", { expression: PAGE_SCRIPT, contextId }, on)
         .catch(() => undefined);
     }
+    await adoptClosedRoots(cdp, sessionId);
   }
 }

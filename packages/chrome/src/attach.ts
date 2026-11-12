@@ -12,6 +12,7 @@ interface Options {
   readonly guardPort: number;
   readonly xpra: string;
   readonly remoteXpra: string;
+  readonly clipboard: boolean;
   readonly ssh: readonly string[];
   readonly retryMs: number;
 }
@@ -22,7 +23,7 @@ interface Ended {
 }
 
 const USAGE =
-  "usage: fleet-attach [user@]host [--display 99] [--guard-port 9222] [--xpra <xpra on this machine>] [--remote-xpra <xpra on the host>] [--ssh ssh] [--retry-ms 1000]";
+  "usage: fleet-attach [user@]host [--display 99] [--guard-port 9222] [--xpra <xpra on this machine>] [--remote-xpra <xpra on the host>] [--clipboard] [--ssh ssh] [--retry-ms 1000]";
 const MAC_XPRA = "/Applications/Xpra.app/Contents/MacOS/Xpra";
 const TARGET = /^([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const KEEPALIVE = ["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"];
@@ -49,6 +50,7 @@ function parse(): Options {
       "guard-port": { type: "string", default: "9222" },
       xpra: { type: "string", default: DEFAULT_XPRA },
       "remote-xpra": { type: "string", default: "xpra" },
+      clipboard: { type: "boolean", default: false },
       ssh: { type: "string", default: "ssh" },
       "retry-ms": { type: "string", default: "1000" },
     },
@@ -72,6 +74,7 @@ function parse(): Options {
     guardPort,
     xpra: values.xpra,
     remoteXpra: values["remote-xpra"],
+    clipboard: values.clipboard,
     ssh: values.ssh.split(/\s+/).filter((word) => word !== ""),
     retryMs,
   };
@@ -125,7 +128,7 @@ function attachArguments(options: Options): string[] {
     `--ssh=${[...options.ssh, ...KEEPALIVE].join(" ")}`,
     "--window-close=disconnect",
     "--reconnect=no",
-    "--clipboard=yes",
+    `--clipboard=${options.clipboard ? "yes" : "no"}`,
     "--opengl=auto",
     "--notifications=no",
     "--splash=no",

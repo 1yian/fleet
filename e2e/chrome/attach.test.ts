@@ -26,8 +26,8 @@ async function withAttach(body: (attach: AttachLab) => Promise<void>): Promise<v
   }
 }
 
-const mac = (attach: AttachLab, port = lab.guardPort): Run =>
-  attach.attach([TARGET, "--display", ":99", "--guard-port", String(port)]);
+const mac = (attach: AttachLab, port = lab.guardPort, extra: readonly string[] = []): Run =>
+  attach.attach([TARGET, "--display", ":99", "--guard-port", String(port), ...extra]);
 
 async function leave(run: Run): Promise<void> {
   run.child.kill("SIGTERM");
@@ -46,6 +46,20 @@ test("the captain's Mac attaches through the guard and a closed window leaves th
     assert.ok(args.includes("--window-close=disconnect"));
     assert.ok(args.includes("--reconnect=no"));
     assert.deepEqual(attach.hostsAsked(), [TARGET]);
+  });
+});
+
+test("the clipboard of the captain's Mac is shared only when the launcher is asked to", async () => {
+  await withAttach(async (attach) => {
+    attach.plan([{ exit: 0 }]);
+    assert.equal(await mac(attach).exit, 0);
+    assert.equal(await mac(attach, lab.guardPort, ["--clipboard"]).exit, 0);
+    const [off, on] = attach.xpraArguments();
+    assert.ok(off !== undefined && on !== undefined);
+    assert.ok(off.includes("--clipboard=no"));
+    assert.equal(off.includes("--clipboard=yes"), false);
+    assert.ok(on.includes("--clipboard=yes"));
+    assert.equal(on.includes("--clipboard=no"), false);
   });
 });
 
@@ -142,6 +156,28 @@ test("the host starts Xpra only behind the guard, on one private socket and no n
     } finally {
       await lab.restartGuard();
     }
+  });
+});
+
+test("the host shares its clipboard with the captain's Mac only when its starter is asked to", async () => {
+  await withAttach(async (attach) => {
+    attach.plan([{ stay: true }]);
+    const runtime = tempDir("xdg-runtime-");
+    const guard = ["--display", ":99", "--guard-port", String(lab.guardPort)];
+    const off = attach.hostXpra(guard, runtime);
+    await attach.waitForXpraStarts(1);
+    off.child.kill("SIGTERM");
+    await off.exit;
+    const on = attach.hostXpra([...guard, "--clipboard"], runtime);
+    await attach.waitForXpraStarts(2);
+    on.child.kill("SIGTERM");
+    await on.exit;
+    const [without, withIt] = attach.xpraArguments();
+    assert.ok(without !== undefined && withIt !== undefined);
+    assert.ok(without.includes("--clipboard=no"));
+    assert.equal(without.includes("--clipboard=yes"), false);
+    assert.ok(withIt.includes("--clipboard=yes"));
+    assert.equal(withIt.includes("--clipboard=no"), false);
   });
 });
 

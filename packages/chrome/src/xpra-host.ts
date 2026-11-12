@@ -4,7 +4,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { guardHere } from "./marker.ts";
 
-const USAGE = "usage: fleet-chrome xpra [--display 99] [--guard-port 9222] [--xpra xpra]";
+const USAGE =
+  "usage: fleet-chrome xpra [--display 99] [--guard-port 9222] [--xpra xpra] [--clipboard]";
 const EXIT_UNGUARDED = 99;
 const EXIT_NO_GUARD = 98;
 const EXIT_USAGE = 64;
@@ -14,7 +15,7 @@ function say(message: string): void {
   process.stderr.write(`fleet-chrome xpra: ${message}\n`);
 }
 
-function serverArguments(display: string): string[] {
+function serverArguments(display: string, clipboard: boolean): string[] {
   const runtime = process.env["XDG_RUNTIME_DIR"];
   if (runtime === undefined || runtime === "")
     throw new Error("XDG_RUNTIME_DIR is not set, so the Xpra socket has no place to live");
@@ -28,6 +29,7 @@ function serverArguments(display: string): string[] {
     "--socket-permissions=600",
     "--html=off",
     "--mdns=no",
+    `--clipboard=${clipboard ? "yes" : "no"}`,
     "--notifications=no",
     "--printing=no",
     "--speaker=off",
@@ -44,6 +46,7 @@ interface Options {
   readonly port: number;
   readonly pollMs: number;
   readonly xpra: string;
+  readonly clipboard: boolean;
 }
 
 function readOptions(): Options {
@@ -52,6 +55,7 @@ function readOptions(): Options {
       display: { type: "string", default: "99" },
       "guard-port": { type: "string", default: "9222" },
       xpra: { type: "string", default: "xpra" },
+      clipboard: { type: "boolean", default: false },
       "poll-ms": { type: "string", default: "2000" },
     },
   });
@@ -66,7 +70,7 @@ function readOptions(): Options {
     Number.isInteger(pollMs) &&
     pollMs > 0;
   if (!valid) throw new Error(USAGE);
-  return { display, port, pollMs, xpra: values.xpra };
+  return { display, port, pollMs, xpra: values.xpra, clipboard: values.clipboard };
 }
 
 async function refusal(port: number): Promise<number | undefined> {
@@ -83,7 +87,7 @@ async function refusal(port: number): Promise<number | undefined> {
 }
 
 function startXpra(options: Options): { child: ChildProcess; ended: Promise<number> } {
-  const child = spawn(options.xpra, serverArguments(options.display), {
+  const child = spawn(options.xpra, serverArguments(options.display, options.clipboard), {
     stdio: "inherit",
     env: { ...process.env, XPRA_BATCH_MAX_DELAY: "10" },
   });

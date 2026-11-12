@@ -59,6 +59,15 @@ export class StandInChrome {
     }
   }
 
+  async closeTab(target: string): Promise<void> {
+    const cdp = await Cdp.connect(this.endpoint);
+    try {
+      await cdp.send("Target.closeTarget", { targetId: target });
+    } finally {
+      cdp.close();
+    }
+  }
+
   async evaluate(target: string, expression: string): Promise<unknown> {
     const cdp = await Cdp.connect(this.endpoint);
     try {

@@ -14,6 +14,12 @@ const Attached = Type.Object({
 });
 const Detached = Type.Object({ sessionId: Type.String() });
 
+interface Read {
+  readonly method: string;
+  readonly ref: Ref;
+  readonly epoch: number;
+}
+
 const OTHER: Ref = { kind: "other" };
 const UNKNOWN: Ref = { kind: "unknown" };
 const SECRETS_KEPT = 2000;
@@ -37,6 +43,7 @@ const refusalReply = (wire: Wire, message: string): string =>
 export class Gate {
   private readonly origins = new Map<string, Origin>();
   private readonly asked = new Map<number, Origin>();
+  private readonly reads = new Map<number, Read>();
   private readonly secrets = new Set<string>();
   private readonly watch: Typing;
   private readonly page: string | undefined;
@@ -50,10 +57,13 @@ export class Gate {
     const wire = parseWire(raw);
     if (wire?.id === undefined || wire.method === undefined)
       return { close: "a DevTools message must have an id and a method" };
-    const verdict = await this.verdictFor(await this.refFor(wire.sessionId));
+    const ref = await this.refFor(wire.sessionId);
+    const verdict = await this.verdictFor(ref);
     const refusal = this.refusal(wire, wire.method, verdict);
     if (refusal !== undefined) return { answer: refusalReply(wire, refusal) };
     this.remember(wire, wire.id, wire.method);
+    if (!allowedWhileTyped(wire.method, wire.params))
+      this.reads.set(wire.id, { method: wire.method, ref, epoch: this.watch.epoch(ref) });
     return { send: raw };
   }
 
@@ -62,7 +72,7 @@ export class Gate {
     if (wire === undefined) return raw;
     if (wire.id !== undefined) {
       this.answered(wire, wire.id);
-      return raw;
+      return this.outdated(wire, wire.id) ?? raw;
     }
     if (wire.method === undefined) return raw;
     this.track(wire, wire.method);
@@ -107,14 +117,22 @@ export class Gate {
 
   private async verdictFor(ref: Ref): Promise<Verdict> {
     if (ref.kind === "other") return "clear";
-    if (ref.kind === "unknown") return this.watch.anyTyped() ? "typed" : "clear";
+    if (ref.kind === "unknown") return this.watch.unplaced();
     return this.watch.settled(ref.id);
   }
 
   private typedNow(ref: Ref): boolean {
     if (ref.kind === "other") return false;
-    if (ref.kind === "unknown") return this.watch.anyTyped();
+    if (ref.kind === "unknown") return this.watch.unplaced() !== "clear";
     return this.watch.verdict(ref.id) !== "clear";
+  }
+
+  private outdated(wire: Wire, id: number): string | undefined {
+    const read = this.reads.get(id);
+    this.reads.delete(id);
+    if (read === undefined) return undefined;
+    if (this.watch.epoch(read.ref) === read.epoch && !this.typedNow(read.ref)) return undefined;
+    return refusalReply(wire, typedMessage(read.method));
   }
 
   private answered(wire: Wire, id: number): void {

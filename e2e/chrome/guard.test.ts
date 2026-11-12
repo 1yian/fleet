@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import { after, before, test } from "node:test";
 import { chromium } from "playwright";
+import { isRecord, optionalString } from "../support/json.ts";
 import { Captain, GuardLab, until, type Worker } from "../support/guard-lab.ts";
 
 const SECRET = "hunter2-secret-value";
@@ -17,17 +18,19 @@ after(async () => {
   await lab.stop();
 });
 
-async function login(worker: Worker): Promise<{ target: string; session: string }> {
-  const tab = await worker.open("about:blank");
-  const navigated = await worker.call(tab.session, "Page.navigate", {
-    url: lab.site.url("/login"),
-  });
-  assert.equal(navigated.ok, true);
+const login = (worker: Worker): Promise<{ target: string; session: string }> =>
+  lab.openPage(worker, "/login", "login");
+
+async function reads(
+  worker: Worker,
+  session: string,
+  expression: string,
+  text: string,
+): Promise<void> {
   await until(async () => {
-    const title = await worker.evaluate(tab.session, "document.title");
-    return title.text === '"login"' ? true : undefined;
-  }, "the login page to load");
-  return tab;
+    const reply = await worker.evaluate(session, expression);
+    return reply.ok && reply.text === text ? true : undefined;
+  }, `${expression} to read ${text}`);
 }
 
 const READS = [
@@ -85,11 +88,7 @@ test("while the captain types a password, the worker cannot read that tab, and c
   }, "the guard to refuse the read");
   await refusedEverywhere(worker, tab.session);
 
-  const untouched = await until(async () => {
-    const reply = await worker.evaluate(other.session, "document.title");
-    return reply.ok ? reply : undefined;
-  }, "another tab to answer");
-  assert.equal(untouched.text, '"notes"');
+  await reads(worker, other.session, "document.title", '"notes"');
   assert.equal((await worker.call(tab.session, "Page.bringToFront")).ok, true);
 
   await captain.erase(SECRET.length);
@@ -105,14 +104,12 @@ test("while the captain types a password, the worker cannot read that tab, and c
 test("a page that puts the cursor in its own password field is not refused until someone uses the field", async () => {
   const worker = await lab.worker();
   const tab = await worker.open(lab.site.url("/autofocus"));
-  const title = await until(async () => {
-    const reply = await worker.evaluate(
-      tab.session,
-      "document.title + ':' + document.activeElement.id",
-    );
-    return reply.ok ? reply : undefined;
-  }, "the page to answer");
-  assert.equal(title.text, '"autofocus:pw"');
+  await reads(
+    worker,
+    tab.session,
+    "document.title + ':' + document.activeElement.id",
+    '"autofocus:pw"',
+  );
 
   const captain = await Captain.at(lab.chrome, tab.target);
   await captain.click("#pw");
@@ -143,7 +140,7 @@ test("a focused password field refuses reads before the first key, and moving on
   captain.close();
 });
 
-test("a submitted password never reaches the worker's network log, and the next page reads normally", async () => {
+test("a submitted password is not in the worker's network log, and the next page reads normally", async () => {
   const worker = await lab.worker();
   const tab = await login(worker);
   assert.equal((await worker.call(tab.session, "Network.enable")).ok, true);
@@ -204,6 +201,119 @@ test("a second worker that attaches to the tab is refused too", async () => {
   captain.close();
 });
 
+const WAIT_FOR_PASSWORD = `new Promise((resolve) => {
+  const field = document.querySelector('#pw');
+  field.addEventListener('input', () => {
+    if (field.value.length >= ${String(SECRET.length)}) resolve(field.value);
+  });
+  window.__listening = true;
+})`;
+
+const HOLD_PASSWORD = `new Promise((resolve) => {
+  const field = document.querySelector('#pw');
+  let kept = '';
+  field.addEventListener('input', () => {
+    if (field.value.length === ${String(SECRET.length)}) kept = field.value;
+  });
+  window.__release = () => resolve(kept);
+  window.__listening = true;
+})`;
+
+const WAIT_IN_FIELD = `function (length) {
+  window.__listening = true;
+  return new Promise((resolve) => {
+    this.addEventListener('input', () => {
+      if (this.value.length >= length) resolve(this.value);
+    });
+  });
+}`;
+
+const reachedPage = (target: string): Promise<true> =>
+  until(
+    async () =>
+      (await lab.chrome.evaluate(target, "window.__listening === true")) === true
+        ? true
+        : undefined,
+    "the worker's read to reach the page",
+  );
+
+async function handleOf(worker: Worker, session: string, expression: string): Promise<string> {
+  const found = await worker.cdp.send("Runtime.evaluate", { expression }, { sessionId: session });
+  const result = isRecord(found) ? found["result"] : undefined;
+  const objectId = isRecord(result) ? optionalString(result, "objectId") : undefined;
+  if (objectId === undefined) throw new Error(`${expression} gave no object`);
+  return objectId;
+}
+
+async function leaveField(captain: Captain): Promise<void> {
+  await captain.erase(SECRET.length);
+  await captain.click("#user");
+}
+
+test("a read that went through before the captain typed is refused when its answer comes after", async () => {
+  const worker = await lab.worker();
+  const tab = await login(worker);
+  const pending = worker.evaluate(tab.session, WAIT_FOR_PASSWORD);
+  await reachedPage(tab.target);
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+
+  const reply = await pending;
+  assert.equal(reply.ok, false);
+  assert.match(reply.text, REFUSED);
+  assert.ok(!reply.text.includes(SECRET));
+  await leaveField(captain);
+  captain.close();
+});
+
+test("a function called on a node before the captain typed is refused when its answer comes after", async () => {
+  const worker = await lab.worker();
+  const tab = await login(worker);
+  const field = await handleOf(worker, tab.session, "document.querySelector('#pw')");
+  const pending = worker.call(tab.session, "Runtime.callFunctionOn", {
+    objectId: field,
+    functionDeclaration: WAIT_IN_FIELD,
+    arguments: [{ value: SECRET.length }],
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  await reachedPage(tab.target);
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+
+  const reply = await pending;
+  assert.equal(reply.ok, false);
+  assert.match(reply.text, REFUSED);
+  assert.ok(!reply.text.includes(SECRET));
+  await leaveField(captain);
+  captain.close();
+});
+
+test("a read that waited while the captain typed and emptied the field is refused too", async () => {
+  const worker = await lab.worker();
+  const tab = await login(worker);
+  const pending = worker.evaluate(tab.session, HOLD_PASSWORD);
+  await reachedPage(tab.target);
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return reply.ok ? undefined : true;
+  }, "the guard to arm");
+  await leaveField(captain);
+  await reads(worker, tab.session, "document.title", '"login"');
+  await lab.chrome.evaluate(tab.target, "window.__release()");
+
+  const reply = await pending;
+  assert.equal(reply.ok, false);
+  assert.match(reply.text, REFUSED);
+  assert.ok(!reply.text.includes(SECRET));
+  captain.close();
+});
+
 test("a password typed into a cross-origin frame guards the whole tab and the frame", async () => {
   const worker = await lab.worker();
   const tab = await worker.open(lab.site.url("/embed"));
@@ -211,6 +321,8 @@ test("a password typed into a cross-origin frame guards the whole tab and the fr
     const found = (await lab.chrome.targets()).find((target) => target.type === "iframe");
     return found?.id;
   }, "the frame to become its own target");
+  const inFrame = await worker.attach(frame);
+  await reads(worker, inFrame, "!!document.querySelector('#pw')", "true");
   const captain = await Captain.at(lab.chrome, tab.target);
   await captain.clickAt(20, 15);
   await captain.type(SECRET);
@@ -219,7 +331,6 @@ test("a password typed into a cross-origin frame guards the whole tab and the fr
     const reply = await worker.evaluate(tab.session, "document.title");
     return reply.ok ? undefined : reply;
   }, "the page to be refused");
-  const inFrame = await worker.attach(frame);
   const reply = await worker.evaluate(inFrame, "document.querySelector('#pw').value");
   assert.equal(reply.ok, false);
   assert.match(reply.text, REFUSED);
