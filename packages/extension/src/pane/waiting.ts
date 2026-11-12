@@ -56,8 +56,8 @@ export class Waiting {
   }
 
   private async fetch(): Promise<Waits> {
-    const cards = await this.link.call("board", {}, DEADLINE_MS);
-    const waits = { cards, decisions: await decisionsOf(this.link, cards) };
+    const board = await this.link.call("board", {}, DEADLINE_MS);
+    const waits = await decisionsOf(this.link, board);
     this.newest = waits;
     for (const listener of this.listeners) listener(waits);
     return waits;

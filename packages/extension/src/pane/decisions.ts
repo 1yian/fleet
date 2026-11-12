@@ -19,12 +19,19 @@ function decisionOf({ card, hold }: CardView): Decision[] {
   return [{ card: card.id, title: card.title, hold: entry, question, options }];
 }
 
-export async function decisionsOf(link: Link, cards: readonly BoardCard[]): Promise<Decision[]> {
+export async function decisionsOf(
+  link: Link,
+  cards: readonly BoardCard[],
+): Promise<{ cards: BoardCard[]; decisions: Decision[] }> {
   const waiting = cards.filter(needsYou).sort((a, b) => a.updatedAt - b.updatedAt);
   const views = await Promise.all(
     waiting.map((card) => link.call("card", { card: card.id }, DEADLINE_MS)),
   );
-  return views.flatMap(decisionOf);
+  const read = new Map(views.map((view) => [view.card.id, view.card]));
+  return {
+    cards: cards.map((card) => read.get(card.id) ?? card),
+    decisions: views.flatMap(decisionOf),
+  };
 }
 
 export async function deferDecision(link: Link, decision: Decision, said: string): Promise<string> {

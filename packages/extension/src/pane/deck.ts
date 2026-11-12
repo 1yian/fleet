@@ -47,7 +47,7 @@ export function merged(deck: readonly Slot[], at: number, fresh: readonly Decisi
     if (landing === -1 && !slot.answered && place >= at) landing = next.length;
     next.push(slot);
   });
-  const held = new Set(next.flatMap((slot) => (slot.answered ? [] : [slot.decision.card])));
+  const held = new Set(next.map((slot) => slot.decision.card));
   for (const decision of fresh)
     if (!held.has(decision.card)) next.push({ decision, answered: false });
   const staying = stayingAt(next, deck[at]);
