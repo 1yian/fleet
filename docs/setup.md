@@ -603,6 +603,7 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 | `fleet scratch --open N`                   | Makes card N's scratch folder as dispatch does, and prints it and the compile cache.        |
 | `fleet scratch --move N`                   | Moves `/tmp/fleet-c-N` to disk and leaves a symlink, as close does (see Scratch space).     |
 | `fleet scratch --largest PATH... [--by M]` | Prints the largest directories under the PATHs together, by `inodes` (default) or `space`.  |
+| `fleet files [verb ...]`                   | Runs the Files tab's explorer in this lane's home, or one of its commands (The Files tab).  |
 | `fleet migrate [--undo]`                   | Moves the earlier layout into homes (below).                                                |
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
@@ -647,7 +648,7 @@ The lane home with `config/`, `data/`, and `state/` visible, and these places on
 | `g w` | A picker of the worker worktrees of this lane's cards and the scratch worktrees      |
 | `g k` | The skill folders. In the ystack lane, the scratch worktree's `skills/` comes first. |
 
-`fleet files roots` prints the same list. A lane can add folders in `config/lane.json` with `"files": {"roots": ["/absolute/folder"]}`. A lane whose folders are huge can turn the previews off with `"files": {"previews": false}`: Yazi then shows only the list and the current folder.
+`fleet files roots` prints every place that the tab knows. Some have no key: the evidence folders of this lane's cards, and the folders that the lane adds. A lane can add folders in `config/lane.json` with `"files": {"roots": ["/absolute/folder"]}`. A lane whose folders are huge can turn the previews off with `"files": {"previews": false}`: Yazi then shows only the list and the current folder.
 
 ### The guard
 
@@ -673,13 +674,13 @@ The guard is a seat belt for the captain's keys. It does not stop a program that
 
 `S` types a message into this lane's mate as your own message, `M` types it into main, `R` reloads this lane's mate, and `Ctrl-r` reloads main. Each one first prints the whole text and waits. Enter sends it, Esc cancels, and nothing is typed without that Enter. You can add one line of your own before Enter. The text names the host, the absolute path, and the first 12 characters of the file's SHA-256. For a path in a scratch worktree it also names the branch, the commit, and the `git diff --stat` lines, and it never carries the file's content. A reload is typed only when herdr says the mate is `idle`, because Pi cannot reload while it works. A blocked mate is refused with the reason.
 
-`M` needs to reach main's herdr. Set `"files": {"main": "<host>"}` in `config/lane.json`, the name of the host where main runs. When that is this host, or a host in the lane's `hosts` map, `M` types into main's pane. In any other case `M` posts the text as the captain's comment on this lane's newest open card, which reaches main as `[fleet] captain on c-N (in <lane>'s lane)`, and says that it did. A lane with no open card has nothing to comment on, so `M` refuses and says so.
+`M` needs to reach main's herdr. Set `"files": {"main": "<host>"}` in `config/lane.json`, the name of the host where main runs. Main's own lane needs no setting: it types into main on this host. When the setting names this host, or a host in the lane's `hosts` map, `M` types into main's pane. In any other case `M` posts the text as the captain's comment on this lane's newest open card, which reaches main as `[fleet] captain on c-N (in <lane>'s lane)`, and says that it did. A lane with no open card has nothing to comment on, so `M` refuses and says so.
 
 ### Skills
 
 Skill text is edited in one place: the ystack lane. Every other lane, and every host, reads the released install, read-only. In another lane, `E` on a skill makes no scratch worktree and says so: press `M` to ask main, which routes the request to the ystack lane. In the ystack lane, `E` on `~/.agents/skills/<name>/<file>` opens `<scratch>/skills/<name>/<file>`, and the lane's own Pi, which loads that folder ahead of the release (see "Changing a lane's settings"), sees the edit after `/reload`. The lane's args list the scratch worktree's `skills/` first, so the Files tab finds the workshop from them: a `--skill` folder that is the `skills/` of a git checkout of a registered project, other than the project's clone.
 
-`fleet files skills` prints the winner of each skill name in this lane's Pi, where its file is, who can write it, the skills it hides, how far the scratch is ahead of and behind the base, and flags for the problems that matter: a scratch that is behind (it hides newer released text from this lane), a merged scratch branch, a skill folder that links into a live checkout, and a host whose released install is older than the newest ystack tag. The mate writes `state/skills.json` when it starts or reloads, and the command reads it, so run it after the mate has started.
+`fleet files skills` prints the winner of each skill name in this lane's Pi, where its file is, who can write it, the skills it hides, how far the scratch is ahead of and behind the base, and flags for the problems that matter: a scratch that is behind (it hides newer released text from this lane), a merged scratch branch, a skill folder that links into a live checkout, a skill in `~/.pi/agent/skills` that hides the released one of its name, and a host whose released install is older than the newest ystack tag. The mate writes `state/skills.json` when it starts or reloads, and the command reads it, so run it after the mate has started.
 
 ### Rolling it out
 
