@@ -4,6 +4,8 @@ Main's Pi screen shows what needs the captain without a message in the chat. Col
 
 Only main shows it. A second mate's screen does not, because a second mate holds nothing for the captain.
 
+The chat stays silent about what waits. Main never tells the captain to type `/d` and never points him at the card. The role contract (`packages/extension/prompts/mate.md`, sections 7 and 8) owns when main may speak of a waiting decision: when he asks what waits, and for interruption 4. Neither case carries an instruction.
+
 ## What it shows
 
 The status line carries the counts, worst first:
@@ -119,5 +121,7 @@ The pane asks `cardd` for the board when the link connects, after every `[fleet]
 ## Evidence
 
 `e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, and sends a mouse click to the strip. `e2e/extension/decide-input.test.ts` does the same for the words he types, the arrow keys, a mouse press and release on the choices, and the editor's text coming back when the card closes. They read the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
+
+`e2e/extension/decision-silence.test.ts` starts a mate on main's lane and on a second mate's lane, reads the role contract that the model receives, and checks that it never names `/d` and keeps chat silent about waiting decisions.
 
 `e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, that nothing reaches the model's context, the strip for a card idle past 4 hours, a watcher with line breaks, and a list of 40 running cards that scrolls inside the overlay.
