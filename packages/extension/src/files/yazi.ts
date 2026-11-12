@@ -1,14 +1,15 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { quote } from "@fleet/protocol/route";
 import { filesSettings } from "../lane-config.ts";
-import { guardBuffers } from "./editor.ts";
 import { launchWords } from "./invoke.ts";
 import type { World } from "./world.ts";
+import { pinnedYazi, YAZI_VERSION } from "./yazi-release.ts";
 
 const GUARD_PLUGIN = fileURLToPath(new URL("./yazi/fleet-guard.yazi", import.meta.url));
+const INIT_LUA = fileURLToPath(new URL("./yazi/init.lua", import.meta.url));
 
 const stateDir = (home: string): string => join(home, "state", "files");
 
@@ -103,6 +104,7 @@ function writeConfig(world: World, ff: string): string {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, "plugins"), { recursive: true });
   cpSync(GUARD_PLUGIN, join(dir, "plugins", "fleet-guard.yazi"), { recursive: true });
+  cpSync(INIT_LUA, join(dir, "init.lua"));
   writeFileSync(join(dir, "yazi.toml"), yaziToml(world, ff));
   writeFileSync(join(dir, "keymap.toml"), keys(world, ff).map(toml).join("\n"));
   return dir;
@@ -111,23 +113,31 @@ function writeConfig(world: World, ff: string): string {
 const missing = (run: SpawnSyncReturns<Buffer>): boolean =>
   run.error !== undefined && "code" in run.error && run.error.code === "ENOENT";
 
-const MISSING_NOTE =
-  "fleet files: yazi, nvim and vim are not installed here. Install yazi and nvim (docs/setup.md, Files tab); the lane's files are still on disk";
+async function yaziFolder(): Promise<string | undefined> {
+  try {
+    return await pinnedYazi();
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    console.error(`fleet files: could not fetch yazi ${YAZI_VERSION}: ${why}`);
+    return undefined;
+  }
+}
 
-export function launchExplorer(world: World): number {
+const NO_YAZI = `fleet files: no yazi to run. Check this host can reach github.com and run fleet files again; the lane's files are still on disk`;
+
+export async function launchExplorer(world: World): Promise<number> {
   const ff = writeWrapper(world.home);
+  const folder = await yaziFolder();
+  const path = process.env["PATH"] ?? "";
   const env = {
     ...process.env,
+    PATH: folder === undefined ? path : [folder, path].join(delimiter),
     YAZI_CONFIG_HOME: writeConfig(world, ff),
     FLEET_FILES_HOME: world.home,
     FLEET_FILES_BIN: ff,
   };
   const yazi = spawnSync("yazi", [world.home], { stdio: "inherit", env });
   if (!missing(yazi)) return yazi.status ?? 1;
-  for (const editor of ["nvim", "vim"]) {
-    const run = spawnSync(editor, [...guardBuffers(), world.home], { stdio: "inherit", env });
-    if (!missing(run)) return run.status ?? 1;
-  }
-  console.error(MISSING_NOTE);
-  return 0;
+  console.error(NO_YAZI);
+  return 1;
 }

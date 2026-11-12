@@ -21,7 +21,12 @@ export class FilesPane {
   static async open(
     lab: HerdrLab,
     fleet: FilesFleet,
-    options: { label?: string; path?: string; command?: string } = {},
+    options: {
+      label?: string;
+      path?: string;
+      command?: string;
+      env?: Record<string, string>;
+    } = {},
   ): Promise<FilesPane> {
     const created = await lab.run([
       "workspace",
@@ -33,7 +38,7 @@ export class FilesPane {
       "--no-focus",
     ]);
     const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
-    const env = fleet.env({ PATH: options.path ?? process.env["PATH"] ?? "" });
+    const env = fleet.env({ PATH: options.path ?? process.env["PATH"] ?? "", ...options.env });
     const assignments = Object.entries(env)
       .map(([name, value]) => `${name}='${value}'`)
       .join(" ");

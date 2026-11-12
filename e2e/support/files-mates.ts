@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FilesFleet } from "./files-fleet.ts";
@@ -8,7 +8,7 @@ import { Harness } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
 import { mateArgs } from "./scratch.ts";
-import { tempDir } from "./run-root.ts";
+import { sharedCacheDir } from "./run-root.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -26,16 +26,6 @@ export async function until<T>(
   }
 }
 
-function installYazi(folder: string, userHome: string, kind: "stub" | "real"): void {
-  const wrapper = join(folder, "yazi");
-  const body =
-    kind === "stub"
-      ? 'echo "FILES-TAB-STUB in $1"\nexec sleep 3600'
-      : `export XDG_STATE_HOME='${join(userHome, ".local", "state")}'\nexec '${execFileSync("sh", ["-c", "command -v yazi"], { encoding: "utf8" }).trim()}' "$@"`;
-  writeFileSync(wrapper, `#!/bin/sh\n${body}\n`);
-  chmodSync(wrapper, 0o755);
-}
-
 function addFilesConfig(home: string, files: Record<string, unknown>): void {
   const laneFile = join(home, "config", "lane.json");
   const config = parseRecord(readFileSync(laneFile, "utf8"));
@@ -46,20 +36,12 @@ export class FilesMates {
   readonly fleet: FilesFleet;
   readonly h: Harness;
   readonly lab: HerdrLab;
-  readonly stubs: string;
   readonly lane: string;
 
-  private constructor(parts: {
-    fleet: FilesFleet;
-    h: Harness;
-    lab: HerdrLab;
-    stubs: string;
-    lane: string;
-  }) {
+  private constructor(parts: { fleet: FilesFleet; h: Harness; lab: HerdrLab; lane: string }) {
     this.fleet = parts.fleet;
     this.h = parts.h;
     this.lab = parts.lab;
-    this.stubs = parts.stubs;
     this.lane = parts.lane;
   }
 
@@ -68,12 +50,10 @@ export class FilesMates {
       lane?: string;
       files?: Record<string, unknown>;
       laneArgs?: (h: Harness) => string[];
-      yazi?: "stub" | "real";
     } = {},
   ): Promise<FilesMates> {
     const h = await Harness.start();
     const lane = options.lane ?? "cleo";
-    const stubs = tempDir("files-mates-");
     const cleanups: (() => Promise<void>)[] = [() => h.stop()];
     try {
       mkdirSync(join(h.dir, "agent", "extensions"), { recursive: true });
@@ -85,15 +65,16 @@ export class FilesMates {
         laneArgs: options.laneArgs?.(h) ?? mateArgs(h),
       });
       cleanups.push(() => fleet.stop());
-      installYazi(stubs, fleet.userHome, options.yazi ?? "stub");
       addFilesConfig(fleet.home, options.files ?? {});
-      const path = [stubs, fleet.bin, BIN, process.env["PATH"] ?? ""].join(delimiter);
+      const path = [fleet.bin, BIN, process.env["PATH"] ?? ""].join(delimiter);
       const lab = await HerdrLab.start({
         ...h.piEnv("mate"),
         FILES_EDITOR_LOG: fleet.editorLog,
         PATH: path,
+        XDG_CACHE_HOME: sharedCacheDir,
+        XDG_STATE_HOME: join(fleet.userHome, ".local", "state"),
       });
-      return new FilesMates({ fleet, h, lab, stubs, lane });
+      return new FilesMates({ fleet, h, lab, lane });
     } catch (error) {
       await Promise.allSettled(cleanups.map((cleanup) => cleanup()));
       throw error;

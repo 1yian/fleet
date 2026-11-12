@@ -9,18 +9,19 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { FilesFleet } from "../support/files-fleet.ts";
 import { FilesPane } from "../support/files-pane.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { git } from "../support/remote.ts";
+import { tempDir } from "../support/run-root.ts";
 
 let fleet: FilesFleet;
 let lab: HerdrLab;
 let files: FilesPane;
 beforeEach(async () => {
-  for (const tool of ["yazi", "ya", "nvim", "fzf"]) {
+  for (const tool of ["nvim", "fzf"]) {
     execFileSync("sh", ["-c", `command -v ${tool}`]);
   }
   fleet = await FilesFleet.start();
@@ -54,6 +55,100 @@ test("the lane home shows hidden files, config, data and state, and g d g c g s 
   await goTo("gs", join(fleet.home, "state"));
   await goTo("gh", fleet.home);
   await files.sees("AGENTS.md");
+});
+
+const withoutYazi = (): string =>
+  (process.env["PATH"] ?? "")
+    .split(delimiter)
+    .filter((dir) => dir !== "" && !existsSync(join(dir, "yazi")))
+    .join(delimiter);
+
+test("on a host with no yazi the tab fetches the pinned yazi once and shows parent, current and preview columns", async () => {
+  const cache = tempDir("files-cache-");
+  const fresh = await FilesPane.open(lab, fleet, {
+    label: "fresh",
+    path: withoutYazi(),
+    env: { XDG_CACHE_HOME: cache },
+  });
+  await fresh.sees("AGENTS.md");
+  assert.deepEqual(readdirSync(join(cache, "fleet")), [
+    `yazi-26.5.6-${process.platform}-${process.arch}`,
+  ]);
+  await fresh.type("gd");
+  await fresh.sees(new RegExp(`^${escaped(join(fleet.home, "data"))}(\\s.*)?$`, "m"));
+  await fresh.hover("note.md");
+  const screen = await fresh.sees(/note\.md.*private note/, "note.md beside its preview");
+  for (const sibling of ["config", "state", "packages"])
+    assert.match(screen, new RegExp(sibling), `the parent column to list ${sibling}`);
+  assert.doesNotMatch(screen, /Netrw/);
+});
+
+test("j, k, gg, G and / move the cursor, l and h go in and out of folders, and the preview follows", async () => {
+  for (const name of ["alpha", "bravo", "zulu"])
+    writeFileSync(dataFile(`${name}.md`), `${name} body\n`);
+  mkdirSync(dataFile("inner"));
+  writeFileSync(dataFile("inner/deep.md"), "deep body\n");
+  await goTo("gd", join(fleet.home, "data"));
+  await files.type("G");
+  await files.sees("zulu body");
+  await files.type("k");
+  await files.sees("private note");
+  await files.type("gg");
+  await files.sees("deep.md");
+  await files.type("j");
+  await files.sees("alpha body");
+  await files.type("/");
+  await files.sees("Find next:");
+  await files.type("bravo");
+  await files.press("enter");
+  await files.sees("bravo body");
+  await files.type("gg");
+  await files.type("l");
+  await files.sees(new RegExp(`^${escaped(dataFile("inner"))}(\\s.*)?$`, "m"));
+  await files.sees("deep body");
+  await files.type("h");
+  await files.sees(new RegExp(`^${escaped(join(fleet.home, "data"))}(\\s.*)?$`, "m"));
+});
+
+const ESC = String.fromCharCode(27);
+
+const colours = (line: string): Set<string> =>
+  new Set(
+    [...line.matchAll(new RegExp(`${ESC}\\[[0-9;]*38;[25];[0-9;]+m`, "g"))].map(
+      (match) => match[0],
+    ),
+  );
+
+test("the preview highlights source code and keeps a binary file out of the text view", async () => {
+  writeFileSync(
+    dataFile("sample.ts"),
+    'export const answer: number = 42;\nconst greeting = "hello";\n',
+  );
+  writeFileSync(dataFile("blob.bin"), Buffer.from([0, 1, 2, 3, 255, 0, 7, 9, 0, 0]));
+  await goTo("gd", join(fleet.home, "data"));
+  await files.hover("sample.ts");
+  await files.sees("answer");
+  const line = (await lab.coloredScreen(files.pane))
+    .split("\n")
+    .find((each) => each.includes("answer"));
+  assert.ok(line !== undefined);
+  assert.ok(colours(line).size >= 3, `expected highlighted code, got ${JSON.stringify(line)}`);
+  await files.press("esc");
+  await files.hover("blob.bin");
+  const binary = await files.screen();
+  assert.doesNotMatch(binary, /\uFFFD/);
+});
+
+test("a long file name is cut with an ellipsis in the list and in the status line, clear of the permissions", async () => {
+  const long = `${"a-very-long-file-name-that-keeps-going".repeat(4)}.md`;
+  writeFileSync(dataFile(long), "long name\n");
+  await goTo("gd", join(fleet.home, "data"));
+  await files.hover("a-very-long");
+  await files.press("esc");
+  const screen = await files.sees("long name");
+  const status = screen.trimEnd().split("\n").at(-1) ?? "";
+  assert.match(status, /a-very-long-file-name\S*…\s+-rw/, `status line: ${status}`);
+  assert.match(screen, /a-very-long-file-name\S*…\.md/);
 });
 
 test("Enter on an ignored file opens it writable, with a space in its name", async () => {

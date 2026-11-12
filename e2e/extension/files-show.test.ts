@@ -18,8 +18,7 @@ afterEach(async (t) => {
 });
 
 const requireTools = (): void => {
-  for (const tool of ["yazi", "ya", "nvim", "fzf"])
-    execFileSync("sh", ["-c", `command -v ${tool}`]);
+  for (const tool of ["nvim", "fzf"]) execFileSync("sh", ["-c", `command -v ${tool}`]);
 };
 
 const sha12 = (file: string): string =>
@@ -50,7 +49,7 @@ async function typedInto(m: FilesMates, agent: string, text: RegExp): Promise<st
 
 test("S shows this lane's mate a file, typed as a message only after Enter, and Esc types nothing", async () => {
   requireTools();
-  mates = await FilesMates.start({ yazi: "real", files: { main: "p620" } });
+  mates = await FilesMates.start({ files: { main: "p620" } });
   mates.h.onModel(() => ({ text: "noted" }), "mate");
   const files = await explorer(mates);
   const agents = join(mates.fleet.home, "AGENTS.md");
@@ -81,7 +80,7 @@ test("S shows this lane's mate a file, typed as a message only after Enter, and 
 
 test("M types into main's pane when this host reaches main, with the lane named", async () => {
   requireTools();
-  mates = await FilesMates.start({ yazi: "real", files: { main: "p620" } });
+  mates = await FilesMates.start({ files: { main: "p620" } });
   mates.h.onModel(() => ({ text: "noted" }), "main");
   mates.h.onModel(() => ({ text: "noted" }), "mate");
   const mainPane = await mates.mainPane();
@@ -106,7 +105,7 @@ test("M types into main's pane when this host reaches main, with the lane named"
 
 test("M with no way to reach main's herdr posts a board comment that main hears as the captain's", async () => {
   requireTools();
-  mates = await FilesMates.start({ yazi: "real", files: {} });
+  mates = await FilesMates.start({ files: {} });
   mates.h.onModel(() => ({ text: "noted" }), "main");
   mates.h.onModel(() => ({ text: "noted" }), "mate");
   const lane = await mates.fleet.cardd.connect(mates.fleet.laneToken);
@@ -132,7 +131,6 @@ test("R is refused while the mate works, and when it is idle types /reload so th
   const folder = join(tempDir("files-skills-"), "skills");
   mkdirSync(folder, { recursive: true });
   mates = await FilesMates.start({
-    yazi: "real",
     laneArgs: (h) => [...mateArgs(h), "--skill", folder],
   });
   let release: () => void = () => undefined;
@@ -187,7 +185,7 @@ test("R is refused while the mate works, and when it is idle types /reload so th
 
 test("R is refused when the mate started working while its prompt was open, and types nothing", async () => {
   requireTools();
-  mates = await FilesMates.start({ yazi: "real" });
+  mates = await FilesMates.start();
   let release: () => void = () => undefined;
   const held = new Promise<void>((resolve) => {
     release = resolve;
