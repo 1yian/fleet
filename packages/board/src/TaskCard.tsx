@@ -52,7 +52,8 @@ interface CardProps extends Handlers {
 }
 
 const onControl = (event: MouseEvent): boolean =>
-  event.target instanceof Element && event.target.closest("a, button, textarea, input") !== null;
+  event.target instanceof Element &&
+  event.target.closest("a, button, textarea, input, label") !== null;
 
 const opens = (event: MouseEvent): boolean =>
   event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey;
