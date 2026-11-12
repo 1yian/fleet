@@ -7,6 +7,7 @@ import {
   cardRows,
   DecideLab,
   keep,
+  NOTHING,
   onCard,
   RENAME,
   rowsOf,
@@ -171,11 +172,9 @@ test("a card the captain put off is neither counted nor on /d until its date, ho
   assert.equal(await lab.cardd.act(vendor.id, action), 200);
 
   await lab.herdr().submit(pane, "/d");
-  await lab.screenWhere(
-    pane,
-    "nothing waiting",
-    showing(["Nothing is waiting for your decision."]),
-  );
+  await lab.screenWhere(pane, "the card that says nothing waits", onCard([NOTHING]));
+  await lab.herdr().press(pane, "esc");
+  await lab.screenWhere(pane, "the card to close", (screen) => cardRows(screen).length === 0);
   keep("6-put-off", await lab.screenWhere(pane, "no decision", showing(["board"], ["await"])));
 
   ageCard(lab.cardd, vendor, 6 * DAY_MS);
@@ -214,11 +213,9 @@ test("a card of the captain's own that he put off is neither counted nor on /d u
   assert.equal(await lab.cardd.act(own.id, action), 200);
 
   await lab.herdr().submit(pane, "/d");
-  await lab.screenWhere(
-    pane,
-    "nothing waiting",
-    showing(["Nothing is waiting for your decision."]),
-  );
+  await lab.screenWhere(pane, "the card that says nothing waits", onCard([NOTHING]));
+  await lab.herdr().press(pane, "esc");
+  await lab.screenWhere(pane, "the card to close", (screen) => cardRows(screen).length === 0);
   const screen = await lab.screenWhere(
     pane,
     "no decision and no count",

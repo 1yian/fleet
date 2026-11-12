@@ -132,6 +132,37 @@ const putOff = async (card: number): Promise<number> => {
   return lab.cardd.act(card, { kind: "hold", hold: open.hold, said: "in 2 hours", zone: "UTC" });
 };
 
+test("a decision put off while it is on screen leaves the card for the next one, and the first ⏎ after it answers nothing", async () => {
+  const pane = await lab.openMain();
+  const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
+  const rename = await lab.askedMain(pane, "Repository name", RENAME, ["Rename", "Keep"], 2);
+  await lab.herdr().submit(pane, "/d");
+  await lab.screenWhere(pane, "the first decision", onCard(["Decision 1 of 2", SHIP]));
+  lab.answers(3);
+
+  assert.equal(await putOff(ship.id), 200);
+  keep(
+    "live-8-put-off-on-screen",
+    await lab.screenWhere(
+      pane,
+      "the next decision and why it is there",
+      onCard(["Decision 1 of 1", NEW_ONE, RENAME], [SHIP]),
+    ),
+  );
+
+  await lab.herdr().press(pane, "enter");
+  await lab.screenWhere(pane, "the first ⏎ to be a look", onCard([RENAME], [NEW_ONE]));
+  assert.deepEqual(await lab.answered(ship), []);
+  assert.deepEqual(await lab.answered(rename), []);
+
+  await lab.herdr().press(pane, "enter");
+  await lab.screenWhere(pane, "the answer", (screen) => cardRows(screen).length === 0);
+  assert.deepEqual(await lab.answered(rename), [
+    { body: "Rename", source: "pane", written: undefined },
+  ]);
+  assert.deepEqual(await lab.answered(ship), []);
+});
+
 test("a decision he puts off on the board leaves the open card and the status bar together", async () => {
   const pane = await lab.openMain();
   const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
