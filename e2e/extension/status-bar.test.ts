@@ -233,6 +233,20 @@ test("a card of the captain's own that he put off is neither counted nor on /d u
   await lab.screenWhere(pane, "the card for his own card", onCard(["Decision 1 of 1", VENDOR]));
 });
 
+test("a Later made on the board lowers the count at once, with no /d and no poll", async () => {
+  const pane = await lab.openMain();
+  await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
+  const vendor = await lab.askedMain(pane, "Vendor", VENDOR, ["Acme", "Other"], 2);
+  const open = (await lab.cardd.board()).holds.find((each) => each.card === vendor.id);
+  assert.ok(open !== undefined, "the vendor decision is open");
+  lab.answers(1);
+  const action = { kind: "hold", hold: open.hold, said: "in 1 hour", zone: "UTC" } as const;
+  assert.equal(await lab.cardd.act(vendor.id, action), 200);
+
+  const one = await lab.screenWhere(pane, "only the other decision", showing([awaiting(1)]));
+  assert.match(statusRow(one), /^1 decision awaits you board$/, "the put-off card is still counted");
+});
+
 const FULL = "2 decisions await you ● 1 ▲ 1 board";
 const WIDTHS = [
   { columns: 57, ratio: 0.5 },
