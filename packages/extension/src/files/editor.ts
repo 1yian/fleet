@@ -23,7 +23,7 @@ function statusLine(note: string): string[] {
   return ["-c", "set laststatus=2", "-c", `let &statusline = ${vimString(line)}`];
 }
 
-export function guardBuffers(): string[] {
+function guardBuffers(): string[] {
   const check = [...launchPrefix(), "files", "check"].map(vimString).join(", ");
   return [
     "-c",

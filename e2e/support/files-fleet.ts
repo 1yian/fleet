@@ -11,7 +11,7 @@ import {
 import { delimiter, join } from "node:path";
 import { Cardd } from "./cardd.ts";
 import { git } from "./remote.ts";
-import { tempDir } from "./run-root.ts";
+import { sharedCacheDir, tempDir } from "./run-root.ts";
 import { configureMain, Scratch } from "./scratch.ts";
 
 const HOST = "p620";
@@ -116,6 +116,7 @@ export class FilesFleet {
       HOME: this.userHome,
       PI_CODING_AGENT_DIR: join(this.userHome, ".pi", "agent"),
       PATH: [this.bin, process.env["PATH"] ?? ""].join(delimiter),
+      XDG_CACHE_HOME: sharedCacheDir,
       ...extra,
     };
   }

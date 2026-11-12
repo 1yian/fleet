@@ -87,7 +87,7 @@ export async function runFiles(args: readonly string[]): Promise<number> {
   const [verb, ...rest] = args;
   try {
     const world = await loadWorld();
-    if (verb === undefined) return launchExplorer(world);
+    if (verb === undefined) return await launchExplorer(world);
     const handler = HANDLERS[verb];
     if (handler === undefined) throw new Error(`fleet files: unknown command ${verb}`);
     return await handler(world, rest);

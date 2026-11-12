@@ -39,7 +39,7 @@ The fleet checks all of this on each host before it starts a mate, and before `/
 
 The check does not test that the cardd host is reachable over Tailscale. Mates reconnect to `cardd` by themselves while it restarts, so a mate must start when `cardd` is down, and a reachability test would be slow and flaky.
 
-`yazi`, `nvim`, and `fzf` are optional. They are for the Files tab (see [The Files tab](#the-files-tab)). A host without them starts its mates and shows the Files tab as a plain `nvim` or `vim` folder view, or, with no editor either, prints one line that says what to install. The tab is tested with `yazi` 26.5.6 and `nvim` 0.12. Yazi's `ya` command must be on the `PATH` next to `yazi`. `fzf` is only the picker behind `g p` and `g w`, which say so when it is missing. Install them from your package manager or, on a host with no nix, from the release binaries: https://github.com/sxyazi/yazi/releases.
+`yazi` is not a prerequisite. The Files tab (see [The Files tab](#the-files-tab)) runs Yazi 26.5.6, which `fleet files` fetches from Yazi's GitHub release the first time it runs on a host. It checks the download against a SHA-256 written in the fleet's code, refuses any other file, and keeps `yazi` and `ya` in `~/.cache/fleet/yazi-26.5.6-<platform>-<arch>/` (under `$XDG_CACHE_HOME` when that is set), shared by every lane on the host. It is pinned for macOS and Linux on arm64 and x64; on Linux it is the static musl build, so it needs no system library. A host that cannot reach github.com runs a `yazi` on its `PATH` instead, or prints one line that says why. `nvim` and `fzf` are optional. The editor is `nvim`, then `vim`, then `vi`. `fzf` is only the picker behind `g p` and `g w`, which say so when it is missing.
 
 `lavish-axi` is optional. A host without it starts its mates and runs its workers with no problem reported. Install it (`npm install -g lavish-axi`, 0.1.80 or later) to let workers show review pages, so the fleet waits on the captain's feedback there. 0.1.80 is the first release whose `reply` confirms that the page took the answer. On a host where it is missing or older, a worker's `lavish-axi` command is not found, so the worker writes a plain Markdown report and reports `needs-decision` or `done` with its path.
 
@@ -631,7 +631,7 @@ A host updates with the code it already has. A host whose checkout predates `fle
 
 ## The Files tab
 
-Every mate's herdr workspace has a second tab named `Files`. It runs `fleet files` in the lane home, which starts Yazi with `nvim` as the editor. The tab is made when the mate starts, on the mate's own host, and a mate that finds the tab already there leaves it alone. When Yazi quits, the pane is a shell in the lane home, and `fleet files` brings the explorer back. Nothing about it goes through `cardd`, the board, or a link: it is a terminal on the host that has the files.
+Every mate's herdr workspace has a second tab named `Files`. It runs `fleet files` in the lane home, which starts Yazi, with `nvim` as the editor. Yazi shows three columns: the parent folder, the current folder, and a preview of what the cursor is on, with icons, syntax-highlighted code, and its usual keys (`h` `j` `k` `l`, `g g`, `G`, `/`, Enter). The tab is made when the mate starts, on the mate's own host, and a mate that finds the tab already there leaves it alone. When Yazi quits, the pane is a shell in the lane home, and `fleet files` brings the explorer back. Nothing about it goes through `cardd`, the board, or a link: it is a terminal on the host that has the files.
 
 ### What it shows
 
@@ -685,7 +685,7 @@ Skill text is edited in one place: the ystack lane. Every other lane, and every 
 ### Rolling it out
 
 1. Merge the change and run `/updatefleet`. Every lane then has the new extension. Nothing in the protocol, `cardd`, or the database changes, so mates that run the earlier code keep working and reconnect as before. A lane gets its Files tab the next time its mate starts (`lane(<lane>, "restart")`), and a lane that has not restarted has none.
-2. Install `yazi`, `nvim`, and `fzf` on each host, or none of them (see Prerequisites). The CNP VM has no nix, so use the release binaries there.
+2. Nothing to install for Yazi: the first `fleet files` on a host fetches it (see Prerequisites). A Files tab that is already open keeps what it runs. Quit it (`:q` in the `nvim` folder view of an earlier version) and run `fleet files` in that pane.
 3. Set `"files": {"main": "<host>"}` in each lane's `config/lane.json` that should type into main's pane with `M`. A lane that does not set it uses the board comment.
 4. Before a lane that holds a very large tree gets the tab for good, run `fleet files` in it by hand and note how long the first listing of its biggest folder takes. If it stalls, set `"files": {"previews": false}` for that lane.
 5. In the ystack lane, nothing more is needed if its `args` already load the scratch worktree's `skills/` as in "Changing a lane's settings".

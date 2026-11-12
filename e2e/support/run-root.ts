@@ -56,3 +56,5 @@ if (process.env["NODE_COMPILE_CACHE"] !== undefined) {
 export function tempDir(prefix: string): string {
   return mkdtempSync(join(runRoot, prefix));
 }
+
+export const sharedCacheDir = join(outerTmpdir, "fleet-e2e-cache");

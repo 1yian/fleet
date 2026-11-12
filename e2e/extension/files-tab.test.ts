@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { FilesMates, until } from "../support/files-mates.ts";
+import { FilesPane } from "../support/files-pane.ts";
 import { optionalString, parseRecord } from "../support/json.ts";
 
 let mates: FilesMates;
@@ -36,23 +37,28 @@ async function startedWithFiles(): Promise<{ workspace: string; pane: string }> 
   return { workspace, pane };
 }
 
-test("a mate's workspace gets a Files tab that runs the explorer in the lane home", async () => {
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+
+const header = (folder: string): RegExp => new RegExp(`^${escaped(folder)}(\\s.*)?$`, "m");
+
+test("a mate's workspace gets a Files tab that runs yazi in the lane home", async () => {
   const { workspace, pane } = await startedWithFiles();
-  await until("the explorer", async () =>
-    (await mates.lab.screen(pane)).includes(`FILES-TAB-STUB in ${mates.fleet.home}`)
-      ? true
-      : undefined,
-  );
+  const files = FilesPane.attach(mates.lab, pane);
+  await files.sees(header(mates.fleet.home), "yazi's header to name the lane home");
+  await files.sees("AGENTS.md");
   const labels = await tabLabels(workspace);
   assert.equal(labels.length, 2);
   assert.equal(labels[1], "Files");
 });
 
 test("a reload of the mate and a second fleet up leave one Files tab, and its running explorer alone", async () => {
+  const data = join(mates.fleet.home, "data");
+  mkdirSync(data, { recursive: true });
   const { workspace, pane } = await startedWithFiles();
-  await until("the explorer", async () =>
-    (await mates.lab.screen(pane)).includes("FILES-TAB-STUB") ? true : undefined,
-  );
+  const files = FilesPane.attach(mates.lab, pane);
+  await files.sees("AGENTS.md");
+  await files.type("gd");
+  await files.sees(header(data), "the header to name data");
   const before = await until("the mate's first skills record", skillsRecordedAt);
   const mate = await mates.matePane();
   await mates.lab.submit(mate, "/reload");
@@ -62,8 +68,7 @@ test("a reload of the mate and a second fleet up leave one Files tab, and its ru
     return now !== undefined && now !== before ? now : undefined;
   });
   assert.deepEqual(await tabLabels(workspace), ["1", "Files"]);
-  const screen = await mates.lab.screen(pane);
-  assert.equal(screen.split("FILES-TAB-STUB").length - 1, 1);
+  assert.match(await files.screen(), header(data));
 });
 
 test("the Files tab goes with its workspace, and a mate started again makes one new tab", async () => {
