@@ -77,22 +77,30 @@ export class DecideLab {
   readonly h: Harness;
   readonly cleo: Session;
   private readonly scratch: Scratch;
+  private readonly env: Record<string, string>;
   private opened: HerdrLab | undefined;
 
-  private constructor(cardd: Cardd, h: Harness, scratch: Scratch, cleo: Session) {
+  private constructor(
+    cardd: Cardd,
+    h: Harness,
+    scratch: Scratch,
+    cleo: Session,
+    env: Record<string, string>,
+  ) {
     this.cardd = cardd;
     this.h = h;
     this.scratch = scratch;
     this.cleo = cleo;
+    this.env = env;
   }
 
-  static async start(): Promise<DecideLab> {
+  static async start(env: Record<string, string> = {}): Promise<DecideLab> {
     const cardd = await Cardd.start();
     const h = await Harness.start();
     const scratch = new Scratch();
     configureMain(scratch, cardd.url, cardd.addLane("main", undefined, scratch.root));
     const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
-    return new DecideLab(cardd, h, scratch, cleo);
+    return new DecideLab(cardd, h, scratch, cleo, env);
   }
 
   async stop(t: object): Promise<void> {
@@ -116,6 +124,7 @@ export class DecideLab {
   private async openLab(): Promise<HerdrLab> {
     this.opened = await HerdrLab.start({
       ...this.h.piEnv("mate"),
+      ...this.env,
       FLEET_PANE_POLL_MS: "3600000",
       PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     });

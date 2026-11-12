@@ -232,12 +232,26 @@ export class Cardd {
   }
 
   async act(card: number, action: BoardAction["action"]): Promise<number> {
+    return (await this.refusal(card, action)).status;
+  }
+
+  async refusal(
+    card: number,
+    action: BoardAction["action"],
+  ): Promise<{ status: number; error: string | undefined; body: unknown }> {
     const response = await fetch(this.http("/api/action"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ card, action }),
     });
-    return response.status;
+    const body: unknown = await response.json();
+    const error: unknown =
+      typeof body === "object" && body !== null ? Reflect.get(body, "error") : undefined;
+    return {
+      status: response.status,
+      error: typeof error === "string" ? error : undefined,
+      body,
+    };
   }
 
   async connect(

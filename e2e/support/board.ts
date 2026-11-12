@@ -41,8 +41,12 @@ export async function openBoardPage(
   context: TestContext | SuiteContext,
   browser: Browser,
   viewport?: { width: number; height: number },
+  timezoneId?: string,
 ): Promise<Page> {
-  const page = await browser.newPage(viewport === undefined ? {} : { viewport });
+  const page = await browser.newPage({
+    ...(viewport === undefined ? {} : { viewport }),
+    ...(timezoneId === undefined ? {} : { timezoneId }),
+  });
   assert.ok("after" in context);
   context.after(() => page.close());
   return page;

@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Link } from "../link.ts";
 import { DecisionCard } from "./card.ts";
-import { answerDecision, loadDecisions } from "./decisions.ts";
+import { answerDecision, deferDecision, loadDecisions } from "./decisions.ts";
 
 const RESERVED_ROWS = 5;
 const NOTHING_WAITING = "Nothing is waiting for your decision.";
@@ -47,6 +47,9 @@ export class Decide {
             rows: () => tui.terminal.rows - RESERVED_ROWS,
             send: (decision, choice, written) =>
               answerDecision(this.link, decision, choice, written),
+            later: async (decision, said) => {
+              ui.notify(await deferDecision(this.link, decision, said), "info");
+            },
             reload: () => loadDecisions(this.link),
             redraw: () => {
               tui.requestRender();

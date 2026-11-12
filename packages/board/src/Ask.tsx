@@ -1,19 +1,21 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { MERGE_OPTIONS } from "@fleet/protocol";
-import type { Question } from "./format.ts";
+import { deviceZone, type Question } from "./format.ts";
 import { ClockIcon, PenIcon } from "./icons.tsx";
 import { Rich } from "./Rich.tsx";
 
-const HOUR = 3_600_000;
-const MORNING = 9;
-const MONDAY = 1;
+const PRESETS = [
+  { label: "In 3 hours", said: "in 3 hours" },
+  { label: "Tomorrow 09:00", said: "tomorrow 09:00" },
+  { label: "Monday 09:00", said: "Monday 09:00" },
+] as const;
 
 interface Props {
   readonly question: Question;
   readonly showQuestion: boolean;
   readonly onRead: (() => void) | undefined;
   readonly onAnswer: (hold: number, choice: string, written: boolean) => Promise<boolean>;
-  readonly onLater: (hold: number, until: number, reason: string) => void;
+  readonly onLater: (hold: number, said: string) => Promise<string | undefined>;
 }
 
 type Mode = "options" | "words" | "later";
@@ -88,12 +90,7 @@ function AskBody(props: Props) {
         <Words question={question} onAnswer={props.onAnswer} onCancel={toOptions} />
       ) : null}
       {mode === "later" ? (
-        <Later
-          onLater={(until, reason) => {
-            props.onLater(question.hold, until, reason);
-          }}
-          onCancel={toOptions}
-        />
+        <Later onLater={(said) => props.onLater(question.hold, said)} onCancel={toOptions} />
       ) : null}
       {mode === "options" ? (
         <div className="ask-foot">
@@ -192,47 +189,82 @@ function Words(props: {
   );
 }
 
-interface Preset {
-  readonly label: string;
-  readonly until: number;
-}
-
-function presets(now: number): Preset[] {
-  const morning = (days: number): number => {
-    const day = new Date(now);
-    day.setDate(day.getDate() + days);
-    return day.setHours(MORNING, 0, 0, 0);
-  };
-  const untilMonday = (MONDAY + 7 - new Date(now).getDay()) % 7 || 7;
-  return [
-    { label: "In 3 hours", until: now + 3 * HOUR },
-    { label: `Tomorrow ${String(MORNING).padStart(2, "0")}:00`, until: morning(1) },
-    { label: `Monday ${String(MORNING).padStart(2, "0")}:00`, until: morning(untilMonday) },
-  ];
-}
-
 function Later(props: {
-  readonly onLater: (until: number, reason: string) => void;
+  readonly onLater: (said: string) => Promise<string | undefined>;
   readonly onCancel: () => void;
 }) {
-  const [options] = useState(() => presets(Date.now()));
+  const inputId = useId();
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [problem, setProblem] = useState<string | undefined>();
+  const send = async (said: string): Promise<void> => {
+    const words = said.trim();
+    if (words === "" || sending) return;
+    setSending(true);
+    setProblem(await props.onLater(words));
+    setSending(false);
+  };
+  const key = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      props.onCancel();
+    }
+  };
   return (
     <div className="later" role="group" aria-label="Ask me later">
-      {options.map((preset) => (
+      {PRESETS.map((preset) => (
         <button
           type="button"
           key={preset.label}
           className="option later-option"
+          disabled={sending}
           onClick={() => {
-            props.onLater(preset.until, `Put off from the board until ${preset.label}`);
+            void send(preset.said);
           }}
         >
           {preset.label}
         </button>
       ))}
-      <button type="button" className="quiet" onClick={props.onCancel}>
-        Cancel
-      </button>
+      <form
+        className="write"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send(text);
+        }}
+      >
+        <label className="write-prompt" htmlFor={inputId}>
+          Or say when
+        </label>
+        <input
+          id={inputId}
+          type="text"
+          aria-label="Until when"
+          autoFocus
+          autoComplete="off"
+          value={text}
+          placeholder="Friday 4PM, Nov 20, in 2 hours"
+          onChange={(event) => {
+            setText(event.target.value);
+          }}
+          onKeyDown={key}
+        />
+        {problem === undefined ? null : (
+          <p className="later-problem" role="alert">
+            {problem}
+          </p>
+        )}
+        <div className="write-actions">
+          <p className="hint">
+            It comes back to you then. A time with no zone is read in {deviceZone()}.
+          </p>
+          <button type="button" className="quiet" onClick={props.onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="send" disabled={sending || text.trim() === ""}>
+            Hold until then
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

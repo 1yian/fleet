@@ -9,6 +9,8 @@ import {
   type Card,
   type CardView,
   type Entry,
+  type LaterResult,
+  type OpResult,
   type Pulse,
   type RemainingStep,
   type Status,
@@ -34,6 +36,7 @@ import {
 import type { Timings } from "./timing.ts";
 import { entryFor } from "./bundle.ts";
 import { canSee, datedWait, sightOf } from "./waits.ts";
+import { laterAt } from "./later.ts";
 
 export class StaleCard extends Error {}
 
@@ -61,6 +64,15 @@ function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
     throw new StaleCard(`${name}'s decision changed, so nothing was recorded`);
   return open;
 }
+
+function requireCaptainsHold(db: DatabaseSync, card: Card, seen: number): Hold {
+  const open = requireSeen(db, card, seen);
+  if (open.holder !== "captain")
+    throw new Error("that hold is with main or its mate. It reaches you when main escalates it");
+  return open;
+}
+
+type PaneLater = OpResult<"pane.later">;
 
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
 const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
@@ -206,9 +218,7 @@ function answerOnBoard(
   written: boolean,
   source: "board" | "pane",
 ): string[] {
-  const open = requireSeen(db, card, hold);
-  if (open.holder !== "captain")
-    throw new Error("that hold is with main or its mate. It reaches you when main escalates it");
+  const open = requireCaptainsHold(db, card, hold);
   const picked = written && open.merge ? MERGE_OPTIONS[1] : choice;
   const args = { words: choice, source, choice: picked, ...(written ? { written } : {}) };
   return [...answerHold(db, null, card, open, args).notify];
@@ -230,24 +240,29 @@ function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
   return to;
 }
 
+interface Deferred extends LaterResult {
+  readonly notify: string[];
+}
+
 function deferOnBoard(
   db: DatabaseSync,
   card: Card,
   hold: number,
-  until: number,
-  reason: string,
-): string[] {
-  if (until <= Date.now()) throw new Error("until must be in the future");
-  requireSeen(db, card, hold);
+  said: string,
+  zone: string,
+  now: number,
+): Deferred {
+  requireCaptainsHold(db, card, hold);
+  const later = laterAt(said, now, zone);
   const facts = factsFrom(cardEntries(db, card.id));
-  const base = rewritten(facts, facts.hold?.holder ?? "owner", until);
-  const fields = { ...base, wait: { by: "later", text: reason }, remaining: [], reason };
-  const body = facts.hold?.question ?? reason;
+  const base = rewritten(facts, facts.hold?.holder ?? "owner", later.until);
+  const fields = { ...base, wait: { by: "later", text: said.trim() }, remaining: [] };
+  const body = facts.hold?.question ?? `The captain put this off: ${said.trim()}`;
   const draft: Draft = { card: card.id, author: "captain", kind: "hold", body, fields };
   requireOpen(db, card);
-  const to = hearers(db, card, null, [fields.holder]);
-  addEntry(db, draft, to);
-  return to;
+  const notify = hearers(db, card, null, [fields.holder]);
+  addEntry(db, draft, notify);
+  return { notify, ...later };
 }
 
 export function paneAnswer(
@@ -259,11 +274,35 @@ export function paneAnswer(
   return { value: getCard(db, id), notify };
 }
 
-export function boardAction(db: DatabaseSync, raw: unknown): string[] {
+export function paneLater(
+  db: DatabaseSync,
+  raw: unknown,
+  now: number,
+): { readonly value: PaneLater; readonly notify: readonly string[] } {
+  const { card: id, hold, said, zone } = check(OPS["pane.later"].args, raw);
+  const { notify, until, zone: used } = deferOnBoard(db, getCard(db, id), hold, said, zone, now);
+  return { value: { card: getCard(db, id), until, zone: used }, notify };
+}
+
+export function boardAction(
+  db: DatabaseSync,
+  raw: unknown,
+  now: number,
+): { readonly notify: string[]; readonly later?: LaterResult } {
   const { card: id, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);
-  if (action.kind === "answer")
-    return answerOnBoard(db, card, action.hold, action.choice, action.written === true, "board");
-  if (action.kind === "comment") return commentOnBoard(db, card, action.text);
-  return deferOnBoard(db, card, action.hold, action.until, action.reason);
+  if (action.kind === "answer") {
+    const written = action.written === true;
+    return { notify: answerOnBoard(db, card, action.hold, action.choice, written, "board") };
+  }
+  if (action.kind === "comment") return { notify: commentOnBoard(db, card, action.text) };
+  const { notify, until, zone } = deferOnBoard(
+    db,
+    card,
+    action.hold,
+    action.said,
+    action.zone,
+    now,
+  );
+  return { notify, later: { until, zone } };
 }

@@ -39,7 +39,7 @@ interface Handlers {
     choice: string,
     written: boolean,
   ) => Promise<boolean>;
-  readonly onLater: (card: number, hold: number, until: number, reason: string) => void;
+  readonly onLater: (card: number, hold: number, said: string) => Promise<string | undefined>;
   readonly onDismiss: (card: number) => void;
 }
 
@@ -52,7 +52,8 @@ interface CardProps extends Handlers {
 }
 
 const onControl = (event: MouseEvent): boolean =>
-  event.target instanceof Element && event.target.closest("a, button, textarea, input") !== null;
+  event.target instanceof Element &&
+  event.target.closest("a, button, textarea, input, label") !== null;
 
 const opens = (event: MouseEvent): boolean =>
   event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey;
@@ -233,9 +234,7 @@ function Hold(props: CardProps & { readonly question: Question; readonly open: (
       showQuestion={!(question.merge && card.pr !== null)}
       onRead={props.open}
       onAnswer={(hold, choice, written) => props.onAnswer(card.id, hold, choice, written)}
-      onLater={(hold, until, reason) => {
-        props.onLater(card.id, hold, until, reason);
-      }}
+      onLater={(hold, said) => props.onLater(card.id, hold, said)}
     />
   );
 }

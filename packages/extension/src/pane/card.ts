@@ -12,9 +12,11 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
+import { LATER_EXAMPLES } from "@fleet/protocol";
 import type { Decision } from "./decisions.ts";
 
 const WRITE_LABEL = "My words…";
+const LATER_LABEL = "Later…";
 const RECOMMENDED = "(recommended)";
 const MAX_DOTS = 10;
 const MAX_BODY_ROWS = 16;
@@ -33,10 +35,13 @@ export interface CardDeps {
   readonly decisions: readonly Decision[];
   readonly rows: () => number;
   readonly send: (decision: Decision, choice: string, written: boolean) => Promise<void>;
+  readonly later: (decision: Decision, said: string) => Promise<void>;
   readonly reload: () => Promise<readonly Decision[]>;
   readonly redraw: () => void;
   readonly close: () => void;
 }
+
+type Row = "option" | "words" | "later";
 
 interface Slot {
   readonly decision: Decision;
@@ -75,15 +80,21 @@ export class DecisionCard implements Component, Focusable {
   private note: string | undefined;
   private focus = false;
   private readonly input: Input;
+  private readonly when: Input;
   private readonly deps: CardDeps;
 
   constructor(deps: CardDeps) {
     this.deps = deps;
     this.deck = deps.decisions.map((decision) => ({ decision, answered: false }));
-    this.input = new Input({
+    this.input = this.typedLine(WRITE_LABEL);
+    this.when = this.typedLine(`${LATER_LABEL} ${LATER_EXAMPLES}`);
+  }
+
+  private typedLine(placeholder: string): Input {
+    return new Input({
       prompt: "",
-      placeholder: WRITE_LABEL,
-      placeholderStyle: (text) => deps.theme.fg("accent", text),
+      placeholder,
+      placeholderStyle: (text) => this.deps.theme.fg("accent", text),
     });
   }
 
@@ -94,6 +105,7 @@ export class DecisionCard implements Component, Focusable {
   set focused(value: boolean) {
     this.focus = value;
     this.input.focused = value;
+    this.when.focused = value;
   }
 
   private get current(): Decision | undefined {
@@ -101,19 +113,32 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private get choices(): readonly string[] {
-    return [...(this.current?.options ?? []), WRITE_LABEL];
+    return [...(this.current?.options ?? []), WRITE_LABEL, LATER_LABEL];
   }
 
   private get writeRow(): number {
+    return this.choices.length - 2;
+  }
+
+  private get laterRow(): number {
     return this.choices.length - 1;
   }
 
-  private get writing(): boolean {
-    return this.row === this.writeRow;
+  private get kind(): Row {
+    if (this.row === this.writeRow) return "words";
+    return this.row === this.laterRow ? "later" : "option";
+  }
+
+  private get typed(): Input {
+    return this.kind === "later" ? this.when : this.input;
   }
 
   private get words(): string {
     return this.input.getValue().trim();
+  }
+
+  private get drafting(): boolean {
+    return this.kind !== "option" && this.typed.getValue().trim() !== "";
   }
 
   private get open(): number {
@@ -122,6 +147,7 @@ export class DecisionCard implements Component, Focusable {
 
   invalidate(): void {
     this.input.invalidate();
+    this.when.invalidate();
   }
 
   handleInput(data: string): void {
@@ -165,12 +191,12 @@ export class DecisionCard implements Component, Focusable {
     const at = event.y - this.firstPick;
     if (at < 0 || at >= this.shownPicks) return undefined;
     this.row = this.choiceTop + at;
-    if (event.type === "click" && !this.writing) this.confirm();
+    if (event.type === "click" && this.kind === "option") this.confirm();
     return { handled: true };
   }
 
   private cancel(): void {
-    if (this.writing && this.words !== "") this.input.setValue("");
+    if (this.drafting) this.typed.setValue("");
     else this.deps.close();
   }
 
@@ -180,14 +206,15 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private sideways(step: number, data: string): void {
-    if (this.writing && this.input.getValue() !== "") this.input.handleInput(data);
+    if (this.kind !== "option" && this.typed.getValue() !== "") this.typed.handleInput(data);
     else this.turn(step);
   }
 
   private type(data: string): void {
-    const before = this.input.getValue();
-    this.input.handleInput(oneLine(data));
-    if (this.input.getValue() !== before) this.row = this.writeRow;
+    const line = this.typed;
+    const before = line.getValue();
+    line.handleInput(oneLine(data));
+    if (line.getValue() !== before && this.kind === "option") this.row = this.writeRow;
   }
 
   private turn(step: number): void {
@@ -213,21 +240,30 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private confirm(): void {
-    if (!this.writing) {
+    const { kind } = this;
+    if (kind === "words") this.answer(this.words, true);
+    else if (kind === "later") this.defer(this.when.getValue().trim());
+    else {
       const choice = this.choices[this.row];
       if (choice !== undefined) this.answer(choice, false);
-      return;
     }
-    this.answer(this.words, true);
   }
 
   private answer(choice: string, written: boolean): void {
+    if (choice !== "") this.submit((decision) => this.deps.send(decision, choice, written));
+  }
+
+  private defer(said: string): void {
+    if (said !== "") this.submit((decision) => this.deps.later(decision, said));
+  }
+
+  private submit(run: (decision: Decision) => Promise<void>): void {
     const decision = this.current;
-    if (decision === undefined || choice === "" || this.sending) return;
+    if (decision === undefined || this.sending) return;
     this.sending = true;
     this.note = undefined;
     this.deps.redraw();
-    this.deps.send(decision, choice, written).then(
+    run(decision).then(
       () => {
         this.sending = false;
         this.next();
@@ -243,6 +279,7 @@ export class DecisionCard implements Component, Focusable {
       place === this.at ? { ...slot, answered: true } : slot,
     );
     this.input.setValue("");
+    this.when.setValue("");
     if (this.open === 0) {
       this.deps.close();
       return;
@@ -284,16 +321,18 @@ export class DecisionCard implements Component, Focusable {
       if (!kept.has(decision.card)) deck.push({ decision, answered: false });
     const same = deck.findIndex((slot) => !slot.answered && slot.decision.card === refused.card);
     const first = deck.findIndex((slot) => !slot.answered);
-    const picked = this.writing ? undefined : this.choices[this.row];
+    const { kind } = this;
+    const picked = kind === "option" ? this.choices[this.row] : undefined;
     this.deck = deck;
     this.at = Math.max(0, same !== -1 ? same : landing !== -1 ? landing : first);
     if (same === -1) this.settle();
-    else this.row = this.follow(picked);
+    else this.row = this.follow(kind, picked);
   }
 
-  private follow(picked: string | undefined): number {
-    if (picked === undefined) return this.writeRow;
-    return Math.max(0, (this.current?.options ?? []).indexOf(picked));
+  private follow(kind: Row, picked: string | undefined): number {
+    if (kind === "words") return this.writeRow;
+    if (kind === "later") return this.laterRow;
+    return Math.max(0, (this.current?.options ?? []).indexOf(picked ?? ""));
   }
 
   private settle(): void {
@@ -301,6 +340,7 @@ export class DecisionCard implements Component, Focusable {
     this.scroll = 0;
     this.choiceTop = 0;
     this.input.setValue("");
+    this.when.setValue("");
   }
 
   private layout(): Layout {
@@ -387,19 +427,22 @@ export class DecisionCard implements Component, Focusable {
     const chosen = at === this.row;
     const pointer = chosen ? theme.fg("accent", POINTER) : " ".repeat(POINTER.length);
     const room = inner - POINTER.length;
-    if (at === this.writeRow) return `${pointer}${this.writeIn(chosen, room)}`;
+    if (at === this.writeRow)
+      return `${pointer}${this.writeIn(chosen, room, this.input, WRITE_LABEL)}`;
+    if (at === this.laterRow)
+      return `${pointer}${this.writeIn(chosen, room, this.when, LATER_LABEL)}`;
     const tag = at === 0 && this.choices.length > 1 ? ` ${RECOMMENDED}` : "";
     const text = this.fit(plain(label), room - visibleWidth(tag));
     const word = chosen ? theme.fg("accent", text) : text;
     return `${pointer}${word}${theme.fg("muted", tag)}`;
   }
 
-  private writeIn(chosen: boolean, room: number): string {
+  private writeIn(chosen: boolean, room: number, line: Input, label: string): string {
     const { theme } = this.deps;
-    const typed = this.input.getValue();
-    if (chosen) return this.input.render(room)[0] ?? "";
-    if (typed === "") return this.fit(WRITE_LABEL, room);
-    return theme.fg("muted", this.fit(`${WRITE_LABEL} ${plain(typed)}`, room));
+    const typed = line.getValue();
+    if (chosen) return line.render(room)[0] ?? "";
+    if (typed === "") return this.fit(label, room);
+    return theme.fg("muted", this.fit(`${label} ${plain(typed)}`, room));
   }
 
   private hint(inner: number): string {
@@ -412,20 +455,20 @@ export class DecisionCard implements Component, Focusable {
   }
 
   private hints(): (readonly [string, string])[] {
-    const drafting = this.writing && this.words !== "";
+    const { drafting, kind } = this;
     return [
       ["↑↓", `choose${this.place()}`],
       ...(this.open > 1 && !drafting ? [["←→", "decision"] as const] : []),
       ...this.enter(drafting),
-      ...(drafting ? [] : [["type", "your own words"] as const]),
+      ...(drafting ? [] : [["type", kind === "later" ? "until when" : "your own words"] as const]),
       ...(this.overflow ? [["PgUp/PgDn", "read"] as const] : []),
-      ["esc", drafting ? "clear" : "later"],
+      ["esc", drafting ? "clear" : "close"],
     ];
   }
 
   private enter(drafting: boolean): (readonly [string, string])[] {
-    if (drafting) return [["⏎", "send"]];
-    return this.writing ? [] : [["⏎", "select"]];
+    if (drafting) return [["⏎", this.kind === "later" ? "hold" : "send"]];
+    return this.kind === "option" ? [["⏎", "select"]] : [];
   }
 
   private place(): string {

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Board, BoardAction } from "@fleet/protocol";
-import { act, loadBoard, unreachable, useChanges } from "./api.ts";
+import { laterLine, type Board, type BoardAction } from "@fleet/protocol";
+import { act, loadBoard, unreachable, useChanges, type Acted } from "./api.ts";
 import { Kanban } from "./Board.tsx";
 import { CardDetail, NoCard } from "./CardDetail.tsx";
 import { useFacts } from "./facts.ts";
-import { questionsByCard } from "./format.ts";
+import { deviceZone, questionsByCard } from "./format.ts";
 import { useCardRoute } from "./route.ts";
 import { TopBar } from "./TopBar.tsx";
 
@@ -49,7 +49,11 @@ function useNow(): number {
   return now;
 }
 
-function useDecisions(refresh: () => void, setNotice: (notice: string | undefined) => void) {
+function useDecisions(
+  refresh: () => void,
+  setNotice: (notice: string | undefined) => void,
+  setHeld: (held: string | undefined) => void,
+) {
   const [notices, setNotices] = useState<ReadonlyMap<number, string>>(new Map());
   const noticeOn = useCallback((card: number, text: string | undefined) => {
     setNotices((all) => {
@@ -60,17 +64,17 @@ function useDecisions(refresh: () => void, setNotice: (notice: string | undefine
     });
   }, []);
   const send = useCallback(
-    async (card: number, action: BoardAction["action"]): Promise<string | undefined> => {
-      const error = await act({ card, action });
+    async (card: number, action: BoardAction["action"]): Promise<Acted> => {
+      const acted = await act({ card, action });
       refresh();
-      return error;
+      return acted;
     },
     [refresh],
   );
   const decide = useCallback(
     async (card: number, action: BoardAction["action"]): Promise<boolean> => {
       noticeOn(card, undefined);
-      const error = await send(card, action);
+      const { error } = await send(card, action);
       noticeOn(card, error);
       return error === undefined;
     },
@@ -82,10 +86,17 @@ function useDecisions(refresh: () => void, setNotice: (notice: string | undefine
     [decide],
   );
   const later = useCallback(
-    (card: number, hold: number, until: number, reason: string) => {
-      void decide(card, { kind: "hold", hold, until, reason });
+    async (card: number, hold: number, said: string): Promise<string | undefined> => {
+      const { error, later: held } = await send(card, {
+        kind: "hold",
+        hold,
+        said,
+        zone: deviceZone(),
+      });
+      if (held !== undefined) setHeld(laterLine(card, held, Date.now()));
+      return error;
     },
-    [decide],
+    [send, setHeld],
   );
   const dismiss = useCallback(
     (card: number) => {
@@ -95,7 +106,7 @@ function useDecisions(refresh: () => void, setNotice: (notice: string | undefine
   );
   const reply = useCallback(
     async (card: number, text: string): Promise<boolean> => {
-      const error = await send(card, { kind: "comment", text });
+      const { error } = await send(card, { kind: "comment", text });
       setNotice(error);
       return error === undefined;
     },
@@ -120,21 +131,39 @@ export function App() {
   const changes = useChanges();
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
+  const [held, setHeld] = useState<string | undefined>();
   const { board, refresh } = useBoard(changes, now, setNotice);
   const [lane, setLane] = useState<string | undefined>();
   const { card: open, open: openCard, close } = useCardRoute();
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
 
-  const { notices, answer, later, dismiss, reply } = useDecisions(refresh, setNotice);
+  const { notices, answer, later, dismiss, reply } = useDecisions(refresh, setNotice, setHeld);
   useEscape(close);
 
-  const banner =
-    notice === undefined ? null : (
-      <p className="notice" role="alert">
-        {notice}
-      </p>
-    );
+  const banner = (
+    <>
+      {notice === undefined ? null : (
+        <p className="notice" role="alert">
+          {notice}
+        </p>
+      )}
+      {held === undefined ? null : (
+        <p className="notice held" role="status">
+          <span>{held}</span>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => {
+              setHeld(undefined);
+            }}
+          >
+            Dismiss
+          </button>
+        </p>
+      )}
+    </>
+  );
   if (board === undefined)
     return (
       <main className="board">
@@ -166,9 +195,7 @@ export function App() {
               dismiss(shown.id);
             }}
             onAnswer={(hold, choice, written) => answer(shown.id, hold, choice, written)}
-            onLater={(hold, until, reason) => {
-              later(shown.id, hold, until, reason);
-            }}
+            onLater={(hold, said) => later(shown.id, hold, said)}
             onReply={(text) => reply(shown.id, text)}
             onFail={setNotice}
           />

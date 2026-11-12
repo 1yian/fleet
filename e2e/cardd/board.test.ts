@@ -231,7 +231,7 @@ test("Later is checked against the hold he saw, not against the rest of the card
   const later = (held: number) =>
     send("/api/action", "POST", json, {
       card,
-      action: { kind: "hold", hold: held, until: Date.now() + 3_600_000, reason: "later" },
+      action: { kind: "hold", hold: held, said: "in 1 hour", zone: "UTC" },
     });
 
   await main.call("hold", { card, question: "1. Which version?\n2. Ship it?\n3. When?" });
