@@ -789,13 +789,35 @@ The captain approves the host steps. Do them when no worker is using the browser
    The unit has no `--clipboard`, so the host's clipboard stays off. Its journal shows `pulseaudio` and `OpenGL is not supported` warnings at each start. Audio is off (`--pulseaudio=no`), so these warnings are harmless. Check that `ss -lxp | grep xpra` lists one socket for the display, that `ss -ltnp | grep -i xpra` lists nothing, and that `stat -c %a /run/user/$(id -u)/xpra/<host>-99` says 600.
 
 5. **Install Xpra.app on the Mac**, the same version as the host (6.5.5 on p620; Homebrew's cask is disabled). A mismatch stops the launcher with Xpra's own error. Download `Xpra-arm64-6.5.5-r0.dmg` from https://www.xpra.org/stable/osx/arm64/ (sha1 `7438cf6e8f8295ef64769b4138f138fb783e3e25`), open it, and drag the app to Applications. If macOS says it is damaged, run `xattr -rd com.apple.quarantine /Applications/Xpra.app`. macOS may ask for permissions when the first window opens. They are the captain's to grant. Check that `ssh -o BatchMode=yes <host> true` answers with no prompt. Check the version with `/Applications/Xpra.app/Contents/MacOS/Xpra --version`: it must say the same version as the host's `xpra --version`.
-6. **Attach.** On the Mac, run the launcher from the captain's checkout (`~/Projects/fleet`), or from any checkout at a commit that has `bin/fleet-attach`:
+6. **Attach.** Before the first attach, the Mac needs these, in this order:
+
+   - **A fleet checkout at current `main`, with no `npm ci`.** The launcher imports only Node's built-in modules and one file, so it needs the files and nothing installed. The repository is public, so no login is needed: `mkdir -p ~/fleet-projects && git clone https://github.com/1yian/fleet.git ~/fleet-projects/fleet`. Later, `git -C ~/fleet-projects/fleet pull`. The launcher is `~/fleet-projects/fleet/bin/fleet-attach`.
+   - **Node 24 or later on the `PATH` of the shell that runs the command.** Check it with `node --version`, in a new terminal and also in a shell that did not read your profile. Homebrew's `/opt/homebrew/bin` is added only by `~/.zprofile` and `~/.zshrc`, so `brew install node` alone can leave a non-interactive or launchd-started shell with no `node`. The launcher runs the TypeScript directly, so it needs a Node that strips types (24 is what the repository requires).
+   - **Xpra.app at the host's version** in `/Applications` (step 5). Check it with `/Applications/Xpra.app/Contents/MacOS/Xpra --version`.
+   - **macOS 13 or later**, because the launcher calls `realpath`.
+   - **Key-based ssh to the host with no prompt.** `ssh -o BatchMode=yes yian@p620 true` must exit 0 and print nothing. That needs a key (not a password), the host key already accepted, and the name `p620` resolving on the Mac. Use exactly the `<user@host>` that passes this check.
+   - **A way to name the launcher.** On the tested Mac, `~/.local/bin` is on the `PATH` and holds this wrapper, so a shell that has no `node` still finds Homebrew's:
+
+     ```sh
+     #!/bin/sh
+     PATH="$PATH:/opt/homebrew/bin"
+     export PATH
+     command -v node >/dev/null 2>&1 || {
+       echo "fleet-attach: node 24 or later is not on PATH and not in /opt/homebrew/bin" >&2
+       exit 127
+     }
+     exec "$HOME/fleet-projects/fleet/bin/fleet-attach" "$@"
+     ```
+
+     Make it executable (`chmod 755 ~/.local/bin/fleet-attach`). Without the wrapper, use the full path of the launcher.
+
+   Then run the command, from any new terminal tab:
 
    ```sh
-   ~/Projects/fleet/bin/fleet-attach yian@p620 --display 99
+   fleet-attach yian@p620 --display 99
    ```
 
-   `<user@host>` is the SSH target. `--display` must be the display of the host's Xpra unit in step 4 (99 here), because the socket is named for it. Do not add `--clipboard`: the host's unit has none. Add `--remote-xpra '<path>'` only when `xpra` is not on the host's non-interactive `PATH`. The launcher needs Node 24 or later on the Mac's `PATH` (`node --version`). It runs its TypeScript directly and imports only Node's built-in modules and one file, so it needs no `npm ci`. Expect the terminal to print `fleet-attach: attaching to yian@p620 display 99`, then Xpra's own lines, such as `Attached to xpra server at p620:22` and `running, 1 windows`, within a few seconds. The screen shows one native window for each Chrome window on the host, titled like `New Tab - Google Chrome`. The launcher stays in the foreground while it is attached. Open a login page, click its password field, and type. In a worker's browser tool, a read of that tab must now fail with `The captain is typing a password in this tab`. Then clear the field and click out of it. Reads stay refused while the cursor is in the field, and succeed again once it has left an empty field.
+   Or, without the wrapper, `~/fleet-projects/fleet/bin/fleet-attach yian@p620 --display 99`. `<user@host>` is the SSH target. `--display` must be the display of the host's Xpra unit in step 4 (99 here), because the socket is named for it. Do not add `--clipboard`: the host's unit has none. Add `--remote-xpra '<path>'` only when `xpra` is not on the host's non-interactive `PATH`. Expect the terminal to print `fleet-attach: attaching to yian@p620 display 99`, then Xpra's own lines, such as `Attached to xpra server at p620:22` and `running, 1 windows`, within a few seconds. The screen shows one native window for each Chrome window on the host, titled like `New Tab - Google Chrome`. The launcher stays in the foreground while it is attached. Open a login page, click its password field, and type. In a worker's browser tool, a read of that tab must now fail with `The captain is typing a password in this tab`. Then clear the field and click out of it. Reads stay refused while the cursor is in the field, and succeed again once it has left an empty field.
 
 What the launcher prints, and what to do:
 
