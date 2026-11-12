@@ -9,11 +9,11 @@ import { boardUrl } from "../board-link.ts";
 import type { Link } from "../link.ts";
 import { onStatusClick } from "../status-click.ts";
 import { Decide } from "./decide.ts";
-import { decisionsOf } from "./decisions.ts";
 import { glanceOf } from "./glance.ts";
 import { listOf } from "./list.ts";
 import { decisionsText, downStatus, statusOf } from "./look.ts";
 import { PulseView } from "./view.ts";
+import { Waiting } from "./waiting.ts";
 
 const STATUS_KEY = "fleet-attention";
 const MINUTE_MS = 60_000;
@@ -25,6 +25,7 @@ const CARD_TOOLS: ReadonlySet<string> = new Set(["hold", "comment", "close", "di
 interface Settings {
   readonly pollMs: number;
   readonly silentMs: number;
+  readonly liveMs: number;
 }
 
 function number(name: string, fallback: number): number {
@@ -35,6 +36,7 @@ function number(name: string, fallback: number): number {
 const settings = (): Settings => ({
   pollMs: number("FLEET_PANE_POLL_MS", MINUTE_MS),
   silentMs: number("FLEET_PANE_SILENT_MS", 30_000),
+  liveMs: number("FLEET_PANE_LIVE_MS", 5_000),
 });
 
 const isMessageOfHis = (entry: SessionEntry): boolean =>
@@ -61,41 +63,41 @@ class Pane {
   private decisions = 0;
   private since: number;
   private silentSince: number | undefined;
-  private fetching = false;
-  private again = false;
   private stopped = false;
   private timer: NodeJS.Timeout | undefined;
   private status: string | undefined;
-  private readonly link: Link;
   private readonly ctx: ExtensionContext;
   private readonly rules: Settings;
+  private readonly waiting: Waiting;
   readonly decide: Decide;
 
   constructor(link: Link, ctx: ExtensionContext, rules: Settings) {
-    this.link = link;
     this.ctx = ctx;
     this.rules = rules;
     this.since = lastMessageAt(ctx);
-    this.decide = new Decide(link, ctx, () => {
-      this.refresh();
+    this.waiting = new Waiting(link);
+    this.waiting.follow(({ cards, decisions, readAt }) => {
+      this.cards = cards;
+      this.decisions = decisions.length;
+      this.dateRefreshAt = nextDateRefresh(cards, readAt);
+      this.silentSince = undefined;
+      this.paint();
     });
+    this.decide = new Decide(
+      link,
+      this.waiting,
+      ctx,
+      () => {
+        this.refresh();
+      },
+      rules.liveMs,
+    );
   }
 
   refresh(): void {
     if (this.stopped) return;
-    if (this.fetching) {
-      this.again = true;
-      return;
-    }
-    this.fetching = true;
     const settle = (): void => {
-      this.fetching = false;
-      if (!this.again) {
-        this.schedule();
-        return;
-      }
-      this.again = false;
-      this.refresh();
+      this.schedule();
     };
     this.load().then(settle, settle);
   }
@@ -132,16 +134,11 @@ class Pane {
 
   private async load(): Promise<void> {
     try {
-      const readAt = Date.now();
-      const cards = await this.link.call("board", {}, DEADLINE_MS);
-      this.decisions = (await decisionsOf(this.link, cards)).length;
-      this.cards = cards;
-      this.dateRefreshAt = nextDateRefresh(cards, readAt);
-      this.silentSince = undefined;
+      await this.waiting.read();
     } catch {
       this.silentSince ??= Date.now();
+      this.paint();
     }
-    this.paint();
   }
 
   private statusAt(now: number): { text: string; decisions: number } | undefined {
