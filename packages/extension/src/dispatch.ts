@@ -7,7 +7,6 @@ import {
   field,
   herdr,
   onHost,
-  paneMissing,
   paneText,
   piPids,
   piRunning,
@@ -134,10 +133,8 @@ async function confirmStays(
 ): Promise<void> {
   const deadline = Date.now() + STAY_MS;
   while (Date.now() < deadline) {
-    if (!(await piRunning(host, pane).catch(() => true))) {
-      if (await paneMissing(host, pane).catch(() => true)) return;
+    if (await shellIdle(host, pane).catch(() => false))
       throw new Error(await exitedMessage(host, pane, worker));
-    }
     await sleep(POLL_MS);
   }
 }
