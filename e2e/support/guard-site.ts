@@ -140,6 +140,10 @@ const pagesFor = (port: number): ReadonlyMap<string, string> =>
       `<title>embed</title><style>body{margin:0}iframe{display:block;border:0;width:300px;height:100px}</style><iframe id="inner" src="http://two.test:${String(port)}/frame"></iframe>`,
     ],
     ["/frame", FRAME],
+    [
+      "/embedspa",
+      `<title>embedspa</title><style>body{margin:0}iframe{display:block;border:0;width:300px;height:100px}</style><iframe id="inner" src="http://two.test:${String(port)}/spa"></iframe>`,
+    ],
   ]);
 
 const readBody = (request: NodeJS.ReadableStream): Promise<string> =>

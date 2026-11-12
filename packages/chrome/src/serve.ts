@@ -8,6 +8,7 @@ import type { Typing } from "./tracking.ts";
 const HOST = /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(:\d{1,5})?$/;
 const SOCKET_PATH = /^\/devtools\/(browser|page)\/([A-Za-z0-9-]+)$/;
 const MAX_FRAME = 512 * 1024 * 1024;
+const HANDSHAKE_MS = 10_000;
 
 export interface Served {
   readonly server: Server;
@@ -135,9 +136,14 @@ function relay(client: WebSocket, browser: WebSocket, gate: Gate): void {
   });
 }
 
+interface Door {
+  readonly sockets: WebSocketServer;
+  readonly typing: Typing;
+  readonly upstreams: Set<WebSocket>;
+}
+
 function upgrade(
-  sockets: WebSocketServer,
-  typing: Typing,
+  door: Door,
   upstream: string,
   request: IncomingMessage,
   socket: Duplex,
@@ -152,13 +158,24 @@ function upgrade(
   const browser = new WebSocket(`ws://${upstream}${request.url ?? ""}`, {
     maxPayload: MAX_FRAME,
     perMessageDeflate: false,
+    handshakeTimeout: HANDSHAKE_MS,
+  });
+  door.upstreams.add(browser);
+  const drop = (): void => {
+    browser.terminate();
+  };
+  const gone = ["close", "end", "error"] as const;
+  for (const event of gone) socket.once(event, drop);
+  browser.once("close", () => {
+    door.upstreams.delete(browser);
   });
   browser.once("error", () => {
     socket.end(`HTTP/1.1 502 Bad Gateway\r\n${GUARD_HEADER}: 1\r\n\r\n`);
   });
   browser.once("open", () => {
-    sockets.handleUpgrade(request, socket, head, (client) => {
-      relay(client, browser, new Gate(typing, found[1] === "page" ? found[2] : undefined));
+    door.sockets.handleUpgrade(request, socket, head, (client) => {
+      for (const event of gone) socket.off(event, drop);
+      relay(client, browser, new Gate(door.typing, found[1] === "page" ? found[2] : undefined));
     });
   });
 }
@@ -170,6 +187,7 @@ export async function serve(
   typing: Typing,
 ): Promise<Served> {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME });
+  const door: Door = { sockets, typing, upstreams: new Set() };
   const server = createServer((request, response) => {
     handle(upstreamOf, request, response);
   });
@@ -179,7 +197,7 @@ export async function serve(
       socket.end(`HTTP/1.1 502 Bad Gateway\r\n${GUARD_HEADER}: 1\r\n\r\n`);
       return;
     }
-    upgrade(sockets, typing, upstream, request, socket, head);
+    upgrade(door, upstream, request, socket, head);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -189,6 +207,7 @@ export async function serve(
     server,
     close: async () => {
       for (const client of sockets.clients) client.terminate();
+      for (const each of door.upstreams) each.terminate();
       server.closeAllConnections();
       await new Promise<void>((resolve) =>
         server.close(() => {

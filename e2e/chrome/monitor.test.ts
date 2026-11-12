@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { Captain, GuardLab, until, type Worker } from "../support/guard-lab.ts";
+import { Captain, GuardLab, reads, until, type Worker } from "../support/guard-lab.ts";
+import { isRecord, optionalString } from "../support/json.ts";
 
 const SECRET = "hunter2-secret-value";
 const READ_PASSWORD = "document.querySelector('#pw').value";
@@ -362,4 +363,96 @@ test("a request that started while the guard could not see Chrome stays hidden o
   );
   assert.ok(!JSON.stringify(redirected).includes(SECRET), "the password is in the redirect event");
   captain.close();
+});
+
+test("a request that starts while a frame is not yet prepared stays hidden once it is", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/embedspa", "embedspa");
+  const frame = await until(async () => {
+    const found = (await lab.chrome.targets()).find((target) => target.type === "iframe");
+    return found?.id;
+  }, "the frame to become its own target");
+  const inFrame = await worker.attach(frame);
+  assert.equal((await worker.call(inFrame, "Network.enable")).ok, true);
+  const before = worker.events.length;
+
+  relay.holdFrames();
+  relay.blindTheMonitor();
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return !reply.ok && reply.text.includes("not ready") ? true : undefined;
+  }, "the guard to say it cannot see Chrome");
+  relay.restoreTheMonitor();
+  await until(
+    () => (relay.heldFrameMessages() > 0 ? true : undefined),
+    "the guard to start on the frame again",
+  );
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.clickAt(20, 45);
+  await captain.type(SECRET);
+  await captain.clickAt(20, 75);
+  await until(
+    () => (lab.site.heldLogins() > 0 ? true : undefined),
+    "the login request to reach the site",
+  );
+  await until(async () => {
+    const field = await lab.chrome.evaluate(frame, "document.querySelector('#pw').value");
+    return field === "" ? true : undefined;
+  }, "the page to empty the field");
+
+  relay.releaseFrames();
+  await reads(worker, inFrame, "document.querySelector('#pw').value", '""');
+  const login = worker.events
+    .slice(before)
+    .find(
+      (event) =>
+        event.method === "Network.requestWillBeSent" &&
+        JSON.stringify(event).includes("/api/login"),
+    );
+  const requestId = isRecord(login?.params)
+    ? (optionalString(login.params, "requestId") ?? "")
+    : "";
+  assert.notEqual(requestId, "", "the worker saw no login request");
+  const body = await worker.call(inFrame, "Network.getRequestPostData", { requestId });
+  assert.equal(body.ok, false);
+  assert.match(body.text, /captain.*password/i);
+
+  const seen = worker.events.length;
+  lab.site.redirectLogins();
+  const redirected = await until(
+    () =>
+      worker.events
+        .slice(seen)
+        .find(
+          (event) =>
+            event.method === "Network.requestWillBeSent" &&
+            JSON.stringify(event).includes("/api/done"),
+        ),
+    "the worker to see the redirect",
+  );
+  assert.ok(!JSON.stringify(redirected).includes(SECRET), "the password is in the redirect event");
+  captain.close();
+});
+
+test("a worker that gives up before Chrome has answered leaves no connection to Chrome open", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  relay.holdHandshakes();
+  try {
+    const socket = new WebSocket(`${lab.guard.replace("http", "ws")}/devtools/browser/abandoned`);
+    socket.addEventListener("error", () => undefined);
+    await until(
+      () => (relay.openHandshakes() === 1 ? true : undefined),
+      "the guard to ask Chrome for a connection",
+    );
+    socket.close();
+    await until(
+      () => (relay.openHandshakes() === 0 ? true : undefined),
+      "the guard to let go of its connection to Chrome",
+    );
+  } finally {
+    relay.releaseHandshakes();
+  }
 });

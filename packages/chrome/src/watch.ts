@@ -226,7 +226,9 @@ export class Watch implements Typing {
   private typedIn(pageId: string): boolean {
     const page = this.pages.get(pageId);
     if (page?.own === undefined) return true;
-    return [...page.sessions].some((session) => this.contexts.typed(session));
+    return [...page.sessions].some(
+      (session) => !this.observer.prepared(session) || this.contexts.typed(session),
+    );
   }
 
   private async run(): Promise<void> {

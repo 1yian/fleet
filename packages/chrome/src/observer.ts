@@ -21,6 +21,10 @@ export class Observer {
     this.loads = new Loads(parseWaitMs);
   }
 
+  prepared(session: string): boolean {
+    return this.enrolled.has(session);
+  }
+
   hold(session: string): void {
     this.pages.hold(session);
     this.loads.mark(session);

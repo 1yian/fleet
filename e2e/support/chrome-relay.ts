@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { freePort } from "./chrome.ts";
 import { HeldObjects } from "./held-objects.ts";
@@ -49,6 +50,8 @@ export class ChromeRelay {
   private refused = 0;
   private readonly calls = new Map<string, number>();
   private readonly objects = new HeldObjects();
+  private readonly stalled: Duplex[] = [];
+  private stalling = false;
   private readonly lagging: (() => void)[] = [];
   private lagEvents = false;
   private blocking = false;
@@ -71,6 +74,13 @@ export class ChromeRelay {
         });
     });
     server.on("upgrade", (request, socket, head) => {
+      if (this.stalling) {
+        socket.once("end", () => {
+          socket.destroy();
+        });
+        this.stalled.push(socket);
+        return;
+      }
       this.sockets.handleUpgrade(request, socket, head, (client) => {
         this.pipe(client, request.url ?? "");
       });
@@ -123,6 +133,19 @@ export class ChromeRelay {
     for (const send of this.lagging.splice(0)) send();
   }
 
+  holdHandshakes(): void {
+    this.stalling = true;
+  }
+
+  openHandshakes(): number {
+    return this.stalled.filter((socket) => !socket.destroyed).length;
+  }
+
+  releaseHandshakes(): void {
+    this.stalling = false;
+    for (const socket of this.stalled.splice(0)) socket.destroy();
+  }
+
   heldObjects(): number {
     return this.objects.count;
   }
@@ -136,6 +159,7 @@ export class ChromeRelay {
   }
 
   async stop(): Promise<void> {
+    this.releaseHandshakes();
     for (const client of this.sockets.clients) client.terminate();
     this.server.closeAllConnections();
     await new Promise<void>((resolve) =>
