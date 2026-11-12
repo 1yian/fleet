@@ -174,3 +174,17 @@ export class Loads {
     this.awaiting.clear();
   }
 }
+
+export type Verdict = "clear" | "typed" | "unseen";
+
+export interface Typing {
+  resolve(targetId: string): Promise<Ref>;
+  peek(targetId: string): Ref;
+  verdict(pageId: string): Verdict;
+  settled(pageId: string): Promise<Verdict>;
+  unplaced(): Verdict;
+  epoch(ref: Ref): number;
+  armed(ref: Ref): boolean;
+  secret(ref: Ref, key: string): boolean;
+  taint(ref: Ref, keys: readonly string[]): void;
+}

@@ -1,15 +1,14 @@
 import Type from "typebox";
 import {
   allowedWhileTyped,
-  bodyReaderOf,
   droppedWhileTyped,
+  readerKey,
   refusedAlways,
+  requestKeys,
   withoutBody,
 } from "./rules.ts";
-import { Secrets } from "./secrets.ts";
 import { parseWire, record, shape, words, type Wire } from "./wire.ts";
-import type { Ref } from "./tracking.ts";
-import type { Typing, Verdict } from "./watch.ts";
+import type { Ref, Typing, Verdict } from "./tracking.ts";
 
 export type Decision =
   { readonly send: string } | { readonly answer: string } | { readonly close: string };
@@ -51,7 +50,6 @@ export class Gate {
   private readonly origins = new Map<string, Origin>();
   private readonly asked = new Map<number, Origin>();
   private readonly reads = new Map<number, Read>();
-  private readonly secrets = new Secrets();
   private readonly watch: Typing;
   private readonly page: string | undefined;
 
@@ -68,7 +66,7 @@ export class Gate {
     const verdict = allowedWhileTyped(wire.method, wire.params)
       ? "clear"
       : await this.verdictFor(ref);
-    const refusal = this.refusal(wire, wire.method, verdict);
+    const refusal = this.refusal(wire, wire.method, verdict, ref);
     if (refusal !== undefined) return { answer: refusalReply(wire, refusal) };
     this.remember(wire, wire.id, wire.method);
     if (!allowedWhileTyped(wire.method, wire.params))
@@ -88,10 +86,10 @@ export class Gate {
     return this.screened(wire, wire.method, raw);
   }
 
-  private refusal(wire: Wire, method: string, verdict: Verdict): string | undefined {
+  private refusal(wire: Wire, method: string, verdict: Verdict, ref: Ref): string | undefined {
     if (refusedAlways(method)) return `${method} is not available through the guard.`;
-    const body = bodyReaderOf(method, wire.params);
-    if (body !== undefined && this.secrets.has(wire.sessionId ?? "", body)) return bodyMessage;
+    const key = readerKey(method, wire.params, wire.sessionId ?? "");
+    if (key !== undefined && this.watch.secret(ref, key)) return bodyMessage;
     if (verdict === "clear" || allowedWhileTyped(method, wire.params)) return undefined;
     return verdict === "typed" ? typedMessage(method) : unseenMessage(method);
   }
@@ -155,9 +153,7 @@ export class Gate {
   private track(wire: Wire, method: string): void {
     if (method === "Target.detachedFromTarget") {
       const session = shape(Detached, wire.params)?.sessionId;
-      if (session === undefined) return;
-      this.origins.delete(session);
-      this.secrets.forget(session);
+      if (session !== undefined) this.origins.delete(session);
       return;
     }
     const attached =
@@ -177,17 +173,14 @@ export class Gate {
   }
 
   private screened(wire: Wire, method: string, raw: string): string | undefined {
-    const armed = this.verdictNow(this.refNow(wire.sessionId)) !== "clear";
-    if (armed && droppedWhileTyped(method)) return undefined;
-    return this.cut(wire, method, raw, armed);
-  }
-
-  private cut(wire: Wire, method: string, raw: string, armed: boolean): string {
-    const stripped = withoutBody(method, wire.params);
-    if (stripped === undefined) return raw;
-    const session = wire.sessionId ?? "";
-    if (armed) for (const id of stripped.requestIds) this.secrets.keep(session, id);
-    else if (!stripped.requestIds.some((id) => this.secrets.has(session, id))) return raw;
-    return JSON.stringify({ ...wire, params: stripped.params });
+    const ref = this.refNow(wire.sessionId);
+    const verdict = this.verdictNow(ref);
+    if (verdict !== "clear" && droppedWhileTyped(method)) return undefined;
+    const keys = requestKeys(method, wire.params, wire.sessionId ?? "");
+    const secret = this.watch.armed(ref) || keys.some((key) => this.watch.secret(ref, key));
+    if (secret) this.watch.taint(ref, keys);
+    if (!secret && verdict === "clear") return raw;
+    const params = withoutBody(method, wire.params);
+    return params === undefined ? raw : JSON.stringify({ ...wire, params });
   }
 }

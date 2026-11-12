@@ -2,20 +2,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Cdp, type CdpEvent } from "@fleet/protocol";
 import Type from "typebox";
 import { Observer } from "./observer.ts";
+import { Requests } from "./requests.ts";
+import { requestKeys } from "./rules.ts";
 import { BINDING, PAGE_SCRIPT, RESCAN } from "./script.ts";
-import { Contexts, Targets, type Ref } from "./tracking.ts";
+import { Contexts, Targets, type Ref, type Typing, type Verdict } from "./tracking.ts";
 import { record, shape, words } from "./wire.ts";
-
-export type Verdict = "clear" | "typed" | "unseen";
-
-export interface Typing {
-  resolve(targetId: string): Promise<Ref>;
-  peek(targetId: string): Ref;
-  verdict(pageId: string): Verdict;
-  settled(pageId: string): Promise<Verdict>;
-  unplaced(): Verdict;
-  epoch(ref: Ref): number;
-}
 
 const TargetInfo = Type.Object({ targetId: Type.String(), type: Type.String() });
 const Created = Type.Object({ targetInfo: TargetInfo });
@@ -57,6 +48,7 @@ export class Watch implements Typing {
   private readonly epochs = new Map<string, number>();
   private readonly injected = new Set<string>();
   private readonly observer: Observer;
+  private readonly requests = new Requests();
   private readonly targets = new Targets();
   private readonly contexts = new Contexts();
   private readonly waiters = new Set<() => void>();
@@ -114,6 +106,12 @@ export class Watch implements Typing {
       "Page.lifecycleEvent",
       (cdp, event) => {
         this.onLifecycle(cdp, event);
+      },
+    ],
+    [
+      "Network.requestWillBeSent",
+      (_cdp, event) => {
+        this.onRequest(event);
       },
     ],
     [
@@ -209,6 +207,27 @@ export class Watch implements Typing {
     return Math.max(typedAt, this.lostAt);
   }
 
+  armed(ref: Ref): boolean {
+    if (!this.live) return true;
+    if (ref.kind === "other") return false;
+    if (ref.kind === "unknown") return [...this.pages.keys()].some((id) => this.typedIn(id));
+    return this.typedIn(ref.id);
+  }
+
+  secret(ref: Ref, key: string): boolean {
+    return this.requests.has(ref.kind === "page" ? ref.id : "", key);
+  }
+
+  taint(ref: Ref, keys: readonly string[]): void {
+    this.requests.taint(ref.kind === "page" ? ref.id : "", keys);
+  }
+
+  private typedIn(pageId: string): boolean {
+    const page = this.pages.get(pageId);
+    if (page?.own === undefined) return true;
+    return [...page.sessions].some((session) => this.contexts.typed(session));
+  }
+
   private async run(): Promise<void> {
     while (!this.stopped) {
       try {
@@ -293,6 +312,7 @@ export class Watch implements Typing {
     for (const session of this.pages.get(id)?.sessions ?? []) this.forget(session);
     this.pages.delete(id);
     this.epochs.delete(id);
+    this.requests.forget(id);
     this.targets.remove(id);
     this.notify();
   }
@@ -332,6 +352,12 @@ export class Watch implements Typing {
     this.notify();
   }
 
+  private onRequest(event: CdpEvent): void {
+    const page = this.owners.get(event.sessionId ?? "");
+    if (page === undefined || !this.typedIn(page)) return;
+    this.requests.taint(page, requestKeys(event.method, event.params, ""));
+  }
+
   private onLifecycle(cdp: Cdp, event: CdpEvent): void {
     const lifecycle = shape(Lifecycle, event.params);
     if (event.sessionId === undefined || lifecycle === undefined) return;
@@ -363,11 +389,11 @@ export class Watch implements Typing {
     }
     const typed = call.payload === "1";
     this.contexts.bound(event.sessionId, call.executionContextId, typed);
-    if (typed) this.armed(event.sessionId);
+    if (typed) this.stamp(event.sessionId);
     this.notify();
   }
 
-  private armed(session: string): void {
+  private stamp(session: string): void {
     const now = ++this.clock;
     const page = this.owners.get(session);
     if (page !== undefined) this.epochs.set(page, now);
@@ -443,6 +469,7 @@ export class Watch implements Typing {
   private async prepare(cdp: Cdp, sessionId: string): Promise<void> {
     const on = { sessionId };
     await cdp.send("Runtime.enable", {}, on);
+    await cdp.send("Network.enable", { maxTotalBufferSize: 1, maxResourceBufferSize: 1 }, on);
     await cdp.send("Page.enable", {}, on);
     await cdp.send("Page.setLifecycleEventsEnabled", { enabled: true }, on);
     await cdp.send("Runtime.addBinding", { name: BINDING }, on);

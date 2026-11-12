@@ -3,6 +3,7 @@ import { ADOPT_ROOT } from "./script.ts";
 import { record, words } from "./wire.ts";
 
 const CHILD_LISTS = ["children", "shadowRoots"];
+const GROUP = "fleet-guard-scan";
 
 function closedRoots(node: unknown, found: number[] = []): number[] {
   const fields = record(node);
@@ -68,7 +69,9 @@ export class Scanner {
       ];
       if (record(root) === undefined) throw new Error("the page gave no document");
       for (const backendNodeId of closedRoots(root)) {
-        const resolved = record(await cdp.send("DOM.resolveNode", { backendNodeId }, on));
+        const resolved = record(
+          await cdp.send("DOM.resolveNode", { backendNodeId, objectGroup: GROUP }, on),
+        );
         const objectId = words(record(resolved?.["object"]), "objectId");
         if (objectId === undefined) throw new Error("a closed shadow root cannot be reached");
         const called = record(
@@ -82,6 +85,9 @@ export class Scanner {
           throw new Error("a closed shadow root was not handed to the page script");
       }
     } finally {
+      await cdp
+        .send("Runtime.releaseObjectGroup", { objectGroup: GROUP }, on)
+        .catch(() => undefined);
       await cdp.send("DOM.disable", {}, on).catch(() => undefined);
     }
   }

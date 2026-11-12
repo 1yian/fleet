@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { freePort } from "./chrome.ts";
+import { HeldObjects } from "./held-objects.ts";
 import { isRecord, optionalNumber, optionalString, type JsonRecord } from "./json.ts";
 
 const textOf = (data: RawData): string =>
@@ -47,6 +48,9 @@ export class ChromeRelay {
   private readonly failing = new Set<string>();
   private refused = 0;
   private readonly calls = new Map<string, number>();
+  private readonly objects = new HeldObjects();
+  private readonly lagging: (() => void)[] = [];
+  private lagEvents = false;
   private blocking = false;
   private holding = false;
 
@@ -110,6 +114,19 @@ export class ChromeRelay {
     return this.calls.get(method) ?? 0;
   }
 
+  holdWorkerEvents(): void {
+    this.lagEvents = true;
+  }
+
+  releaseWorkerEvents(): void {
+    this.lagEvents = false;
+    for (const send of this.lagging.splice(0)) send();
+  }
+
+  heldObjects(): number {
+    return this.objects.count;
+  }
+
   refusedCalls(): number {
     return this.refused;
   }
@@ -133,11 +150,15 @@ export class ChromeRelay {
     return method !== undefined && this.failing.has(method);
   }
 
-  private noteFrame(text: string): void {
-    if (!text.includes("Target.attachedToTarget")) return;
+  private observe(text: string): void {
     const message = parsed(text);
-    if (message === undefined || optionalString(message, "method") !== "Target.attachedToTarget")
-      return;
+    if (message === undefined) return;
+    this.objects.answered(message);
+    this.noteFrame(message);
+  }
+
+  private noteFrame(message: JsonRecord): void {
+    if (optionalString(message, "method") !== "Target.attachedToTarget") return;
     const params = message["params"];
     if (!isRecord(params)) return;
     const info = params["targetInfo"];
@@ -162,6 +183,7 @@ export class ChromeRelay {
       link.forward(text);
       return;
     }
+    this.objects.sent(message);
     const method = optionalString(message, "method");
     if (method !== undefined) this.calls.set(method, this.callsOf(method) + 1);
     if (this.failsNow(message)) {
@@ -201,8 +223,12 @@ export class ChromeRelay {
     });
     browser.on("message", (data: RawData) => {
       const text = textOf(data);
-      if (link.monitor) this.noteFrame(text);
-      if (client.readyState === WebSocket.OPEN) client.send(text);
+      if (link.monitor) this.observe(text);
+      const deliver = (): void => {
+        if (client.readyState === WebSocket.OPEN) client.send(text);
+      };
+      if (this.lagEvents && !link.monitor && !text.startsWith('{"id":')) this.lagging.push(deliver);
+      else deliver();
     });
     client.on("close", () => {
       this.monitors.delete(client);

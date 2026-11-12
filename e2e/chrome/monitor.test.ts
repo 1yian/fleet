@@ -203,3 +203,96 @@ test("a closed root that the parse builds after the guard's look is guarded whil
   captain.close();
   await lab.chrome.closeTab(tab.target);
 });
+
+test("the guard lets go of what it resolves while it scans a page that is still loading", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await startHeldPage(relay, worker);
+  lab.site.continueHeld();
+  await until(async () => {
+    const built = await lab.chrome.evaluate(tab.target, "!!document.querySelector('#x-held')");
+    return built === true ? true : undefined;
+  }, "the page to build the closed root");
+  const scans = relay.callsOf("DOM.getDocument");
+  await until(
+    () => (relay.callsOf("DOM.getDocument") >= scans + 3 ? true : undefined),
+    "the guard to scan the page three more times",
+  );
+  await until(
+    () => (relay.heldObjects() === 0 ? true : undefined),
+    "the guard to let go of the objects it resolved",
+  );
+  lab.site.release();
+  await lab.chrome.closeTab(tab.target);
+});
+
+test("the guard lets go of what it resolves while a page replaces its closed roots", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/built", "built");
+  const scans = relay.callsOf("DOM.getDocument");
+  for (let round = 1; round <= 3; round++) {
+    assert.equal((await worker.evaluate(tab.session, "build()")).ok, true);
+    await until(
+      () => (relay.callsOf("DOM.getDocument") >= scans + round ? true : undefined),
+      `the guard to scan after replacement ${String(round)}`,
+    );
+  }
+  await until(
+    () => (relay.heldObjects() === 0 ? true : undefined),
+    "the guard to let go of the objects it resolved",
+  );
+  await lab.chrome.closeTab(tab.target);
+});
+
+test("a request that started while a password was typed stays hidden from a worker whose events arrive after the field is empty", async () => {
+  const relay = lab.relay;
+  assert.ok(relay, "the lab has no relay in front of Chrome");
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/spa", "spa");
+  assert.equal((await worker.call(tab.session, "Network.enable")).ok, true);
+  relay.holdWorkerEvents();
+  const before = worker.events.length;
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+  await captain.click("#go");
+  await until(
+    () => (lab.site.heldLogins() > 0 ? true : undefined),
+    "the login request to reach the site",
+  );
+  await until(async () => {
+    const reply = await worker.evaluate(tab.session, "document.title");
+    return reply.ok ? true : undefined;
+  }, "the guard to see the field empty");
+  const early = worker.events
+    .slice(before)
+    .filter((event) => event.method === "Network.requestWillBeSent");
+  assert.equal(early.length, 0, "the worker has seen the request already");
+
+  relay.releaseWorkerEvents();
+  const sent = await until(
+    () =>
+      worker.events
+        .slice(before)
+        .find(
+          (event) =>
+            event.method === "Network.requestWillBeSent" &&
+            JSON.stringify(event).includes("/api/login"),
+        ),
+    "the worker to see the login request",
+  );
+  assert.ok(!JSON.stringify(sent).includes(SECRET), "the password is in the request event");
+  const params = sent.params;
+  const requestId =
+    typeof params === "object" && params !== null && "requestId" in params
+      ? String(params.requestId)
+      : "";
+  const body = await worker.call(tab.session, "Network.getRequestPostData", { requestId });
+  assert.equal(body.ok, false);
+  assert.ok(!body.text.includes(SECRET));
+  lab.site.redirectLogins();
+  captain.close();
+});

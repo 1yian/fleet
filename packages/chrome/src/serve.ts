@@ -3,7 +3,7 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { Gate } from "./gate.ts";
 import { GUARD_HEADER } from "./marker.ts";
-import type { Typing } from "./watch.ts";
+import type { Typing } from "./tracking.ts";
 
 const HOST = /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(:\d{1,5})?$/;
 const SOCKET_PATH = /^\/devtools\/(browser|page)\/([A-Za-z0-9-]+)$/;

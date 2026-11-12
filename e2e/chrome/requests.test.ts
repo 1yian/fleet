@@ -127,3 +127,78 @@ test("the answer to a request that carried a typed password is hidden, and other
   assert.ok(again.text.includes("plain notes"));
   captain.close();
 });
+
+function pausedOf(worker: Worker): { requestId: string; networkId: string } | undefined {
+  for (const event of worker.events) {
+    const params = event.params;
+    if (event.method !== "Fetch.requestPaused" || !isRecord(params)) continue;
+    const requestId = optionalString(params, "requestId");
+    const networkId = optionalString(params, "networkId");
+    if (requestId !== undefined && networkId !== undefined) return { requestId, networkId };
+  }
+  return undefined;
+}
+
+test("a response-stage pause of a request that carried a typed password hides the answer under its new id", async () => {
+  const worker = await lab.worker();
+  const tab = await lab.openPage(worker, "/holdecho", "spa");
+  assert.equal((await worker.call(tab.session, "Network.enable")).ok, true);
+  const patterns = [{ urlPattern: "*/api/hold", requestStage: "Response" }];
+  assert.equal((await worker.call(tab.session, "Fetch.enable", { patterns })).ok, true);
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+  await captain.click("#go");
+  await until(
+    () => (lab.site.heldEchoes() > 0 ? true : undefined),
+    "the login request to reach the site",
+  );
+  await reads(worker, tab.session, "document.querySelector('#pw').value", '""');
+  lab.site.answerEchoes();
+  const paused = await until(() => pausedOf(worker), "the response of the login to pause");
+  assert.notEqual(paused.requestId, paused.networkId);
+
+  for (const method of ["Fetch.getResponseBody", "Fetch.takeResponseBodyAsStream"]) {
+    const reply = await worker.call(tab.session, method, { requestId: paused.requestId });
+    assert.equal(reply.ok, false, `${method} answered for a request that carried a password`);
+    assert.ok(!reply.text.includes(SECRET));
+  }
+  const events = JSON.stringify(worker.events.filter((event) => event.method.startsWith("Fetch.")));
+  assert.ok(!events.includes(SECRET));
+  await worker.call(tab.session, "Fetch.disable");
+  captain.close();
+});
+
+test("a worker that joins after the field is empty still gets a pending redirect without the body", async () => {
+  const first = await lab.worker();
+  const tab = await lab.openPage(first, "/spa", "spa");
+  const captain = await Captain.at(lab.chrome, tab.target);
+  await captain.click("#pw");
+  await captain.type(SECRET);
+  await captain.click("#go");
+  await until(
+    () => (lab.site.heldLogins() > 0 ? true : undefined),
+    "the login request to reach the site",
+  );
+  await reads(first, tab.session, "document.querySelector('#pw').value", '""');
+
+  const second = await lab.worker();
+  const session = await second.attach(tab.target);
+  assert.equal((await second.call(session, "Network.enable")).ok, true);
+  const before = second.events.length;
+  lab.site.redirectLogins();
+  await until(
+    () => (lab.site.submitted.some((body) => body.includes(SECRET)) ? true : undefined),
+    "the redirect to send the password again",
+  );
+  const redirected = await until(
+    () => second.events.slice(before).find((event) => sentTo(event, "/api/done") !== undefined),
+    "the second worker to see the redirected request",
+  );
+  assert.ok(!JSON.stringify(redirected).includes(SECRET), "the password is in the redirect event");
+  const requestId = sentTo(redirected, "/api/done") ?? "";
+  const body = await second.call(session, "Network.getRequestPostData", { requestId });
+  assert.equal(body.ok, false);
+  assert.ok(!body.text.includes(SECRET));
+  captain.close();
+});

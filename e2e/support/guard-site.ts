@@ -107,6 +107,7 @@ const pagesFor = (port: number): ReadonlyMap<string, string> =>
     ["/login", LOGIN],
     ["/spa", spa("/api/login")],
     ["/echo", spa("/api/echo")],
+    ["/holdecho", spa("/api/hold")],
     ["/autofocus", AUTOFOCUS],
     ["/closed", CLOSED],
     ["/filled", FILLED],
@@ -136,6 +137,7 @@ export class Site {
   private readonly server: Server;
   private readonly held: ServerResponse[];
   private readonly logins: ServerResponse[];
+  private readonly echoes: { response: ServerResponse; body: string }[];
 
   private constructor(
     server: Server,
@@ -143,18 +145,21 @@ export class Site {
     submitted: string[],
     held: ServerResponse[],
     logins: ServerResponse[],
+    echoes: { response: ServerResponse; body: string }[],
   ) {
     this.server = server;
     this.port = port;
     this.submitted = submitted;
     this.held = held;
     this.logins = logins;
+    this.echoes = echoes;
   }
 
   static async start(): Promise<Site> {
     const submitted: string[] = [];
     const held: ServerResponse[] = [];
     const logins: ServerResponse[] = [];
+    const echoes: { response: ServerResponse; body: string }[] = [];
     let port = 0;
     const posts = new Map<string, (body: string, response: ServerResponse) => void>([
       [
@@ -166,6 +171,7 @@ export class Site {
       ],
       ["/api/login", (_body, response) => logins.push(response)],
       ["/api/echo", (body, response) => response.end(`you sent ${body}`)],
+      ["/api/hold", (body, response) => echoes.push({ response, body })],
       [
         "/api/done",
         (body, response) => {
@@ -190,7 +196,7 @@ export class Site {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     port = typeof address === "object" && address !== null ? address.port : 0;
-    return new Site(server, port, submitted, held, logins);
+    return new Site(server, port, submitted, held, logins, echoes);
   }
 
   url(path: string, host = "one.test"): string {
@@ -203,6 +209,14 @@ export class Site {
 
   heldLogins(): number {
     return this.logins.length;
+  }
+
+  heldEchoes(): number {
+    return this.echoes.length;
+  }
+
+  answerEchoes(): void {
+    for (const { response, body } of this.echoes.splice(0)) response.end(`you sent ${body}`);
   }
 
   redirectLogins(): void {

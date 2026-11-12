@@ -55,21 +55,39 @@ const DROPPED_EVENTS = new Set([
   "Network.eventSourceMessageReceived",
 ]);
 
-const BODY_EVENTS = new Set([
-  "Network.requestWillBeSent",
-  "Network.requestIntercepted",
-  "Fetch.requestPaused",
+type Scope = "net" | "fetch" | "icpt";
+type IdField = readonly [string, Scope];
+
+const REQUEST_FIELDS = new Map<string, readonly IdField[]>([
+  ["Network.requestWillBeSent", [["requestId", "net"]]],
+  [
+    "Network.requestIntercepted",
+    [
+      ["interceptionId", "icpt"],
+      ["requestId", "net"],
+    ],
+  ],
+  [
+    "Fetch.requestPaused",
+    [
+      ["requestId", "fetch"],
+      ["networkId", "net"],
+    ],
+  ],
 ]);
 
-const BODY_READERS = new Map([
-  ["Network.getRequestPostData", "requestId"],
-  ["Network.getResponseBody", "requestId"],
-  ["Network.searchInResponseBody", "requestId"],
-  ["Network.streamResourceContent", "requestId"],
-  ["Network.getResponseBodyForInterception", "interceptionId"],
-  ["Fetch.getResponseBody", "requestId"],
-  ["Fetch.takeResponseBodyAsStream", "requestId"],
+const BODY_READERS = new Map<string, IdField>([
+  ["Network.getRequestPostData", ["requestId", "net"]],
+  ["Network.getResponseBody", ["requestId", "net"]],
+  ["Network.searchInResponseBody", ["requestId", "net"]],
+  ["Network.streamResourceContent", ["requestId", "net"]],
+  ["Network.getResponseBodyForInterception", ["interceptionId", "icpt"]],
+  ["Fetch.getResponseBody", ["requestId", "fetch"]],
+  ["Fetch.takeResponseBodyAsStream", ["requestId", "fetch"]],
 ]);
+
+const keyOf = (scope: Scope, id: string, session: string): string =>
+  scope === "net" ? `net:${id}` : `${scope}:${session}:${id}`;
 
 const domainOf = (method: string): string => method.slice(0, method.indexOf("."));
 
@@ -80,9 +98,19 @@ export function refusedAlways(method: string): boolean {
   return REFUSED_ALWAYS.has(method);
 }
 
-export function bodyReaderOf(method: string, params: unknown): string | undefined {
-  const key = BODY_READERS.get(method);
-  return key === undefined ? undefined : (words(record(params), key) ?? "");
+export function readerKey(method: string, params: unknown, session: string): string | undefined {
+  const field = BODY_READERS.get(method);
+  return field === undefined
+    ? undefined
+    : keyOf(field[1], words(record(params), field[0]) ?? "", session);
+}
+
+export function requestKeys(method: string, params: unknown, session: string): string[] {
+  const fields = record(params);
+  return (REQUEST_FIELDS.get(method) ?? []).flatMap(([field, scope]) => {
+    const id = words(fields, field);
+    return id === undefined ? [] : [keyOf(scope, id, session)];
+  });
 }
 
 export function allowedWhileTyped(method: string, params: unknown): boolean {
@@ -96,23 +124,13 @@ export function droppedWhileTyped(method: string): boolean {
   return DROPPED_EVENTS.has(method) || DROPPED_DOMAINS.has(domainOf(method));
 }
 
-export interface Stripped {
-  readonly requestIds: readonly string[];
-  readonly params: Record<string, unknown>;
-}
-
 const BODY_FIELDS = new Set(["postData", "postDataEntries"]);
 
-export function withoutBody(method: string, params: unknown): Stripped | undefined {
-  if (!BODY_EVENTS.has(method)) return undefined;
+export function withoutBody(method: string, params: unknown): Record<string, unknown> | undefined {
+  if (!REQUEST_FIELDS.has(method)) return undefined;
   const fields = record(params);
   const request = record(fields?.["request"]);
   if (fields === undefined || request === undefined) return undefined;
   const rest = Object.fromEntries(Object.entries(request).filter(([key]) => !BODY_FIELDS.has(key)));
-  const requestIds = [
-    words(fields, "requestId"),
-    words(fields, "networkId"),
-    words(fields, "interceptionId"),
-  ].filter((id) => id !== undefined);
-  return { requestIds, params: { ...fields, request: rest } };
+  return { ...fields, request: rest };
 }
