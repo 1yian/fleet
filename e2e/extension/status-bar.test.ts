@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
+import { CardSchema, check } from "@fleet/protocol";
 import {
   awaiting,
   awaitingAt,
@@ -53,11 +54,11 @@ for (const hyperlinks of ["1", "0"]) {
   test(`the status bar shows the word board and no URL, and a click on it opens the board (hyperlinks ${hyperlinks})`, async () => {
     const opener = new FakeOpener();
     const pane = await lab.openMain({ PI_HYPERLINKS: hyperlinks, PATH: opener.dir });
-    const screen = await lab.screenWhere(pane, "the board link", showing(["✓ clear", "board"]));
+    const screen = await lab.screenWhere(pane, "the board link", showing(["board"]));
     keep(`board-hyperlinks-${hyperlinks}`, screen);
     assert.ok(!screen.includes("http"), `the status bar shows a URL:\n${screen}`);
     assert.ok(!screen.includes(new URL(boardUrl()).port), "the status bar shows the port");
-    assert.match(statusRow(screen), /^✓ clear board$/);
+    assert.match(statusRow(screen), /^board$/);
 
     const colored = await lab.herdr().coloredScreen(pane);
     keep(`board-hyperlinks-${hyperlinks}.ansi`, colored);
@@ -77,7 +78,7 @@ for (const hyperlinks of ["1", "0"]) {
 test("a click beside the word board opens nothing", async () => {
   const opener = new FakeOpener();
   const pane = await lab.openMain({ PI_HYPERLINKS: "0", PATH: opener.dir });
-  const screen = await lab.screenWhere(pane, "the board link", showing(["✓ clear", "board"]));
+  const screen = await lab.screenWhere(pane, "the board link", showing(["board"]));
   const link = boardAt(screen);
   await lab.click(pane, link.row, link.column + "board".length + 4);
   await lab.click(pane, link.row - 1, link.column);
@@ -89,8 +90,9 @@ test("a click beside the word board opens nothing", async () => {
 
 test("the decisions item is absent for none, singular for one, plural for several, and follows each answer", async () => {
   const pane = await lab.openMain();
-  const clear = await lab.screenWhere(pane, "the clear state", showing(["✓ clear"], ["await"]));
+  const clear = await lab.screenWhere(pane, "the clear state", showing(["board"], ["await"]));
   keep("1-none", clear);
+  assert.equal(statusRow(clear), "board", "zero counts and the clear glyph are absent");
 
   const ship = await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
   const one = await lab.screenWhere(pane, "one decision", showing([awaiting(1)], ["✓ clear"]));
@@ -118,7 +120,7 @@ test("the decisions item is absent for none, singular for one, plural for severa
       await lab.cardd.act(card.id, { kind: "answer", hold: open.hold, choice: "Hold" }),
       200,
     );
-    const shown = left === 0 ? showing(["✓ clear"], ["await"]) : showing([awaiting(left)]);
+    const shown = left === 0 ? showing(["board"], ["await"]) : showing([awaiting(left)]);
     keep(
       `4-answered-${String(left)}-left`,
       await lab.screenWhere(pane, `${String(left)} left`, shown),
@@ -155,7 +157,7 @@ const VENDOR = "Pick the vendor?";
 
 test("a card the captain put off is neither counted nor on /d until its date, however old the hold, and returns in both at its date", async () => {
   const pane = await lab.openMain();
-  await lab.screenWhere(pane, "the clear state", showing(["✓ clear"]));
+  await lab.screenWhere(pane, "the clear state", showing(["board"]));
   const vendor = await lab.askedMain(pane, "Vendor", VENDOR, ["Acme", "Other"], 1);
   const date = Date.now() + LATER_MS;
   const open = (await lab.cardd.board()).holds.find((each) => each.card === vendor.id);
@@ -174,7 +176,7 @@ test("a card the captain put off is neither counted nor on /d until its date, ho
     "nothing waiting",
     showing(["Nothing is waiting for your decision."]),
   );
-  keep("6-put-off", await lab.screenWhere(pane, "no decision", showing(["✓ clear"], ["await"])));
+  keep("6-put-off", await lab.screenWhere(pane, "no decision", showing(["board"], ["await"])));
 
   ageCard(lab.cardd, vendor, 6 * DAY_MS);
   await lab.askedMain(pane, "Repository name", RENAME, ["Rename", "Keep"], 1);
@@ -198,7 +200,7 @@ test("a card the captain put off is neither counted nor on /d until its date, ho
 
 test("a card of the captain's own that he put off is neither counted nor on /d until its date, and returns in both at its date", async () => {
   const pane = await lab.openMain();
-  await lab.screenWhere(pane, "the clear state", showing(["✓ clear"]));
+  await lab.screenWhere(pane, "the clear state", showing(["board"]));
   const own = await lab.askedMain(pane, "Vendor contract", VENDOR, ["Acme", "Other"], 1, "captain");
   const date = Date.now() + LATER_MS;
   const open = (await lab.cardd.board()).holds.find((each) => each.card === own.id);
@@ -220,10 +222,10 @@ test("a card of the captain's own that he put off is neither counted nor on /d u
   const screen = await lab.screenWhere(
     pane,
     "no decision and no count",
-    showing(["✓ clear"], ["await", "◆"]),
+    showing(["board"], ["await", "◆"]),
   );
   keep("7-own-card-put-off", screen);
-  assert.match(statusRow(screen), /^✓ clear board$/);
+  assert.match(statusRow(screen), /^board$/);
   assert.ok(Date.now() < date, "the date came before the checks above were done");
 
   const back = await lab.screenWhere(pane, "the decision back", showing([awaiting(1)]));
@@ -251,7 +253,31 @@ test("a Later made on the board lowers the count at once, with no /d and no poll
   );
 });
 
-const FULL = "2 decisions await you ● 1 ▲ 1 board";
+test("counts name broken work, your own work, stalled work and landings without glyphs or zero counts", async () => {
+  const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });
+  await lab.screenWhere(pane, "the board", showing(["board"]));
+  await lab.cleo.call("card.new", { title: "Sign the contract", kind: "captain" });
+  const own = await lab.screenWhere(pane, "your work alone", showing(["1 for you"]));
+  assert.equal(statusRow(own), "1 for you board");
+  await lab.failedWorker("Fix the build");
+  const idle = check(
+    CardSchema,
+    await lab.cleo.call("card.new", { title: "Read the invoices", kind: "scout" }),
+  );
+  ageCard(lab.cardd, idle, 5 * 3_600_000);
+  await lab.landedCard("Check the budget");
+  const screen = await lab.screenWhere(
+    pane,
+    "every count in words",
+    showing(["1 broken", "1 for you", "1 stalled", "1 landed"]),
+  );
+  assert.equal(statusRow(screen), "1 broken · 1 for you · 1 stalled · 1 landed board");
+  assert.doesNotMatch(statusRow(screen), /[●◆◇▲]|\b0\b/);
+  keep("counts-in-words", screen);
+  keep("counts-in-words.ansi", await lab.herdr().coloredScreen(pane));
+});
+
+const FULL = "2 decisions await you · 1 broken · 1 landed board";
 const WIDTHS = [
   { columns: 57, ratio: 0.5 },
   { columns: 39, ratio: 0.65 },
@@ -270,14 +296,15 @@ for (const { columns, ratio } of WIDTHS) {
     const screen = await lab.screenWhere(
       pane,
       "the whole status",
-      showing([awaiting(2), "● 1"].slice(0, columns > awaiting(2).length + 4 ? 2 : 1)),
+      showing([awaiting(2), "1 broken"]),
     );
     keep(`narrow-${String(columns)}`, screen);
     const row = statusRow(screen);
     assert.ok(row.length <= columns, `the status bar is wider than the pane: ${row}`);
     assert.ok(row.startsWith(awaiting(2)), `the decisions are not first: ${row}`);
     if (FULL.length <= columns) assert.equal(row, FULL);
-    else assert.ok(FULL.startsWith(row.replace(/\.*$/, "")), `the cut row is not a prefix: ${row}`);
+    else assert.equal(row, `2 decisions await you · 1 broken${columns >= 38 ? " board" : ""}`);
+    assert.doesNotMatch(row, /[●◆◇▲]|\.\.\.|\b0\b/);
 
     const item = awaitingAt(screen);
     await lab.click(pane, item.row, item.column);

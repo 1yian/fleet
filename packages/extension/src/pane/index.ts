@@ -158,7 +158,7 @@ class Pane {
     const shown = this.statusAt(Date.now());
     if (shown === undefined || this.stopped) return;
     if (shown.text !== this.status) {
-      this.ctx.ui.setStatus(STATUS_KEY, shown.text);
+      this.ctx.ui.setStatus(STATUS_KEY, shown.text || undefined);
       this.status = shown.text;
     }
     const waiting = decisionsText(shown.decisions);

@@ -113,7 +113,9 @@ test("/pulse lists the neglected cards first, quiet first, with running cards in
   await running("Ship the scrollbar fix");
   await running("Fix the Cleo rule");
   const pane = await openMain();
-  await screenWhere(pane, "the pane to count what is his", (screen) => screen.includes("◆ 1"));
+  await screenWhere(pane, "the pane to count what is his", (screen) =>
+    screen.includes("1 for you"),
+  );
 
   await herdr().submit(pane, "/pulse");
   const opened = await screenWhere(pane, "the overlay", (screen) =>
@@ -208,7 +210,7 @@ test("a Needs you row shows when the card last moved and the steps behind it, al
 
 test("enter on a card shows its board link, and an empty board says so", async () => {
   const pane = await openMain();
-  await screenWhere(pane, "the clear state", (screen) => screen.includes("✓ clear"));
+  await screenWhere(pane, "the clear state", (screen) => screen.includes("board"));
   await herdr().submit(pane, "/pulse");
   const empty = await screenWhere(pane, "the overlay", (screen) =>
     screen.includes("Pulse · 0 open · quiet first"),
@@ -236,7 +238,7 @@ test("a card idle past 4 hours, which only main is told about, counts on main's 
   ageCard(cardd, idle, 5 * HOUR);
   const pane = await openMain();
   const counted = await screenWhere(pane, "the status bar to count the idle card", (screen) =>
-    screen.includes("◇ 1"),
+    screen.includes("1 stalled"),
   );
   keep("pulse-6-idle-count", counted);
   assert.ok(!counted.includes("✓ clear"), "an idle card is not clear");
@@ -260,7 +262,9 @@ test("a watcher with line breaks and escapes stays on its row and the overlay ke
   });
   ageCard(cardd, parked, 4 * DAY);
   const pane = await openMain();
-  await screenWhere(pane, "the status bar to count the card", (screen) => screen.includes("● 1"));
+  await screenWhere(pane, "the status bar to count the card", (screen) =>
+    screen.includes("1 broken"),
+  );
 
   await herdr().submit(pane, "/pulse");
   const opened = await screenWhere(pane, "the overlay", (screen) =>
@@ -291,7 +295,7 @@ test("a long list of running cards scrolls inside the overlay, so every one can 
   );
   for (const title of titles) await running(title);
   const pane = await openMain();
-  await screenWhere(pane, "the pane to load the board", (screen) => screen.includes("✓ clear"));
+  await screenWhere(pane, "the pane to load the board", (screen) => screen.includes("board"));
   await herdr().submit(pane, "/pulse");
   await screenWhere(pane, "the overlay", (screen) =>
     screen.includes("Pulse · 40 open · quiet first"),

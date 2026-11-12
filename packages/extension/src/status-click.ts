@@ -47,9 +47,31 @@ function handleMouse(this: object, event: TuiMouseEvent): TuiMouseEventResult | 
   return { handled: true };
 }
 
+function fitStatus(text: string, width: number): string {
+  const items = text.split(" · ").flatMap((item, at) => {
+    const separator = at === 0 ? "" : " · ";
+    if (!stripTerminalSequences(item).endsWith(" board")) return [{ text: item, separator }];
+    const space = item.lastIndexOf(" ");
+    return [
+      { text: item.slice(0, space), separator },
+      { text: item.slice(space + 1), separator: " " },
+    ];
+  });
+  let fitted = "";
+  for (const item of items) {
+    const next = fitted + (fitted === "" ? "" : item.separator) + item.text;
+    if (visibleWidth(next) <= width) fitted = next;
+  }
+  return fitted;
+}
+
 function install(): void {
-  patchRender(FooterComponent.prototype, "FooterComponent", (footer, _width, lines) => {
+  patchRender(FooterComponent.prototype, "FooterComponent", (footer, width, lines) => {
     const rows = lines();
+    if (stripTerminalSequences(rows[STATUS_ROW] ?? "").endsWith("...")) {
+      const whole = lines(Math.max(width, 4096))[STATUS_ROW] ?? "";
+      rows[STATUS_ROW] = fitStatus(whole, width);
+    }
     drawn.set(footer, rows);
     return rows;
   });
