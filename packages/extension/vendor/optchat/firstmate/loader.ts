@@ -85,6 +85,7 @@ export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> 
   let compactor: ProfileSettings["compactor"] | undefined;
   let activatedAt: string | undefined;
   const receipt = (ctx: ExtensionContext, phase: "loaded" | "active") => {
+    ctx.ui.setStatus("firstmate-memory", `${phase === "active" ? "Recall" : "Memory profile"}: ${config.profile}`);
     if (phase === "active" && activatedAt) return;
     if (phase === "active") activatedAt = new Date().toISOString();
     mkdirSync(dirname(receiptPath), { recursive: true });

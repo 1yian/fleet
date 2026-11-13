@@ -10,7 +10,7 @@ import {
 import { requireCommentsRead } from "./deliveries.ts";
 import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
 import { dropLostJob, finishJob, ownJob, runningJobs, startJob, touchJob } from "./jobs.ts";
-import { boardFor, cardView, paneAnswer, paneLater } from "./board.ts";
+import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
@@ -149,11 +149,6 @@ function rework(
   return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
-function requireMainsPane(db: DatabaseSync, session: Session, what: string): void {
-  if (session.lane !== mainLane(db))
-    throw new Error(`only main's pane takes the captain's ${what}`);
-}
-
 const HANDLERS: Record<OpName, Handler> = {
   "maintenance.request": (db, session, raw, timing) =>
     requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
@@ -171,14 +166,6 @@ const HANDLERS: Record<OpName, Handler> = {
     closeFinish(db, session, raw, closeCheck),
   hold,
   release,
-  "pane.answer": (db, session, raw) => {
-    requireMainsPane(db, session, "answers");
-    return paneAnswer(db, raw);
-  },
-  "pane.later": (db, session, raw, timing) => {
-    requireMainsPane(db, session, "later");
-    return paneLater(db, raw, timing.wall());
-  },
   "card.new": (db, session, raw) => {
     const { lane, ...args } = check(OPS["card.new"].args, raw);
     if (lane !== undefined && lane !== session.lane) {

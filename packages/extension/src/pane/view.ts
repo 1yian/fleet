@@ -29,11 +29,6 @@ function ago(ms: number): string {
   return hours < 48 ? `${String(hours)}h` : `${String(Math.round((hours / 24) * 10) / 10)}d`;
 }
 
-const agoText = (ms: number): string => {
-  const text = ago(ms);
-  return text === "now" ? "just now" : `${text} ago`;
-};
-
 interface Look {
   readonly glyph: string;
   readonly tone: Color;
@@ -54,8 +49,15 @@ export interface Links {
   readonly urlOf: (card: number) => string;
 }
 
-function detailsOf({ card, pulse }: Listed, now: number): string[] {
-  const movedText = `moved ${agoText(now - pulse.movedAt)}`;
+function block(theme: Theme, listed: Listed, now: number, links: Links): string[] {
+  const { card, pulse } = listed;
+  const { glyph, tone } = lookOf(theme, pulse);
+  const id = `c-${String(card.id)}`;
+  const linked = getCapabilities().hyperlinks ? hyperlink(id, links.urlOf(card.id)) : id;
+  const word = `${glyph} ${wordOf(pulse)} ${ago(now - pulse.since)}`;
+  const head = `${theme.style(word, { fg: tone, bold: true })}  ${linked} ${plain(card.lane)}`;
+  const moved = ago(now - pulse.movedAt);
+  const movedText = `moved ${moved === "now" ? "just now" : `${moved} ago`}`;
   const details =
     pulse.state === "you"
       ? [movedText]
@@ -64,17 +66,7 @@ function detailsOf({ card, pulse }: Listed, now: number): string[] {
           waitsText(card),
         ];
   if (pulse.behind !== null) details.push(behindText(pulse.behind));
-  return details;
-}
-
-function block(theme: Theme, listed: Listed, now: number, links: Links): string[] {
-  const { card, pulse } = listed;
-  const { glyph, tone } = lookOf(theme, pulse);
-  const id = `c-${String(card.id)}`;
-  const linked = getCapabilities().hyperlinks ? hyperlink(id, links.urlOf(card.id)) : id;
-  const word = `${glyph} ${wordOf(pulse)} ${ago(now - pulse.since)}`;
-  const head = `${theme.style(word, { fg: tone, bold: true })}  ${linked} ${plain(card.lane)}`;
-  const rows = detailsOf(listed, now).map((text) => theme.fg("muted", `  ${plain(text)}`));
+  const rows = details.map((text) => theme.fg("muted", `  ${plain(text)}`));
   return [head, `  ${plain(card.title)}`, ...rows, ""];
 }
 
@@ -148,7 +140,8 @@ export class PulseView implements Component {
         : this.window(blocks, budget);
     const inner = Math.max(10, width - 2);
     const edge = (text: string): string => theme.fg("accent", text);
-    const lead = `╭─ ${this.list.heading} `;
+    const title = `Pulse · ${String(this.list.open)} open · quiet first`;
+    const lead = `╭─ ${title} `;
     const body = shown.flatMap(({ lines, selected }) =>
       lines.map((line) => this.row(line, selected && line !== "", inner)),
     );

@@ -3,7 +3,6 @@ import Value from "typebox/value";
 import { ApprovesArg } from "./approval.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
-import { LaterFields, LaterResult } from "./later.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { NextSchema } from "./next.ts";
@@ -268,21 +267,6 @@ export const OPS = {
       replyTo: ReplyTo,
     }),
     result: CardSchema,
-  },
-  "pane.answer": {
-    roles: ["mate"],
-    args: Type.Object({
-      card: Type.Integer(),
-      hold: Type.Integer(),
-      choice: Type.String({ minLength: 1 }),
-      written: Type.Optional(Type.Boolean()),
-    }),
-    result: CardSchema,
-  },
-  "pane.later": {
-    roles: ["mate"],
-    args: Type.Object({ card: Type.Integer(), hold: Type.Integer(), ...LaterFields }),
-    result: Type.Object({ card: CardSchema, ...LaterResult.properties }),
   },
   release: {
     roles: ["mate"],

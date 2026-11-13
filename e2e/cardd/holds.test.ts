@@ -151,31 +151,27 @@ test("the captain's answer releases the whole hold, and the card moves on", asyn
   assert.equal((await entries(card)).filter((entry) => entry.kind === "answer").length, 1);
 });
 
-test("main's pane answers the captain's hold as the board does, tagged as the pane's, and no one else can", async () => {
-  const { card } = await laneCard();
-  await cleo.call("hold", ask(card));
-  await fleet.main.call("hold", ask(card, { to: "captain" }));
+test("the removed pane endpoints cannot answer or defer a captain hold", async () => {
+  const card = await newCard(fleet.main, "Only board or chat", "captain");
+  await fleet.main.call("hold", ask(card));
   const { hold } = await theHold();
-
-  await assert.rejects(cleo.call("pane.answer", { card: card.id, hold, choice: "No" }), {
-    message: /only main's pane takes the captain's answers/,
-  });
-  await assert.rejects(
-    fleet.main.call("pane.answer", { card: card.id, hold: hold - 1, choice: "No" }),
-    { message: /c-\d+'s decision changed, so nothing was recorded/ },
-  );
+  for (const op of ["pane.answer", "pane.later"]) {
+    const reply = await fleet.cardd.post(fleet.mainToken, op, {
+      card: card.id,
+      hold,
+      choice: "Yes",
+      said: "tomorrow",
+      zone: "UTC",
+    });
+    assert.equal(reply.status, 400);
+  }
   assert.deepEqual(await needsYou(), [card.id]);
-
-  await fleet.main.call("pane.answer", { card: card.id, hold, choice: "No" });
-  assert.equal(await status(cleo, card), "with-mate");
+  assert.equal(
+    (await entries(card)).some((entry) => entry.author === "captain"),
+    false,
+  );
+  assert.equal(await fleet.cardd.act(card.id, { kind: "answer", hold, choice: "Yes" }), 200);
   assert.deepEqual(await needsYou(), []);
-  const heard = await cleo.waitForEntry((entry) => entry.kind === "answer", "the answer");
-  assert.deepEqual([heard.author, heard.body, heard.fields["source"]], ["captain", "No", "pane"]);
-  await fleet.main.waitForEntry((entry) => entry.kind === "answer", "the answer");
-  await assert.rejects(fleet.main.call("pane.answer", { card: card.id, hold, choice: "Yes" }), {
-    message: /c-\d+ is no longer waiting for your answer, so nothing was recorded/,
-  });
-  assert.equal((await entries(card)).filter((entry) => entry.kind === "answer").length, 1);
 });
 
 test("a mate that answers an owed reply by asking the same thing again does not refuse the captain's answer", async () => {
@@ -190,13 +186,13 @@ test("a mate that answers an owed reply by asking the same thing again does not 
   await cleo.call("hold", ask(card, { replyTo: `r-${String(owed.id)}` }));
   assert.notEqual((await theHold()).hold, hold, "the hold is a newer entry");
 
-  await fleet.main.call("pane.answer", { card: card.id, hold, choice: "Yes" });
+  assert.equal(await fleet.cardd.act(card.id, { kind: "answer", hold, choice: "Yes" }), 200);
   assert.deepEqual(await needsYou(), []);
   const answer = (await entries(card)).find((entry) => entry.kind === "answer");
-  assert.deepEqual([answer?.body, answer?.fields["source"]], ["Yes", "pane"]);
+  assert.deepEqual([answer?.body, answer?.fields["source"]], ["Yes", "board"]);
 });
 
-test("a pick or his own words on a merge question from the pane are never refused: they reach the mate, and only an approving option approves", async () => {
+test("a pick or his own words on a merge question from the board are never refused: they reach the mate, and only an approving option approves", async () => {
   const { card, worker } = await laneCard("Ads exports");
   await worker.call("report", { status: "done", text: "PR ready", pr: PR });
   await fleet.main.waitForEntry((entry) => entry.kind === "hold", "the merge hold");
@@ -204,11 +200,14 @@ test("a pick or his own words on a merge question from the pane are never refuse
 
   const words = "Not before the audit";
   const { hold } = await theHold();
-  await fleet.main.call("pane.answer", { card: card.id, hold, choice: words, written: true });
+  assert.equal(
+    await fleet.cardd.act(card.id, { kind: "answer", hold, choice: words, written: true }),
+    200,
+  );
   const heard = (await entries(card)).filter((entry) => entry.author === "captain");
   assert.deepEqual(
     heard.map(({ kind, body, fields }) => [kind, body, fields["written"], fields["source"]]),
-    [["comment", words, true, "pane"]],
+    [["comment", words, true, "board"]],
   );
   assert.equal(await status(cleo, card), "with-mate");
   assert.deepEqual(await needsYou(), []);
@@ -444,10 +443,6 @@ test("a merge question withdrawn while the PR is reworked and asked again in the
     zone: "UTC",
   } as const;
   assert.equal(await fleet.cardd.act(card.id, putOff), 409);
-  await assert.rejects(
-    fleet.main.call("pane.answer", { card: card.id, hold: seen.hold, choice: APPROVE }),
-    { message: /c-\d+'s decision changed, so nothing was recorded/ },
-  );
   assert.deepEqual(await needsYou(), [card.id]);
   assert.equal((await entries(card)).filter((entry) => entry.kind === "answer").length, 0);
 

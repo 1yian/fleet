@@ -6,25 +6,18 @@ export interface Listed {
 }
 
 export interface List {
-  readonly heading: string;
+  readonly open: number;
   readonly rows: readonly Listed[];
   readonly running: readonly Listed[];
 }
 
-const pulsed = (cards: readonly BoardCard[]): Listed[] =>
-  cards
+export function listOf(cards: readonly BoardCard[]): List {
+  const open = cards
     .flatMap((card) => (card.pulse === null ? [] : [{ card, pulse: card.pulse }]))
     .sort((a, b) => quietFirst(a.pulse, b.pulse) || a.card.id - b.card.id);
-
-export function listOf(cards: readonly BoardCard[]): List {
-  const open = pulsed(cards);
   return {
-    heading: `Pulse · ${String(open.length)} open · quiet first`,
+    open: open.length,
     rows: open.filter(({ pulse }) => pulse.state !== "running"),
     running: open.filter(({ pulse }) => pulse.state === "running"),
   };
-}
-
-export function listOfCounted(cards: readonly BoardCard[], heading: string): List {
-  return { heading, rows: pulsed(cards), running: [] };
 }

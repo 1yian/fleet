@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { ActedSchema, CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
+import { ActedSchema, CardViewSchema, check, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
@@ -47,48 +47,33 @@ async function fromBoard(card: Card, said: string, zone: string) {
   return fleet.cardd.refusal(card.id, { kind: "hold", hold: await holdOf(card), said, zone });
 }
 
-async function fromPane(card: Card, said: string, zone: string) {
-  const args = { card: card.id, hold: await holdOf(card), said, zone };
-  return check(OPS["pane.later"].result, await fleet.main.call("pane.later", args));
-}
-
 const unknownZone = (token: string): RegExp =>
   new RegExp(
     `${token.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")} is not a time zone the reader knows\\. Use a city such as Europe/Paris, an offset such as UTC\\+2, or one of ET, CT, MT, PT\\.`,
   );
 
-async function readOnBothSurfaces(said: string, zone: string) {
-  const board = await asked(`Board reads ${said} in ${zone}`);
-  const pane = await asked(`Pane reads ${said} in ${zone}`);
-  const acted = await fromBoard(board, said, zone);
+async function readDate(said: string, zone: string) {
+  const card = await asked(`Read ${said} in ${zone}`);
+  const acted = await fromBoard(card, said, zone);
   assert.equal(acted.status, 200, `${said}: ${acted.error ?? ""}`);
-  const fromTheBoard = check(ActedSchema, acted.body).later;
-  assert.ok(fromTheBoard, `${said}: the board action says what it read`);
-  const fromThePane = await fromPane(pane, said, zone);
-  return {
-    board: fromTheBoard,
-    pane: { until: fromThePane.until, zone: fromThePane.zone },
-  };
+  const result = check(ActedSchema, acted.body).later;
+  assert.ok(result, `${said}: the board action says what it read`);
+  return result;
 }
 
 async function untilOf(said: string, zone: string): Promise<number> {
-  const card = await asked(`Read ${said} in ${zone}`);
-  return (await fromPane(card, said, zone)).until;
+  return (await readDate(said, zone)).until;
 }
 
-test("a typed later holds the card as the captain's dated later, the same from the board and from the pane", async () => {
+test("a typed later holds the card as the captain's dated later from the board", async () => {
   const board = await asked("From the board");
-  const pane = await asked("From the pane");
   const said = "Dec 31 2099 4PM CST";
   const until = Date.UTC(2099, 11, 31, 22, 0);
 
   const acted = await fromBoard(board, said, "UTC");
   assert.equal(acted.status, 200);
   assert.deepEqual(check(ActedSchema, acted.body).later, { until, zone: "America/Chicago" });
-  const result = await fromPane(pane, said, "UTC");
-  assert.deepEqual([result.until, result.zone], [until, "America/Chicago"]);
-
-  for (const card of [board, pane]) {
+  for (const card of [board]) {
     const hold = (await holds(card)).at(-1);
     assert.equal(hold?.author, "captain");
     assert.equal(hold.body, QUESTION);
@@ -143,7 +128,7 @@ test("a bare time is read in the zone of the screen he typed on, a zone in his w
   assert.equal(await untilOf(`${clock(now + 120 * MINUTE)} UTC`, "Asia/Tokyo"), nextTime);
 });
 
-test("a zone in his words wins however he names it: an abbreviation, an offset, or a city, the same from the board and from the pane", async () => {
+test("a zone in his words wins however he names it: an abbreviation, an offset, or a city from the board", async () => {
   const named: [string, string, number, string][] = [
     ["Dec 31 2099 4PM CET", "UTC", Date.UTC(2099, 11, 31, 15), "Europe/Paris"],
     ["Jul 4 2099 4PM CEST", "UTC", Date.UTC(2099, 6, 4, 14), "Europe/Paris"],
@@ -192,11 +177,8 @@ test("a zone in his words wins however he names it: an abbreviation, an offset, 
   ];
   for (const [said, screen, until, zone] of named) {
     const before = Date.now();
-    const read = await readOnBothSurfaces(said, screen);
-    for (const [surface, result] of [
-      ["board", read.board],
-      ["pane", read.pane],
-    ] as const) {
+    const read = await readDate(said, screen);
+    for (const [surface, result] of [["board", read]] as const) {
       const where = `${said} from the ${surface} on a ${screen} screen`;
       assert.equal(result.zone, zone, where);
       if (until === 0) assert.ok(Math.abs(result.until - before - 120 * MINUTE) < MINUTE, where);
@@ -216,9 +198,8 @@ async function pinnedAt(iso: string): Promise<void> {
 }
 
 async function yearless(said: string, zone = "UTC"): Promise<number> {
-  const read = await readOnBothSurfaces(said, zone);
-  assert.equal(read.board.until, read.pane.until, `${said} reads the same on both surfaces`);
-  return read.pane.until;
+  const read = await readDate(said, zone);
+  return read.until;
 }
 
 test("a date with no year is its next occurrence as a whole instant, and Feb 29 is the next leap year's, while an explicit past year and an impossible date are refused", async () => {
@@ -252,7 +233,6 @@ test("a date with no year is its next occurrence as a whole instant, and Feb 29 
     const outcome = await fromBoard(card, text, "UTC");
     assert.equal(outcome.status, 400, text);
     assert.match(outcome.error ?? "", message, text);
-    await assert.rejects(fromPane(card, text, "UTC"), { message }, text);
   }
   assert.deepEqual(await entries(card), before);
 });
@@ -284,12 +264,11 @@ test("a wall time already passed today, this year, or this week is never convert
     const outcome = await fromBoard(card, text, "UTC");
     assert.equal(outcome.status, 400, text);
     assert.match(outcome.error ?? "", message, text);
-    await assert.rejects(fromPane(card, text, "UTC"), { message }, text);
   }
   assert.deepEqual(await entries(card), before);
 });
 
-test("connecting words in capitals are not zones: AT, ON, and the like hold the time he typed, the same from the board and from the pane", async () => {
+test("connecting words in capitals are not zones: AT, ON, and the like hold the time he typed from the board", async () => {
   const day = 24 * 60 * MINUTE;
   const startOfToday = Math.floor(Date.now() / day) * day;
   const phrases: [string, (until: number) => boolean][] = [
@@ -307,11 +286,9 @@ test("connecting words in capitals are not zones: AT, ON, and the like hold the 
     ],
   ];
   for (const [said, right] of phrases) {
-    const read = await readOnBothSurfaces(said, "UTC");
-    assert.ok(right(read.board.until), `${said} from the board`);
-    assert.ok(right(read.pane.until), `${said} from the pane`);
-    assert.equal(read.board.zone, "UTC");
-    assert.equal(read.pane.zone, "UTC");
+    const read = await readDate(said, "UTC");
+    assert.ok(right(read.until), `${said} from the board`);
+    assert.equal(read.zone, "UTC");
   }
 });
 
@@ -348,9 +325,6 @@ test("text with no time is refused in place, with what he can say, and nothing i
   const error = refusal.error ?? "";
   assert.ok(error.includes(`No time in "${said}"`), error);
   assert.ok(error.includes(EXAMPLES), error);
-  await assert.rejects(fromPane(card, said, "UTC"), {
-    message: new RegExp(`No time in "${said}".*${EXAMPLES}`),
-  });
 
   const refused: [string, RegExp][] = [
     ["Jan 1 2020", /in the past/],
@@ -402,7 +376,6 @@ test("text with no time is refused in place, with what he can say, and nothing i
     const outcome = await fromBoard(card, text, "UTC");
     assert.equal(outcome.status, 400, text);
     assert.match(outcome.error ?? "", message, text);
-    await assert.rejects(fromPane(card, text, "UTC"), { message }, text);
   }
   const outcome = await fromBoard(card, "9am", "Mars/Base");
   assert.match(outcome.error ?? "", /not an IANA time zone/);
@@ -426,17 +399,8 @@ test("the card leaves his list and returns by itself at the time he typed", asyn
   assert.deepEqual([back?.question, back?.options], [QUESTION, OPTIONS]);
 });
 
-test("only the captain's pane or board can put his decision off: a second mate, a worker, and main's own hold are refused", async () => {
+test("only the captain's board can put his decision off: agents cannot invent his words", async () => {
   const card = await asked("Not for agents");
-  const worker = await fleet.cardd.connect(await begin(cleo, await newCard(cleo, "Cleo's card")));
-  const args = { card: card.id, hold: await holdOf(card), said: "tomorrow", zone: "UTC" };
-
-  await assert.rejects(cleo.call("pane.later", args), {
-    message: /only main's pane takes the captain's later/,
-  });
-  await assert.rejects(worker.call("pane.later", args), {
-    message: "worker sessions cannot call pane.later",
-  });
   const until = Date.now() + 60 * MINUTE;
   const invented = { card: card.id, question: QUESTION, until, remaining: [], source: "record" };
   await assert.rejects(fleet.main.call("hold", { ...invented, said: "snooze it until Friday" }), {
@@ -448,9 +412,7 @@ test("only the captain's pane or board can put his decision off: a second mate, 
 
   const mates = await newCard(cleo, "Held by its mate");
   await cleo.call("hold", { card: mates.id, question: "Which plan?", options: ["A", "B"] });
-  await assert.rejects(fromPane(mates, "tomorrow", "UTC"), {
-    message: /that hold is with main or its mate/,
-  });
+  assert.equal((await fromBoard(mates, "tomorrow", "UTC")).status, 400);
 
   assert.deepEqual(await needsYou(), [card.id]);
   assert.equal(await status(fleet.main, card), "needs-you");
@@ -466,10 +428,8 @@ test("a later on a decision that changed since the captain looked is refused, an
   const card = await asked("Changed meanwhile");
   const seen = await holdOf(card);
   await fleet.main.call("hold", { card: card.id, question: "Renew it today?", options: ["Yes"] });
-  const args = { card: card.id, hold: seen, said: "tomorrow", zone: "UTC" };
-  await assert.rejects(fleet.main.call("pane.later", args), {
-    message: /decision changed, so nothing was recorded/,
-  });
+  const args = { hold: seen, said: "tomorrow", zone: "UTC" };
+  assert.equal((await fleet.cardd.refusal(card.id, { kind: "hold", ...args })).status, 409);
   assert.equal((await fromBoard(card, "tomorrow", "UTC")).status, 200);
 });
 

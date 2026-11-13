@@ -48,13 +48,17 @@ const mateAsks = (card: Card, extra: Record<string, unknown> = {}) =>
     approves: APPROVING,
     ...extra,
   });
-const pick = async (card: Card, choice: string, written = false) =>
-  fleet.main.call("pane.answer", {
-    card: card.id,
-    hold: (await view(card)).hold?.entry,
-    choice,
-    ...(written ? { written } : {}),
-  });
+const pick = async (card: Card, choice: string, written = false) => {
+  assert.equal(
+    await fleet.cardd.act(card.id, {
+      kind: "answer",
+      hold: (await view(card)).hold?.entry ?? -1,
+      choice,
+      ...(written ? { written } : {}),
+    }),
+    200,
+  );
+};
 const lastOf = async (card: Card, kind: string) =>
   (await entries(card)).findLast((entry) => entry.kind === kind);
 
@@ -71,7 +75,7 @@ test("a merge question rewritten with the mate's own options: an option it names
   const answer = await lastOf(card, "answer");
   assert.deepEqual(
     [answer?.body, answer?.fields["choice"], answer?.fields["approved"], answer?.fields["source"]],
-    ["Merge only", "Merge only", true, "pane"],
+    ["Merge only", "Merge only", true, "board"],
   );
   assert.equal(answer?.fields["hold"], open?.hold);
 });
@@ -88,7 +92,7 @@ test("an option the merge question does not name in approves is accepted, approv
   const heard = await lastOf(card, "comment");
   assert.deepEqual(
     [heard?.author, heard?.body, heard?.fields["choice"], heard?.fields["source"]],
-    ["captain", "Request changes", "Request changes", "pane"],
+    ["captain", "Request changes", "Request changes", "board"],
   );
   assert.equal(typeof heard?.fields["answers"], "number");
   assert.equal((await view(card)).hold?.merge, true);
@@ -181,7 +185,7 @@ test("a mate rewriting a merge question must say which of its new options approv
   assert.equal(await lastOf(card, "answer"), undefined);
 });
 
-test("a merge question whose approves changed since the captain looked refuses his pick of the old one, from the pane, the board, and Later", async () => {
+test("a merge question whose approves changed since the captain looked refuses his pick of the old one, from the board and Later", async () => {
   const card = await newCard(fleet.main, "Repair the recording egress group");
   await done(card);
   const ask = (approves: string[]) =>
@@ -197,10 +201,6 @@ test("a merge question whose approves changed since the captain looked refuses h
   assert.equal(await fleet.cardd.act(card.id, old), 409);
   const putOff = { kind: "hold", hold: seen, said: "tomorrow", zone: "UTC" } as const;
   assert.equal(await fleet.cardd.act(card.id, putOff), 409);
-  await assert.rejects(
-    fleet.main.call("pane.answer", { card: card.id, hold: seen, choice: "Proceed" }),
-    { message: /c-\d+'s decision changed, so nothing was recorded/ },
-  );
   assert.equal(await lastOf(card, "answer"), undefined);
   assert.equal(await status(fleet.main, card), "needs-you");
 

@@ -47,13 +47,9 @@ The check does not test that the cardd host is reachable over Tailscale. Mates r
 
 Each host that has Lavish runs its own Lavish server, so the captain's browser must reach that host, as it does over Tailscale.
 
-### Plain clicks through a remote terminal
+### Board access
 
-In Pi's fullscreen mode, plain clicks on decisions, broken cards, and stalled cards open inside Pi. They work with a custom footer too. The terminal must allow mouse reporting. No browser or Element connection is needed for these three items.
-
-The `board` item opens a URL. On a remote host it uses Element's `el open` route to the browser on the computer at your keyboard. Install the [Element Chrome extension](https://chromewebstore.google.com/detail/aanpmajidbphoflakmnhcjpjfjbgohmc) there and set up its native host as [Element's installation guide](https://elmts.dev) says. Keep `el link <Pi-host>` running on that computer when using the SSH link. `el status` on that computer must report a connected browser. A running SSH link alone is not a browser connection: the remote hub can report the link's proxy as a browser while the local hub still reports zero.
-
-If Element cannot open the link, Pi shows a connection instruction. It does not fall back to opening a browser on the remote host. Connect the browser extension and click again. No Pi or herdr restart is needed for that browser connection.
+The pane shows the plain board URL. Open it in your browser to answer decisions. Fleet installs no status-click handlers or browser bridge.
 
 ## 1. A checkout on each host
 

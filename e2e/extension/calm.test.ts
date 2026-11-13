@@ -85,7 +85,7 @@ async function cleoAsks(title: string): Promise<void> {
 }
 
 const FLEET_ROW = "[fleet] cleo on c-2 ship-the-scrollbar-fix (hold)";
-const TOOL_ROW = /^[ \t]*board[ \t]*$/m;
+const TOOL_ROW = "board";
 const NOTE = "Checking the board first.";
 const REPLY = "Cleo wants a decision on the scrollbar fix.";
 const CAPTAIN = "Any news for me?";
@@ -93,17 +93,10 @@ const ANSWER = "Nothing else is waiting.";
 const BANNER_REPLY = "The banner can go.";
 const TRANSCRIPT_BOTTOM = "\u001b[1;5F";
 const TRANSCRIPT_TOP = "\u001b[1;5H";
-const aboveFooter = (screen: string): string => {
-  const lines = screen.split("\n");
-  const rule = lines.map((line) => line.startsWith("───")).lastIndexOf(true);
-  return rule < 0 ? screen : lines.slice(0, rule).join("\n");
-};
-const present = (screen: string, text: string | RegExp): boolean =>
-  typeof text === "string" ? screen.includes(text) : text.test(aboveFooter(screen));
 const showing =
-  (shown: readonly (string | RegExp)[], hidden: readonly (string | RegExp)[] = []) =>
+  (shown: readonly string[], hidden: readonly string[] = []) =>
   (screen: string): boolean =>
-    shown.every((text) => present(screen, text)) && !hidden.some((text) => present(screen, text));
+    shown.every((text) => screen.includes(text)) && !hidden.some((text) => screen.includes(text));
 
 test("/calm hides fleet rows, tool rows, and working notes, keeps the conversation, and survives a restart", async () => {
   h.onModel(() => ({ tool: "board", text: NOTE }), "mate");
