@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { LiveFleet, until } from "../support/live-fleet.ts";
@@ -73,7 +73,7 @@ for (const skip of [false, true]) {
   );
 }
 
-test("the update completes a worker whose helper's first verification reads fail transiently", async () => {
+async function idlePausedWorker(title: string) {
   const untilDate = new Date(Date.now() + 3_600_000).toISOString();
   for (let call = 0; call < 100; call += 1) {
     fleet.h.onModel((turns) => {
@@ -85,20 +85,36 @@ test("the update completes a worker whose helper's first verification reads fail
     fleet.h.onModel(() => ({ text: "noted" }), "mate");
   }
   await fleet.startMain();
-  const worker = await fleet.startWorker("flaky-read", "p620", true);
+  const worker = await fleet.startWorker(title, "p620", true);
   await until(async () => {
     const card = await fleet.cardOf(worker.card);
     return card.activity?.state === "idle" ? card : undefined;
   }, "the worker to pause and idle");
-  const pid = await fleet.piIn(worker.pane);
-  fault.flake(worker.pane);
+  return { worker, pid: await fleet.piIn(worker.pane) };
+}
+
+async function updateLine(session: string): Promise<string> {
   await fleet.lab.submit(fleet.mainPane, "/updatefleet");
   const report = await until(
     () => fleet.userTexts("mate").find((text) => text.startsWith("[fleet] update:")),
     "the update's report",
   );
-  const line = report.split("\n").find((text) => text.includes(worker.session)) ?? "";
-  assert.match(line, /reload completed/);
+  return report.split("\n").find((text) => text.includes(session)) ?? "";
+}
+
+test("the update completes a worker whose helper's first verification reads fail transiently", async () => {
+  const { worker, pid } = await idlePausedWorker("flaky-read");
+  fault.flake(worker.pane);
+  assert.match(await updateLine(worker.session), /reload completed/);
   assert.equal(fault.flaked(), FLAKY_READS);
+  assert.notEqual(await fleet.newPid(worker.pane, pid ?? 0), pid);
+});
+
+test("the update completes a worker whose helper cannot write its diagnostic log", async () => {
+  const { worker, pid } = await idlePausedWorker("unwritable-log");
+  const logs = join(process.env["FLEET_HOST_DIR"] ?? "", "logs");
+  rmSync(logs, { recursive: true, force: true });
+  writeFileSync(logs, "not a directory");
+  assert.match(await updateLine(worker.session), /reload completed/);
   assert.notEqual(await fleet.newPid(worker.pane, pid ?? 0), pid);
 });

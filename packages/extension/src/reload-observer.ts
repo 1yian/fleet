@@ -66,8 +66,6 @@ export async function observeReload(
   identity: { readonly pid: number; readonly pane: string; readonly home: string },
   work: () => Promise<void>,
 ): Promise<void> {
-  const file = join(hostDir(), "logs", "reloads.jsonl");
-  mkdirSync(join(hostDir(), "logs"), { recursive: true, mode: 0o700 });
   let report: ReloadReceipt | undefined;
   let startedAt: number | null = null;
   const log = (event: string, detail: string): void => {
@@ -80,7 +78,13 @@ export async function observeReload(
       maintenance: report?.id ?? null,
       detail: redacted(detail, report?.token),
     };
-    appendFileSync(file, `${JSON.stringify(row)}\n`, { mode: 0o600 });
+    try {
+      const dir = join(hostDir(), "logs");
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      appendFileSync(join(dir, "reloads.jsonl"), `${JSON.stringify(row)}\n`, { mode: 0o600 });
+    } catch {
+      return;
+    }
   };
   try {
     const at = process.env["FLEET_RELAUNCH_STARTED_AT"];
