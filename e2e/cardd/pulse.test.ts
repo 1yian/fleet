@@ -11,7 +11,7 @@ import {
   type Pulse,
 } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { ageCard, begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { ageCard, ageSession, begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
 
 const MINUTE = 60_000;
@@ -99,6 +99,24 @@ test("a running job counts as running, and is named", async () => {
   assert.deepEqual(pulse.running, { by: "job", what: `job ${String(job)} (release build)` });
 });
 
+test("a silent worker with a live job is running, not stalled", async () => {
+  const card = await newCard(cleo, "Watch the ad campaign");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  const { job } = check(
+    OPS["job.start"].result,
+    await worker.call("job.start", { label: "ad watch", command: "watch ads" }),
+  );
+  worker.send({ t: "activity", state: "running" });
+  await worker.call("standing", {});
+  ageSession(fleet.cardd, card, 10 * MINUTE);
+  const view = await onBoard(card);
+  assert.deepEqual([view.pulse?.state, view.pulse?.notice], ["running", "none"]);
+  assert.equal(view.pulse?.running?.what, `job ${String(job)} (ad watch)`);
+  await worker.call("job.finish", { job, exitCode: 0, outputTail: "finished" });
+  const after = await onBoard(card);
+  assert.deepEqual([after.pulse?.state, after.pulse?.notice], ["stalled", "captain"]);
+});
+
 test("idle is nothing running with no stated reason: main is told after 4 hours and the captain after 24", async () => {
   const young = await aged("Port the calendar", 3 * HOUR);
   const old = await aged("Port the invoices", 5 * HOUR);
@@ -150,7 +168,7 @@ test("last moved comes from entries and progress, not from the activity that a r
   assert.equal(progressed.notice, "none");
 });
 
-test("a dated hold that nothing checks is parked: noticed after a day, urgent after three, and never once a job checks it", async () => {
+test("stated outside dates, declared watchers, and live jobs cover dated holds however old they are", async () => {
   const young = await newCard(cleo, "Quota card");
   await park(young, { outside: "the weekly quota resets" });
   ageCard(fleet.cardd, young, 23 * HOUR);
@@ -170,9 +188,9 @@ test("a dated hold that nothing checks is parked: noticed after a day, urgent af
   assert.deepEqual(
     parked.map((pulse) => [pulse.state, pulse.notice, pulse.waits]),
     [
-      ["parked", "none", "date"],
-      ["parked", "captain", "date"],
-      ["parked", "urgent", "date"],
+      ["waiting", "none", "date"],
+      ["waiting", "none", "date"],
+      ["waiting", "none", "date"],
     ],
   );
   assert.equal(waitsText(await onBoard(urgent)).startsWith("waits on an outside date"), true);
@@ -199,13 +217,13 @@ test("a dated hold that nothing checks is parked: noticed after a day, urgent af
   }
 });
 
-test("a pause is parked, and a decision for the captain is his to make, whatever its age", async () => {
+test("a dated pause is waiting, and a decision for the captain is his to make, whatever its age", async () => {
   const card = await newCard(cleo, "Wait for the CI run");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
   await worker.call("report", { status: "paused", text: "CI runs", until: Date.now() + HOUR });
   ageCard(fleet.cardd, card, 26 * HOUR);
   const paused = await pulseWhere(card, movedBy(26 * HOUR));
-  assert.deepEqual([paused.state, paused.notice, paused.waits], ["parked", "captain", "pause"]);
+  assert.deepEqual([paused.state, paused.notice, paused.waits], ["waiting", "none", "pause"]);
 
   const asked = await aged("Merge the Wiz fix?", 5 * DAY);
   await cleo.call("hold", {

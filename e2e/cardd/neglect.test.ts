@@ -103,7 +103,7 @@ test("a card that main already holds is in main's list once, with the hold, not 
   assert.doesNotMatch(body, /idle \d+ min/);
 });
 
-test("a list for an action names a card parked for over a day once, and not again on the 30 minute cadence", async () => {
+test("an action list carries an armed watcher only as information, never as work to act on", async () => {
   const parked = await newCard(cleo, "Crud ingress card");
   await park(parked, 24 * HOUR * SCALE + 2 * MINUTE);
   const idle = await newCard(cleo, "Port the invoices");
@@ -117,35 +117,39 @@ test("a list for an action names a card parked for over a day once, and not agai
     () => (naming("Port the invoices").length >= 2 ? true : undefined),
     "two lists that name the idle card",
   );
-  assert.equal(naming("Crud ingress card").length, 1, "the parked card is in one list");
+  const lists = naming("Port the invoices");
+  assert.equal(lists.length, 2, "two action lists were observed");
+  for (const { body } of lists) {
+    const [actions = "", information = ""] = body.split("Dated waits with something running");
+    assert.doesNotMatch(actions, /Crud ingress card/);
+    assert.match(information, /Crud ingress card/);
+  }
 });
 
-test("a card parked for over a day on a wait nothing checks is named once a day, with what to do", async () => {
+test("declared watchers stay information-only regardless of the age of their holds", async () => {
   const young = await newCard(cleo, "Quota card");
   await park(young, 24 * HOUR * SCALE - 2 * MINUTE);
   const parked = await newCard(cleo, "Crud ingress card");
   await park(parked, 24 * HOUR * SCALE + 2 * MINUTE);
 
   const { body } = await reminder(fleet.main);
-  assert.match(
-    body,
-    new RegExp(
-      `^reminder: 1 card parked for over a day, nothing checks what it waits for\\..*\\nParked for more than a day on a wait that fleet cannot check\\. Start what it waits on, or clear the hold and act on it:\\n- c-${String(parked.id)} Crud ingress card - waits on the support hub log \\(fleet cannot check it\\)`,
-      "s",
-    ),
+  assert.match(body, /^information: 2 dated waits, nothing needs action/);
+  assert.match(body, /Quota card/);
+  assert.match(body, /Crud ingress card - waits on the support hub log/);
+  const board = check(OPS.board.result, await cleo.call("board", {}));
+  assert.deepEqual(
+    [young, parked].map(({ id }) => {
+      const pulse = board.find((each) => each.id === id)?.pulse;
+      return [pulse?.state, pulse?.notice];
+    }),
+    [
+      ["waiting", "none"],
+      ["waiting", "none"],
+    ],
   );
-  const lines = body.split("\n");
-  const from = lines.findIndex((line) => line.startsWith("Parked for more than a day")) + 1;
-  const named = lines.slice(from);
-  const section = named.slice(
-    0,
-    named.findIndex((line) => !line.startsWith("- ")),
-  );
-  assert.equal(section.length, 1, `the parked group is ${section.join(" | ")}`);
-  assert.deepEqual(await reminderOn(cleo, parked), [], "the mate that holds it is not told");
 });
 
-test("a card the captain put off is never named for action before its date, however old the hold, while a watcher nothing checks is", async () => {
+test("captain deferrals and declared watchers both stay off action lists however old they are", async () => {
   const later = await newCard(cleo, "Launch the referral page");
   const question = "Launch it now?";
   await cleo.call("hold", { card: later.id, question });
@@ -164,10 +168,8 @@ test("a card the captain put off is never named for action before its date, howe
   ageCards(fleet.cardd, [later, parked], 24 * HOUR * SCALE + 2 * MINUTE);
 
   const { body } = await reminder(fleet.main);
-  assert.match(
-    body,
-    new RegExp(`^reminder: 1 card parked for over a day.*- c-${String(parked.id)} `, "s"),
-  );
+  assert.match(body, /^information: 2 dated waits, nothing needs action/);
+  assert.match(body, /Crud ingress card/);
   const [toAct = ""] = body.split("Dated waits with something running");
   assert.doesNotMatch(toAct, /Launch the referral page/);
   const told = await reminderOn(cleo, later);
@@ -177,7 +179,7 @@ test("a card the captain put off is never named for action before its date, howe
   );
 });
 
-test("a hold dated again after it sat open for a day is named for main at the age of the hold, not of the date", async () => {
+test("arming an old hold with an outside checkpoint makes it waiting instead of neglected", async () => {
   const held = await newCard(cleo, "Crud ingress card");
   await cleo.call("hold", { card: held.id, question: "Wait for it?" });
   ageCard(fleet.cardd, held, 24 * HOUR * SCALE + 2 * MINUTE);
@@ -189,31 +191,29 @@ test("a hold dated again after it sat open for a day is named for main at the ag
     remaining: [],
   });
 
-  const entry = await fleet.main.waitForEntry(
-    (each) => isReminder(each) && each.body.includes("parked for over a day"),
-    "the parked reminder",
-  );
-  assert.match(
-    entry.body,
-    new RegExp(`- c-${String(held.id)} Crud ingress card - waits on an outside date`),
-  );
+  const board = check(OPS.board.result, await cleo.call("board", {}));
+  const pulse = board.find(({ id }) => id === held.id)?.pulse;
+  assert.deepEqual([pulse?.state, pulse?.notice], ["waiting", "none"]);
+  const dated = board.find(({ id }) => id === held.id)?.datedWait;
+  assert.equal(dated?.watch, "outside");
+  assert.equal(dated.what, "the first real support hub interaction");
 });
 
-test("a worker's pause past a day is listed for main with what to do, and not for its mate", async () => {
+test("a worker's future dated checkpoint is not listed for action even after a day", async () => {
   const paused = await newCard(cleo, "Wait for the CI run");
   const worker = await fleet.cardd.connect(await begin(cleo, paused));
   try {
     await worker.call("report", { status: "paused", text: "CI runs", until: Date.now() + HOUR });
     ageCard(fleet.cardd, paused, 24 * HOUR * SCALE + 2 * MINUTE);
 
+    const idle = await newCard(cleo, "Unattended control");
+    ageCard(fleet.cardd, idle, 4 * HOUR * SCALE + MINUTE);
     const { body } = await reminder(fleet.main);
-    assert.match(
-      body,
-      new RegExp(
-        `^reminder: 1 card parked for over a day, nothing checks what it waits for\\..*\\nParked for more than a day on a wait that fleet cannot check\\. Start what it waits on, or clear the hold and act on it:\\n- c-${String(paused.id)} Wait for the CI run - paused \\d+ min, nothing checks what it waits for$`,
-        "s",
-      ),
-    );
+    assert.match(body, /Unattended control/);
+    assert.doesNotMatch(body, /Wait for the CI run/);
+    const board = check(OPS.board.result, await cleo.call("board", {}));
+    const pulse = board.find(({ id }) => id === paused.id)?.pulse;
+    assert.deepEqual([pulse?.state, pulse?.notice], ["waiting", "none"]);
     assert.deepEqual(await reminderOn(cleo, paused), [], "its mate is not told");
   } finally {
     await worker.close();

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardSchema, check } from "@fleet/protocol";
+import { CardSchema, check, OPS } from "@fleet/protocol";
 import {
   awaiting,
   awaitingAt,
@@ -14,7 +14,7 @@ import {
 } from "../support/decide-lab.ts";
 import { FakeElement } from "../support/fake-element.ts";
 import { FakeOpener } from "../support/fake-opener.ts";
-import { ageCard } from "../support/fleet.ts";
+import { ageCard, ageSession, begin } from "../support/fleet.ts";
 import { HerdrClient, type Cell } from "../support/herdr-client.ts";
 
 const WAIT_MS = 30_000;
@@ -171,6 +171,71 @@ function assertExactly(overlay: string, text: string, cards: readonly string[]):
     assert.ok(!overlay.includes(title), `${title} is in the list of ${text}:\n${overlay}`);
   assert.equal(overlay.match(/c-\d+/g)?.length, cards.length, `the rows of ${text}:\n${overlay}`);
 }
+
+test("armed watches and live long jobs never count as stalled, and the count opens only unattended work", async () => {
+  const make = async (title: string) =>
+    check(CardSchema, await lab.cleo.call("card.new", { title, kind: "scout", project: "web" }));
+  const busy = await make("Live ad watch");
+  const worker = await lab.cardd.connect(await begin(lab.cleo, busy));
+  const { job, heartbeatMs } = check(
+    OPS["job.start"].result,
+    await worker.call("job.start", { label: "ad watch", command: "watch ads" }),
+  );
+  const beat = setInterval(() => {
+    worker.call("job.alive", { job }).catch(() => undefined);
+  }, heartbeatMs);
+  try {
+    worker.send({ t: "activity", state: "running" });
+    await worker.call("standing", {});
+    ageSession(lab.cardd, busy, 10 * 60_000);
+    for (const [title, wait] of [
+      ["Watched checkpoint", { watcher: "the scheduled CNP sweep checks the review" }],
+      ["Outside checkpoint", { outside: "the EIN appointment" }],
+    ] as const) {
+      const held = await make(title);
+      await lab.cleo.call("hold", {
+        card: held.id,
+        question: "Wait for the checkpoint",
+        until: Date.now() + 10 * 24 * HOUR_MS,
+        remaining: [],
+        ...wait,
+      });
+      ageCard(lab.cardd, held, 45 * HOUR_MS);
+    }
+    const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });
+    const quiet = await attached(pane, "board");
+    keep("stalled-watchers-zero", quiet);
+    assert.equal(statusRow(quiet), "board", quiet);
+
+    const idle = await make("Unattended invoices");
+    ageCard(lab.cardd, idle, 5 * HOUR_MS);
+    const counted = await lab.screenWhere(pane, "one unattended card", showing(["1 stalled card"]));
+    keep("stalled-unattended-one", counted);
+    assert.equal(statusRow(counted), "1 stalled card board");
+    const overlay = await openedList(pane, "1 stalled card");
+    assert.ok(overlay.includes("Unattended invoices"), overlay);
+    assert.equal(overlay.match(/c-\d+/g)?.length, 1, overlay);
+    for (const title of ["Live ad watch", "Watched checkpoint", "Outside checkpoint"])
+      assert.ok(!overlay.includes(title), overlay);
+    await lab.herdr().press(pane, "esc");
+    await lab.cleo.call("hold", {
+      card: idle.id,
+      question: "Wait for the outside checkpoint",
+      until: Date.now() + HOUR_MS,
+      outside: "the invoice release date",
+      remaining: [],
+    });
+    const cleared = await lab.screenWhere(
+      pane,
+      "no unattended cards",
+      (screen) => statusRow(screen) === "board",
+    );
+    keep("stalled-watchers-cleared", cleared);
+  } finally {
+    clearInterval(beat);
+    await worker.close();
+  }
+});
 
 test("each count opens the list of exactly the cards it counts, and his own tasks and landings are on no strip, through a real herdr client", async () => {
   const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });

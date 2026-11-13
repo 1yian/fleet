@@ -99,13 +99,7 @@ const at = (screen: string, text: string): number => {
 
 test("/pulse lists the neglected cards first, quiet first, with running cards in one line, and it never reaches the chat or the model", async () => {
   const parked = await card("Crud ingress bypasses Cloud Armor");
-  await cleo.call("hold", {
-    card: parked.id,
-    question: "Wait for the first hub use?",
-    until: Date.now() + 10 * DAY,
-    outside: "the first real support hub interaction",
-    remaining: [],
-  });
+  oldDatedHold(cardd, parked, "main", Date.now(), Date.now() + 10 * DAY);
   ageCard(cardd, parked, 4 * DAY);
   const idle = await card("Port the invoices");
   ageCard(cardd, idle, 5 * HOUR);
@@ -127,7 +121,7 @@ test("/pulse lists the neglected cards first, quiet first, with running cards in
     `PARKED 4d`,
     `c-${String(parked.id)}`,
     "Crud ingress bypasses Cloud Armor",
-    "waits on an outside date: the first real support hub interaction",
+    "idle park, nothing running",
     "IDLE 5h",
     "Port the invoices",
     "waits on cleo",
@@ -262,9 +256,7 @@ test("a watcher with line breaks and escapes stays on its row and the overlay ke
   });
   ageCard(cardd, parked, 4 * DAY);
   const pane = await openMain();
-  await screenWhere(pane, "the status bar to count the card", (screen) =>
-    screen.includes("1 broken card"),
-  );
+  await screenWhere(pane, "the quiet status bar", (screen) => screen.includes("board"));
 
   await herdr().submit(pane, "/pulse");
   const opened = await screenWhere(pane, "the overlay", (screen) =>

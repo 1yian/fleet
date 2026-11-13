@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
-import type { Card } from "@fleet/protocol";
+import { check, OPS } from "@fleet/protocol";
 import type { Cardd, Session } from "../support/cardd.ts";
-import { ageCard, begin, newCard } from "../support/fleet.ts";
+import { ageCard, ageSession, begin, newCard, oldDatedHold } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
 import { boundBoardFile, openBoardPage, startBoardServer } from "../support/board.ts";
 
@@ -35,22 +35,63 @@ beforeEach(async (context) => {
 const open = (): Promise<unknown> =>
   page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
 
-async function park(card: Card): Promise<void> {
-  await main.call("hold", {
-    card: card.id,
-    question: "Wait for the first hub use?",
-    until: Date.now() + 10 * DAY,
-    outside: "the first real support hub interaction",
-    remaining: [],
-  });
-}
+test("armed waits and a silent worker's live job raise no board alarm, while unattended work does", async () => {
+  for (const [title, wait] of [
+    ["Review sweep", { watcher: "the review sweep checks approval" }],
+    ["Outside checkpoint", { outside: "the November 16 read" }],
+  ] as const) {
+    const held = await newCard(main, title);
+    await main.call("hold", {
+      card: held.id,
+      question: "Wait for the checkpoint",
+      until: Date.now() + 10 * DAY,
+      remaining: [],
+      ...wait,
+    });
+    ageCard(cardd, held, 4 * DAY);
+  }
+  const busy = await newCard(main, "Live ad watch");
+  const worker = await cardd.connect(await begin(main, busy));
+  const { job, heartbeatMs } = check(
+    OPS["job.start"].result,
+    await worker.call("job.start", { label: "ad watch", command: "watch ads" }),
+  );
+  const beat = setInterval(() => {
+    worker.call("job.alive", { job }).catch(() => undefined);
+  }, heartbeatMs);
+  try {
+    worker.send({ t: "activity", state: "running" });
+    await worker.call("standing", {});
+    ageSession(cardd, busy, 10 * 60_000);
+    await open();
+    await page.getByRole("article", { name: "Live ad watch" }).waitFor();
+    assert.equal(await page.getByRole("region", { name: "Attention" }).count(), 0);
+    assert.equal(await page.locator("p.pulse-line b").count(), 0);
+    assert.match(
+      (await page
+        .getByRole("article", { name: "Live ad watch" })
+        .locator("p.pulse-line")
+        .textContent()) ?? "",
+      /running job \d+ \(ad watch\)/,
+    );
+    const idle = await newCard(main, "Unattended invoices");
+    ageCard(cardd, idle, 25 * HOUR);
+    const strip = page.getByRole("region", { name: "Attention" });
+    await strip.getByRole("link", { name: /Unattended invoices/ }).waitFor();
+    assert.equal(await strip.getByRole("listitem").count(), 1);
+    assert.equal(await strip.locator(".what").textContent(), "Idle 1d");
+  } finally {
+    clearInterval(beat);
+    await worker.close();
+  }
+});
 
 test("the Attention strip lists broken, parked, idle and your cards in that order across projects, and each card says who has it", async (context) => {
   const broken = await newCard(main, "Fix the Cleo rule");
   const failing = await cardd.connect(await begin(main, broken));
   await failing.call("report", { status: "failed", text: "the build is red" });
   const parked = await newCard(main, "Crud ingress bypasses Cloud Armor");
-  await park(parked);
+  oldDatedHold(cardd, parked, "main", Date.now(), Date.now() + 10 * DAY);
   ageCard(cardd, parked, 4 * DAY);
   const idle = await newCard(main, "Port the invoices");
   ageCard(cardd, idle, 25 * HOUR);
@@ -75,7 +116,7 @@ test("the Attention strip lists broken, parked, idle and your cards in that orde
   assert.equal(await items.nth(3).locator(".what").textContent(), "Waiting on you");
   assert.match(
     (await items.nth(1).locator(".why").textContent()) ?? "",
-    /waits on an outside date: the first real support hub interaction · running nothing/,
+    /idle park, nothing running · running nothing/,
   );
   assert.equal(await strip.getByText("Ship the scrollbar fix").count(), 0);
   assert.equal(
