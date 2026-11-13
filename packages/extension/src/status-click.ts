@@ -1,11 +1,11 @@
-import { FooterComponent } from "@earendil-works/pi-coding-agent";
+import { FooterComponent, InteractiveMode } from "@earendil-works/pi-coding-agent";
 import {
   stripTerminalSequences,
   visibleWidth,
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import { installPresentation, once, patchRender } from "./patch.ts";
+import { installPresentation, methodOf, once, patchRender } from "./patch.ts";
 
 export interface StatusClick {
   readonly text: string;
@@ -29,10 +29,9 @@ function shared(): Map<string, StatusClick> {
 }
 
 function clickedAt(footer: object, event: TuiMouseEvent): StatusClick | undefined {
-  if (event.y !== STATUS_ROW) return undefined;
-  const plain = stripTerminalSequences(drawn.get(footer)?.[STATUS_ROW] ?? "");
+  const plain = stripTerminalSequences(drawn.get(footer)?.[event.y] ?? "");
   return [...shared().values()].find((click) => {
-    const at = plain.indexOf(click.text);
+    const at = plain.lastIndexOf(click.text);
     if (at === -1) return false;
     const start = visibleWidth(plain.slice(0, at));
     return event.x >= start && event.x < start + visibleWidth(click.text);
@@ -83,13 +82,43 @@ function fitStatus(footer: object, width: number): string {
   return fitted;
 }
 
+function wrapCustomFooter(footer: object): void {
+  const render = methodOf(footer, "render");
+  const mouse: unknown = Reflect.get(footer, "handleMouse");
+  Reflect.set(footer, "render", function (this: object, width: number) {
+    const rows: unknown = render(this, width);
+    if (Array.isArray(rows) && rows.every((row) => typeof row === "string")) drawn.set(this, rows);
+    return rows;
+  });
+  Reflect.set(footer, "handleMouse", function (this: object, event: TuiMouseEvent) {
+    const click = handleMouse.call(this, event);
+    if (click !== undefined) return click;
+    const result: unknown =
+      typeof mouse === "function" ? Reflect.apply(mouse, this, [event]) : undefined;
+    return result;
+  });
+}
+
 function install(): void {
+  once("custom-footer-mouse", () => {
+    const proto = InteractiveMode.prototype;
+    const original = methodOf(proto, "setExtensionFooter");
+    Reflect.set(proto, "setExtensionFooter", function (this: object, factory: unknown) {
+      const result = original(this, factory);
+      const footer: unknown = Reflect.get(this, "customFooter");
+      if (typeof footer === "object" && footer !== null) wrapCustomFooter(footer);
+      return result;
+    });
+  });
   patchRender(FooterComponent.prototype, "FooterComponent", (footer, width, lines) => {
     const rows = lines();
     if (stripTerminalSequences(rows[STATUS_ROW] ?? "").endsWith("...")) {
       rows[STATUS_ROW] = fitStatus(footer, width);
     }
-    drawn.set(footer, rows);
+    drawn.set(
+      footer,
+      rows.map((row, at) => (at === STATUS_ROW ? row : "")),
+    );
     return rows;
   });
   once("footer-mouse", () => {
@@ -97,8 +126,12 @@ function install(): void {
   });
 }
 
-export function onStatusClick(key: string, click: StatusClick | undefined): void {
+export function installStatusClicks(): void {
   installPresentation("Status", "click", install);
+}
+
+export function onStatusClick(key: string, click: StatusClick | undefined): void {
+  installStatusClicks();
   if (click === undefined) shared().delete(key);
   else shared().set(key, click);
 }

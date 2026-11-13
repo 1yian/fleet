@@ -75,7 +75,7 @@ for (const hyperlinks of ["1", "0"]) {
   });
 }
 
-test("a click on board falls back to the host's opener when Element cannot open it", async () => {
+test("a disconnected browser explains how to connect Element, never opens on the host, and a retry works", async () => {
   const element = new FakeElement(1);
   const host = new FakeOpener();
   const pane = await lab.openMain({ PATH: host.dir, ELEMENT_HOME: element.home });
@@ -84,9 +84,20 @@ test("a click on board falls back to the host's opener when Element cannot open 
 
   const at = cellOf(screen, "board");
   await client?.click(pane, { row: at.row, column: at.column + 2 });
-  await until(() => host.opened().length > 0, "the host's opener to be asked");
-  assert.deepEqual(host.opened(), [boardUrl()]);
-  assert.deepEqual(element.opened(), [boardUrl()], "Element was asked first");
+  await lab.screenWhere(
+    pane,
+    "the browser connection instruction",
+    showing(["Could not open", "browser extension", "click again"]),
+  );
+  assert.deepEqual(host.opened(), [], "failure must not open a browser on the pane host");
+  assert.deepEqual(element.opened(), [boardUrl()]);
+  element.exitCode = 0;
+  const retry = cellOf(await lab.herdr().screen(pane), "board");
+  await client?.click(pane, { row: retry.row - 1, column: retry.column });
+  await client?.click(pane, { row: retry.row, column: retry.column + 2 });
+  await until(() => element.opened().length === 2, "the connected browser to open on retry");
+  assert.deepEqual(element.opened(), [boardUrl(), boardUrl()]);
+  assert.deepEqual(host.opened(), []);
 });
 
 test("a ctrl-click on the linked board is herdr's own and opens it on the machine of the client", async () => {

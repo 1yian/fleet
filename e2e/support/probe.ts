@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { TuiAltScreen } from "@earendil-works/pi-tui";
 import { probeEdits } from "./probe-edits.ts";
 import { isRecord, optionalNumber, optionalString, parseRecord } from "./json.ts";
 
@@ -18,6 +19,18 @@ function registerReload(pi: ExtensionAPI): void {
   });
 }
 
+function observeMouse(report: (event: Record<string, unknown>) => void): void {
+  if (process.env["PROBE_MOUSE"] !== "1") return;
+  const proto = TuiAltScreen.prototype;
+  const handle: unknown = Reflect.get(proto, "handleMouseEvent");
+  if (typeof handle !== "function") return;
+  Reflect.set(proto, "handleMouseEvent", function (this: object, data: unknown) {
+    report({ type: "terminal_mouse", data });
+    const result: unknown = Reflect.apply(handle, this, [data]);
+    return result;
+  });
+}
+
 export default function probe(pi: ExtensionAPI): void {
   registerReload(pi);
   const url = (process.env["FLEET_CONTROL_URL"] ?? "").replace(/^http/, "ws");
@@ -32,6 +45,7 @@ export default function probe(pi: ExtensionAPI): void {
     for (const line of outbox.splice(0)) socket.send(line);
   });
 
+  observeMouse(report);
   const edit = probeEdits(pi, report);
 
   let release: (() => void) | undefined;
