@@ -10,6 +10,7 @@ import type {
   Status,
 } from "@fleet/protocol";
 import { runningJobSql } from "./jobs.ts";
+import { pausedNow } from "./status.ts";
 import { activityOf, type Loaded } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { SCHEDULE, SCRIPT } from "./wakes.ts";
@@ -111,8 +112,10 @@ function silent({ loaded, activity, env }: Basis): Reading | undefined {
 
 const putOff = ({ wait }: Basis): boolean => wait?.watch === "later";
 
-const covered = ({ running, wait, loaded }: Basis): boolean =>
-  running?.by === "job" || (wait !== null && !idlePark(wait)) || loaded.card.status === "paused";
+const pausedOf = ({ loaded, env }: Basis): boolean => pausedNow(loaded.standing, env.now);
+
+const covered = (basis: Basis): boolean =>
+  basis.running?.by === "job" || (basis.wait !== null && !idlePark(basis.wait)) || pausedOf(basis);
 
 function needOf(basis: Basis): Reading | undefined {
   const { card, standing } = basis.loaded;
@@ -126,12 +129,12 @@ function needOf(basis: Basis): Reading | undefined {
 
 function readingOf(basis: Basis): Reading {
   const { loaded, wait, running, moved } = basis;
-  const { card, standing } = loaded;
+  const { standing } = loaded;
   const need = needOf(basis);
   if (need !== undefined) return need;
   if (running !== null) return { state: "running", since: moved };
   if (wait !== null) return { state: idlePark(wait) ? "parked" : "waiting", since: wait.since };
-  if (card.status === "paused") return { state: "waiting", since: standing.since };
+  if (pausedOf(basis)) return { state: "waiting", since: standing.since };
   return { state: "idle", since: moved };
 }
 
@@ -187,7 +190,7 @@ function ownerOf(db: DatabaseSync, basis: Basis): Pulse["owner"] {
 function waitsOf(basis: Basis, state: PulseState, owner: Pulse["owner"]): Pulse["waits"] {
   if (state === "you") return "captain";
   if (basis.wait !== null) return "date";
-  if (basis.loaded.card.status === "paused") return "pause";
+  if (pausedOf(basis)) return "pause";
   return owner.kind === "worker" ? "nothing" : owner.kind;
 }
 

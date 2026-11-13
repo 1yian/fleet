@@ -217,6 +217,30 @@ test("stated outside dates, declared watchers, and live jobs cover dated holds h
   }
 });
 
+test("a dated pause during merging is waiting and quiet, however long the worker has been idle", async () => {
+  fleet.cardd.yolo("web");
+  const card = await newCard(cleo, "Land the deploy");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", {
+    status: "done",
+    text: "ready to land",
+    pr: "https://github.com/acme/web/pull/7",
+  });
+  await worker.call("report", {
+    status: "paused",
+    text: "deploy window",
+    until: Date.now() + HOUR,
+  });
+  worker.send({ t: "activity", state: "idle" });
+  ageCard(fleet.cardd, card, 5 * HOUR);
+  const quiet = await pulseWhere(card, movedBy(5 * HOUR));
+  assert.equal((await onBoard(card)).status, "merging");
+  assert.deepEqual(
+    [quiet.state, quiet.notice, quiet.waits, quiet.owner.kind],
+    ["waiting", "none", "pause", "worker"],
+  );
+});
+
 test("a dated pause is waiting, and a decision for the captain is his to make, whatever its age", async () => {
   const card = await newCard(cleo, "Wait for the CI run");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
