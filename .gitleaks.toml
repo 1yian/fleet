@@ -17,3 +17,9 @@ description = "A made-up lane token that the home setup e2e test feeds to fleet 
 condition = "AND"
 paths = ['''^e2e/extension/home-setup\.test\.ts$''']
 regexes = ['''^-tok-3f9c2a71e8d44b0a$''']
+
+[[allowlists]]
+description = "A made-up helper failure value that the reload failure e2e test checks is hidden, in the commit history"
+condition = "AND"
+paths = ['''^e2e/(support/reload-fault\.ts|extension/reload-failure\.test\.ts)$''']
+regexes = ['''sk-labSecretMustNotReachDiagnosticLogs123456''']

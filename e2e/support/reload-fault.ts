@@ -8,7 +8,7 @@ import { tempDir } from "./run-root.ts";
 
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 export const HELPER_ERROR = "LAB-HELPER-FAILURE: pane run refused";
-export const HELPER_SECRET = "sk-labSecretMustNotReachDiagnosticLogs123456";
+export const HELPER_LEAK = "labLeakMustNotReachDiagnosticLogsAbcdefgh1234";
 
 export const FLAKY_READS = 3;
 
@@ -62,7 +62,7 @@ if (args[0] === "pane" && args[1] === "run" && args[2] === mode.pane) {
     console.log(JSON.stringify({ result: {} }));
     process.exit(0);
   }
-  console.error(${JSON.stringify(`${HELPER_ERROR} ${HELPER_SECRET}`)});
+  console.error(${JSON.stringify(`${HELPER_ERROR} ${HELPER_LEAK}`)});
   process.exit(42);
 }
 const result = require("node:child_process").spawnSync(${JSON.stringify(real)}, args, { stdio: "inherit" });

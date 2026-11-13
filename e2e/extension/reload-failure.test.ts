@@ -3,7 +3,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { LiveFleet, until } from "../support/live-fleet.ts";
-import { FLAKY_READS, HELPER_ERROR, HELPER_SECRET, reloadFault } from "../support/reload-fault.ts";
+import { FLAKY_READS, HELPER_ERROR, HELPER_LEAK, reloadFault } from "../support/reload-fault.ts";
 
 let fleet: LiveFleet;
 let fault: ReturnType<typeof reloadFault>;
@@ -55,7 +55,7 @@ for (const skip of [false, true]) {
       const line = report.split("\n").find((text) => text.includes(worker.session)) ?? "";
       assert.match(line, /reload failed/);
       assert.ok(line.includes(skip ? "no replacement hello" : HELPER_ERROR), line);
-      assert.equal(report.includes(HELPER_SECRET), false);
+      assert.equal(report.includes(HELPER_LEAK), false);
       assert.equal(await fleet.piIn(worker.pane), undefined);
       const after = await fleet.cardOf(worker.card);
       assert.equal(after.status, before.status);
@@ -72,7 +72,7 @@ for (const skip of [false, true]) {
       assert.ok(log.includes(`"pid":${String(pid)}`));
       assert.ok(log.includes('"event":"start"'));
       assert.ok(log.includes(skip ? "no replacement hello" : HELPER_ERROR));
-      assert.equal(log.includes(HELPER_SECRET), false);
+      assert.equal(log.includes(HELPER_LEAK), false);
     },
   );
 }
