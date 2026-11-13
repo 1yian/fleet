@@ -6,6 +6,7 @@ import { records, type JsonRecord } from "./json.ts";
 
 const WAIT_MS = 30_000;
 const CTRL = 16;
+const MOUSE_ON = "\u001b[?1006h";
 
 export interface Cell {
   readonly row: number;
@@ -42,12 +43,21 @@ export class HerdrClient {
   private readonly child: ChildProcess;
   private readonly rows: number;
   private readonly columns: number;
+  private readonly mouseOn: Promise<void>;
 
   private constructor(lab: HerdrLab, child: ChildProcess, rows: number, columns: number) {
     this.lab = lab;
     this.child = child;
     this.rows = rows;
     this.columns = columns;
+    this.mouseOn = new Promise((resolve) => {
+      let seen = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        seen += chunk.toString("latin1");
+        if (seen.includes(MOUSE_ON)) resolve();
+        seen = seen.slice(-MOUSE_ON.length);
+      });
+    });
   }
 
   static async start(
@@ -76,12 +86,13 @@ export class HerdrClient {
           TERM: "xterm-256color",
           TERM_PROGRAM: "ghostty",
         },
-        stdio: ["pipe", "ignore", "ignore"],
+        stdio: ["pipe", "pipe", "ignore"],
       },
     );
     child.stdin?.on("error", () => undefined);
     const client = new HerdrClient(lab, child, size.rows, size.columns);
     await client.attached(pane, before);
+    await client.mouseOn;
     return client;
   }
 
