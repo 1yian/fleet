@@ -200,7 +200,7 @@ function bundleText(items: readonly Item[]): string {
       parked,
     ),
     ...group(
-      "Waiting on the captain. Do not list them in chat: they wait on the board. Your role contract says when one may interrupt him. Do not hold a card with a date to quiet it:",
+      "Waiting on the captain. You put each to him in chat when it arrived: do not say it again or list them. Do not hold a card with a date to quiet it:",
       inGroup(items, "captain"),
     ),
     ...group(

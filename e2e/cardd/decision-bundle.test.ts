@@ -121,8 +121,11 @@ test("main's bundle holds its own cards, an escalated hold, and every captain de
   assert.match(mateGroup, new RegExp(name(escalated)));
   assert.match(mateGroup, new RegExp(name(own)));
   assert.doesNotMatch(mateGroup, new RegExp(name(decision)));
-  assert.match(captainGroup, /^Waiting on the captain\. Do not list them in chat/);
-  assert.doesNotMatch(captainGroup, /short list|catch-up|afk/);
+  assert.match(
+    captainGroup,
+    /^Waiting on the captain\. You put each to him in chat when it arrived: do not say it again or list them\./,
+  );
+  assert.doesNotMatch(captainGroup, /short list|catch-up|afk|wait on the board/);
   assert.match(captainGroup, new RegExp(name(decision)));
   assert.doesNotMatch(captainGroup, new RegExp(name(own)));
 });
