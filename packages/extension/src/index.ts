@@ -324,7 +324,7 @@ function start(
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
   }
-  maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow);
+  maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow, { url, token });
   applyPolicies(pi, ctx, role);
   pi.on("session_shutdown", () => {
     worker?.dispose();

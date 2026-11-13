@@ -17,6 +17,7 @@ import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, markRead, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
 import { adoptProcess } from "./incidents.ts";
+import { sanitize } from "./incident-kinds.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
@@ -52,6 +53,36 @@ function readBody(request: IncomingMessage): Promise<string> {
     });
     request.on("error", reject);
   });
+}
+
+function connectionIdentity(hello: Extract<ClientMessage, { t: "hello" }> | undefined) {
+  const process = hello?.process ?? "";
+  return {
+    process: /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(process)
+      ? process
+      : sanitize(process),
+    pid: hello?.pid ?? null,
+    startedAt: hello?.startedAt ?? null,
+  };
+}
+
+function logWorker(
+  event: "hello" | "close",
+  session: Session | undefined,
+  hello: Extract<ClientMessage, { t: "hello" }> | undefined,
+  code?: number,
+  why?: string,
+): void {
+  if (session?.role !== "worker") return;
+  console.log(
+    JSON.stringify({
+      at: new Date().toISOString(),
+      event,
+      session: session.id,
+      ...connectionIdentity(hello),
+      ...(code === undefined ? {} : { code, reason: sanitize(why ?? "") }),
+    }),
+  );
 }
 
 class Hub {
@@ -143,6 +174,7 @@ class Hub {
   attach(socket: WebSocket): void {
     let token: string | undefined;
     let session: Session | undefined;
+    let hello: Extract<ClientMessage, { t: "hello" }> | undefined;
     const live = (): Session => {
       const current = token === undefined ? undefined : sessionByToken(this.db, token);
       if (!current?.live) throw new NotLive("the session is not live");
@@ -152,8 +184,10 @@ class Hub {
       if (message.t !== "hello" && session !== undefined)
         this.said.delete(unreadableKey(session.id));
       if (message.t === "hello") {
+        hello = message;
         session = this.hello(socket, message);
         token = session === undefined ? undefined : message.token;
+        logWorker("hello", session, hello);
       } else if (message.t === "read") markRead(this.db, live().id, message.entry);
       else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
       else if (message.t === "activity") {
@@ -176,6 +210,7 @@ class Hub {
       }
     });
     socket.on("close", (code, why) => {
+      logWorker("close", session, hello, code, why.toString("utf8"));
       if (session === undefined) return;
       if (code === CLOSE.unreadable) this.cannotRead(session.id, why.toString("utf8"));
       if (this.bySession.get(session.id) !== socket) return;

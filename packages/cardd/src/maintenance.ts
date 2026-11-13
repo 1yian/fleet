@@ -6,6 +6,7 @@ import {
   type Maintenance,
   type OpArgs,
 } from "@fleet/protocol";
+import { sanitize } from "./incident-kinds.ts";
 import { stopOf, untilOf } from "./lane-stop.ts";
 import { json, laneCardOf, addEntry, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
@@ -193,8 +194,35 @@ export function requestMaintenance(
   return { value: rowsOf(db, "m.batch = ?", raw.batch), notify };
 }
 
-export function maintenanceStatus(db: DatabaseSync, batch: string): Maintenance[] {
-  return rowsOf(db, "m.batch = ?", batch);
+export function maintenanceStatus(
+  db: DatabaseSync,
+  caller: Session,
+  args: OpArgs<"maintenance.status">,
+): { value: Maintenance[]; notify: string[] } {
+  const rows = rowsOf(db, "m.batch = ?", args.batch);
+  const notify =
+    args.failUnverified === true
+      ? rows
+          .filter((row) => row.state === "reloading")
+          .flatMap((row) => {
+            const owner = db.prepare("SELECT requester FROM maintenance WHERE id = ?").get(row.id);
+            if (owner?.["requester"] !== caller.id)
+              throw new Error("only the requester can end reload verification");
+            return settle(
+              db,
+              row.id,
+              "failed",
+              "no replacement hello before the update verification deadline",
+            );
+          })
+      : [];
+  return { value: rowsOf(db, "m.batch = ?", args.batch), notify };
+}
+
+export function readMaintenance(db: DatabaseSync, caller: Session, id: number): Maintenance {
+  const [value] = rowsOf(db, "m.id = ? AND m.session = ?", id, caller.id);
+  if (value === undefined) throw new Error(`maintenance request ${String(id)} is not yours`);
+  return value;
 }
 
 export function acknowledgeMaintenance(
@@ -211,12 +239,10 @@ export function acknowledgeMaintenance(
     open === undefined
       ? []
       : args.state === "failed"
-        ? settle(db, args.id, "failed", args.detail)
+        ? settle(db, args.id, "failed", sanitize(args.detail))
         : (db
             .prepare("UPDATE maintenance SET state = ?, detail = ?, updated_at = ? WHERE id = ?")
             .run(args.state, args.detail, Date.now(), args.id),
           []);
-  const [value] = rowsOf(db, "m.id = ? AND m.session = ?", args.id, caller.id);
-  if (value === undefined) throw new Error(`maintenance request ${String(args.id)} is not yours`);
-  return { value, notify };
+  return { value: readMaintenance(db, caller, args.id), notify };
 }
