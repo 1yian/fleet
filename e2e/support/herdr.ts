@@ -1,26 +1,29 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { guardCleanup } from "./guarded.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
+import { tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
 
 export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
+  readonly config = join(tempDir("herdr-config-"), "config.toml");
   private server: ChildProcess | undefined;
   env: Record<string, string> = {};
   private disarm = (): void => undefined;
 
   static async start(env: Record<string, string>): Promise<HerdrLab> {
     const lab = new HerdrLab();
+    writeFileSync(lab.config, "onboarding = false\n");
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
     lab.env = { ...env };
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawn("herdr", ["server", "--session", lab.name], {
-      env: { ...process.env, ...env, HERDR_SESSION: lab.name },
+      env: { ...process.env, ...env, HERDR_SESSION: lab.name, HERDR_CONFIG_PATH: lab.config },
       stdio: "ignore",
     });
     const deadline = Date.now() + WAIT_MS;
@@ -82,7 +85,10 @@ export class HerdrLab {
       execFile(
         "herdr",
         [...args, "--session", this.name],
-        { encoding: "utf8", env: { ...process.env, HERDR_SESSION: this.name } },
+        {
+          encoding: "utf8",
+          env: { ...process.env, HERDR_SESSION: this.name, HERDR_CONFIG_PATH: this.config },
+        },
         (error, stdout) => {
           if (error !== null && stdout === "") reject(new Error(error.message));
           else resolve(stdout);

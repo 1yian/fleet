@@ -6,13 +6,6 @@ import { records, type JsonRecord } from "./json.ts";
 
 const WAIT_MS = 30_000;
 const CTRL = 16;
-const MOUSE_WAIT_MS = 5_000;
-const MOUSE_ON = new RegExp(`${String.fromCharCode(27)}\\[\\?[0-9;]*1006[0-9;]*h`);
-const MOUSE_TAIL = 32;
-const DEVICE_QUERY = "\u001b[c";
-const DEVICE_REPLY = "\u001b[?62;c";
-const FOCUS_IN = "\u001b[I";
-const DIAGNOSTIC_CHARS = 1_500;
 
 export interface Cell {
   readonly row: number;
@@ -49,28 +42,12 @@ export class HerdrClient {
   private readonly child: ChildProcess;
   private readonly rows: number;
   private readonly columns: number;
-  private readonly mouseOn: Promise<void>;
-  private output = "";
 
   private constructor(lab: HerdrLab, child: ChildProcess, rows: number, columns: number) {
     this.lab = lab;
     this.child = child;
     this.rows = rows;
     this.columns = columns;
-    this.mouseOn = new Promise((resolve) => {
-      let seen = "";
-      child.stdout?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString("latin1");
-        this.output = (this.output + text).slice(-DIAGNOSTIC_CHARS);
-        seen += text;
-        if (seen.includes(DEVICE_QUERY)) child.stdin?.write(DEVICE_REPLY);
-        if (MOUSE_ON.test(seen)) {
-          child.stdin?.write(FOCUS_IN);
-          resolve();
-        }
-        seen = seen.slice(-MOUSE_TAIL);
-      });
-    });
   }
 
   static async start(
@@ -95,28 +72,17 @@ export class HerdrClient {
         env: {
           ...clean,
           ...env,
+          HERDR_CONFIG_PATH: lab.config,
           PATH: [...front, process.env["PATH"] ?? ""].join(delimiter),
           TERM: "xterm-256color",
           TERM_PROGRAM: "ghostty",
         },
-        stdio: ["pipe", "pipe", "ignore"],
+        stdio: ["pipe", "ignore", "ignore"],
       },
     );
     child.stdin?.on("error", () => undefined);
     const client = new HerdrClient(lab, child, size.rows, size.columns);
     await client.attached(pane, before);
-    await Promise.race([
-      client.mouseOn,
-      new Promise((_, reject) =>
-        setTimeout(() => {
-          reject(
-            new Error(
-              `the herdr client never enabled mouse reporting; it last wrote ${JSON.stringify(client.output)}`,
-            ),
-          );
-        }, MOUSE_WAIT_MS),
-      ),
-    ]);
     return client;
   }
 

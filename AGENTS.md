@@ -37,6 +37,7 @@ A mate is a Pi that runs in a lane home: a folder with a private `config/lane.js
 - A behavior change needs an end-to-end test. A bug fix needs a test that fails before the fix.
 - Do not wait with fixed sleeps. Wait for an event, an entry, or a state.
 - Do not test by reading source files for strings.
+- A test or a helper stops only what it started itself: its own lab session by its own `--session` name (`HerdrLab` does this), or its own process by pid or process group. It never kills a process by name. One host runs the live herdr server, the lanes, and other workers' tests, so `pkill herdr` or `killall` takes them all down. `eslint.config.js` fails any `pkill` or `killall` in `e2e` code, except in the two tests that check Pi's refusal of them.
 - A test that starts the fleet uses `Scratch` from `e2e/support/scratch.ts`: a copy of this repository with its own lane homes. Never point a test at the live main, its lanes, `~/.fleet`, or `~/.config/fleet`.
 
 ### Documents
