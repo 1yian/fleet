@@ -2,11 +2,11 @@
 
 The pane shows attention without taking answers. Decisions are answered in chat or on the board. There is no `/d` decision card and no pane answer or Later operation.
 
-Main says each arriving captain decision once in chat, with the evidence, consequence, recommendation, and full PR URL when relevant. Reminders do not repeat it. Chat never tells the captain to type a command. Main clears a chat answer with the captain's exact words. A board answer clears the hold directly.
+The [mate contract](../packages/extension/prompts/mate.md#7-holds) owns how main presents and clears chat decisions. Board answers follow the merge-choice rules below.
 
 ## Attention
 
-The footer shows glyph counts: broken `●`, needs you `◆`, stalled `◇`, and landed `▲`. When nothing needs attention it shows `✓ clear`. Landings count since the captain's last message.
+The footer shows glyph counts: broken `●`, needs you `◆`, stalled `◇`, and landed `▲`. When nothing needs attention it shows `✓ clear`. The needs-you count includes both decisions and the captain's own work cards. Landings count Done cards since the captain's last message, excluding lane and standing cards.
 
 A tinted row above the editor shows the worst need first, with the count of the others. Long titles are cut to one row. It is read-only: no click opens a card or writes an answer. It draws no border.
 
