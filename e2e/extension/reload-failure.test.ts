@@ -13,7 +13,11 @@ beforeEach(async () => {
 });
 afterEach(async (t) => {
   await fleet.lab.printIfFailed(t);
-  await fleet.stop();
+  try {
+    await fleet.stop();
+  } finally {
+    await fault.stop();
+  }
 });
 
 for (const skip of [false, true]) {
