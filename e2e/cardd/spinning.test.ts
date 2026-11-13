@@ -32,7 +32,9 @@ test("a running tool that keeps producing output is never a stall, and a long tu
       db.prepare(
         "UPDATE sessions SET turn_since = ? WHERE attempt IN (SELECT id FROM attempts WHERE card IN (?, ?))",
       ).run(past, spinning.id, working.id);
-      db.prepare("UPDATE cards SET last_activity = ? WHERE id = ?").run(past, quiet.id);
+      db.prepare(
+        "UPDATE sessions SET last_seen = ? WHERE attempt IN (SELECT id FROM attempts WHERE card = ?)",
+      ).run(past, quiet.id);
     } finally {
       db.close();
     }
