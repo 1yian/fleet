@@ -22,10 +22,14 @@ export class HerdrLab {
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
     lab.env = { ...env };
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
-    lab.server = spawn("herdr", ["server", "--session", lab.name], {
-      env: { ...process.env, ...env, HERDR_SESSION: lab.name, HERDR_CONFIG_PATH: lab.config },
-      stdio: "ignore",
-    });
+    lab.server = spawn(
+      env["FLEET_E2E_HERDR_SERVER"] ?? "herdr",
+      ["server", "--session", lab.name],
+      {
+        env: { ...process.env, ...env, HERDR_SESSION: lab.name, HERDR_CONFIG_PATH: lab.config },
+        stdio: "ignore",
+      },
+    );
     const deadline = Date.now() + WAIT_MS;
     while (!(await lab.running())) {
       if (Date.now() > deadline) throw new Error(`herdr lab ${lab.name} did not start`);

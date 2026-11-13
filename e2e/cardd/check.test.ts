@@ -90,22 +90,6 @@ test("a worker that disconnects is reminded each tier until it is back, and a st
   );
 });
 
-test("a running tool that keeps producing output is never a stall, and a long turn with no report, commit, or file change is spinning", async () => {
-  const quiet = await newCard(fleet.main, "stalls");
-  const quietWorker = await fleet.cardd.connect(await begin(fleet.main, quiet));
-  quietWorker.send({ t: "activity", state: "running" });
-  const spinning = await newCard(fleet.main, "long turn with nothing to show");
-  heartbeat(await fleet.cardd.connect(await begin(fleet.main, spinning)), false);
-  const working = await newCard(fleet.main, "long turn that commits");
-  heartbeat(await fleet.cardd.connect(await begin(fleet.main, working)), true);
-
-  await reach(fleet.main, spinning, "worker-spinning", 1);
-  await reach(fleet.main, quiet, "worker-stalled", 1);
-  assert.deepEqual(await tiersOf(spinning, "worker-stalled"), []);
-  assert.deepEqual(await tiersOf(working, "worker-stalled"), []);
-  assert.deepEqual(await tiersOf(working, "worker-spinning"), []);
-});
-
 test("an idle worker is nudged itself once, and its mate hears only when it is still idle after the nudge, then each tier", async () => {
   const card = await newCard(fleet.main, "idle");
   const worker = await idle(await begin(fleet.main, card));

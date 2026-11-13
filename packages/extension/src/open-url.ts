@@ -6,6 +6,12 @@ import { TuiAltScreen } from "@earendil-works/pi-tui";
 import { installPresentation, methodOf, once } from "./patch.ts";
 
 const ELEMENT_TIMEOUT_MS = 15_000;
+const FAILURE_NOTICE = Symbol.for("fleet:open-url-failure");
+
+function notifyFailure(): void {
+  const notify: unknown = Reflect.get(globalThis, FAILURE_NOTICE);
+  if (typeof notify === "function") Reflect.apply(notify, undefined, []);
+}
 
 function elementShim(): string | undefined {
   const shim = join(process.env["ELEMENT_HOME"] ?? join(homedir(), ".element"), "el");
@@ -30,20 +36,21 @@ export function openForCaptain(url: string): void {
     openOnThisHost(url);
     return;
   }
-  let fellBack = false;
-  const fallBack = (): void => {
-    if (fellBack) return;
-    fellBack = true;
-    openOnThisHost(url);
+  let failed = false;
+  const fail = (): void => {
+    if (failed) return;
+    failed = true;
+    notifyFailure();
   };
   spawn(shim, ["open", url], { stdio: "ignore", timeout: ELEMENT_TIMEOUT_MS })
-    .on("error", fallBack)
+    .on("error", fail)
     .on("exit", (code) => {
-      if (code !== 0) fallBack();
+      if (code !== 0) fail();
     });
 }
 
-export function routeLinkClicks(): void {
+export function routeLinkClicks(notify: () => void): void {
+  Reflect.set(globalThis, FAILURE_NOTICE, notify);
   installPresentation("Links", "click", () => {
     once("alt-screen-open-url", () => {
       const proto = TuiAltScreen.prototype;

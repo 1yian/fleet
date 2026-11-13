@@ -12,13 +12,14 @@ export function boardUrl(carddUrl: string): string {
 
 export function showBoardLink(ctx: ExtensionContext, carddUrl: string): void {
   const url = boardUrl(carddUrl);
-  routeLinkClicks();
+  routeLinkClicks(() => {
+    ctx.ui.notify(
+      "Could not open the link in your browser. Connect Element's browser extension on your computer, then click again.",
+      "error",
+    );
+  });
   const text = ctx.ui.theme.style(BOARD_TEXT, { fg: "mdLink", underline: true });
-  if (getCapabilities().hyperlinks) {
-    ctx.ui.setStatus(BOARD_STATUS_KEY, hyperlink(text, url));
-    return;
-  }
-  ctx.ui.setStatus(BOARD_STATUS_KEY, text);
+  ctx.ui.setStatus(BOARD_STATUS_KEY, getCapabilities().hyperlinks ? hyperlink(text, url) : text);
   onStatusClick(BOARD_STATUS_KEY, {
     text: BOARD_TEXT,
     act: () => {

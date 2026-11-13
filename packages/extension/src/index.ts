@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Entry } from "@fleet/protocol";
 import { AccountRotation } from "./account-rotation.ts";
 import { showBoardLink } from "./board-link.ts";
+import { installStatusClicks } from "./status-click.ts";
 import { registerBranch } from "./branch.ts";
 import { registerGuard } from "./guard.ts";
 import { applyCacheBreakLog } from "./cache-breaks.ts";
@@ -342,6 +343,7 @@ function exportAvoid(): void {
 }
 
 export default function fleet(pi: ExtensionAPI): void {
+  installStatusClicks();
   shimKillCommands();
   exportAvoid();
   pi.registerFlag("fleet-avoid", {
