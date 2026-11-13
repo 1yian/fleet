@@ -37,6 +37,11 @@ function placedFrom(result: JsonRecord, pane: string): Placed {
   };
 }
 
+function scriptArguments(command: string): string[] {
+  if (process.platform === "darwin") return ["-q", "/dev/null", "sh", "-c", command];
+  return ["-qfec", command, "/dev/null"];
+}
+
 export class HerdrClient {
   private readonly lab: HerdrLab;
   private readonly child: ChildProcess;
@@ -61,25 +66,18 @@ export class HerdrClient {
       Object.entries(process.env).filter(([key]) => !key.startsWith("HERDR")),
     );
     const front = env["PATH"] === undefined ? [] : [env["PATH"]];
-    const child = spawnGuarded(
-      "script",
-      [
-        "-qfec",
-        `stty rows ${String(size.rows)} cols ${String(size.columns)}; exec herdr --session ${lab.name}`,
-        "/dev/null",
-      ],
-      {
-        env: {
-          ...clean,
-          ...env,
-          HERDR_CONFIG_PATH: lab.config,
-          PATH: [...front, process.env["PATH"] ?? ""].join(delimiter),
-          TERM: "xterm-256color",
-          TERM_PROGRAM: "ghostty",
-        },
-        stdio: ["pipe", "ignore", "ignore"],
+    const command = `stty rows ${String(size.rows)} cols ${String(size.columns)}; exec herdr --session ${lab.name}`;
+    const child = spawnGuarded("script", scriptArguments(command), {
+      env: {
+        ...clean,
+        ...env,
+        HERDR_CONFIG_PATH: lab.config,
+        PATH: [...front, process.env["PATH"] ?? ""].join(delimiter),
+        TERM: "xterm-256color",
+        TERM_PROGRAM: "ghostty",
       },
-    );
+      stdio: ["pipe", "ignore", "ignore"],
+    });
     child.stdin?.on("error", () => undefined);
     const client = new HerdrClient(lab, child, size.rows, size.columns);
     await client.attached(pane, before);
