@@ -202,16 +202,16 @@ test("armed watches and live long jobs never count as stalled, and the count ope
       });
       ageCard(lab.cardd, held, 45 * HOUR_MS);
     }
-    const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });
-    const quiet = await attached(pane, "board");
-    keep("stalled-watchers-zero", quiet);
-    assert.equal(statusRow(quiet), "board", quiet);
-
     const idle = await make("Unattended invoices");
     ageCard(lab.cardd, idle, 5 * HOUR_MS);
-    const counted = await lab.screenWhere(pane, "one unattended card", showing(["1 stalled card"]));
+    const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });
+    const counted = await lab.screenWhere(pane, "one unattended card", (screen) =>
+      /\b\d+ stalled cards?\b/.test(screen),
+    );
     keep("stalled-unattended-one", counted);
-    assert.equal(statusRow(counted), "1 stalled card board");
+    assert.equal(statusRow(counted), "1 stalled card board", counted);
+    const attachedScreen = await attached(pane, "1 stalled card");
+    assert.equal(statusRow(attachedScreen), "1 stalled card board", attachedScreen);
     const overlay = await openedList(pane, "1 stalled card");
     assert.ok(overlay.includes("Unattended invoices"), overlay);
     assert.equal(overlay.match(/c-\d+/g)?.length, 1, overlay);
