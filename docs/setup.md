@@ -698,6 +698,16 @@ Skill text is edited in one place: the ystack lane. Every other lane, and every 
 4. Before a lane that holds a very large tree gets the tab for good, run `fleet files` in it by hand and note how long the first listing of its biggest folder takes. If it stalls, set `"files": {"previews": false}` for that lane.
 5. In the ystack lane, nothing more is needed if its `args` already load the scratch worktree's `skills/` as in "Changing a lane's settings".
 
+## Worker browser
+
+Workers use `chrome-devtools-axi` through bash. Install `chrome-devtools-axi@0.1.46` and `chrome-devtools-mcp@1.13.0` on each browser-capable host. Run `chrome-devtools-axi --help` for the commands. `open <url>` navigates and `snapshot` reads the page.
+
+The CLI launches headless Chrome by default. Give each worker its own `CHROME_DEVTOOLS_AXI_SESSION`, such as `fleet-c-123-a1`, for every browser command. End only that session with `chrome-devtools-axi stop` when finished. Do not attach to the captain's browser or use Safari automation.
+
+On Linux, ystack's `fleet.linuxBrowser.enable` installs Chrome and sets `CHROME_DEVTOOLS_AXI_MCP_PATH` to its executable-path wrapper. Without ystack, set `CHROME_DEVTOOLS_AXI_EXECUTABLE_PATH` to the installed Chrome binary. The browser needs a working Chrome sandbox. Fleet does not provide Chrome, a shared profile, a password guard, a viewer, or a Mac attach command.
+
+Existing shared browser services are separate host configuration. Updating Fleet does not stop them. Coordinate their retirement with the host configuration owner before updating a checkout that their units run from. Preserve signed-in profiles and obtain approval before stopping Chrome or its virtual display: a graceful Chrome exit can discard session-only cookies.
+
 ## Moving from the earlier layout
 
 Before this layout, main's home was `~/fleet-homes/main`, each mate's settings were in `~/.config/fleet/<lane>.json`, mates ran from `~/.fleet/app`, and `fleet up` started them. Migration only copies. It changes nothing in cardd, so every card, entry, and live worker stays. It never deletes an old home, an old conversation, or a record.
