@@ -81,6 +81,7 @@ for (const { columns, hyperlinks } of LAYOUTS) {
     client = await HerdrClient.start(
       lab.herdr(),
       pane,
+      "board",
       { PATH: ssh.bin },
       { rows: 36, columns },
       { target: "fleet-click-lab", local },

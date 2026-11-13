@@ -50,7 +50,7 @@ async function until(done: () => boolean, what: string): Promise<void> {
 }
 
 async function attached(pane: string, shown: string, size = WIDE): Promise<string> {
-  client = await HerdrClient.start(lab.herdr(), pane, {}, size);
+  client = await HerdrClient.start(lab.herdr(), pane, "board", {}, size);
   return lab.screenWhere(pane, `${shown} after the client attached`, showing([shown]));
 }
 
@@ -113,6 +113,7 @@ test("a ctrl-click on the linked board is herdr's own and opens it on the machin
   client = await HerdrClient.start(
     lab.herdr(),
     pane,
+    "board",
     { PATH: there.dir },
     { rows: 30, columns: 120 },
   );
