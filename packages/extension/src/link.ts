@@ -67,6 +67,8 @@ export class Link {
         t: "hello" as const,
         token: this.options.token,
         inFile: this.options.inFile(),
+        pid: process.pid,
+        startedAt: Math.trunc(Date.now() - process.uptime() * 1000),
         maintenance: this.options.onMaintenance !== undefined,
         running: this.options.running?.() === true,
         ...(id === undefined ? {} : { process: id }),

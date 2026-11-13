@@ -102,6 +102,7 @@ export class HerdrClient {
   static async start(
     lab: HerdrLab,
     pane: string,
+    readyText: string,
     env: Record<string, string>,
     size: { rows: number; columns: number } = { rows: 30, columns: 120 },
     remote?: SavedSsh,
@@ -122,7 +123,7 @@ export class HerdrClient {
     child.stdin?.on("error", () => undefined);
     const client = new HerdrClient(lab, child, size.rows, size.columns);
     try {
-      await client.attached(pane, before);
+      await client.attached(pane, before, () => output.includes(readyText));
       return client;
     } catch (error) {
       client.stop();
@@ -130,11 +131,12 @@ export class HerdrClient {
     }
   }
 
-  private async attached(pane: string, before: Placed): Promise<void> {
+  private async attached(pane: string, before: Placed, presented: () => boolean): Promise<void> {
     const deadline = Date.now() + WAIT_MS;
     for (;;) {
       const { area } = placedFrom(await this.lab.run(["pane", "layout", "--pane", pane]), pane);
-      if (area.width !== before.area.width || area.height !== before.area.height) return;
+      if (presented() && (area.width !== before.area.width || area.height !== before.area.height))
+        return;
       if (Date.now() > deadline) throw new Error("the herdr client did not attach");
       await new Promise((resolve) => setTimeout(resolve, 50));
     }

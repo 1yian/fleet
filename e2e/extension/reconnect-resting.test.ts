@@ -33,6 +33,14 @@ async function until<T>(read: () => Promise<T | undefined>, what: string): Promi
 
 const cardOne = async () => (await parts.cardd.board()).cards.find((card) => card.id === 1);
 
+async function promptMate(text: string): Promise<void> {
+  await until(async () => {
+    const state = await parts.mate.state();
+    return state["isStreaming"] === false ? true : undefined;
+  }, "the mate to settle");
+  parts.mate.prompt(text);
+}
+
 const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Move => {
   const at = turns.findLastIndex((turn) => turn.role === "user");
   const done = turns.slice(at).filter((turn) => turn.role === "toolResult").length;
@@ -42,7 +50,7 @@ const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Move => {
 };
 
 test("restart_card reconnects the worker of a paused card whose process is gone, keeps the card paused, and the next comment reaches it", async () => {
-  const { h, lab, mate } = parts;
+  const { h, lab } = parts;
   const until1h = new Date(Date.now() + 3_600_000).toISOString();
   const dispatch = {
     tool: "dispatch",
@@ -79,8 +87,18 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
   }
 
   await mateConnected(h);
-  mate.prompt("ship the scrollbar fix");
+  await promptMate("ship the scrollbar fix");
   await until(async () => ((await cardOne())?.status === "paused" ? true : undefined), "the pause");
+  await until(
+    () =>
+      Promise.resolve(
+        h
+          .callsOf("mate")
+          .flatMap((turns) => toolResults(turns))
+          .find((text) => text.includes("Dispatched c-1-a1")),
+      ),
+    "the completed dispatch",
+  );
   const gone = await until(() => workerGroupOf(lab, "c-1-a1"), "the worker's process");
   process.kill(-gone, "SIGKILL");
   await until(
@@ -88,7 +106,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
     "the worker to be lost",
   );
 
-  mate.prompt("reconnect the worker");
+  await promptMate("reconnect the worker");
   const result = await until(
     () =>
       Promise.resolve(
@@ -118,7 +136,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
     false,
   );
 
-  mate.prompt("send the wake-up");
+  await promptMate("send the wake-up");
   await until(
     () =>
       Promise.resolve(

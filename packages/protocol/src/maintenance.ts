@@ -30,7 +30,16 @@ export const MAINTENANCE_OPS = {
     args: Type.Object({ batch: Batch, kind: Type.Enum(MAINTENANCE_KINDS) }),
     result: Rows,
   },
-  "maintenance.status": { roles: ["mate"], args: Type.Object({ batch: Batch }), result: Rows },
+  "maintenance.status": {
+    roles: ["mate"],
+    args: Type.Object({ batch: Batch, failUnverified: Type.Optional(Type.Boolean()) }),
+    result: Rows,
+  },
+  "maintenance.read": {
+    roles: ["mate", "worker"],
+    args: Type.Object({ id: Type.Integer() }),
+    result: MaintenanceSchema,
+  },
   "maintenance.ack": {
     roles: ["mate", "worker"],
     args: Type.Object({

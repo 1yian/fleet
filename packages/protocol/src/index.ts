@@ -411,6 +411,8 @@ const ClientMessage = Type.Union([
     token: Type.String(),
     inFile: Type.Array(Type.Integer()),
     process: Type.Optional(Type.String()),
+    pid: Type.Optional(Type.Integer({ minimum: 1 })),
+    startedAt: Type.Optional(Type.Integer({ minimum: 0 })),
     maintenance: Type.Optional(Type.Boolean()),
     running: Type.Optional(Type.Boolean()),
     started: Type.Optional(Type.Boolean()),

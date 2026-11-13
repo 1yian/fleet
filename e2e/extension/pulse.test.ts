@@ -55,7 +55,9 @@ async function openMain(): Promise<string> {
     FLEET_PANE_POLL_MS: "3600000",
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
   });
-  return startMain(opened, scratch, h);
+  const pane = await startMain(opened, scratch, h);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
+  return pane;
 }
 
 async function screenWhere(pane: string, what: string, ready: (screen: string) => boolean) {

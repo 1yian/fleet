@@ -255,7 +255,7 @@ export class LiveFleet {
     }, `pane ${pane} to run a new Pi`);
   }
 
-  async startWorker(title: string, host: string): Promise<Worker> {
+  async startWorker(title: string, host: string, agentStart = false): Promise<Worker> {
     const card = check(
       CardSchema,
       await this.ghost.call("card.new", { title, kind: "scout", project: "site" }),
@@ -290,7 +290,21 @@ export class LiveFleet {
       PROBE,
     ];
     await this.lab.submit(pane, "export FLEET_FAKE_AGENT=worker");
-    await this.lab.submit(pane, `pi ${flags.map((arg) => `'${arg}'`).join(" ")}`);
+    if (agentStart)
+      await this.lab.run([
+        "agent",
+        "start",
+        begun.session,
+        "--kind",
+        "pi",
+        "--pane",
+        pane,
+        "--timeout",
+        "10000",
+        "--",
+        ...flags,
+      ]);
+    else await this.lab.submit(pane, `pi ${flags.map((arg) => `'${arg}'`).join(" ")}`);
     return { session: begun.session, card: card.id, branch: begun.branch, worktree, pane, host };
   }
 

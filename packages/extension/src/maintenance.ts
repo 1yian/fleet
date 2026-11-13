@@ -5,6 +5,7 @@ import { maintenanceLine, type Maintenance } from "@fleet/protocol";
 import { mateRelaunchArgs, readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
 import { LEAVING } from "./worker.ts";
+import type { ReloadReceipt } from "./reload-observer.ts";
 
 const RELAUNCH = fileURLToPath(new URL("./relaunch.ts", import.meta.url));
 
@@ -22,7 +23,12 @@ function lastStaleReload(pi: ExtensionAPI): number {
   return Number.isFinite(at) ? at : 0;
 }
 
-export function relaunchSelf(ctx: ExtensionContext, pane: string, staleAt?: number): void {
+export function relaunchSelf(
+  ctx: ExtensionContext,
+  pane: string,
+  staleAt?: number,
+  report?: ReloadReceipt,
+): void {
   const running = process.argv
     .slice(2)
     .filter((arg) => arg !== "-c" && arg !== "--continue" && !arg.startsWith(STALE_RELOAD_ARG));
@@ -36,7 +42,12 @@ export function relaunchSelf(ctx: ExtensionContext, pane: string, staleAt?: numb
     {
       detached: true,
       stdio: "ignore",
-      env: { ...process.env, FLEET_RELAUNCH_DIRENV: direnv ?? "" },
+      env: {
+        ...process.env,
+        FLEET_RELAUNCH_DIRENV: direnv ?? "",
+        FLEET_RELAUNCH_REPORT: report === undefined ? "" : JSON.stringify(report),
+        FLEET_RELAUNCH_STARTED_AT: String(Math.trunc(Date.now() - process.uptime() * 1000)),
+      },
     },
   );
   helper.unref();
@@ -52,6 +63,7 @@ export class MaintenanceQueue {
   private readonly mayHaveJobs: boolean;
   private readonly stow: (() => Promise<unknown>) | undefined;
   private readonly lastStaleReload: number;
+  private readonly cardd: { readonly url: string; readonly token: string };
   private stalePane: string | undefined;
 
   constructor(
@@ -60,12 +72,14 @@ export class MaintenanceQueue {
     ctx: ExtensionContext,
     mayHaveJobs: boolean,
     stow: (() => Promise<unknown>) | undefined,
+    cardd: { readonly url: string; readonly token: string },
   ) {
     this.pi = pi;
     this.link = link;
     this.ctx = ctx;
     this.mayHaveJobs = mayHaveJobs;
     this.stow = stow;
+    this.cardd = cardd;
     this.lastStaleReload = lastStaleReload(pi);
     pi.on("agent_settled", () => {
       this.later();
@@ -145,7 +159,7 @@ export class MaintenanceQueue {
       }
       this.requests.delete(request.id);
       this.pi.events.emit(LEAVING, {});
-      relaunchSelf(this.ctx, pane);
+      relaunchSelf(this.ctx, pane, undefined, { ...this.cardd, id: request.id });
     } catch (error) {
       this.requests.delete(request.id);
       const detail = error instanceof Error ? error.message : String(error);
@@ -209,5 +223,7 @@ export async function requestAndAwait(
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     rows = await link.call("maintenance.status", { batch }).catch(() => rows);
   }
+  if (rows.some((row) => row.state === "reloading"))
+    rows = await link.call("maintenance.status", { batch, failUnverified: true });
   return rows;
 }

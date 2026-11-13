@@ -85,10 +85,11 @@ export class HerdrLab {
   }
 
   private async text(args: readonly string[]): Promise<string> {
+    const split = args.includes("--") ? args.indexOf("--") : args.length;
     const out = await new Promise<string>((resolve, reject) => {
       execFile(
         "herdr",
-        [...args, "--session", this.name],
+        [...args.slice(0, split), "--session", this.name, ...args.slice(split)],
         {
           encoding: "utf8",
           env: { ...process.env, HERDR_SESSION: this.name, HERDR_CONFIG_PATH: this.config },

@@ -14,7 +14,12 @@ import { boardFor, cardView, paneAnswer, paneLater } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
-import { acknowledgeMaintenance, maintenanceStatus, requestMaintenance } from "./maintenance.ts";
+import {
+  acknowledgeMaintenance,
+  maintenanceStatus,
+  readMaintenance,
+  requestMaintenance,
+} from "./maintenance.ts";
 import { keepingRefusals } from "./incident-escalation.ts";
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
@@ -152,8 +157,10 @@ function requireMainsPane(db: DatabaseSync, session: Session, what: string): voi
 const HANDLERS: Record<OpName, Handler> = {
   "maintenance.request": (db, session, raw, timing) =>
     requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
-  "maintenance.status": (db, _session, raw) => ({
-    value: maintenanceStatus(db, check(OPS["maintenance.status"].args, raw).batch),
+  "maintenance.status": (db, session, raw) =>
+    maintenanceStatus(db, session, check(OPS["maintenance.status"].args, raw)),
+  "maintenance.read": (db, session, raw) => ({
+    value: readMaintenance(db, session, check(OPS["maintenance.read"].args, raw).id),
     notify: [],
   }),
   "maintenance.ack": (db, session, raw) =>
