@@ -708,6 +708,43 @@ On Linux, ystack's `fleet.linuxBrowser.enable` installs Chrome and sets `CHROME_
 
 Existing shared browser services are separate host configuration. Updating Fleet does not stop them. Coordinate their retirement with the host configuration owner before updating a checkout that their units run from. Preserve signed-in profiles and obtain approval before stopping Chrome or its virtual display: a graceful Chrome exit can discard session-only cookies.
 
+### Sign in through your own Chrome
+
+Use Chrome's remote-target inspector. Nothing new is installed on the Mac. This inspects the worker's headless Chrome, not your personal tabs or the old shared browser.
+
+**The worker prepares its own browser before launching it.** Stock Chrome DevTools MCP uses `pipe: true`, not a TCP debugging listener. `CHROME_DEVTOOLS_AXI_PORT` is the CLI bridge port, not Chrome's debugging port. For a session that may need your sign-in, the worker keeps its own `CHROME_DEVTOOLS_AXI_SESSION`, creates a private profile under its scratch `TMPDIR`, and adds a random loopback debugging port while retaining existing Chrome arguments:
+
+```sh
+export CHROME_DEVTOOLS_AXI_USER_DATA_DIR="$(mktemp -d "${TMPDIR:?}/chrome-signin.XXXXXX")"
+export CHROME_DEVTOOLS_AXI_CHROME_ARGS="${CHROME_DEVTOOLS_AXI_CHROME_ARGS:+$CHROME_DEVTOOLS_AXI_CHROME_ARGS }--remote-debugging-port=0 --remote-debugging-address=127.0.0.1"
+chrome-devtools-axi open <sign-in-url>
+head -n 1 "$CHROME_DEVTOOLS_AXI_USER_DATA_DIR/DevToolsActivePort"
+```
+
+Keep those settings and the same named session for every subsequent browser command. Use this only for the worker's own profile. Never stop an existing Chrome to add flags or replace a live signed-in profile. A browser launched without these flags has no TCP target to forward; arrange a new worker-owned sign-in session instead. The profile lasts only as long as the worker's scratch folder.
+
+The first line of `DevToolsActivePort` is the actual Chrome port. It changes when Chrome restarts and belongs to this browser session, not the whole host. The worker checks with `ss -ltn` that this port listens only on `127.0.0.1:<worker-port>`, never a public interface, then sends you the port, page title and matching command below. The worker pauses browser actions while you sign in.
+
+**On the Mac, run one command for the host**, replacing `<worker-port>` with that number:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9222:127.0.0.1:<worker-port> yian@p620
+```
+
+For the CNP VM, use the Mac's existing `cnp-devvm` SSH alias:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9222:127.0.0.1:<worker-port> cnp-devvm
+```
+
+Leave the command running. If local port 9222 is occupied, use 9223 on the left and in Chrome's discovery settings instead. Do not kill the process using 9222. Both commands bind the Mac listener to loopback and forward through SSH.
+
+In a normal, non-Incognito Chrome window on the Mac, open `chrome://inspect/#devices`. Enable **Discover network targets**, click **Configure...**, and add `127.0.0.1:9222`. Find the title the worker gave you and click **inspect**. In DevTools, enable **Toggle screencast** to see the page and enter the sign-in there. Your personal Chrome does not need remote debugging enabled. Cookies stay in the worker's remote profile, not your Mac's profile. Tell the worker when you are done, then press Ctrl+C in the SSH terminal. This stops only the forward, not the remote browser.
+
+From a second Mac terminal, `curl http://127.0.0.1:9222/json/version` checks the remote Chrome and its WebSocket URL. `curl http://127.0.0.1:9222/json/list` lists its pages. Forwarded discovery and the actual `chrome://inspect` target listing were verified on p620. The CNP alias reached `cx-devvm-01` from frontera and its CLI supports the required settings, but CNP browser sign-in itself is unverified.
+
+This grants trusted local processes full DevTools access to the worker's browser. There is no password guard. The worker must not read, log or report passwords, codes or tokens. Some sites or physical passkeys may not support headless sign-in.
+
 ## Moving from the earlier layout
 
 Before this layout, main's home was `~/fleet-homes/main`, each mate's settings were in `~/.config/fleet/<lane>.json`, mates ran from `~/.fleet/app`, and `fleet up` started them. Migration only copies. It changes nothing in cardd, so every card, entry, and live worker stays. It never deletes an old home, an old conversation, or a record.
