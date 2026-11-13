@@ -8,28 +8,50 @@ The chat says it once when a decision arrives. Main writes one message for each 
 
 ## What it shows
 
-The status bar is one line. The decisions come first, then the counts, then the board link:
+The status bar is one line. The decisions come first, then the two counts of cards in trouble, then the board link:
 
 ```
-2 decisions await you · 1 broken · 1 for you · 1 stalled · 3 landed board
+2 decisions await you · 1 broken card · 3 stalled cards board
 ```
 
-| Item                    | Meaning                                                 | Color                  |
-| ----------------------- | ------------------------------------------------------- | ---------------------- |
-| `2 decisions await you` | Decisions that wait for the captain, and a click target | yellow                 |
-| `2 broken`              | Broken                                                  | red word               |
-| `1 for you`             | A card of his own, which waits on him                   | yellow words           |
-| `1 stalled`             | Stalled, idle, or parked                                | orange word            |
-| `4 landed`              | Landed since the captain's last message                 | green word             |
-| `board`                 | A link to the board                                     | link color, underlined |
+| Item                    | Meaning                                 | Color                  |
+| ----------------------- | --------------------------------------- | ---------------------- |
+| `2 decisions await you` | Decisions that wait for the captain     | yellow                 |
+| `2 broken cards`        | Cards that are broken                   | red words              |
+| `3 stalled cards`       | Cards that are stalled, idle, or parked | orange words           |
+| `board`                 | A link to the board                     | link color, underlined |
 
-The decisions item reads `1 decision awaits you` when one waits, `N decisions await you` when more do, and is absent when none do. It counts the decisions that `/d` walks through, and it is made from the same code, so the two cannot differ. A click on the item does what typing `/d` does (see [The decision card](#the-decision-card)).
+An item earns its place on the strip when the captain can act on it or must know about it now, when nothing else on the screen already says it, and when a click on it opens its cards. So there is one count that speaks to him, the decisions, and no other item says `you`. A card of his own that only he can act on (`card_new` with kind `captain`, such as signing a contract) is not on the strip: it has nothing to answer, `/pulse` lists it as a `YOU` row, and the board shows it in his lane. A landing is not on the strip either: nothing is left to do about it, main says what landed when he writes, and the board lists it. The footer keeps one more item that this pane does not own, the cache state (`cache warm 4m`, `cache cold`), because a cold cache costs him money and the time left tells him whether to wait. The conversation-memory word `Recall: main` is not shown, because it never changes and nobody acts on it. `/firstmate-memory` says whether memory is active.
 
-The word `board` is a link to the board. The status bar never shows the address. The target is the address of `cardd` with `http` for `ws`, which is the tailnet or local address that main's lane already uses. In a terminal that has hyperlinks (OSC 8), `board` is a terminal hyperlink. In Pi's fullscreen mode a click on it opens the board, and in the other terminals the terminal's own link click does (often Cmd-click or Ctrl-click). Where the terminal has no hyperlinks, `board` is plain text, and a click on it opens the board from the extension. Both open the link on the machine where Pi runs: `open` on macOS and `xdg-open` elsewhere.
+The decisions item counts the decisions that `/d` walks through, and it is made from the same code, so the two cannot differ. It reads `1 decision awaits you` when one waits, `N decisions await you` when more do, and is absent when none do. Each count reads `1 broken card` for one and `N broken cards` for more, and the same for `stalled`. Only non-zero counts appear. Color accents the words, not the numbers. No legend is needed to read the counts.
 
-Only non-zero counts appear. Color accents the words, not the numbers. No legend is needed to read the counts. The web board already labels its attention counts with words.
+### Clicking an item
 
-In a narrow pane, whole items that do not fit are omitted. No count, word, decision sentence, or board link is cut in half. Earlier items have priority. A later item can still appear if it fits the remaining space. At 33 columns, `2 decisions await you · 1 broken` fits. At 39 columns, the board link fits after it too.
+Each item is a click target. A click opens the list of exactly the cards that the item counts, and the number and the list come from one reading (`glanceOf`, see [code.md](code.md#pane)), so they cannot differ:
+
+| Item            | A click opens                                                                         |
+| --------------- | ------------------------------------------------------------------------------------- |
+| decisions       | The decision card, as `/d` does. See [The decision card](#the-decision-card).         |
+| broken, stalled | A list of those cards, titled with the item (`2 stalled cards`), louder notice first. |
+
+A list is the same overlay as `/pulse`, so `↑↓` moves, `⏎` shows the card's board link, and `esc` closes it. It lists the cards as the status bar counted them when it was last drawn. A list does not refresh while open.
+
+The word `board` is a link to the board. The status bar never shows the address. The target is the address of `cardd` with `http` for `ws`, which is the tailnet or local address that main's lane already uses. On a fleet of several hosts it is a tailnet address, which his own machine reaches. On a single machine it is that machine's loopback address, which is his too.
+
+A plain click on `board` opens it where the captain sits, not where Pi runs. Pi runs on the host and the captain looks at it through herdr from another machine, so the host's own opener (`xdg-open`, or `open` on macOS) opens a page that he cannot see. A headless host does not even have one: `xdg-open` answers `no method available`, and Pi ignores that. So a click goes to `openForCaptain` (`open-url.ts`), which asks Element to open it in his browser, as the session's `open_url` tool does: `el open <url>`, with `el` at `$ELEMENT_HOME/el` or `~/.element/el`. When Element is not installed there, or it exits with an error or does not answer in 15 seconds, the click uses the host's own opener, as Pi's click did before. The same opener serves every link that a click reaches in Pi's fullscreen mode, such as the card numbers of `/pulse` and the links in the chat, because fleet sets it as the link opener of Pi's fullscreen screen.
+
+What herdr allows, found with a real herdr 0.9.5 client:
+
+- A plain click on the status bar reaches Pi, because Pi turns mouse reporting on in fullscreen mode and herdr forwards a plain click to a program that asked for it. That is why the click works at all, and why the counts work. Pi, not herdr or the terminal, decides what it opens.
+- herdr takes a Ctrl-click for itself. For an OSC 8 link, it opens the link in the default browser of the machine that runs the herdr client, and Pi never sees the click. Where the herdr client runs on the captain's own machine, as with `herdr --remote`, this works with no setup. If he runs herdr on the host over ssh, the client is the host and nothing reaches him.
+- herdr does not pass OSC 8 links to his terminal while `ui.mouse_capture` is on (the default), so Command-click in his terminal never sees `board`.
+- herdr has no call that opens a URL on the client for a program in a pane. A script can ask it to resolve the link under a cell (`pane.link.activate`), but it gets the URL back and opens nothing.
+
+So fleet cannot make herdr open the link. The plain click works through Element, and Ctrl-click works through herdr where the client is the captain's machine. Without Element and without such a client, a click on a headless host opens nothing that he can see. Element must be linked to his browser (`el link <host>` from his machine) for the click to reach it.
+
+In a terminal that has hyperlinks (OSC 8), `board` is a terminal hyperlink, and in Pi's fullscreen mode a click on it goes to `openForCaptain` as above. Where the terminal has no hyperlinks, `board` is plain text, and a click on it runs the same opener from the extension.
+
+In a narrow pane, whole items that do not fit are omitted. No count, word, decision sentence, or board link is cut in half. Earlier items have priority. A later item can still appear if it fits the remaining space. At 33 columns, `2 decisions await you board` fits. At 39 columns, `2 decisions await you · 1 broken card` fits, and the board link needs more. At 57 columns, `1 stalled card` fits after them too, and at 66 columns the board link fits after all three.
 
 ## The decision card
 
@@ -77,11 +99,10 @@ Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane re
 | Item     | A card counts when                                                                                                                                                                    |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Decision | Its status is Needs you, and the `card` op still shows a hold that waits on the captain. These are the cards `/d` walks through.                                                      |
-| Own card | Its pulse state is `you` and its status is not Needs you: a card of the captain's own, with no hold on him and no later of his own. `/d` does not show it.                            |
 | Broken   | A worker reported `failed`. Or a worker is not connected for 2 minutes while the card is Working or In review. Or a card has been parked for 3 days with nothing running or checking. |
 | Stalled  | A worker reported `blocked` or `stopped` 5 minutes ago, or a running worker has been silent for 5 minutes. Or a card has been idle for 4 hours, or parked for 24 hours.               |
 
-A decision is never also broken, stalled, or an own card, and it is counted once, in the decisions item.
+A decision is never also broken or stalled, and it is counted once, in the decisions item.
 
 A hold that the captain put off with his own later (`said`, or a board "later") is not a decision until its date, and is not broken, stalled, or parked either, however old the hold is: its pulse is `waiting`. So it is in neither the decisions item nor the counts, and `/d` skips it. At its date it is a decision again, in the item and in `/d` together (see [How it stays current](#how-it-stays-current)).
 
@@ -90,8 +111,6 @@ An idle card counts from 4 hours, when main is told. Only main shows this pane, 
 A reported need counts its age from the report itself, so a card that its worker already handed back, and that then reports `blocked`, is not stalled until 5 minutes after that report. The limits are `cardd`'s own (`timing.ts`), so `CARDD_TIMING_SCALE` scales them.
 
 When `cardd` has not answered for 30 seconds, the status bar shows `● cardd: not answering` in place of the decisions and the counts, because they are no longer current. They return when `cardd` answers again.
-
-Landed counts the cards that ended Done since the captain's last message. His next message resets it. A message that is a command, such as `/calm`, is not a message. The count survives a reload because it starts from the last user message in the session.
 
 ## /pulse
 
@@ -124,9 +143,9 @@ Landed counts the cards that ended Done since the captain's last message. His ne
 ## What it does not do
 
 - It is not in the model's context. The status bar and the card are drawn with `ctx.ui.setStatus` and `ctx.ui.custom`, which are not session messages. Main still learns state from the same `[fleet]` rows and the `board` tool as before.
-- It does not name the card behind a broken or stalled count. `/pulse` lists every open card with its state, age, lane, and title, and the board shows them too.
+- It does not name a card in the status bar. A click on a count opens the list of its cards, `/pulse` lists every open card with its state, age, lane, and title, and the board shows them too.
 - It replaces nothing: not the editor (OptChat owns it, and the card only stands in its place while it is open), not the footer, and not the terminal title.
-- It has no image or animation. The only mouse use is the click on the decisions item, the click on `board`, and, while the card is open, a click on its choices.
+- It has no image or animation. The only mouse use is the click on an item of the status bar, including `board`, and, while the card is open, a click on its choices.
 
 ## How it stays current
 
@@ -136,10 +155,12 @@ The pane asks `cardd` for the board when the link connects, after every `[fleet]
 
 ## Evidence
 
-`e2e/extension/status-bar.test.ts` starts a real main in herdr against a real `cardd`. It reads the status bar for the word `board` and no address, clicks `board` with and without terminal hyperlinks and reads the address that a stand-in `xdg-open` received, and counts none, one, and several decisions as the captain answers them. It puts a card off with a dated later, a card of the captain's own included, and reads that it is neither counted nor on `/d` however old the hold, and that it returns in both at its date. A Later made on the board lowers the count with no `/d` and no poll. It reads the status bar at 57, 39, and 33 columns and clicks the decisions item at each. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
+`e2e/extension/status-bar.test.ts` starts a real main in herdr against a real `cardd`. It reads the status bar for the word `board` and no address, clicks `board` with and without terminal hyperlinks and reads the address that a stand-in `xdg-open` received, reads each count in words, and counts none, one, and several decisions as the captain answers them. It puts a card off with a dated later, a card of the captain's own included, and reads that it is neither counted nor on `/d` however old the hold, and that it returns in both at its date. A Later made on the board lowers the count with no `/d` and no poll. It reads the status bar at 57, 39, and 33 columns and clicks the decisions item at each. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
+
+`e2e/extension/status-click.test.ts` drives main through a real herdr client, attached through a pty, so a click goes through herdr's own mouse handling and not straight into the pane. It clicks `board` and reads that Element, not the host's opener, was asked for the address (with and without terminal hyperlinks), that the host's opener is used when Element fails, and that a Ctrl-click is herdr's and reaches the client's opener. It clicks the decisions item and each count, and reads that the list opened holds exactly the cards that the count counts, and none of the cards of the other counts. Stand-ins for `el`, `xdg-open`, and `open` receive what is opened, and the end-to-end environment points `ELEMENT_HOME` at an empty folder, so a test never reaches the real Element.
 
 `e2e/extension/decision-message.test.ts` starts a real `cardd` and a mate on main's lane, and reads the role contract that the mate receives and the notification that `cardd` sends it. It does not show how a model behaves: a scripted model only escalates the hold, and the test reads that one hold is on the captain's board. For the merge question of main's own ship card, a second mate's merge question, a second mate's hold, and a review page, it reads that the notification carries the full PR URL or page link, and that the contract's row for it tells main to put the decision to the captain once, in chat, and never to stay silent. It reads that the rows for a yolo landing and a second mate's finished card still say to tell him nothing, that the reminder's row and its text say not to say a waiting decision again, that section 3 does not let `yield` skip a decision, that section 8 makes a decision one message said once with its evidence, consequence, recommendation, and full PR URL, and that no mate's contract names `/d`. Whether a model follows the contract is for development evidence, not for this test.
 
 `e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, and sends a mouse click to the decisions item. `e2e/extension/decide-live.test.ts` keeps the card open and changes cardd under it: `/d` on nothing that then gets a decision, a card that is answered and held for him again three times in a row, a decision that its mate rewrites, and a decision put off on the board while the card is open and while it is closed. `e2e/extension/decide-later.test.ts` does the same for `Later…`: the typed time that holds the decision in the zone of main's Pi, the text with no time that stays on its line, a zone it does not know that stays on its line while a zone it knows holds with the time it reads, and `My words…` and `Later…` on a decision with options, one with none, and a merge question. `e2e/extension/decide-narrow.test.ts` does the same for narrow and short panes: a long question and title, long options, and the hints wrap at the pane width, an option taller than the pane can give scrolls inside itself, and a click answers the option that was pressed after the press reflowed the card. `e2e/extension/decide-input.test.ts` does the same for the words he types, the arrow keys, a mouse press and release on the choices, and the editor's text coming back when the card closes. They read the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
 
-`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, that nothing reaches the model's context, the count and the overlay row of a card idle past 4 hours, a watcher with line breaks, and a list of 40 running cards that scrolls inside the overlay.
+`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled with a landing and a task of his own that stay off the strip, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, that nothing reaches the model's context, the count and the overlay row of a card idle past 4 hours, a watcher with line breaks, and a list of 40 running cards that scrolls inside the overlay.

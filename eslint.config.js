@@ -18,6 +18,9 @@ const noComments = {
   }),
 };
 
+const killsByName = String.raw`\b(pkill|killall)\b`;
+const noKillByName = `Never kill a process by name in e2e code: one host runs the live herdr server, the lanes, and other workers' tests, and a name match kills them all. Stop only the lab session this test started, by its own --session name, or your own process by pid.`;
+
 export default defineConfig(
   {
     ignores: [
@@ -67,6 +70,17 @@ export default defineConfig(
       "max-depth": ["error", 3],
       "max-nested-callbacks": ["error", 3],
       eqeqeq: "error",
+    },
+  },
+  {
+    files: ["e2e/**/*.ts"],
+    ignores: ["e2e/extension/kill-guard.test.ts", "e2e/extension/no-browser.test.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        { selector: `Literal[value=/${killsByName}/]`, message: noKillByName },
+        { selector: `TemplateElement[value.raw=/${killsByName}/]`, message: noKillByName },
+      ],
     },
   },
   { files: ["packages/board/**/*.tsx"], extends: [reactHooks.configs.flat["recommended-latest"]] },

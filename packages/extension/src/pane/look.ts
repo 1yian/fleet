@@ -5,17 +5,12 @@ import {
   stripTerminalSequences,
   type Color,
 } from "@earendil-works/pi-tui";
-import { KINDS, type Glance, type Kind } from "./glance.ts";
+import { RAISED, type Glance, type Kind, type Raised } from "./glance.ts";
 
 export const GLYPHS: Readonly<Record<Kind, string>> = {
   broken: "●",
-  "needs-you": "◆",
+  own: "◆",
   stalled: "◇",
-};
-const LABELS: Readonly<Record<Kind, string>> = {
-  broken: "broken",
-  "needs-you": "for you",
-  stalled: "stalled",
 };
 const DOWN_TEXT = "cardd: not answering";
 
@@ -23,32 +18,55 @@ type Colors = Theme["colors"];
 
 export const TONES: Readonly<Record<Kind, (colors: Colors) => Color>> = {
   broken: (colors) => colors.error,
-  "needs-you": (colors) => colors.warning,
+  own: (colors) => colors.warning,
   stalled: (colors) => mixColors(colors.warning, colors.error, 0.5),
+};
+
+export const COUNTED = ["decisions", ...RAISED] as const;
+export type Counted = (typeof COUNTED)[number];
+
+interface Item {
+  readonly key: Counted;
+  readonly text: string;
+  readonly styled: string;
+}
+
+const NOUNS: Readonly<Record<Raised, readonly [string, string]>> = {
+  broken: ["broken card", "broken cards"],
+  stalled: ["stalled card", "stalled cards"],
 };
 
 export const plain = (text: string): string =>
   replaceControlCharacters(stripTerminalSequences(text));
 
-export const decisionsText = (count: number): string | undefined => {
+const decisionsText = (count: number): string | undefined => {
   if (count === 0) return undefined;
   return count === 1 ? "1 decision awaits you" : `${String(count)} decisions await you`;
 };
 
-function chip(theme: Theme, kind: Kind, count: number): string {
-  return `${String(count)} ${theme.style(LABELS[kind], { fg: TONES[kind](theme.colors) })}`;
+function counted(key: Raised, count: number, tone: (words: string) => string): Item[] {
+  if (count === 0) return [];
+  const [one, many] = NOUNS[key];
+  const words = count === 1 ? one : many;
+  return [{ key, text: `${String(count)} ${words}`, styled: `${String(count)} ${tone(words)}` }];
 }
 
-export function statusOf(theme: Theme, glance: Glance, decisions: number): string {
+export function itemsOf(theme: Theme, glance: Glance, decisions: number): Item[] {
   const waiting = decisionsText(decisions);
-  const raised = KINDS.flatMap((kind) =>
-    glance.counts[kind] === 0 ? [] : [chip(theme, kind, glance.counts[kind])],
+  const calling: Item[] =
+    waiting === undefined
+      ? []
+      : [{ key: "decisions", text: waiting, styled: theme.fg("warning", waiting) }];
+  const raised = RAISED.flatMap((kind) =>
+    counted(kind, glance[kind].length, (words) =>
+      theme.style(words, { fg: TONES[kind](theme.colors) }),
+    ),
   );
-  const calling = waiting === undefined ? [] : [theme.fg("warning", waiting)];
-  const landed =
-    glance.landed === 0 ? [] : [`${String(glance.landed)} ${theme.fg("success", "landed")}`];
-  return [...calling, ...raised, ...landed].join(" · ");
+  return [...calling, ...raised];
 }
+
+export const statusOf = (items: readonly Item[]): string =>
+  items.map(({ styled }) => styled).join(" · ");
 
 export const downStatus = (theme: Theme): string =>
   theme.style(`${GLYPHS.broken} ${DOWN_TEXT}`, { fg: TONES.broken(theme.colors) });

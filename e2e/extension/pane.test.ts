@@ -182,7 +182,7 @@ test("the status bar is quiet when nothing waits, counts decisions, and is quiet
   assert.ok(!DECISIONS_ITEM.test(context), "the model's context holds the decisions item");
 });
 
-test("the words count broken and stalled work and colour each kind, and landed work counts until the captain writes", async () => {
+test("the words count broken and stalled work and colour each kind, and a landing is on no strip", async () => {
   const pane = await openMain(QUICK_LIMITS);
   await screenWhere(pane, "the clear state", showing(["board"]));
 
@@ -198,12 +198,12 @@ test("the words count broken and stalled work and colour each kind, and landed w
 
   const busy = await screenWhere(
     pane,
-    "a broken and a stalled count, and a landing",
-    showing(["1 broken", "1 stalled", "1 landed"], ["✓ clear", "worker failed"]),
+    "a broken and a stalled count",
+    showing(["1 broken card", "1 stalled card"], ["✓ clear", "worker failed", "landed"]),
   );
-  keep("4-broken-stalled-landed", busy);
+  keep("4-broken-and-stalled", busy);
   const colored = await herdr().coloredScreen(pane);
-  keep("4-broken-stalled-landed.ansi", colored);
+  keep("4-broken-and-stalled.ansi", colored);
   const chipRow = colored.split("\n").find((row) => row.includes("stalled")) ?? "";
   const colorOf = (chip: string): string =>
     chipRow.slice(0, chipRow.indexOf(chip)).split("\u001b[").at(-1) ?? "";
@@ -215,14 +215,14 @@ test("the words count broken and stalled work and colour each kind, and landed w
   await screenWhere(
     pane,
     "the same counts after a reload",
-    showing(["1 broken", "1 stalled", "1 landed"]),
+    showing(["1 broken card", "1 stalled card"], ["landed"]),
   );
 
   await herdr().submit(pane, QUESTION);
   const heard = await screenWhere(
     pane,
-    "the landing count to reset",
-    showing([QUESTION], ["1 landed"]),
+    "the counts to stay after he writes",
+    showing(["1 broken card", "1 stalled card", QUESTION], ["landed"]),
   );
   keep("5-after-his-message", heard);
 
@@ -230,7 +230,7 @@ test("the words count broken and stalled work and colour each kind, and landed w
   await screenWhere(
     pane,
     "the counts after a second reload",
-    showing(["1 broken", "1 stalled", QUESTION], ["1 landed"]),
+    showing(["1 broken card", "1 stalled card", QUESTION], ["landed"]),
   );
 });
 
@@ -254,13 +254,17 @@ test("the pane says only that cardd is not answering while it is down, and the c
   const failing = await cleoShipCard("Fix the Cleo rule");
   await (await workerOf(failing)).call("report", { status: "failed", text: "the build is red" });
   await cleoAsksMain(asked);
-  await screenWhere(pane, "the failed worker and the decision", showing(["1 broken", awaiting(1)]));
+  await screenWhere(
+    pane,
+    "the failed worker and the decision",
+    showing(["1 broken card", awaiting(1)]),
+  );
 
   await cardd.stop();
   const down = await screenWhere(
     pane,
     "only the broken cardd",
-    showing(["● cardd: not answering"], ["1 broken", "await", "✓ clear"]),
+    showing(["● cardd: not answering"], ["1 broken card", "await", "✓ clear"]),
   );
   keep("6-cardd-down", down);
 
@@ -268,7 +272,7 @@ test("the pane says only that cardd is not answering while it is down, and the c
   const back = await screenWhere(
     pane,
     "the counts again",
-    showing(["1 broken", awaiting(1)], ["cardd:"]),
+    showing(["1 broken card", awaiting(1)], ["cardd:"]),
   );
   keep("7-cardd-back", back);
 });
@@ -288,19 +292,24 @@ test("a card handed back long ago that then reports blocked is not stalled until
   await screenWhere(
     pane,
     "the clock card to stall, which proves the done report is older than the limit",
-    showing(["1 stalled"]),
+    showing(["1 stalled card"]),
   );
   await clockWorker.call("report", { status: "working", text: "back at it" });
-  await screenWhere(pane, "the clock card to resume", showing(["board"], ["1 stalled"]));
+  await screenWhere(pane, "the clock card to resume", showing(["board"], ["1 stalled card"]));
 
   await handedWorker.call("report", { status: "blocked", text: "the run is waiting" });
-  await cleoLandedCard("Check the invoices");
-  const fresh = await screenWhere(pane, "the pane to read the stop", showing(["1 landed"]));
+  const failing = await cleoShipCard("Fix the invoices");
+  const failedWorker = await workerOf(failing);
+  await failedWorker.call("report", { status: "failed", text: "the build is red" });
+  const fresh = await screenWhere(pane, "the pane to read the stop", showing(["1 broken card"]));
   keep("8-blocked-after-done", fresh);
-  assert.ok(!fresh.includes("1 stalled"), `a card that reported just now is stalled:\n${fresh}`);
+  assert.ok(
+    !fresh.includes("1 stalled card"),
+    `a card that reported just now is stalled:\n${fresh}`,
+  );
   assert.ok(!fresh.includes("✓ clear"));
 
   ageCard(cardd, handed, 6 * MINUTE);
-  const stalled = await screenWhere(pane, "the stall limit to pass", showing(["1 stalled"]));
+  const stalled = await screenWhere(pane, "the stall limit to pass", showing(["1 stalled card"]));
   keep("9-stalled-after-the-limit", stalled);
 });
