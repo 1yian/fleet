@@ -2,14 +2,12 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   check,
   BoardActionSchema,
-  OPS,
   type Board,
   type BoardCard,
   type Card,
   type CardView,
   type Entry,
   type LaterResult,
-  type OpResult,
   type Pulse,
   type RemainingStep,
   type Status,
@@ -74,8 +72,6 @@ function requireCaptainsHold(db: DatabaseSync, card: Card, seen: number): Hold {
     throw new Error("that hold is with main or its mate. It reaches you when main escalates it");
   return open;
 }
-
-type PaneLater = OpResult<"pane.later">;
 
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
 const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
@@ -221,10 +217,9 @@ function answerOnBoard(
   hold: number,
   choice: string,
   written: boolean,
-  source: "board" | "pane",
 ): string[] {
   const open = requireCaptainsHold(db, card, hold);
-  const args = { words: choice, source, choice, ...(written ? { written } : {}) };
+  const args = { words: choice, source: "board", choice, ...(written ? { written } : {}) };
   return [...answerHold(db, null, card, open, args).notify];
 }
 
@@ -269,25 +264,6 @@ function deferOnBoard(
   return { notify, ...later };
 }
 
-export function paneAnswer(
-  db: DatabaseSync,
-  raw: unknown,
-): { readonly value: Card; readonly notify: readonly string[] } {
-  const { card: id, hold, choice, written } = check(OPS["pane.answer"].args, raw);
-  const notify = answerOnBoard(db, getCard(db, id), hold, choice, written === true, "pane");
-  return { value: getCard(db, id), notify };
-}
-
-export function paneLater(
-  db: DatabaseSync,
-  raw: unknown,
-  now: number,
-): { readonly value: PaneLater; readonly notify: readonly string[] } {
-  const { card: id, hold, said, zone } = check(OPS["pane.later"].args, raw);
-  const { notify, until, zone: used } = deferOnBoard(db, getCard(db, id), hold, said, zone, now);
-  return { value: { card: getCard(db, id), until, zone: used }, notify };
-}
-
 export function boardAction(
   db: DatabaseSync,
   raw: unknown,
@@ -297,7 +273,7 @@ export function boardAction(
   const card = getCard(db, id);
   if (action.kind === "answer") {
     const written = action.written === true;
-    return { notify: answerOnBoard(db, card, action.hold, action.choice, written, "board") };
+    return { notify: answerOnBoard(db, card, action.hold, action.choice, written) };
   }
   if (action.kind === "comment") return { notify: commentOnBoard(db, card, action.text) };
   const { notify, until, zone } = deferOnBoard(
