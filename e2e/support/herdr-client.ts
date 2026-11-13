@@ -9,6 +9,10 @@ const CTRL = 16;
 const MOUSE_WAIT_MS = 5_000;
 const MOUSE_ON = new RegExp(`${String.fromCharCode(27)}\\[\\?[0-9;]*1006[0-9;]*h`);
 const MOUSE_TAIL = 32;
+const DEVICE_QUERY = "\u001b[c";
+const DEVICE_REPLY = "\u001b[?62;c";
+const FOCUS_IN = "\u001b[I";
+const DIAGNOSTIC_CHARS = 1_500;
 
 export interface Cell {
   readonly row: number;
@@ -46,6 +50,7 @@ export class HerdrClient {
   private readonly rows: number;
   private readonly columns: number;
   private readonly mouseOn: Promise<void>;
+  private output = "";
 
   private constructor(lab: HerdrLab, child: ChildProcess, rows: number, columns: number) {
     this.lab = lab;
@@ -55,8 +60,14 @@ export class HerdrClient {
     this.mouseOn = new Promise((resolve) => {
       let seen = "";
       child.stdout?.on("data", (chunk: Buffer) => {
-        seen += chunk.toString("latin1");
-        if (MOUSE_ON.test(seen)) resolve();
+        const text = chunk.toString("latin1");
+        this.output = (this.output + text).slice(-DIAGNOSTIC_CHARS);
+        seen += text;
+        if (seen.includes(DEVICE_QUERY)) child.stdin?.write(DEVICE_REPLY);
+        if (MOUSE_ON.test(seen)) {
+          child.stdin?.write(FOCUS_IN);
+          resolve();
+        }
         seen = seen.slice(-MOUSE_TAIL);
       });
     });
@@ -96,7 +107,15 @@ export class HerdrClient {
     await client.attached(pane, before);
     await Promise.race([
       client.mouseOn,
-      new Promise((resolve) => setTimeout(resolve, MOUSE_WAIT_MS)),
+      new Promise((_, reject) =>
+        setTimeout(() => {
+          reject(
+            new Error(
+              `the herdr client never enabled mouse reporting; it last wrote ${JSON.stringify(client.output)}`,
+            ),
+          );
+        }, MOUSE_WAIT_MS),
+      ),
     ]);
     return client;
   }
