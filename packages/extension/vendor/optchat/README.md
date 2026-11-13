@@ -13,7 +13,7 @@ Conversation memory for fleet mates. `packages/extension/src/optchat.ts` loads `
 - `IMPORT_GUIDANCE` now comes from `src/prompts.ts`, where 0.9.0 moved it.
 - `viewBudget` in `config/optchat.json` (bytes, 16000 to 128000) sets the memory view budget, which is the `VIEW` constant (128000) when absent. The loader passes it to `optchat()`, which passes it to `Memory.open`.
 - `mode` and `foldTokens` in `config/optchat.json` (opt in). With `"mode": "fold"` the loader passes `foldTokens` (default 150000, 1000 or more) to `optchat()`. The chat then grows as a plain transcript: `run` is kept across turns, the view is the one from the last fold, and the previous-exchange replay and the mid-turn refresh are off. When the view plus the transcript pass `foldTokens` at the start of a run, the transcript is moved into memory and the view is rebuilt once. Upstream 0.9.0 has no such setting (`refreshAt` only moves one long turn into memory). `foldOnCacheExpiry` (default true) also folds at the start of a run that follows an idle gap longer than the model's `promptCache` lifetime for the session's retention. Without `mode` nothing changes.
-- The loader shows `Recall: <profile>` in the footer when memory is active. `/firstmate-memory` and `state/optchat-activation.json` also report activation.
+- The loader sets no status in the footer. Dotfiles showed `Recall: main` there, a word that never changed and that nobody acts on. `/firstmate-memory` and `state/optchat-activation.json` still say whether memory is active.
 - Without `compactorProvider` and `compactorModel`, summaries go to `tier/compact` when that model exists, not to the mate's own model.
 
 ## Patches on upstream
