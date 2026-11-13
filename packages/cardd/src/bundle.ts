@@ -28,10 +28,9 @@ const firstLine = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
-type Group = "act" | "captain" | "watched" | "parked";
+type Group = "act" | "captain" | "watched";
 
-const DAILY: ReadonlySet<Group> = new Set(["watched", "parked"]);
-const acts = ({ group }: { readonly group: Group }): boolean => !DAILY.has(group);
+const acts = ({ group }: { readonly group: Group }): boolean => group !== "watched";
 
 interface Item {
   readonly card: number;
@@ -85,40 +84,24 @@ function receiver(db: DatabaseSync, card: Loaded["card"], holder: string): strin
   return holder === "main" ? (parentOf(db, card.lane) ?? card.lane) : card.lane;
 }
 
-function waitGroup(wait: DatedWait, pulse: Pulse | undefined): Group {
-  if (idlePark(wait)) return "act";
-  return pulse?.state === "parked" && pulse.notice !== "none" ? "parked" : "watched";
-}
-
-function waitItem(
-  db: DatabaseSync,
-  loaded: Loaded,
-  wait: DatedWait,
-  pulse: Pulse | undefined,
-  now: number,
-): Item {
+function waitItem(db: DatabaseSync, loaded: Loaded, wait: DatedWait, now: number): Item {
   const { card, standing } = loaded;
   const { hold } = standing.facts;
   const question = firstLine(hold?.question ?? "");
-  const group = waitGroup(wait, pulse);
-  const parked = group === "parked";
-  const to = parked ? mainLane(db) : receiver(db, card, hold?.holder ?? "owner");
-  const since = parked ? (pulse?.since ?? standing.since) : standing.since;
+  const group = idlePark(wait) ? "act" : "watched";
+  const to = receiver(db, card, hold?.holder ?? "owner");
+  const since = standing.since;
   const line = `c-${String(card.id)} ${card.title} - ${waitLine(sightOf(db, to, card.id, wait), now)}: ${question}`;
   return { card: card.id, since, to, line, group };
 }
 
 function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefined, now: number) {
   if (pulse === undefined || pulse.notice === "none") return [];
-  const idle = pulse.state === "idle";
-  if (!idle && !(pulse.state === "parked" && card.status === "paused")) return [];
+  if (pulse.state !== "idle") return [];
   const name = `c-${String(card.id)} ${card.title}`;
-  const since = idle ? pulse.movedAt : pulse.since;
-  const line = idle
-    ? `${name} - idle ${waited(now, since)}, nothing running and no stated reason`
-    : `${name} - paused ${waited(now, since)}, nothing checks what it waits for`;
-  const group: Group = idle ? "act" : "parked";
-  return [{ card: card.id, since, to: mainLane(db), line, group }];
+  const since = pulse.movedAt;
+  const line = `${name} - idle ${waited(now, since)}, nothing running and no stated reason`;
+  return [{ card: card.id, since, to: mainLane(db), line, group: "act" as const }];
 }
 
 function openItems(
@@ -131,7 +114,7 @@ function openItems(
   return cards.flatMap((loaded) => {
     const wait = waits.get(loaded.card.id);
     const pulse = pulses.get(loaded.card.id);
-    if (wait !== undefined) return [waitItem(db, loaded, wait, pulse, now)];
+    if (wait !== undefined) return [waitItem(db, loaded, wait, now)];
     if (loaded.standing.status === "needs-you")
       return [captainItem(db, loaded.card, loaded.standing, now)];
     const mate = mateItem(db, loaded, now);
@@ -174,30 +157,19 @@ const inGroup = (items: readonly Item[], wanted: Group): Item[] =>
 const plural = (n: number, one: string, many: string): string =>
   `${String(n)} ${n === 1 ? one : many}`;
 
-function leadOf(
-  acting: readonly Item[],
-  parked: readonly Item[],
-  watched: readonly Item[],
-): string {
+function leadOf(acting: readonly Item[], watched: readonly Item[]): string {
   if (acting.length > 0)
     return `reminder: ${acting.length === 1 ? "1 card needs" : `${String(acting.length)} cards need`} a decision or action from you`;
-  if (parked.length > 0)
-    return `reminder: ${plural(parked.length, "card", "cards")} parked for over a day, nothing checks ${parked.length === 1 ? "what it waits" : "what they wait"} for`;
   return `information: ${plural(watched.length, "dated wait", "dated waits")}, nothing needs action`;
 }
 
 function bundleText(items: readonly Item[]): string {
   const watched = inGroup(items, "watched");
-  const parked = inGroup(items, "parked");
-  const lead = leadOf(items.filter(acts), parked, watched);
+  const lead = leadOf(items.filter(acts), watched);
   const sections = [
     ...group(
       "You can settle or close these yourself. Act on each now. A dated wait that says nothing is running is an idle park: start what it waits on, or clear the hold and act:",
       inGroup(items, "act"),
-    ),
-    ...group(
-      "Parked for more than a day on a wait that fleet cannot check. Start what it waits on, or clear the hold and act on it:",
-      parked,
     ),
     ...group(
       "Waiting on the captain. You put each to him in chat when it arrived: do not say it again or list them. Do not hold a card with a date to quiet it:",
@@ -232,15 +204,14 @@ export function bundleMatches(
     if (now - last.at < t.waiting) return [];
     const due = now - last.informed >= t.informing;
     if (acting.length === 0 && !due) return [];
-    const listed = due ? items : items.filter(({ group: each }) => each !== "parked");
     return [
       {
         card: first.card,
         lane: to,
         condition: BUNDLE,
-        text: bundleText(listed),
+        text: bundleText(items),
         tier: last.count + 1,
-        fields: { to, watched: due ? listed.filter((item) => !acts(item)).length : 0 },
+        fields: { to, watched: due ? items.filter((item) => !acts(item)).length : 0 },
       },
     ];
   });

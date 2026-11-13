@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { idlePark } from "@fleet/protocol";
 import type {
   Activity,
   DatedWait,
@@ -9,6 +10,7 @@ import type {
   Status,
 } from "@fleet/protocol";
 import { runningJobSql } from "./jobs.ts";
+import { pausedNow } from "./status.ts";
 import { activityOf, type Loaded } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { SCHEDULE, SCRIPT } from "./wakes.ts";
@@ -49,7 +51,6 @@ const MOVEMENT: ReadonlySet<string> = new Set([
 ]);
 const AUTOMATIC: ReadonlySet<string> = new Set([SCHEDULE, SCRIPT]);
 const DOWN: ReadonlySet<string> = new Set(["starting", "exited", "lost"]);
-const COVERED: ReadonlySet<DatedWait["watch"]> = new Set(["running", "later"]);
 const WORKING: ReadonlySet<Status> = new Set(["working", "in-review"]);
 const WITH_WORKER: ReadonlySet<Status> = new Set(["working", "in-review", "merging", "paused"]);
 
@@ -111,22 +112,29 @@ function silent({ loaded, activity, env }: Basis): Reading | undefined {
 
 const putOff = ({ wait }: Basis): boolean => wait?.watch === "later";
 
+const pausedOf = ({ loaded, env }: Basis): boolean => pausedNow(loaded.standing, env.now);
+
+const covered = (basis: Basis): boolean =>
+  basis.running?.by === "job" || (basis.wait !== null && !idlePark(basis.wait)) || pausedOf(basis);
+
 function needOf(basis: Basis): Reading | undefined {
   const { card, standing } = basis.loaded;
   if (card.status === "needs-you" || (card.kind === "captain" && !putOff(basis)))
     return { state: "you", since: standing.since };
-  return reported(basis) ?? silent(basis);
+  const need = reported(basis) ?? silent(basis);
+  if (need?.state === "broken") return need;
+  if (covered(basis)) return undefined;
+  return need;
 }
 
 function readingOf(basis: Basis): Reading {
   const { loaded, wait, running, moved } = basis;
-  const { card, standing } = loaded;
+  const { standing } = loaded;
   const need = needOf(basis);
   if (need !== undefined) return need;
   if (running !== null) return { state: "running", since: moved };
-  if (wait !== null)
-    return { state: COVERED.has(wait.watch) ? "waiting" : "parked", since: wait.since };
-  if (card.status === "paused") return { state: "parked", since: standing.since };
+  if (wait !== null) return { state: idlePark(wait) ? "parked" : "waiting", since: wait.since };
+  if (pausedOf(basis)) return { state: "waiting", since: standing.since };
   return { state: "idle", since: moved };
 }
 
@@ -182,7 +190,7 @@ function ownerOf(db: DatabaseSync, basis: Basis): Pulse["owner"] {
 function waitsOf(basis: Basis, state: PulseState, owner: Pulse["owner"]): Pulse["waits"] {
   if (state === "you") return "captain";
   if (basis.wait !== null) return "date";
-  if (basis.loaded.card.status === "paused") return "pause";
+  if (pausedOf(basis)) return "pause";
   return owner.kind === "worker" ? "nothing" : owner.kind;
 }
 
@@ -209,11 +217,11 @@ export function pulseOf(
   const activity = activityOf(db, card, false);
   const jobs = runningJobs(db, card.id);
   const running: Pulse["running"] =
-    activity?.state === "running"
-      ? { by: "turn", what: "a turn" }
-      : jobs === undefined
-        ? null
-        : { by: "job", what: jobs };
+    jobs !== undefined
+      ? { by: "job", what: jobs }
+      : activity?.state === "running"
+        ? { by: "turn", what: "a turn" }
+        : null;
   const basis = { loaded, wait, activity, running, moved: movedAt(db, loaded), env };
   const reading = readingOf(basis);
   const owner = ownerOf(db, basis);

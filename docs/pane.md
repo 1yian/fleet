@@ -104,6 +104,8 @@ Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane re
 
 A decision is never also broken or stalled, and it is counted once, in the decisions item.
 
+A live long job, an armed dated hold, or a future worker checkpoint does not count as stalled. Armed holds include live jobs, schedules and workers, declared watchers, outside dates and captain deferrals. Only a missing watcher or an unstated wait is parked. These rules come from cardd's pulse, shared by the board, `/pulse`, the counted list, and the timed worker-stalled check. A zero count is absent.
+
 A hold that the captain put off with his own later (`said`, or a board "later") is not a decision until its date, and is not broken, stalled, or parked either, however old the hold is: its pulse is `waiting`. So it is in neither the decisions item nor the counts, and `/d` skips it. At its date it is a decision again, in the item and in `/d` together (see [How it stays current](#how-it-stays-current)).
 
 An idle card counts from 4 hours, when main is told. Only main shows this pane, so main sees it there, and `/pulse` says how long the card has been idle.

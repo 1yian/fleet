@@ -71,7 +71,7 @@ const WORKER_RULES: readonly {
     condition: "worker-stalled",
     text: "worker stalled",
     where: () => "w.state = 'running'",
-    since: "w.active",
+    since: "w.seen",
     first: (t) => t.stall,
   },
   {
@@ -450,7 +450,11 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
     ...holdMatches(db, open, now),
   ];
   const matches = [
-    ...checks.filter((match) => acting.has(match.card)),
+    ...checks.filter(
+      (match) =>
+        acting.has(match.card) &&
+        (match.condition !== "worker-stalled" || pulses.get(match.card)?.state === "stalled"),
+    ),
     ...bundleMatches(db, open, waits, pulses, now, t),
   ];
   clearStopped(db, now, matches);

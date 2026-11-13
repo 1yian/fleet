@@ -23,17 +23,17 @@ A lane's mate reads `behind` with every step in another lane counted as open and
 
 ## States
 
-The first row that fits wins.
+Captain decisions come first. A live long job, an armed dated hold, or a future worker checkpoint then covers silence and reported blocks. Remaining needs and inactivity use the rows below.
 
-| State     | A card is in it when                                                                                                   | Counts from                |
-| --------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `you`     | Its status is Needs you, or it is a card of the captain's own, unless his own later holds it until its date.           | The status change          |
-| `broken`  | A worker reported `failed`. Or its worker has not been connected for 2 minutes while the card is Working or In review. | The report, or last seen   |
-| `stalled` | A worker reported `blocked` or `stopped` 5 minutes ago. Or its running worker has been silent for 5 minutes.           | The report, or last output |
-| `running` | A turn or a job runs for it.                                                                                           | `movedAt`                  |
-| `waiting` | A dated hold, and the job, schedule, or worker it names runs now. Or the captain's own later, until its date.          | The hold's age             |
-| `parked`  | A dated hold that nothing checks (a watcher, an outside date, or an idle park). Or a worker's pause.                   | The hold's age             |
-| `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker.                                | `movedAt`                  |
+| State     | A card is in it when                                                                                                                | Counts from                |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `you`     | Its status is Needs you, or it is a card of the captain's own, unless his own later holds it until its date.                        | The status change          |
+| `broken`  | A worker reported `failed`. Or its worker has not been connected for 2 minutes while the card is Working or In review.              | The report, or last seen   |
+| `stalled` | A worker reported `blocked` or `stopped` 5 minutes ago. Or its running worker has been silent for 5 minutes.                        | The report, or last output |
+| `running` | A turn or a job runs for it.                                                                                                        | `movedAt`                  |
+| `waiting` | A dated hold with a live job, schedule, worker, declared watcher, outside date, or captain deferral. Or a future worker checkpoint. | The hold or pause age      |
+| `parked`  | A dated hold with a missing watcher or no stated reason.                                                                            | The hold age               |
+| `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker.                                             | `movedAt`                  |
 
 The captain's later is his own choice and his own date, so it is never parked and never an idle park. A hold that says `said` (or a board "later") is `waiting` until its date, however old the hold is, and even on a card of his own. Nobody is asked to act on it: main and the mate see it only in the information list of dated waits, and the captain's status bar does not count it. When its date passes the hold is a decision again, and it counts and shows in the decisions item and in `/d` at once.
 
@@ -41,22 +41,22 @@ A hold ends a worker's report as an attention: `standing` shows `attention` only
 
 ## Who is told, and when
 
-| State                | Main is told               | The captain is told | Red          |
-| -------------------- | -------------------------- | ------------------- | ------------ |
-| `idle`               | after 4 hours              | after 24 hours      |              |
-| `parked`             | after 24 hours, then daily | after 24 hours      | after 3 days |
-| `stalled`            |                            | at once             |              |
-| `broken`             |                            | at once             | at once      |
-| `you`                |                            | it is his card      |              |
-| `waiting`, `running` | never                      | never               |              |
+| State                | Main is told                      | The captain is told | Red          |
+| -------------------- | --------------------------------- | ------------------- | ------------ |
+| `idle`               | after 4 hours                     | after 24 hours      |              |
+| `parked`             | its holder is told to act at once | after 24 hours      | after 3 days |
+| `stalled`            |                                   | at once             |              |
+| `broken`             |                                   | at once             | at once      |
+| `you`                |                                   | it is his card      |              |
+| `waiting`, `running` | never                             | never               |              |
 
 The limits are `idleMain`, `idleCaptain`, `parked`, and `parkedUrgent` in `timing.ts`, so `CARDD_TIMING_SCALE` scales them with the rest.
 
 Main is told in the 30 minute reminder (see [The timed check](code.md#the-timed-check)). The reminder for neglect goes to main for every lane, and never to the mate that owns the card:
 
 - An idle card past 4 hours is an item to act on, in the first group. It is any card whose state is idle: Queued, Working, In review, With mate, or Merging, finished or not. Its mate keeps the reminders it already had. A card that main already has in its own list, such as a hold with main, is listed once.
-- A card parked for over a day is in its own group: start what it waits on, or clear the hold. It rides the daily list: it never starts a 30 minute list, and a 30 minute list for an action carries it only when the daily list is due, so it is not repeated every 30 minutes. It ages from the hold's first opening, so dating the hold again does not restart it. An idle park is listed for action at once, as before.
-- A worker's pause past a day is in the same group.
+- An idle park is listed for action by its holder: start what it waits on, or clear the hold. It ages from the hold first opening.
+- Armed dated holds stay information-only regardless of age. A declared watcher need not be verifiable by fleet. An outside date needs no polling. A future worker checkpoint is also quiet until its date.
 
 The captain is told by the counts in the status bar of main's pane and by the board's Attention strip.
 
