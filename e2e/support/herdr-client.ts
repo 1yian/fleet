@@ -6,7 +6,9 @@ import { records, type JsonRecord } from "./json.ts";
 
 const WAIT_MS = 30_000;
 const CTRL = 16;
-const MOUSE_ON = "\u001b[?1006h";
+const MOUSE_WAIT_MS = 5_000;
+const MOUSE_ON = new RegExp(`${String.fromCharCode(27)}\\[\\?[0-9;]*1006[0-9;]*h`);
+const MOUSE_TAIL = 32;
 
 export interface Cell {
   readonly row: number;
@@ -54,8 +56,8 @@ export class HerdrClient {
       let seen = "";
       child.stdout?.on("data", (chunk: Buffer) => {
         seen += chunk.toString("latin1");
-        if (seen.includes(MOUSE_ON)) resolve();
-        seen = seen.slice(-MOUSE_ON.length);
+        if (MOUSE_ON.test(seen)) resolve();
+        seen = seen.slice(-MOUSE_TAIL);
       });
     });
   }
@@ -92,7 +94,10 @@ export class HerdrClient {
     child.stdin?.on("error", () => undefined);
     const client = new HerdrClient(lab, child, size.rows, size.columns);
     await client.attached(pane, before);
-    await client.mouseOn;
+    await Promise.race([
+      client.mouseOn,
+      new Promise((resolve) => setTimeout(resolve, MOUSE_WAIT_MS)),
+    ]);
     return client;
   }
 
