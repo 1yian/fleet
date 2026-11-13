@@ -10,6 +10,7 @@ import {
   rowsOf,
   SHIP,
   showing,
+  statusRow,
 } from "../support/decide-lab.ts";
 import { FakeElement } from "../support/fake-element.ts";
 import { FakeOpener } from "../support/fake-opener.ts";
@@ -138,10 +139,8 @@ const overlayOf = (screen: string): string[] => {
 };
 
 const COUNTS = [
-  { text: "2 tasks of yours", cards: OWN },
   { text: "2 broken cards", cards: BROKEN },
   { text: "2 stalled cards", cards: STALLED },
-  { text: "2 landed cards", cards: LANDED },
 ] as const;
 
 async function openedList(pane: string, text: string): Promise<string> {
@@ -162,7 +161,7 @@ function assertExactly(overlay: string, text: string, cards: readonly string[]):
   assert.equal(overlay.match(/c-\d+/g)?.length, cards.length, `the rows of ${text}:\n${overlay}`);
 }
 
-test("each count opens the list of exactly the cards it counts, through a real herdr client", async () => {
+test("each count opens the list of exactly the cards it counts, and his own tasks and landings are on no strip, through a real herdr client", async () => {
   const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });
   await lab.screenWhere(pane, "the board", showing(["board"]));
   for (const title of OWN) await lab.cleo.call("card.new", { title, kind: "captain" });
@@ -172,13 +171,9 @@ test("each count opens the list of exactly the cards it counts, through a real h
     ageCard(lab.cardd, idle, 5 * HOUR_MS);
   }
   for (const title of LANDED) await lab.landedCard(title);
-  const everything = await attached(pane, "2 landed cards");
+  const everything = await attached(pane, "2 stalled cards");
   keep("click-counts-status", everything);
-  assert.match(
-    everything,
-    /2 broken cards · 2 tasks of yours · 2 stalled cards · 2 landed cards/,
-    `the counts are not all on one row:\n${everything}`,
-  );
+  assert.equal(statusRow(everything), "2 broken cards · 2 stalled cards board");
 
   for (const { text, cards } of COUNTS) {
     assertExactly(await openedList(pane, text), text, cards);

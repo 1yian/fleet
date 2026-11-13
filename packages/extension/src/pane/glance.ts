@@ -1,12 +1,11 @@
 import type { BoardCard, Pulse } from "@fleet/protocol";
 
-export const KINDS = ["broken", "own", "stalled"] as const;
-export type Kind = (typeof KINDS)[number];
+export type Kind = "broken" | "own" | "stalled";
 
-export interface Glance {
-  readonly cards: Readonly<Record<Kind, readonly BoardCard[]>>;
-  readonly landed: readonly BoardCard[];
-}
+export const RAISED = ["broken", "stalled"] as const;
+export type Raised = (typeof RAISED)[number];
+
+export type Glance = Readonly<Record<Raised, readonly BoardCard[]>>;
 
 export function kindOf({ state, notice }: Pulse): Kind | undefined {
   if (state === "you") return "own";
@@ -14,21 +13,13 @@ export function kindOf({ state, notice }: Pulse): Kind | undefined {
   return state === "stalled" || notice !== "none" ? "stalled" : undefined;
 }
 
-const isDecision = (card: BoardCard): boolean => card.status === "needs-you";
-
-const countedKind = (card: BoardCard): Kind | undefined => {
+const raisedKind = (card: BoardCard): Raised | undefined => {
   const kind = card.pulse === null ? undefined : kindOf(card.pulse);
-  return kind === "own" && isDecision(card) ? undefined : kind;
+  return kind === "own" ? undefined : kind;
 };
 
-const landedSince = (card: BoardCard, since: number): boolean =>
-  card.status === "done" && !card.mate && card.kind !== "standing" && card.updatedAt > since;
-
-export function glanceOf(cards: readonly BoardCard[], since: number): Glance {
-  const of = (kind: Kind): readonly BoardCard[] =>
-    cards.filter((card) => countedKind(card) === kind);
-  return {
-    cards: { broken: of("broken"), own: of("own"), stalled: of("stalled") },
-    landed: cards.filter((card) => landedSince(card, since)),
-  };
+export function glanceOf(cards: readonly BoardCard[]): Glance {
+  const of = (kind: Raised): readonly BoardCard[] =>
+    cards.filter((card) => raisedKind(card) === kind);
+  return { broken: of("broken"), stalled: of("stalled") };
 }

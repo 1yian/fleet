@@ -8,35 +8,31 @@ The chat stays silent about what waits. Main never tells the captain to type `/d
 
 ## What it shows
 
-The status bar is one line. The decisions come first, then the counts, then the board link:
+The status bar is one line. The decisions come first, then the two counts of cards in trouble, then the board link:
 
 ```
-2 decisions await you · 1 broken card · 1 task of yours · 3 stalled cards · 4 landed cards board
+2 decisions await you · 1 broken card · 3 stalled cards board
 ```
 
-| Item                    | Meaning                                                           | Color                  |
-| ----------------------- | ----------------------------------------------------------------- | ---------------------- |
-| `2 decisions await you` | Decisions that wait for the captain                               | yellow                 |
-| `2 broken cards`        | Cards that are broken                                             | red words              |
-| `1 task of yours`       | A card of his own that only he can act on, with nothing to answer | yellow words           |
-| `3 stalled cards`       | Cards that are stalled, idle, or parked                           | orange words           |
-| `4 landed cards`        | Cards that landed since the captain's last message                | green words            |
-| `board`                 | A link to the board                                               | link color, underlined |
+| Item                    | Meaning                                 | Color                  |
+| ----------------------- | --------------------------------------- | ---------------------- |
+| `2 decisions await you` | Decisions that wait for the captain     | yellow                 |
+| `2 broken cards`        | Cards that are broken                   | red words              |
+| `3 stalled cards`       | Cards that are stalled, idle, or parked | orange words           |
+| `board`                 | A link to the board                     | link color, underlined |
 
-Every item says what it counts, and there is only one count of decisions. A decision has a question for him, and `/d` answers it. A task of his own has nothing to answer: it is a card that main made for something only he can do (`card_new` with kind `captain`), such as signing a contract, and it has no hold on him and no later of his own. `/d` never shows it. The two are different things, so they have different names.
+An item earns its place on the strip when the captain can act on it or must know about it now, when nothing else on the screen already says it, and when a click on it opens its cards. So there is one count that speaks to him, the decisions, and no other item says `you`. A card of his own that only he can act on (`card_new` with kind `captain`, such as signing a contract) is not on the strip: it has nothing to answer, `/pulse` lists it as a `YOU` row, and the board shows it in his lane. A landing is not on the strip either: nothing is left to do about it, main says what landed when he writes, and the board lists it. The footer keeps one more item that this pane does not own, the cache state (`cache warm 4m`, `cache cold`), because a cold cache costs him money and the time left tells him whether to wait. The conversation-memory word `Recall: main` is not shown, because it never changes and nobody acts on it. `/firstmate-memory` says whether memory is active.
 
-The decisions item counts the decisions that `/d` walks through, and it is made from the same code, so the two cannot differ. It reads `1 decision awaits you` when one waits, `N decisions await you` when more do, and is absent when none do. Each count reads `1 broken card` for one and `N broken cards` for more, and the same for `stalled`, `landed`, and `task of yours` (`tasks of yours`). Only non-zero counts appear. Color accents the words, not the numbers. No legend is needed to read the counts.
+The decisions item counts the decisions that `/d` walks through, and it is made from the same code, so the two cannot differ. It reads `1 decision awaits you` when one waits, `N decisions await you` when more do, and is absent when none do. Each count reads `1 broken card` for one and `N broken cards` for more, and the same for `stalled`. Only non-zero counts appear. Color accents the words, not the numbers. No legend is needed to read the counts.
 
 ### Clicking an item
 
 Each item is a click target. A click opens the list of exactly the cards that the item counts, and the number and the list come from one reading (`glanceOf`, see [code.md](code.md#pane)), so they cannot differ:
 
-| Item            | A click opens                                                                                     |
-| --------------- | ------------------------------------------------------------------------------------------------- |
-| decisions       | The decision card, as `/d` does. See [The decision card](#the-decision-card).                     |
-| broken, stalled | A list of those cards, titled with the item (`2 stalled cards`), louder notice first.             |
-| task of yours   | A list of his own cards, titled `2 tasks of yours`.                                               |
-| landed          | A list of the cards that landed, newest first, titled `2 landed cards · since your last message`. |
+| Item            | A click opens                                                                         |
+| --------------- | ------------------------------------------------------------------------------------- |
+| decisions       | The decision card, as `/d` does. See [The decision card](#the-decision-card).         |
+| broken, stalled | A list of those cards, titled with the item (`2 stalled cards`), louder notice first. |
 
 A list is the same overlay as `/pulse`, so `↑↓` moves, `⏎` shows the card's board link, and `esc` closes it. It lists the cards as the status bar counted them when it was last drawn. A list does not refresh while open.
 
@@ -55,7 +51,7 @@ So fleet cannot make herdr open the link. The plain click works through Element,
 
 In a terminal that has hyperlinks (OSC 8), `board` is a terminal hyperlink, and in Pi's fullscreen mode a click on it goes to `openForCaptain` as above. Where the terminal has no hyperlinks, `board` is plain text, and a click on it runs the same opener from the extension.
 
-In a narrow pane, whole items that do not fit are omitted. No count, word, decision sentence, or board link is cut in half. Earlier items have priority. A later item can still appear if it fits the remaining space. At 33 columns, `2 decisions await you` fits. At 39 columns, `2 decisions await you · 1 broken card` fits. At 57 columns, `1 landed card` fits after them too, and the board link needs more.
+In a narrow pane, whole items that do not fit are omitted. No count, word, decision sentence, or board link is cut in half. Earlier items have priority. A later item can still appear if it fits the remaining space. At 33 columns, `2 decisions await you board` fits. At 39 columns, `2 decisions await you · 1 broken card` fits, and the board link needs more. At 57 columns, `1 stalled card` fits after them too, and at 66 columns the board link fits after all three.
 
 ## The decision card
 
@@ -100,14 +96,13 @@ The card is inline, the way Pi draws its own selectors. It takes the editor's pl
 
 Each card has a `pulse` from `cardd` (see [neglect.md](neglect.md)). The pane reads its state and notice and keeps no limit of its own.
 
-| Item          | A card counts when                                                                                                                                                                    |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Decision      | Its status is Needs you, and the `card` op still shows a hold that waits on the captain. These are the cards `/d` walks through.                                                      |
-| Task of yours | Its pulse state is `you` and its status is not Needs you: a card of the captain's own, with no hold on him and no later of his own. `/d` does not show it.                            |
-| Broken        | A worker reported `failed`. Or a worker is not connected for 2 minutes while the card is Working or In review. Or a card has been parked for 3 days with nothing running or checking. |
-| Stalled       | A worker reported `blocked` or `stopped` 5 minutes ago, or a running worker has been silent for 5 minutes. Or a card has been idle for 4 hours, or parked for 24 hours.               |
+| Item     | A card counts when                                                                                                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Decision | Its status is Needs you, and the `card` op still shows a hold that waits on the captain. These are the cards `/d` walks through.                                                      |
+| Broken   | A worker reported `failed`. Or a worker is not connected for 2 minutes while the card is Working or In review. Or a card has been parked for 3 days with nothing running or checking. |
+| Stalled  | A worker reported `blocked` or `stopped` 5 minutes ago, or a running worker has been silent for 5 minutes. Or a card has been idle for 4 hours, or parked for 24 hours.               |
 
-A decision is never also broken, stalled, or a task of yours, and it is counted once, in the decisions item.
+A decision is never also broken or stalled, and it is counted once, in the decisions item.
 
 A hold that the captain put off with his own later (`said`, or a board "later") is not a decision until its date, and is not broken, stalled, or parked either, however old the hold is: its pulse is `waiting`. So it is in neither the decisions item nor the counts, and `/d` skips it. At its date it is a decision again, in the item and in `/d` together (see [How it stays current](#how-it-stays-current)).
 
@@ -116,8 +111,6 @@ An idle card counts from 4 hours, when main is told. Only main shows this pane, 
 A reported need counts its age from the report itself, so a card that its worker already handed back, and that then reports `blocked`, is not stalled until 5 minutes after that report. The limits are `cardd`'s own (`timing.ts`), so `CARDD_TIMING_SCALE` scales them.
 
 When `cardd` has not answered for 30 seconds, the status bar shows `● cardd: not answering` in place of the decisions and the counts, because they are no longer current. They return when `cardd` answers again.
-
-Landed counts the cards that ended Done since the captain's last message. His next message resets it. A message that is a command, such as `/calm`, is not a message. The count survives a reload because it starts from the last user message in the session.
 
 ## /pulse
 
@@ -170,4 +163,4 @@ The pane asks `cardd` for the board when the link connects, after every `[fleet]
 
 `e2e/extension/decide.test.ts` starts a real main in herdr against a real `cardd`, types `/d`, presses keys, and sends a mouse click to the decisions item. `e2e/extension/decide-live.test.ts` keeps the card open and changes cardd under it: `/d` on nothing that then gets a decision, a card that is answered and held for him again three times in a row, a decision that its mate rewrites, and a decision put off on the board while the card is open and while it is closed. `e2e/extension/decide-later.test.ts` does the same for `Later…`: the typed time that holds the decision in the zone of main's Pi, the text with no time that stays on its line, a zone it does not know that stays on its line while a zone it knows holds with the time it reads, and `My words…` and `Later…` on a decision with options, one with none, and a merge question. `e2e/extension/decide-narrow.test.ts` does the same for narrow and short panes: a long question and title, long options, and the hints wrap at the pane width, an option taller than the pane can give scrolls inside itself, and a click answers the option that was pressed after the press reflowed the card. `e2e/extension/decide-input.test.ts` does the same for the words he types, the arrow keys, a mouse press and release on the choices, and the editor's text coming back when the card closes. They read the card from the screen and the answers from the board's thread. Set `DECIDE_EVIDENCE_DIR` to keep the screens.
 
-`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled and landed, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, that nothing reaches the model's context, the count and the overlay row of a card idle past 4 hours, a watcher with line breaks, and a list of 40 running cards that scrolls inside the overlay.
+`e2e/extension/pane.test.ts` starts a real main in herdr against a real `cardd` and reads the screen. Set `PANE_EVIDENCE_DIR` to keep each screen it reads: clear, a captain hold, answered, broken and stalled with a landing and a task of his own that stay off the strip, after his message, and `cardd` down and back. `e2e/extension/pulse.test.ts` types `/pulse` into the same pane and reads the overlay: its order, the collapsed running line, that nothing reaches the model's context, the count and the overlay row of a card idle past 4 hours, a watcher with line breaks, and a list of 40 running cards that scrolls inside the overlay.

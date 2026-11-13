@@ -28,6 +28,12 @@ export const showing =
 
 export const rowsOf = (screen: string): string[] => screen.split("\n");
 
+export const statusRow = (screen: string): string => {
+  const rows = rowsOf(screen).map((row) => row.trimEnd());
+  const at = rows.findLastIndex((row) => row !== "");
+  return rows[at] ?? "";
+};
+
 export const awaiting = (count: number): string =>
   count === 1 ? "1 decision awaits you" : `${String(count)} decisions await you`;
 

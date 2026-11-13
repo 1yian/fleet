@@ -2,7 +2,6 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
-  SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { BoardCard } from "@fleet/protocol";
 import type { Link } from "../link.ts";
@@ -10,7 +9,7 @@ import { onStatusClick, type StatusClick } from "../status-click.ts";
 import { showCards } from "./cards.ts";
 import { Decide } from "./decide.ts";
 import { glanceOf, type Glance } from "./glance.ts";
-import { listOf, listOfCounted, listOfLanded, type List } from "./list.ts";
+import { listOf, listOfCounted } from "./list.ts";
 import { COUNTED, downStatus, itemsOf, statusOf, type Counted } from "./look.ts";
 import { Waiting } from "./waiting.ts";
 
@@ -38,22 +37,12 @@ const settings = (): Settings => ({
   liveMs: number("FLEET_PANE_LIVE_MS", 5_000),
 });
 
-const isMessageOfHis = (entry: SessionEntry): boolean =>
-  entry.type === "message" && entry.message.role === "user";
-
 function nextDateRefresh(cards: readonly BoardCard[], readAt: number): number | undefined {
   const refreshes = cards.flatMap(({ datedWait }) => {
     const at = datedWait === null ? 0 : datedWait.until + LAPSE_SLACK_MS;
     return at > readAt ? [at] : [];
   });
   return refreshes.length === 0 ? undefined : Math.min(...refreshes);
-}
-
-function lastMessageAt(ctx: ExtensionContext): number {
-  const last = ctx.sessionManager.getBranch().findLast(isMessageOfHis);
-  const started = ctx.sessionManager.getHeader()?.timestamp;
-  const stamp = last?.timestamp ?? started;
-  return stamp === undefined ? Date.now() : Date.parse(stamp);
 }
 
 interface Shown {
@@ -69,7 +58,6 @@ class Pane {
   private cards: readonly BoardCard[] | undefined;
   private dateRefreshAt: number | undefined;
   private decisions = 0;
-  private since: number;
   private listing = false;
   private silentSince: number | undefined;
   private stopped = false;
@@ -85,7 +73,6 @@ class Pane {
     this.ctx = ctx;
     this.carddUrl = carddUrl;
     this.rules = rules;
-    this.since = lastMessageAt(ctx);
     this.waiting = new Waiting(link);
     this.waiting.follow(({ cards, decisions, readAt }) => {
       this.cards = cards;
@@ -131,11 +118,6 @@ class Pane {
     this.timer.unref();
   }
 
-  heard(at: number): void {
-    this.since = at;
-    this.paint();
-  }
-
   stop(ctx: ExtensionContext): void {
     this.stopped = true;
     clearTimeout(this.timer);
@@ -158,7 +140,7 @@ class Pane {
     if (silent !== undefined && now - silent >= this.rules.silentMs)
       return { text: downStatus(theme), clicks: new Map() };
     if (this.cards === undefined) return undefined;
-    const glance = glanceOf(this.cards, this.since);
+    const glance = glanceOf(this.cards);
     const items = itemsOf(theme, glance, this.decisions);
     const clicks = new Map(
       items.map(({ key, text }) => [
@@ -195,17 +177,12 @@ class Pane {
       const reason = error instanceof Error ? error.message : String(error);
       this.ctx.ui.notify(`The list could not be shown: ${reason}`, "error");
     };
-    showCards(this.ctx, listOfCount(glance, key, text), this.carddUrl)
+    showCards(this.ctx, listOfCounted(glance[key], text), this.carddUrl)
       .catch(failed)
       .finally(() => {
         this.listing = false;
       });
   }
-}
-
-function listOfCount(glance: Glance, key: Exclude<Counted, "decisions">, text: string): List {
-  if (key === "landed") return listOfLanded(glance.landed, `${text} · since your last message`);
-  return listOfCounted(glance.cards[key], text);
 }
 
 async function showPulse(link: Link, ctx: ExtensionCommandContext, carddUrl: string) {
@@ -241,9 +218,6 @@ export function showPane(
   pi.events.on("fleet:delivered", refresh);
   pi.on("tool_execution_end", (event) => {
     if (CARD_TOOLS.has(event.toolName)) pane.refresh();
-  });
-  pi.on("input", (event) => {
-    if (event.source === "interactive") pane.heard(Date.now());
   });
   pi.on("session_shutdown", (_event, ended) => {
     pane.stop(ended);

@@ -5,7 +5,7 @@ import {
   stripTerminalSequences,
   type Color,
 } from "@earendil-works/pi-tui";
-import { KINDS, type Glance, type Kind } from "./glance.ts";
+import { RAISED, type Glance, type Kind, type Raised } from "./glance.ts";
 
 export const GLYPHS: Readonly<Record<Kind, string>> = {
   broken: "●",
@@ -22,7 +22,7 @@ export const TONES: Readonly<Record<Kind, (colors: Colors) => Color>> = {
   stalled: (colors) => mixColors(colors.warning, colors.error, 0.5),
 };
 
-export const COUNTED = ["decisions", ...KINDS, "landed"] as const;
+export const COUNTED = ["decisions", ...RAISED] as const;
 export type Counted = (typeof COUNTED)[number];
 
 interface Item {
@@ -31,11 +31,9 @@ interface Item {
   readonly styled: string;
 }
 
-const NOUNS: Readonly<Record<Exclude<Counted, "decisions">, readonly [string, string]>> = {
+const NOUNS: Readonly<Record<Raised, readonly [string, string]>> = {
   broken: ["broken card", "broken cards"],
-  own: ["task of yours", "tasks of yours"],
   stalled: ["stalled card", "stalled cards"],
-  landed: ["landed card", "landed cards"],
 };
 
 export const plain = (text: string): string =>
@@ -46,11 +44,7 @@ const decisionsText = (count: number): string | undefined => {
   return count === 1 ? "1 decision awaits you" : `${String(count)} decisions await you`;
 };
 
-function counted(
-  key: Exclude<Counted, "decisions">,
-  count: number,
-  tone: (words: string) => string,
-): Item[] {
+function counted(key: Raised, count: number, tone: (words: string) => string): Item[] {
   if (count === 0) return [];
   const [one, many] = NOUNS[key];
   const words = count === 1 ? one : many;
@@ -63,13 +57,12 @@ export function itemsOf(theme: Theme, glance: Glance, decisions: number): Item[]
     waiting === undefined
       ? []
       : [{ key: "decisions", text: waiting, styled: theme.fg("warning", waiting) }];
-  const raised = KINDS.flatMap((kind) =>
-    counted(kind, glance.cards[kind].length, (words) =>
+  const raised = RAISED.flatMap((kind) =>
+    counted(kind, glance[kind].length, (words) =>
       theme.style(words, { fg: TONES[kind](theme.colors) }),
     ),
   );
-  const landed = counted("landed", glance.landed.length, (words) => theme.fg("success", words));
-  return [...calling, ...raised, ...landed];
+  return [...calling, ...raised];
 }
 
 export const statusOf = (items: readonly Item[]): string =>

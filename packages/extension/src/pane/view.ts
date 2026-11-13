@@ -10,14 +10,13 @@ import {
 } from "@earendil-works/pi-tui";
 import { behindText, ownerText, runningText, waitsText, type Pulse } from "@fleet/protocol";
 import { kindOf } from "./glance.ts";
-import type { List, Listed, Open } from "./list.ts";
+import type { List, Listed } from "./list.ts";
 import { GLYPHS, plain, TONES } from "./look.ts";
 
 const MINUTE_MS = 60_000;
 const SELECTED = "▌";
 const RUNNING_GLYPH = "▶";
 const QUIET_GLYPH = "◇";
-const LANDED_GLYPH = "✓";
 const CHROME_ROWS = 5;
 const RESET = "\u001b[0m";
 const BACKGROUND_OFF = "\u001b[49m";
@@ -40,27 +39,22 @@ interface Look {
   readonly tone: Color;
 }
 
-function lookOf(theme: Theme, pulse: Pulse | null): Look {
+function lookOf(theme: Theme, pulse: Pulse): Look {
   const { colors } = theme;
-  if (pulse === null) return { glyph: LANDED_GLYPH, tone: colors.success };
   const kind = kindOf(pulse);
   if (kind !== undefined) return { glyph: GLYPHS[kind], tone: TONES[kind](colors) };
   if (pulse.state === "running") return { glyph: RUNNING_GLYPH, tone: colors.success };
   return { glyph: QUIET_GLYPH, tone: colors.muted };
 }
 
-const wordOf = (pulse: Pulse | null): string => {
-  if (pulse === null) return "LANDED";
-  return pulse.state === "you" ? "YOU" : pulse.state.toUpperCase();
-};
+const wordOf = (pulse: Pulse): string =>
+  pulse.state === "you" ? "YOU" : pulse.state.toUpperCase();
 
 export interface Links {
   readonly urlOf: (card: number) => string;
 }
 
-function detailsOf(listed: Listed, now: number): string[] {
-  const { card, pulse } = listed;
-  if (pulse === null) return [];
+function detailsOf({ card, pulse }: Listed, now: number): string[] {
   const movedText = `moved ${agoText(now - pulse.movedAt)}`;
   const details =
     pulse.state === "you"
@@ -78,14 +72,13 @@ function block(theme: Theme, listed: Listed, now: number, links: Links): string[
   const { glyph, tone } = lookOf(theme, pulse);
   const id = `c-${String(card.id)}`;
   const linked = getCapabilities().hyperlinks ? hyperlink(id, links.urlOf(card.id)) : id;
-  const held = pulse === null ? card.updatedAt : pulse.since;
-  const word = `${glyph} ${wordOf(pulse)} ${ago(now - held)}`;
+  const word = `${glyph} ${wordOf(pulse)} ${ago(now - pulse.since)}`;
   const head = `${theme.style(word, { fg: tone, bold: true })}  ${linked} ${plain(card.lane)}`;
   const rows = detailsOf(listed, now).map((text) => theme.fg("muted", `  ${plain(text)}`));
   return [head, `  ${plain(card.title)}`, ...rows, ""];
 }
 
-function runningLine(theme: Theme, listed: Open): string {
+function runningLine(theme: Theme, listed: Listed): string {
   const { card, pulse } = listed;
   const { colors } = theme;
   const glyph = theme.style(RUNNING_GLYPH, { fg: colors.success });

@@ -113,8 +113,8 @@ test("/pulse lists the neglected cards first, quiet first, with running cards in
   await running("Ship the scrollbar fix");
   await running("Fix the Cleo rule");
   const pane = await openMain();
-  await screenWhere(pane, "the pane to count what is his", (screen) =>
-    screen.includes("1 task of yours"),
+  await screenWhere(pane, "the pane to count the broken and the stalled card", (screen) =>
+    screen.includes("1 broken card · 1 stalled card board"),
   );
 
   await herdr().submit(pane, "/pulse");

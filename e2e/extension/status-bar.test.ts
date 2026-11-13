@@ -13,6 +13,7 @@ import {
   rowsOf,
   SHIP,
   showing,
+  statusRow,
 } from "../support/decide-lab.ts";
 import { FakeOpener } from "../support/fake-opener.ts";
 import { ageCard } from "../support/fleet.ts";
@@ -29,12 +30,6 @@ afterEach(async (t) => {
 });
 
 const boardUrl = (): string => lab.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
-
-const statusRow = (screen: string): string => {
-  const rows = rowsOf(screen).map((row) => row.trimEnd());
-  const at = rows.findLastIndex((row) => row !== "");
-  return rows[at] ?? "";
-};
 
 function boardAt(screen: string): { row: number; column: number } {
   const row = rowsOf(screen).findIndex((each) => /\bboard\s*$/.test(each));
@@ -250,12 +245,10 @@ test("a Later made on the board lowers the count at once, with no /d and no poll
   );
 });
 
-test("every count names the cards it counts, and his own tasks are not a second kind of you", async () => {
+test("every count names the cards it counts, and his own tasks and landings are on no strip", async () => {
   const pane = await lab.openMain({ FLEET_PANE_POLL_MS: "400" });
   await lab.screenWhere(pane, "the board", showing(["board"]));
   await lab.cleo.call("card.new", { title: "Sign the contract", kind: "captain" });
-  const own = await lab.screenWhere(pane, "his task alone", showing(["1 task of yours"]));
-  assert.equal(statusRow(own), "1 task of yours board");
   await lab.failedWorker("Fix the build");
   const idle = check(
     CardSchema,
@@ -266,13 +259,10 @@ test("every count names the cards it counts, and his own tasks are not a second 
   const screen = await lab.screenWhere(
     pane,
     "every count in words",
-    showing(["1 broken card", "1 task of yours", "1 stalled card", "1 landed card"]),
+    showing(["1 broken card", "1 stalled card"]),
   );
-  assert.equal(
-    statusRow(screen),
-    "1 broken card · 1 task of yours · 1 stalled card · 1 landed card board",
-  );
-  assert.doesNotMatch(statusRow(screen), /[●◆◇▲]|\b0\b|for you/);
+  assert.equal(statusRow(screen), "1 broken card · 1 stalled card board");
+  assert.doesNotMatch(statusRow(screen), /[●◆◇▲]|\b0\b|\byou(rs)?\b|landed/);
   keep("counts-in-words", screen);
   keep("counts-in-words.ansi", await lab.herdr().coloredScreen(pane));
 });
@@ -281,9 +271,9 @@ const WIDTHS = [
   {
     columns: 66,
     ratio: 0.4,
-    shown: "2 decisions await you · 1 broken card · 1 landed card board",
+    shown: "2 decisions await you · 1 broken card · 1 stalled card board",
   },
-  { columns: 57, ratio: 0.5, shown: "2 decisions await you · 1 broken card · 1 landed card" },
+  { columns: 57, ratio: 0.5, shown: "2 decisions await you · 1 broken card · 1 stalled card" },
   { columns: 39, ratio: 0.65, shown: "2 decisions await you · 1 broken card" },
   { columns: 33, ratio: 0.7, shown: "2 decisions await you board" },
 ] as const;
@@ -294,7 +284,11 @@ for (const { columns, ratio, shown } of WIDTHS) {
     await lab.askedMain(pane, "Scrollbar fix", SHIP, ["Ship it", "Hold"], 1);
     await lab.askedMain(pane, "Repository name", RENAME, ["Rename", "Keep"], 2);
     await lab.failedWorker("Fix the Cleo rule");
-    await lab.landedCard("Check the ads budget");
+    const idle = check(
+      CardSchema,
+      await lab.cleo.call("card.new", { title: "Read the invoices", kind: "scout" }),
+    );
+    ageCard(lab.cardd, idle, 5 * 3_600_000);
     lab.answers(2);
 
     const first = await lab.screenWhere(pane, "the decisions", showing([awaiting(2)]));
