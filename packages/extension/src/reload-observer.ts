@@ -44,11 +44,20 @@ async function call(report: ReloadReceipt, op: string, args: object) {
 
 async function verified(report: ReloadReceipt): Promise<void> {
   const deadline = Date.now() + 60_000;
+  let lastError: string | undefined;
   for (;;) {
-    const row = await call(report, "maintenance.read", { id: report.id });
-    if (row.state === "completed") return;
-    if (row.state === "failed") throw new Error(row.detail);
-    if (Date.now() >= deadline) throw new Error("no replacement hello within 60 seconds");
+    const row = await call(report, "maintenance.read", { id: report.id }).catch(
+      (error: unknown) => {
+        lastError = error instanceof Error ? error.message : String(error);
+        return undefined;
+      },
+    );
+    if (row?.state === "completed") return;
+    if (row?.state === "failed") throw new Error(row.detail);
+    if (Date.now() >= deadline)
+      throw new Error(
+        `no replacement hello within 60 seconds${lastError === undefined ? "" : `; last read error: ${lastError}`}`,
+      );
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }

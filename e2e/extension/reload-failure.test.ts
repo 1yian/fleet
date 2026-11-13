@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { LiveFleet, until } from "../support/live-fleet.ts";
-import { HELPER_ERROR, HELPER_SECRET, reloadFault } from "../support/reload-fault.ts";
+import { FLAKY_READS, HELPER_ERROR, HELPER_SECRET, reloadFault } from "../support/reload-fault.ts";
 
 let fleet: LiveFleet;
 let fault: ReturnType<typeof reloadFault>;
@@ -72,3 +72,33 @@ for (const skip of [false, true]) {
     },
   );
 }
+
+test("the update completes a worker whose helper's first verification reads fail transiently", async () => {
+  const untilDate = new Date(Date.now() + 3_600_000).toISOString();
+  for (let call = 0; call < 100; call += 1) {
+    fleet.h.onModel((turns) => {
+      const at = turns.findLastIndex((turn) => turn.role === "user");
+      return turns.slice(at).some((turn) => turn.role === "toolResult")
+        ? { text: "waiting" }
+        : { tool: "report", args: { status: "paused", text: "waiting", until: untilDate } };
+    }, "worker");
+    fleet.h.onModel(() => ({ text: "noted" }), "mate");
+  }
+  await fleet.startMain();
+  const worker = await fleet.startWorker("flaky-read", "p620", true);
+  await until(async () => {
+    const card = await fleet.cardOf(worker.card);
+    return card.activity?.state === "idle" ? card : undefined;
+  }, "the worker to pause and idle");
+  const pid = await fleet.piIn(worker.pane);
+  fault.flake(worker.pane);
+  await fleet.lab.submit(fleet.mainPane, "/updatefleet");
+  const report = await until(
+    () => fleet.userTexts("mate").find((text) => text.startsWith("[fleet] update:")),
+    "the update's report",
+  );
+  const line = report.split("\n").find((text) => text.includes(worker.session)) ?? "";
+  assert.match(line, /reload completed/);
+  assert.equal(fault.flaked(), FLAKY_READS);
+  assert.notEqual(await fleet.newPid(worker.pane, pid ?? 0), pid);
+});

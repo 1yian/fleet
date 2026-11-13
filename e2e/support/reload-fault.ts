@@ -8,10 +8,33 @@ const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 export const HELPER_ERROR = "LAB-HELPER-FAILURE: pane run refused";
 export const HELPER_SECRET = "sk-labSecretMustNotReachDiagnosticLogs123456";
 
+export const FLAKY_READS = 3;
+
 export function reloadFault() {
   const bin = tempDir("reload-fault-");
   const marker = join(bin, "pane");
   const fired = join(bin, "fired");
+  const flake = join(bin, "flake");
+  const flaked = join(bin, "flaked");
+  const preload = join(bin, "preload.mjs");
+  writeFileSync(
+    preload,
+    `import fs from "node:fs";
+const mode = () => (fs.existsSync(${JSON.stringify(flake)}) ? JSON.parse(fs.readFileSync(${JSON.stringify(flake)}, "utf8")) : {});
+const real = globalThis.fetch;
+if ((process.argv[1] ?? "").endsWith("relaunch.ts")) {
+  globalThis.fetch = async (input, init) => {
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+    const failed = fs.existsSync(${JSON.stringify(flaked)}) ? fs.readFileSync(${JSON.stringify(flaked)}, "utf8").length : 0;
+    if (body.op === "maintenance.read" && mode().pane === process.argv[3] && failed < ${String(FLAKY_READS)}) {
+      fs.appendFileSync(${JSON.stringify(flaked)}, "x");
+      throw new TypeError("fetch failed");
+    }
+    return real(input, init);
+  };
+}
+`,
+  );
   const real = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
   writeFileSync(
     join(bin, "herdr"),
@@ -34,9 +57,18 @@ process.exit(result.status ?? 1);
     { mode: 0o755 },
   );
   return {
-    env: { PATH: `${bin}:${BIN}:${process.env["PATH"] ?? ""}` },
+    env: {
+      PATH: `${bin}:${BIN}:${process.env["PATH"] ?? ""}`,
+      NODE_OPTIONS: `${process.env["NODE_OPTIONS"] ?? ""} --import=${preload}`.trim(),
+    },
     fail(pane: string, skip: boolean): void {
       writeFileSync(marker, JSON.stringify({ pane, skip }));
+    },
+    flake(pane: string): void {
+      writeFileSync(flake, JSON.stringify({ pane }));
+    },
+    flaked(): number {
+      return existsSync(flaked) ? readFileSync(flaked, "utf8").length : 0;
     },
     fired(): boolean {
       return existsSync(fired) && readFileSync(fired, "utf8") === "fired";
