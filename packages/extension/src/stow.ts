@@ -64,6 +64,7 @@ export function registerStow(
         );
       const problem = await stow();
       if (problem !== undefined && ctx.hasUI) ctx.ui.notify(problem, "warning");
+      await ctx.waitForIdle();
       await ctx.reload();
     },
   });

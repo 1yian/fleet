@@ -330,6 +330,38 @@ test("/stow in main files what the model curates, publishes main's shared prefer
   assert.doesNotMatch(after, RegExp(LEO_PREF));
 });
 
+test("/stow waits for an overlapping response after publishing before reloading", async () => {
+  await startLab(600_000);
+  seedMemory();
+  let finish: (() => void) | undefined;
+  const response = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  for (let call = 0; call < 80; call += 1)
+    h.onModel(async (turns) => {
+      if (lastUser(turns) === "An overlapping notification") await response;
+      return { text: "Stowed, captain." };
+    }, "mate");
+  const overlap = fileURLToPath(new URL("../support/stow-overlap.ts", import.meta.url));
+  const mainPane = await startMain(lab, here, h, false, [...piArgs, "-e", overlap]);
+  await connected(2);
+  appendFileSync(join(here.root, "AGENTS.md"), `\n${AGENTS_RULE}\n`);
+  writeFileSync(join(here.parent, "p620-down"), "down\n");
+  try {
+    await lab.submit(mainPane, "/stow");
+    await asked("An overlapping notification");
+    await until(async () => {
+      const screen = await lab.history(mainPane);
+      return screen.includes("Shared preferences did not reach") ? true : undefined;
+    }, "the shared publication failure to be reported");
+  } finally {
+    finish?.();
+  }
+  await reloaded(here.root);
+  await lab.submit(mainPane, "HELLO-AFTER-OVERLAP");
+  assert.match(systemOf(await asked("HELLO-AFTER-OVERLAP")), RegExp(AGENTS_RULE));
+});
+
 test("/stow in a second mate curates only its own home, leaves main's shared copy alone and routes a shared preference to main, then reloads its AGENTS.md and role contract", async () => {
   await startLab(600_000);
   seedMemory();
