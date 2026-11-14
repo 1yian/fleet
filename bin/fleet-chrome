@@ -1,7 +1,0 @@
-#!/bin/sh
-src="$(dirname "$(realpath "$0")")/../packages/chrome/src"
-case "$1" in
-  guard) shift; exec node "$src/guard.ts" "$@" ;;
-  xpra) shift; exec node "$src/xpra-host.ts" "$@" ;;
-  *) echo "usage: fleet-chrome guard|xpra [options]" >&2; exit 64 ;;
-esac

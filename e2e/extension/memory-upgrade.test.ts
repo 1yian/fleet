@@ -202,6 +202,7 @@ test("a standing-rule edit rewrites only the system tail, not the cached role bl
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
   await cleo.call("comment", { lane: "cleo", text: "First step passed." });
   await h.waitForCall(0, "mate", WAIT_MS);
+  await h.waitFor((event) => event["type"] === "settled", "the first turn to settle");
   writeFileSync(join(scratch.root, "data", "captain.md"), "Always answer in haiku.\n");
   await cleo.call("comment", { lane: "cleo", text: "Second step passed." });
   await h.waitForCall(1, "mate", WAIT_MS);
