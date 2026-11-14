@@ -1,6 +1,6 @@
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { laidOut } from "@fleet/protocol";
-import { deviceZone, type Question } from "./format.ts";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { laidOut, REQUEST_CHANGES } from "@fleet/protocol";
+import { type Question } from "./format.ts";
 import { ClockIcon, PenIcon } from "./icons.tsx";
 import { Rich } from "./Rich.tsx";
 
@@ -65,19 +65,25 @@ function Question(props: { readonly text: string; readonly onRead: (() => void) 
 function AskBody(props: Props) {
   const { question } = props;
   const [mode, setMode] = useState<Mode>("options");
+  const originalMerge = question.merge && question.author === "fleet";
+  const options =
+    originalMerge && !question.options.includes(REQUEST_CHANGES)
+      ? [...question.options, REQUEST_CHANGES]
+      : question.options;
   const toOptions = (): void => {
     setMode("options");
   };
   return (
     <>
       <div className="options">
-        {question.options.map((option, index) => (
+        {options.map((option, index) => (
           <button
             type="button"
             key={option}
             className={index === 0 ? "option primary" : "option"}
             onClick={() => {
-              void props.onAnswer(question.hold, option, false);
+              if (originalMerge && option === REQUEST_CHANGES) setMode("words");
+              else void props.onAnswer(question.hold, option, false);
             }}
           >
             {option}
@@ -92,16 +98,18 @@ function AskBody(props: Props) {
       ) : null}
       {mode === "options" ? (
         <div className="ask-foot">
-          <button
-            type="button"
-            className="quiet-action"
-            onClick={() => {
-              setMode("words");
-            }}
-          >
-            <PenIcon />
-            Your words
-          </button>
+          {originalMerge ? null : (
+            <button
+              type="button"
+              className="quiet-action"
+              onClick={() => {
+                setMode("words");
+              }}
+            >
+              <PenIcon />
+              Your words
+            </button>
+          )}
           <button
             type="button"
             className="quiet-action"
@@ -124,6 +132,7 @@ function Words(props: {
   readonly onCancel: () => void;
 }) {
   const { question, onAnswer, onCancel } = props;
+  const changes = question.merge && question.author === "fleet";
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const send = async (): Promise<void> => {
@@ -153,7 +162,7 @@ function Words(props: {
       }}
     >
       <label className="write-prompt" htmlFor={`words-${String(question.hold)}`}>
-        Your answer
+        {changes ? "What should change before it merges?" : "Your answer"}
       </label>
       <textarea
         id={`words-${String(question.hold)}`}
@@ -161,14 +170,18 @@ function Words(props: {
         autoFocus
         rows={3}
         value={text}
-        placeholder="Write your answer"
+        placeholder={changes ? "Say what to fix" : "Write your answer"}
         onChange={(event) => {
           setText(event.target.value);
         }}
         onKeyDown={key}
       />
       <div className="write-actions">
-        <p className="hint">Goes to main as your words.</p>
+        <p className="hint">
+          {changes
+            ? "Goes to main as your words, and the card goes back to the worker."
+            : "Goes to main as your words."}
+        </p>
         <button type="button" className="quiet" onClick={onCancel}>
           Cancel
         </button>
@@ -184,22 +197,13 @@ function Later(props: {
   readonly onLater: (said: string) => Promise<string | undefined>;
   readonly onCancel: () => void;
 }) {
-  const inputId = useId();
-  const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
   const send = async (said: string): Promise<void> => {
-    const words = said.trim();
-    if (words === "" || sending) return;
+    if (sending) return;
     setSending(true);
-    setProblem(await props.onLater(words));
+    setProblem(await props.onLater(said));
     setSending(false);
-  };
-  const key = (event: KeyboardEvent): void => {
-    if (event.key === "Escape") {
-      event.stopPropagation();
-      props.onCancel();
-    }
   };
   return (
     <div className="later" role="group" aria-label="Ask me later">
@@ -216,46 +220,10 @@ function Later(props: {
           {preset.label}
         </button>
       ))}
-      <form
-        className="write"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send(text);
-        }}
-      >
-        <label className="write-prompt" htmlFor={inputId}>
-          Or say when
-        </label>
-        <input
-          id={inputId}
-          type="text"
-          aria-label="Until when"
-          autoFocus
-          autoComplete="off"
-          value={text}
-          placeholder="Friday 4PM, Nov 20, in 2 hours"
-          onChange={(event) => {
-            setText(event.target.value);
-          }}
-          onKeyDown={key}
-        />
-        {problem === undefined ? null : (
-          <p className="later-problem" role="alert">
-            {problem}
-          </p>
-        )}
-        <div className="write-actions">
-          <p className="hint">
-            It comes back to you then. A time with no zone is read in {deviceZone()}.
-          </p>
-          <button type="button" className="quiet" onClick={props.onCancel}>
-            Cancel
-          </button>
-          <button type="submit" className="send" disabled={sending || text.trim() === ""}>
-            Hold until then
-          </button>
-        </div>
-      </form>
+      {problem === undefined ? null : <p role="alert">{problem}</p>}
+      <button type="button" className="quiet" onClick={props.onCancel}>
+        Cancel
+      </button>
     </div>
   );
 }

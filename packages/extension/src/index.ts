@@ -30,7 +30,6 @@ import {
 } from "./lane-config.ts";
 import { applyEnvSecrets, bwsFor, laneToken } from "./lane-secrets.ts";
 import { Link, type Push } from "./link.ts";
-import { showPane } from "./pane/index.ts";
 import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
@@ -316,7 +315,6 @@ function start(
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);
     showBoardLink(ctx, url);
-    if (lane === "main") showPane(pi, link, ctx, url);
   }
   watchMainCardd(pi, link, { url, role, lane }, HOME());
   if (lane === "main") {

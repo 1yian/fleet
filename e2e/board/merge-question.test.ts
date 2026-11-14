@@ -74,13 +74,19 @@ test("Needs you: Approve & merge moves the card to Merging as the captain's appr
   assert.deepEqual([answer.fields["choice"], answer.fields["approved"]], [APPROVE, true]);
 });
 
-test("Needs you: the fleet's own merge question offers Approve & merge and his own words, and his words go to main and approve nothing", async () => {
+test("Needs you: original Request changes asks what to fix and the written answer approves nothing", async () => {
   await open();
   const title = "Board: thread as a story, steers fold away";
   const asked = card(title);
-  assert.equal(await asked.getByRole("button", { name: "Request changes" }).count(), 0);
-  await asked.getByRole("button", { name: "Your words" }).click();
-  await asked.getByText("Your answer").waitFor();
+  assert.equal(await asked.getByRole("button", { name: "Your words" }).count(), 0);
+  await asked.getByRole("button", { name: "Request changes" }).click();
+  await asked.getByText("What should change before it merges?").waitFor();
+  assert.equal(
+    (await cardd.thread(fleet.cards["merge"]?.id ?? 0)).entries.some(
+      (entry) => entry.kind === "answer",
+    ),
+    false,
+  );
   const send = asked.getByRole("button", { name: "Send answer" });
   assert.equal(await send.isDisabled(), true);
   await shoot("merge-words-1440");

@@ -447,6 +447,6 @@ test("a merge question put off comes back as the same merge question with its ow
   const [back] = (await fleet.cardd.board()).holds;
   assert.deepEqual(
     [back?.question, back?.merge, back?.options],
-    [`Merge ${PR}?`, true, ["Approve & merge"]],
+    [`Merge ${PR}?`, true, ["Approve & merge", "Request changes"]],
   );
 });

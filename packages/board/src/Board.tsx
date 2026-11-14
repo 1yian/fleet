@@ -9,7 +9,6 @@ import {
   type Facts,
   type Swimlane,
 } from "./format.ts";
-import { Attention } from "./Attention.tsx";
 import { ChevronIcon, ClockIcon, StatusIcon, type Glyph } from "./icons.tsx";
 import { DoneRow, MateRow, TaskCard } from "./TaskCard.tsx";
 
@@ -237,7 +236,6 @@ export function Kanban(props: Props) {
   );
   return (
     <>
-      <Attention cards={shown} now={now} onOpen={props.onOpen} />
       <div className={columns.merging.length === 0 ? "board-body no-merging" : "board-body"}>
         <div className="swimlanes">
           <Heads columns={columns} />

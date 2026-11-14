@@ -387,7 +387,7 @@ test("a merge question is part of the hold: it goes up through main, and is with
   });
   assert.equal(await status(cleo, card), "needs-you");
   const merge = await theHold();
-  assert.deepEqual(merge.options, [APPROVE]);
+  assert.deepEqual(merge.options, [APPROVE, "Request changes"]);
   assert.equal(merge.merge, true);
 
   await cleo.call("comment", { card: card.id, text: "Fix the failing check first." });

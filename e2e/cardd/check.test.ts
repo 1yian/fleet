@@ -259,10 +259,10 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
   assert.match(
     reminder.body,
     new RegExp(
-      `^reminder: ${name} is finished and still open \\(with-mate, \\d+ min\\)\\. Close it with close\\(`,
+      `^reminder: ${name} is finished and still open \\(with-mate, \\d+ min\\)\\. Relay the findings, then close it with close\\(`,
     ),
   );
-  assert.doesNotMatch(reminder.body, /relay/i);
+  assert.match(reminder.body, /Relay the findings/);
   assert.match(reminder.body, /close\(card, summary, next=<build, decision, or drop>\)/);
   await reach(cleo, card, "finished", 2);
   await reach(cleo, card, "finished", 3);
