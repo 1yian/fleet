@@ -1,6 +1,8 @@
 import Type from "typebox";
 
 export const APPROVE_MERGE = "Approve & merge";
+export const REQUEST_CHANGES = "Request changes";
+export const MERGE_OPTIONS = [APPROVE_MERGE, REQUEST_CHANGES] as const;
 
 export const ApprovesArg = Type.Optional(
   Type.Array(Type.String({ minLength: 1 }), {

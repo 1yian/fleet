@@ -4,6 +4,6 @@ Firstmate, rebuilt: cards in one SQLite store (`cardd`), one `fleet` Pi extensio
 
 See [docs/spec.md](docs/spec.md) for the design and [docs/build-plan.md](docs/build-plan.md) for the build order.
 
-Main says each arriving decision once in chat. Answer there or on the board. The [pane](docs/pane.md) shows read-only attention counts and the board URL.
+Discuss decisions in chat or answer on the board. Ask for a [decision walkthrough](docs/decision-walkthrough.md) to take them one at a time. The [pane](docs/pane.md) shows the board URL, without decision counts or a strip.
 
 Fleet does not provide or manage a browser. Open the board in your own browser.

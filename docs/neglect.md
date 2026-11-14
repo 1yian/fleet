@@ -1,6 +1,6 @@
 # The neglect view
 
-Every open work card carries a `pulse`: who has it, whether anything runs for it now, when it last moved, and what it waits on. `cardd` computes it. The board, the Pi pane, and main's reminders read the same field, so none of them keeps its own limit.
+Every open work card carries a `pulse`: who has it, whether anything runs for it now, when it last moved, and what it waits on. `cardd` computes it. Mate tools and main's reminders read this field. The original captain-facing UI has no pulse overlay, Attention strip, or per-card pulse line.
 
 A standing card (a lane home or a schedule holder) and a closed card have no pulse.
 
@@ -35,7 +35,7 @@ Captain decisions come first. A live long job, an armed dated hold, or a future 
 | `parked`  | A dated hold with a missing watcher or no stated reason.                                                                            | The hold age               |
 | `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker.                                             | `movedAt`                  |
 
-The captain's later is his own choice and his own date, so it is never parked and never an idle park. A hold that says `said` (or a board "later") is `waiting` until its date, however old the hold is, and even on a card of his own. Nobody is asked to act on it: main and the mate see it only in the information list of dated waits, and the captain's status bar does not count it. When its date passes the hold is a decision again, shown on the board and counted by the read-only attention pane on its next refresh.
+The captain's later is his own choice and his own date, so it is never parked and never an idle park. A hold that says `said` (or a board "later") is `waiting` until its date, however old the hold is, and even on a card of his own. Nobody is asked to act on it: main and the mate see it only in the information list of dated waits, and it stays off Needs you. When its date passes the hold is a decision again, shown on the board.
 
 A hold ends a worker's report as an attention: `standing` shows `attention` only while a card has no open hold. So a card whose worker reported `blocked`, `stopped`, or `failed` and whose mate then dated it on a running job, schedule, or worker is `waiting` and quiet. When the job, schedule, or worker it names goes, it is an idle park (a dated hold that names nothing is one too), and when the date passes, it is idle. The report stays in the card's history.
 
@@ -58,16 +58,8 @@ Main is told in the 30 minute reminder (see [The timed check](code.md#the-timed-
 - An idle park is listed for action by its holder: start what it waits on, or clear the hold. It ages from the hold first opening.
 - Armed dated holds stay information-only regardless of age. A declared watcher need not be verifiable by fleet. An outside date needs no polling. A future worker checkpoint is also quiet until its date.
 
-The captain is told by the counts in the status bar of main's pane and by the board's Attention strip.
-
-## Where it shows
-
-- Pi pane: `/pulse` opens an overlay with every open card, quiet first, running cards in one line. See [pane.md](pane.md).
-- Pi pane: attention counts read `pulse`. A notice of any kind counts, so an idle card past 4 hours is on main's pane as soon as main is told. [pane.md](pane.md#attention) owns the footer counts, including landings, and the read-only attention row.
-- Board: an Attention strip above the lanes, and one line on each card with who has it, what runs, when it moved, what it waits on, and how many steps are behind it. A Needs you card's line says when it moved and how many steps are behind it, so an expired captain hold with work left still shows what is left. The phone's compact rows still hide the line. The board is the captain's, so the strip and the line's alarm show only what the captain is told: a notice of `captain` or `urgent`, or a broken or stalled state. The strip also lists his own cards. An idle card between 4 and 24 hours is main's alone: the board's line for it says what is true and raises no alarm.
-
-Sorting puts the louder notice first, then the state (broken, idle, parked, stalled, you, waiting, running), then the oldest.
+The captain hears decisions and escalations through main's chat and sees holds on the board. See [pane.md](pane.md) for the restored original experience.
 
 ## Evidence
 
-`e2e/cardd/pulse.test.ts` reads the pulse of a real `cardd` over each state, with cards aged by writing old times into the scratch database, and reads `behind` as a mate of another lane sees it. `e2e/cardd/neglect.test.ts` reads the reminders, that the mate that owns a card is not told, and that a card the captain put off is not named for action before its date. `e2e/cardd/pulse.test.ts` also dates blocked and failed cards on a schedule, then removes the schedule and lets a date pass. `e2e/extension/pulse.test.ts` opens `/pulse` in a real Pi pane. `e2e/board/attention.test.ts` reads the strip and the card line in Chromium.
+`e2e/cardd/pulse.test.ts` and `e2e/cardd/neglect.test.ts` exercise preserved server pulse and reminder behavior, including covered waits. `e2e/extension/pane.test.ts` and `e2e/board/attention.test.ts` verify that post-feedback neglect displays are absent while decisions remain answerable.

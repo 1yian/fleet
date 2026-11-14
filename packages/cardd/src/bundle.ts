@@ -172,7 +172,7 @@ function bundleText(items: readonly Item[]): string {
       inGroup(items, "act"),
     ),
     ...group(
-      "Waiting on the captain. You put each to him in chat when it arrived: do not say it again or list them. Do not hold a card with a date to quiet it:",
+      "Waiting on the captain. If he wrote to you since your last list of these, bring them up again as one short list with your recommendation for each. If he did not, or he said afk, he is away: leave them for the catch-up. Do not hold a card with a date to quiet it:",
       inGroup(items, "captain"),
     ),
     ...group(

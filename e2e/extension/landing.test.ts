@@ -162,7 +162,7 @@ test("a merged report for a PR from another branch closes the card Done on its o
         `Closed automatically: c-1 is done. Unlanded work is archived in local:${archive}.`,
       ),
     );
-    assert.doesNotMatch(message, /relay/i);
+    assert.match(message, /Relay the outcome with the PR URL/);
     return { text: "relayed" };
   }, "mate");
   await mateConnected();

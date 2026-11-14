@@ -50,6 +50,7 @@ const sameHold = (a: Hold, b: Hold): boolean =>
   a.holder === b.holder &&
   a.question === b.question &&
   a.merge === b.merge &&
+  a.originalMerge === b.originalMerge &&
   sameList(a.options, b.options) &&
   sameList(a.approves, b.approves);
 
@@ -147,8 +148,16 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
     const { hold } = each.standing.facts;
     const open = card.status !== "done" && card.status !== "dropped";
     if (open && hold !== undefined && askingCaptain(hold, now)) {
-      const { entry, question, options, merge, author } = hold;
-      holds.push({ card: card.id, hold: entry, question, options: [...options], merge, author });
+      const { entry, question, options, merge, originalMerge, author } = hold;
+      holds.push({
+        card: card.id,
+        hold: entry,
+        question,
+        options: [...options],
+        merge,
+        originalMerge,
+        author,
+      });
     }
     return card;
   });

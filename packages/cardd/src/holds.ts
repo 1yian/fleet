@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { APPROVE_MERGE, check, OPS, type Card, type Holder } from "@fleet/protocol";
+import { APPROVE_MERGE, MERGE_OPTIONS, check, OPS, type Card, type Holder } from "@fleet/protocol";
 import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
@@ -357,7 +357,7 @@ export function mergeQuestion(
   const holder: Holder = levelsOf(db, card).includes("main") ? "main" : "captain";
   const fields = {
     holder,
-    options: [APPROVE_MERGE],
+    options: [...MERGE_OPTIONS],
     approves: [APPROVE_MERGE],
     merge: true,
     until: null,

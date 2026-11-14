@@ -45,7 +45,7 @@ test("a done ship card asks the captain; approval, the worker's merge, and the m
   assert.equal(report.fields["pr"], PR);
   assert.equal((await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.pr, PR);
   await assert.rejects(approve(card, "sure"), {
-    message: `choice must be one of the options of c-${String(card.id)}'s merge question: ${APPROVE}`,
+    message: `choice must be one of the options of c-${String(card.id)}'s merge question: ${APPROVE} | Request changes`,
   });
 
   await approve(card);

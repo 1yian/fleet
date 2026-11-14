@@ -21,6 +21,7 @@ export interface Hold {
   readonly question: string;
   readonly options: readonly string[];
   readonly merge: boolean;
+  readonly originalMerge: boolean;
   readonly approves: readonly string[];
   readonly keys: readonly string[];
   readonly fromWorker: boolean;
@@ -65,19 +66,27 @@ interface Tally {
 function holdFrom(tally: Tally, entry: Entry): void {
   const merge = entry.fields["merge"] === true;
   const until = entry.fields["until"];
+  const open = tally.hold;
+  const options = textsOf(entry.fields["options"]);
+  const approves = approvesOf(entry.fields);
+  const originalMerge =
+    merge &&
+    (entry.author === "fleet" ||
+      (open?.originalMerge === true &&
+        JSON.stringify([options, approves]) === JSON.stringify([open.options, open.approves])));
   const written = {
     holder: holderOf(entry.fields["holder"]),
     question: entry.body,
-    options: textsOf(entry.fields["options"]),
+    options,
     merge,
-    approves: approvesOf(entry.fields),
+    originalMerge,
+    approves,
     until: typeof until === "number" ? until : null,
     wait: parseWait(entry.fields["wait"]),
     remaining: parseCards(entry.fields["remaining"]),
     author: entry.author,
     entry: entry.id,
   };
-  const open = tally.hold;
   if (open === undefined) {
     const opened = { occurrence: ++tally.occurrences, openedAt: entry.createdAt };
     tally.hold = { ...written, ...opened, keys: [], fromWorker: false };
@@ -94,6 +103,7 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       question: entry.body,
       options: [],
       merge: false,
+      originalMerge: false,
       approves: [],
       keys: [key],
       fromWorker: true,
