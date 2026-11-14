@@ -65,7 +65,7 @@ function Question(props: { readonly text: string; readonly onRead: (() => void) 
 function AskBody(props: Props) {
   const { question } = props;
   const [mode, setMode] = useState<Mode>("options");
-  const originalMerge = question.merge && question.author === "fleet";
+  const { originalMerge } = question;
   const options =
     originalMerge && !question.options.includes(REQUEST_CHANGES)
       ? [...question.options, REQUEST_CHANGES]
@@ -132,7 +132,7 @@ function Words(props: {
   readonly onCancel: () => void;
 }) {
   const { question, onAnswer, onCancel } = props;
-  const changes = question.merge && question.author === "fleet";
+  const changes = question.originalMerge;
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const send = async (): Promise<void> => {

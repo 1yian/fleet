@@ -421,6 +421,7 @@ export const BoardSchema = Type.Object({
       question: Type.String(),
       options: Type.Array(Type.String()),
       merge: Type.Boolean(),
+      originalMerge: Type.Boolean(),
       author: Type.Optional(Type.String()),
     }),
   ),

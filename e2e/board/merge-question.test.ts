@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
@@ -111,12 +112,12 @@ test("Needs you: original Request changes asks what to fix and the written answe
   assert.equal(await region("Merging").getByRole("article", { name: title }).count(), 0);
 });
 
-async function rewrittenMergeAsk(title: string): Promise<Card> {
+async function mergeAsk(title: string, mate: Session = main): Promise<Card> {
   const created = check(
     CardSchema,
-    await main.call("card.new", { title, kind: "ship", project: "fleet" }),
+    await mate.call("card.new", { title, kind: "ship", project: "fleet" }),
   );
-  const began = await main.call("attempt.begin", {
+  const began = await mate.call("attempt.begin", {
     card: created.id,
     host: "maverick",
     task: title,
@@ -124,6 +125,11 @@ async function rewrittenMergeAsk(title: string): Promise<Card> {
   const worker = await cardd.connect(check(OPS["attempt.begin"].result, began).token);
   const url = "https://github.com/acme/fleet/pull/51";
   await worker.call("report", { status: "done", text: "PR green and ready", pr: url });
+  return created;
+}
+
+async function rewrittenMergeAsk(title: string): Promise<Card> {
+  const created = await mergeAsk(title);
   await main.call("hold", {
     card: created.id,
     question: ROLL_QUESTION,
@@ -132,6 +138,94 @@ async function rewrittenMergeAsk(title: string): Promise<Card> {
   });
   return created;
 }
+
+async function expireLater(id: number): Promise<void> {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) SELECT card, author, kind, body, json_set(fields, '$.until', ?), created_at FROM entries WHERE card = ? AND kind = 'hold' AND author = 'captain' ORDER BY id DESC LIMIT 1",
+    ).run(Date.now() - 1, id);
+  } finally {
+    db.close();
+  }
+  await page.reload();
+}
+
+async function requestWrittenChanges(created: Card): Promise<void> {
+  const asked = region("Needs you").getByRole("article", { name: created.title });
+  await asked.getByRole("button", { name: "Request changes" }).click();
+  await asked.getByText("What should change before it merges?").waitFor();
+  assert.equal(
+    (await cardd.thread(created.id)).entries.some((entry) => entry.kind === "answer"),
+    false,
+  );
+  const words = "Keep the error visible before merging";
+  await asked.getByRole("textbox", { name: "Your words" }).fill(words);
+  await asked.getByRole("button", { name: "Send answer" }).click();
+  await region("In progress").getByRole("article", { name: created.title }).waitFor();
+  const entries = (await cardd.thread(created.id)).entries;
+  const heard = entries.findLast((entry) => entry.kind === "comment");
+  assert.deepEqual(
+    [heard?.author, heard?.body, heard?.fields["written"]],
+    ["captain", words, true],
+  );
+  assert.equal(
+    entries.some((entry) => entry.kind === "answer"),
+    false,
+  );
+}
+
+for (const legacy of [false, true]) {
+  for (const rewrite of ["none", "escalate", "later"]) {
+    test(`Fleet merge words survive ${rewrite}, legacy=${String(legacy)}`, async () => {
+      const title = "Preserve original merge interaction";
+      const created = await mergeAsk(title, rewrite === "escalate" ? fleet.cleo : main);
+      if (legacy) {
+        const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+        try {
+          db.prepare(
+            "INSERT INTO entries (card, author, kind, body, fields, created_at) SELECT card, author, kind, body, json_set(fields, '$.options', json(?)), created_at FROM entries WHERE card = ? AND kind = 'hold' AND author = 'fleet' ORDER BY id DESC LIMIT 1",
+          ).run(JSON.stringify([APPROVE]), created.id);
+        } finally {
+          db.close();
+        }
+      }
+      if (rewrite === "escalate") {
+        const hold = (await cardd.thread(created.id)).entries.findLast((e) => e.kind === "hold");
+        assert.ok(hold);
+        await main.call("hold", { card: created.id, question: hold.body, to: "captain" });
+      }
+      await open();
+      if (rewrite === "later") {
+        const asked = card(title);
+        await asked.getByRole("button", { name: "Later", exact: true }).click();
+        await asked.getByRole("button", { name: "In 3 hours" }).click();
+        await region("Up next").getByRole("article", { name: title }).waitFor();
+        await expireLater(created.id);
+      }
+      await requestWrittenChanges(created);
+    });
+  }
+}
+
+test("Changed approvals remain authoritative even with fleet option labels", async () => {
+  const created = await mergeAsk("Customized approval meaning");
+  const hold = (await cardd.thread(created.id)).entries.findLast((e) => e.kind === "hold");
+  assert.ok(hold);
+  await main.call("hold", { card: created.id, question: hold.body, approves: [] });
+  await open();
+  const asked = card(created.title);
+  await asked.getByRole("button", { name: "Your words" }).waitFor();
+  await asked.getByRole("button", { name: APPROVE }).click();
+  await region("In progress").getByRole("article", { name: created.title }).waitFor();
+  const entries = (await cardd.thread(created.id)).entries;
+  const heard = entries.findLast((entry) => entry.kind === "comment");
+  assert.deepEqual([heard?.body, heard?.fields["choice"]], [APPROVE, APPROVE]);
+  assert.equal(
+    entries.some((entry) => entry.kind === "answer"),
+    false,
+  );
+});
 
 test("Needs you: a merge question the mate rewrote shows his question and options, laid out, and an approving option approves", async () => {
   const title = "Repair the recording egress group";
