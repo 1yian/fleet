@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { parseAccess } from "./access.ts";
 import { openDatabase } from "./db.ts";
-import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
+import { fillRepo, type Hosts } from "./pulls.ts";
 import { stampLogLines } from "./log.ts";
 import { serve } from "./server.ts";
 import { DELIVERIES } from "@fleet/protocol";
@@ -175,7 +175,7 @@ if (command === "serve") {
   }
   const repo = values.repo === undefined ? null : ownerName(values.repo, "--repo");
   addProject(db, { name: rest[1], delivery: values.delivery, clones, yolo: values.yolo, repo });
-  await Promise.all(projectsWithoutRepo(db).map((project) => fillRepo(db, hosts, project)));
+  if (repo === null) await fillRepo(db, hosts, { name: rest[1], clones });
   console.log(`${rest[1]}: added`);
   console.log(describeRepo(db, rest[1]));
 } else if (command === "project" && rest[0] === "list") {
