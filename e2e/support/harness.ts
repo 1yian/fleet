@@ -123,8 +123,8 @@ export class Pi {
     return poll(() => this.uiRequests.find(match), what);
   }
 
-  prompt(message: string): void {
-    this.command({ type: "prompt", message });
+  prompt(message: string, streamingBehavior?: "steer" | "followUp"): void {
+    this.command({ type: "prompt", message, streamingBehavior });
   }
 
   compact(): void {
