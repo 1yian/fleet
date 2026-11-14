@@ -60,6 +60,8 @@ You start in your own isolated copy of the project (a git worktree), on a placeh
    Under no-mistakes delivery, the pipeline rebases for you: run `no-mistakes axi run` again instead.
    Under local-only delivery, your base is the clone's local base branch, not origin's: run `git rebase <base>` with no fetch, and never push. A local-only branch lands only as a fast-forward, so rebase it when the base has moved, and then rerun the full checks that AGENTS.md requires for a change that never reaches CI, since no CI runs for it.
 
+12. Use `chrome-devtools-axi` through bash for browser work (`chrome-devtools-axi --help`). Set `CHROME_DEVTOOLS_AXI_SESSION=fleet-c-<card>-a<attempt>` for every command so your browser is separate from other workers. Open a page with `open <url>` and read it with `snapshot`. The default is your own headless Chrome, not the captain's browser. Stop only your own named session when finished. Never drive Safari, attach to the captain's browser, or open windows on his screen. If the CLI or Chrome is unavailable, report the missing prerequisite rather than starting a shared browser.
+
 ## Project memory
 
 A project's `AGENTS.md` or `CLAUDE.md` is loaded into every agent session, so edit it only to correct information that is factually wrong, including information your own change made wrong. Never edit it to add missing knowledge.

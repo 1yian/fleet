@@ -27,7 +27,6 @@
     ".pi/extensions",
     "packages/cardd/src",
     "packages/cardd/scripts",
-    "packages/chrome/src",
     "packages/protocol/src",
     "packages/extension/src",
     "e2e"

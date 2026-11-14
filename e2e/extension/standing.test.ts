@@ -24,7 +24,6 @@ const WAIT_MS = 90_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
 const PROBE = fileURLToPath(new URL("../support/probe.ts", import.meta.url));
-
 const MAIN_PREF = "MAIN-DOMAIN-PREF";
 const LEO_PREF = "LEO-DOMAIN-PREF";
 const SHARED_ONE = "SHARED-PREF-ONE";
@@ -38,11 +37,9 @@ const LEO_OLD = "LEO-OLD-FACT";
 const LEO_NEW = "LEO-NEW-LEARNING";
 const LEO_PROPOSAL = "LEO-SHARED-PROPOSAL";
 const AGENTS_RULE = "AGENTS-RULE-ADDED-AFTER-START";
-
 const daysAgo = (days: number): string =>
   new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 const TODAY = daysAgo(0);
-
 let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
@@ -96,12 +93,10 @@ afterEach(async (t) => {
 });
 
 const dataFile = (home: string, name: string): string => join(home, "data", name);
-
 function put(home: string, name: string, text: string): void {
   mkdirSync(join(home, "data"), { recursive: true });
   writeFileSync(dataFile(home, name), text);
 }
-
 const read = (home: string, name: string): string | undefined =>
   existsSync(dataFile(home, name)) ? readFileSync(dataFile(home, name), "utf8") : undefined;
 
@@ -131,10 +126,8 @@ async function paneOf(label: string): Promise<string> {
 
 const systemOf = (turns: readonly Turn[]): string =>
   turns.find((turn) => turn.role === "system")?.text ?? "";
-
 const lastUser = (turns: readonly Turn[]): string =>
   turns.findLast((turn) => turn.role === "user")?.text ?? "";
-
 async function asked(word: string): Promise<Turn[]> {
   return until(
     () => h.callsOf("mate").find((turns) => lastUser(turns).includes(word)),
@@ -161,7 +154,6 @@ async function reloaded(home: string): Promise<void> {
 }
 
 const readOnly = (file: string): boolean => (statSync(file).mode & 0o222) === 0;
-
 type Move =
   { readonly text: string } | { readonly tool: string; readonly args: Record<string, string> };
 
@@ -181,7 +173,6 @@ const write = (path: string, content: string): Move => ({
   tool: "write",
   args: { path, content },
 });
-
 function staleLines(message: string): string[] {
   return message
     .split("\n")
@@ -330,6 +321,38 @@ test("/stow in main files what the model curates, publishes main's shared prefer
   assert.doesNotMatch(after, RegExp(LEO_PREF));
 });
 
+test("/stow waits for an overlapping response after publishing before reloading", async () => {
+  await startLab(600_000);
+  seedMemory();
+  let finish: (() => void) | undefined;
+  const response = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  for (let call = 0; call < 80; call += 1)
+    h.onModel(async (turns) => {
+      if (lastUser(turns) === "An overlapping notification") await response;
+      return { text: "Stowed, captain." };
+    }, "mate");
+  const overlap = fileURLToPath(new URL("../support/stow-overlap.ts", import.meta.url));
+  const mainPane = await startMain(lab, here, h, false, [...piArgs, "-e", overlap]);
+  await connected(2);
+  appendFileSync(join(here.root, "AGENTS.md"), `\n${AGENTS_RULE}\n`);
+  writeFileSync(join(here.parent, "p620-down"), "down\n");
+  try {
+    await lab.submit(mainPane, "/stow");
+    await asked("An overlapping notification");
+    await until(async () => {
+      const screen = await lab.history(mainPane);
+      return screen.includes("Shared preferences did not reach") ? true : undefined;
+    }, "the shared publication failure to be reported");
+  } finally {
+    finish?.();
+  }
+  await reloaded(here.root);
+  await lab.submit(mainPane, "HELLO-AFTER-OVERLAP");
+  assert.match(systemOf(await asked("HELLO-AFTER-OVERLAP")), RegExp(AGENTS_RULE));
+});
+
 test("/stow in a second mate curates only its own home, leaves main's shared copy alone and routes a shared preference to main, then reloads its AGENTS.md and role contract", async () => {
   await startLab(600_000);
   seedMemory();
@@ -400,10 +423,8 @@ const preserved = (home: string): string[] =>
   readdirSync(join(home, "data"))
     .filter((name) => name.startsWith("captain-shared.edited-"))
     .sort();
-
 const preservedTexts = (home: string): string[] =>
   preserved(home).map((name) => readFileSync(join(home, "data", name), "utf8"));
-
 function handEdit(home: string, text: string): void {
   const file = dataFile(home, "captain-shared.md");
   chmodSync(file, 0o644);

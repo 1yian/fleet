@@ -337,9 +337,9 @@ The mate edits these files itself: it reads a file in full, then writes a consid
 
 1. The mate gets the stow instructions and a report of its memory files: each entry with its tier and age, and the stale ones flagged. An aging entry is stale after 30 days, and a perishable one after 7. Entries in `captain.md` and `captain-shared.md` do not age unless they carry a marker.
 2. The mate curates the files, routes what only this conversation knows to its owner, and files the open work it holds as cards on the board (`card_new`, `comment`, `hold`). It never writes open work into a memory file. A stale entry moves to `data/memory-archive.md`, which nothing loads. A second mate sends a shared preference to main with `comment`, and main files it.
-3. When that turn ends, main copies `data/captain-shared.md` to every host. Then the mate reloads in the same conversation: Pi reads `AGENTS.md` and the other context files again and rebuilds the role contract, so a pulled change to `AGENTS.md` takes effect without a restart. The conversation continues, and the mate reconnects to cardd.
+3. When that turn ends, main copies `data/captain-shared.md` to every host. Then the mate waits for any overlapping response to finish before reloading in the same conversation: Pi reads `AGENTS.md` and the other context files again and rebuilds the role contract, so a pulled change to `AGENTS.md` takes effect without a restart. The conversation continues, and the mate reconnects to cardd.
 
-A stow in main does not stow the second mates: each one runs its own `/stow`.
+A stow in main also requests a stow from the second mates. Each waits for its turn and jobs to finish, curates its own memory, then relaunches in the same conversation. Stopped and held lanes are left alone. Main shows the request status and hears when each finishes. A stow in a second mate affects only that mate.
 
 ### Conversation memory (optchat)
 
@@ -698,181 +698,52 @@ Skill text is edited in one place: the ystack lane. Every other lane, and every 
 4. Before a lane that holds a very large tree gets the tab for good, run `fleet files` in it by hand and note how long the first listing of its biggest folder takes. If it stalls, set `"files": {"previews": false}` for that lane.
 5. In the ystack lane, nothing more is needed if its `args` already load the scratch worktree's `skills/` as in "Changing a lane's settings".
 
-## The host's Chrome and the captain's windows
+## Worker browser
 
-This is optional. It is for a host whose workers share one Chrome, as p620 does. The captain gets that Chrome's windows on his Mac as native windows, and workers keep driving it over DevTools on `127.0.0.1:9222`. Nothing here talks to `cardd`. `/updatefleet` moves the checkout that these units run from, but it does not restart them. See [After an update](#after-an-update).
+Workers use `chrome-devtools-axi` through bash. Install `chrome-devtools-axi@0.1.46` and `chrome-devtools-mcp@1.13.0` on each browser-capable host. Run `chrome-devtools-axi --help` for the commands. `open <url>` navigates and `snapshot` reads the page.
 
-The guard stops reads of a password that the captain typed natively, through the shared DevTools port, by habit and by ordinary tools. A worker who takes deliberate steps can still get it, for example by finding Chrome's real loopback port. A worker also cannot read the body of a form that it submits by navigation, because the guard hides every such body.
+The CLI launches headless Chrome by default. Give each worker its own `CHROME_DEVTOOLS_AXI_SESSION`, such as `fleet-c-123-a1`, for every browser command. End only that session with `chrome-devtools-axi stop` when finished. Do not attach to the captain's browser or use Safari automation.
 
-The pieces, all in `packages/chrome` and run through `<checkout>/bin/fleet-chrome` on the host and `<checkout>/bin/fleet-attach` on the Mac:
+On Linux, ystack's `fleet.linuxBrowser.enable` installs Chrome and sets `CHROME_DEVTOOLS_AXI_MCP_PATH` to its executable-path wrapper. Without ystack, set `CHROME_DEVTOOLS_AXI_EXECUTABLE_PATH` to the installed Chrome binary. The browser needs a working Chrome sandbox. Fleet does not provide Chrome, a shared profile, a password guard, a viewer, or a Mac attach command.
 
-- **The guard** (`fleet-chrome guard`) listens on `127.0.0.1:9222` where Chrome did. Chrome moves to a port that it picks itself (`--remote-debugging-port=0`), and the guard finds it in `DevToolsActivePort` in the profile folder. While the captain types a password into a tab, the guard refuses the worker calls that read that tab and strips what he typed from the events and request bodies that workers see. A read that was let through before he typed is refused when its answer comes back after. A request that carried a typed password keeps its body and its answer hidden after the field is empty. The guard does not hide addresses: a password form that submits with GET puts the password in the address, and workers see addresses as they are. While the guard cannot see Chrome, as when it has just started or has lost its link, it refuses those reads too and says `The browser guard is not ready`. A tab that the guard has not finished looking at reads as `not ready` in the same way, as while the tab or one of its frames is loading. The guard looks into shadow roots, and it holds a page back for 10 s at most while it loads. What a page can still expose in the gaps is listed in [code.md](code.md#native-chrome-attach). Everything else works as before. The guard covers the shared DevTools port: it stops reads by habit and by tools that go through that port. It does not stop a worker that looks for Chrome's real loopback port on purpose.
-- **Xpra** (`fleet-chrome xpra`) shows the windows of Chrome's display. It listens on one unix socket (`$XDG_RUNTIME_DIR/xpra/<host>-<display>`, mode 600) and on no network port. The Mac reaches it through `ssh <host> xpra _proxy`. It starts only when the guard answers on 9222, and it stops when the guard stops, so there is no way to attach without the guard.
-- **The launcher** (`fleet-attach <host>`) checks over ssh that the guard answers, then runs the Xpra client with `--window-close=disconnect`. It checks again before every attach.
+Existing shared browser services are separate host configuration. Updating Fleet does not stop them. Coordinate their retirement with the host configuration owner before updating a checkout that their units run from. Preserve signed-in profiles and obtain approval before stopping Chrome or its virtual display: a graceful Chrome exit can discard session-only cookies.
 
-The clipboard is off. Both ends must say yes for it to work: `fleet-chrome xpra --clipboard` on the host and `fleet-attach --clipboard` on the Mac. Without the flag, each end passes `--clipboard=no` to Xpra. Turning it on makes the captain's Mac clipboard readable on the host by every process of the desktop user, workers included, so anything he copies can be read. It is a decision for each host (change the unit's `ExecStart`) and for each attach (the launcher flag).
+### Sign in through your own Chrome
 
-What the captain sees: every window of the host's Chrome, including every worker's tabs, with Chrome's own tab strip and shortcuts. Closing a window, or Cmd+Q, leaves all windows and ends the launcher. Every tab keeps running on the host. Run `fleet-attach` again to come back. Two limits: the page follows the size of his window, so a worker's screenshots change when he resizes it, and text is soft on a Retina display because the host Chrome runs at device scale 1.
+Use Chrome's remote-target inspector. Nothing new is installed on the Mac. This inspects the worker's headless Chrome, not your personal tabs or the old shared browser.
 
-### Restarting Chrome without losing session cookies
-
-Chrome keeps two kinds of cookie. A persistent cookie has an expiry date, and it survives a restart in the profile. A session-only cookie has none, and a clean exit drops it.
-
-- `systemctl --user restart fleet-chrome` sends SIGTERM. Chrome shuts down cleanly, and its session-only cookies are gone when it starts again. Every site then asks for its sign-in again. Use it only when the captain accepts that.
-- `systemctl --user kill --kill-whom=main --signal=SIGKILL fleet-chrome` sends SIGKILL to Chrome's main process only. Chrome treats the exit as a crash. On its next start it restores the last session, session-only cookies included. `Restart=always` starts the unit again within about 5 s, with the unit's current definition.
-
-A lab run with Chrome 155 and this unit's flags showed it. A profile held one persistent and one session-only cookie. After SIGTERM the session-only cookie was gone and the persistent one stayed. After SIGKILL both stayed. On p620, the session-only and persistent cookie counts were the same before and after the step-3 restart. The reason is Chrome's crash recovery, so the SIGKILL restart keeps session cookies only because Chrome restores its session after a crash.
-
-Before a SIGKILL restart:
-
-- Check that no worker is in a browser call. `ss -tn state established '( sport = :9222 )'` lists the connected clients, and `curl -s http://127.0.0.1:9222/json/list` lists the tabs. A worker that is parked between calls can still hold a tab, so check with the captain or main before you go on.
-- Wait a few seconds after the last worker action. SIGKILL skips Chrome's shutdown, so a cookie set in the last seconds may not be on disk yet.
-- Count the cookies from a copy, and print only the counts, never the values. Copy `Cookies` from the profile's `Default` folder, with any `Cookies-journal` or `Cookies-wal` file beside it, into `$TMPDIR`, then run `sqlite3 <copy> 'select is_persistent, count(*) from cookies group by is_persistent'`. `is_persistent` 0 is session-only. Count again after the restart.
-- Do not restart `fleet-xvfb` to do this. Its restart kills Chrome.
-
-### Rollout on a host, in this order
-
-The captain approves the host steps. Do them when no worker is using the browser: step 3 restarts Chrome, which closes every open tab. Persistent cookies and the logins that use them stay in the profile. Session-only cookies stay only when Chrome is restarted in the way described in [Restarting Chrome](#restarting-chrome-without-losing-session-cookies), because a plain `systemctl restart` drops them.
-
-1. **Install Xpra 6.5.x on the host**, where a non-interactive SSH session finds `xpra` (on p620, `nix profile install nixpkgs#xpra`, which puts it in `~/.nix-profile/bin`). Check that the display has no window manager of its own: `DISPLAY=:99 xprop -root _NET_SUPPORTING_WM_CHECK` must say `not found`. Xpra becomes the window manager of that display. Check the version with `ssh <host> 'xpra --version'`: it must say `xpra v6.5.5` on p620, the same as the Mac app in step 5. A later `nix profile` install may resolve another version, so do not upgrade the host's Xpra without upgrading the Mac app too.
-2. **Update the checkout** on the host to a commit that has `bin/fleet-chrome` (section 7). Use the host's fleet root, `~/.fleet/app`. The guard and Xpra import `ws` and `typebox` from its `node_modules`, so the checkout must have `node_modules`: `fleet update` runs `npm ci` when the lock file changed, and otherwise run `npm ci` there by hand. Do not use a project clone such as `~/fleet-projects/fleet`: it has no `node_modules`, so the guard cannot start from it. The launcher on the Mac needs none of this (step 6).
-3. **Move Chrome and start the guard.** Chrome moves to port 0. How you do that depends on who owns the Chrome unit. Run `systemctl --user cat fleet-chrome`: a path under `/nix/store`, or a file that links into it, means a config manager owns the unit.
-
-   - **You own the unit file.** In `fleet-chrome.service`, change `--remote-debugging-port=9222` to `--remote-debugging-port=0`, and add an `ExecStartPre=` line that runs `rm -f <profile>/DevToolsActivePort`. Systemd needs the absolute path of `rm` (`command -v rm`). Then run `systemctl --user daemon-reload`.
-   - **A config manager owns the unit**, such as Home Manager on p620. Do not edit the unit or its store file, because a switch replaces them. Write a drop-in instead, `~/.config/systemd/user/fleet-chrome.service.d/attach.conf`. A drop-in adds to the unit, so it first clears `ExecStart`, and then sets it again with the whole command copied from `systemctl --user cat fleet-chrome`, with the port changed:
-
-     ```ini
-     [Service]
-     ExecStart=
-     ExecStart=<the unit's ExecStart, with --remote-debugging-port=0>
-     ExecStartPre=<absolute path of rm> -f <profile>/DevToolsActivePort
-     ```
-
-     The copy keeps the Chrome build that the unit had when you wrote it. After Home Manager changes Chrome, update the copy, or remove the drop-in once the change is in the Nix module. A `home-manager switch` that changes the unit restarts Chrome with SIGTERM, which drops session-only cookies.
-
-   Add the guard as `fleet-chrome-guard.service` in `~/.config/systemd/user/`. A unit you write by hand is not a Home Manager file, so a switch leaves it alone unless it has the same name as a file the switch manages. Set `<checkout>` to the host's fleet root, `~/.fleet/app`, and `<profile>` to the Chrome profile folder (on p620, `~/.local/share/fleet-browser/profile`):
-
-   ```ini
-   [Unit]
-   Description=Fleet shared browser guard
-   After=fleet-chrome.service
-
-   [Service]
-   Environment=PATH=%h/.nix-profile/bin:/usr/bin:/bin
-   ExecStart=<checkout>/bin/fleet-chrome guard --listen 127.0.0.1:9222 --chrome <profile>
-   Restart=always
-   RestartSec=2
-
-   [Install]
-   WantedBy=default.target
-   ```
-
-   Then restart Chrome on the new definition and start the guard. Use the SIGKILL restart, not `restart`, so that session-only cookies stay (see [Restarting Chrome](#restarting-chrome-without-losing-session-cookies)). The guard must start after Chrome has left port 9222.
-
-   ```sh
-   systemctl --user daemon-reload
-   systemctl --user kill --kill-whom=main --signal=SIGKILL fleet-chrome
-   systemctl --user enable --now fleet-chrome-guard
-   ```
-
-   Check that `ss -ltnp 'sport = :9222'` lists the guard's node process and not Chrome, and that `curl -si http://127.0.0.1:9222/json/version` shows `x-fleet-guard: 1`. Then check that a worker's browser tool still opens a page. On p620 that check can fail with `Arguments executablePath and browserUrl are mutually exclusive`: the host's `chrome-devtools-axi` wrapper passes both options. The curl check is then the proof that the guard works. A pane that started before a Home Manager switch can also keep a removed `CHROME_DEVTOOLS_AXI_MCP_PATH`, so open a new shell.
-
-4. **Start Xpra.** Add `fleet-chrome-xpra.service` in `~/.config/systemd/user/`, with the host's display and the checkout's path (`~/.fleet/app`), and run `systemctl --user enable --now fleet-chrome-xpra`:
-
-   ```ini
-   [Unit]
-   Description=Fleet shared browser windows for the captain (Xpra)
-   After=fleet-xvfb.service fleet-chrome-guard.service
-
-   [Service]
-   Environment=PATH=%h/.nix-profile/bin:/usr/bin:/bin
-   ExecStart=<checkout>/bin/fleet-chrome xpra --display 99 --guard-port 9222 --xpra %h/.nix-profile/bin/xpra
-   Restart=always
-   RestartSec=5
-
-   [Install]
-   WantedBy=default.target
-   ```
-
-   The unit has no `--clipboard`, so the host's clipboard stays off. Its journal shows `pulseaudio` and `OpenGL is not supported` warnings at each start. Audio is off (`--pulseaudio=no`), so these warnings are harmless. Check that `ss -lxp | grep xpra` lists one socket for the display, that `ss -ltnp | grep -i xpra` lists nothing, and that `stat -c %a /run/user/$(id -u)/xpra/<host>-99` says 600.
-
-5. **Install Xpra.app on the Mac**, the same version as the host (6.5.5 on p620; Homebrew's cask is disabled). A mismatch stops the launcher with Xpra's own error. Download `Xpra-arm64-6.5.5-r0.dmg` from https://www.xpra.org/stable/osx/arm64/ (sha1 `7438cf6e8f8295ef64769b4138f138fb783e3e25`), open it, and drag the app to Applications. If macOS says it is damaged, run `xattr -rd com.apple.quarantine /Applications/Xpra.app`. macOS may ask for permissions when the first window opens. They are the captain's to grant. Check that `ssh -o BatchMode=yes <host> true` answers with no prompt. Check the version with `/Applications/Xpra.app/Contents/MacOS/Xpra --version`: it must say the same version as the host's `xpra --version`.
-6. **Attach.** Before the first attach, the Mac needs these, in this order:
-
-   - **A fleet checkout at current `main`, with no `npm ci`.** The launcher imports only Node's built-in modules and one file, so it needs the files and nothing installed. The repository is public, so no login is needed: `mkdir -p ~/fleet-projects && git clone https://github.com/1yian/fleet.git ~/fleet-projects/fleet`. Later, `git -C ~/fleet-projects/fleet pull`. The launcher is `~/fleet-projects/fleet/bin/fleet-attach`.
-   - **Node 24 or later on the `PATH` of the shell that runs the command.** Check it with `node --version`, in a new terminal and also in a shell that did not read your profile. Homebrew's `/opt/homebrew/bin` is added only by `~/.zprofile` and `~/.zshrc`, so `brew install node` alone can leave a non-interactive or launchd-started shell with no `node`. The launcher runs the TypeScript directly, so it needs a Node that strips types (24 is what the repository requires).
-   - **Xpra.app at the host's version** in `/Applications` (step 5). Check it with `/Applications/Xpra.app/Contents/MacOS/Xpra --version`.
-   - **macOS 13 or later**, because the launcher calls `realpath`.
-   - **Key-based ssh to the host with no prompt.** `ssh -o BatchMode=yes yian@p620 true` must exit 0 and print nothing. That needs a key (not a password), the host key already accepted, and the name `p620` resolving on the Mac. Use exactly the `<user@host>` that passes this check.
-   - **A way to name the launcher.** On the tested Mac, `~/.local/bin` is on the `PATH` and holds this wrapper, so a shell that has no `node` still finds Homebrew's:
-
-     ```sh
-     #!/bin/sh
-     PATH="$PATH:/opt/homebrew/bin"
-     export PATH
-     command -v node >/dev/null 2>&1 || {
-       echo "fleet-attach: node 24 or later is not on PATH and not in /opt/homebrew/bin" >&2
-       exit 127
-     }
-     exec "$HOME/fleet-projects/fleet/bin/fleet-attach" "$@"
-     ```
-
-     Make it executable (`chmod 755 ~/.local/bin/fleet-attach`). Without the wrapper, use the full path of the launcher.
-
-   Then run the command, from any new terminal tab:
-
-   ```sh
-   fleet-attach yian@p620 --display 99
-   ```
-
-   Or, without the wrapper, `~/fleet-projects/fleet/bin/fleet-attach yian@p620 --display 99`. `<user@host>` is the SSH target. `--display` must be the display of the host's Xpra unit in step 4 (99 here), because the socket is named for it. Do not add `--clipboard`: the host's unit has none. Add `--remote-xpra '<path>'` only when `xpra` is not on the host's non-interactive `PATH`. Expect the terminal to print `fleet-attach: attaching to yian@p620 display 99`, then Xpra's own lines, such as `Attached to xpra server at p620:22` and `running, 1 windows`, within a few seconds. The screen shows one native window for each Chrome window on the host, titled like `New Tab - Google Chrome`. The launcher stays in the foreground while it is attached. Open a login page, click its password field, and type. In a worker's browser tool, a read of that tab must now fail with `The captain is typing a password in this tab`. Then clear the field and click out of it. Reads stay refused while the cursor is in the field, and succeed again once it has left an empty field.
-
-What the launcher prints, and what to do:
-
-| Output                                                                                                                   | Meaning                                                                                                 | What to do                                                                                              |
-| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `fleet-attach: attaching to <user@host> display <n>`, then Xpra's lines                                                  | Success. The windows appear in a few seconds.                                                           | None.                                                                                                   |
-| `fleet-attach: the guard is not answering on <user@host> port 9222, trying again`, repeated up to 10 s apart             | The guard is down on the host. The launcher keeps trying and attaches by itself when the guard is back. | On the host, `systemctl --user status fleet-chrome-guard`.                                              |
-| `fleet-attach: <user@host> is not reachable, trying again`, often after an ssh line such as `Could not resolve hostname` | No SSH link to the host. The launcher keeps trying.                                                     | Check `ssh -o BatchMode=yes <user@host> true`.                                                          |
-| `fleet-attach: something answers on <user@host> port 9222 that is not the guard, so nothing is attached` (exit 99)       | Something else holds the guard's port, such as Chrome before step 3.                                    | On the host, `curl -si http://127.0.0.1:9222/json/version` must show `x-fleet-guard: 1`. Finish step 3. |
-| `fleet-attach: cannot run <path>: spawn <path> ENOENT` (exit 127)                                                        | No Xpra client at that path.                                                                            | Install Xpra.app (step 5), or pass `--xpra <path>`.                                                     |
-| Xpra's own message and exit code, such as a version mismatch or a wrong password                                         | The client cannot attach. Waiting does not fix it. The exit code is Xpra's.                             | Match the versions in steps 1 and 5.                                                                    |
-| `fleet-attach: the host ended the session, attaching again`, or `the link to the host dropped, attaching again`          | The host's Xpra restarted, or the link dropped. The launcher attaches again.                            | None, unless it repeats.                                                                                |
-| A Node stack trace ending in the usage text (exit 1)                                                                     | The arguments are wrong.                                                                                | Use the form above.                                                                                     |
-
-To stop the launcher, close the windows or press Cmd+Q: it ends with exit 0, and Chrome and its tabs keep running on the host.
-
-To undo, on the host, in this order:
-
-1. `systemctl --user disable --now fleet-chrome-xpra fleet-chrome-guard`. Stop the guard first, because it holds port 9222 and Chrome cannot come back there while it runs.
-2. Delete the two hand-made units, `~/.config/systemd/user/fleet-chrome-guard.service` and `~/.config/systemd/user/fleet-chrome-xpra.service`.
-3. Put Chrome's port back. If you own the unit file, change `--remote-debugging-port=0` back to `9222` in it. If a config manager owns the unit, delete the drop-in `~/.config/systemd/user/fleet-chrome.service.d/attach.conf`.
-4. `systemctl --user daemon-reload`, then `systemctl --user kill --kill-whom=main --signal=SIGKILL fleet-chrome`. Chrome starts on 9222 again and keeps its session-only cookies. A plain `systemctl --user restart fleet-chrome` would close the tabs and drop those cookies.
-5. If you want Xpra gone from the host, `nix profile remove xpra` (step 1). On the Mac, stop `fleet-attach` and delete `/Applications/Xpra.app` and `~/.xpra`.
-
-### What happens when something restarts
-
-| What stops                               | What the captain and workers see                                                                                                                                                                                                                                             |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The Mac sleeps or the link drops         | The windows go. The launcher checks the guard and attaches again, after 1 s and then up to 10 s apart. The tabs are as he left them.                                                                                                                                         |
-| The captain closes a window or quits     | All windows go and the launcher ends with 0. Chrome and every tab keep running.                                                                                                                                                                                              |
-| The host's Xpra service restarts         | The launcher attaches again when Xpra is back.                                                                                                                                                                                                                               |
-| The guard stops or crashes               | Within about 4 s the host stops Xpra. Workers get no DevTools port until the guard is back. The launcher waits, and attaches by itself once the guard is up.                                                                                                                 |
-| Chrome restarts                          | Its tabs are gone, as for any Chrome restart. A SIGTERM restart also drops session-only cookies, so use the SIGKILL restart in [Restarting Chrome](#restarting-chrome-without-losing-session-cookies). The guard follows the new port and the new windows appear on the Mac. |
-| `cardd` or a mate restarts or reconnects | Nothing changes. This path never touches `cardd`.                                                                                                                                                                                                                            |
-
-`fleet-attach` options: `--display` (default 99), `--guard-port` (9222), `--xpra` (the client, by default the app in Applications), `--remote-xpra` (Xpra on the host, default `xpra`, a path as the host sees it, so spell out `/home/<user>/.nix-profile/bin/xpra` or quote it, because the Mac shell expands an unquoted `~` to a Mac path), `--clipboard` (share the clipboard, off by default, and only works when the host's Xpra was started with `--clipboard` too), `--ssh` (default `ssh`), and `--retry-ms` (1000). It ends with 99 when something other than the guard answers on the guard's port, and with Xpra's own exit code for a failure that waiting does not fix.
-
-### After an update
-
-`/updatefleet` moves the host's checkout (section 7), and `fleet update` runs `npm ci` when the lock file changed. It does not restart the guard or Xpra. A running process keeps the code it loaded. So after an update that changed `packages/chrome`, restart both units on the host, guard first:
+**The worker prepares its own browser before launching it.** Stock Chrome DevTools MCP uses `pipe: true`, not a TCP debugging listener. `CHROME_DEVTOOLS_AXI_PORT` is the CLI bridge port, not Chrome's debugging port. For a session that may need your sign-in, the worker keeps its own `CHROME_DEVTOOLS_AXI_SESSION`, creates a private profile under its scratch `TMPDIR`, and adds a random loopback debugging port while retaining existing Chrome arguments:
 
 ```sh
-systemctl --user restart fleet-chrome-guard
-systemctl --user restart fleet-chrome-xpra
+export CHROME_DEVTOOLS_AXI_USER_DATA_DIR="$(mktemp -d "${TMPDIR:?}/chrome-signin.XXXXXX")"
+export CHROME_DEVTOOLS_AXI_CHROME_ARGS="${CHROME_DEVTOOLS_AXI_CHROME_ARGS:+$CHROME_DEVTOOLS_AXI_CHROME_ARGS }--remote-debugging-port=0 --remote-debugging-address=127.0.0.1"
+chrome-devtools-axi open <sign-in-url>
+head -n 1 "$CHROME_DEVTOOLS_AXI_USER_DATA_DIR/DevToolsActivePort"
 ```
 
-The guard restart ends workers' DevTools access for a few seconds, and the captain's windows go until Xpra is back. Do it when no worker is in a browser call. Do not restart `fleet-chrome` for an update: it runs Chrome, not the fleet's code, and a restart costs the tabs and, with SIGTERM, the session-only cookies.
+Keep those settings and the same named session for every subsequent browser command. Use this only for the worker's own profile. Never stop an existing Chrome to add flags or replace a live signed-in profile. A browser launched without these flags has no TCP target to forward; arrange a new worker-owned sign-in session instead. The profile lasts only as long as the worker's scratch folder.
+
+The first line of `DevToolsActivePort` is the actual Chrome port. It changes when Chrome restarts and belongs to this browser session, not the whole host. The worker checks with `ss -ltn` that this port listens only on `127.0.0.1:<worker-port>`, never a public interface, then sends you the port, page title and matching command below. The worker pauses browser actions while you sign in.
+
+**On the Mac, run one command for the host**, replacing `<worker-port>` with that number:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9222:127.0.0.1:<worker-port> yian@p620
+```
+
+For the CNP VM, use the Mac's existing `cnp-devvm` SSH alias:
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:9222:127.0.0.1:<worker-port> cnp-devvm
+```
+
+Leave the command running. If local port 9222 is occupied, use 9223 on the left and in Chrome's discovery settings instead. Do not kill the process using 9222. Both commands bind the Mac listener to loopback and forward through SSH.
+
+In a normal, non-Incognito Chrome window on the Mac, open `chrome://inspect/#devices`. Enable **Discover network targets**, click **Configure...**, and add `127.0.0.1:9222`. Find the title the worker gave you and click **inspect**. In DevTools, enable **Toggle screencast** to see the page and enter the sign-in there. Your personal Chrome does not need remote debugging enabled. Cookies stay in the worker's remote profile, not your Mac's profile. Tell the worker when you are done, then press Ctrl+C in the SSH terminal. This stops only the forward, not the remote browser.
+
+From a second Mac terminal, `curl http://127.0.0.1:9222/json/version` checks the remote Chrome and its WebSocket URL. `curl http://127.0.0.1:9222/json/list` lists its pages. Forwarded discovery and the actual `chrome://inspect` target listing were verified on p620. The CNP alias reached `cx-devvm-01` from frontera and its CLI supports the required settings, but CNP browser sign-in itself is unverified.
+
+This grants trusted local processes full DevTools access to the worker's browser. There is no password guard. The worker must not read, log or report passwords, codes or tokens. Some sites or physical passkeys may not support headless sign-in.
 
 ## Moving from the earlier layout
 

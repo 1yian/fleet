@@ -74,7 +74,7 @@ export default defineConfig(
   },
   {
     files: ["e2e/**/*.ts"],
-    ignores: ["e2e/extension/kill-guard.test.ts", "e2e/extension/no-browser.test.ts"],
+    ignores: ["e2e/extension/kill-guard.test.ts"],
     rules: {
       "no-restricted-syntax": [
         "error",
