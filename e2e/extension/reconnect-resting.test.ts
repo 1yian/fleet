@@ -18,7 +18,7 @@ beforeEach(async () => {
 });
 afterEach(async (t) => {
   try {
-    if (!t.passed)
+    if ("passed" in t && !t.passed)
       t.diagnostic(
         JSON.stringify({
           responses: parts.mate.responses,
@@ -35,7 +35,10 @@ afterEach(async (t) => {
   }
 });
 
-async function until<T>(read: () => Promise<T | undefined>, what: string): Promise<T> {
+async function until<T>(
+  read: () => T | undefined | Promise<T | undefined>,
+  what: string,
+): Promise<T> {
   const deadline = Date.now() + WORKER_WAIT_MS;
   for (;;) {
     const value = await read();
@@ -75,20 +78,16 @@ function scriptRestart(notification: ReturnType<typeof gate>): void {
     args: { status: "paused", text: "waiting for CI", until: until1h },
   };
   for (let call = 0; call < 12; call += 1) {
-    h.onModel(
-      async (turns) => {
-        if (lastUser(turns)?.includes("Synthetic maintenance notification"))
-          await notification.wait;
-        return plan(turns, {
-          "ship the scrollbar fix": [dispatch],
-          "reconnect the worker": [{ tool: "restart_card", args: { card: 1, key: "reconnect" } }],
-          "send the wake-up": [
-            { tool: "comment", args: { card: 1, text: "WAKE-UP the wait is over" } },
-          ],
-        });
-      },
-      "mate",
-    );
+    h.onModel(async (turns) => {
+      if (lastUser(turns)?.includes("Synthetic maintenance notification")) await notification.wait;
+      return plan(turns, {
+        "ship the scrollbar fix": [dispatch],
+        "reconnect the worker": [{ tool: "restart_card", args: { card: 1, key: "reconnect" } }],
+        "send the wake-up": [
+          { tool: "comment", args: { card: 1, text: "WAKE-UP the wait is over" } },
+        ],
+      });
+    }, "mate");
     h.onModel(
       (turns) => plan(turns, { "fix the scrollbar": [pause], "WAKE-UP": [{ text: "woke" }] }),
       "worker",
@@ -101,7 +100,7 @@ async function queuedPrompt(message: string): Promise<void> {
   const prompts = mate.responses.filter((entry) => entry["command"] === "prompt").length;
   mate.prompt(message, "followUp");
   const response = await until(
-    async () => mate.responses.filter((entry) => entry["command"] === "prompt")[prompts],
+    () => mate.responses.filter((entry) => entry["command"] === "prompt")[prompts],
     `RPC acceptance of ${message}`,
   );
   assert.equal(response["success"], true, JSON.stringify(response));
@@ -123,10 +122,10 @@ async function overlapNotification(): Promise<void> {
     await ops.close();
   }
   await until(
-    async () =>
-      h.callsOf("mate").some((turns) =>
-        lastUser(turns)?.includes("Synthetic maintenance notification"),
-      )
+    () =>
+      h
+        .callsOf("mate")
+        .some((turns) => lastUser(turns)?.includes("Synthetic maintenance notification"))
         ? true
         : undefined,
     "the overlapping notification",
@@ -204,16 +203,13 @@ async function reconnectPaused(
 }
 
 for (const overlap of [false, true]) {
-  test(
-    `restart_card reconnects the worker of a paused card whose process is gone, keeps the card paused, and the next comment reaches it${overlap ? " during a mate notification" : ""}`,
-    async () => {
-      const notification = gate();
-      scriptRestart(notification);
-      try {
-        await reconnectPaused(overlap, notification);
-      } finally {
-        notification.open();
-      }
-    },
-  );
+  test(`restart_card reconnects the worker of a paused card whose process is gone, keeps the card paused, and the next comment reaches it${overlap ? " during a mate notification" : ""}`, async () => {
+    const notification = gate();
+    scriptRestart(notification);
+    try {
+      await reconnectPaused(overlap, notification);
+    } finally {
+      notification.open();
+    }
+  });
 }
