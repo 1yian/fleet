@@ -337,9 +337,9 @@ The mate edits these files itself: it reads a file in full, then writes a consid
 
 1. The mate gets the stow instructions and a report of its memory files: each entry with its tier and age, and the stale ones flagged. An aging entry is stale after 30 days, and a perishable one after 7. Entries in `captain.md` and `captain-shared.md` do not age unless they carry a marker.
 2. The mate curates the files, routes what only this conversation knows to its owner, and files the open work it holds as cards on the board (`card_new`, `comment`, `hold`). It never writes open work into a memory file. A stale entry moves to `data/memory-archive.md`, which nothing loads. A second mate sends a shared preference to main with `comment`, and main files it.
-3. When that turn ends, main copies `data/captain-shared.md` to every host. Then the mate reloads in the same conversation: Pi reads `AGENTS.md` and the other context files again and rebuilds the role contract, so a pulled change to `AGENTS.md` takes effect without a restart. The conversation continues, and the mate reconnects to cardd.
+3. When that turn ends, main copies `data/captain-shared.md` to every host. Then the mate waits for any overlapping response to finish before reloading in the same conversation: Pi reads `AGENTS.md` and the other context files again and rebuilds the role contract, so a pulled change to `AGENTS.md` takes effect without a restart. The conversation continues, and the mate reconnects to cardd.
 
-A stow in main does not stow the second mates: each one runs its own `/stow`.
+A stow in main also requests a stow from the second mates. Each waits for its turn and jobs to finish, curates its own memory, then relaunches in the same conversation. Stopped and held lanes are left alone. Main shows the request status and hears when each finishes. A stow in a second mate affects only that mate.
 
 ### Conversation memory (optchat)
 
