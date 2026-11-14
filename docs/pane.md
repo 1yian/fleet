@@ -20,4 +20,8 @@ The restoration is selective. It does not reset the repository or data. Later sa
 
 `e2e/extension/pane.test.ts` drives a real Pi in an isolated Scratch home and herdr lab. It covers the original footer, absence of the strip and counts, board answers, exact chat-word answers, no `/pulse` overlay, and reload. `decision-walkthrough.test.ts` checks prompt and skill discovery and partial-answer plumbing, not model judgment. `decision-message.test.ts` checks the contract actually delivered to Pi on a merge arrival. Board attention, Later, and kanban tests exercise the original visible interactions in Chromium.
 
-The maintainer should update spec section 12.5 in the published working copy. It describes a Needs you widget that was never present in the actual pre-feedback baseline. Do not restore a nonexistent widget to satisfy that stale description.
+## Maintainer-owned spec follow-up
+
+Keep `docs/spec.md` unchanged in this worktree. The maintainer must update its authoritative working copy and publish it. Sections 7.6, 10.1, 10.4, and 12.5 still promise a Needs you widget and must reflect the restored footer-only Pi display, with decisions in chat and on the board. Section 14 also cites the removed widget count. Do not restore a widget to satisfy these stale references.
+
+PR handoff: include this ownership constraint and all four affected sections (7.6, 10.1, 10.4, and 12.5), plus the section 14 reference, in the PR description. The maintainer-owned publication follow-up does not block the authorized restoration. Preserve unrelated behavior and data.
