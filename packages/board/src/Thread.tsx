@@ -17,7 +17,8 @@ function ThreadRow(props: {
 }) {
   const { row, open, now, children } = props;
   const waiting = open.has(row.entry.id);
-  return isMessage(row.entry) && !row.quiet && !waiting ? (
+  const failure = attention(row.entry);
+  return (isMessage(row.entry) && !row.quiet && !waiting) || failure ? (
     <Message row={row} now={now}>
       {children}
     </Message>
@@ -28,11 +29,21 @@ function ThreadRow(props: {
   );
 }
 
+function attention(entry: Entry): boolean {
+  return (
+    entry.fields["state"] === "failed" ||
+    entry.kind === "finding" ||
+    (entry.kind === "report" &&
+      ["blocked", "failed", "stopped", "needs-decision"].includes(String(entry.fields["status"])))
+  );
+}
+
 function Replies(props: {
   readonly rows: readonly Row[];
   readonly open: Open;
   readonly now: number;
   readonly waiting: boolean;
+  readonly owes: string | undefined;
 }) {
   if (props.rows.length === 0 && !props.waiting) return null;
   return (
@@ -41,7 +52,7 @@ function Replies(props: {
         <ThreadRow key={row.entry.id} row={row} open={props.open} now={props.now} />
       ))}
       {props.rows.length === 0 && props.waiting ? (
-        <li className="reply-owed">Waiting for a reply</li>
+        <li className="reply-owed">{props.owes ?? "Recipient"} owes a reply</li>
       ) : null}
     </ol>
   );
@@ -54,8 +65,14 @@ export function Entries(props: {
   readonly now: number;
   readonly owed: readonly OwedReply[];
 }) {
+  const [history, setHistory] = useState(false);
   if (props.entries.length === 0) return <p className="muted">No activity yet.</p>;
-  const rows = threadRows(props.entries, { lane: props.lane });
+  const all = threadRows(props.entries, { lane: props.lane });
+  const latest = all.findLast(
+    (row) => row.replyTo === undefined && ["report", "cleanup"].includes(row.entry.kind),
+  );
+  const hidden = new Set(all.filter((row) => technical(row, latest)).map((row) => row.entry.id));
+  const rows = history ? all : all.filter((row) => row !== latest && !hidden.has(row.entry.id));
   const replies = new Map<number, Row[]>();
   for (const row of rows) {
     if (row.replyTo?.author === "captain") {
@@ -65,21 +82,77 @@ export function Entries(props: {
   }
   const nested = new Set([...replies.values()].flat().map((row) => row.entry.id));
   return (
-    <ol className="thread" aria-label="Thread">
-      {rows
-        .filter((row) => !nested.has(row.entry.id))
-        .map((row) => (
-          <ThreadRow key={row.entry.id} row={row} open={props.open} now={props.now}>
-            <Replies
-              rows={replies.get(row.entry.id) ?? []}
-              open={props.open}
-              now={props.now}
-              waiting={props.owed.some((each) => each.id === `r-${String(row.entry.id)}`)}
-            />
-          </ThreadRow>
-        ))}
-    </ol>
+    <>
+      <Latest row={latest} history={history} />
+      {hidden.size === 0 ? null : (
+        <button
+          type="button"
+          className="history-toggle"
+          aria-expanded={history}
+          onClick={() => {
+            setHistory(!history);
+          }}
+        >
+          {history ? "Hide technical history" : `Show technical history (${String(hidden.size)})`}
+        </button>
+      )}
+      <ol className="thread" aria-label="Thread">
+        {rows
+          .filter((row) => !nested.has(row.entry.id))
+          .map((row) => (
+            <ThreadRow key={row.entry.id} row={row} open={props.open} now={props.now}>
+              <Replies
+                rows={replies.get(row.entry.id) ?? []}
+                open={props.open}
+                now={props.now}
+                waiting={props.owed.some((each) => each.id === `r-${String(row.entry.id)}`)}
+                owes={props.owed.find((each) => each.id === `r-${String(row.entry.id)}`)?.owes}
+              />
+            </ThreadRow>
+          ))}
+      </ol>
+    </>
   );
+}
+
+function Latest({ row, history }: { readonly row: Row | undefined; readonly history: boolean }) {
+  if (row === undefined) return null;
+  const { entry } = row;
+  return (
+    <section
+      id={history ? undefined : `entry-${String(entry.id)}`}
+      className="latest-update"
+      aria-label="Latest update"
+    >
+      <h3>Latest update</h3>
+      <p className="update-source">
+        {authorOf(entry.author).name} · {verb(entry)} ·{" "}
+        <time dateTime={new Date(entry.createdAt).toISOString()}>
+          {new Date(entry.createdAt).toLocaleString()}
+        </time>{" "}
+        <Key entry={entry} />
+      </p>
+      <Collapsible text={row.original} />
+    </section>
+  );
+}
+
+function technical(row: Row, latest: Row | undefined): boolean {
+  const { entry } = row;
+  if (entry.author === "captain" || row.replyTo !== undefined) return false;
+  if (typeof entry.fields["resolves"] === "string") return false;
+  if (entry.fields["maintenance"] !== undefined)
+    return entry.fields["state"] === "completed" && entry.fields["quiet"] === true;
+  if (entry.kind === "report")
+    return (
+      row !== latest && (entry.fields["status"] === "working" || entry.fields["status"] === "note")
+    );
+  if (entry.kind !== "comment") return false;
+  return taskRouting(row);
+}
+
+function taskRouting({ entry, flow }: Row): boolean {
+  return entry.fields["task"] === true || entry.fields["routed"] === true || flow?.to === "worker";
 }
 
 function Avatar({ author }: { readonly author: Author }) {

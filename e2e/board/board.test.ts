@@ -131,6 +131,7 @@ test("a click on a card opens its detail: properties, the description, and the t
   await detail.getByText("Compare v1 and v2 before the freeze.").waitFor();
   const thread = detail.getByRole("list", { name: "Thread" });
   await thread.getByText("waiting for your answer above").waitFor();
+  await page.getByRole("button", { name: /^Show technical history/ }).click();
   await thread.getByText("Spec: build the v2 endpoint").waitFor();
   await detail.getByRole("region", { name: "Waiting for you" }).getByText("Ship v2 now?").waitFor();
 
@@ -171,6 +172,7 @@ test("the thread is the conversation between the owner and its mate, with each a
 
   const thread = page.getByRole("list", { name: "Thread" });
   await thread.getByText("waiting for your answer above").waitFor();
+  await page.getByRole("button", { name: /^Show technical history/ }).click();
   await page.getByRole("button", { name: "yes" }).click();
   const pr = "https://github.com/acme/web/pull/3";
   await worker.call("report", { status: "done", text: "a final note", pr });
@@ -202,6 +204,7 @@ test("a long task message is one line that opens to the whole text", async () =>
   const { card, worker } = await shipped("Users see one scrollbar", task);
   await page.goto(`${http()}#/c-${String(card.id)}`);
   const thread = page.getByRole("list", { name: "Thread" });
+  await page.getByRole("button", { name: /^Show technical history/ }).click();
   const sent = thread.getByRole("button", { name: /sent the task/ });
   await sent.getByText("Fix the scrollbar").waitFor();
   assert.equal(await thread.getByText("Do not touch the header").count(), 0);
