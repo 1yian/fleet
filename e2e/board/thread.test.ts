@@ -249,7 +249,7 @@ test("activity leads with the latest report, keeps blockers and answers, and fol
     status: "blocked",
     text: "The campaign export is missing. Cleo needs to provide it.",
   });
-  const db = new DatabaseSync(cardd.db);
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
   try {
     const add = db.prepare(
       "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, 'maintenance', 'note', ?, ?, ?)",
