@@ -639,7 +639,7 @@ A host updates with the code it already has. A host whose checkout predates `fle
 
 ## The Files tab
 
-Every mate's herdr workspace has a second tab named `Files`. It runs `fleet files` in the lane home, which starts Yazi, with `nvim` as the editor. Yazi shows three columns: the parent folder, the current folder, and a preview of what the cursor is on, with icons, syntax-highlighted code, and its usual keys (`h` `j` `k` `l`, `g g`, `G`, `/`, Enter). The tab is made when the mate starts, on the mate's own host, and a mate that finds the tab already there leaves it alone. When Yazi quits, the pane is a shell in the lane home, and `fleet files` brings the explorer back. Nothing about it goes through `cardd`, the board, or a link: it is a terminal on the host that has the files.
+Every mate's herdr workspace has a second tab named `Files`. It runs `fleet files` in the lane home, which starts Yazi, with `nvim` as the editor (`vim` or `vi` on a host without it). Yazi shows three columns: the parent folder, the current folder, and a preview of what the cursor is on, with icons, syntax-highlighted code, and its usual keys (`h` `j` `k` `l`, `g g`, `G`, `/`, Enter). The tab is made when the mate starts, on the mate's own host, and a mate that finds the tab already there leaves it alone. When Yazi quits, the pane is a shell in the lane home, and `fleet files` brings the explorer back. Nothing about it goes through `cardd`, the board, or a link: it is a terminal on the host that has the files.
 
 ### What it shows
 

@@ -84,7 +84,17 @@ test("netrw is off in a Vim that Files starts, so a folder is not browsed and ca
   await editor.sees("netrw=1");
   await editor.type(`:edit ${fleet.home}`);
   await editor.press("enter");
-  await editor.sees("is a directory");
+  await editor.type(':echo "directory-filetype=" . (empty(&filetype) ? "none" : &filetype)');
+  await editor.press("enter");
+  await editor.sees("directory-filetype=none");
+  const tracked = join(fleet.home, "README.md");
+  const before = readFileSync(tracked, "utf8");
+  await editor.type(`:edit ${tracked}`);
+  await editor.press("enter");
+  await editor.sees("# fleet");
+  await editor.type("ix");
+  await editor.sees("E21: Cannot make changes");
+  assert.equal(readFileSync(tracked, "utf8"), before);
 });
 
 test("a guarded file that is forced writable still keeps its swap out of the tree, and a written change still shows as modified", async () => {
