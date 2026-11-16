@@ -2,6 +2,10 @@ import Type, { type Static, type TSchema } from "typebox";
 import { WakeArgsSchema } from "./wakes.ts";
 
 export const MAX_SCHEDULES = 24;
+export const SCHEDULE_LOG_NAME = "scheduled-messages";
+
+export const isScheduleLog = (card: { readonly scheduleLog?: boolean }): boolean =>
+  card.scheduleLog === true;
 
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 

@@ -1,5 +1,10 @@
 import { useState, type ReactNode } from "react";
-import type { Board as BoardData, BoardCard, Schedule } from "@fleet/protocol";
+import {
+  isScheduleLog,
+  type Board as BoardData,
+  type BoardCard,
+  type Schedule,
+} from "@fleet/protocol";
 import {
   arrange,
   openIn,
@@ -211,8 +216,9 @@ function Rail(props: {
 export function Kanban(props: Props) {
   const { board, now, facts } = props;
   const asked = questionsByCard(board.holds);
-  const columns = arrange(board.cards, asked, now);
-  const lanes = swimlanes(board.cards, asked, now);
+  const shown = board.cards.filter((card) => !isScheduleLog(card));
+  const columns = arrange(shown, asked, now);
+  const lanes = swimlanes(shown, asked, now);
   const cardOf: Render = (card) => (
     <TaskCard
       key={card.id}
