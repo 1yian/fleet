@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { APPROVE_MERGE, MERGE_OPTIONS, check, OPS, type Card, type Holder } from "@fleet/protocol";
 import { localLanding } from "./attempts.ts";
-import { requireCaptainWords, yoloFor } from "./authority.ts";
+import { yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { askersOf, requireOwedBy } from "./replies.ts";
+import { proveWords, type ReviewEvidence, type ReviewReading } from "./review.ts";
 import { factsFrom, finishFrom, type Facts, type Hold } from "./status.ts";
 import {
   addEntry,
@@ -214,6 +215,7 @@ interface Answer {
   readonly source: string;
   readonly choice?: string | undefined;
   readonly written?: boolean;
+  readonly review?: ReviewEvidence | undefined;
 }
 
 function requireOffered(card: Card, open: Hold, choice: string | undefined): void {
@@ -267,6 +269,7 @@ export function answerHold(
     choice: args.choice,
     ...(open.merge ? { approved } : {}),
     ...(args.written === true ? { written: true } : {}),
+    ...(args.review === undefined ? {} : { review: args.review }),
   };
   const draft: Draft = {
     card: card.id,
@@ -286,7 +289,12 @@ function toWorkerOf(db: DatabaseSync, card: Card, open: Hold): string[] {
   return worker === undefined ? [] : [worker];
 }
 
-export function release(db: DatabaseSync, session: Session, raw: unknown): Done {
+export function release(
+  db: DatabaseSync,
+  session: Session,
+  raw: unknown,
+  review?: ReviewReading,
+): Done {
   const args = check(OPS.release.args, raw);
   const { card, own } = reachable(db, session, args.card);
   const name = `c-${String(card.id)}`;
@@ -297,9 +305,8 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
       "clearing a hold needs the captain's exact words, or your own note, and not both",
     );
   if (args.words !== undefined) {
-    const source = args.source ?? "record";
-    requireCaptainWords(db, args.words, source);
-    return answerHold(db, session.lane, card, open, { ...args, words: args.words, source });
+    const proof = proveWords(db, open, args.words, args.source ?? "record", review);
+    return answerHold(db, session.lane, card, open, { ...args, words: args.words, ...proof });
   }
   if (open.holder === "captain" || open.merge)
     throw new Error(`${name} waits on the captain: clear it with his exact words`);

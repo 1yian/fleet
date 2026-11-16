@@ -35,6 +35,7 @@ import {
 import { loadPlan } from "./plans.ts";
 import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
+import { reviewOf, type ReviewReading } from "./review.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
@@ -72,6 +73,7 @@ type Handler = (
   note?: string,
   closeCheck?: CloseCheck,
   emptyBranch?: true,
+  review?: ReviewReading,
 ) => Done;
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
@@ -165,7 +167,8 @@ const HANDLERS: Record<OpName, Handler> = {
   "close.finish": (db, session, raw, _timing, _note, closeCheck) =>
     closeFinish(db, session, raw, closeCheck),
   hold,
-  release,
+  release: (db, session, raw, _timing, _note, _closeCheck, _emptyBranch, review) =>
+    release(db, session, raw, review),
   "card.new": (db, session, raw) => {
     const { lane, ...args } = check(OPS["card.new"].args, raw);
     if (lane !== undefined && lane !== session.lane) {
@@ -428,6 +431,8 @@ async function performStored(
     op === "close.begin" || op === "close.finish"
       ? await reverifyAtClose(db, hosts, op, args)
       : undefined;
+  const review =
+    op === "release" ? await reviewOf(db, hosts, args).catch(() => undefined) : undefined;
   return transaction(db, () => {
     const result = HANDLERS[op](
       db,
@@ -437,6 +442,7 @@ async function performStored(
       report?.note,
       closeCheck,
       emptyBranch,
+      review,
     );
     noteControl(db, session.id, op);
     return result;

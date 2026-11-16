@@ -55,6 +55,28 @@ export class Lavish {
     await this.exited;
   }
 
+  open(file: string): { session: string; url: string } {
+    const opened = execFileSync("lavish-axi", [file, "--no-open"], {
+      env: { ...process.env, ...this.env },
+      encoding: "utf8",
+    });
+    const url = /(https?:\/\/\S+\/session\/(\w+))/.exec(opened);
+    if (url?.[1] === undefined || url[2] === undefined)
+      throw new Error(`lavish-axi gave no session for ${file}: ${opened}`);
+    return { session: url[2], url: url[1] };
+  }
+
+  async say(session: string, text: string): Promise<void> {
+    const origin = `http://127.0.0.1:${this.env["LAVISH_AXI_PORT"] ?? ""}`;
+    const response = await fetch(`${origin}/api/${session}/prompts`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ prompts: [{ tag: "message", prompt: text }] }),
+    });
+    if (response.status !== 200)
+      throw new Error(`the page refused the feedback: ${await response.text()}`);
+  }
+
   private port(): string | undefined {
     if (this.child.pid === undefined) return undefined;
     try {
