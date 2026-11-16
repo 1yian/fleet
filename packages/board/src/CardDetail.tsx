@@ -142,7 +142,9 @@ function ActivityHeader({
         {card.activity?.state === "idle" ? null : <LiveChip card={card} now={now} />}
       </header>
       {card.holder === null || asked ? null : (
-        <p className="next-action">Waiting on {card.holder === "captain" ? "you" : withWho(card)}</p>
+        <p className="next-action">
+          Waiting on {card.holder === "captain" ? "you" : withWho(card)}
+        </p>
       )}
     </>
   );
