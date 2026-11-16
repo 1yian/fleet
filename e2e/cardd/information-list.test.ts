@@ -23,7 +23,7 @@ const isList = (entry: Entry): boolean =>
 const lists = (session: Session): Entry[] =>
   session.entries.map(({ entry }) => entry).filter(isList);
 
-test("a mate with only dated waits hears no list on the 30 minute cadence, hears one information list after a day, and not again after a restart", async () => {
+test("a mate with only dated waits hears no list on the 10 minute cadence, hears one information list after a day, and not again after a restart", async () => {
   const quota = await newCard(fleet.main, "Waits on the quota");
   const schedule = check(
     OPS["schedule.set"].result,
@@ -40,7 +40,7 @@ test("a mate with only dated waits hears no list on the 30 minute cadence, hears
   const first = await until(() => lists(fleet.main)[0], "the information list");
   assert.ok(
     Date.now() - held >= DAY,
-    "no list arrived before a day: the 30 minute cadence does not start one",
+    "no list arrived before a day: the 10 minute cadence does not start one",
   );
   assert.match(
     first.body,
@@ -59,7 +59,7 @@ test("a mate with only dated waits hears no list on the 30 minute cadence, hears
   await worker.call("report", { status: "blocked", text: "stuck" });
   await quinn.waitForEntry(
     (entry) => isList(entry) && Number(entry.fields["tier"]) >= 2,
-    "two lists for quinn, so more than one 30 minute cadence has passed",
+    "two lists for quinn, so more than one 10 minute cadence has passed",
   );
   assert.deepEqual(
     lists(main).filter((entry) => entry.id !== first.id),

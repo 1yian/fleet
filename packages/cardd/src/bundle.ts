@@ -172,7 +172,7 @@ function bundleText(items: readonly Item[]): string {
       inGroup(items, "act"),
     ),
     ...group(
-      "Waiting on the captain. If he wrote to you since your last list of these, bring them up again as one short list with your recommendation for each. If he did not, or he said afk, he is away: leave them for the catch-up. Do not hold a card with a date to quiet it:",
+      "Waiting on the captain. If he wrote to you since your last list of these, bring them up again as one short list with your recommendation for each. If he did not, or he said afk, he is away: leave them for the catch-up. This list is a reminder to you, not a prompt to write to him. Do not hold a card with a date to quiet it:",
       inGroup(items, "captain"),
     ),
     ...group(
@@ -198,10 +198,10 @@ export function bundleMatches(
   return [...byMate].flatMap(([to, items]): BundleMatch[] => {
     const acting = items.filter(acts);
     const [first] = acting.length > 0 ? acting : items;
-    if (first === undefined || now - first.since < (acting.length > 0 ? t.waiting : t.informing))
+    if (first === undefined || now - first.since < (acting.length > 0 ? t.chase : t.informing))
       return [];
     const last = lastBundle(db, to);
-    if (now - last.at < t.waiting) return [];
+    if (now - last.at < t.chase) return [];
     const due = now - last.informed >= t.informing;
     if (acting.length === 0 && !due) return [];
     return [
