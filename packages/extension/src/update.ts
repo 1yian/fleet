@@ -78,10 +78,19 @@ const attempt = <T>(run: () => T): { ok: true; out: T } | { ok: false; error: st
 const onUpstream = (dir: string): boolean =>
   attempt(() => git(dir, "merge-base", "--is-ancestor", "HEAD", UPSTREAM)).ok;
 
+const VIM_SWAP = /^\?\? (?:.*\/)?\.([^/]+)\.sw[a-p]$/;
+
+function described(line: string): string {
+  const name = VIM_SWAP.exec(line)?.[1];
+  return name === undefined
+    ? line.trim()
+    : `${line.trim()} (a Vim swap for ${name}: the file is open in an editor, or the swap was left by a crash)`;
+}
+
 function uncommitted(dir: string): string | undefined {
   const changes = git(dir, "status", "--porcelain").split("\n").filter(Boolean);
   if (changes.length === 0) return undefined;
-  const shown = changes.slice(0, 3).map((line) => line.trim());
+  const shown = changes.slice(0, 3).map(described);
   return changes.length > 3
     ? `${shown.join(", ")}, and ${String(changes.length - 3)} more`
     : shown.join(", ");

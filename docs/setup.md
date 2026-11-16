@@ -660,7 +660,7 @@ The lane home with `config/`, `data/`, and `state/` visible, and these places on
 
 ### The guard
 
-An edit to a tracked file is never made in place. A file opens read-only in `nvim` (`-R -M`, with the reason in the status line) when it is:
+An edit to a tracked file is never made in place. A file opens read-only in the editor (`-R -M`, with the reason in the status line) when it is:
 
 - tracked by git, or new and not ignored, in this checkout, in any lane home, or in a registered project clone on this host;
 - inside a worker's worktree, which its worker owns;
@@ -673,6 +673,26 @@ The keys that change files check every path that they would write or delete, not
 The guard needs to know the project clones of this host, which it asks `cardd` for and saves in `state/files/projects.json`. When `cardd` cannot be reached and nothing is saved yet, it cannot tell a clone from a private folder, so it treats every path outside the lane homes and the fleet checkout as guarded, and says why.
 
 The guard is a seat belt for the captain's keys. It does not stop a program that writes the file by another route.
+
+### Editor swap files
+
+The editor is `nvim`, then `vim`, then `vi`. A host with no `nvim` runs Vim, and Vim writes `.<name>.swp` beside the file it opens. An untracked swap in a lane home or a clone is a change to git, so it stops `/updatefleet` and the clone refresh. So `fleet files` starts every Vim or vi with its swap, backup, and undo folders in one per-host folder, outside every tree, shared by every lane:
+
+- `${XDG_STATE_HOME:-~/.local/state}/fleet/vim/swap`
+- `${XDG_STATE_HOME:-~/.local/state}/fleet/vim/backup`
+- `${XDG_STATE_HOME:-~/.local/state}/fleet/vim/undo`
+
+The tab makes them with mode 0700, and a file name in them is the full path of the file with `%` for `/`. `nvim` keeps its own swap folder, `${XDG_STATE_HOME:-~/.local/state}/nvim/swap`, which is outside every tree as well. The settings come from the command line, so they run before a `vimrc` and a `vimrc` that sets `directory` itself wins. The tab turns netrw off in the editors that it starts, because Yazi is the folder view and netrw resets the read-only flags that the guard sets.
+
+After a crash, the swap still holds the unsaved work. Open the same file again from the Files tab, and Vim shows `E325: ATTENTION` with the swap's name. Press `r` to recover. Outside the tab, point Vim at the swap folder above, with the `//` after it:
+
+```
+vim --cmd 'set dir=<folder>//' -r <file>
+```
+
+Without `<file>`, `-r` lists the swaps in that folder. A recovered edit of a tracked file is a change to git only after it is written, and then `/updatefleet` refuses until the change is committed or dropped.
+
+Each file that Yazi opens starts a new `fleet files open` from the home's current code, so after `/updatefleet` the next file gets these settings even in a Yazi that is already open. An editor that was started earlier keeps the old settings until it quits. If `/updatefleet` refuses with `?? .<name>.swp`, the line says that it is a Vim swap for `<name>`, and that the file is open in an editor or the swap was left by a crash. It is a refusal, and nothing treats a swap as clean. Quit that editor, or recover the work first and then delete the swap.
 
 ### Scratch worktrees
 

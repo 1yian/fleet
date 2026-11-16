@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { launchPrefix } from "./invoke.ts";
 import { decide, type Decision } from "./places.ts";
 import type { World } from "./world.ts";
@@ -8,6 +9,8 @@ import type { World } from "./world.ts";
 const MAX_EDIT_BYTES = 2 * 1024 * 1024;
 const SNIFF_BYTES = 8192;
 const EDITORS = ["nvim", "vim", "vi"];
+const KEEPS_ITS_OWN_SCRATCH = "nvim";
+const VIM_SCRATCH_FOLDERS = { directory: "swap", backupdir: "backup", undodir: "undo" } as const;
 
 const FOLLOW_DISK = [
   "-c",
@@ -23,28 +26,55 @@ function statusLine(note: string): string[] {
   return ["-c", "set laststatus=2", "-c", `let &statusline = ${vimString(line)}`];
 }
 
+const NO_NETRW = ["--cmd", "let g:loaded_netrw = 1 | let g:loaded_netrwPlugin = 1"];
+
 function guardBuffers(): string[] {
   const check = [...launchPrefix(), "files", "check"].map(vimString).join(", ");
+  const command = `join(map([${check}, expand('<afile>:p')], 'shellescape(v:val)'), ' ')`;
   return [
     "-c",
-    `autocmd BufReadPost,BufNewFile * call system([${check}, expand('<afile>:p')]) | if v:shell_error != 0 | setlocal readonly nomodifiable | endif`,
+    `autocmd BufReadPost,BufNewFile * call system(${command}) | if v:shell_error != 0 | setlocal readonly nomodifiable | endif`,
   ];
 }
 
+function vimScratchRoot(): string {
+  const named = process.env["XDG_STATE_HOME"];
+  const state = named !== undefined && named !== "" ? named : join(homedir(), ".local", "state");
+  return join(state, "fleet", "vim");
+}
+
+function vimScratch(): string[] {
+  const root = vimScratchRoot();
+  return Object.entries(VIM_SCRATCH_FOLDERS).flatMap(([option, folder]) => {
+    const path = join(root, folder);
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    const item = `${path.replaceAll(",", "\\,")}//`;
+    return ["--cmd", `let &${option} = ${vimString(item)}`];
+  });
+}
+
+function sessionBanner(decision: Decision, scratchNote?: string): string[] {
+  if (!decision.editable) {
+    return [
+      "-R",
+      "-M",
+      ...statusLine(
+        `GUARDED, ${decision.why}. In Files: E opens a scratch copy, S shows it to the mate`,
+      ),
+    ];
+  }
+  return scratchNote === undefined ? [] : statusLine(`SCRATCH, ${scratchNote}`);
+}
+
 function editorArgs(decision: Decision, path: string, scratchNote?: string): string[] {
-  const banner = decision.editable
-    ? [
-        ...(scratchNote === undefined ? [] : statusLine(`SCRATCH, ${scratchNote}`)),
-        ...guardBuffers(),
-      ]
-    : [
-        "-R",
-        "-M",
-        ...statusLine(
-          `GUARDED, ${decision.why}. In Files: E opens a scratch copy, S shows it to the mate`,
-        ),
-      ];
-  return [...banner, ...FOLLOW_DISK, "--", path];
+  return [
+    ...NO_NETRW,
+    ...sessionBanner(decision, scratchNote),
+    ...guardBuffers(),
+    ...FOLLOW_DISK,
+    "--",
+    path,
+  ];
 }
 
 function hasNul(path: string): boolean {
@@ -79,7 +109,8 @@ function showMetadata(path: string, because: string): void {
 
 function runEditor(world: World, args: readonly string[], cwd?: string): number {
   for (const editor of EDITORS) {
-    const run = spawnSync(editor, args, {
+    const own = editor === KEEPS_ITS_OWN_SCRATCH ? args : [...vimScratch(), ...args];
+    const run = spawnSync(editor, own, {
       stdio: "inherit",
       env: { ...process.env, FLEET_FILES_HOME: world.home },
       ...(cwd === undefined ? {} : { cwd }),

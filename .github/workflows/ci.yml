@@ -216,6 +216,10 @@ jobs:
           curl -fsSL -o fzf.tar.gz "https://github.com/junegunn/fzf/releases/download/${FZF_VERSION}/fzf-${FZF_VERSION}-linux_amd64.tar.gz"
           echo "${FZF_SHA256}  fzf.tar.gz" | sha256sum -c -
           sudo tar -xzf fzf.tar.gz -C /usr/local/bin fzf
+      - name: Install vim, which the Files tab falls back to on a host without nvim and the Vim end-to-end tests drive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq vim
       - name: Install lavish-axi, which the review end-to-end tests drive (optional on a host, docs/setup.md)
         run: npm install -g lavish-axi@0.1.90
       - run: npm run build
