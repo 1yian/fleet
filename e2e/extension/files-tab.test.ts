@@ -94,6 +94,7 @@ test("a Files tab whose explorer has quit gets the explorer again in the same pa
   const { workspace, pane } = await startedWithFiles();
   const files = FilesPane.attach(mates.lab, pane);
   await running(pane, "yazi");
+  await files.sees("AGENTS.md");
   await files.type("q");
   await atPrompt(pane);
   await mates.lab.submit(pane, "cd /");
@@ -109,6 +110,7 @@ test("a Files pane that runs another program is left alone, whether its shell ru
   const { pane } = await startedWithFiles();
   const files = FilesPane.attach(mates.lab, pane);
   await running(pane, "yazi");
+  await files.sees("AGENTS.md");
   await files.type("q");
   await atPrompt(pane);
   await mates.lab.submit(pane, "sleep 3000");
