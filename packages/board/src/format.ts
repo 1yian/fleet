@@ -221,11 +221,6 @@ export function laneColor(lane: string): string {
   return LANE_COLORS[hash % LANE_COLORS.length] ?? "#52525b";
 }
 
-export function lanesOf(cards: readonly BoardCard[]): string[] {
-  const lanes = [...new Set(cards.map((card) => card.lane))];
-  return lanes.sort((a, b) => (a === "main" ? -1 : b === "main" ? 1 : a.localeCompare(b)));
-}
-
 const PHRASES: Record<Status, string> = {
   queued: "Queued",
   working: "Working",

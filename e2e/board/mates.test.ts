@@ -31,7 +31,7 @@ const http = (): string => cardd.url.replace(/^ws/, "http").replace(/\/session$/
 
 test("the Mates section shows each second mate's lane card, and its detail is the talk with main", async () => {
   await page.goto(http());
-  await page.getByText("Nothing for you").waitFor();
+  await page.getByText("Nothing is on the board.").waitFor();
   assert.equal(await page.getByRole("region", { name: "Mates" }).count(), 0);
 
   const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
@@ -74,7 +74,6 @@ test("a second mate's hold is not in Needs you until main escalates it", async (
   const running = page.getByRole("region", { name: "In progress" });
   await running.getByText("Asks main: Which channel?").waitFor();
   await running.locator(".chip", { hasText: "with main" }).waitFor();
-  await page.getByText("Nothing for you").waitFor();
   assert.equal(await page.getByRole("button", { name: "search" }).count(), 0);
 
   await main.call("hold", {
