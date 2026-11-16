@@ -61,8 +61,12 @@ interface Config {
 const EXTENSION = fileURLToPath(import.meta.url);
 const HOME = (): string => process.cwd();
 
-async function filesSetup(pi: ExtensionAPI, home: string): Promise<void> {
-  await ensureFilesTab(home).catch(() => undefined);
+async function filesSetup(pi: ExtensionAPI, ctx: ExtensionContext, home: string): Promise<void> {
+  await ensureFilesTab(home).catch((error: unknown) => {
+    announce(ctx, [
+      `the Files tab did not start: ${error instanceof Error ? error.message : String(error)}`,
+    ]);
+  });
   recordSkills(pi, home);
 }
 
@@ -389,7 +393,7 @@ export default function fleet(pi: ExtensionAPI): void {
     );
     if (found.lane !== undefined) {
       titleMate(pi, found.lane).catch(() => undefined);
-      filesSetup(pi, HOME()).catch(() => undefined);
+      filesSetup(pi, ctx, HOME()).catch(() => undefined);
     }
   });
 }
