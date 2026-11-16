@@ -1,10 +1,16 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, MAX_SCHEDULES, OPS, type OpArgs, type Schedule } from "@fleet/protocol";
+import {
+  check,
+  MAX_SCHEDULES,
+  OPS,
+  SCHEDULE_LOG_NAME,
+  type OpArgs,
+  type Schedule,
+} from "@fleet/protocol";
 import { dueSlots, localMinute, timeZoneProblem } from "./schedule.ts";
 import { addCard, addEntry, laneCardOf, mainLane } from "./store.ts";
 
 const AUTHOR = "schedule";
-const MAIN_CARD = "scheduled-messages";
 
 interface Row extends Schedule {
   readonly since: number;
@@ -112,12 +118,12 @@ function cardFor(db: DatabaseSync, recipient: string): number {
   if (lane !== undefined) return lane;
   const found = db
     .prepare("SELECT id FROM cards WHERE lane = ? AND kind = 'standing' AND name = ?")
-    .get(recipient, MAIN_CARD)?.["id"];
+    .get(recipient, SCHEDULE_LOG_NAME)?.["id"];
   if (typeof found === "number") return found;
   return addCard(db, {
     lane: recipient,
     title: "Scheduled messages",
-    name: MAIN_CARD,
+    name: SCHEDULE_LOG_NAME,
     kind: "standing",
   }).id;
 }

@@ -125,6 +125,7 @@ export const BoardCardSchema = Type.Object({
   activity: Nullable(ActivitySchema),
   summary: Type.String(),
   mate: Type.Boolean(),
+  scheduleLog: Type.Optional(Type.Boolean()),
   holder: Nullable(Holder),
   replies: Type.Array(OwedReplySchema),
   ...Shown,

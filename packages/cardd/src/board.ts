@@ -1,6 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
   check,
+  isScheduleLog,
+  SCHEDULE_LOG_NAME,
   BoardActionSchema,
   type Board,
   type BoardCard,
@@ -28,6 +30,7 @@ import {
   isLaneCard,
   loadCard,
   loadCards,
+  mainLane,
   type Loaded,
 } from "./store.ts";
 import type { Timings } from "./timing.ts";
@@ -113,6 +116,8 @@ function boardCard(db: DatabaseSync, each: Loaded, neglect: Neglect): BoardCard 
     activity: activityOf(db, card, mate),
     summary: summaryOf(card, entries, mate, hold),
     mate,
+    scheduleLog:
+      card.kind === "standing" && card.name === SCHEDULE_LOG_NAME && card.lane === mainLane(db),
     holder: hold?.holder ?? null,
     replies,
     attention: standing.attention,
@@ -147,7 +152,7 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
     const card = boardCard(db, each, neglect);
     const { hold } = each.standing.facts;
     const open = card.status !== "done" && card.status !== "dropped";
-    if (open && hold !== undefined && askingCaptain(hold, now)) {
+    if (open && !isScheduleLog(card) && hold !== undefined && askingCaptain(hold, now)) {
       const { entry, question, options, merge, originalMerge, author } = hold;
       holds.push({
         card: card.id,
@@ -166,7 +171,7 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
 
 export function boardFor(db: DatabaseSync, lane: string, timing: Timings): BoardCard[] {
   return boardView(db, timing)
-    .cards.filter((card) => canSee(db, lane, card.lane))
+    .cards.filter((card) => !isScheduleLog(card) && canSee(db, lane, card.lane))
     .map((card) => seenBy(db, lane, card));
 }
 
