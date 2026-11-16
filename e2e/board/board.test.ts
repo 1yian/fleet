@@ -61,7 +61,7 @@ test("Needs you shows a hold, and one click answers it", async () => {
   await page.getByText("Pick the API version?").waitFor();
 
   await page.getByRole("button", { name: "v2" }).click();
-  await page.getByText("Nothing for you").waitFor();
+  await page.getByRole("button", { name: "v2", exact: true }).waitFor({ state: "hidden" });
   const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
   assert.deepEqual([answer.author, answer.body], ["captain", "v2"]);
 });
@@ -78,7 +78,7 @@ test("a click on a hold goes through although other entries landed on the card s
   assert.ok(moved > looked, "the card moved on after he looked");
 
   await page.getByRole("button", { name: "now" }).click();
-  await page.getByText("Nothing for you").waitFor();
+  await page.getByRole("button", { name: "now", exact: true }).waitFor({ state: "hidden" });
   const answer = await main.waitForEntry((entry) => entry.kind === "answer", "the answer");
   assert.deepEqual([answer.author, answer.body], ["captain", "now"]);
   assert.equal(await page.getByRole("alert").count(), 0);
@@ -321,7 +321,7 @@ test("Your words answers the question in the captain's words, for the card's mat
   );
   assert.equal(answer.fields["source"], "board");
   assert.equal(answer.fields["written"], true);
-  await page.getByText("Nothing for you").waitFor();
+  await page.getByRole("button", { name: "Your words", exact: true }).waitFor({ state: "hidden" });
 });
 
 test("Escape closes the answer box and not the card", async () => {
@@ -337,7 +337,7 @@ test("Escape closes the answer box and not the card", async () => {
 
 test("the board reloads after its live socket reconnects", async () => {
   await page.goto(http());
-  await page.getByText("Nothing for you").waitFor();
+  await page.getByText("Nothing is on the board.").waitFor();
 
   await cardd.restart();
   main = await cardd.connect(mainToken);

@@ -88,7 +88,6 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-/* The board page: a top bar, five columns, and a rail */
 .kanban {
   font-size: 13px;
   min-height: 100dvh;
@@ -98,74 +97,6 @@ textarea:focus-visible {
 }
 .kanban .notice {
   margin: 10px 12px 0;
-}
-.top {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 48px;
-  padding: 0 16px;
-  background: #fff;
-  border-bottom: 1px solid var(--line-2);
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-.brand-mark {
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  border-radius: 5px;
-  background: var(--ink);
-}
-.brand-mark svg {
-  width: 12px;
-  height: 12px;
-  fill: none;
-  stroke: #fff;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.lanes {
-  display: flex;
-  gap: 4px;
-  min-width: 0;
-  padding-left: 14px;
-  border-left: 1px solid var(--line);
-}
-.lane-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 8px 0 4px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: var(--ink-2);
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.lane-chip:first-child {
-  padding-left: 8px;
-}
-.lane-chip:hover {
-  background: var(--panel);
-}
-.lane-chip[aria-pressed="true"] {
-  background: var(--panel);
-  color: var(--ink);
 }
 .av {
   width: 18px;
@@ -179,36 +110,6 @@ textarea:focus-visible {
   font-weight: 600;
   text-transform: lowercase;
 }
-.for-you {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  margin: 0 0 0 auto;
-  padding: 0 10px;
-  border: 1px solid var(--needs-line);
-  border-radius: 999px;
-  background: var(--needs-bg);
-  color: var(--needs-ink);
-  font-weight: 600;
-  white-space: nowrap;
-}
-.for-you .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--needs);
-}
-.for-you.clear {
-  border-color: var(--line);
-  background: none;
-  color: var(--muted);
-  font-weight: 500;
-}
-.for-you.clear .dot {
-  background: var(--faint);
-}
-
 .board-body {
   --heads: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.45fr) minmax(0, 0.95fr) minmax(0, 1.05fr);
   --inset: 8px;
@@ -236,7 +137,7 @@ textarea:focus-visible {
 }
 .col-heads {
   position: sticky;
-  top: 48px;
+  top: 0;
   z-index: 2;
   padding: 8px calc(var(--inset) + 1px) 6px;
   background: var(--page);
@@ -976,19 +877,6 @@ button.hidden-col:hover:not(:disabled) {
 
 /* Below a wide screen: one list, Needs you first */
 @media (max-width: 1200px) {
-  .top {
-    flex-wrap: wrap;
-    gap: 8px 12px;
-    padding: 8px 14px;
-  }
-  .lanes {
-    order: 3;
-    flex: 1 0 100%;
-    padding-left: 0;
-    border-left: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
   .board-body,
   .board-body.no-merging {
     flex-direction: column;

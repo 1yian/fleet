@@ -194,16 +194,6 @@ export function ChevronIcon() {
   );
 }
 
-export function BrandMark() {
-  return (
-    <span className="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 14 14">
-        <path d="M2.5 10.5 7 3l4.5 7.5z" />
-      </svg>
-    </span>
-  );
-}
-
 export function BackIcon() {
   return (
     <svg className="inline-icon" viewBox="0 0 16 16" aria-hidden="true">

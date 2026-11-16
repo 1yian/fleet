@@ -81,6 +81,29 @@ const sideways = (): Promise<string[]> =>
       .map((element) => element.className || element.tagName),
   );
 
+test("the board starts at the top without navigation on desktop and phone", async () => {
+  for (const viewport of [DESKTOP, PHONE]) {
+    await page.setViewportSize(viewport);
+    await open();
+    await shoot(`topbar-removed-${String(viewport.width)}`);
+    assert.equal(await page.getByRole("navigation", { name: "Lanes" }).count(), 0);
+    assert.equal(await page.getByRole("heading", { name: "Fleet", exact: true }).count(), 0);
+    const first = viewport.width === DESKTOP.width ? page.locator(".col-heads") : lane("fleet");
+    const box = await first.boundingBox();
+    assert.ok(box !== null && box.y <= 8, "board content fills the removed header space");
+    assert.deepEqual(await sideways(), []);
+    await card("Pick the API version").waitFor();
+    await card("Leo: rotate the Twilio webhook secret").waitFor();
+    if (viewport.width === DESKTOP.width) {
+      await page.evaluate(() => {
+        window.scrollTo(0, 200);
+      });
+      const sticky = await first.boundingBox();
+      assert.equal(sticky?.y, 0, "column headings stick to the viewport top");
+    }
+  }
+});
+
 test("desktop: one swimlane for each project, and each card in the cell of its project and status", async () => {
   await open();
   await region("Merging").getByRole("article").nth(1).waitFor();
@@ -296,7 +319,7 @@ test("desktop: Done today says merged, merged automatically with yolo, and done 
   await region("Merging").getByText("you approved · landing").waitFor();
 });
 
-test("the rail holds Dropped, older Done, and the Mates, and lane chips filter the board", async () => {
+test("the rail holds Dropped, older Done, and the Mates across all lanes", async () => {
   await open();
   const hidden = region("Hidden columns");
   await hidden.getByRole("button", { name: /Dropped/ }).click();
@@ -311,16 +334,9 @@ test("the rail holds Dropped, older Done, and the Mates, and lane chips filter t
   const mates = region("Mates");
   assert.deepEqual(await mates.locator(".title").allTextContents(), ["cleo", "leo"]);
 
-  const lanes = page.getByRole("navigation", { name: "Lanes" });
-  await lanes.getByRole("button", { name: "leo", exact: true }).click();
-  assert.deepEqual(await titles("Up next"), [
-    "Leo: rotate the Twilio webhook secret",
-    "Renew the leo-calls TLS certificate",
-  ]);
-  assert.equal(await region("Needs you").getByRole("article").count(), 0);
+  await card("Leo: rotate the Twilio webhook secret").waitFor();
+  await card("Pick the API version").waitFor();
   assert.equal(await mates.getByRole("article").count(), 2);
-  await lanes.getByRole("button", { name: "All lanes" }).click();
-  await region("Needs you").getByRole("article").first().waitFor();
 });
 
 test("Needs you: a long question clamps to two lines with a Read link that opens the card", async () => {

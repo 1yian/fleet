@@ -17,7 +17,6 @@ const RAIL_SHOWN = 25;
 
 interface Props {
   readonly board: BoardData;
-  readonly lane: string | undefined;
   readonly now: number;
   readonly facts: ReadonlyMap<number, Facts>;
   readonly onOpen: (card: number) => void;
@@ -212,11 +211,8 @@ function Rail(props: {
 export function Kanban(props: Props) {
   const { board, now, facts } = props;
   const asked = questionsByCard(board.holds);
-  const shown = board.cards.filter(
-    (card) => card.mate || props.lane === undefined || card.lane === props.lane,
-  );
-  const columns = arrange(shown, asked, now);
-  const lanes = swimlanes(shown, asked, now);
+  const columns = arrange(board.cards, asked, now);
+  const lanes = swimlanes(board.cards, asked, now);
   const cardOf: Render = (card) => (
     <TaskCard
       key={card.id}

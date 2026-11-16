@@ -62,7 +62,7 @@ function TitleLink(props: { readonly card: BoardCard; readonly onOpen: () => voi
   );
 }
 
-export function LaneAvatar({ lane }: { readonly lane: string }) {
+function LaneAvatar({ lane }: { readonly lane: string }) {
   return (
     <span className="av" style={{ background: laneColor(lane) }} title={lane} aria-hidden="true">
       {lane.charAt(0)}

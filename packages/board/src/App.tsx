@@ -6,7 +6,6 @@ import { CardDetail, NoCard } from "./CardDetail.tsx";
 import { useFacts } from "./facts.ts";
 import { deviceZone, questionsByCard } from "./format.ts";
 import { useCardRoute } from "./route.ts";
-import { TopBar } from "./TopBar.tsx";
 
 const TICK_MS = 30_000;
 
@@ -127,7 +126,6 @@ export function App() {
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
   const { board, refresh } = useBoard(changes, now, setNotice);
-  const [lane, setLane] = useState<string | undefined>();
   const { card: open, open: openCard, close } = useCardRoute();
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
@@ -179,14 +177,11 @@ export function App() {
         )}
       </main>
     );
-  const selected = board.cards.some((card) => card.lane === lane) ? lane : undefined;
   return (
     <main className="kanban">
-      <TopBar cards={board.cards} waiting={board.holds.length} lane={selected} onLane={setLane} />
       {banner}
       <Kanban
         board={board}
-        lane={selected}
         now={now}
         facts={facts}
         onOpen={openCard}
