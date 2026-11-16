@@ -166,7 +166,8 @@ test("desktop: one swimlane for each project, and each card in the cell of its p
     await cellOf("calls", "In progress").locator(".chip", { hasText: "with cleo" }).count(),
     1,
   );
-  assert.equal(await page.getByText("3 for you").count(), 1);
+  assert.equal(await lane("fleet").getByText("1 for you").count(), 1);
+  assert.equal(await lane("No project").getByText("2 for you").count(), 1);
   assert.deepEqual(await sideways(), []);
   await shoot("desktop-1440");
 });
@@ -207,17 +208,6 @@ test("desktop: lanes are physically separate, each with its name, and cards stay
     0,
   );
   await shoot("swimlanes-1440");
-});
-
-test("filtering to one mate hides the projects that mate has no cards in", async () => {
-  await open();
-  assert.equal(await lane("calls").count(), 1);
-  await page
-    .getByRole("navigation", { name: "Lanes" })
-    .getByRole("button", { name: "main" })
-    .click();
-  assert.equal(await lane("calls").count(), 0);
-  assert.equal(await lane("fleet").count(), 1);
 });
 
 test("a card has no avatar, and its id row says its kind and its lane", async () => {
@@ -373,7 +363,7 @@ test("Needs you: one click on an option answers, and the card goes to its owner"
     ["captain", "v2", "board"],
   );
   assert.equal(await region("Needs you").getByRole("article").count(), 2);
-  await page.getByText("2 for you").waitFor();
+  await lane("No project").getByText("1 for you").waitFor();
 });
 
 test("Needs you: Cancel closes the words box and leaves the options", async () => {
