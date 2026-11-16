@@ -326,9 +326,14 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
       findings().map((body) => body.slice(0, 22)),
       ["job lost: job 1 (first"],
     );
-    assert.match(
-      lastUser(await h.waitForCall(3)) ?? "",
-      /^\[fleet\] c-1 users-see-one-scrollbar job 1 \(first\) lost: no heartbeat arrived/,
+    assert.ok(
+      (await h.waitForCall(3)).some(
+        (turn) =>
+          turn.role === "user" &&
+          turn.text.startsWith(
+            "[fleet] c-1 users-see-one-scrollbar job 1 (first) lost: no heartbeat arrived",
+          ),
+      ),
     );
     const reported = (): boolean => fleet.main.entries.some(({ entry }) => entry.kind === "report");
     await until(() => (reported() ? true : undefined), "the worker's report");
@@ -359,9 +364,14 @@ test("a result that arrives after the job was marked lost is still delivered onc
   process.kill(wrapper, "SIGSTOP");
   try {
     await until(() => (findings().length > 0 ? true : undefined), "the finding");
-    assert.match(
-      lastUser(await h.waitForCall(3)) ?? "",
-      /^\[fleet\] c-1 users-see-one-scrollbar job 1 \(late\) lost: no heartbeat arrived/,
+    assert.ok(
+      (await h.waitForCall(3)).some(
+        (turn) =>
+          turn.role === "user" &&
+          turn.text.startsWith(
+            "[fleet] c-1 users-see-one-scrollbar job 1 (late) lost: no heartbeat arrived",
+          ),
+      ),
     );
     await until(
       () => (fleet.main.entries.some(({ entry }) => entry.kind === "report") ? true : undefined),
