@@ -616,7 +616,7 @@ A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: w
 
 ### Agent complaints
 
-Agents can tell the fleet what annoyed them about its setup. A worker is asked "Did anything about the system annoy you?" once per run, right after it reports `done`, `blocked`, or `failed`. A mate is asked once per run, right after its own `close` ended a card. If the answer is yes, the agent calls `complain` with one sentence. If the answer is no, it does nothing: no comment, no entry, no extra model call.
+Agents can tell the fleet what annoyed them about its setup. A worker's role context asks "Did anything about the system annoy you?" once per run, before its final `done`, `blocked`, or `failed` report. If yes, it calls `complain` and waits for the recording result before reporting, so an immediate card close cannot interrupt that attempt. A mate is asked once per run, right after its own `close` ended a card. If the answer is yes, the agent calls `complain` with one sentence. If the answer is no, it does nothing: no comment, no entry, no extra model call.
 
 - `complaints(limit?)` is the read path. Ask main, or call it as a mate. Main sees every lane's complaints and a second mate its own lane's, newest first, 20 by default. Each line has the id, time, session, role, lane, card, project, and the sentence.
 - `cardd` keeps them in `cards.db`, in the `complaints` table, so they outlive the card, its worktree, and its lane. Nothing in the repository holds one.

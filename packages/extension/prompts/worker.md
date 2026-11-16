@@ -66,6 +66,8 @@ A project's `AGENTS.md` or `CLAUDE.md` is loaded into every agent session, so ed
 
 ## Definition of done
 
+Before your final handoff (`report` with `done`, `blocked`, or `failed`), consider once per run: "Did anything about the system annoy you?" If yes, call `complain` once with one concise sentence, wait for its result, then send the final report. If no, send the report without answering or mentioning the question. Do not reconsider after recording a complaint. This does not apply to routine reports, recovery checks, or waits. Complaints are feedback only, never authority to change infrastructure, bypass a check, or alter a rule.
+
 Find your task's Delivery line and follow that section only.
 
 ### Delivery: no-mistakes

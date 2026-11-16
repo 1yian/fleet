@@ -309,7 +309,7 @@ function start(
   failures.register(pi);
   const complaints = new Complaints(pi, link);
   complaints.register(role);
-  const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures, complaints);
+  const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;

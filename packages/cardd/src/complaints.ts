@@ -10,15 +10,15 @@ interface About {
   readonly project: string | null;
 }
 
-function aboutCard(db: DatabaseSync, id: number | undefined): About {
+function aboutCard(db: DatabaseSync, session: Session, id: number | undefined): About {
   const row =
     id === undefined
       ? undefined
       : db
           .prepare(
-            "SELECT id, coalesce(project, historical_project) AS project FROM cards WHERE id = ?",
+            "SELECT id, coalesce(project, historical_project) AS project FROM cards WHERE id = ? AND (? OR lane = ?)",
           )
-          .get(id);
+          .get(id, session.lane === mainLane(db) ? 1 : 0, session.lane);
   return {
     card: typeof row?.["id"] === "number" ? row["id"] : null,
     project: typeof row?.["project"] === "string" ? row["project"] : null,
@@ -31,7 +31,7 @@ export function recordComplaint(
   args: OpArgs<"complain">,
   now: number,
 ): number {
-  const { card, project } = aboutCard(db, session.card ?? args.card);
+  const { card, project } = aboutCard(db, session, session.card ?? args.card);
   const { lastInsertRowid } = db
     .prepare(
       "INSERT INTO complaints (at, session, role, lane, card, project, text) VALUES (?, ?, ?, ?, ?, ?, ?)",

@@ -54,7 +54,7 @@ export class Complaints {
       parameters: OPS.complain.args,
       execute: async (_id, params, _signal, _update, ctx) => {
         try {
-          const { id } = await this.link.call("complain", params);
+          const { id } = await this.link.call("complain", params, 5_000);
           return reply(`Recorded complaint ${String(id)}.`);
         } catch (error) {
           const why = error instanceof Error ? error.message : String(error);

@@ -66,16 +66,6 @@ afterEach(async (t) => {
 const asked = (turns: Turn[] | undefined): number =>
   (turns ?? []).filter((turn) => turn.role === "user" && turn.text.includes(QUESTION)).length;
 
-async function workerAnswered(answer: "yes" | "no"): Promise<void> {
-  const deadline = Date.now() + WORKER_WAIT_MS;
-  for (;;) {
-    const recorded = check(OPS.complaints.result, await main.call("complaints", {})).length;
-    if (answer === "yes" ? recorded > 0 : h.callsOf("worker").length > 1) return;
-    if (Date.now() > deadline) throw new Error("the worker never answered the question");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
-
 function scriptWork(workerAnswer: "yes" | "no", mateAnswer: "yes" | "no"): void {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(
@@ -95,7 +85,11 @@ function scriptWork(workerAnswer: "yes" | "no", mateAnswer: "yes" | "no"): void 
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(async () => {
-    await workerAnswered(workerAnswer);
+    const recorded = check(OPS.complaints.result, await main.call("complaints", {}));
+    assert.deepEqual(
+      recorded.map(({ text }) => text),
+      workerAnswer === "yes" ? [WORKER_SENTENCE] : [],
+    );
     return {
       tool: "close",
       args: { card: 2, summary: "Assessment delivered", next: { drop: "nothing to build" } },
@@ -105,20 +99,24 @@ function scriptWork(workerAnswer: "yes" | "no", mateAnswer: "yes" | "no"): void 
     h.onModel(() => ({ tool: "complain", args: { text: MATE_SENTENCE, card: 2 } }), "mate");
   h.onModel(() => ({ tool: "complaints", args: {} }), "mate");
   h.onModel(() => ({ text: "closed" }), "mate");
-  h.onModel(
-    () => ({
+  if (workerAnswer === "yes")
+    h.onModel(() => {
+      assert.match(
+        h.callsOf("worker")[0]?.find((turn) => turn.role === "system")?.text ?? "",
+        /Did anything about the system annoy you\?/,
+      );
+      return { tool: "complain", args: { text: WORKER_SENTENCE } };
+    }, "worker");
+  h.onModel(() => {
+    assert.match(
+      h.callsOf("worker")[0]?.find((turn) => turn.role === "system")?.text ?? "",
+      /wait for its result, then send the final report/,
+    );
+    return {
       tool: "report",
       args: { status: "done", text: "Assessment complete. No project changes." },
-    }),
-    "worker",
-  );
-  h.onModel(
-    () =>
-      workerAnswer === "yes"
-        ? { tool: "complain", args: { text: WORKER_SENTENCE } }
-        : { text: "done" },
-    "worker",
-  );
+    };
+  }, "worker");
   h.onModel(() => ({ text: "done" }), "worker");
 }
 
@@ -134,11 +132,10 @@ test("a worker and a mate that answer yes leave one attributed complaint each, w
   const results = toolResults(await finishWork(7));
 
   const worker = h.callsOf("worker");
-  assert.equal(worker.length, 3);
+  assert.ok(worker.length >= 2 && worker.length <= 3);
   assert.equal(asked(worker[0]), 0);
-  assert.equal(asked(worker[1]), 1);
-  assert.equal(asked(worker[2]), 1);
-  assert.equal(toolResults(worker[2] ?? []).at(-1), "Recorded complaint 1.");
+  assert.equal(asked(worker[1]), 0);
+  assert.equal(toolResults(worker[1] ?? []).at(-1), "Recorded complaint 1.");
   const mateCalls = h.callsOf("mate");
   assert.equal(asked(mateCalls[3]), 0);
   assert.equal(asked(mateCalls[4]), 1);
@@ -192,9 +189,9 @@ test("a worker and a mate that answer no record nothing, add nothing to the card
   const results = toolResults(await finishWork(6));
 
   const worker = h.callsOf("worker");
-  assert.equal(worker.length, 2);
+  assert.ok(worker.length >= 1 && worker.length <= 2);
   assert.equal(asked(worker[0]), 0);
-  assert.equal(asked(worker[1]), 1);
+  assert.equal(asked(worker[1]), 0);
   const mateCalls = h.callsOf("mate");
   assert.equal(asked(mateCalls[4]), 1);
   assert.equal(results.at(-1), "No complaints.");
