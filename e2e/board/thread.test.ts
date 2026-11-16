@@ -184,6 +184,42 @@ test("an entry that carries a reply-to shows a link to the message it answers", 
   await page.locator(`#entry-${String(asked.id)}`).waitFor();
 });
 
+test("folded activity preserves worker reply targets for quiet reports and blockers", async () => {
+  const { card, worker } = await shipped("Keep the worker conversation reachable");
+  for (const status of ["working", "blocked"]) {
+    const question = `Explain the ${status} result.`;
+    await cleo.call("comment", { card: card.id, text: question, reply: true });
+    const asked = await worker.waitForEntry((entry) => entry.body === question, question);
+    await worker.call("report", {
+      status,
+      text: `The ${status} result is ready.`,
+      replyTo: `r-${String(asked.id)}`,
+    });
+    await page.goto(`${http()}#/c-${String(card.id)}`);
+    await thread().getByText(`The ${status} result is ready.`).waitFor();
+    const history = page.getByRole("button", { name: /^Show technical history/ });
+    await history.waitFor();
+    assert.equal(await history.getAttribute("aria-expanded"), "false");
+    const target = page.locator(`#entry-${String(asked.id)}`);
+    await target.getByText(question, { exact: true }).waitFor();
+    await thread()
+      .locator(`li[data-reply-to="${String(asked.id)}"]`)
+      .getByRole("button", { name: /In reply to cleo/ })
+      .click();
+    assert.equal(await target.evaluate((element) => element.classList.contains("flash")), true);
+  }
+});
+
+test("waiting labels identify main and the owning lane rather than the owner role", async () => {
+  const card = await scout(cleo, "Choose the next campaign");
+  await escalated(card);
+  assert.equal(await cardd.act(card.id, { kind: "comment", text: "Check last week first." }), 200);
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  await page.getByText("Waiting on cleo", { exact: true }).waitFor();
+  await cleo.call("hold", { card: card.id, question: "Last week was flat. Raise it?" });
+  await page.getByText("Waiting on main", { exact: true }).waitFor();
+});
+
 test("the same short answer to a later question is not mistaken for a duplicated hold clear", async () => {
   const card = await scout(main, "Two separate approvals");
   await main.call("hold", {

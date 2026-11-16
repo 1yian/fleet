@@ -14,7 +14,7 @@ import { idLabel } from "./text.ts";
 import { Collapsible } from "./Collapsible.tsx";
 import { Entries } from "./Thread.tsx";
 import { LiveChip, WaitLine } from "./TaskCard.tsx";
-import { glyphOf, laterLabel, phraseOf, prLabel, since, type Question } from "./format.ts";
+import { glyphOf, laterLabel, phraseOf, prLabel, since, withWho, type Question } from "./format.ts";
 import { BackIcon, SendIcon, StatusIcon } from "./icons.tsx";
 
 interface Props {
@@ -142,7 +142,7 @@ function ActivityHeader({
         {card.activity?.state === "idle" ? null : <LiveChip card={card} now={now} />}
       </header>
       {card.holder === null || asked ? null : (
-        <p className="next-action">Waiting on {card.holder === "captain" ? "you" : card.holder}</p>
+        <p className="next-action">Waiting on {card.holder === "captain" ? "you" : withWho(card)}</p>
       )}
     </>
   );

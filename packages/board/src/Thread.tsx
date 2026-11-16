@@ -71,7 +71,12 @@ export function Entries(props: {
   const latest = all.findLast(
     (row) => row.replyTo === undefined && ["report", "cleanup"].includes(row.entry.kind),
   );
-  const hidden = new Set(all.filter((row) => technical(row, latest)).map((row) => row.entry.id));
+  const parents = new Set(all.map((row) => row.replyTo?.id));
+  const hidden = new Set(
+    all
+      .filter((row) => !parents.has(row.entry.id) && technical(row, latest))
+      .map((row) => row.entry.id),
+  );
   const rows = history ? all : all.filter((row) => row !== latest && !hidden.has(row.entry.id));
   const replies = new Map<number, Row[]>();
   for (const row of rows) {
