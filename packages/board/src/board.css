@@ -1073,6 +1073,44 @@ kbd.esc {
   min-width: 0;
   max-width: 740px;
 }
+.latest-update {
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.latest-update h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.update-source {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.latest-update .collapsible .body {
+  font-size: 14.5px;
+}
+.history-toggle {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 8px 0;
+  margin-bottom: 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.history-toggle:hover {
+  color: var(--ink);
+}
+.next-action {
+  font-size: 14px;
+  color: var(--ink);
+}
 .activity-head {
   display: flex;
   align-items: center;

@@ -14,7 +14,7 @@ import { idLabel } from "./text.ts";
 import { Collapsible } from "./Collapsible.tsx";
 import { Entries } from "./Thread.tsx";
 import { LiveChip, WaitLine } from "./TaskCard.tsx";
-import { glyphOf, laterLabel, phraseOf, prLabel, since, type Question } from "./format.ts";
+import { glyphOf, laterLabel, phraseOf, prLabel, since, withWho, type Question } from "./format.ts";
 import { BackIcon, SendIcon, StatusIcon } from "./icons.tsx";
 
 interface Props {
@@ -105,10 +105,7 @@ export function CardDetail(props: Props) {
             <Waiting question={question} onAnswer={props.onAnswer} onLater={props.onLater} />
           )}
           <section className="activity" aria-label="Activity">
-            <header className="activity-head">
-              <h2>Activity</h2>
-              <LiveChip card={card} now={now} always />
-            </header>
+            <ActivityHeader card={card} asked={asked} now={now} />
             {thread === undefined ? (
               <p className="muted">Loading…</p>
             ) : (
@@ -126,6 +123,30 @@ export function CardDetail(props: Props) {
         </div>
       </article>
     </div>
+  );
+}
+
+function ActivityHeader({
+  card,
+  asked,
+  now,
+}: {
+  readonly card: BoardCard;
+  readonly asked: boolean;
+  readonly now: number;
+}) {
+  return (
+    <>
+      <header className="activity-head">
+        <h2>Updates & conversation</h2>
+        {card.activity?.state === "idle" ? null : <LiveChip card={card} now={now} />}
+      </header>
+      {card.holder === null || asked ? null : (
+        <p className="next-action">
+          Waiting on {card.holder === "captain" ? "you" : withWho(card)}
+        </p>
+      )}
+    </>
   );
 }
 

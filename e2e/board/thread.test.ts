@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright";
@@ -49,7 +50,9 @@ async function scout(mate: Session, title: string): Promise<Card> {
 
 async function open(card: Card): Promise<void> {
   await page.goto(`${http()}#/c-${String(card.id)}`);
-  await thread().waitFor();
+  await thread().waitFor({ state: "attached" });
+  const history = page.getByRole("button", { name: /^Show technical history/ });
+  if (await history.count()) await history.click();
 }
 
 async function shipped(title: string): Promise<{ card: Card; worker: Session }> {
@@ -181,6 +184,42 @@ test("an entry that carries a reply-to shows a link to the message it answers", 
   await page.locator(`#entry-${String(asked.id)}`).waitFor();
 });
 
+test("folded activity preserves worker reply targets for quiet reports and blockers", async () => {
+  const { card, worker } = await shipped("Keep the worker conversation reachable");
+  for (const status of ["working", "blocked"]) {
+    const question = `Explain the ${status} result.`;
+    await cleo.call("comment", { card: card.id, text: question, reply: true });
+    const asked = await worker.waitForEntry((entry) => entry.body === question, question);
+    await worker.call("report", {
+      status,
+      text: `The ${status} result is ready.`,
+      replyTo: `r-${String(asked.id)}`,
+    });
+    await page.goto(`${http()}#/c-${String(card.id)}`);
+    await thread().getByText(`The ${status} result is ready.`).waitFor();
+    const history = page.getByRole("button", { name: /^Show technical history/ });
+    await history.waitFor();
+    assert.equal(await history.getAttribute("aria-expanded"), "false");
+    const target = page.locator(`#entry-${String(asked.id)}`);
+    await target.getByText(question, { exact: true }).waitFor();
+    await thread()
+      .locator(`li[data-reply-to="${String(asked.id)}"]`)
+      .getByRole("button", { name: /In reply to cleo/ })
+      .click();
+    assert.equal(await target.evaluate((element) => element.classList.contains("flash")), true);
+  }
+});
+
+test("waiting labels identify main and the owning lane rather than the owner role", async () => {
+  const card = await scout(cleo, "Choose the next campaign");
+  await escalated(card);
+  assert.equal(await cardd.act(card.id, { kind: "comment", text: "Check last week first." }), 200);
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  await page.getByText("Waiting on cleo", { exact: true }).waitFor();
+  await cleo.call("hold", { card: card.id, question: "Last week was flat. Raise it?" });
+  await page.getByText("Waiting on main", { exact: true }).waitFor();
+});
+
 test("the same short answer to a later question is not mistaken for a duplicated hold clear", async () => {
   const card = await scout(main, "Two separate approvals");
   await main.call("hold", {
@@ -201,6 +240,63 @@ test("the same short answer to a later question is not mistaken for a duplicated
   await answers.getByText("Yes", { exact: true }).waitFor();
   assert.equal(await answers.count(), 1);
   assert.equal(await thread().locator("li.message.captain .body", { hasText: /^Yes$/ }).count(), 2);
+});
+
+test("activity leads with the latest report, keeps blockers and answers, and folds task routing on desktop and mobile", async () => {
+  const { card, worker } = await shipped("Review the campaign outcome");
+  await worker.call("report", { status: "working", text: "Checking the campaign records." });
+  await worker.call("report", {
+    status: "blocked",
+    text: "The campaign export is missing. Cleo needs to provide it.",
+  });
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    const add = db.prepare(
+      "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, 'maintenance', 'note', ?, ?, ?)",
+    );
+    add.run(
+      card.id,
+      "Reload completed.",
+      JSON.stringify({ maintenance: 1, state: "completed", quiet: true }),
+      Date.now(),
+    );
+    add.run(
+      card.id,
+      "Reload failed. No replacement process connected.",
+      JSON.stringify({ maintenance: 2, state: "failed", quiet: false }),
+      Date.now(),
+    );
+  } finally {
+    db.close();
+  }
+  assert.equal(await cardd.act(card.id, { kind: "comment", text: "Use the May export." }), 200);
+  await page.goto(`${http()}#/c-${String(card.id)}`);
+  await thread().waitFor();
+  const latest = page.getByRole("region", { name: "Latest update" });
+  await latest.getByText("The campaign export is missing. Cleo needs to provide it.").waitFor();
+  await thread().getByText("Use the May export.").waitFor();
+  assert.equal(await thread().getByText("Checking the campaign records.").count(), 0);
+  assert.equal(await thread().getByText("Reload completed.").count(), 0);
+  await thread().getByText("Reload failed. No replacement process connected.").waitFor();
+  const history = page.getByRole("button", { name: /^Show technical history/ });
+  await history.waitFor();
+  if (SHOTS !== undefined)
+    await page.screenshot({ path: join(SHOTS, "activity-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  if (SHOTS !== undefined)
+    await page.screenshot({ path: join(SHOTS, "activity-mobile.png"), fullPage: true });
+  await history.focus();
+  await page.keyboard.press("Enter");
+  await thread().getByText("Checking the campaign records.").waitFor();
+  await thread().getByText("Reload completed.").waitFor();
+  await thread().getByText("fix it", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Hide technical history" }).click();
+  await page
+    .getByRole("textbox", { name: "Comment", exact: true })
+    .fill("The export is ready now.");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await thread().getByText("The export is ready now.").waitFor();
 });
 
 const ASK =

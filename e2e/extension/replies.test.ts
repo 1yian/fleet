@@ -319,7 +319,7 @@ test("a captain's board comment owes a reply from main, which is resent and answ
     (await onBoard(card)).replies.map((each) => [each.id, each.from, each.owes]),
     [[id, "captain", "main"]],
   );
-  await page.getByText("Waiting for a reply").waitFor();
+  await page.getByText("main owes a reply", { exact: true }).waitFor();
 
   assert.deepEqual(await hears("mate", /still owed/), [
     `[fleet] check on c-1 dev-port (finding): reply ${id} is still owed to captain: "Which port does the dev server use?". Please answer the captain on the board with comment(card=1, text, replyTo="${id}") or hold(card=1, question, replyTo="${id}").`,
@@ -337,7 +337,7 @@ test("a captain's board comment owes a reply from main, which is resent and answ
       .allTextContents(),
     ["You"],
   );
-  assert.equal(await page.getByText("Waiting for a reply").count(), 0);
+  assert.equal(await page.getByText("main owes a reply", { exact: true }).count(), 0);
   assert.deepEqual((await onBoard(card)).replies, []);
   assert.equal(
     (await onBoard(card)).summary,
