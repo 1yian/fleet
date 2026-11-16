@@ -2,6 +2,7 @@ import { OPS } from "@fleet/protocol";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { parseUtc, textOf } from "./inbox.ts";
+import type { Complaints } from "./complaints.ts";
 import type { Failures } from "./failure.ts";
 import type { Jobs } from "./jobs.ts";
 import type { Link } from "./link.ts";
@@ -13,6 +14,7 @@ const HANDOFFS: ReadonlySet<string> = new Set([
   "blocked",
   "needs-decision",
 ]);
+const FINAL_HANDOFFS: ReadonlySet<string> = new Set(["done", "blocked", "failed"]);
 const BLOCKED_PANE = "blocked: reported";
 const STANDING_MS = Number(process.env["FLEET_STANDING_MS"]) || 15_000;
 const STANDING_DEADLINE_MS = 5_000;
@@ -85,11 +87,13 @@ export class WorkerRun {
   private readonly link: Link;
   private readonly jobs: Jobs;
   private readonly failures: Failures;
+  private readonly complaints: Complaints;
 
-  constructor(link: Link, jobs: Jobs, failures: Failures) {
+  constructor(link: Link, jobs: Jobs, failures: Failures, complaints: Complaints) {
     this.link = link;
     this.jobs = jobs;
     this.failures = failures;
+    this.complaints = complaints;
   }
 
   reset(): void {
@@ -152,6 +156,7 @@ export class WorkerRun {
         const card = await this.link.call("report", args);
         this.latest = { status: params.status, until };
         await this.settlePane(params.status === "blocked");
+        if (FINAL_HANDOFFS.has(params.status)) this.complaints.ask();
         const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
         return { content: [{ type: "text", text }], details: {} };
       },

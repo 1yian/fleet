@@ -11,6 +11,7 @@ import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
 import { applyCompactionBackoff } from "./compaction-backoff.ts";
 import { applyCompactionPolicy } from "./compaction-policy.ts";
+import { Complaints } from "./complaints.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
 import { watchMainCardd } from "./cardd-watch.ts";
@@ -306,7 +307,9 @@ function start(
   registerGuard(pi);
   const failures = new Failures(link);
   failures.register(pi);
-  const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
+  const complaints = new Complaints(pi, link);
+  complaints.register(role);
+  const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures, complaints);
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
@@ -314,7 +317,7 @@ function start(
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
     const launch = { url, piArgs: piArgs(), extension: EXTENSION, lost: tellLaunchLost(pi) };
-    registerMate(pi, link, launch, lanes, lane === "main");
+    registerMate(pi, link, launch, lanes, lane === "main", complaints);
     registerRestart(pi, link, launch, lane === "main" ? HOME() : undefined);
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);

@@ -1,3 +1,5 @@
+CREATE INDEX complaints_by_lane ON complaints (lane, id);
+
 CREATE INDEX deliveries_not_taken ON deliveries (session)
   WHERE state IN ('pending', 'pushed', 'resent', 'pushed-again', 'read', 'filed');
 
@@ -72,6 +74,17 @@ CREATE TABLE cards (
   CHECK (kind = 'ship' OR delivery IS NULL),
   CHECK ((held_until IS NULL) = (return_status IS NULL)),
   CHECK (tick IS NULL OR parent IS NOT NULL)
+) STRICT;
+
+CREATE TABLE complaints (
+  id INTEGER PRIMARY KEY,
+  at INTEGER NOT NULL,
+  session TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('mate', 'worker')),
+  lane TEXT NOT NULL,
+  card INTEGER,
+  project TEXT,
+  text TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE "deliveries" (

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { Next, OpResult } from "@fleet/protocol";
+import type { Next, OpArgs, OpResult } from "@fleet/protocol";
 import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
@@ -248,6 +248,7 @@ interface CloseRequest {
   landed?: boolean | undefined;
   confirm?: boolean | undefined;
   next?: Next | undefined;
+  onClosed?: (() => void) | undefined;
 }
 
 interface Running {
@@ -353,6 +354,16 @@ async function clearScratch(hosts: ReadonlySet<string>, card: number): Promise<S
   return { kept, moved, stayed };
 }
 
+async function finishClose(
+  link: Link,
+  request: CloseRequest,
+  finish: OpArgs<"close.finish">,
+): Promise<OpResult<"close.finish">> {
+  const card = await link.call("close.finish", finish);
+  request.onClosed?.();
+  return card;
+}
+
 async function teardown(
   link: Link,
   request: CloseRequest,
@@ -387,7 +398,7 @@ async function teardown(
     archives,
     left,
   };
-  const card = await link.call("close.finish", finish);
+  const card = await finishClose(link, request, finish);
   const scratch = await clearScratch(retiredOn, id);
   const hostsJustUnreachable = new Set(left.map((each) => each.host));
   const found = await refreshClonesInTurn(

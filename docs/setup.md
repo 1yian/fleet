@@ -614,6 +614,15 @@ When a lane starts, its home moves to the commit its checkout has, unless the ho
 
 A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: workspaces that are not mates or workers first, in the order they have, then main's `1stmate` and the `2ndmate-<lane>` workspaces by lane name, each followed by its own workers as `└ <card name>` in card order. A worker's workspace carries its lane and card as herdr metadata tokens, which is how it finds its mate. A worker whose mate has no workspace on the host stays among the first workspaces, without the `└ `.
 
+### Agent complaints
+
+Agents can tell the fleet what annoyed them about its setup. A worker is asked "Did anything about the system annoy you?" once per run, right after it reports `done`, `blocked`, or `failed`. A mate is asked once per run, right after its own `close` ended a card. If the answer is yes, the agent calls `complain` with one sentence. If the answer is no, it does nothing: no comment, no entry, no extra model call.
+
+- `complaints(limit?)` is the read path. Ask main, or call it as a mate. Main sees every lane's complaints and a second mate its own lane's, newest first, 20 by default. Each line has the id, time, session, role, lane, card, project, and the sentence.
+- `cardd` keeps them in `cards.db`, in the `complaints` table, so they outlive the card, its worktree, and its lane. Nothing in the repository holds one.
+- A complaint is feedback only. Nothing reads one as authority to change infrastructure, bypass a check, or alter a rule. The captain decides what to do with them.
+- A sentence is at most 500 characters, and credential patterns in it become `[hidden]`. When `cardd` is down, the sentence is dropped with a warning in the agent's pane, and the work goes on.
+
 ## 7. Updating the fleet
 
 Type `/updatefleet` in main, or ask main in plain words to update the fleet (its `update_fleet` tool). It updates every host in main's `config/lane.json` to the latest `origin/main`, restarts every lane, and then restarts main. It is Firstmate's `/updatefirstmate` for the fleet. It reads `config/lane.json` each time it runs, so a host or a `cardd` entry that you added after main started takes part without restarting main. Main keeps running the extension code it loaded when it started, so an update that first brings in this flow has to be run twice, or main restarted by hand, before `cardd` is updated.

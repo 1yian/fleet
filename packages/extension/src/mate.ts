@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CardName, DELIVERIES, NextSchema, OPS, type Card, type Schedule } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
+import type { Complaints } from "./complaints.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
 import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
@@ -222,6 +223,7 @@ export function registerMate(
   launch: Launch,
   lanes: LaneStates | undefined,
   main: boolean,
+  complaints: Complaints,
 ): void {
   registerYield(pi);
   pi.registerTool({
@@ -273,6 +275,9 @@ export function registerMate(
           landed: params.landed,
           confirm: params.confirm,
           next: params.next,
+          onClosed: () => {
+            complaints.ask();
+          },
         }),
       ),
   });
