@@ -7,3 +7,5 @@ See [docs/spec.md](docs/spec.md) for the design and [docs/build-plan.md](docs/bu
 Discuss decisions in chat or answer on the board. Ask for a [decision walkthrough](docs/decision-walkthrough.md) to take them one at a time. The [pane](docs/pane.md) shows the board URL, without decision counts or a strip.
 
 Fleet does not provide or manage a browser. Open the board in your own browser.
+
+An open card's **Updates & conversation** leads with the latest report or cleanup summary that is not a reply. Routine progress, task routing, and quiet completed maintenance are folded under **Show technical history**. Blockers, failures, decisions, captain messages, replies, and their parent messages remain visible. Waiting labels name who must act or reply next.
