@@ -59,6 +59,12 @@ export class HerdrLab {
     return this.text(["pane", "read", pane, "--source", "visible"]);
   }
 
+  async foreground(pane: string): Promise<string[]> {
+    const info = await this.run(["pane", "process-info", "--pane", pane]);
+    const processes = records(records([info["process_info"]])[0]?.["foreground_processes"]);
+    return processes.map((each) => `${String(each["pid"])}:${String(each["name"])}`);
+  }
+
   async history(pane: string): Promise<string> {
     return this.text(["pane", "read", pane, "--source", "recent", "--lines", "200"]);
   }
@@ -134,9 +140,7 @@ export class HerdrLab {
     const labels = new Map(workspaces.map((each) => [each["workspace_id"], each["label"]]));
     for (const pane of records((await this.run(["pane", "list"]))["panes"])) {
       const id = String(pane["pane_id"]);
-      const info = await this.run(["pane", "process-info", "--pane", id]);
-      const processes = records(records([info["process_info"]])[0]?.["foreground_processes"]);
-      const running = processes.map((each) => `${String(each["pid"])}:${String(each["name"])}`);
+      const running = await this.foreground(id);
       const label = String(labels.get(pane["workspace_id"]));
       lines.push(`--- pane ${id} in ${label}, cwd ${String(pane["cwd"])}`);
       lines.push(`foreground: ${running.join(" ")}`);

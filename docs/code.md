@@ -173,6 +173,7 @@ A scout closes Done only when the close names what happens next (`next-step.ts`)
 - `fleet-args.ts`: each value follows `=` in its flag, because Pi reads a separate value that begins with `-` as an option, and 1 `cardd` token in 64 begins with `-`. `launch.ts` turns the separate value of each option it takes, such as `--url <value>`, into `--url=<value>` for the same reason. It refuses `--token` before it reads anything else, so no token value is ever in its argument list or in a message.
 - `.pi/extensions/fleet.ts` loads the fleet extensions only in a lane home. A worker in a worktree of this repository has no `config/lane.json`, so it loads nothing from there and needs no installed packages. Dispatch gives workers the extension with `-e`.
 - Activity at each run and tool call keeps `last_activity` fresh for the stall check (spec section 12.2).
+- `files/tab.ts` tells an idle shell from a program with herdr's `pane process-info`. `pane list` and `pane get` carry no process, and a plain shell's `agent_status` is `unknown`. A pane is idle when its only foreground process has the shell's own pid and a shell's name. The pid alone is not enough: after `exec yazi`, the program has the shell's pid, and typing the launch line into it would send keys to that program. A shell nested inside the shell has another pid, so it counts as busy. Text typed at a prompt and not yet run cannot be seen, so the launch line would follow it.
 
 ### Sessions
 

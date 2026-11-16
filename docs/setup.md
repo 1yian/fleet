@@ -639,7 +639,7 @@ A host updates with the code it already has. A host whose checkout predates `fle
 
 ## The Files tab
 
-Every mate's herdr workspace has a second tab named `Files`. It runs `fleet files` in the lane home, which starts Yazi, with `nvim` as the editor. Yazi shows three columns: the parent folder, the current folder, and a preview of what the cursor is on, with icons, syntax-highlighted code, and its usual keys (`h` `j` `k` `l`, `g g`, `G`, `/`, Enter). The tab is made when the mate starts, on the mate's own host, and a mate that finds the tab already there leaves it alone. When Yazi quits, the pane is a shell in the lane home, and `fleet files` brings the explorer back. Nothing about it goes through `cardd`, the board, or a link: it is a terminal on the host that has the files.
+Every mate's herdr workspace has a second tab named `Files`. It runs `fleet files` in the lane home, which starts Yazi, with `nvim` as the editor. Yazi shows three columns: the parent folder, the current folder, and a preview of what the cursor is on, with icons, syntax-highlighted code, and its usual keys (`h` `j` `k` `l`, `g g`, `G`, `/`, Enter). The tab is made when the mate starts, on the mate's own host. A mate that finds the tab already there leaves it alone unless every pane in it is an idle shell, which is what the tab holds after Yazi quits or herdr restores it. Then the mate runs the explorer again in the first pane, from the lane home. It makes no second tab, never switches tabs, and never touches a pane that runs a program, whether the shell started the program or became it. The signal is herdr's `pane process-info`: a pane is idle when its only foreground process is the shell itself. When Yazi quits and no mate restarts, the pane is a shell in the lane home, and `fleet files` brings the explorer back. Nothing about it goes through `cardd`, the board, or a link: it is a terminal on the host that has the files.
 
 ### What it shows
 
@@ -693,7 +693,7 @@ Skill text is edited in one place: the ystack lane. Every other lane, and every 
 ### Rolling it out
 
 1. Merge the change and run `/updatefleet`. Every lane then has the new extension. Nothing in the protocol, `cardd`, or the database changes, so mates that run the earlier code keep working and reconnect as before. A lane gets its Files tab the next time its mate starts (`lane(<lane>, "restart")`), and a lane that has not restarted has none.
-2. Nothing to install for Yazi: the first `fleet files` on a host fetches it (see Prerequisites). A Files tab that is already open keeps what it runs. Quit it (`:q` in the `nvim` folder view of an earlier version) and run `fleet files` in that pane.
+2. Nothing to install for Yazi: the first `fleet files` on a host fetches it (see Prerequisites). A Files tab that is already open keeps what it runs. Quit it (`:q` in the `nvim` folder view of an earlier version) and run `fleet files` in that pane, or leave the shell there: the next mate start runs the explorer in it.
 3. Set `"files": {"main": "<host>"}` in each lane's `config/lane.json` that should type into main's pane with `M`. A lane that does not set it uses the board comment.
 4. Before a lane that holds a very large tree gets the tab for good, run `fleet files` in it by hand and note how long the first listing of its biggest folder takes. If it stalls, set `"files": {"previews": false}` for that lane.
 5. In the ystack lane, nothing more is needed if its `args` already load the scratch worktree's `skills/` as in "Changing a lane's settings".
