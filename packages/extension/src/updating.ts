@@ -293,7 +293,7 @@ async function arrangeAll(config: LaneConfig): Promise<string[]> {
 async function tagAllWorkers(config: LaneConfig, link: Link): Promise<void> {
   const cards = await link.call("board", {});
   const laneOfCard = new Map(cards.map((card) => [card.id, card.lane]));
-  const mates = await mateHosts(config);
+  const mates = await mateHosts(config).catch(() => new Map<string, string>());
   for (const host of hostsOf(config))
     await tagWorkers(host, laneOfCard, mates).catch(() => undefined);
 }

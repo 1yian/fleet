@@ -219,7 +219,9 @@ function lane(): string {
 
 const configuredHost =
   command === "up" || command === "restart" || command === "arrange"
-    ? readLaneConfig(root)?.host
+    ? [readLaneConfig(root), ...laneHomes(root).map((each) => each.config)].find(
+        (each) => each?.host !== undefined,
+      )?.host
     : undefined;
 if (configuredHost !== undefined) process.env["FLEET_HOST"] ??= configuredHost;
 

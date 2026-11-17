@@ -48,14 +48,10 @@ const describe = (host: string, row: Record<string, unknown>): string => {
 
 async function everyLane(
   config: LaneConfig,
-  tolerant: boolean,
 ): Promise<{ host: string; row: Record<string, unknown> }[]> {
   const out: { host: string; row: Record<string, unknown> }[] = [];
   for (const host of hostsOf(config)) {
-    const found = tolerant
-      ? await rows(config, host, ["status"]).catch(() => [])
-      : await rows(config, host, ["status"]);
-    for (const row of found) out.push({ host, row });
+    for (const row of await rows(config, host, ["status"])) out.push({ host, row });
   }
   return out;
 }
@@ -75,13 +71,13 @@ function laneHosts(
 
 export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
   const found = new Map([[config.lane, ownHostName()]]);
-  for (const [lane, host] of laneHosts(await everyLane(config, true)))
+  for (const [lane, host] of laneHosts(await everyLane(config)))
     found.set(lane, host === "local" ? ownHostName() : host);
   return found;
 }
 
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
-  const host = laneHosts(await everyLane(config, false)).get(lane);
+  const host = laneHosts(await everyLane(config)).get(lane);
   if (host === undefined) throw new Error(`no lane ${lane} is configured on any host`);
   return host;
 }

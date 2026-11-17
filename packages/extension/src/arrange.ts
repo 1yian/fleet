@@ -257,10 +257,12 @@ function missingOwner(
   space: Space | undefined,
   laneOfCard: ReadonlyMap<number, string>,
 ): { lane: string; card: number } | undefined {
-  if (space?.lane !== undefined && space.card !== undefined) return undefined;
-  const card = space?.card ?? worktreeCard(pane);
-  const lane = space?.lane ?? laneOfCard.get(card);
-  return lane === undefined || !Number.isInteger(card) ? undefined : { lane, card };
+  const card = worktreeCard(pane);
+  if (!Number.isInteger(card)) return undefined;
+  if (space?.lane !== undefined)
+    return space.card === undefined ? { lane: space.lane, card } : undefined;
+  const lane = laneOfCard.get(card);
+  return lane === undefined ? undefined : { lane, card };
 }
 
 export async function tagWorkers(

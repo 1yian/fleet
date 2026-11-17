@@ -14,7 +14,8 @@ const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?
 
 function ownNames(): string[] {
   const named = process.env["FLEET_HOST"];
-  if (named !== undefined && named !== "") return [named.toLowerCase(), firstLabel(named)];
+  if (named !== undefined && named !== "" && named !== "local")
+    return [named.toLowerCase(), firstLabel(named)];
   return [hostname().toLowerCase(), firstLabel(hostname())];
 }
 
