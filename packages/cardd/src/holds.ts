@@ -15,7 +15,7 @@ import {
   workerOf,
   type Session,
 } from "./store.ts";
-import { dating, type Dating } from "./waits.ts";
+import { dating, isWatched, type Dating } from "./waits.ts";
 
 interface Done {
   readonly value: unknown;
@@ -184,6 +184,9 @@ function marksUnlanded(
   return asked === true || carriedMark || holdsUnlandedWork(db, card);
 }
 
+const announcedTo = (dated: Dating, target: Holder): readonly Holder[] =>
+  isWatched(dated) ? [] : [target];
+
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.hold.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -230,7 +233,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     fields,
   };
   requireOpen(db, card);
-  const heard = hearers(db, card, session.lane, [target]);
+  const heard = hearers(db, card, session.lane, announcedTo(dated, target));
   const to = withEcho(db, session, card, [...heard, ...asker]);
   addEntry(db, draft, to);
   return { value: getCard(db, card.id), notify: to };
