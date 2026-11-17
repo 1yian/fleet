@@ -204,7 +204,7 @@ for (const kind of KINDS)
       const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
       assert.equal(view.card.status, "waiting");
       assert.equal(view.hold?.question, question);
-      assert.equal(view.hold?.holder, "main");
+      assert.equal(view.hold.holder, "main");
       assert.deepEqual(view.card.replies, []);
       assert.equal((await readsAs(fleet.main, card, "running")).watch, "running");
     });
