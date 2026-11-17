@@ -192,13 +192,23 @@ test("a main whose host is local, and a lane that moved hosts, tell each worker 
   assert.ok(rowAfter(shown, "[main] main-far", 1).includes("main"), shown.join("\n"));
   assert.ok(rowAfter(shown, "[main] main-far", 2).includes(`mate on ${OWN_LABEL}`));
 
-  await open(far, "1stmate", here.root);
+  const localMate = await open(far, "1stmate", here.root);
   p620.fleet(["arrange", "--host", REMOTE], { HERDR_SESSION: far.name });
   const home = await untilScreen("the worker to move under its mate", client, (lines) =>
     lines.some((line) => line.includes("\u2514 main-far")),
   );
   assert.ok(!home.join("\n").includes("mate on"), home.join("\n"));
   assert.ok(rowAfter(home, "\u2514 main-far", 1).includes("main"), home.join("\n"));
+
+  await far.run(["workspace", "close", localMate.id]);
+  p620.fleet(["arrange", "--host", REMOTE], { HERDR_SESSION: far.name });
+  const ungrouped = await untilScreen("the worker to regain its lane prefix", client, (lines) =>
+    lines.some((line) => line.includes("[main] main-far")),
+  );
+  assert.ok(!ungrouped.join("\n").includes(`mate on ${OWN_LABEL}`), ungrouped.join("\n"));
+  const cleared = await tokensOf(far, "[main] main-far");
+  assert.equal(cleared["mate"], undefined);
+  assert.equal(cleared["away"], undefined);
 });
 
 test("a lane that runs nowhere and has homes on two hosts keeps the mate host its workers already have", async () => {

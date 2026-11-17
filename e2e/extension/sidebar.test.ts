@@ -8,7 +8,7 @@ import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { optionalString, records } from "../support/json.ts";
-import { addRemote, git, landOnRemote } from "../support/remote.ts";
+import { addRemote, landOnRemote } from "../support/remote.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 120_000;
@@ -16,36 +16,29 @@ const FLEET_HOST = "fixture-mac";
 const LONG_HOST = "devvm-".padEnd(60, "x");
 const OWN_HOSTNAME = hostname().toLowerCase().split(".")[0] ?? "";
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
-const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
 
 let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
 let here: Scratch;
-let p620: Scratch;
 let tokens: Record<string, string>;
 let sites: string;
 beforeEach(async () => {
   h = await Harness.start();
   here = new Scratch();
   const remote = addRemote(here.root);
-  p620 = new Scratch("fleet");
-  git(p620.root, "remote", "add", "origin", remote);
-  git(p620.root, "fetch", "-q", "origin");
-  git(p620.root, "reset", "-q", "--hard", "origin/main");
   cardd = await Cardd.start();
-  const marker = join(here.parent, "p620-down");
   const mainToken = cardd.addLane("main", undefined, here.root);
-  configureMain(here, cardd.url, mainToken, {
-    host: FLEET_HOST,
-    hosts: { p620: ["node", TRANSPORT, marker] },
-    roots: { p620: p620.root },
-  });
+  configureMain(here, cardd.url, mainToken, { host: FLEET_HOST });
   tokens = { main: mainToken };
   for (const lane of ["ops", "far"]) {
     tokens[lane] = cardd.addLane(lane, "main");
-    const settings = { url: cardd.url, token: tokens[lane] ?? "", args: mateArgs(h) };
-    (lane === "ops" ? here : p620).addLane(lane, settings);
+    here.addLane(lane, {
+      url: cardd.url,
+      token: tokens[lane] ?? "",
+      args: mateArgs(h),
+      host: FLEET_HOST,
+    });
   }
   sites = join(here.parent, "site.worktrees");
   lab = await HerdrLab.start({
@@ -59,7 +52,6 @@ afterEach(async (t) => {
   await lab.printIfFailed(t);
   const stopped = await Promise.allSettled([lab.stop(), h.stop(), cardd.stop()]);
   here.dispose();
-  p620.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -210,7 +202,7 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
   await allRunPi();
   const labels = ["\u2514 main-one", "\u2514 far-one", "\u2514 ops-alpha", "\u2514 stale-owner"];
   const mates = await Promise.all(labels.map(async (label) => (await tokensOf(label))["mate"]));
-  assert.deepEqual(mates, [FLEET_HOST, "p620", FLEET_HOST, FLEET_HOST]);
+  assert.deepEqual(mates, [FLEET_HOST, FLEET_HOST, FLEET_HOST, FLEET_HOST]);
   process.stderr.write(`sidebar after the update: ${JSON.stringify(await sidebar())}\n`);
 });
 
@@ -286,7 +278,7 @@ test("workers without a local mate follow the local groups, keep their lane, and
     "[yang-auto] yang-jeep",
   ]);
   assert.equal((await tokensOf("└ cleo-early"))["away"], undefined);
-  assert.equal((await tokensOf("└ cleo-early"))["mate"], "farhost");
+  assert.equal((await tokensOf("└ cleo-early"))["mate"], undefined);
   assert.equal((await tokensOf("[yang-auto] yang-jeep"))["away"], "↗ mate on farhost");
 });
 
@@ -320,7 +312,9 @@ test("a mate on this host never shows an away hint, and a worker named like the 
   assert.equal((await tokensOf("[homer] home-worker"))["away"], undefined);
   assert.equal((await tokensOf("[namer] hostname-worker"))["away"], `↗ mate on ${OWN_HOSTNAME}`);
   assert.equal((await tokensOf("[longlane] far-worker"))["away"], `↗ mate on ${LONG_HOST}`);
-  assert.equal((await tokensOf("└ fleet-ops"))["away"], undefined);
+  const grouped = await tokensOf("└ fleet-ops");
+  assert.equal(grouped["mate"], undefined);
+  assert.equal(grouped["away"], undefined);
   assert.equal((await tokensOf("└ ops-beta"))["away"], undefined);
   assert.equal((await tokensOf("[zed] fleet-zed"))["away"], undefined);
 });

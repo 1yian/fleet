@@ -19,7 +19,7 @@ interface Space {
 interface Arrangement {
   readonly order: readonly string[];
   readonly labels: ReadonlyMap<string, string>;
-  readonly hints: ReadonlyMap<string, string | undefined>;
+  readonly metadata: ReadonlyMap<string, readonly string[]>;
 }
 
 const MATE_LABELS: readonly [RegExp, (match: RegExpExecArray) => string][] = [
@@ -86,22 +86,30 @@ function hostedWorkers(spaces: readonly Space[], mates: ReadonlyMap<string, Spac
   return hosted;
 }
 
+function sidebarMetadata(space: Space, groupedHere: boolean): string[] {
+  const remoteMate = space.mate !== undefined && !ownsHostName(space.mate) ? space.mate : undefined;
+  const away = groupedHere || remoteMate === undefined ? undefined : awayHint(remoteMate);
+  const args: string[] = [];
+  if (groupedHere && remoteMate !== undefined) args.push("--clear-token", "mate");
+  if (away !== space.away)
+    args.push(...(away === undefined ? ["--clear-token", "away"] : ["--token", `away=${away}`]));
+  return args;
+}
+
 function arrangement(spaces: readonly Space[]): Arrangement {
   const mates = matesOf(spaces);
   const hosted = hostedWorkers(spaces, mates);
   const heads = new Set(mates.values());
   const labels = new Map<string, string>();
-  const hints = new Map<string, string | undefined>();
+  const metadata = new Map<string, string[]>();
   for (const space of spaces) {
     if (heads.has(space)) continue;
-    const prefix = hosted.has(space) ? WORKER_MARK : lanePrefix(space);
+    const groupedHere = hosted.has(space);
+    const prefix = groupedHere ? WORKER_MARK : lanePrefix(space);
     const label = `${prefix}${bare(space)}`;
     if (label !== space.label) labels.set(space.id, label);
-    const away =
-      hosted.has(space) || space.mate === undefined || ownsHostName(space.mate)
-        ? undefined
-        : awayHint(space.mate);
-    if (away !== space.away) hints.set(space.id, away);
+    const args = sidebarMetadata(space, groupedHere);
+    if (args.length > 0) metadata.set(space.id, args);
   }
   const rest = spaces.filter((space) => !heads.has(space) && !hosted.has(space));
   const unowned = rest.filter((space) => space.lane === undefined);
@@ -112,7 +120,7 @@ function arrangement(spaces: readonly Space[]): Arrangement {
   });
   const all = [...unowned, ...grouped, ...strays];
   const order = all.flatMap((space) => (space === undefined ? [] : [space.id]));
-  return { order, labels, hints };
+  return { order, labels, metadata };
 }
 
 const token = (tokens: Record<string, unknown>, name: string): string | undefined => {
@@ -184,17 +192,10 @@ async function moveBlock(ids: readonly string[]): Promise<void> {
 
 export async function arrangeHere(): Promise<void> {
   const spaces = await listed("local");
-  const { order, labels, hints } = arrangement(spaces);
+  const { order, labels, metadata } = arrangement(spaces);
   for (const [id, label] of labels) await herdr("local", ["workspace", "rename", id, label]);
-  for (const [id, hint] of hints)
-    await herdr("local", [
-      "workspace",
-      "report-metadata",
-      id,
-      "--source",
-      SOURCE,
-      ...(hint === undefined ? ["--clear-token", "away"] : ["--token", `away=${hint}`]),
-    ]);
+  for (const [id, args] of metadata)
+    await herdr("local", ["workspace", "report-metadata", id, "--source", SOURCE, ...args]);
   const current = spaces.map((space) => space.id);
   const first = order.findIndex((id, index) => id !== current[index]);
   if (first !== -1) await moveBlock(order.slice(first));
