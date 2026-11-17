@@ -41,7 +41,9 @@ jobs:
               - "package.json"
               - "package-lock.json"
               - "tsconfig.json"
-              - "eslint.config.js"
+              - ".oxlintrc.json"
+              - "lint.js"
+              - "lint-plugin.js"
               - "knip.json"
               - ".dependency-cruiser.cjs"
               - ".prettierrc.json"
@@ -103,12 +105,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
+      - run: npm run check
       - run: npm run build
-      - run: npm run knip
-      - run: npm run deps
 
   migrations:
     timeout-minutes: 10

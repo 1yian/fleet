@@ -115,7 +115,8 @@ export function holdFor(db: DatabaseSync, lane: string, entry: Entry): Entry {
 
 export function datedWait(db: DatabaseSync, standing: Standing): DatedWait | null {
   const { hold } = standing.facts;
-  if (standing.status !== "waiting" || hold === undefined || hold.until === null) return null;
+  if (standing.status !== "waiting" || hold === undefined) return null;
+  if (hold.until === null) return null;
   return { until: hold.until, since: hold.openedAt, ...watching(db, hold.wait, hold.author) };
 }
 
