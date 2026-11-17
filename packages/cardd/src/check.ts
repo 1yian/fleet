@@ -10,7 +10,8 @@ import { incidentFrom, LIVE_INCIDENT, roleOf } from "./incident-store.ts";
 import { lostMates } from "./incident-lanes.ts";
 import { expireMaintenance } from "./maintenance.ts";
 import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
-import { describe, labelOf } from "./incident-text.ts";
+import { describe, labelOf, nextStep } from "./incident-text.ts";
+import { remaining } from "./incident-kinds.ts";
 import { replyNudges } from "./replies.ts";
 import { finishedOpen, idleNow, resting } from "./status.ts";
 import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
@@ -184,7 +185,16 @@ function withIncidents(
     const phase = PROCESS_PHASES[match.condition];
     if (phase === undefined) return match;
     const found = watchdogIncident(db, match.card, phase, now, t);
-    return found === undefined ? match : { ...match, text: `${match.text}. ${found}` };
+    if (found === undefined) return match;
+    const exhausted =
+      found.state === "blocked" &&
+      remaining(found).length === 0 &&
+      found.retries + found.replacements > 0;
+    return {
+      ...match,
+      text: `${match.text}. Incident ${String(found.id)}, process generation ${String(found.generation)}. ${nextStep(db, found)}`,
+      ...(exhausted ? { instance: String(found.id), tier: 1 } : {}),
+    };
   });
 }
 

@@ -125,9 +125,7 @@ function failRecovery(
     Date.now(),
   );
   const after = incidentById(db, inc.id) ?? { ...inc, classification: kind, eligibleAt: eligible };
-  const left = recoverable
-    ? nextStep(db, after)
-    : "No recovery is left within its bounds: it needs intervention.";
+  const left = nextStep(db, after);
   const body = `recovery of incident ${String(inc.id)} (${inc.recoveryMode ?? "retry"}) did not verify: ${error}. ${left}`;
   return tell(db, after, role, body);
 }
@@ -454,7 +452,7 @@ export function watchdogIncident(
   phase: "startup" | "lost",
   now: number,
   t: Timings,
-): string | undefined {
+): Incident | undefined {
   const row = db
     .prepare(
       `SELECT s.id AS id, s.lane AS lane, s.role AS role FROM sessions s JOIN attempts a ON a.id = s.attempt
@@ -464,7 +462,7 @@ export function watchdogIncident(
   if (row === undefined) return undefined;
   const actor = String(row["id"]);
   const live = liveIncident(db, actor);
-  if (live !== undefined) return `See incident ${String(live.id)}.`;
+  if (live !== undefined) return live;
   const intent = intentOf(db, card, "worker");
   if (intent !== "working") return undefined;
   const detail =
@@ -477,6 +475,5 @@ export function watchdogIncident(
     t,
     true,
   );
-  const ids = `Incident ${String(made.inc.id)}, process generation ${String(made.inc.generation)}.`;
-  return `${ids} ${nextStep(db, made.inc)}`;
+  return made.inc;
 }
