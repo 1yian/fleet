@@ -18,6 +18,14 @@ Code in this repository has no comments. A lint rule fails on any comment. What 
 
 Every board test file calls `boundBoardFile` from `e2e/support/board.ts`, which ends the file after ten minutes even if its tests finished with open handles. Board fixtures register cleanup through `startBoardServer` and `openBoardPage` as each resource is acquired. A seed failure before the page exists must still stop its server. The kanban and links fixtures use normal timers: they do not assert timed-check behavior, and an accelerated timed check competes with fixture database writes.
 
+## Long-command status
+
+`run_long` uses `bash -o pipefail -c`, without `errexit`. A pipeline fails with its rightmost nonzero stage, so a passing `tail` or `tee` cannot hide a failed suite. Bash must be installed. The wrapper prints a warning before execution and the tool describes the policy before submission. There is no shell parser or heuristic rejection.
+
+A command list still returns its last command's status. `false; true` succeeds, and `pipefail` does not change that. Use `suite && formatter` to run formatting only after success. To always format while retaining suite status, use `suite; code=$?; formatter; exit "$code"`. Intentional recovery such as `suite || recover`, `if suite; then ...; else ...; fi`, and explicit nested shells keep their normal shell meaning. A nested `sh -c 'suite | tail'` must set its own failure policy. An exit 0 means the supplied command succeeded under these rules, not that every subprocess succeeded.
+
+The wrapper preserves the child status as its own process exit code after durable result delivery and cleanup. Child signals use `128 + signal number`. Wrapper cancellation reports 130 and command deadline expiry reports 124. Spawn errors report 127. Result retries, heartbeats, output tails, and worker wakeups retain their existing ownership. A bounded wait ending in a still-running pipeline is not a completed command failure.
+
 ## Protocol
 
 `packages/protocol` is the wire protocol between `cardd`, the extension, and the board. Each schema is the one source of its type and its validator. `parse` throws one readable error that names the first problem.
