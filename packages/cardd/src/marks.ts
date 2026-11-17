@@ -60,9 +60,7 @@ function lastCaptainMark(db: DatabaseSync): Captain | undefined {
 }
 
 const captainDecisions = (cards: readonly Loaded[]): Loaded[] =>
-  cards.filter(
-    ({ standing }) => standing.status === "needs-you" && standing.facts.hold?.until === null,
-  );
+  cards.filter(({ standing }) => standing.status === "needs-you");
 
 function presentation({ entries, standing }: Loaded): number | undefined {
   const occurrence = standing.facts.hold?.occurrence;
@@ -125,6 +123,10 @@ export function recordPresented(
   if (standing.status !== "needs-you" || hold === undefined)
     throw new Error(
       `c-${String(card.id)} is not waiting on the captain, so nothing was recorded. Only a decision that waits on him is brought up`,
+    );
+  if (hold.occurrence !== args.occurrence)
+    throw new Error(
+      `c-${String(card.id)} was held again since you checked it, so nothing was recorded. Check the card and bring up its current question`,
     );
   addEntry(
     db,

@@ -51,6 +51,7 @@ beforeEach(async () => {
   refusals.length = 0;
   steps.length = 0;
   lastDue = undefined;
+  beforeWriting = undefined;
   cardd = await Cardd.start({ CARDD_TIMING_SCALE: "0.002" });
   h = await Harness.start();
   scratch = new Scratch();
@@ -89,6 +90,7 @@ type Style = "writes" | "marks-silently" | "yield-first" | "codemode";
 
 const YIELD = { tool: "yield" } as const;
 let lastDue: Due | undefined;
+let beforeWriting: (() => Promise<void>) | undefined;
 
 async function afterRefusal(refusal: string): Promise<Move> {
   refusals.push(refusal);
@@ -96,6 +98,9 @@ async function afterRefusal(refusal: string): Promise<Move> {
   assert.ok(lastDue !== undefined);
   assert.deepEqual(await marksOn(lastDue.card), [], "no mark is written before chat text");
   const title = lastDue.title;
+  const hook = beforeWriting;
+  beforeWriting = undefined;
+  await hook?.();
   return { text: `Captain, ${title}: ${QUESTIONS[title] ?? ""}` };
 }
 
@@ -173,6 +178,14 @@ async function marksOn(card: number): Promise<string[]> {
   return check(CardViewSchema, view.value)
     .entries.filter((entry) => entry.kind === "note")
     .map((entry) => String(entry.fields["mark"]));
+}
+
+async function presentedAt(card: number): Promise<number[]> {
+  const view = await asMain("card", { card });
+  if (!view.ok) return [];
+  return check(CardViewSchema, view.value)
+    .entries.filter((entry) => entry.fields["mark"] === "presented")
+    .map((entry) => Number(entry.fields["occurrence"]));
 }
 
 async function untilMarked(card: number, mark: string, count = 1): Promise<void> {
@@ -303,3 +316,66 @@ for (const style of ["marks-silently", "yield-first", "codemode"] as const)
     }, "the decision written after the refusal");
     assert.ok(texts.every((text) => decisionsIn(text).length <= 1));
   });
+
+test("a presentation queued before chat is refused when the hold was replaced meanwhile, and the new decision stays due", async () => {
+  await startWithTwoHolds("marks-silently");
+  beforeWriting = async () => {
+    const { holds } = await cardd.board();
+    const open = holds.find((each) => each.card === older);
+    assert.ok(open !== undefined);
+    assert.equal(await cardd.act(older, { kind: "answer", hold: open.hold, choice: "Yes" }), 200);
+    const again = await asMain("hold", { card: older, question: QUESTIONS[OLDER] ?? "" });
+    assert.ok(again.ok);
+  };
+
+  await say("How is the build going?");
+  const second = await until(
+    () => refusals.find((each) => each.includes(`c-${String(newer)} ${NEWER} is due:`)),
+    "the other decision due right after the stale presentation",
+  );
+  assert.match(second, /yield refused/);
+  assert.deepEqual(await presentedAt(older), []);
+  await untilMarked(newer, "presented");
+
+  await say("And the release?");
+  const back = await listAfter(0, (list) => dueTitles(list).includes(OLDER), "the replacement");
+  assert.deepEqual(dueTitles(back), [OLDER]);
+  await untilAsync(async () => ((await presentedAt(older)).length > 0 ? true : undefined), "mark");
+  assert.deepEqual(await presentedAt(older), [2]);
+});
+
+test("the captain's message sent while cardd is down is recorded once it is back", async () => {
+  await startWithTwoHolds("writes");
+  await listsAfter(0, 1);
+  await cardd.stop();
+
+  await say("How is the build going?");
+  await until(() => steps.find((each) => each.includes("How is the build going?")), "the message");
+  await cardd.restart();
+
+  const refused = await until<string>(() => refusals[0], "the refused yield after cardd is back");
+  assert.match(refused, new RegExp(`c-${String(older)} ${OLDER} is due:`));
+  assert.deepEqual(await marksOn(newer + 1), ["captain.seen"]);
+  await untilMarked(older, "presented");
+});
+
+test("an afk message sent while cardd is down still keeps the decisions from being brought up", async () => {
+  await startWithTwoHolds("writes");
+  await say("How is the build going?");
+  await untilMarked(older, "presented");
+  await cardd.stop();
+
+  await say("afk for an hour");
+  await until(() => steps.find((each) => each.includes("afk for an hour")), "the afk message");
+  await cardd.restart();
+
+  await untilAsync(
+    async () => ((await marksOn(newer + 1)).includes("captain.away") ? true : undefined),
+    "the away mark once cardd is back",
+  );
+  assert.deepEqual(await marksOn(newer + 1), ["captain.seen", "captain.away"]);
+  const waited = lists.length;
+  await listsAfter(waited, 3);
+  assert.ok(lists.slice(waited).every(noneDue), "nothing is due while he is away");
+  assert.equal(refusals.length, 1);
+});

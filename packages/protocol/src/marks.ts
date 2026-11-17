@@ -4,6 +4,12 @@ export const CAPTAIN_LOG_NAME = "captain-log";
 
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
 
+export const PresentedCardSchema = Type.Object({
+  card: Type.Integer({
+    description: "The card whose decision your chat message to the captain in this turn brings up",
+  }),
+});
+
 export const MARK_OPS = {
   "captain.seen": {
     roles: ["mate"],
@@ -20,9 +26,10 @@ export const MARK_OPS = {
   presented: {
     roles: ["mate"],
     args: Type.Object({
-      card: Type.Integer({
+      ...PresentedCardSchema.properties,
+      occurrence: Type.Integer({
         description:
-          "The card whose decision your chat message to the captain in this turn brings up",
+          "The hold occurrence that was checked as waiting on the captain. Refused when the card's hold has since been replaced by another occurrence",
       }),
     }),
     result: Type.Object({ card: Type.Integer(), waiting: Type.Integer() }),

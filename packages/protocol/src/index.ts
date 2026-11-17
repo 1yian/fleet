@@ -23,7 +23,7 @@ export * from "./branch.ts";
 export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
 export * from "./http.ts";
-export { CAPTAIN_LOG_NAME } from "./marks.ts";
+export { CAPTAIN_LOG_NAME, PresentedCardSchema } from "./marks.ts";
 export * from "./next.ts";
 export { ActedSchema, LATER_EXAMPLES, laterLine, type LaterResult } from "./later.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
@@ -143,6 +143,7 @@ export const CardViewSchema = Type.Object({
   hold: Nullable(
     Type.Object({
       entry: Type.Integer(),
+      occurrence: Type.Integer(),
       holder: Holder,
       question: Type.String(),
       options: Type.Array(Type.String()),

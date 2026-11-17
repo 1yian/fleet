@@ -24,8 +24,27 @@ async function seen(away = false): Promise<number> {
   return check(OPS["captain.seen"].result, await fleet.main.call("captain.seen", args)).entry;
 }
 
-const present = async (card: Card): Promise<number> =>
-  check(OPS.presented.result, await fleet.main.call("presented", { card: card.id })).waiting;
+async function occurrenceOf(card: Card): Promise<number> {
+  const view = check(OPS.card.result, await fleet.main.call("card", { card: card.id }));
+  assert.ok(view.hold !== null);
+  return view.hold.occurrence;
+}
+
+const presentAt = async (card: Card, occurrence: number): Promise<number> =>
+  check(OPS.presented.result, await fleet.main.call("presented", { card: card.id, occurrence }))
+    .waiting;
+
+const present = async (card: Card): Promise<number> => presentAt(card, await occurrenceOf(card));
+
+async function untilStatus(card: Card, status: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const view = check(OPS.card.result, await fleet.main.call("card", { card: card.id }));
+    if (view.card.status === status) return;
+    assert.ok(Date.now() < deadline, `timed out waiting for c-${String(card.id)} to be ${status}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
 
 async function due(): Promise<number | undefined> {
   const found = check(OPS["decision.due"].result, await fleet.main.call("decision.due", {}));
@@ -159,11 +178,11 @@ test("only a decision that waits on the captain is brought up, only main records
   const card = await held("Staff-call upload", "Ship it?");
 
   await assert.rejects(
-    fleet.main.call("presented", { card: plain.id }),
+    fleet.main.call("presented", { card: plain.id, occurrence: 1 }),
     /not waiting on the captain, so nothing was recorded/,
   );
   for (const [op, args] of [
-    ["presented", { card: card.id }],
+    ["presented", { card: card.id, occurrence: 1 }],
     ["captain.seen", {}],
     ["decision.due", {}],
   ] as const)
@@ -186,4 +205,43 @@ test("only a decision that waits on the captain is brought up, only main records
     false,
   );
   await cleo.close();
+});
+
+test("a presentation checked against an earlier hold occurrence is refused, and the replacement decision stays due", async () => {
+  const card = await held("Staff-call upload", "Ship it?");
+  const checked = await occurrenceOf(card);
+  const open = (await fleet.cardd.board()).holds.find((each) => each.card === card.id);
+  assert.ok(open !== undefined);
+  await fleet.cardd.act(card.id, { kind: "answer", hold: open.hold, choice: "Yes" });
+  await fleet.main.call("hold", { card: card.id, question: "Ship it, with a review?" });
+  assert.equal(await occurrenceOf(card), checked + 1);
+
+  await seen();
+  await assert.rejects(presentAt(card, checked), /held again since you checked it/);
+  assert.equal(await due(), card.id);
+  assert.equal(await presentAt(card, checked + 1), 0);
+  assert.equal(await due(), undefined);
+});
+
+test("a captain decision whose date has passed rejoins the rotation and is counted as waiting", async () => {
+  const dated = await newCard(fleet.main, "Staff-call upload");
+  await fleet.main.call("hold", {
+    card: dated.id,
+    question: "Ship it?",
+    until: Date.now() + 2_000,
+    outside: "the vendor answers on Monday",
+    remaining: [],
+  });
+  const other = await held("Prod tag policy", "Own it?");
+
+  await seen();
+  assert.equal(await due(), other.id);
+  assert.equal(await presentAt(other, await occurrenceOf(other)), 0);
+
+  await untilStatus(dated, "needs-you");
+  await seen();
+  assert.equal(await due(), dated.id);
+  assert.equal(await present(dated), 1);
+  await seen();
+  assert.equal(await due(), other.id);
 });

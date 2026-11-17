@@ -203,6 +203,7 @@ export function cardView(db: DatabaseSync, id: number, lane: string, timing: Tim
         ? null
         : {
             entry: hold.entry,
+            occurrence: hold.occurrence,
             holder: hold.holder,
             question: hold.question,
             options: [...hold.options],
