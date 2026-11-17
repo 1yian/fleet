@@ -134,7 +134,12 @@ export function writeLaneConfig(home: string, config: LaneConfig): void {
 
 export function reconfigure(
   home: string,
-  changes: { readonly args?: readonly string[]; readonly workerArgs?: readonly string[] },
+  changes: {
+    readonly args?: readonly string[];
+    readonly workerArgs?: readonly string[];
+    readonly hosts?: Readonly<Record<string, unknown>>;
+    readonly roots?: Readonly<Record<string, unknown>>;
+  },
 ): void {
   const file = join(home, LANE_FILE);
   const current: unknown = JSON.parse(readFileSync(file, "utf8"));
