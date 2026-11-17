@@ -24,10 +24,6 @@ Each reminder uses the obligation, occurrence, and due tier as its identity. A d
 
 Runtime failure recovery still uses `recover`. Repeating a notice never retries a model or restarts a process automatically. No programmed escalation substitutes for a healthy second mate deciding when to ask main, except for a runtime failure that has no recovery left: main is told of it once. [Runtime incidents](code.md#runtime-incidents) says when no recovery is left.
 
-## Explicit PR reports
+For merge verification outside the timed check, see [Closing](code.md#closing).
 
-A worker reports `pr="https://github.com/owner/repo/pull/N"` when done. After an authorized merge succeeds, it reports the same URL and `merged=true`. Fleet stores those reports and close trusts them. It does not discover a PR, watch checks, or confirm a merge with GitHub.
-
-The worker still checks required CI before merging. Captain approval remains required unless yolo authorizes the merge. A report never grants merge authority. Local-only landing still uses the local branch checks.
-
-`docs/spec.md` needs its timed-check, PR discovery, merge confirmation, and escalation descriptions updated by its maintainer to match this plan.
+`docs/spec.md` needs its timed-check and escalation descriptions updated by its maintainer to match this plan.

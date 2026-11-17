@@ -151,6 +151,8 @@ For a worker writing or reviewing non-English text, including Chinese and Spanis
 
 Dispatch independent cards at once. Serialize only when one change truly depends on another.
 
+One ship card owns one PR. When an outcome needs two PRs, dispatch two linked ship cards, each with its own scope, branch, validation, PR report and merge approval. Link their card numbers in tasks and threads. Never replace one card's PR URL to track the other: a verified merge can close that card and remove its worktrees immediately. Keep a discovered continuation safe on its own card before closing the original. For the dispatch, transfer, continuation and close sequence, read `docs/multiple-pr-delivery.md` in the fleet repository.
+
 ## 5. The task message
 
 The task message is the worker's whole assignment, so write it to need nothing else. Use this shape:
