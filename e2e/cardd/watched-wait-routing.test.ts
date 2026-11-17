@@ -168,6 +168,66 @@ test("a second mate's dated hold on a watcher fleet checks stays a quiet wait fo
   assert.match(watchedPart(list), /^Dated waits .*Information only, no action now:/);
 });
 
+for (const kind of KINDS)
+  for (const reply of [false, true])
+    test(`a checked ${kind} wait after main's comment suppresses echo, with owed reply ${String(reply)}`, async () => {
+      const { ref } = await watching(kind);
+      const card = await newCard(yang, "Dependency progress");
+      await fleet.main.call("comment", { card: card.id, text: "What is blocking this?", reply });
+      const request = await yang.waitForEntry(
+        (entry) =>
+          entry.card === card.id && entry.author === "mate:main" && entry.kind === "comment",
+        "main's progress request",
+      );
+      const replyTo = `r-${String(request.id)}`;
+      const question = "The dependency is still running";
+      await yang.call("hold", {
+        card: card.id,
+        question,
+        until: Date.now() + HOUR,
+        ...ref,
+        remaining: [],
+        ...(reply ? { replyTo } : {}),
+      });
+      if (reply) {
+        const answer = await fleet.main.waitForEntry(
+          (entry) => entry.card === card.id && entry.fields["replyTo"] === replyTo,
+          "the informational answer",
+        );
+        assert.equal(answer.kind, "comment");
+        assert.equal(answer.body, question);
+      }
+      const marker = await newCard(yang, "Routing barrier");
+      await decision(marker);
+      await heardHold(fleet.main, marker);
+      assert.deepEqual(asks(fleet.main, card), []);
+      const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
+      assert.equal(view.card.status, "waiting");
+      assert.equal(view.hold?.question, question);
+      assert.equal(view.hold?.holder, "main");
+      assert.deepEqual(view.card.replies, []);
+      assert.equal((await readsAs(fleet.main, card, "running")).watch, "running");
+    });
+
+for (const by of ["watcher", "outside", "said"] as const)
+  test(`a dated ${by} hold retains its notification to main`, async () => {
+    const card = await newCard(yang, `Waits on ${by}`);
+    const words = "Ask me again next week.";
+    if (by === "said")
+      assert.equal(await fleet.cardd.act(card.id, { kind: "comment", text: words }), 200);
+    await yang.call("hold", {
+      card: card.id,
+      question: "An unchecked wait",
+      until: Date.now() + HOUR,
+      remaining: [],
+      ...(by === "said" ? { said: words, source: "record" } : { [by]: "External event" }),
+    });
+    const told = await heardHold(fleet.main, card);
+    assert.equal(told.body, "An unchecked wait");
+    assert.equal(told.fields["holder"], "main");
+    assert.equal(await statusOf(fleet.main, card), "waiting");
+  });
+
 test("an ordinary undated decision from a second mate still notifies main and is listed for action", async () => {
   const card = await newCard(yang, "Budget question");
   await yang.call("hold", {

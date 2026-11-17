@@ -191,8 +191,6 @@ export interface Dating {
   readonly remaining: readonly number[];
 }
 
-export const isWatched = ({ wait }: Dating): boolean => wait !== null;
-
 export function dating(
   db: DatabaseSync,
   session: Session,

@@ -4,7 +4,7 @@ import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
-import { askersOf, requireOwedBy } from "./replies.ts";
+import { askersOf, isCaptainsReply, requireOwedBy } from "./replies.ts";
 import { factsFrom, finishFrom, type Facts, type Hold } from "./status.ts";
 import {
   addEntry,
@@ -15,7 +15,7 @@ import {
   workerOf,
   type Session,
 } from "./store.ts";
-import { dating, isWatched, type Dating } from "./waits.ts";
+import { dating, type Dating } from "./waits.ts";
 
 interface Done {
   readonly value: unknown;
@@ -184,8 +184,29 @@ function marksUnlanded(
   return asked === true || carriedMark || holdsUnlandedWork(db, card);
 }
 
-const announcedTo = (dated: Dating, target: Holder): readonly Holder[] =>
-  isWatched(dated) ? [] : [target];
+function announceHold(
+  db: DatabaseSync,
+  session: Session,
+  card: Card,
+  draft: Draft,
+  dated: Dating,
+  target: Holder,
+  asker: readonly string[],
+): string[] {
+  const quiet = dated.wait !== null && "id" in dated.wait;
+  const heard = hearers(db, card, session.lane, quiet ? [] : [target]);
+  if (!quiet) {
+    const to = withEcho(db, session, card, [...heard, ...asker]);
+    addEntry(db, draft, to);
+    return to;
+  }
+  addEntry(db, { ...draft, fields: { ...draft.fields, replyTo: undefined } }, heard);
+  const replyTo = draft.fields["replyTo"];
+  if (typeof replyTo !== "string") return heard;
+  const toCaptain = isCaptainsReply(db, card, replyTo) ? { for: "captain" } : {};
+  addEntry(db, { ...draft, kind: "comment", fields: { replyTo, ...toCaptain } }, asker);
+  return [...new Set([...heard, ...asker])];
+}
 
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.hold.args, raw);
@@ -233,9 +254,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     fields,
   };
   requireOpen(db, card);
-  const heard = hearers(db, card, session.lane, announcedTo(dated, target));
-  const to = withEcho(db, session, card, [...heard, ...asker]);
-  addEntry(db, draft, to);
+  const to = announceHold(db, session, card, draft, dated, target, asker);
   return { value: getCard(db, card.id), notify: to };
 }
 
