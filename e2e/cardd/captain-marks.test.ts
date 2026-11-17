@@ -184,6 +184,7 @@ test("only a decision that waits on the captain is brought up, only main records
   for (const [op, args] of [
     ["presented", { card: card.id, occurrence: 1 }],
     ["captain.seen", {}],
+    ["walkthrough", { paused: true }],
     ["decision.due", {}],
   ] as const)
     await assert.rejects(cleo.call(op, args), /only main records what the captain has been told/);
@@ -244,4 +245,30 @@ test("a captain decision whose date has passed rejoins the rotation and is count
   assert.equal(await present(dated), 1);
   await seen();
   assert.equal(await due(), other.id);
+});
+
+test("a paused walkthrough makes nothing due, even after he writes, until it is resumed", async () => {
+  const older = await held("Staff-call upload", "Ship it?");
+  await held("Prod tag policy", "Own it?");
+  await seen();
+  assert.equal(await due(), older.id);
+
+  const paused = check(
+    OPS.walkthrough.result,
+    await fleet.main.call("walkthrough", { paused: true }),
+  );
+  assert.deepEqual(paused, { paused: true });
+  assert.equal(await due(), undefined);
+  await seen();
+  assert.equal(await due(), undefined);
+  const quiet = await listAfter(await seen(), "a list while paused", () => true);
+  assert.deepEqual(dueLines(quiet.body), []);
+  assert.match(captainGroup(quiet.body), /^Waiting on the captain\. None is due: /);
+
+  await fleet.main.call("walkthrough", { paused: false });
+  assert.equal(await due(), older.id);
+  assert.equal(
+    (await fleet.cardd.board()).cards.some((each) => each.name === "captain-log"),
+    false,
+  );
 });

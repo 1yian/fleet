@@ -15,7 +15,7 @@ import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
 import { listComplaints, recordComplaint } from "./complaints.ts";
-import { dueDecision, recordPresented, recordSeen } from "./marks.ts";
+import { dueDecision, recordPresented, recordSeen, recordWalkthrough } from "./marks.ts";
 import {
   acknowledgeMaintenance,
   maintenanceStatus,
@@ -176,6 +176,10 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   presented: (db, session, raw) => ({
     value: recordPresented(db, session, check(OPS.presented.args, raw)),
+    notify: [],
+  }),
+  walkthrough: (db, session, raw) => ({
+    value: recordWalkthrough(db, session, check(OPS.walkthrough.args, raw)),
     notify: [],
   }),
   "decision.due": (db, session) => ({ value: dueDecision(db, session), notify: [] }),

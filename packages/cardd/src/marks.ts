@@ -7,6 +7,8 @@ import { firstLine } from "./text.ts";
 const SEEN = "captain.seen";
 const AWAY = "captain.away";
 const PRESENTED = "presented";
+const PAUSED = "walkthrough.paused";
+const RESUMED = "walkthrough.resumed";
 
 export const isMark = (entry: Entry): boolean =>
   entry.kind === "note" && typeof entry.fields["mark"] === "string";
@@ -39,6 +41,39 @@ export function recordSeen(
   return { entry };
 }
 
+export function recordWalkthrough(
+  db: DatabaseSync,
+  session: Session,
+  args: OpArgs<"walkthrough">,
+): OpResult<"walkthrough"> {
+  requireMain(db, session);
+  addEntry(
+    db,
+    {
+      card: logCardOf(db, session.lane, CAPTAIN_LOG_NAME, "Captain activity"),
+      author: author(session),
+      kind: "note",
+      body: args.paused ? "the walkthrough is paused" : "the walkthrough is resumed",
+      fields: { mark: args.paused ? PAUSED : RESUMED },
+    },
+    [],
+  );
+  return { paused: args.paused };
+}
+
+function walkthroughPaused(db: DatabaseSync): boolean {
+  const row = db
+    .prepare(
+      `SELECT json_extract(e.fields, '$.mark') AS mark
+       FROM entries e JOIN cards c ON c.id = e.card
+       WHERE c.lane = ? AND c.kind = 'standing' AND c.name = ? AND e.kind = 'note'
+         AND json_extract(e.fields, '$.mark') IN (?, ?)
+       ORDER BY e.id DESC LIMIT 1`,
+    )
+    .get(mainLane(db), CAPTAIN_LOG_NAME, PAUSED, RESUMED);
+  return row?.["mark"] === PAUSED;
+}
+
 interface Captain {
   readonly entry: number;
   readonly away: boolean;
@@ -50,9 +85,10 @@ function lastCaptainMark(db: DatabaseSync): Captain | undefined {
       `SELECT json_extract(e.fields, '$.mark') AS mark, e.id AS entry
        FROM entries e JOIN cards c ON c.id = e.card
        WHERE c.lane = ? AND c.kind = 'standing' AND c.name = ? AND e.kind = 'note'
+         AND json_extract(e.fields, '$.mark') IN (?, ?)
        ORDER BY e.id DESC LIMIT 1`,
     )
-    .get(mainLane(db), CAPTAIN_LOG_NAME);
+    .get(mainLane(db), CAPTAIN_LOG_NAME, SEEN, AWAY);
   if (row === undefined) return undefined;
   if (typeof row["entry"] !== "number" || (row["mark"] !== SEEN && row["mark"] !== AWAY))
     throw new Error("invalid captain activity mark");
@@ -98,7 +134,8 @@ export function rotationOf(db: DatabaseSync, cards: readonly Loaded[]): Rotation
   const shown = new Set(
     marked.filter(({ at }) => at !== undefined && at >= since).map(({ each }) => each.card.id),
   );
-  const open = seen !== undefined && !seen.away && !presentedSince(db, seen.entry);
+  const open =
+    seen !== undefined && !seen.away && !presentedSince(db, seen.entry) && !walkthroughPaused(db);
   const never = marked.filter(({ at }) => at === undefined);
   const pool = never.length > 0 ? never : marked;
   const [first] = open

@@ -34,6 +34,16 @@ export const MARK_OPS = {
     }),
     result: Type.Object({ card: Type.Integer(), waiting: Type.Integer() }),
   },
+  walkthrough: {
+    roles: ["mate"],
+    args: Type.Object({
+      paused: Type.Boolean({
+        description:
+          "True when the captain paused or stopped the decision walkthrough, false only when he asked to resume it",
+      }),
+    }),
+    result: Type.Object({ paused: Type.Boolean() }),
+  },
   "decision.due": {
     roles: ["mate"],
     args: Type.Object({}),

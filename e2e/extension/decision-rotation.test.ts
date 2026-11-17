@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -122,6 +122,14 @@ function onList(list: string, style: Style): Move {
 
 function onMessage(text: string): Move {
   if (text.startsWith("[fleet]")) return YIELD;
+  if (/pause the walkthrough/i.test(text))
+    return {
+      tool: "walkthrough",
+      args: { paused: true },
+      text: "Captain, the walkthrough is paused.",
+    };
+  if (/resume the walkthrough/i.test(text))
+    return { tool: "walkthrough", args: { paused: false }, text: "Captain, resuming." };
   if (/\bafk\b/i.test(text)) return { text: "Captain, you are away: the decisions wait." };
   return { text: "Captain, noted." };
 }
@@ -198,7 +206,9 @@ async function untilMarked(card: number, mark: string, count = 1): Promise<void>
 
 async function assistantTexts(): Promise<string[]> {
   const session = await h.waitFor((event) => event["type"] === "session", "the session file");
-  return readFileSync(optionalString(session, "file") ?? "", "utf8")
+  const file = optionalString(session, "file") ?? "";
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
     .split("\n")
     .filter(Boolean)
     .map(parseRecord)
@@ -378,4 +388,52 @@ test("an afk message sent while cardd is down still keeps the decisions from bei
   await listsAfter(waited, 3);
   assert.ok(lists.slice(waited).every(noneDue), "nothing is due while he is away");
   assert.equal(refusals.length, 1);
+});
+
+test("a presentation written while cardd was down is recorded after it is back and is not demanded again", async () => {
+  await startWithTwoHolds("marks-silently");
+  beforeWriting = () => cardd.stop();
+
+  await say("How is the build going?");
+  await untilAsync(
+    async () => ((await assistantTexts()).some((text) => text.includes(OLDER)) ? true : undefined),
+    "the decision written while cardd is down",
+  );
+  await cardd.restart();
+
+  await untilMarked(older, "presented");
+  const settled = lists.length;
+  await listsAfter(settled, 3);
+  assert.equal(refusals.length, 1, "the decision he already read is not demanded again");
+  assert.deepEqual(await presentedAt(older), [1]);
+  assert.deepEqual(await marksOn(newer), []);
+});
+
+test("a paused walkthrough makes nothing due until he asks to resume it", async () => {
+  await startWithTwoHolds("writes");
+  await say("How is the build going?");
+  await untilMarked(older, "presented");
+
+  await say("Please pause the walkthrough");
+  await untilAsync(
+    async () => ((await marksOn(newer + 1)).includes("walkthrough.paused") ? true : undefined),
+    "the pause mark",
+  );
+  const paused = refusals.length;
+  await say("What is the weather like?");
+  const waited = lists.length;
+  await listsAfter(waited, 3);
+  assert.ok(lists.slice(waited).every(noneDue), "nothing is due while paused");
+  assert.equal(refusals.length, paused, "no yield is refused while paused");
+  assert.ok(lists.slice(waited).every((list) => list.includes(OLDER) && list.includes(NEWER)));
+
+  await say("Please resume the walkthrough");
+  await until(
+    () => (refusals.length > paused ? true : undefined),
+    "the refused yield after resume",
+  );
+  assert.match(refusals[paused] ?? "", / is due: /);
+  const marks = await marksOn(newer + 1);
+  assert.deepEqual(marks.slice(-2), ["captain.seen", "walkthrough.resumed"]);
+  assert.equal(marks.filter((mark) => mark === "walkthrough.paused").length, 1);
 });

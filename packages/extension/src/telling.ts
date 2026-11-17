@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PresentedCardSchema, type OpResult } from "@fleet/protocol";
+import { OPS, PresentedCardSchema, type OpResult } from "@fleet/protocol";
 import { textOf } from "./inbox.ts";
-import type { Link } from "./link.ts";
+import { Refused, type Link } from "./link.ts";
 
 const PRESENTED = "presented";
 const AFK = /\bafk\b/i;
@@ -18,8 +18,17 @@ function dueRefusal(due: Due): string {
   return `yield refused: the captain has written to you since you last brought a decision up, and c-${String(due.card)} ${due.title} is due: ${due.question}\nAnswer him first, then end your reply with this one decision and your recommendation${others}. Call presented(card=${String(due.card)}) in the same turn, and yield only if nothing else is left. Bring up no other decision.`;
 }
 
-const UNRECORDED_YIELD =
-  "yield refused: the captain's latest message could not be recorded because cardd did not take it. Try again shortly; nothing is brought up to him until it is recorded.";
+type Outgoing =
+  | { readonly op: "captain.seen"; readonly args: { readonly away: boolean } }
+  | {
+      readonly op: typeof PRESENTED;
+      readonly args: { readonly card: number; readonly occurrence: number };
+    };
+
+const unrecorded = (what: string, error: unknown): Error =>
+  new Error(
+    `${what} refused: the captain's messages or what you brought up to him could not be recorded yet (${error instanceof Error ? error.message : String(error)}). They are kept and recorded in order once cardd answers. Try again shortly.`,
+  );
 
 const UNWRITTEN_YIELD =
   "yield refused: you called presented but wrote no chat text in this turn. A decision counts as shown only when you wrote it to the captain. Write it now, with your recommendation.";
@@ -32,7 +41,7 @@ export class Telling {
   private yielded = false;
   private written = false;
   private readonly pending = new Map<number, number>();
-  private readonly unrecorded: boolean[] = [];
+  private readonly outbox: Outgoing[] = [];
   private recording: Promise<void> = Promise.resolve();
   private readonly pi: ExtensionAPI;
   private readonly link: Link;
@@ -43,9 +52,13 @@ export class Telling {
   }
 
   register(): void {
+    this.registerWalkthrough();
+    this.pi.events.on("fleet:connected", () => {
+      void this.record().catch(() => undefined);
+    });
     this.pi.on("input", async (event) => {
       if (event.source !== "interactive") return undefined;
-      this.unrecorded.push(AFK.test(event.text));
+      this.outbox.push({ op: "captain.seen", args: { away: AFK.test(event.text) } });
       await this.record().catch(() => undefined);
       return undefined;
     });
@@ -58,10 +71,10 @@ export class Telling {
     this.pi.on("message_end", async (event) => {
       if (event.message.role !== "assistant" || textOf(event.message).trim() === "") return;
       this.written = true;
-      for (const [card, occurrence] of [...this.pending]) {
-        this.pending.delete(card);
-        await this.link.call(PRESENTED, { card, occurrence }).catch(() => undefined);
-      }
+      for (const [card, occurrence] of this.pending)
+        this.outbox.push({ op: PRESENTED, args: { card, occurrence } });
+      this.pending.clear();
+      await this.record().catch(() => undefined);
     });
     this.pi.on("tool_call", (event) => {
       if (event.toolName === PRESENTED) this.marked = true;
@@ -85,7 +98,19 @@ export class Telling {
             "Pending: write this decision to the captain in this turn to record it as shown.",
           );
         }
-        const { card, waiting } = await this.link.call(PRESENTED, { ...params, occurrence });
+        const args = { ...params, occurrence };
+        const result = await this.record()
+          .then(() => this.link.call(PRESENTED, args, MARK_DEADLINE_MS))
+          .catch((error: unknown) => {
+            if (error instanceof Refused) throw error;
+            this.outbox.push({ op: PRESENTED, args });
+            return undefined;
+          });
+        if (result === undefined)
+          return reply(
+            "Pending: cardd did not take the mark yet. It is kept and recorded before your next yield.",
+          );
+        const { card, waiting } = result;
         const rest =
           waiting === 0
             ? "No other decision waits on him."
@@ -95,11 +120,34 @@ export class Telling {
     });
   }
 
+  private registerWalkthrough(): void {
+    this.pi.registerTool({
+      name: "walkthrough",
+      label: "Walkthrough",
+      description:
+        "Main only: records that the captain paused or stopped the decision walkthrough (paused=true), or asked to resume it (paused=false). While it is paused no decision is due and yield is not refused for one. Holds stay as they are, and the pause is not a message from him. Resume only when he asks. Chat from him on another subject, a routine wake, or a new decision does not resume it.",
+      parameters: OPS.walkthrough.args,
+      execute: async (_id, params) => {
+        await this.record().catch((error: unknown) => {
+          throw unrecorded("walkthrough", error);
+        });
+        const { paused } = await this.link.call("walkthrough", params, MARK_DEADLINE_MS);
+        return reply(
+          paused
+            ? "Recorded: the walkthrough is paused. No decision is due until he asks to resume it."
+            : "Recorded: the walkthrough is resumed.",
+        );
+      },
+    });
+  }
+
   private record(): Promise<void> {
     const run = this.recording.then(async () => {
-      while (this.unrecorded.length > 0) {
-        await this.link.call("captain.seen", { away: this.unrecorded[0] }, MARK_DEADLINE_MS);
-        this.unrecorded.shift();
+      for (let next = this.outbox[0]; next !== undefined; next = this.outbox[0]) {
+        await this.link.call(next.op, next.args, MARK_DEADLINE_MS).catch((error: unknown) => {
+          if (!(error instanceof Refused)) throw error;
+        });
+        this.outbox.shift();
       }
     });
     this.recording = run.catch(() => undefined);
@@ -108,8 +156,8 @@ export class Telling {
 
   async allowYield(): Promise<void> {
     if (this.marked && !this.written) throw new Error(UNWRITTEN_YIELD);
-    await this.record().catch(() => {
-      throw new Error(UNRECORDED_YIELD);
+    await this.record().catch((error: unknown) => {
+      throw unrecorded("yield", error);
     });
     const due = await this.link.call("decision.due", {}, DUE_DEADLINE_MS);
     if (due !== null) throw new Error(dueRefusal(due));
