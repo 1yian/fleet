@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -171,6 +171,50 @@ test("ops refuses a done handoff without evidence and refuses PR or merged claim
       .length,
     1,
   );
+});
+
+test("ops refuses a missing completion report and cannot close Done", async () => {
+  dispatchOperation();
+  h.onModel(async () => {
+    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+    return { tool: "report", args: { status: "done", text: "Operation complete", evidence: report } };
+  }, "worker");
+  h.onModel(
+    (turns) =>
+      /ops completion evidence.*readable/.test(toolResults(turns).at(-1) ?? "")
+        ? { tool: "report", args: { status: "failed", text: "Evidence report is missing" } }
+        : { text: "reported" },
+    "worker",
+  );
+  h.onModel(() => ({ text: "handed off" }), "worker");
+  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Operation complete" } }), "mate");
+  h.onModel(() => ({ text: "close attempted" }), "mate");
+  await start();
+  assert.match(await result(4), /the worker has not reported done/);
+  const thread = await cardd.thread(1);
+  assert.equal(thread.card.status, "with-mate");
+  assert.equal(
+    thread.entries.some((entry) => entry.kind === "report" && entry.fields["status"] === "done"),
+    false,
+  );
+});
+
+test("ops refuses Done if accepted completion evidence disappears", async () => {
+  dispatchOperation();
+  h.onModel(async () => {
+    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+    return completed();
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  h.onModel(() => {
+    unlinkSync(report);
+    return { tool: "close", args: { card: 1, summary: "Operation complete", confirm: true } };
+  }, "mate");
+  h.onModel(() => ({ text: "close attempted" }), "mate");
+  await start();
+  assert.match(await result(4), /cannot close Done.*ops completion evidence is not readable/);
+  assert.equal((await cardd.thread(1)).card.status, "with-mate");
+  assert.equal(existsSync(`${scratch.root}.worktrees/c-1-a1`), true);
 });
 
 test("ops warns about unexpected committed and untracked changes, refuses confirm, and preserves them when explicitly dropped", async () => {

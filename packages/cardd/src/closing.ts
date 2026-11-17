@@ -4,6 +4,7 @@ import { endLiveAttempts } from "./attempts.ts";
 import { settleClosedCard } from "./maintenance.ts";
 import { requireOrdinary } from "./change.ts";
 import { closeCardIncidents } from "./incident-lifecycle.ts";
+import { latestOperationReport } from "./merged-report.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import { nextLine, requireNext, type NextStep } from "./next-step.ts";
@@ -21,6 +22,7 @@ import {
 export interface CloseCheck {
   readonly merged: boolean;
   readonly unknown?: string;
+  readonly checkedEvidence?: number;
 }
 
 interface Done {
@@ -96,6 +98,13 @@ function closable(
     );
   }
   const closing = outcome(db, card, args.landed, closeCheck);
+  if (card.delivery === "ops" && closing.mode === "done") {
+    const report = latestOperationReport(cardEntries(db, card.id));
+    if (report === undefined || report.id !== closeCheck?.checkedEvidence)
+      throw new Error(
+        `${name} cannot close Done: its ops completion evidence is not readable outside the worker's worktree`,
+      );
+  }
   return { card, ...closing, next: requireNext(db, session, card, closing.mode, args.next) };
 }
 
