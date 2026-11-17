@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { check, OPS, parseClientMessage, type Card } from "@fleet/protocol";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { Harness, type Pi, type Turn } from "../support/harness.ts";
@@ -28,6 +28,19 @@ async function worker(url = fleet.cardd.url): Promise<Pi> {
   const env = { FLEET_URL: url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
   return h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
 }
+const rawText = (data: RawData): string => {
+  if (Array.isArray(data)) return Buffer.concat(data).toString();
+  if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data)).toString();
+  return data.toString();
+};
+const sendWhenReady = async (
+  ready: Promise<void>,
+  upstream: WebSocket,
+  text: string,
+): Promise<void> => {
+  await ready;
+  upstream.send(text);
+};
 const asked = (turns: Turn[] | undefined): number =>
   (turns ?? []).filter((turn) => turn.role === "user" && turn.text.includes(QUESTION)).length;
 const toolResults = (turns: Turn[] | undefined): string[] =>
@@ -97,21 +110,29 @@ test("an open connection that never answers complain times out, warns, and still
   const proxy = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   await new Promise<void>((resolve) => proxy.once("listening", resolve));
   let received = 0;
+  const upstreams: WebSocket[] = [];
   proxy.on("connection", (client) => {
     const upstream = new WebSocket(fleet.cardd.url);
     const ready = new Promise<void>((resolve) => upstream.once("open", resolve));
     client.on("message", (data) => {
-      const text = String(data);
+      const text = rawText(data);
       const message = parseClientMessage(text);
       if (message.t === "call" && message.op === "complain") {
         received += 1;
         return;
       }
-      void ready.then(() => upstream.send(text));
+      void sendWhenReady(ready, upstream, text);
     });
-    upstream.on("message", (data) => client.send(String(data)));
-    client.on("close", () => upstream.close());
-    t.after(() => upstream.terminate());
+    upstream.on("message", (data) => {
+      client.send(rawText(data));
+    });
+    client.on("close", () => {
+      upstream.close();
+    });
+    upstreams.push(upstream);
+  });
+  t.after(() => {
+    for (const upstream of upstreams) upstream.terminate();
   });
   t.after(() => {
     for (const client of proxy.clients) client.terminate();
