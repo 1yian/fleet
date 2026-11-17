@@ -45,6 +45,13 @@ function cardOf(db: DatabaseSync, session: string): number | undefined {
   return typeof row?.["lane"] === "string" ? laneCardOf(db, row["lane"]) : undefined;
 }
 
+const summarized = (db: DatabaseSync, batch: string): boolean =>
+  db
+    .prepare(
+      "SELECT 1 FROM entries WHERE author = 'maintenance' AND json_extract(fields, '$.maintenanceBatch') = ?",
+    )
+    .get(batch) !== undefined;
+
 function summarize(db: DatabaseSync, batch: string, requester: string): string[] {
   const rows = batchRows(db, batch);
   if (
@@ -52,11 +59,7 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
     rows.some(
       (row) => row.kind !== "reload" || row.state === "pending" || row.state === "reloading",
     ) ||
-    db
-      .prepare(
-        "SELECT 1 FROM entries WHERE author = 'maintenance' AND json_extract(fields, '$.maintenanceBatch') = ?",
-      )
-      .get(batch) !== undefined
+    summarized(db, batch)
   )
     return [];
   const first = rows[0];
@@ -229,6 +232,7 @@ export function requestMaintenance(
   t: Timings,
 ): { value: Maintenance[]; notify: string[] } {
   if (caller.lane !== "main") throw new Error("only main can ask the fleet to reload or stow");
+  if (summarized(db, raw.batch)) return { value: batchRows(db, raw.batch), notify: [] };
   const now = Date.now();
   const notify: string[] = [];
   for (const target of targets(db, caller.id, raw.kind, t.wall())) {

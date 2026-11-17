@@ -58,10 +58,15 @@ function readSession(session: string): { process: string | null; generation: num
 function insertReloading(session: string, process: string): void {
   const db = new DatabaseSync(fleet?.cardd.db ?? "", { timeout: 5000 });
   try {
+    db.exec("BEGIN");
     db.prepare(
       `INSERT INTO maintenance (batch, requester, session, kind, state, process, detail, updated_at)
        VALUES (?, 'main', ?, 'reload', 'reloading', ?, 'waiting to reconnect', ?)`,
     ).run(`batch-${session}`, session, process, Date.now());
+    db.prepare(
+      "INSERT INTO maintenance_batches (batch, requester, maintenance) SELECT batch, requester, id FROM maintenance WHERE batch = ?",
+    ).run(`batch-${session}`);
+    db.exec("COMMIT");
   } finally {
     db.close();
   }

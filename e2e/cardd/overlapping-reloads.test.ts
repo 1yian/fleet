@@ -83,3 +83,55 @@ test("overlapping reload batches retain verified receipts and shared pending mem
     await fleet.cardd.stop();
   }
 });
+
+test("a finalized reload batch rejects late new and already-pending targets on retries across restart", async () => {
+  const fleet = await startFleet();
+  const connections = [fleet.main];
+  try {
+    const card = await newCard(fleet.main, "original member");
+    const token = await begin(fleet.main, card);
+    const original = await fleet.cardd.connect(token, [], true, false, true);
+    connections.push(original);
+    await fleet.main.call("maintenance.request", { batch: "finalized", kind: "reload" });
+    await original.close();
+    connections.push(await fleet.cardd.connect(token, [], true, false, true, true));
+    const summary = await fleet.main.waitForEntry(
+      (entry) => entry.fields["maintenanceBatch"] === "finalized",
+      "the original member's summary",
+    );
+    assert.match(summary.body, /1 reloaded and verified, 0 failed/);
+    const expected = check(
+      OPS["maintenance.status"].result,
+      await fleet.main.call("maintenance.status", { batch: "finalized" }),
+    );
+    const pendingToken = await begin(fleet.main, await newCard(fleet.main, "already pending"));
+    connections.push(await fleet.cardd.connect(pendingToken, [], true, false, true));
+    await fleet.main.call("maintenance.request", { batch: "still-open", kind: "reload" });
+    const newToken = await begin(fleet.main, await newCard(fleet.main, "new target"));
+    connections.push(await fleet.cardd.connect(newToken, [], true, false, true));
+    const retry = check(
+      OPS["maintenance.request"].result,
+      await fleet.main.call("maintenance.request", { batch: "finalized", kind: "reload" }),
+    );
+    assert.deepEqual(retry, expected);
+    await Promise.all(connections.map((session) => session.close()));
+    await fleet.cardd.restart();
+    const main = await fleet.cardd.connect(fleet.mainToken);
+    connections.push(main);
+    assert.deepEqual(
+      check(
+        OPS["maintenance.request"].result,
+        await main.call("maintenance.request", { batch: "finalized", kind: "reload" }),
+      ),
+      expected,
+    );
+    const history = check(OPS.card.result, await main.call("card", { card: card.id }));
+    assert.equal(
+      history.entries.filter((entry) => entry.fields["maintenanceBatch"] === "finalized").length,
+      1,
+    );
+  } finally {
+    await Promise.all(connections.map((session) => session.close()));
+    await fleet.cardd.stop();
+  }
+});
