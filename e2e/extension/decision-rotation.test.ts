@@ -443,4 +443,5 @@ test("a paused walkthrough makes nothing due until he asks to resume it", async 
   const marks = await marksOn(newer + 1);
   assert.deepEqual(marks.slice(-2), ["captain.seen", "walkthrough.resumed"]);
   assert.equal(marks.filter((mark) => mark === "walkthrough.paused").length, 1);
+  assert.deepEqual(marks.slice(-5), ["captain.seen", "walkthrough.paused", "captain.seen", "captain.seen", "walkthrough.resumed"]);
 });

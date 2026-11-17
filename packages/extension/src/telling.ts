@@ -5,6 +5,7 @@ import type { Link } from "./link.ts";
 
 const PRESENTED = "presented";
 const AFK = /\bafk\b/i;
+const PAUSE = /\b(?:pause|stop)\b[^.?!\n]*\bwalkthrough\b/i;
 const MARK_DEADLINE_MS = 2_000;
 const DUE_DEADLINE_MS = 5_000;
 
@@ -66,6 +67,7 @@ export class Telling {
     });
     this.pi.on("input", async (event) => {
       if (event.source !== "interactive") return undefined;
+      if (PAUSE.test(event.text)) return undefined;
       this.outbox.push({ op: "captain.seen", args: { away: AFK.test(event.text) } });
       await this.record().catch(() => undefined);
       return undefined;
