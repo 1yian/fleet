@@ -217,6 +217,12 @@ function lane(): string {
   return name;
 }
 
+const configuredHost =
+  command === "up" || command === "restart" || command === "arrange"
+    ? readLaneConfig(root)?.host
+    : undefined;
+if (configuredHost !== undefined) process.env["FLEET_HOST"] ??= configuredHost;
+
 if (command === "up" || command === "restart") {
   const problems = hostProblems(root, values.maintenance !== true);
   if (problems.length > 0) {

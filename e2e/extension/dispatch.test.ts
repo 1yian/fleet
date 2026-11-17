@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import {
@@ -20,6 +21,7 @@ import {
 } from "../support/dispatch-lab.ts";
 import type { Harness, Pi } from "../support/harness.ts";
 import type { HerdrLab } from "../support/herdr.ts";
+import { optionalString, records } from "../support/json.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const PR = "https://github.com/acme/site/pull/1";
@@ -47,6 +49,18 @@ const branches = (): string[] => branchesOf(clone);
 const sidebar = (): Promise<string[]> => sidebarOf(lab);
 const workers = (): Promise<string[]> => workersOf(lab);
 const mateConnected = () => connected(h);
+
+async function worker(label: string): Promise<{ id: string; tokens: Record<string, unknown> }> {
+  const found = records((await lab.run(["workspace", "list"]))["workspaces"]).find((each) =>
+    String(each["label"]).includes(label),
+  );
+  const id = found === undefined ? undefined : optionalString(found, "workspace_id");
+  assert.ok(found !== undefined && id !== undefined, `no workspace for ${label}`);
+  const tokens = found["tokens"];
+  return { id, tokens: typeof tokens === "object" && tokens !== null ? { ...tokens } : {} };
+}
+
+const ownHost = hostname().toLowerCase().split(".")[0];
 
 function scriptMate(...dispatches: { host: string }[]): void {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
@@ -105,6 +119,45 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
   assert.deepEqual(worktrees(), ["branch refs/heads/main", "branch refs/heads/c-1-a1"]);
   assert.deepEqual(await workers(), ["c-1-a1"]);
   assert.deepEqual(await sidebar(), ["1stmate", "└ one-scrollbar", "2ndmate-cleo"]);
+});
+
+test("a dispatch that finds the worker's workspace again writes its lane, card, and mate host again", async () => {
+  const args = {
+    title: "Users see one scrollbar",
+    name: "one-scrollbar",
+    kind: "ship",
+    project: "site",
+    intent: "Fix the scrollbar",
+    host: "local",
+    task: "fix the scrollbar",
+  };
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => ({ tool: "dispatch", args }), "mate");
+  h.onModel(async () => {
+    const { id } = await worker("one-scrollbar");
+    const stale = ["lane=gone-lane", "card=99", "mate=gone-host"];
+    await lab.run([
+      "workspace",
+      "report-metadata",
+      id,
+      "--source",
+      "fleet",
+      ...stale.flatMap((token) => ["--token", token]),
+    ]);
+    return { tool: "dispatch", args };
+  }, "mate");
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
+  h.onModel(() => ({ text: "waiting for the job" }), "worker");
+  await mateConnected();
+  mate.prompt("ship the scrollbar fix");
+  const results = toolResults(await h.waitForCall(3, "mate", WORKER_WAIT_MS));
+  assert.equal(results.at(-2), "Dispatched c-1-a1 on local, branch c-1-a1.");
+  assert.equal(results.at(-1), "Found c-1-a1 on local already starting.");
+  const { tokens } = await worker("one-scrollbar");
+  assert.equal(tokens["lane"], "main");
+  assert.equal(tokens["card"], "1");
+  assert.equal(tokens["mate"], ownHost);
 });
 
 test("a dispatch whose connection drops after the worker started finds it, and a retry starts no other", async () => {
@@ -358,4 +411,8 @@ test("restart_card restarts a card whose worker died on its own session", async 
     ),
   );
   assert.deepEqual(await workers(), ["c-1-a1"]);
+  const { tokens } = await worker("one-scrollbar");
+  assert.equal(tokens["lane"], "main");
+  assert.equal(tokens["card"], "1");
+  assert.equal(tokens["mate"], ownHost);
 });

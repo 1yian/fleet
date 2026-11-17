@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
@@ -11,6 +12,9 @@ import { addRemote, git, landOnRemote } from "../support/remote.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 120_000;
+const FLEET_HOST = "fixture-mac";
+const LONG_HOST = "devvm-".padEnd(60, "x");
+const OWN_HOSTNAME = hostname().toLowerCase().split(".")[0] ?? "";
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
 
@@ -33,6 +37,7 @@ beforeEach(async () => {
   const marker = join(here.parent, "p620-down");
   const mainToken = cardd.addLane("main", undefined, here.root);
   configureMain(here, cardd.url, mainToken, {
+    host: FLEET_HOST,
     hosts: { p620: ["node", TRANSPORT, marker] },
     roots: { p620: p620.root },
   });
@@ -148,8 +153,13 @@ async function openWorker(name: string, card: number): Promise<string> {
   return String(records([made["workspace"]])[0]?.["workspace_id"]);
 }
 
+const EXPECTED_AFTER_UPDATE = [...GROUPED, "\u2514 stale-owner", "[yang] yang-a", "[yang] yang-b"];
+
 test("/updatefleet leaves each mate's workspace followed by its own workers, whatever order the restarts and the workers' creation left", async () => {
   await lab.run(["workspace", "create", "--cwd", here.root, "--label", "~", "--no-focus"]);
+  const stoppedCopy = { url: cardd.url, token: tokens["ops"] ?? "", args: mateArgs(h), hold: true };
+  p620.addLane("ops", stoppedCopy);
+  tokens["yang"] = cardd.addLane("yang", "main");
   const pane = await startMain(lab, here, h);
   await allRunPi();
   const cards = new Map<string, number>();
@@ -167,8 +177,25 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
     "--token",
     "mate=gone-host",
   ]);
+  const yangA = await newCard("yang", "yang-a");
+  const yangB = await newCard("yang", "yang-b");
+  for (const [name, card] of [
+    ["yang-b", yangB],
+    ["yang-a", yangA],
+  ] as const) {
+    const workspace = await openWorker(name, card);
+    await lab.run([
+      "workspace",
+      "report-metadata",
+      workspace,
+      "--source",
+      "fleet",
+      "--token",
+      "lane=yang",
+    ]);
+  }
   const before = await sidebar();
-  assert.notDeepEqual(before, GROUPED);
+  assert.notDeepEqual(before, EXPECTED_AFTER_UPDATE);
   process.stderr.write(`sidebar before the update: ${JSON.stringify(before)}\n`);
 
   await lab.submit(pane, "/updatefleet");
@@ -181,17 +208,11 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
     "main to record the update's report",
     async () => `the sidebar reads ${JSON.stringify(await sidebar())}`,
   );
-  await untilSidebar([...GROUPED, "\u2514 stale-owner"]);
+  await untilSidebar(EXPECTED_AFTER_UPDATE);
   await allRunPi();
-  const mates = await Promise.all(
-    ["\u2514 main-one", "\u2514 far-one", "\u2514 ops-alpha", "\u2514 stale-owner"].map(
-      async (label) => (await tokensOf(label))["mate"],
-    ),
-  );
-  assert.equal(mates[1], "p620");
-  assert.equal(mates[2], mates[0]);
-  assert.equal(mates[3], mates[0]);
-  assert.notEqual(mates[0], undefined);
+  const labels = ["\u2514 main-one", "\u2514 far-one", "\u2514 ops-alpha", "\u2514 stale-owner"];
+  const mates = await Promise.all(labels.map(async (label) => (await tokensOf(label))["mate"]));
+  assert.deepEqual(mates, [FLEET_HOST, "p620", FLEET_HOST, FLEET_HOST]);
   process.stderr.write(`sidebar after the update: ${JSON.stringify(await sidebar())}\n`);
 });
 
@@ -267,6 +288,7 @@ test("workers without a local mate follow the local groups, keep their lane, and
     "[yang-auto] yang-jeep",
   ]);
   assert.equal((await tokensOf("└ cleo-early"))["away"], undefined);
+  assert.equal((await tokensOf("└ cleo-early"))["mate"], "farhost");
   assert.equal((await tokensOf("[yang-auto] yang-jeep"))["away"], "↗ mate on farhost");
 });
 
@@ -274,6 +296,9 @@ test("a mate on this host never shows an away hint, and a worker named like the 
   await mateWorkspace("2ndmate-ops");
   await tagged("fleet-ops", 1860, { lane: "ops", mate: "stale-host" });
   await tagged("fleet-zed", 1861, { lane: "zed" });
+  await tagged("home-worker", 1863, { lane: "homer", mate: FLEET_HOST });
+  await tagged("hostname-worker", 1864, { lane: "namer", mate: OWN_HOSTNAME });
+  await tagged("far-worker", 1865, { lane: "longlane", mate: LONG_HOST });
   const hostOnly = await tagged("ops-beta", 1862, { lane: "ops" });
   await lab.run([
     "workspace",
@@ -285,7 +310,18 @@ test("a mate on this host never shows an away hint, and a worker named like the 
     "away=↗ mate on gone",
   ]);
   arrange();
-  await untilSidebar(["2ndmate-ops", "└ fleet-ops", "└ ops-beta", "[zed] fleet-zed"]);
+  await untilSidebar([
+    "2ndmate-ops",
+    "└ fleet-ops",
+    "└ ops-beta",
+    "[homer] home-worker",
+    "[longlane] far-worker",
+    "[namer] hostname-worker",
+    "[zed] fleet-zed",
+  ]);
+  assert.equal((await tokensOf("[homer] home-worker"))["away"], undefined);
+  assert.equal((await tokensOf("[namer] hostname-worker"))["away"], `↗ mate on ${OWN_HOSTNAME}`);
+  assert.equal((await tokensOf("[longlane] far-worker"))["away"], `↗ mate on ${LONG_HOST}`);
   assert.equal((await tokensOf("└ fleet-ops"))["away"], undefined);
   assert.equal((await tokensOf("└ ops-beta"))["away"], undefined);
   assert.equal((await tokensOf("[zed] fleet-zed"))["away"], undefined);

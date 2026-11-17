@@ -48,28 +48,42 @@ const describe = (host: string, row: Record<string, unknown>): string => {
 
 async function everyLane(
   config: LaneConfig,
+  tolerant: boolean,
 ): Promise<{ host: string; row: Record<string, unknown> }[]> {
   const out: { host: string; row: Record<string, unknown> }[] = [];
   for (const host of hostsOf(config)) {
-    for (const row of await rows(config, host, ["status"])) out.push({ host, row });
+    const found = tolerant
+      ? await rows(config, host, ["status"]).catch(() => [])
+      : await rows(config, host, ["status"]);
+    for (const row of found) out.push({ host, row });
   }
   return out;
 }
 
+function laneHosts(
+  entries: readonly { host: string; row: Record<string, unknown> }[],
+): Map<string, string> {
+  const found = new Map<string, { host: string; running: boolean }>();
+  for (const { host, row } of entries) {
+    const lane = text(row, "lane");
+    const running = text(row, "state") === "running";
+    const known = found.get(lane);
+    if (known === undefined || (running && !known.running)) found.set(lane, { host, running });
+  }
+  return new Map([...found].map(([lane, { host }]) => [lane, host]));
+}
+
 export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
   const found = new Map([[config.lane, ownHostName()]]);
-  for (const host of hostsOf(config)) {
-    const rowsOfHost = await rows(config, host, ["status"]).catch(() => []);
-    for (const row of rowsOfHost)
-      found.set(text(row, "lane"), host === "local" ? ownHostName() : host);
-  }
+  for (const [lane, host] of laneHosts(await everyLane(config, true)))
+    found.set(lane, host === "local" ? ownHostName() : host);
   return found;
 }
 
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
-  const found = (await everyLane(config)).find((each) => text(each.row, "lane") === lane);
-  if (found === undefined) throw new Error(`no lane ${lane} is configured on any host`);
-  return found.host;
+  const host = laneHosts(await everyLane(config, false)).get(lane);
+  if (host === undefined) throw new Error(`no lane ${lane} is configured on any host`);
+  return host;
 }
 
 function sharedArgs(home: string): string[] {

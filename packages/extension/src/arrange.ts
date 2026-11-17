@@ -5,7 +5,7 @@ import { isRecord } from "./lane-config.ts";
 const SOCKET_WAIT_MS = 5000;
 const WORKER_MARK = "└ ";
 const SOURCE = "fleet";
-const HOST_NAME = /^[A-Za-z0-9._-]{1,40}$/;
+const HERDR_VALUE_LIMIT = 80;
 
 interface Space {
   readonly id: string;
@@ -27,7 +27,10 @@ const MATE_LABELS: readonly [RegExp, (match: RegExpExecArray) => string][] = [
   [/^2ndmate-(.+)$/, (match) => match[1] ?? ""],
 ];
 
-const awayHint = (mate: string): string => `↗ mate on ${mate}`;
+const awayHint = (mate: string): string | undefined => {
+  const hint = `↗ mate on ${mate}`;
+  return hint.length <= HERDR_VALUE_LIMIT ? hint : undefined;
+};
 
 function mateLane(label: string): string | undefined {
   for (const [pattern, lane] of MATE_LABELS) {
@@ -122,13 +125,12 @@ function spaceOf(row: Record<string, unknown>): Space | undefined {
   if (id === undefined) return undefined;
   const tokens = isRecord(row["tokens"]) ? row["tokens"] : {};
   const card = Number(tokens["card"]);
-  const mate = token(tokens, "mate");
   return {
     id,
     label: field(row, "label") ?? "",
     lane: token(tokens, "lane"),
     card: Number.isInteger(card) ? card : undefined,
-    mate: mate !== undefined && HOST_NAME.test(mate) ? mate : undefined,
+    mate: token(tokens, "mate"),
     away: token(tokens, "away"),
   };
 }
@@ -247,6 +249,20 @@ async function correctMates(
   }
 }
 
+const worktreeCard = (pane: Record<string, unknown>): number =>
+  Number(WORKTREE_CARD.exec(field(pane, "cwd") ?? "")?.[1]);
+
+function missingOwner(
+  pane: Record<string, unknown>,
+  space: Space | undefined,
+  laneOfCard: ReadonlyMap<number, string>,
+): { lane: string; card: number } | undefined {
+  if (space?.lane !== undefined && space.card !== undefined) return undefined;
+  const card = space?.card ?? worktreeCard(pane);
+  const lane = space?.lane ?? laneOfCard.get(card);
+  return lane === undefined || !Number.isInteger(card) ? undefined : { lane, card };
+}
+
 export async function tagWorkers(
   host: string,
   laneOfCard: ReadonlyMap<number, string>,
@@ -254,13 +270,14 @@ export async function tagWorkers(
 ): Promise<void> {
   const spaces = await listed(host);
   await correctMates(host, spaces, mateHosts);
-  const tagged = new Set(spaces.flatMap((s) => (s.lane === undefined ? [] : [s.id])));
+  const known = new Map(spaces.map((space) => [space.id, space]));
+  const done = new Set<string>();
   for (const pane of records((await herdr(host, ["pane", "list"]))["panes"])) {
     const workspace = field(pane, "workspace_id");
-    const card = Number(WORKTREE_CARD.exec(field(pane, "cwd") ?? "")?.[1]);
-    const lane = laneOfCard.get(card);
-    if (workspace === undefined || lane === undefined || tagged.has(workspace)) continue;
-    tagged.add(workspace);
-    await tagWorker(host, workspace, { lane, card, mate: mateHosts.get(lane) });
+    if (workspace === undefined || done.has(workspace)) continue;
+    const owner = missingOwner(pane, known.get(workspace), laneOfCard);
+    if (owner === undefined) continue;
+    done.add(workspace);
+    await tagWorker(host, workspace, { ...owner, mate: mateHosts.get(owner.lane) });
   }
 }

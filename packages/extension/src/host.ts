@@ -194,7 +194,8 @@ export const onHelper = (
   timeout = 600_000,
 ): Promise<string> => run(host, argv, timeout, ["env", `${HELPER_MARK}=1`, ...argv]);
 
-const FLEET_ON_ROOT = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
+const FLEET_ON_ROOT =
+  'root=${1:-$HOME/.fleet/app}; FLEET_HOST=$2; export FLEET_HOST; shift 2; exec "$root/bin/fleet" "$@"';
 
 export function onFleetRoot(
   host: string,
@@ -202,7 +203,7 @@ export function onFleetRoot(
   args: readonly string[],
   timeout?: number,
 ): Promise<string> {
-  return onHost(host, ["sh", "-c", FLEET_ON_ROOT, "fleet", root ?? "", ...args], timeout);
+  return onHost(host, ["sh", "-c", FLEET_ON_ROOT, "fleet", root ?? "", host, ...args], timeout);
 }
 
 export const records = (value: unknown): Record<string, unknown>[] =>

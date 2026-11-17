@@ -633,14 +633,15 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 
-A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: workspaces that are not mates or workers first, in the order they have, then main's `1stmate` and the `2ndmate-<lane>` workspaces by lane name, each followed by its own workers as `└ <card name>` in card order. A worker whose mate has no workspace on the host comes after all of these groups, sorted by lane and then card, labeled `[<lane>] <card name>`. A worker's workspace carries its lane and card as herdr metadata tokens, which is how it finds its mate. A worker's name never makes it a mate: only `1stmate` and `2ndmate-<lane>` are mates. Herdr cannot nest workspaces, so the `└ ` and the `[<lane>] ` are text and the order is the only structure. Fleet also records the host of the worker's mate in a `mate` token, when the worker is dispatched and again at each `/updatefleet`, which corrects it when a lane moves hosts. A worker with no mate workspace on the host and a `mate` token that names another host gets an `away` token, `↗ mate on <host>`. When the mate's workspace appears on the host, the next arrange moves the worker beneath it, replaces the lane prefix with `└ `, and clears `away`.
+A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: workspaces that are not mates or workers first, in the order they have, then main's `1stmate` and the `2ndmate-<lane>` workspaces by lane name, each followed by its own workers as `└ <card name>` in card order. A worker whose mate has no workspace on the host comes after all of these groups, sorted by lane and then card, labeled `[<lane>] <card name>`. A worker's workspace carries its lane and card as herdr metadata tokens, which is how it finds its mate. A worker's name never makes it a mate: only `1stmate` and `2ndmate-<lane>` are mates. Herdr cannot nest workspaces, so the `└ ` and the `[<lane>] ` are text and the order is the only structure. Fleet also records the host of the worker's mate in a `mate` token, when the worker is dispatched and again at each `/updatefleet`, which corrects it when a lane moves hosts. A lane that has a running home on one host and a stopped copy on another counts as running where it runs. A worker that is dispatched again, on a workspace that already exists or on a new one, gets its lane, card, and `mate` tokens written again. A worker with no mate workspace on the host and a `mate` token that names another host gets an `away` token, `↗ mate on <host>`. When the mate's workspace appears on the host, the next arrange moves the worker beneath it, replaces the lane prefix with `└ `, and clears `away`.
 
-To show the hint, add a row to your own herdr client config. Fleet never writes this file, and a row whose token is not set disappears. The `[ui.sidebar.spaces]` section of the herdr configuration lists the available styles.
+To show the hint, add a row to your own herdr client config. Keep herdr's default rows, `["state_icon", "workspace"]` and `["branch", "git_status"]`, because setting `rows` replaces the default layout. Fleet never writes this file, and a row whose token is not set disappears. The `[ui.sidebar.spaces]` section of the herdr configuration lists the available styles.
 
 ```toml
 [ui.sidebar.spaces]
 rows = [
   ["state_icon", "workspace"],
+  ["branch", "git_status"],
   [{ token = "$away", dim = true }],
 ]
 ```

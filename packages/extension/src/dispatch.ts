@@ -15,7 +15,7 @@ import {
   shellIdle,
   worktreeOf,
 } from "./host.ts";
-import { openWorkerWorkspace } from "./place.ts";
+import { claimWorkspace, openWorkerWorkspace } from "./place.ts";
 import { OPEN_SCRATCH_SCRIPT, parseOpened, workerEnvironment } from "./scratch.ts";
 import type { Link } from "./link.ts";
 import { workerModelArgs } from "./lane-config.ts";
@@ -45,10 +45,13 @@ async function worktreePane(
   );
   const workspace = field(tree, "open_workspace_id");
   const path = field(tree, "path") ?? `${plan.clone}.worktrees/${plan.session}`;
+  const claim = (id: string): Promise<void> =>
+    claimWorkspace(host, id, { id: card, lane: plan.lane });
   if (workspace !== undefined) {
     const panes = records((await herdr(host, ["pane", "list", "--workspace", workspace]))["panes"]);
     const pane = field(panes[0], "pane_id");
     if (pane === undefined) throw new Error(`workspace ${workspace} on ${host} has no pane`);
+    await claim(workspace);
     return { pane, path };
   }
   if (tree === undefined) {
@@ -56,13 +59,14 @@ async function worktreePane(
     const args = [plan.clone, path, plan.branch, plan.base, from];
     await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", ...args]);
   }
-  const root = await openWorkerWorkspace(
+  const opened = await openWorkerWorkspace(
     host,
     path,
-    { id: card, name: plan.name, lane: plan.lane },
+    { name: plan.name },
     await scratchEnvironment(host, card),
   );
-  return { pane: root, path };
+  if (opened.workspace !== undefined) await claim(opened.workspace);
+  return { pane: opened.pane, path };
 }
 
 const SHELL_WAIT_MS = 20_000;
