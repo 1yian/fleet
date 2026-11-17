@@ -197,6 +197,13 @@ CREATE TABLE maintenance (
   UNIQUE (batch, session)
 ) STRICT;
 
+CREATE TABLE maintenance_batches (
+  batch TEXT NOT NULL,
+  requester TEXT NOT NULL REFERENCES sessions (id),
+  maintenance INTEGER NOT NULL REFERENCES maintenance (id),
+  PRIMARY KEY (batch, maintenance)
+) STRICT;
+
 CREATE TABLE projects (
   name TEXT PRIMARY KEY,
   clones TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(clones)),

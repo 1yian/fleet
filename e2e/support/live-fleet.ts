@@ -32,6 +32,7 @@ export async function until<T>(
 }
 
 export interface Worker {
+  readonly token: string;
   readonly session: string;
   readonly card: number;
   readonly branch: string;
@@ -54,6 +55,7 @@ interface Parts {
   readonly remote: string;
   readonly ghost: Session;
   readonly ghostToken: string;
+  readonly mainToken: string;
   readonly opsHome: string;
   readonly farHome: string;
   readonly site: string;
@@ -73,6 +75,7 @@ export class LiveFleet {
   readonly remote: string;
   ghost: Session;
   readonly ghostToken: string;
+  readonly mainToken: string;
   readonly opsHome: string;
   readonly farHome: string;
   readonly site: string;
@@ -90,6 +93,7 @@ export class LiveFleet {
     this.remote = parts.remote;
     this.ghost = parts.ghost;
     this.ghostToken = parts.ghostToken;
+    this.mainToken = parts.mainToken;
     this.opsHome = parts.opsHome;
     this.farHome = parts.farHome;
     this.site = parts.site;
@@ -155,6 +159,7 @@ export class LiveFleet {
         remote,
         ghost,
         ghostToken,
+        mainToken,
         opsHome,
         farHome,
         site,
@@ -315,7 +320,15 @@ export class LiveFleet {
         ...flags,
       ]);
     else await this.lab.submit(pane, `pi ${flags.map((arg) => `'${arg}'`).join(" ")}`);
-    return { session: begun.session, card: card.id, branch: begun.branch, worktree, pane, host };
+    return {
+      token: begun.token,
+      session: begun.session,
+      card: card.id,
+      branch: begun.branch,
+      worktree,
+      pane,
+      host,
+    };
   }
 
   async board(): Promise<BoardCard[]> {

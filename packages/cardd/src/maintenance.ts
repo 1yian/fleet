@@ -30,6 +30,11 @@ export const pendingFor = (db: DatabaseSync, session: string): Maintenance[] =>
 
 const TERMINAL = "('completed', 'failed')";
 
+const batchRows = (db: DatabaseSync, batch: string): Maintenance[] =>
+  rowsOf(db, "m.id IN (SELECT maintenance FROM maintenance_batches WHERE batch = ?)", batch).map(
+    (row) => ({ ...row, batch }),
+  );
+
 function cardOf(db: DatabaseSync, session: string): number | undefined {
   const row = db
     .prepare(
@@ -41,7 +46,7 @@ function cardOf(db: DatabaseSync, session: string): number | undefined {
 }
 
 function summarize(db: DatabaseSync, batch: string, requester: string): string[] {
-  const rows = rowsOf(db, "m.batch = ?", batch);
+  const rows = batchRows(db, batch);
   if (
     rows.length === 0 ||
     rows.some(
@@ -112,7 +117,15 @@ function settle(
   const fields = { maintenance: id, batch: row.batch, kind: row.kind, state, quiet };
   const recipients = quiet && row.kind === "reload" ? [] : [requester];
   addEntry(db, { card, author: "maintenance", kind: "note", body, fields }, recipients);
-  return [...recipients, ...summarize(db, row.batch, requester)];
+  const batches = db
+    .prepare("SELECT batch, requester FROM maintenance_batches WHERE maintenance = ?")
+    .all(id);
+  return [
+    ...recipients,
+    ...batches.flatMap((batch) =>
+      summarize(db, String(batch["batch"]), String(batch["requester"])),
+    ),
+  ];
 }
 
 export function adoptMaintenance(
@@ -219,18 +232,21 @@ export function requestMaintenance(
   const now = Date.now();
   const notify: string[] = [];
   for (const target of targets(db, caller.id, raw.kind, t.wall())) {
+    const member = db
+      .prepare(
+        "SELECT 1 FROM maintenance_batches b JOIN maintenance m ON m.id = b.maintenance WHERE b.batch = ? AND m.session = ?",
+      )
+      .get(raw.batch, target.id);
+    if (member !== undefined) continue;
     const open = db
       .prepare(
         "SELECT id FROM maintenance WHERE session = ? AND kind = ? AND state IN ('pending', 'reloading')",
       )
       .get(target.id, raw.kind);
     if (open !== undefined) {
-      db.prepare("UPDATE maintenance SET batch = ?, requester = ? WHERE id = ? AND batch != ?").run(
-        raw.batch,
-        caller.id,
-        Number(open["id"]),
-        raw.batch,
-      );
+      db.prepare(
+        "INSERT INTO maintenance_batches (batch, requester, maintenance) VALUES (?, ?, ?)",
+      ).run(raw.batch, caller.id, Number(open["id"]));
       notify.push(target.id);
       continue;
     }
@@ -239,10 +255,13 @@ export function requestMaintenance(
       `INSERT OR IGNORE INTO maintenance (batch, requester, session, kind, state, process, detail, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(raw.batch, caller.id, target.id, raw.kind, state, target.process, detail, now);
+    db.prepare(
+      "INSERT OR IGNORE INTO maintenance_batches (batch, requester, maintenance) SELECT ?, ?, id FROM maintenance WHERE batch = ? AND session = ?",
+    ).run(raw.batch, caller.id, raw.batch, target.id);
     if (state === "pending") notify.push(target.id);
   }
   return {
-    value: rowsOf(db, "m.batch = ?", raw.batch),
+    value: batchRows(db, raw.batch),
     notify: [...notify, ...summarize(db, raw.batch, caller.id)],
   };
 }
@@ -252,7 +271,7 @@ export function maintenanceStatus(
   caller: Session,
   args: OpArgs<"maintenance.status">,
 ): { value: Maintenance[]; notify: string[] } {
-  const rows = rowsOf(db, "m.batch = ?", args.batch);
+  const rows = batchRows(db, args.batch);
   const notify =
     args.failUnverified === true
       ? rows
@@ -269,7 +288,7 @@ export function maintenanceStatus(
             );
           })
       : [];
-  return { value: rowsOf(db, "m.batch = ?", args.batch), notify };
+  return { value: batchRows(db, args.batch), notify };
 }
 
 export function readMaintenance(db: DatabaseSync, caller: Session, id: number): Maintenance {

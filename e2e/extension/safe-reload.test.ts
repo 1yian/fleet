@@ -117,11 +117,15 @@ async function asksWithNewCode(worker: Worker): Promise<void> {
   assert.doesNotMatch(systemOf(first ?? []), RegExp(NEW_CODE));
 }
 
-async function mainHears(workers: readonly Worker[]): Promise<void> {
+async function mainHears(
+  workers: readonly Worker[],
+  expected = "5 reloaded and verified, 1 failed",
+  prompt = "WHO-RELOADED",
+): Promise<void> {
   await fleet.matePid("main");
-  await fleet.lab.submit(fleet.mainPane, "WHO-RELOADED");
+  await fleet.lab.submit(fleet.mainPane, prompt);
   const heard = await until(
-    () => fleet.h.callsOf("mate").find((each) => lastUser(each).includes("WHO-RELOADED")),
+    () => fleet.h.callsOf("mate").find((each) => lastUser(each).includes(prompt)),
     "main to answer",
   );
   const told = heard
@@ -129,7 +133,7 @@ async function mainHears(workers: readonly Worker[]): Promise<void> {
     .map((turn) => turn.text);
   const summaries = told.filter((line) => line.includes("Reload batch "));
   assert.equal(summaries.length, 1, told.join("\n"));
-  assert.ok(summaries[0]?.includes("5 reloaded and verified, 1 failed"));
+  assert.ok(summaries[0]?.includes(expected));
   assert.equal(told.filter((line) => line.includes("reload completed -")).length, 0);
   for (const worker of workers) {
     const history = await fleet.ghost.call("card", { card: worker.card });
@@ -229,4 +233,61 @@ test("update_fleet reloads every worker and second mate at its safe point, never
   assert.ok(afterOps.some((turn) => turn.role === "user" && turn.text.includes("LONG-TURN")));
 
   await mainHears([busy, job, paused]);
+});
+
+test("a successful multi-host update summarizes real replacements once, including a late safe point and duplicate receipts", async () => {
+  script();
+  const control = await fleet.cardd.connect(fleet.mainToken);
+  await control.call("lane.stopping", { lane: "ghost" });
+  await control.close();
+  await fleet.startMain();
+  const mates = { ops: await fleet.matePid("ops"), far: await fleet.matePid("far") };
+  const busy = await fleet.startWorker("busy", "local");
+  const paused = await fleet.startWorker("paused", "p620");
+  await until(() => (reached("busy", "started") ? true : undefined), "busy's turn");
+  await until(
+    async () => ((await fleet.cardOf(paused.card)).status === "paused" ? true : undefined),
+    "the far worker to pause",
+  );
+  const was = { busy: await before(busy), paused: await before(paused) };
+  fleet.landCode();
+  await fleet.lab.submit(fleet.mainPane, "/updatefleet");
+  const report = await until(
+    () => fleet.userTexts("mate").find((text) => text.startsWith("[fleet] update:")),
+    "the update report before the late safe point",
+  );
+  assert.ok(report.includes(`${busy.session} (worker on local): reload pending`));
+  assert.equal(await fleet.piIn(busy.pane), was.busy.pid);
+  await onNewCode(paused, was.paused);
+  for (const lane of ["ops", "far"] as const) {
+    const pane = await until(() => fleet.paneOf(`2ndmate-${lane}`), `${lane}'s pane`);
+    assert.notEqual(await fleet.newPid(pane, mates[lane]), mates[lane]);
+  }
+  fleet.open("busy-gate");
+  await onNewCode(busy, was.busy);
+  for (const worker of [busy, paused]) await asksWithNewCode(worker);
+  await mainHears([busy, paused], "4 reloaded and verified, 0 failed");
+  const history = check(OPS.card.result, await fleet.ghost.call("card", { card: busy.card }));
+  const receipt = history.entries.find((entry) => typeof entry.fields["maintenance"] === "number");
+  assert.ok(receipt);
+  const id = receipt.fields["maintenance"];
+  assert.equal(typeof id, "number");
+  const owner = await fleet.cardd.connect(busy.token, [], true, false, true, true);
+  try {
+    const duplicate = check(
+      OPS["maintenance.ack"].result,
+      await owner.call("maintenance.ack", {
+        id,
+        state: "failed",
+        detail: "late duplicate helper failure",
+      }),
+    );
+    assert.equal(duplicate.state, "completed");
+    assert.equal(duplicate.detail, NOW_LINE);
+  } finally {
+    await owner.close();
+  }
+  await mainHears([busy, paused], "4 reloaded and verified, 0 failed", "AFTER-DUPLICATE");
+  const after = check(OPS.card.result, await fleet.ghost.call("card", { card: busy.card }));
+  assert.equal(after.entries.filter((entry) => entry.fields["maintenance"] === id).length, 1);
 });
