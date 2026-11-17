@@ -155,6 +155,18 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
   const cards = new Map<string, number>();
   for (const [lane, name] of WORKERS) cards.set(name, await newCard(lane, name));
   for (const [, name] of [...WORKERS].reverse()) await openWorker(name, cards.get(name) ?? 0);
+  const stale = await openWorker("stale-owner", await newCard("ops", "stale-owner"));
+  await lab.run([
+    "workspace",
+    "report-metadata",
+    stale,
+    "--source",
+    "fleet",
+    "--token",
+    "lane=ops",
+    "--token",
+    "mate=gone-host",
+  ]);
   const before = await sidebar();
   assert.notDeepEqual(before, GROUPED);
   process.stderr.write(`sidebar before the update: ${JSON.stringify(before)}\n`);
@@ -169,60 +181,114 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
     "main to record the update's report",
     async () => `the sidebar reads ${JSON.stringify(await sidebar())}`,
   );
-  await untilSidebar(GROUPED);
+  await untilSidebar([...GROUPED, "\u2514 stale-owner"]);
   await allRunPi();
+  const mates = await Promise.all(
+    ["\u2514 main-one", "\u2514 far-one", "\u2514 ops-alpha", "\u2514 stale-owner"].map(
+      async (label) => (await tokensOf(label))["mate"],
+    ),
+  );
+  assert.equal(mates[1], "p620");
+  assert.equal(mates[2], mates[0]);
+  assert.equal(mates[3], mates[0]);
+  assert.notEqual(mates[0], undefined);
   process.stderr.write(`sidebar after the update: ${JSON.stringify(await sidebar())}\n`);
 });
 
-test("workers without a local mate show their lane without changing matched workers' grouping", async () => {
-  await lab.run([
-    "workspace",
-    "create",
-    "--cwd",
-    here.root,
-    "--label",
-    "2ndmate-ops",
-    "--no-focus",
-  ]);
-  for (const [lane, name, card] of [
-    ["yang-auto", "yang-jeep-offlot-reel", 1822],
-    ["ops", "ops-alpha", 1823],
-  ] as const) {
-    const workspace = await openWorker(name, card);
-    await lab.run([
-      "workspace",
-      "report-metadata",
-      workspace,
-      "--source",
-      "fleet",
-      "--token",
-      `lane=${lane}`,
-      "--token",
-      `card=${String(card)}`,
-    ]);
-  }
-  const expected = ["[yang-auto] yang-jeep-offlot-reel", "2ndmate-ops", "└ ops-alpha"];
-  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
-  await untilSidebar(expected);
-  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
-  await untilSidebar(expected);
+async function tokensOf(label: string): Promise<Record<string, unknown>> {
+  const row = records((await lab.run(["workspace", "list"]))["workspaces"]).find(
+    (each) => each["label"] === label,
+  );
+  assert.ok(row !== undefined, `no workspace ${label}`);
+  const found = row["tokens"];
+  return typeof found === "object" && found !== null ? { ...found } : {};
+}
 
-  await lab.run([
-    "workspace",
-    "create",
-    "--cwd",
-    here.root,
-    "--label",
-    "2ndmate-yang-auto",
-    "--no-focus",
+async function tagged(name: string, card: number, tokens: Record<string, string>): Promise<string> {
+  const workspace = await openWorker(name, card);
+  const marks = Object.entries({ card: String(card), ...tokens }).flatMap(([key, value]) => [
+    "--token",
+    `${key}=${value}`,
   ]);
-  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
-  await untilSidebar([
+  await lab.run(["workspace", "report-metadata", workspace, "--source", "fleet", ...marks]);
+  return workspace;
+}
+
+const arrange = (): string => here.fleet(["arrange"], { HERDR_SESSION: lab.name });
+
+async function mateWorkspace(label: string): Promise<void> {
+  await lab.run(["workspace", "create", "--cwd", here.root, "--label", label, "--no-focus"]);
+}
+
+test("workers without a local mate follow the local groups, keep their lane, and say where their mate is", async () => {
+  await mateWorkspace("1stmate");
+  await mateWorkspace("2ndmate-ops");
+  await lab.run(["workspace", "create", "--cwd", here.root, "--label", "~", "--no-focus"]);
+  await tagged("ops-alpha", 1823, { lane: "ops", mate: "farhost" });
+  await tagged("main-one", 1830, { lane: "main", mate: "farhost" });
+  await tagged("yang-jeep", 1822, { lane: "yang-auto", mate: "farhost" });
+  await tagged("cleo-late", 1850, { lane: "cleo", mate: "farhost" });
+  await tagged("cleo-early", 1840, { lane: "cleo", mate: "farhost" });
+  await tagged("yang-bmw", 1821, { lane: "yang-auto" });
+  const expected = [
+    "~",
+    "1stmate",
+    "└ main-one",
     "2ndmate-ops",
     "└ ops-alpha",
-    "2ndmate-yang-auto",
-    "└ yang-jeep-offlot-reel",
+    "[cleo] cleo-early",
+    "[cleo] cleo-late",
+    "[yang-auto] yang-bmw",
+    "[yang-auto] yang-jeep",
+  ];
+  arrange();
+  await untilSidebar(expected);
+  assert.equal((await tokensOf("[cleo] cleo-early"))["away"], "↗ mate on farhost");
+  assert.equal((await tokensOf("[yang-auto] yang-jeep"))["away"], "↗ mate on farhost");
+  assert.equal((await tokensOf("[yang-auto] yang-bmw"))["away"], undefined);
+  assert.equal((await tokensOf("└ ops-alpha"))["away"], undefined);
+  const seen = await sidebar();
+  arrange();
+  assert.deepEqual(await sidebar(), seen);
+  assert.equal((await tokensOf("[cleo] cleo-early"))["away"], "↗ mate on farhost");
+
+  await mateWorkspace("2ndmate-cleo");
+  arrange();
+  await untilSidebar([
+    "~",
+    "1stmate",
+    "└ main-one",
+    "2ndmate-cleo",
+    "└ cleo-early",
+    "└ cleo-late",
+    "2ndmate-ops",
+    "└ ops-alpha",
+    "[yang-auto] yang-bmw",
+    "[yang-auto] yang-jeep",
   ]);
+  assert.equal((await tokensOf("└ cleo-early"))["away"], undefined);
+  assert.equal((await tokensOf("[yang-auto] yang-jeep"))["away"], "↗ mate on farhost");
+});
+
+test("a mate on this host never shows an away hint, and a worker named like the old mate title stays a worker", async () => {
+  await mateWorkspace("2ndmate-ops");
+  await tagged("fleet-ops", 1860, { lane: "ops", mate: "stale-host" });
+  await tagged("fleet-zed", 1861, { lane: "zed" });
+  const hostOnly = await tagged("ops-beta", 1862, { lane: "ops" });
+  await lab.run([
+    "workspace",
+    "report-metadata",
+    hostOnly,
+    "--source",
+    "fleet",
+    "--token",
+    "away=↗ mate on gone",
+  ]);
+  arrange();
+  await untilSidebar(["2ndmate-ops", "└ fleet-ops", "└ ops-beta", "[zed] fleet-zed"]);
+  assert.equal((await tokensOf("└ fleet-ops"))["away"], undefined);
+  assert.equal((await tokensOf("└ ops-beta"))["away"], undefined);
+  assert.equal((await tokensOf("[zed] fleet-zed"))["away"], undefined);
 });
 
 test("restarting one lane on its own puts its workspace back above its workers", async () => {

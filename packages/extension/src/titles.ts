@@ -4,11 +4,6 @@ import { herdr } from "./host.ts";
 export const mateTitle = (lane: string): string =>
   lane === "main" ? "1stmate" : `2ndmate-${lane}`;
 
-const formerTitle = (lane: string): string => `fleet-${lane}`;
-
-export const isMateWorkspace = (label: unknown, lane: string): boolean =>
-  label === mateTitle(lane) || label === formerTitle(lane);
-
 const holdsTerminal = (): boolean => process.stdin.isTTY && process.stdout.isTTY;
 
 export async function titleMate(pi: ExtensionAPI, lane: string): Promise<void> {

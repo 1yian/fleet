@@ -1,5 +1,5 @@
 import { arrangeOn, tagWorker } from "./arrange.ts";
-import { field, herdr, records, rootOf, rootPane } from "./host.ts";
+import { field, herdr, ownHostName, records, rootOf, rootPane } from "./host.ts";
 
 export async function openWorkerWorkspace(
   host: string,
@@ -19,7 +19,11 @@ export async function openWorkerWorkspace(
   ]);
   const workspace = field(records([created["workspace"]])[0], "workspace_id");
   if (workspace !== undefined) {
-    await tagWorker(host, workspace, { lane: card.lane, card: card.id }).catch(() => undefined);
+    await tagWorker(host, workspace, {
+      lane: card.lane,
+      card: card.id,
+      mate: ownHostName(),
+    }).catch(() => undefined);
     await arrangeOn(host, rootOf(host)).catch(() => undefined);
   }
   return rootPane(created);

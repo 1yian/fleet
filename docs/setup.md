@@ -598,7 +598,7 @@ Main starts, and within a minute it has brought up every lane on every host that
 - A lane that starts three times in ten minutes is held, and main tells the captain once.
 - A host that cannot be reached is reported once, and again when it answers.
 - `lane(name, "stop")` stops a lane and holds it, so main leaves it alone. `lane(name, "start")` starts it. `lane(name, "restart")` restarts one lane, and `lane("all", "restart")` every lane that is not held, on every host. Ask main in plain words: "restart the fleet".
-- Each second mate runs in its own herdr workspace, `2ndmate-<lane>`, in that host's `default` session, and continues its conversation when it starts again. Each mate names itself when it starts: its Pi session and its herdr workspace read `1stmate` for main and `2ndmate-<lane>` for a second mate. A mate still in a workspace from before, `fleet-<lane>`, is found there until it restarts. A mate in a workspace with any other label renames it to its own name the next time its Pi starts in that pane, which includes the relaunch that `/updatefleet` does. No pane closes. To see another host's workspaces in the herdr you already use, add the host once as a machine: `herdr machine add p620 --remote-session default`.
+- Each second mate runs in its own herdr workspace, `2ndmate-<lane>`, in that host's `default` session, and continues its conversation when it starts again. Each mate names itself when it starts: its Pi session and its herdr workspace read `1stmate` for main and `2ndmate-<lane>` for a second mate. A mate in a workspace with any other label renames it to its own name the next time its Pi starts in that pane, which includes the relaunch that `/updatefleet` does. No pane closes. To see another host's workspaces in the herdr you already use, add the host once as a machine: `herdr machine add p620 --remote-session default`.
 
 Fleet starts the herdr server when it is not running. The first herdr call that fails with `server_not_running`, such as the lane keeper's check after a reboot, starts the host's `default` server (or the session named by `HERDR_SESSION`) detached, so it outlives the process that started it, and then repeats the call. Other sessions, such as `fm-remote`, are never started or touched. The server keeps the open-file limit of the process that started it, and every pane costs it two or three descriptors, so fleet raises the soft limit to 65536, capped at the hard limit, before it starts the server. A server that something else started keeps its own limit: if that is low (1024 on most Linux logins, 256 on macOS), `run_long` fails with `tab_create_failed`. Raise the limit where the host starts its login sessions, outside this repository: `/etc/security/limits.d` on Linux, a launchd limit on macOS. Check a running server with `grep "open files" /proc/<pid>/limits` (Linux) or `launchctl limit maxfiles` (macOS).
 
@@ -633,7 +633,17 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 
-A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: workspaces that are not mates or workers first, in the order they have, then main's `1stmate` and the `2ndmate-<lane>` workspaces by lane name, each followed by its own workers as `└ <card name>` in card order. A worker's workspace carries its lane and card as herdr metadata tokens, which is how it finds its mate. A worker whose mate has no workspace on the host stays among the first workspaces, labeled `[<lane>] <card name>` instead of `└ <card name>`. This shows its owning lane even when the mate runs on another host. When the mate's workspace appears on this host, the next arrange moves the worker beneath it and replaces the lane prefix with `└ `.
+A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: workspaces that are not mates or workers first, in the order they have, then main's `1stmate` and the `2ndmate-<lane>` workspaces by lane name, each followed by its own workers as `└ <card name>` in card order. A worker whose mate has no workspace on the host comes after all of these groups, sorted by lane and then card, labeled `[<lane>] <card name>`. A worker's workspace carries its lane and card as herdr metadata tokens, which is how it finds its mate. A worker's name never makes it a mate: only `1stmate` and `2ndmate-<lane>` are mates. Herdr cannot nest workspaces, so the `└ ` and the `[<lane>] ` are text and the order is the only structure. Fleet also records the host of the worker's mate in a `mate` token, when the worker is dispatched and again at each `/updatefleet`, which corrects it when a lane moves hosts. A worker with no mate workspace on the host and a `mate` token that names another host gets an `away` token, `↗ mate on <host>`. When the mate's workspace appears on the host, the next arrange moves the worker beneath it, replaces the lane prefix with `└ `, and clears `away`.
+
+To show the hint, add a row to your own herdr client config. Fleet never writes this file, and a row whose token is not set disappears. The `[ui.sidebar.spaces]` section of the herdr configuration lists the available styles.
+
+```toml
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  [{ token = "$away", dim = true }],
+]
+```
 
 ### Agent complaints
 

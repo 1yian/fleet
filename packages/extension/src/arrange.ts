@@ -1,28 +1,33 @@
 import { createConnection } from "node:net";
-import { field, herdr, isLocal, onFleetRoot, onHost, records } from "./host.ts";
+import { field, herdr, isLocal, onFleetRoot, onHost, ownsHostName, records } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 
 const SOCKET_WAIT_MS = 5000;
 const WORKER_MARK = "└ ";
 const SOURCE = "fleet";
+const HOST_NAME = /^[A-Za-z0-9._-]{1,40}$/;
 
 interface Space {
   readonly id: string;
   readonly label: string;
   readonly lane: string | undefined;
   readonly card: number | undefined;
+  readonly mate: string | undefined;
+  readonly away: string | undefined;
 }
 
 interface Arrangement {
   readonly order: readonly string[];
   readonly labels: ReadonlyMap<string, string>;
+  readonly hints: ReadonlyMap<string, string | undefined>;
 }
 
 const MATE_LABELS: readonly [RegExp, (match: RegExpExecArray) => string][] = [
   [/^1stmate$/, () => "main"],
   [/^2ndmate-(.+)$/, (match) => match[1] ?? ""],
-  [/^fleet-(.+)$/, (match) => match[1] ?? ""],
 ];
+
+const awayHint = (mate: string): string => `↗ mate on ${mate}`;
 
 function mateLane(label: string): string | undefined {
   for (const [pattern, lane] of MATE_LABELS) {
@@ -44,6 +49,11 @@ const lanePrefix = (space: Space): string => (space.lane === undefined ? "" : `[
 
 const byCard = (a: Space, b: Space): number =>
   (a.card ?? Number.MAX_SAFE_INTEGER) - (b.card ?? Number.MAX_SAFE_INTEGER);
+
+const byLaneThenCard = (a: Space, b: Space): number => {
+  const lanes = a.lane === b.lane ? 0 : (a.lane ?? "") < (b.lane ?? "") ? -1 : 1;
+  return lanes === 0 ? byCard(a, b) : lanes;
+};
 
 const mainFirst = (a: string, b: string): number => {
   if (a === b) return 0;
@@ -78,32 +88,48 @@ function arrangement(spaces: readonly Space[]): Arrangement {
   const hosted = hostedWorkers(spaces, mates);
   const heads = new Set(mates.values());
   const labels = new Map<string, string>();
+  const hints = new Map<string, string | undefined>();
   for (const space of spaces) {
     if (heads.has(space)) continue;
     const prefix = hosted.has(space) ? WORKER_MARK : lanePrefix(space);
     const label = `${prefix}${bare(space)}`;
     if (label !== space.label) labels.set(space.id, label);
+    const away =
+      hosted.has(space) || space.mate === undefined || ownsHostName(space.mate)
+        ? undefined
+        : awayHint(space.mate);
+    if (away !== space.away) hints.set(space.id, away);
   }
-  const loose = spaces.filter((space) => !heads.has(space) && !hosted.has(space));
+  const rest = spaces.filter((space) => !heads.has(space) && !hosted.has(space));
+  const unowned = rest.filter((space) => space.lane === undefined);
+  const strays = rest.filter((space) => space.lane !== undefined).sort(byLaneThenCard);
   const grouped = [...mates.keys()].sort(mainFirst).flatMap((lane) => {
     const own = spaces.filter((space) => hosted.get(space) === lane).sort(byCard);
     return [mates.get(lane), ...own];
   });
-  const order = [...loose, ...grouped].flatMap((space) => (space === undefined ? [] : [space.id]));
-  return { order, labels };
+  const all = [...unowned, ...grouped, ...strays];
+  const order = all.flatMap((space) => (space === undefined ? [] : [space.id]));
+  return { order, labels, hints };
 }
+
+const token = (tokens: Record<string, unknown>, name: string): string | undefined => {
+  const value = tokens[name];
+  return typeof value === "string" && value !== "" ? value : undefined;
+};
 
 function spaceOf(row: Record<string, unknown>): Space | undefined {
   const id = field(row, "workspace_id");
   if (id === undefined) return undefined;
   const tokens = isRecord(row["tokens"]) ? row["tokens"] : {};
   const card = Number(tokens["card"]);
-  const lane = tokens["lane"];
+  const mate = token(tokens, "mate");
   return {
     id,
     label: field(row, "label") ?? "",
-    lane: typeof lane === "string" && lane !== "" ? lane : undefined,
+    lane: token(tokens, "lane"),
     card: Number.isInteger(card) ? card : undefined,
+    mate: mate !== undefined && HOST_NAME.test(mate) ? mate : undefined,
+    away: token(tokens, "away"),
   };
 }
 
@@ -156,8 +182,17 @@ async function moveBlock(ids: readonly string[]): Promise<void> {
 
 export async function arrangeHere(): Promise<void> {
   const spaces = await listed("local");
-  const { order, labels } = arrangement(spaces);
+  const { order, labels, hints } = arrangement(spaces);
   for (const [id, label] of labels) await herdr("local", ["workspace", "rename", id, label]);
+  for (const [id, hint] of hints)
+    await herdr("local", [
+      "workspace",
+      "report-metadata",
+      id,
+      "--source",
+      SOURCE,
+      ...(hint === undefined ? ["--clear-token", "away"] : ["--token", `away=${hint}`]),
+    ]);
   const current = spaces.map((space) => space.id);
   const first = order.findIndex((id, index) => id !== current[index]);
   if (first !== -1) await moveBlock(order.slice(first));
@@ -171,9 +206,10 @@ export async function arrangeOn(host: string, root: string | undefined): Promise
 export async function tagWorker(
   host: string,
   workspace: string,
-  owner: { lane: string; card?: number },
+  owner: { lane: string; card?: number; mate?: string | undefined },
 ): Promise<void> {
   const card = owner.card === undefined ? [] : ["--token", `card=${String(owner.card)}`];
+  const mate = owner.mate === undefined ? [] : ["--token", `mate=${owner.mate}`];
   await herdr(host, [
     "workspace",
     "report-metadata",
@@ -183,6 +219,7 @@ export async function tagWorker(
     "--token",
     `lane=${owner.lane}`,
     ...card,
+    ...mate,
   ]);
 }
 
@@ -198,17 +235,32 @@ export async function claimFollowers(lane: string): Promise<void> {
 
 const WORKTREE_CARD = /\.worktrees\/c-(\d+)-a\d+$/;
 
-export async function tagUntaggedWorkers(
+async function correctMates(
+  host: string,
+  spaces: readonly Space[],
+  mateHosts: ReadonlyMap<string, string>,
+): Promise<void> {
+  for (const space of spaces) {
+    const mate = mateHosts.get(space.lane ?? "");
+    if (space.lane !== undefined && mate !== undefined && mate !== space.mate)
+      await tagWorker(host, space.id, { lane: space.lane, mate });
+  }
+}
+
+export async function tagWorkers(
   host: string,
   laneOfCard: ReadonlyMap<number, string>,
+  mateHosts: ReadonlyMap<string, string>,
 ): Promise<void> {
-  const tagged = new Set((await listed(host)).flatMap((s) => (s.lane === undefined ? [] : [s.id])));
+  const spaces = await listed(host);
+  await correctMates(host, spaces, mateHosts);
+  const tagged = new Set(spaces.flatMap((s) => (s.lane === undefined ? [] : [s.id])));
   for (const pane of records((await herdr(host, ["pane", "list"]))["panes"])) {
     const workspace = field(pane, "workspace_id");
     const card = Number(WORKTREE_CARD.exec(field(pane, "cwd") ?? "")?.[1]);
     const lane = laneOfCard.get(card);
     if (workspace === undefined || lane === undefined || tagged.has(workspace)) continue;
     tagged.add(workspace);
-    await tagWorker(host, workspace, { lane, card });
+    await tagWorker(host, workspace, { lane, card, mate: mateHosts.get(lane) });
   }
 }

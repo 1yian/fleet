@@ -101,7 +101,7 @@ test("main reads 1stmate and a second mate reads 2ndmate-<lane>, in herdr and in
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
 });
 
-test("lane tooling still finds a second mate that runs in its old fleet-<lane> workspace", async () => {
+test("a worker named fleet-<lane> is never taken for that lane's mate", async () => {
   const created = await lab.run([
     "workspace",
     "create",
@@ -111,20 +111,31 @@ test("lane tooling still finds a second mate that runs in its old fleet-<lane> w
     "fleet-cleo",
     "--no-focus",
   ]);
-  const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
-  const pi = ["pi", "--continue", ...mateArgs(h)].map((arg) => `'${arg}'`).join(" ");
-  await lab.submit(pane, `cd '${cleoHome}' && env -u HERDR_WORKSPACE_ID ${pi}`);
+  const worker = String(records([created["workspace"]])[0]?.["workspace_id"]);
+  await lab.run([
+    "workspace",
+    "report-metadata",
+    worker,
+    "--source",
+    "fleet",
+    "--token",
+    "lane=cleo",
+    "--token",
+    "card=913",
+  ]);
 
-  await until(
-    "cleo to run",
-    () => Promise.resolve(fleet(["status"])),
-    (out) => out === "cleo: running\n",
+  assert.equal(fleet(["status"]), "cleo: down\n");
+  assert.equal(fleet(["up"]), "cleo: started in 2ndmate-cleo\n");
+  const started = await until("cleo's workspace", labels, (now) =>
+    [...now.values()].includes("2ndmate-cleo"),
   );
-  assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
-  assert.deepEqual(
-    (await titles()).map(({ label }) => label),
-    ["fleet-cleo"],
-  );
+  assert.equal(started.get(worker), "\u2514 fleet-cleo");
+  fleet(["arrange"]);
+  assert.deepEqual([...(await labels()).values()], ["2ndmate-cleo", "\u2514 fleet-cleo"]);
+
+  fleet(["stop", "cleo"]);
+  const stopped = await until("cleo's workspace to close", labels, (now) => now.size === 1);
+  assert.deepEqual([...stopped.values()], ["\u2514 fleet-cleo"]);
 });
 
 test("a mate Pi that only inherited a worker pane's herdr environment leaves that worker's workspace alone", async () => {

@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { check, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
-import { arrangeOn, tagUntaggedWorkers } from "./arrange.ts";
+import { arrangeOn, tagWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
 import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
-import { fleet, hostsOf, withLanes } from "./lanes.ts";
+import { fleet, hostsOf, mateHosts, withLanes } from "./lanes.ts";
 import type { Link } from "./link.ts";
 import { maintenanceReport, ownPane, relaunchSelf, requestAndAwait } from "./maintenance.ts";
 
@@ -241,7 +241,7 @@ async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolea
       ok: false,
       text: `Fleet update stopped before any change: nothing was pulled, and no mate was restarted.\n${bullets(blocking.flatMap((reply) => reply.lines))}`,
     };
-  await tagWorkers(config, link).catch(() => undefined);
+  await tagAllWorkers(config, link).catch(() => undefined);
   const replies = await untilOneFails(config);
   if (replies.some((reply) => reply.state !== "updated"))
     return {
@@ -290,11 +290,12 @@ async function arrangeAll(config: LaneConfig): Promise<string[]> {
   return lines;
 }
 
-async function tagWorkers(config: LaneConfig, link: Link): Promise<void> {
+async function tagAllWorkers(config: LaneConfig, link: Link): Promise<void> {
   const cards = await link.call("board", {});
   const laneOfCard = new Map(cards.map((card) => [card.id, card.lane]));
+  const mates = await mateHosts(config);
   for (const host of hostsOf(config))
-    await tagUntaggedWorkers(host, laneOfCard).catch(() => undefined);
+    await tagWorkers(host, laneOfCard, mates).catch(() => undefined);
 }
 
 function changeLines(replies: readonly HostReply[], carddUpdated: boolean): string[] {

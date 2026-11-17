@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
-import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
+import { HostUnreachable, onFleetRoot, onHost, ownHostName, records } from "./host.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { readShared } from "./standing.ts";
@@ -54,6 +54,16 @@ async function everyLane(
     for (const row of await rows(config, host, ["status"])) out.push({ host, row });
   }
   return out;
+}
+
+export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
+  const found = new Map([[config.lane, ownHostName()]]);
+  for (const host of hostsOf(config)) {
+    const rowsOfHost = await rows(config, host, ["status"]).catch(() => []);
+    for (const row of rowsOfHost)
+      found.set(text(row, "lane"), host === "local" ? ownHostName() : host);
+  }
+  return found;
 }
 
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {

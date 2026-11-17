@@ -25,7 +25,7 @@ import {
   type LaneConfig,
 } from "./lane-config.ts";
 import { withCompileCache } from "./scratch.ts";
-import { isMateWorkspace, mateTitle } from "./titles.ts";
+import { mateTitle } from "./titles.ts";
 
 interface LaneHome {
   readonly lane: string;
@@ -162,7 +162,7 @@ function heldReason(home: string): string | undefined {
 async function workspaceOf(lane: string): Promise<string | undefined> {
   const listed = records((await herdr(["workspace", "list"]))["workspaces"]);
   return field(
-    listed.find((each) => isMateWorkspace(each["label"], lane)),
+    listed.find((each) => each["label"] === mateTitle(lane)),
     "workspace_id",
   );
 }
