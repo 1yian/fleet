@@ -89,11 +89,13 @@ function isSame(
     until: number | null;
     options: readonly string[];
     approves: readonly string[];
+    unlanded: boolean;
   } & Dating,
 ): boolean {
   return (
     open?.holder === next.holder &&
     open.question === next.question &&
+    open.unlanded === next.unlanded &&
     open.until === next.until &&
     open.options.join("\n") === next.options.join("\n") &&
     open.approves.join("\n") === next.approves.join("\n") &&
@@ -110,17 +112,30 @@ export function rewritten(
   options: readonly string[];
   approves: readonly string[];
   merge: boolean;
+  unlanded: boolean;
   until: number | null;
   occurrence: number;
 } {
   const open = facts.hold;
   return {
     holder,
+    ...carried(open),
+    until: until ?? null,
+    occurrence: open?.occurrence ?? facts.occurrences + 1,
+  };
+}
+
+function carried(open: Hold | undefined): {
+  options: readonly string[];
+  approves: readonly string[];
+  merge: boolean;
+  unlanded: boolean;
+} {
+  return {
     options: open?.options ?? [],
     approves: open?.approves ?? [],
     merge: open?.merge ?? false,
-    until: until ?? null,
-    occurrence: open?.occurrence ?? facts.occurrences + 1,
+    unlanded: open?.unlanded ?? false,
   };
 }
 
@@ -160,6 +175,15 @@ function approvingOptions(card: Card, open: Hold | undefined, offer: Offer): rea
   return offer.approves;
 }
 
+function marksUnlanded(
+  db: DatabaseSync,
+  card: Card,
+  asked: boolean | undefined,
+  carriedMark: boolean,
+): boolean {
+  return asked === true || carriedMark || holdsUnlandedWork(db, card);
+}
+
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.hold.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -173,6 +197,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const target = targetOf(levelsOf(db, card), current, args.to);
   requireClimb(db, session, card, current, target);
   const base = rewritten(facts, target, args.until);
+  const unlanded = marksUnlanded(db, card, args.unlanded, base.unlanded);
   const options = args.options ?? base.options;
   const approves = approvingOptions(card, open, args);
   const replyTo = args.replyTo;
@@ -183,12 +208,14 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     until: base.until,
     options,
     approves,
+    unlanded,
     ...dated,
   });
   if (same && replyTo === undefined) return { value: card, notify: [] };
   const escalated = open !== undefined && target !== current;
   const fields = {
     ...base,
+    unlanded,
     ...dated,
     options,
     approves,
@@ -286,6 +313,25 @@ function toWorkerOf(db: DatabaseSync, card: Card, open: Hold): string[] {
   return worker === undefined ? [] : [worker];
 }
 
+function requireNoteMayClear(card: Card, open: Hold, own: boolean): void {
+  const name = `c-${String(card.id)}`;
+  if (open.holder === "captain" || open.merge)
+    throw new Error(`${name} waits on the captain: clear it with his exact words`);
+  if (own) return;
+  if (open.holder !== "main")
+    throw new Error(`${name} waits on ${card.lane}'s mate, who resolves it or escalates it`);
+  if (open.unlanded)
+    throw new Error(
+      `${name} holds finished work that has not landed, so whether to keep, land, or discard it is the captain's call: escalate it with hold(card, to="captain", question, options), or clear it with his exact words`,
+    );
+}
+
+function holdsUnlandedWork(db: DatabaseSync, card: Card): boolean {
+  if (card.kind !== "ship" || mergeSubject(db, card) === undefined) return false;
+  const { workerDone, merged, emptyBranch } = finishFrom(cardEntries(db, card.id));
+  return workerDone && !merged && !emptyBranch;
+}
+
 export function release(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.release.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -301,10 +347,7 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
     requireCaptainWords(db, args.words, source);
     return answerHold(db, session.lane, card, open, { ...args, words: args.words, source });
   }
-  if (open.holder === "captain" || open.merge)
-    throw new Error(`${name} waits on the captain: clear it with his exact words`);
-  if (!own && open.holder !== "main")
-    throw new Error(`${name} waits on ${card.lane}'s mate, who resolves it or escalates it`);
+  requireNoteMayClear(card, open, own);
   const fields = { hold: open.entry, occurrence: open.occurrence };
   const body = args.note ?? "";
   const draft: Draft = {

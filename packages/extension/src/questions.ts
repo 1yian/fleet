@@ -14,6 +14,7 @@ const HoldParams = Type.Object({
   question: Type.Optional(OPS.hold.args.properties.question),
   options: OPS.hold.args.properties.options,
   approves: OPS.hold.args.properties.approves,
+  unlanded: OPS.hold.args.properties.unlanded,
   to: OPS.hold.args.properties.to,
   replyTo: OPS.hold.args.properties.replyTo,
   until: Type.Optional(
@@ -45,7 +46,8 @@ const HoldParams = Type.Object({
   note: Type.Optional(
     Type.String({
       minLength: 1,
-      description: "With clear: your own decision, when it was yours or main's to decide",
+      description:
+        "With clear: your own decision, when it was yours or main's to decide. Main's note never clears a second mate's hold marked unlanded",
     }),
   ),
   choice: Type.Optional(
@@ -60,6 +62,7 @@ const SETTING = [
   "question",
   "options",
   "approves",
+  "unlanded",
   "to",
   "until",
   "replyTo",
@@ -100,10 +103,11 @@ export function registerQuestions(
     if (extra.length > 0) throw new Error(`${extra.join(", ")} only go with clear=true`);
     const { card: id, question, until, said, ...rest } = params;
     if (question === undefined) throw new Error("a hold needs its question");
-    const { options, approves, to, replyTo, job, schedule, worker, watcher, outside } = rest;
+    const { options, approves, unlanded, to, replyTo, job, schedule, worker, watcher, outside } =
+      rest;
     const { remaining } = rest;
     const args = {
-      ...{ card: id, question, options, approves, to, replyTo },
+      ...{ card: id, question, options, approves, unlanded, to, replyTo },
       ...{ job, schedule, worker, watcher, outside, remaining, said },
       ...(until === undefined ? {} : { until: parseUtc(until) }),
       ...(said === undefined ? {} : { source: sourceOf(said) }),
@@ -114,7 +118,7 @@ export function registerQuestions(
     name: "hold",
     label: "Hold",
     description:
-      "Holds a card at a gate, with every question of the gate bundled in one hold: the evidence, the consequence, the options, and your recommendation. A card has one hold, so holding it again rewrites the same hold. A second mate's hold waits on main. Main's hold waits on the captain, and main escalates a second mate's hold with to=captain. until holds it until a date, only when a process or an outside event is truly the blocker or the captain said later, never to quiet a card. A date must say what watches it, with exactly one of job (a running job id), schedule (a schedule id), worker (a card number whose worker is live), watcher (who else checks it and how), outside (an outside date or event), or said (the captain's exact words for later), and must state remaining: [] when no other work is left, otherwise each step that does not depend on the event on an open card of its own. The date covers only what depends on the event. clear=true clears the hold: with words, the captain's exact words, when he decided it, or with note, your own decision when it was yours or main's. Words are checked against what the captain wrote. replyTo answers a reply you owe with this hold.",
+      "Holds a card at a gate, with every question of the gate bundled in one hold: the evidence, the consequence, the options, and your recommendation. A card has one hold, so holding it again rewrites the same hold. A second mate's hold waits on main. Main's hold waits on the captain, and main escalates a second mate's hold with to=captain. until holds it until a date, only when a process or an outside event is truly the blocker or the captain said later, never to quiet a card. A date must say what watches it, with exactly one of job (a running job id), schedule (a schedule id), worker (a card number whose worker is live), watcher (who else checks it and how), outside (an outside date or event), or said (the captain's exact words for later), and must state remaining: [] when no other work is left, otherwise each step that does not depend on the event on an open card of its own. The date covers only what depends on the event. clear=true clears the hold: with words, the captain's exact words, when he decided it, or with note, your own decision when it was yours or main's. Set unlanded=true when the hold asks whether to keep, land, or discard finished work that has not landed, including preserved work with no PR; rewrite a hold with this mark when it becomes such a question. The fleet also marks holds written on finished ship cards with a PR or local landing. A note never clears a merge question, nor main's clearing of a second mate's hold marked unlanded: those are the captain's. Words are checked against what the captain wrote. replyTo answers a reply you owe with this hold.",
     parameters: HoldParams,
     execute: async (_id, params) =>
       reply(params.clear === true ? await clearHold(params) : await setHold(params)),
