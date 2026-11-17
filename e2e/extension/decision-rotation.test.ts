@@ -420,11 +420,18 @@ test("a paused walkthrough makes nothing due until he asks to resume it", async 
     "the pause mark",
   );
   const paused = refusals.length;
+  const shownAtPause = [await presentedAt(older), await presentedAt(newer)];
+  const expected = shownAtPause[1]?.length === 0 ? newer : older;
   await say("What is the weather like?");
   const waited = lists.length;
   await listsAfter(waited, 3);
   assert.ok(lists.slice(waited).every(noneDue), "nothing is due while paused");
   assert.equal(refusals.length, paused, "no yield is refused while paused");
+  assert.deepEqual(
+    [await presentedAt(older), await presentedAt(newer)],
+    shownAtPause,
+    "pausing and chatting mark no decision as shown",
+  );
   assert.ok(lists.slice(waited).every((list) => list.includes(OLDER) && list.includes(NEWER)));
 
   await say("Please resume the walkthrough");
@@ -432,7 +439,7 @@ test("a paused walkthrough makes nothing due until he asks to resume it", async 
     () => (refusals.length > paused ? true : undefined),
     "the refused yield after resume",
   );
-  assert.match(refusals[paused] ?? "", / is due: /);
+  assert.match(refusals[paused] ?? "", new RegExp(`c-${String(expected)} .* is due: `));
   const marks = await marksOn(newer + 1);
   assert.deepEqual(marks.slice(-2), ["captain.seen", "walkthrough.resumed"]);
   assert.equal(marks.filter((mark) => mark === "walkthrough.paused").length, 1);

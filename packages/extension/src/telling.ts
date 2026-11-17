@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { OPS, PresentedCardSchema, type OpResult } from "@fleet/protocol";
 import { textOf } from "./inbox.ts";
-import { Refused, type Link } from "./link.ts";
+import type { Link } from "./link.ts";
 
 const PRESENTED = "presented";
 const AFK = /\bafk\b/i;
@@ -18,11 +18,19 @@ function dueRefusal(due: Due): string {
   return `yield refused: the captain has written to you since you last brought a decision up, and c-${String(due.card)} ${due.title} is due: ${due.question}\nAnswer him first, then end your reply with this one decision and your recommendation${others}. Call presented(card=${String(due.card)}) in the same turn, and yield only if nothing else is left. Bring up no other decision.`;
 }
 
+type Presented = OpResult<"presented">;
+
+interface Shown {
+  readonly card: number;
+  readonly occurrence: number;
+}
+
 type Outgoing =
   | { readonly op: "captain.seen"; readonly args: { readonly away: boolean } }
   | {
       readonly op: typeof PRESENTED;
-      readonly args: { readonly card: number; readonly occurrence: number };
+      readonly args: Shown;
+      readonly done?: (outcome: Presented | Error) => void;
     };
 
 const unrecorded = (what: string, error: unknown): Error =>
@@ -98,19 +106,22 @@ export class Telling {
             "Pending: write this decision to the captain in this turn to record it as shown.",
           );
         }
-        const args = { ...params, occurrence };
-        const result = await this.record()
-          .then(() => this.link.call(PRESENTED, args, MARK_DEADLINE_MS))
-          .catch((error: unknown) => {
-            if (error instanceof Refused) throw error;
-            this.outbox.push({ op: PRESENTED, args });
-            return undefined;
-          });
-        if (result === undefined)
+        const answer: { outcome?: Presented | Error } = {};
+        this.outbox.push({
+          op: PRESENTED,
+          args: { ...params, occurrence },
+          done: (outcome) => {
+            answer.outcome = outcome;
+          },
+        });
+        await this.record().catch(() => undefined);
+        const { outcome } = answer;
+        if (outcome === undefined)
           return reply(
             "Pending: cardd did not take the mark yet. It is kept and recorded before your next yield.",
           );
-        const { card, waiting } = result;
+        if (outcome instanceof Error) throw outcome;
+        const { card, waiting } = outcome;
         const rest =
           waiting === 0
             ? "No other decision waits on him."
@@ -141,12 +152,33 @@ export class Telling {
     });
   }
 
+  private async send(item: Outgoing): Promise<void> {
+    if (item.op === "captain.seen") {
+      await this.link.call(item.op, item.args, MARK_DEADLINE_MS);
+      return;
+    }
+    try {
+      const result = await this.link.call(item.op, item.args, MARK_DEADLINE_MS);
+      item.done?.(result);
+    } catch (error) {
+      if (!(await this.obsolete(item.args))) throw error;
+      item.done?.(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  private async obsolete({ card, occurrence }: Shown): Promise<boolean> {
+    const { hold } = await this.link.call("card", { card }, DUE_DEADLINE_MS);
+    return (
+      hold?.holder !== "captain" ||
+      hold.occurrence !== occurrence ||
+      (hold.until !== null && hold.until > Date.now())
+    );
+  }
+
   private record(): Promise<void> {
     const run = this.recording.then(async () => {
       for (let next = this.outbox[0]; next !== undefined; next = this.outbox[0]) {
-        await this.link.call(next.op, next.args, MARK_DEADLINE_MS).catch((error: unknown) => {
-          if (!(error instanceof Refused)) throw error;
-        });
+        await this.send(next);
         this.outbox.shift();
       }
     });

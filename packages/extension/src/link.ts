@@ -28,8 +28,6 @@ function checkResult(op: OpName, value: unknown): unknown {
 const unreadableResult = (op: OpName, error: unknown): string =>
   `cardd's answer to ${op} cannot be read by this session (${error instanceof Error ? error.message : String(error)}). This session runs other code than cardd, most likely loaded before an update: restart this session so it loads the current code (main: lane(<lane>, "restart")).`;
 
-export class Refused extends Error {}
-
 export interface LinkOptions {
   readonly url: string;
   readonly token: string;
@@ -50,7 +48,7 @@ export class Link {
   private backoff = 250;
   private latest: "running" | "idle" | "waiting" | undefined;
   private nextId = 1;
-  private readonly pending = new Map<number, (result: Result | undefined) => void>();
+  private readonly pending = new Map<number, (result: Result) => void>();
   private readonly untold: ClientMessage[] = [];
   private readonly options: LinkOptions;
   private announced = false;
@@ -92,7 +90,7 @@ export class Link {
     });
     socket.addEventListener("close", (event) => {
       this.connected = false;
-      this.failPending();
+      this.failPending("cardd closed the connection");
       if (stopsForGood(event.code)) this.stopped = true;
       if (this.stopped) return;
       setTimeout(() => {
@@ -121,8 +119,7 @@ export class Link {
             }, deadlineMs);
       this.pending.set(id, (result) => {
         clearTimeout(timer);
-        if (result === undefined) reject(new Error("cardd closed the connection"));
-        else if (!result.ok) reject(new Refused(result.error));
+        if (!result.ok) reject(new Error(result.error));
         else
           try {
             resolve(checkResult(op, result.value));
@@ -177,8 +174,8 @@ export class Link {
     this.options.onConnect();
   }
 
-  private failPending(): void {
-    for (const settle of this.pending.values()) settle(undefined);
+  private failPending(error: string): void {
+    for (const [id, settle] of this.pending) settle({ t: "result", id, ok: false, error });
     this.pending.clear();
   }
 }
