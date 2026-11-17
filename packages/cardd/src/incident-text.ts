@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
-import { remaining } from "./incident-kinds.ts";
+import { exhaustion, remaining } from "./incident-kinds.ts";
 import { recoveryOffered } from "./incident-lifecycle.ts";
-import { currentIntent, type Incident } from "./incident-store.ts";
+import { currentIntent, roleOf, type Incident } from "./incident-store.ts";
 import { addEntry } from "./store.ts";
 
 export const stamp = (ms: number): string => new Date(ms).toISOString();
@@ -12,8 +12,17 @@ export function nextStep(db: DatabaseSync, inc: Incident): string {
   const held = current === "working" ? inc.intent : current;
   if (!recoveryOffered(held))
     return `Its card is ${held}, so recovery is not offered and nothing is resumed.`;
-  if (modes.length === 0)
-    return `Restarting is not a repair for ${inc.classification}: it needs intervention, not recovery.`;
+  if (inc.state === "recovering")
+    return `Incident ${String(inc.id)} recovery is in progress; wait for verification.`;
+  if (modes.length === 0) {
+    if (inc.retries + inc.replacements === 0)
+      return `Restarting is not a repair for ${inc.classification}: it needs intervention, not recovery.`;
+    const ordinary =
+      roleOf(db, inc.actor) === "worker"
+        ? ` Ordinary restart_card(card=${String(inc.card)}) without incident is independent, subject to existing direct-parent, card-state, and 3-per-hour eligibility. This grants no new authority.`
+        : "";
+    return `No incident recovery is left: ${exhaustion(inc)}. It needs intervention.${ordinary}`;
+  }
   const when = inc.eligibleAt === null ? "." : `, eligible at ${stamp(inc.eligibleAt)}.`;
   return `Recover with restart_card(card=${String(inc.card)}, incident=${String(inc.id)}, generation=${String(inc.generation)}, mode=${modes.join(" or ")})${when}`;
 }
