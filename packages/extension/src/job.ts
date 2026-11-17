@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
+import { constants } from "node:os";
 import { herdr } from "./host.ts";
 import { shimmedEnv } from "./shims.ts";
 import { StringDecoder } from "node:string_decoder";
@@ -127,7 +128,10 @@ function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
 
 async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> {
   const tail = new Tail(job.keep);
-  const child = spawn("sh", ["-c", job.command], {
+  console.error(
+    "[run_long] WARNING: Bash pipefail is enabled, not errexit. A command list returns its last command's status: 'false; true' succeeds. Use 'suite && formatter' or preserve $? explicitly. Intentional || and if recovery retain normal shell semantics; nested shells own their failure policy.",
+  );
+  const child = spawn("bash", ["-o", "pipefail", "-c", job.command], {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
     env: shimmedEnv(process.env),
@@ -155,11 +159,17 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
       resolve();
     }),
   );
-  const exited = new Promise<number | null>((resolve) =>
-    child.once("exit", (code) => {
-      resolve(code);
-    }),
-  );
+  const exited = new Promise<number>((resolve) => {
+    child.once("exit", (code, signal) => {
+      resolve(code ?? (signal === null ? 1 : 128 + constants.signals[signal]));
+    });
+    child.once("error", (error) => {
+      const message = `could not start command: ${error.message}`;
+      console.error(message);
+      tail.add([message]);
+      resolve(127);
+    });
+  });
   let reason: "timeout" | "interrupted" | undefined;
   let killTimer: NodeJS.Timeout | undefined;
   const stop = (why: "timeout" | "interrupted"): void => {
@@ -193,7 +203,7 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   tail.flush();
   if (reason === "interrupted") tail.add(["interrupted"]);
   const forced = reason === "timeout" ? TIMEOUT_EXIT : INTERRUPTED_EXIT;
-  return { exitCode: reason === undefined ? (code ?? 1) : forced, outputTail: tail.text() };
+  return { exitCode: reason === undefined ? code : forced, outputTail: tail.text() };
 }
 
 function call(job: Job, op: string, args: object): Promise<Response | undefined> {
@@ -224,5 +234,6 @@ const result = await run(job);
 console.log(`\n[run_long] job ${String(job.job)} exited ${String(result.exitCode)}`);
 await post(job, result);
 clearInterval(heartbeat);
+process.exitCode = result.exitCode;
 const tab = process.env["HERDR_TAB_ID"];
 if (tab !== undefined) await herdr("local", ["tab", "close", tab]).catch(() => 0);

@@ -47,10 +47,10 @@ const said = (text: string): boolean =>
 const settled = (n: number) =>
   h.waitForNth((e) => e["type"] === "settled", n, `settle ${String(n)}`);
 
-test("a run_long result wakes the worker, and the wait is not a stall", async () => {
+test("a failed pipeline wakes the worker with failure, and the wait is not a stall", async () => {
   h.onModel(() => ({
     tool: "run_long",
-    args: { label: "tests", command: "echo one; echo two; exit 3" },
+    args: { label: "tests", command: "(echo one; echo two; exit 3) | tail -n 2" },
   }));
   h.onModel(() => ({ text: "waiting for the tests" }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "two tests fail" } }));

@@ -16,7 +16,11 @@ const DEFAULT_TIMEOUT_MINUTES = 60;
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
-  command: Type.String({ minLength: 1, description: "The shell command to run" }),
+  command: Type.String({
+    minLength: 1,
+    description:
+      "Runs in bash -o pipefail without errexit. Pipelines fail if any stage fails. WARNING: a command list returns its last command's status: 'false; true' succeeds. Use 'suite && formatter', or 'suite; code=$?; formatter; exit \"$code\"'. Intentional recovery with || and if keeps normal Bash semantics. Nested shells own their failure policy.",
+  }),
   timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 120 })),
 });
 
