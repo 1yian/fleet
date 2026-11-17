@@ -56,30 +56,28 @@ async function everyLane(
   return out;
 }
 
-function laneHosts(
-  entries: readonly { host: string; row: Record<string, unknown> }[],
-): Map<string, string> {
-  const found = new Map<string, { host: string; running: boolean }>();
-  for (const { host, row } of entries) {
+export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
+  const copies = new Map<string, { host: string; running: boolean }[]>();
+  for (const { host, row } of await everyLane(config)) {
     const lane = text(row, "lane");
     const running = text(row, "state") === "running";
-    const known = found.get(lane);
-    if (known === undefined || (running && !known.running)) found.set(lane, { host, running });
+    copies.set(lane, [...(copies.get(lane) ?? []), { host, running }]);
   }
-  return new Map([...found].map(([lane, { host }]) => [lane, host]));
-}
-
-export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
   const found = new Map([[config.lane, ownHostName()]]);
-  for (const [lane, host] of laneHosts(await everyLane(config)))
-    found.set(lane, host === "local" ? ownHostName() : host);
+  for (const [lane, homes] of copies) {
+    const running = homes.filter((home) => home.running);
+    const only = running.length === 0 && homes.length === 1 ? homes : running;
+    const [home] = only;
+    if (home !== undefined && only.length === 1)
+      found.set(lane, home.host === "local" ? ownHostName() : home.host);
+  }
   return found;
 }
 
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
-  const host = laneHosts(await everyLane(config)).get(lane);
-  if (host === undefined) throw new Error(`no lane ${lane} is configured on any host`);
-  return host;
+  const found = (await everyLane(config)).find((each) => text(each.row, "lane") === lane);
+  if (found === undefined) throw new Error(`no lane ${lane} is configured on any host`);
+  return found.host;
 }
 
 function sharedArgs(home: string): string[] {

@@ -202,7 +202,7 @@ export async function arrangeHere(): Promise<void> {
 
 export async function arrangeOn(host: string, root: string | undefined): Promise<void> {
   if (isLocal(host)) await arrangeHere();
-  else await onFleetRoot(host, root, ["arrange"]);
+  else await onFleetRoot(host, root, ["arrange", "--host", host]);
 }
 
 export async function tagWorker(
@@ -211,7 +211,10 @@ export async function tagWorker(
   owner: { lane: string; card?: number; mate?: string | undefined },
 ): Promise<void> {
   const card = owner.card === undefined ? [] : ["--token", `card=${String(owner.card)}`];
-  const mate = owner.mate === undefined ? [] : ["--token", `mate=${owner.mate}`];
+  const mate =
+    owner.mate === undefined || owner.mate.length > HERDR_VALUE_LIMIT
+      ? []
+      : ["--token", `mate=${owner.mate}`];
   await herdr(host, [
     "workspace",
     "report-metadata",

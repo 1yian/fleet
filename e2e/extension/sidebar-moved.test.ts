@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,17 +55,10 @@ beforeEach(async () => {
     hosts: { [REMOTE]: ["node", SESSION_TRANSPORT, far.name, lab.name] },
     roots: { [REMOTE]: p620.root },
   });
-  for (const lane of ["ops", "far"]) {
-    tokens[lane] = cardd.addLane(lane, "main");
-    const settings = { url: cardd.url, token: tokens[lane] ?? "", args: mateArgs(h), hold: true };
-    (lane === "ops" ? here : p620).addLane(lane, settings);
-  }
-  p620.addLane("ops", {
-    url: cardd.url,
-    token: tokens["ops"] ?? "",
-    args: mateArgs(h),
-    hold: true,
-  });
+  tokens["ops"] = cardd.addLane("ops", "main");
+  const ops = { url: cardd.url, token: tokens["ops"], args: mateArgs(h), hold: true };
+  here.addLane("ops", ops);
+  p620.addLane("ops", { ...ops, host: REMOTE });
   landOnRemote(remote, "fleet-fix");
 });
 afterEach(async (t) => {
@@ -175,26 +169,9 @@ async function updateFleet(pane: string): Promise<void> {
 }
 
 test("a main whose host is local, and a lane that moved hosts, tell each worker where its mate runs, and herdr shows it beside the Git row", async () => {
-  for (const [scratch, lane] of [
-    [here, "ops"],
-    [p620, "ops"],
-    [p620, "far"],
-  ] as const) {
-    const state = join(`${scratch.root}.worktrees`, `lane-${lane}`, "state");
-    mkdirSync(state, { recursive: true });
-    writeFileSync(join(state, "stopped"), "held for the test\n");
-  }
   await moveOpsToP620();
   const pane = await startMain(lab, here, h);
-  const made = await cardd.post(tokens["ops"] ?? "", "card.new", {
-    title: "ops-alpha",
-    name: "ops-alpha",
-    kind: "scout",
-  });
-  assert.equal(made.status, 200);
-  const cwd = join(here.parent, "site.worktrees", "c-1-a1");
-  mkdirSync(cwd, { recursive: true });
-  const alpha = await open(lab, "ops-alpha", cwd);
+  const alpha = await open(lab, "ops-alpha", here.root);
   await mark(lab, alpha.id, "lane=ops", "mate=gone-host");
   const worker = await open(far, "main-far", here.root);
   await mark(far, worker.id, "lane=main", "mate=stale-host");
@@ -216,10 +193,46 @@ test("a main whose host is local, and a lane that moved hosts, tell each worker 
   assert.ok(rowAfter(shown, "[main] main-far", 2).includes(`mate on ${OWN_LABEL}`));
 
   await open(far, "1stmate", here.root);
-  p620.fleet(["arrange"], { HERDR_SESSION: far.name, FLEET_HOST: REMOTE });
+  p620.fleet(["arrange", "--host", REMOTE], { HERDR_SESSION: far.name });
   const home = await untilScreen("the worker to move under its mate", client, (lines) =>
     lines.some((line) => line.includes("\u2514 main-far")),
   );
   assert.ok(!home.join("\n").includes("mate on"), home.join("\n"));
   assert.ok(rowAfter(home, "\u2514 main-far", 1).includes("main"), home.join("\n"));
+});
+
+test("a lane that runs nowhere and has homes on two hosts keeps the mate host its workers already have", async () => {
+  const pane = await startMain(lab, here, h);
+  const worker = await open(lab, "ops-alpha", here.root);
+  await mark(lab, worker.id, "lane=ops", "mate=gone-host");
+  assert.equal(statusOf(here, lab.name)["ops"], "stopped");
+  assert.equal(statusOf(p620, far.name)["ops"], "stopped");
+
+  await updateFleet(pane);
+
+  const kept = await tokensOf(lab, "[ops] ops-alpha");
+  assert.equal(kept["mate"], "gone-host");
+  assert.equal(kept["away"], "\u2197 mate on gone-host");
+});
+
+test("fleet arrange in a second mate's home uses that home's Fleet name, not the checkout's local", async () => {
+  configureMain(p620, cardd.url, tokens["main"], { host: "local" });
+  const inside = await open(lab, "inside", here.root);
+  await mark(lab, inside.id, "lane=aa", `mate=${REMOTE}`);
+  const outside = await open(lab, "outside", here.root);
+  await mark(lab, outside.id, "lane=bb", `mate=${OWN_LABEL}`);
+  const env = { ...process.env };
+  delete env["FLEET_HOST"];
+  const launch = join(
+    `${p620.root}.worktrees`,
+    "lane-ops",
+    "packages",
+    "extension",
+    "src",
+    "launch.ts",
+  );
+  execFileSync("node", [launch, "arrange"], { env: { ...env, HERDR_SESSION: lab.name } });
+
+  assert.equal((await tokensOf(lab, "[aa] inside"))["away"], undefined);
+  assert.equal((await tokensOf(lab, "[bb] outside"))["away"], `\u2197 mate on ${OWN_LABEL}`);
 });

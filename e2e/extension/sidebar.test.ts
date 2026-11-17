@@ -157,8 +157,6 @@ const EXPECTED_AFTER_UPDATE = [...GROUPED, "\u2514 stale-owner", "[yang] yang-a"
 
 test("/updatefleet leaves each mate's workspace followed by its own workers, whatever order the restarts and the workers' creation left", async () => {
   await lab.run(["workspace", "create", "--cwd", here.root, "--label", "~", "--no-focus"]);
-  const stoppedCopy = { url: cardd.url, token: tokens["ops"] ?? "", args: mateArgs(h), hold: true };
-  p620.addLane("ops", stoppedCopy);
   tokens["yang"] = cardd.addLane("yang", "main");
   const pane = await startMain(lab, here, h);
   await allRunPi();
