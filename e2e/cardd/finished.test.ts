@@ -9,7 +9,7 @@ import { tempDir } from "../support/run-root.ts";
 let fleet: Fleet | undefined;
 afterEach(async () => fleet?.cardd.stop());
 
-test("finished reminders wait two hours, repeat every two hours, and never reach the parent", async () => {
+test("finished reminders wait ten minutes, repeat every ten minutes, and never reach the parent", async () => {
   const dir = tempDir("finished-clock-");
   mkdirSync(dir, { recursive: true });
   const clock = join(dir, "clock");
@@ -39,18 +39,18 @@ test("finished reminders wait two hours, repeat every two hours, and never reach
       "the poll after the clock advances",
     );
   };
-  advance(report.createdAt + 7_199);
+  advance(report.createdAt + 599);
   await tick();
   assert.deepEqual(await reminders(), []);
-  advance(report.createdAt + 7_200);
+  advance(report.createdAt + 600);
   await mate.waitForEntry(
     (entry) => entry.card === card.id && entry.fields["tier"] === 1,
     "first reminder",
   );
-  advance(report.createdAt + 14_399);
+  advance(report.createdAt + 1_199);
   await tick();
   assert.equal((await reminders()).length, 1);
-  advance(report.createdAt + 14_400);
+  advance(report.createdAt + 1_200);
   await mate.waitForEntry(
     (entry) => entry.card === card.id && entry.fields["tier"] === 2,
     "second reminder",
@@ -70,7 +70,7 @@ test("finished reminders wait two hours, repeat every two hours, and never reach
     archives: [],
     left: [],
   });
-  advance(report.createdAt + 28_800);
+  advance(report.createdAt + 2_400);
   await tick();
   assert.equal((await reminders()).length, 2);
 });

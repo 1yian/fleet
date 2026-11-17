@@ -225,7 +225,7 @@ function finishedMatches(
   t: Timings,
 ): Match[] {
   const since = Math.max(card.since, finish.at);
-  const tier = repeatTier(now - since, t.finished, t.finished);
+  const tier = repeatTier(now - since, t.chase, t.chase);
   if (tier === 0) return [];
   const close = closeAdvice(card.kind, finish.merged, card.pr !== null, card.delivery);
   const waited = `${card.status}, ${String(minutesSince(now, since))} min`;

@@ -255,7 +255,7 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
     (entry) => entry.kind === "report" && entry.fields["status"] === "done",
   );
   assert.ok(report !== undefined);
-  assert.ok(reminder.createdAt - report.createdAt >= 7_200);
+  assert.ok(reminder.createdAt - report.createdAt >= 600);
   assert.match(
     reminder.body,
     new RegExp(

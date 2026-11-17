@@ -16,8 +16,7 @@ export interface Timings {
   readonly batch: number;
   readonly retryDelays: readonly number[];
   readonly repeat: number;
-  readonly finished: number;
-  readonly waiting: number;
+  readonly chase: number;
   readonly informing: number;
   readonly idleMain: number;
   readonly idleCaptain: number;
@@ -47,8 +46,7 @@ export function timings(scale: number, wall: () => number = Date.now): Timings {
     batch: at(5),
     retryDelays: [at(0.5), at(2)],
     repeat: at(5),
-    finished: at(120),
-    waiting: at(30),
+    chase: at(10),
     informing: at(24 * 60),
     idleMain: at(4 * 60),
     idleCaptain: at(24 * 60),
