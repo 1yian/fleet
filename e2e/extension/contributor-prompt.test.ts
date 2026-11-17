@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { Cardd } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
@@ -35,7 +36,11 @@ test("mates load runtime instructions while a dispatched fleet contributor follo
   const args = mateArgs(h).filter(
     (arg) => !["--no-context-files", "--no-builtin-tools"].includes(arg),
   );
-  const lab = await HerdrLab.start(h.piEnv("mate"));
+  const bin = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
+  const lab = await HerdrLab.start({
+    ...h.piEnv("mate"),
+    PATH: [bin, process.env["PATH"] ?? ""].join(delimiter),
+  });
   t.after(async () => {
     await lab.printIfFailed(t);
     await lab.stop();
