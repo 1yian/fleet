@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,6 @@ import {
 import { Cardd } from "../support/cardd.ts";
 import { Harness, type Move, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import { isRecord, messageText, optionalString, parseRecord } from "../support/json.ts";
 import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -207,21 +206,6 @@ async function untilMarked(card: number, mark: string, count = 1): Promise<void>
   );
 }
 
-async function assistantTexts(): Promise<string[]> {
-  const session = await h.waitFor((event) => event["type"] === "session", "the session file");
-  const file = optionalString(session, "file") ?? "";
-  if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map(parseRecord)
-    .map((entry) => entry["message"])
-    .filter((message) => isRecord(message) && message["role"] === "assistant")
-    .filter(isRecord)
-    .map(messageText)
-    .filter((text) => text !== "");
-}
-
 const decisionsIn = (text: string): string[] =>
   [OLDER, NEWER].filter((title) => text.includes(title));
 
@@ -288,7 +272,7 @@ test("a decision the captain has not seen since his last message is brought up o
   await listsAfter(lists.length, 3);
   assert.equal(refusals.length, before, "a yield with nothing due goes through");
 
-  const replies = await assistantTexts();
+  const replies = await h.assistantTexts();
   const decisionReplies = replies.filter((text) => decisionsIn(text).length > 0);
   assert.deepEqual(decisionReplies.map(decisionsIn), [[OLDER], [NEWER], [OLDER]]);
   for (const reply of decisionReplies) assert.match(reply, /\+1 more waiting/);
@@ -332,7 +316,7 @@ for (const style of ["marks-silently", "yield-first", "codemode"] as const)
       /yield refused: you called presented but wrote no chat text in this turn/,
     );
     const texts = await untilAsync(async () => {
-      const found = await assistantTexts();
+      const found = await h.assistantTexts();
       return found.some((text) => decisionsIn(text).length > 0) ? found : undefined;
     }, "the decision written after the refusal");
     assert.ok(texts.every((text) => decisionsIn(text).length <= 1));
@@ -407,7 +391,8 @@ test("a presentation written while cardd was down is recorded after it is back a
 
   await say("How is the build going?");
   await untilAsync(
-    async () => ((await assistantTexts()).some((text) => text.includes(OLDER)) ? true : undefined),
+    async () =>
+      (await h.assistantTexts()).some((text) => text.includes(OLDER)) ? true : undefined,
     "the decision written while cardd is down",
   );
   await cardd.restart();
@@ -440,8 +425,10 @@ test("a refused presentation write is retried before a newer captain message", a
     await say("And the release?");
     await untilMarked(newer, "presented");
     const ordered = db
-      .prepare(`SELECT card, json_extract(fields, '$.mark') AS mark FROM entries
-      WHERE json_extract(fields, '$.mark') IN ('captain.seen', 'presented') ORDER BY id`)
+      .prepare(
+        `SELECT card, json_extract(fields, '$.mark') AS mark FROM entries
+      WHERE json_extract(fields, '$.mark') IN ('captain.seen', 'presented') ORDER BY id`,
+      )
       .all();
     const marks = ordered.map(({ card, mark }) => [card, mark]);
     assert.deepEqual(marks, [
@@ -464,7 +451,10 @@ test("a paused walkthrough makes nothing due until he asks to resume it", async 
   const shownBeforePause = [await presentedAt(older), await presentedAt(newer)];
   assert.deepEqual(shownBeforePause, [[1], []]);
   const holdsBeforePause = (await cardd.board()).holds;
-  assert.deepEqual(holdsBeforePause.map(({ card }) => card).sort((a, b) => a - b), [older, newer]);
+  assert.deepEqual(
+    holdsBeforePause.map(({ card }) => card).sort((a, b) => a - b),
+    [older, newer],
+  );
   await say("Please pause the walkthrough");
   await untilAsync(
     async () => ((await marksOn(newer + 1)).includes("walkthrough.paused") ? true : undefined),

@@ -303,6 +303,21 @@ export class Harness {
     return poll(() => this.events.find(match), what);
   }
 
+  async assistantTexts(): Promise<string[]> {
+    const session = await this.waitFor((event) => event["type"] === "session", "the session file");
+    const file = optionalString(session, "file") ?? "";
+    if (!existsSync(file)) return [];
+    return readFileSync(file, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map(parseRecord)
+      .map((entry) => entry["message"])
+      .filter((message) => isRecord(message) && message["role"] === "assistant")
+      .filter(isRecord)
+      .map(messageText)
+      .filter((text) => text !== "");
+  }
+
   async waitForNth(
     match: (event: JsonRecord) => boolean,
     n: number,
