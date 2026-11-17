@@ -29,7 +29,7 @@ type ToolArgs = Readonly<
     | boolean
     | readonly string[]
     | readonly number[]
-    | Readonly<Record<string, string | number>>
+    | Readonly<Record<string, string | number | Readonly<Record<string, string | number>>>>
   >
 >;
 export type Move = {

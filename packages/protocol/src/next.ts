@@ -13,6 +13,20 @@ export const NextSchema = Type.Object({
         "The number of an open card whose hold waits on the captain: the decision is on his list. For when he asked only for a plan",
     }),
   ),
+  delivered: Type.Optional(
+    Type.Object({
+      evidence: Type.String({
+        pattern: "\\S",
+        description:
+          "What findings were read or delivered, to whom, and where the delivery is recorded",
+      }),
+      disposition: Type.String({
+        pattern: "\\S",
+        description:
+          "Why delivery completes the request with no authorized build or unresolved decision left. Otherwise name its build or decision card instead",
+      }),
+    }),
+  ),
   drop: Type.Optional(
     Type.String({
       pattern: "\\S",

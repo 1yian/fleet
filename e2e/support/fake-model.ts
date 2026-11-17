@@ -26,7 +26,7 @@ type ArgValue =
   | boolean
   | readonly string[]
   | readonly number[]
-  | Readonly<Record<string, Scalar>>;
+  | Readonly<Record<string, Scalar | Readonly<Record<string, Scalar>>>>;
 
 const isScalar = (value: unknown): value is Scalar =>
   typeof value === "string" || typeof value === "number";
@@ -34,8 +34,11 @@ const isScalar = (value: unknown): value is Scalar =>
 const isFlat = (value: unknown): value is Record<string, Scalar> =>
   isRecord(value) && Object.values(value).every(isScalar);
 
+const isObject = (value: unknown): value is Record<string, Scalar | Record<string, Scalar>> =>
+  isRecord(value) && Object.values(value).every((item) => isScalar(item) || isFlat(item));
+
 function argOf(item: unknown): ArgValue | undefined {
-  if (isScalar(item) || typeof item === "boolean" || isFlat(item)) return item;
+  if (isScalar(item) || typeof item === "boolean" || isObject(item)) return item;
   if (!Array.isArray(item)) return undefined;
   if (item.every((each) => typeof each === "string")) return item;
   return item.every((each) => typeof each === "number") ? item : undefined;

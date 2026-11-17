@@ -28,7 +28,7 @@ export type WireMove = {
           | boolean
           | readonly string[]
           | readonly number[]
-          | Readonly<Record<string, string | number>>
+          | Readonly<Record<string, string | number | Readonly<Record<string, string | number>>>>
         >
       >;
     }

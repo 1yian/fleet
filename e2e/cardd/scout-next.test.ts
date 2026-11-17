@@ -305,3 +305,186 @@ test("a second mate's hold that waits only on main is not a decision waiting on 
   const outcome = await fleet.main.waitForEntry((e) => e.kind === "cleanup", "the outcome");
   assert.deepEqual(outcome.fields["next"], { decision: blocked.id });
 });
+
+async function captainDecision(title: string): Promise<Card> {
+  const card = await newCard(fleet.main, title, "captain");
+  await fleet.main.call("hold", {
+    card: card.id,
+    question: `${title}?`,
+    options: ["Build it", "Drop it"],
+  });
+  assert.equal(await status(fleet.main, card), "needs-you");
+  return card;
+}
+
+async function secondMate(name: string): Promise<Session> {
+  return fleet.cardd.connect(fleet.cardd.addLane(name, "main"));
+}
+
+const NOT_REACHABLE = (id: number, lane: string): RegExp =>
+  new RegExp(
+    `^next (build|decision)=${String(id)}: c-${String(id)} belongs to lane ${lane}: a close names a card of its own lane, of a lane below it, or of the lane above it$`,
+  );
+
+test("a second mate closes its scout naming the decision that main holds for the captain in main's own lane", async () => {
+  const cleo = await secondMate("cleo");
+  const decision = await captainDecision("Build the file explorer or drop it");
+  const scout = await deliveredScout(cleo);
+
+  await closeScout(cleo, scout, { decision: decision.id }, "Report at /reports/explorer.md.");
+
+  assert.equal(await status(cleo, scout), "done");
+  const entry = await closeEntry(scout);
+  assert.deepEqual(entry.fields["next"], { decision: decision.id });
+  assert.equal(
+    entry.body,
+    `Next: the captain decides on c-${String(decision.id)}.\nReport at /reports/explorer.md.`,
+  );
+  assert.equal(await status(fleet.main, decision), "needs-you");
+  const told = await fleet.main.waitForEntry((e) => e.kind === "cleanup", "the outcome");
+  assert.deepEqual(told.fields["next"], { decision: decision.id });
+});
+
+test("a second mate closes its scout naming the ship card that main dispatched in main's own lane", async () => {
+  const cleo = await secondMate("cleo");
+  const open = await newCard(fleet.main, "Build the file explorer");
+  const built = await doneShip("Build the explorer's tree");
+  const first = await deliveredScout(cleo);
+  const second = await deliveredScout(cleo);
+
+  await closeScout(cleo, first, { build: open.id });
+  await closeScout(cleo, second, { build: built.id });
+
+  assert.deepEqual((await closeEntry(first)).fields["next"], { build: open.id });
+  assert.deepEqual((await closeEntry(second)).fields["next"], { build: built.id });
+  assert.equal(await status(cleo, first), "done");
+  assert.equal(await status(cleo, second), "done");
+  assert.equal(await status(fleet.main, open), "queued");
+});
+
+test("a second mate's close still refuses a follow-up in main's lane that carries nothing, one that does not exist, and a card in a lane it cannot name", async () => {
+  const cleo = await secondMate("cleo");
+  const dana = await secondMate("dana");
+  const unheld = await newCard(fleet.main, "Build it or drop it?", "captain");
+  const report = await newCard(fleet.main, "Another report", "scout");
+  const dropped = await newCard(fleet.main, "Abandoned build");
+  await fleet.main.call("close.finish", {
+    card: dropped.id,
+    mode: "dropped",
+    text: "not needed",
+    archives: [],
+    left: [],
+  });
+  const sibling = await newCard(dana, "Build the file explorer");
+  const siblingDecision = await newCard(dana, "Build it or drop it?", "captain");
+  await dana.call("hold", { card: siblingDecision.id, question: "Build it?" });
+  const scout = await deliveredScout(cleo);
+  const refuse = async (next: unknown, message: string | RegExp): Promise<void> => {
+    await assert.rejects(cleo.call("close.begin", { card: scout.id, next }), { message });
+    await assert.rejects(
+      cleo.call("close.finish", {
+        card: scout.id,
+        mode: "done",
+        text: "Plan delivered.",
+        archives: [],
+        left: [],
+        next,
+      }),
+      { message },
+    );
+  };
+
+  await refuse(
+    { decision: unheld.id },
+    `next decision=${String(unheld.id)}: c-${String(unheld.id)} ${NOT_HELD}`,
+  );
+  await refuse(
+    { build: report.id },
+    `next build=${String(report.id)}: c-${String(report.id)} is a scout card, so it cannot carry a build: name a ship card`,
+  );
+  await refuse(
+    { build: dropped.id },
+    `next build=${String(dropped.id)}: c-${String(dropped.id)} is dropped, so it carries no build: name the card that does`,
+  );
+  await refuse({ build: 9999 }, "next build=9999: no card c-9999");
+  await refuse({ decision: 9999 }, "next decision=9999: no card c-9999");
+  await refuse({ build: sibling.id }, NOT_REACHABLE(sibling.id, "dana"));
+  await refuse({ decision: siblingDecision.id }, NOT_REACHABLE(siblingDecision.id, "dana"));
+
+  assert.equal(await status(cleo, scout), "with-mate");
+  assert.deepEqual(
+    (await fleet.cardd.thread(scout.id)).entries.filter((e) => e.kind === "cleanup"),
+    [],
+  );
+});
+
+test("main closes a second mate's delivered scout naming a follow-up in main's lane or in another second mate's lane", async () => {
+  const cleo = await secondMate("cleo");
+  const dana = await secondMate("dana");
+  const decision = await captainDecision("Build the file explorer or drop it");
+  const build = await newCard(dana, "Build the file explorer");
+  const first = await deliveredScout(cleo);
+  const second = await deliveredScout(cleo);
+
+  await closeScout(fleet.main, first, { decision: decision.id });
+  await closeScout(fleet.main, second, { build: build.id });
+
+  assert.deepEqual((await closeEntry(first)).fields["next"], { decision: decision.id });
+  assert.deepEqual((await closeEntry(second)).fields["next"], { build: build.id });
+  assert.equal(await status(fleet.main, first), "done");
+  assert.equal(await status(fleet.main, second), "done");
+});
+
+test("a scout that a mate read itself, with no worker, closes Done once its follow-up is named", async () => {
+  const scout = await newCard(fleet.main, "Read the lifecycle code", "scout");
+  const none = { message: new RegExp(`^c-${String(scout.id)} is a scout: it closes Done only`) };
+  await assert.rejects(fleet.main.call("close.begin", { card: scout.id }), none);
+
+  const decision = await captainDecision("Build the scrollbar fix or drop it");
+  await closeScout(fleet.main, scout, { decision: decision.id }, "Findings relayed in chat.");
+
+  assert.equal(await status(fleet.main, scout), "done");
+  assert.deepEqual((await closeEntry(scout)).fields["next"], { decision: decision.id });
+});
+
+test("a second mate's scout whose worker has not finished stays open however valid the follow-up is", async () => {
+  const cleo = await secondMate("cleo");
+  const decision = await captainDecision("Build the file explorer or drop it");
+  const scout = await newCard(cleo, "Plan the file explorer", "scout");
+  const worker = await fleet.cardd.connect(await begin(cleo, scout));
+  const unfinished = {
+    message: new RegExp(
+      `^c-${String(scout.id)} did not land: the worker has not reported done\\. To end it anyway`,
+    ),
+  };
+  const attempt = async (): Promise<void> => {
+    await assert.rejects(
+      cleo.call("close.begin", { card: scout.id, next: { decision: decision.id } }),
+      unfinished,
+    );
+    await assert.rejects(
+      cleo.call("close.finish", {
+        card: scout.id,
+        mode: "done",
+        text: "Plan delivered.",
+        archives: [],
+        left: [],
+        next: { decision: decision.id },
+      }),
+      unfinished,
+    );
+  };
+
+  await worker.call("report", { status: "working", text: "still reading" });
+  await attempt();
+
+  await worker.call("report", { status: "done", text: "plan written" });
+  await cleo.call("comment", { card: scout.id, text: "Also check the sidebar." });
+  await attempt();
+
+  assert.notEqual(await status(cleo, scout), "done");
+  assert.deepEqual(
+    (await fleet.cardd.thread(scout.id)).entries.filter((e) => e.kind === "cleanup"),
+    [],
+  );
+});
