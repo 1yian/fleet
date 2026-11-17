@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import {
@@ -141,6 +142,8 @@ function script(style: Style): void {
     steps.push(`${last.role}: ${last.text}`);
     if (last.role !== "toolResult")
       return LIST.test(last.text) ? onList(last.text, style) : onMessage(last.text);
+    if (last.text.includes("could not be recorded yet"))
+      return { text: "Captain, the record is temporarily unavailable." };
     return last.text.includes("yield refused") ? afterRefusal(last.text) : YIELD;
   };
   h.onModel(policy, "mate");
@@ -224,6 +227,12 @@ const decisionsIn = (text: string): string[] =>
 
 const say = (text: string): Promise<void> => lab.submit(pane, text);
 
+async function saveScreen(name: string): Promise<void> {
+  if (EVIDENCE === undefined) return;
+  mkdirSync(EVIDENCE, { recursive: true });
+  writeFileSync(join(EVIDENCE, `${name}.ansi`), await lab.coloredScreen(pane));
+}
+
 const listAfter = (from: number, match: (list: string) => boolean, what: string): Promise<string> =>
   until(() => lists.slice(from).find(match), what);
 
@@ -249,6 +258,7 @@ test("a decision the captain has not seen since his last message is brought up o
     new RegExp(`yield refused: .*c-${String(older)} ${OLDER} is due: ${QUESTIONS[OLDER] ?? ""}`),
   );
   await untilMarked(older, "presented");
+  await saveScreen("rotation-first-decision");
   assert.deepEqual(await marksOn(newer), []);
   const shown = lists.length;
   const settled = await listAfter(
@@ -264,6 +274,7 @@ test("a decision the captain has not seen since his last message is brought up o
   assert.deepEqual(dueTitles(second), [NEWER]);
   await until(() => (refusals.length >= 2 ? true : undefined), "the second refused yield");
   await untilMarked(newer, "presented");
+  await saveScreen("rotation-second-decision");
   const rotated = lists.length;
 
   await say("Thanks, one more thing.");
@@ -409,19 +420,57 @@ test("a presentation written while cardd was down is recorded after it is back a
   assert.deepEqual(await marksOn(newer), []);
 });
 
+test("a refused presentation write is retried before a newer captain message", async () => {
+  await startWithTwoHolds("writes");
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.exec(`CREATE TRIGGER fail_presentation BEFORE INSERT ON entries
+      WHEN json_extract(NEW.fields, '$.mark') = 'presented'
+      BEGIN SELECT RAISE(ABORT, 'test cannot write presentation'); END`);
+    await say("How is the build going?");
+    await until(
+      () =>
+        steps.find((step) =>
+          step.includes("could not be recorded yet (test cannot write presentation)"),
+        ),
+      "yield to surface the storage failure",
+    );
+    assert.deepEqual(await presentedAt(older), []);
+    db.exec("DROP TRIGGER fail_presentation");
+    await say("And the release?");
+    await untilMarked(newer, "presented");
+    const ordered = db
+      .prepare(`SELECT card, json_extract(fields, '$.mark') AS mark FROM entries
+      WHERE json_extract(fields, '$.mark') IN ('captain.seen', 'presented') ORDER BY id`)
+      .all();
+    const marks = ordered.map(({ card, mark }) => [card, mark]);
+    assert.deepEqual(marks, [
+      [newer + 1, "captain.seen"],
+      [older, "presented"],
+      [newer + 1, "captain.seen"],
+      [newer, "presented"],
+    ]);
+    steps.push(`Persisted marks in entry order: ${JSON.stringify(marks)}`);
+  } finally {
+    db.close();
+  }
+});
+
 test("a paused walkthrough makes nothing due until he asks to resume it", async () => {
   await startWithTwoHolds("writes");
   await say("How is the build going?");
   await untilMarked(older, "presented");
 
+  const shownBeforePause = [await presentedAt(older), await presentedAt(newer)];
+  assert.deepEqual(shownBeforePause, [[1], []]);
+  const holdsBeforePause = (await cardd.board()).holds;
+  assert.deepEqual(holdsBeforePause.map(({ card }) => card).sort((a, b) => a - b), [older, newer]);
   await say("Please pause the walkthrough");
   await untilAsync(
     async () => ((await marksOn(newer + 1)).includes("walkthrough.paused") ? true : undefined),
     "the pause mark",
   );
   const paused = refusals.length;
-  const shownAtPause = [await presentedAt(older), await presentedAt(newer)];
-  const expected = shownAtPause[1]?.length === 0 ? newer : older;
   await say("What is the weather like?");
   const waited = lists.length;
   await listsAfter(waited, 3);
@@ -429,19 +478,31 @@ test("a paused walkthrough makes nothing due until he asks to resume it", async 
   assert.equal(refusals.length, paused, "no yield is refused while paused");
   assert.deepEqual(
     [await presentedAt(older), await presentedAt(newer)],
-    shownAtPause,
+    shownBeforePause,
     "pausing and chatting mark no decision as shown",
   );
   assert.ok(lists.slice(waited).every((list) => list.includes(OLDER) && list.includes(NEWER)));
+  assert.deepEqual((await cardd.board()).holds, holdsBeforePause);
+  await saveScreen("walkthrough-paused");
 
   await say("Please resume the walkthrough");
   await until(
     () => (refusals.length > paused ? true : undefined),
     "the refused yield after resume",
   );
-  assert.match(refusals[paused] ?? "", new RegExp(`c-${String(expected)} .* is due: `));
+  assert.match(refusals[paused] ?? "", new RegExp(`c-${String(newer)} ${NEWER} is due:`));
+  await untilMarked(newer, "presented");
+  assert.deepEqual([await presentedAt(older), await presentedAt(newer)], [[1], [1]]);
+  steps.push("Presentation occurrences: before pause [[1],[]]; after resume [[1],[1]].");
+  await saveScreen("walkthrough-resumed");
   const marks = await marksOn(newer + 1);
   assert.deepEqual(marks.slice(-2), ["captain.seen", "walkthrough.resumed"]);
   assert.equal(marks.filter((mark) => mark === "walkthrough.paused").length, 1);
-  assert.deepEqual(marks.slice(-5), ["captain.seen", "walkthrough.paused", "captain.seen", "captain.seen", "walkthrough.resumed"]);
+  assert.deepEqual(marks.slice(-5), [
+    "captain.seen",
+    "walkthrough.paused",
+    "captain.seen",
+    "captain.seen",
+    "walkthrough.resumed",
+  ]);
 });

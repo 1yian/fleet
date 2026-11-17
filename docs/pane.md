@@ -2,7 +2,7 @@
 
 Decisions are back in chat and on the board, as before the Nov 10 conversation-shape changes. The footer shows the plain board URL. Fleet adds no decision counts, attention strip, clear-state indicator, or neglect overlay. Calm's boat and the existing transcript remain unchanged.
 
-Answer main in ordinary chat. Main records the captain's exact words against the existing hold before acting. For an optional one-at-a-time conversation, ask for a [decision walkthrough](decision-walkthrough.md) or use `/decisions`. This is a prompt template and skill, not a pane card. It never creates a separate decision queue.
+Answer main in ordinary chat. Main records the captain's exact words against the existing hold before acting. For ordinary chat behavior, see the [README](../README.md). The optional [`/decisions` walkthrough](decision-walkthrough.md) is a prompt template and skill, not a pane card.
 
 The board keeps its original inline questions, option buttons, written answers, and three Later presets: In 3 hours, Tomorrow 09:00, and Monday 09:00. There is no typed-date box. Request changes on a fleet-generated merge question opens the written-answer form instead of immediately submitting a choice, including on older single-option holds. This remains true after Later expires or the question is escalated, provided its options and approval meanings stay unchanged. A mate's own merge options still work, and only options named in `approves` authorize merging. Stale answers remain refused.
 
