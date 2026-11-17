@@ -17,7 +17,7 @@ import { configureMain, Scratch } from "../support/scratch.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
-const REPORT = "Assessment complete. Implementation belongs to separate cards.\n";
+const REPORT = "Assessment complete. The lifecycle inventory is current.\n";
 
 let scratch: Scratch;
 let cardd: Cardd;
@@ -51,6 +51,8 @@ beforeEach(async () => {
       FLEET_PI_ARGS: JSON.stringify(h.piArgs()),
     },
     [EXTENSION],
+    [],
+    true,
   );
 });
 
@@ -92,7 +94,7 @@ function scriptDeliveredAssessment(report: string): void {
   }, "worker");
 }
 
-test("normal close delivers an unchanged scout once its decision is held for the captain, preserving its report", async () => {
+test("normal close delivers an unchanged scout once main holds its decision in main's lane, preserving its report", async () => {
   const report = join(scratch.parent, "reports", "assessment.md");
   scriptDeliveredAssessment(report);
   h.onModel(async () => {
@@ -100,34 +102,20 @@ test("normal close delivers an unchanged scout once its decision is held for the
       card: 2,
       text: "Implementation is the captain's call. Close the delivered assessment normally.",
     });
-    return {
-      tool: "card_new",
-      args: {
-        title: "Build the scrollbar fix or drop it?",
-        name: "scrollbar-decision",
-        kind: "captain",
-      },
-    };
-  }, "mate");
-  h.onModel(
-    () => ({
-      tool: "hold",
-      args: {
-        card: 3,
-        question: "Build the scrollbar fix or drop it?",
-        options: ["Build it", "Drop it"],
-      },
-    }),
-    "mate",
-  );
-  let decisionWithMain = "";
-  h.onModel(async () => {
-    decisionWithMain = (await cardd.thread(3)).card.status;
+    await main.call("card.new", {
+      title: "Build the scrollbar fix or drop it?",
+      name: "scrollbar-decision",
+      kind: "captain",
+    });
     await main.call("hold", {
       card: 3,
-      to: "captain",
       question: "Build the scrollbar fix or drop it?",
+      options: ["Build it", "Drop it"],
     });
+    return { tool: "board", args: {} };
+  }, "mate");
+  h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  h.onModel(() => {
     return {
       tool: "close",
       args: {
@@ -143,7 +131,7 @@ test("normal close delivers an unchanged scout once its decision is held for the
 
   const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
   assert.equal(results.at(-1), "c-2 is done.");
-  assert.equal(decisionWithMain, "with-mate");
+  assert.equal((await cardd.thread(3)).card.lane, "main");
   assert.equal((await cardd.thread(3)).card.status, "needs-you");
   const outcome = await main.waitForEntry(
     (entry) => entry.kind === "cleanup",
@@ -160,28 +148,30 @@ test("normal close delivers an unchanged scout once its decision is held for the
   assert.deepEqual(await workersOf(lab), []);
 });
 
-test("a close that names no next step leaves the scout open with its worker running, and the retry that names one closes it", async () => {
+test("a close without a disposition leaves the scout open, then the mate reads its report and closes it as delivered", async () => {
   const report = join(scratch.parent, "reports", "assessment.md");
   scriptDeliveredAssessment(report);
-  const summary = `Assessment delivered: ${report}`;
+  const summary = `Assessment delivered: ${report}. The lifecycle inventory is current.`;
   h.onModel(() => ({ tool: "close", args: { card: 2, summary } }), "mate");
   let workersAtRefusal: string[] = [];
   let statusAtRefusal = "";
   h.onModel(async () => {
     workersAtRefusal = await workersOf(lab);
     statusAtRefusal = (await cardd.thread(2)).card.status;
-    return {
-      tool: "close",
-      args: { card: 2, summary, next: { drop: "the findings make it moot" } },
-    };
+    return { tool: "read", args: { path: report } };
   }, "mate");
+  const delivered = {
+    evidence: `Read ${report}; findings relayed to main on the card.`,
+    disposition: "The inventory request is complete. No build or unresolved decision remains.",
+  };
+  h.onModel(() => ({ tool: "close", args: { card: 2, summary, next: { delivered } } }), "mate");
   h.onModel(() => ({ text: "closed" }), "mate");
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   mate.prompt("assess the lifecycle");
 
-  const results = toolResults(await h.waitForCall(5, "mate", WORKER_WAIT_MS));
+  const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
   assert.match(
-    results.at(-2) ?? "",
+    results.at(-3) ?? "",
     /^c-2 is a scout: it closes Done only when the close says what happens next\. Pass next with exactly one of build=.*decision=.*drop=/s,
   );
   assert.equal(workersAtRefusal.length, 1);
@@ -191,10 +181,13 @@ test("a close that names no next step leaves the scout open with its worker runn
     (entry) => entry.kind === "cleanup",
     "the delivered outcome",
   );
-  assert.deepEqual(outcome.fields["next"], { drop: "the findings make it moot" });
+  assert.match(results.at(-2) ?? "", /Assessment complete/);
+  assert.deepEqual(outcome.fields["next"], { delivered });
   assert.equal(
-    outcome.body.split("\n")[0],
-    "Next: nothing is built, because the findings make it moot.",
+    outcome.body,
+    `Delivered: ${delivered.evidence}\nDisposition: ${delivered.disposition}\n${summary}`,
   );
+  assert.equal(readFileSync(report, "utf8"), REPORT);
+  assert.deepEqual(worktreesOf(scratch.root), ["branch refs/heads/main"]);
   assert.deepEqual(await workersOf(lab), []);
 });
