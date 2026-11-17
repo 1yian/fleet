@@ -425,6 +425,27 @@ lane("ystack", "restart")
 
 p620's checkout must have `home set` first, so run `/updatefleet` after the change that adds it is merged. A skill folder that does not exist only logs one `skill path does not exist` warning when the mate starts, and the released skills load.
 
+### Sharing a host transport
+
+After the Fleet checkout has this command, main can merge one existing transport from a reference lane into another home on the same host:
+
+```sh
+~/.fleet/app/bin/fleet home transport maverick cleo --from yang-auto
+~/.fleet/app/bin/fleet home transport maverick all --from yang-auto
+```
+
+The reference must be an existing home of that Fleet root with a nonempty transport argv for the named host. There is no guessed SSH fallback. `all` selects that root's second-mate homes. The command copies only the named transport and its explicit remote Fleet root, when present. It keeps other transports, roots, tokens, private records, and Pi settings. Repeated runs leave matching files unchanged. An absent reference or unsupported transport refuses before any home changes.
+
+A mate can run a harmless read-only probe through its own inherited process map:
+
+```sh
+~/.fleet/app/bin/fleet home transport maverick --check
+```
+
+Run this from that mate's shell tool, not main's unrelated shell. It prints `fleet-transport-ok` only after the mapped transport runs `printf`. It never reads another home's configuration or activates a new map. An absent effective route refuses with `no transport for maverick`. This verifies routing, not the remote Fleet root or full dispatch prerequisites.
+
+This is setup, not live activation. Running mates retain their process-local host maps. Main must approve controlled replacement of each affected mate before it can use the new route. Do not treat a raw SSH check or a shell export as dispatch readiness. After replacement, verify a harmless command and the owner's supported dispatch path. The command does not start, stop, reload, or restart anything.
+
 ### Goal and scheduled wakes
 
 A second mate can have a plan: a goal, and a schedule of wakes. The plan is on the lane card in `cardd`, and only the captain sets it, with the `cardd` command on its host (`$CARDD` as in section 2):
