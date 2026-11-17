@@ -5,7 +5,6 @@ import type { Link } from "./link.ts";
 
 const PRESENTED = "presented";
 const AFK = /\bafk\b/i;
-const PAUSE = /\b(?:pause|stop)\b[^.?!\n]*\bwalkthrough\b/i;
 const MARK_DEADLINE_MS = 2_000;
 const DUE_DEADLINE_MS = 5_000;
 
@@ -67,7 +66,6 @@ export class Telling {
     });
     this.pi.on("input", async (event) => {
       if (event.source !== "interactive") return undefined;
-      if (PAUSE.test(event.text)) return undefined;
       this.outbox.push({ op: "captain.seen", args: { away: AFK.test(event.text) } });
       await this.record().catch(() => undefined);
       return undefined;
@@ -138,7 +136,7 @@ export class Telling {
       name: "walkthrough",
       label: "Walkthrough",
       description:
-        "Main only: records that the captain paused or stopped the decision walkthrough (paused=true), or asked to resume it (paused=false). While it is paused no decision is due and yield is not refused for one. Holds stay as they are, and the pause is not a message from him. Resume only when he asks. Chat from him on another subject, a routine wake, or a new decision does not resume it.",
+        "Main only: records that the captain paused or stopped the decision walkthrough (paused=true), or asked to resume it (paused=false). While it is paused no decision is due and yield is not refused for one. Holds stay as they are, and pausing marks no decision presented. Resume only when he asks. Chat from him on another subject, a routine wake, or a new decision does not resume it.",
       parameters: OPS.walkthrough.args,
       execute: async (_id, params) => {
         await this.record().catch((error: unknown) => {
