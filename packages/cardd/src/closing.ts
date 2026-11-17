@@ -130,6 +130,7 @@ export function closeBegin(
     value: {
       mode,
       verify,
+      ...(card.delivery === "ops" ? { operation: true } : {}),
       land,
       attempts,
       refresh: shipCardClonesToRefresh(db, card),

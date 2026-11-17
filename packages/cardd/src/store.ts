@@ -165,6 +165,8 @@ export function addProject(
     repo: string | null;
   },
 ): void {
+  if (project.delivery === "ops")
+    throw new Error("ops is card-only: project changes keep their registered delivery mode");
   if (db.prepare("SELECT 1 FROM projects WHERE name = ?").get(project.name) !== undefined)
     throw new Error(
       `project ${project.name} is already in the registry: project list shows it. project clone adds a host's clone, and project repo, delivery, and yolo change the rest`,
@@ -248,6 +250,8 @@ export function setYolo(db: DatabaseSync, project: string, yolo: boolean): void 
 }
 
 export function setProjectDelivery(db: DatabaseSync, project: string, delivery: Delivery): void {
+  if (delivery === "ops")
+    throw new Error("ops is card-only: project changes keep their registered delivery mode");
   const { changes } = db
     .prepare("UPDATE projects SET delivery = ? WHERE name = ?")
     .run(delivery, project);

@@ -227,6 +227,7 @@ function kindOf(entry: Entry): string {
 function reportPath(entries: readonly Entry[]): string | undefined {
   for (const entry of [...entries].reverse()) {
     if (entry.kind !== "report") continue;
+    if (typeof entry.fields["evidence"] === "string") return entry.fields["evidence"];
     const found = /report written:\s*(\S+?)[.,;:]?(?=\s|$)/i.exec(entry.body);
     if (found?.[1] !== undefined) return found[1];
   }

@@ -200,6 +200,8 @@ function withIncidents(
 
 function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: unknown): string {
   if (merged) return "Close it now with close(card, summary).";
+  if (delivery === "ops")
+    return "Read the operation evidence, then close(card, summary). No PR is expected. Unexpected commits or files prevent Done, even with confirm=true; dispatch product changes separately or close with landed=false to archive them as Dropped.";
   if (kind === "ship" && delivery === "local-only")
     return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   if (kind === "scout")

@@ -38,7 +38,7 @@ const DispatchParams = Type.Object({
   delivery: Type.Optional(
     Type.Enum(DELIVERIES, {
       description:
-        "Only when the captain asked for another mode for this work: records it on the ship card. Otherwise the card keeps its project's mode",
+        "Use ops for an approved operation with no product changes or PR: the worker hands back a report path as evidence, and close checks for unexpected code changes. Otherwise override only when the captain asked for another mode; the ship card keeps its project default",
     }),
   ),
 });

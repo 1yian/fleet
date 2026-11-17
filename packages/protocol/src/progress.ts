@@ -7,6 +7,13 @@ export const ActivityMessage = Type.Object({
   progress: Type.Optional(Type.Boolean()),
 });
 
+export const CompletionEvidence = Type.Optional(
+  Type.String({
+    pattern: "^/",
+    description: "Absolute path to completion evidence outside the worktree, required for ops done",
+  }),
+);
+
 export const LandingFields = {
   pr: ReportPr,
   merged: Type.Optional(Type.Boolean()),

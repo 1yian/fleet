@@ -50,6 +50,7 @@ const ReportParams = Type.Object({
         "ISO 8601 UTC time like 2026-05-01T10:00:00Z. Required for paused: when the wait on a time or an outside event ends",
     }),
   ),
+  evidence: OPS.report.args.properties.evidence,
   replyTo: OPS.report.args.properties.replyTo,
   pr: Type.Optional(
     Type.String({
@@ -143,6 +144,7 @@ export class WorkerRun {
         const args = {
           status: params.status,
           text: params.text,
+          evidence: params.evidence,
           key: params.key,
           until,
           replyTo: params.replyTo,

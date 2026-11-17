@@ -7,7 +7,7 @@ import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { NextSchema } from "./next.ts";
-import { ActivityMessage, LandingFields } from "./progress.ts";
+import { ActivityMessage, CompletionEvidence, LandingFields } from "./progress.ts";
 import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
@@ -47,7 +47,7 @@ export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
 
-export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only"] as const;
+export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only", "ops"] as const;
 const Delivery = Type.Enum(DELIVERIES);
 export type Delivery = Static<typeof Delivery>;
 
@@ -303,6 +303,7 @@ export const OPS = {
     result: Type.Object({
       mode: Type.Enum(["done", "dropped"]),
       verify: Type.Boolean(),
+      operation: Type.Optional(Type.Literal(true)),
       land: Type.Boolean(),
       attempts: Type.Array(
         Type.Object({
@@ -385,6 +386,7 @@ export const OPS = {
     args: Type.Object({
       status: ReportStatus,
       text: Type.String({ minLength: 1 }),
+      evidence: CompletionEvidence,
       key: Type.Optional(Key),
       until: Type.Optional(Type.Integer()),
       replyTo: ReplyTo,

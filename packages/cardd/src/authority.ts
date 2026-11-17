@@ -21,7 +21,7 @@ export function requireCaptainWords(db: DatabaseSync, words: string, source: str
 export function yoloFor(db: DatabaseSync, card: number): boolean {
   const row = db
     .prepare(
-      "SELECT p.yolo AS yolo FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ?",
+      "SELECT p.yolo AS yolo FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ? AND c.delivery IS NOT 'ops'",
     )
     .get(card);
   return row?.["yolo"] === 1;

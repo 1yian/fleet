@@ -107,12 +107,23 @@ export async function normalizeReport(
   raw: unknown,
 ): Promise<{ args: OpArgs<"report">; note?: string }> {
   const args = check(OPS.report.args, raw);
+  requireOperationReport(getCard(db, card), args);
   if (args.status !== "merged") return { args };
   const { merged, note } = await verify(db, hosts, card, args.pr);
   return {
     args: { ...args, status: merged === true ? "merged" : "done", merged: merged === true },
     ...(note === undefined ? {} : { note }),
   };
+}
+
+function requireOperationReport(card: Card, args: OpArgs<"report">): void {
+  if (card.delivery !== "ops") return;
+  if (args.status === "merged" || args.merged === true || args.pr !== undefined)
+    throw new Error("ops work does not report a PR or merge; dispatch product changes separately");
+  if (args.status === "done" && args.evidence === undefined)
+    throw new Error(
+      "ops completion requires evidence: an absolute report path outside the worktree",
+    );
 }
 
 function unmergedShipPr(db: DatabaseSync, id: number): { card: Card; pr: string } | undefined {

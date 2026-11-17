@@ -370,6 +370,7 @@ const HANDLERS: Record<OpName, Handler> = {
       key: args.key,
       until: args.until,
       replyTo: args.replyTo,
+      evidence: args.evidence,
       emptyBranch,
       ...landingOf(db, card, args),
       ...(note === undefined ? {} : { prNote: note }),
@@ -407,15 +408,19 @@ function landingOf(db: DatabaseSync, card: Card, args: OpArgs<"report">): Landin
     return { merged: true, pr: card.pr };
   }
   if (args.status !== "done" || card.kind !== "ship") return {};
-  if (card.delivery === "local-only") {
-    const local = localLanding(db, card.id);
-    if (local === undefined) return { landing: "local-only: the card has no branch" };
-    return {
-      landing: `local-only: branch ${local.branch} lands on local ${local.base} when the card closes`,
-    };
-  }
+  if (card.delivery === "ops")
+    return { landing: `operation evidence: ${String(args.evidence)}; no PR expected` };
+  if (card.delivery === "local-only") return localLandingFields(db, card);
   if (card.pr !== null) return { pr: card.pr };
   return { prNote: "no PR URL reported: the worker reports it with report(pr=<full url>)" };
+}
+
+function localLandingFields(db: DatabaseSync, card: Card): LandingFields {
+  const local = localLanding(db, card.id);
+  if (local === undefined) return { landing: "local-only: the card has no branch" };
+  return {
+    landing: `local-only: branch ${local.branch} lands on local ${local.base} when the card closes`,
+  };
 }
 
 export async function performOp(

@@ -168,7 +168,7 @@ async function unlandedWarning(
   plan: OpResult<"close.begin">,
   confirmed: boolean,
 ): Promise<string | undefined> {
-  if (!plan.verify || confirmed) return undefined;
+  if (!plan.verify || (confirmed && plan.operation !== true)) return undefined;
   const left: string[] = [];
   const detail: string[] = [];
   for (const attempt of plan.attempts) {
@@ -180,6 +180,8 @@ async function unlandedWarning(
     for (const file of found.files) detail.push(`  file ${attempt.session}: ${file}`);
   }
   if (left.length === 0) return undefined;
+  if (plan.operation === true)
+    return `c-${String(card)} was not closed. ${left.join("; ")}:\n${detail.join("\n")}\nops cannot confirm unexpected code changes as landed. Dispatch product changes separately, or close with landed=false and a reason to archive them as Dropped.`;
   return `c-${String(card)} was not closed. ${left.join("; ")}:\n${detail.join("\n")}\nIf this work landed elsewhere (another card's branch or PR), call close again with confirm=true: the card ends Done and this work is archived first. If it did not land and should not end Done, land it, or end it with close(card, summary=<why it is dropped>, landed=false).`;
 }
 
