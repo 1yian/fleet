@@ -53,7 +53,7 @@ test("run_long accepts two hours but rejects anything longer and paused dates ar
   h.onModel(
     () => ({
       tool: "run_long",
-      args: { label: "at-limit", command: "printf accepted", timeout_minutes: 120 },
+      args: { label: "at-limit", command: "sleep 60", timeout_minutes: 120 },
     }),
     "worker",
   );
