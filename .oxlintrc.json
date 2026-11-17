@@ -251,7 +251,15 @@
     "eslint/no-unused-vars": [
       2,
       {
-        "argsIgnorePattern": "^_"
+        "vars": "all",
+        "args": "after-used",
+        "argsIgnorePattern": "^_",
+        "caughtErrors": "all",
+        "ignoreRestSiblings": false,
+        "ignoreClassWithStaticInitBlock": false,
+        "ignoreUsingDeclarations": false,
+        "reportUsedIgnorePattern": false,
+        "reportVarsOnlyUsedAsTypes": true
       }
     ],
     "eslint/no-useless-constructor": [2],
