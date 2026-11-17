@@ -260,6 +260,7 @@ export class Cardd {
     takesIn = true,
     running = false,
     maintenance = false,
+    started = false,
   ): Promise<Session> {
     const session = new Session(new WebSocket(this.url), takesIn);
     await session.opened;
@@ -270,6 +271,7 @@ export class Cardd {
       process: this.processOf(token),
       ...(running ? { running } : {}),
       ...(maintenance ? { maintenance } : {}),
+      ...(started ? { started } : {}),
     });
     await until(() => session.welcome ?? session.closeCode, "welcome or close");
     return session;
@@ -373,6 +375,7 @@ type Outgoing =
       inFile: readonly number[];
       process: string;
       maintenance?: boolean;
+      started?: boolean;
       running?: boolean;
     }
   | { t: "read"; entry: number }

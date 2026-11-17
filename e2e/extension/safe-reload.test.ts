@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Move } from "../support/harness.ts";
+import { check, OPS } from "@fleet/protocol";
 import { git } from "../support/remote.ts";
 import {
   LiveFleet,
@@ -126,14 +127,20 @@ async function mainHears(workers: readonly Worker[]): Promise<void> {
   const told = heard
     .filter((turn) => turn.text.startsWith("[fleet] maintenance:"))
     .map((turn) => turn.text);
-  for (const who of workers.map((each) => each.session))
+  const summaries = told.filter((line) => line.includes("Reload batch "));
+  assert.equal(summaries.length, 1, told.join("\n"));
+  assert.ok(summaries[0]?.includes("5 reloaded and verified, 1 failed"));
+  assert.equal(told.filter((line) => line.includes("reload completed -")).length, 0);
+  for (const worker of workers) {
+    const history = await fleet.ghost.call("card", { card: worker.card });
     assert.ok(
-      told.includes(
-        `[fleet] maintenance: ${who} (worker on ${workers.find((each) => each.session === who)?.host ?? ""}): reload completed - ${NOW_LINE}`,
+      check(OPS.card.result, history).entries.some((entry) =>
+        entry.body.includes(
+          `${worker.session} (worker on ${worker.host}): reload completed - ${NOW_LINE}`,
+        ),
       ),
-      who,
     );
-  assert.ok(told.includes(`[fleet] maintenance: ops (mate): reload completed - ${NOW_LINE}`));
+  }
 }
 
 test("update_fleet reloads every worker and second mate at its safe point, never during a turn or a job, and each returns on its own conversation, branch and worktree with the new code and its pause kept", async () => {
@@ -176,7 +183,7 @@ test("update_fleet reloads every worker and second mate at its safe point, never
       "Reloaded and verified:",
       `- ${paused.session} (worker on p620): reload completed - ${NOW_LINE}`,
       `- far (mate): reload completed - ${NOW_LINE}`,
-      "Waiting for a safe point, not yet reloaded (main hears when each finishes):",
+      "Waiting for a safe point, not yet reloaded (main hears one summary when the batch finishes):",
       `- ${busy.session} (worker on local): reload pending - ${SAFE_POINT}`,
       `- ${job.session} (worker on local): reload pending - ${SAFE_POINT}`,
       `- ops (mate): reload pending - ${SAFE_POINT}`,

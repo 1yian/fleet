@@ -16,7 +16,7 @@ const SECOND = 1000;
 const BIG = "lorem ipsum dolor ".repeat(8000);
 const COMPACTOR_DOWN =
   "pi-tiers: no usable model for tier 'default' (anthropic/claude-opus-5-5 on anthropic: cooling, openai/gpt-5 on openai: cooling)";
-const COMPLETED = "reload completed - reconnected on a new process";
+const COMPLETED = "1 reloaded and verified, 0 failed";
 const QUIET_MS = 1_500;
 const WAIT_MS = 30_000;
 

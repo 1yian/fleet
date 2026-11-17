@@ -40,6 +40,55 @@ function cardOf(db: DatabaseSync, session: string): number | undefined {
   return typeof row?.["lane"] === "string" ? laneCardOf(db, row["lane"]) : undefined;
 }
 
+function summarize(db: DatabaseSync, batch: string, requester: string): string[] {
+  const rows = rowsOf(db, "m.batch = ?", batch);
+  if (
+    rows.length === 0 ||
+    rows.some(
+      (row) => row.kind !== "reload" || row.state === "pending" || row.state === "reloading",
+    ) ||
+    db
+      .prepare(
+        "SELECT 1 FROM entries WHERE author = 'maintenance' AND json_extract(fields, '$.maintenanceBatch') = ?",
+      )
+      .get(batch) !== undefined
+  )
+    return [];
+  const first = rows[0];
+  const card = first === undefined ? undefined : cardOf(db, first.session);
+  if (card === undefined) return [];
+  const hosts = [...new Set(rows.map((row) => row.host))].sort();
+  const counts = (found: readonly Maintenance[]): string =>
+    `${String(found.filter((row) => row.state === "completed").length)} reloaded and verified, ${String(found.filter((row) => row.state === "failed").length)} failed`;
+  const body = [
+    `Reload batch ${batch} finished: ${counts(rows)}; 0 pending. Failures are not verified successes.`,
+    ...hosts.map(
+      (host) =>
+        `- ${host === "" ? "host unspecified" : host}: ${counts(rows.filter((row) => row.host === host))}`,
+    ),
+    "Individual receipts remain in each card's history; failures are reported separately.",
+  ].join("\n");
+  addEntry(
+    db,
+    {
+      card,
+      author: "maintenance",
+      kind: "note",
+      body,
+      fields: {
+        maintenance: "batch",
+        maintenanceBatch: batch,
+        batch,
+        kind: "reload",
+        state: "completed",
+        quiet: false,
+      },
+    },
+    [requester],
+  );
+  return [requester];
+}
+
 function settle(
   db: DatabaseSync,
   id: number,
@@ -61,8 +110,9 @@ function settle(
   const body = maintenanceLine({ ...row, state, detail });
   const quiet = state === "completed";
   const fields = { maintenance: id, batch: row.batch, kind: row.kind, state, quiet };
-  addEntry(db, { card, author: "maintenance", kind: "note", body, fields }, [requester]);
-  return [requester];
+  const recipients = quiet && row.kind === "reload" ? [] : [requester];
+  addEntry(db, { card, author: "maintenance", kind: "note", body, fields }, recipients);
+  return [...recipients, ...summarize(db, row.batch, requester)];
 }
 
 export function adoptMaintenance(
@@ -191,7 +241,10 @@ export function requestMaintenance(
     ).run(raw.batch, caller.id, target.id, raw.kind, state, target.process, detail, now);
     if (state === "pending") notify.push(target.id);
   }
-  return { value: rowsOf(db, "m.batch = ?", raw.batch), notify };
+  return {
+    value: rowsOf(db, "m.batch = ?", raw.batch),
+    notify: [...notify, ...summarize(db, raw.batch, caller.id)],
+  };
 }
 
 export function maintenanceStatus(

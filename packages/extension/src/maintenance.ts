@@ -177,7 +177,10 @@ const sections = (kind: Maintenance["kind"]) => {
   const done = kind === "stow" ? "stowed" : "reloaded";
   return [
     [kind === "stow" ? "Stowed and verified" : "Reloaded and verified", "completed"],
-    [`Waiting for a safe point, not yet ${done} (main hears when each finishes)`, "open"],
+    [
+      `Waiting for a safe point, not yet ${done} (${kind === "reload" ? "main hears one summary when the batch finishes" : "main hears when each finishes"})`,
+      "open",
+    ],
     [`Unable to ${kind}`, "failed"],
   ] as const;
 };
