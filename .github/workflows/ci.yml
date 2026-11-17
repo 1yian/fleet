@@ -74,6 +74,8 @@ jobs:
               - ".github/workflows/ci.yml"
               - ".github/actions/**"
             extension-e2e:
+              - "AGENTS.md"
+              - "CONTRIBUTING.md"
               - "packages/**"
               - "e2e/support/**"
               - "e2e/extension/**"
