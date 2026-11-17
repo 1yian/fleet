@@ -29,25 +29,42 @@ afterEach(async (t) => {
 const prOf = (card: number) => `https://github.com/acme/site/pull/${String(card)}`;
 const treeOf = (p: DispatchLab, card: number) => `${p.clone}.worktrees/c-${String(card)}-a1`;
 
-function mateMove(turns: Turn[]): Move {
-  if (turns.at(-1)?.role !== "user") return { text: "recorded" };
-  const user = lastUser(turns) ?? "";
-  const create = /Create part ([12])/.exec(user);
-  if (create !== null) {
-    const card = Number(create[1]);
-    return {
-      tool: "dispatch",
-      args: {
-        title: `Part ${String(card)} of the outcome`,
-        name: `outcome-part-${String(card)}`,
-        kind: "ship",
-        project: "site",
-        intent: "Deliver both independent parts",
-        host: "local",
-        task: `Deliver only part ${String(card)}. The other part has its own ship card. ${card === 2 ? "Linked to c-1." : "Continuation will be c-2."}`,
-      },
-    };
-  }
+function dispatchPart(card: number): Move {
+  return {
+    tool: "dispatch",
+    args: {
+      title: `Part ${String(card)} of the outcome`,
+      name: `outcome-part-${String(card)}`,
+      kind: "ship",
+      project: "site",
+      intent: "Deliver both independent parts",
+      host: "local",
+      task: `Deliver only part ${String(card)}. The other part has its own ship card. ${card === 2 ? "Linked to c-1." : "Continuation will be c-2."}`,
+    },
+  };
+}
+
+function mateMove(): (turns: Turn[]) => Move {
+  let dispatched = 0;
+  return (turns) => {
+    const last = turns.at(-1)?.role;
+    const user = lastUser(turns) ?? "";
+    if (user.includes("Create both parts")) {
+      if (last === "user" && dispatched === 0) {
+        dispatched = 1;
+        return dispatchPart(1);
+      }
+      if (last !== "user" && dispatched === 1) {
+        dispatched = 2;
+        return dispatchPart(2);
+      }
+    }
+    if (last !== "user") return { text: "recorded" };
+    return approveMove(user);
+  };
+}
+
+function approveMove(user: string): Move {
   const approved = /captain on c-([12]).*\(answer\): Approve & merge/.exec(user);
   if (approved !== null)
     return {
@@ -127,14 +144,14 @@ test("linked ship cards deliver one outcome without closing or approving the pen
   });
   parts = p;
   const worker = workerScript(p);
+  const mate = mateMove();
   for (let call = 0; call < 60; call += 1) {
-    p.h.onModel(mateMove, "mate");
+    p.h.onModel(mate, "mate");
     p.h.onModel(worker, "worker");
   }
   await mateConnected(p.h);
-  p.mate.prompt("Create part 1");
+  p.mate.prompt("Create both parts");
   await waitEntry(p, 1, "report");
-  p.mate.prompt("Create part 2");
   await waitEntry(p, 2, "report");
   const board = await p.cardd.board();
   assert.equal(board.cards.find((c) => c.id === 2)?.pr, prOf(2));
