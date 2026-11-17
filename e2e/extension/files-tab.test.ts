@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { FilesMates, until } from "../support/files-mates.ts";
 import { FilesPane } from "../support/files-pane.ts";
-import { optionalString, parseRecord } from "../support/json.ts";
+import { optionalString, parseRecord, records } from "../support/json.ts";
 
 let mates: FilesMates;
 beforeEach(async () => {
@@ -98,6 +98,16 @@ test("a Files tab whose explorer has quit gets the explorer again in the same pa
   await files.type("q");
   await atPrompt(pane);
   await mates.lab.submit(pane, "cd /");
+  await until("the Files shell to finish changing to /", async () => {
+    const reply = await mates.lab.run(["pane", "process-info", "--pane", pane]);
+    const info = records([reply["process_info"]])[0];
+    const foreground = records(info?.["foreground_processes"]);
+    return foreground.length === 1 &&
+      foreground[0]?.["pid"] === info?.["shell_pid"] &&
+      foreground[0]?.["cwd"] === "/"
+      ? true
+      : undefined;
+  });
   await reloadMate();
   await running(pane, "yazi");
   await files.sees(header(mates.fleet.home), "yazi's header to name the lane home");
