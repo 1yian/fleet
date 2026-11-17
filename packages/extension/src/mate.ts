@@ -4,6 +4,7 @@ import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import type { Complaints } from "./complaints.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
+import { isLocal } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
@@ -289,6 +290,7 @@ export function registerMate(
     parameters: DispatchParams,
     execute: async (_id, params) => {
       const { title, name, kind, project, intent, host, task, delivery, model } = params;
+      isLocal(host);
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>
