@@ -210,7 +210,7 @@ test("a restarted mate and a fleet row keep the same rules and labels", async ()
     "──",
     SECOND,
     "── fleet ──",
-    "[fleet] cleo on c-2 fix-the-scrollbar (hold): Fix the scrollbar?",
+    "[fleet] cleo on c-3 fix-the-scrollbar (hold): Fix the scrollbar?",
     "──",
     RULING,
   ];
