@@ -174,6 +174,57 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
   process.stderr.write(`sidebar after the update: ${JSON.stringify(await sidebar())}\n`);
 });
 
+test("workers without a local mate show their lane without changing matched workers' grouping", async () => {
+  await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    here.root,
+    "--label",
+    "2ndmate-ops",
+    "--no-focus",
+  ]);
+  for (const [lane, name, card] of [
+    ["yang-auto", "yang-jeep-offlot-reel", 1822],
+    ["ops", "ops-alpha", 1823],
+  ] as const) {
+    const workspace = await openWorker(name, card);
+    await lab.run([
+      "workspace",
+      "report-metadata",
+      workspace,
+      "--source",
+      "fleet",
+      "--token",
+      `lane=${lane}`,
+      "--token",
+      `card=${String(card)}`,
+    ]);
+  }
+  const expected = ["[yang-auto] yang-jeep-offlot-reel", "2ndmate-ops", "└ ops-alpha"];
+  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
+  await untilSidebar(expected);
+  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
+  await untilSidebar(expected);
+
+  await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    here.root,
+    "--label",
+    "2ndmate-yang-auto",
+    "--no-focus",
+  ]);
+  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
+  await untilSidebar([
+    "2ndmate-ops",
+    "└ ops-alpha",
+    "2ndmate-yang-auto",
+    "└ yang-jeep-offlot-reel",
+  ]);
+});
+
 test("restarting one lane on its own puts its workspace back above its workers", async () => {
   await lab.run(["workspace", "create", "--cwd", here.root, "--label", "~", "--no-focus"]);
   await startMain(lab, here, h);

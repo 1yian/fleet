@@ -612,7 +612,7 @@ The same commands are on each host as `fleet` (`<checkout>/bin/fleet`):
 
 When a lane starts, its home moves to the commit its checkout has, unless the home has uncommitted changes.
 
-A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: workspaces that are not mates or workers first, in the order they have, then main's `1stmate` and the `2ndmate-<lane>` workspaces by lane name, each followed by its own workers as `└ <card name>` in card order. A worker's workspace carries its lane and card as herdr metadata tokens, which is how it finds its mate. A worker whose mate has no workspace on the host stays among the first workspaces, without the `└ `.
+A lane start, a restart, and a dispatch also arrange the host's herdr sidebar: workspaces that are not mates or workers first, in the order they have, then main's `1stmate` and the `2ndmate-<lane>` workspaces by lane name, each followed by its own workers as `└ <card name>` in card order. A worker's workspace carries its lane and card as herdr metadata tokens, which is how it finds its mate. A worker whose mate has no workspace on the host stays among the first workspaces, labeled `[<lane>] <card name>` instead of `└ <card name>`. This shows its owning lane even when the mate runs on another host. When the mate's workspace appears on this host, the next arrange moves the worker beneath it and replaces the lane prefix with `└ `.
 
 ### Agent complaints
 
