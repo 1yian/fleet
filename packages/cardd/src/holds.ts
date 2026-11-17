@@ -119,12 +119,23 @@ export function rewritten(
   const open = facts.hold;
   return {
     holder,
+    ...carried(open),
+    until: until ?? null,
+    occurrence: open?.occurrence ?? facts.occurrences + 1,
+  };
+}
+
+function carried(open: Hold | undefined): {
+  options: readonly string[];
+  approves: readonly string[];
+  merge: boolean;
+  unlanded: boolean;
+} {
+  return {
     options: open?.options ?? [],
     approves: open?.approves ?? [],
     merge: open?.merge ?? false,
     unlanded: open?.unlanded ?? false,
-    until: until ?? null,
-    occurrence: open?.occurrence ?? facts.occurrences + 1,
   };
 }
 
@@ -164,6 +175,15 @@ function approvingOptions(card: Card, open: Hold | undefined, offer: Offer): rea
   return offer.approves;
 }
 
+function marksUnlanded(
+  db: DatabaseSync,
+  card: Card,
+  asked: boolean | undefined,
+  carriedMark: boolean,
+): boolean {
+  return asked === true || carriedMark || holdsUnlandedWork(db, card);
+}
+
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.hold.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -177,7 +197,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const target = targetOf(levelsOf(db, card), current, args.to);
   requireClimb(db, session, card, current, target);
   const base = rewritten(facts, target, args.until);
-  const unlanded = args.unlanded === true || base.unlanded || holdsUnlandedWork(db, card);
+  const unlanded = marksUnlanded(db, card, args.unlanded, base.unlanded);
   const options = args.options ?? base.options;
   const approves = approvingOptions(card, open, args);
   const replyTo = args.replyTo;
