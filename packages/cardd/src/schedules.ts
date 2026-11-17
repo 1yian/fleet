@@ -8,7 +8,8 @@ import {
   type Schedule,
 } from "@fleet/protocol";
 import { dueSlots, localMinute, timeZoneProblem } from "./schedule.ts";
-import { addCard, addEntry, laneCardOf, mainLane } from "./store.ts";
+import { logCardOf } from "./log-cards.ts";
+import { addEntry, laneCardOf, mainLane } from "./store.ts";
 
 const AUTHOR = "schedule";
 
@@ -114,18 +115,9 @@ function dueMinute(row: Row, now: number): string | undefined {
 }
 
 function cardFor(db: DatabaseSync, recipient: string): number {
-  const lane = laneCardOf(db, recipient);
-  if (lane !== undefined) return lane;
-  const found = db
-    .prepare("SELECT id FROM cards WHERE lane = ? AND kind = 'standing' AND name = ?")
-    .get(recipient, SCHEDULE_LOG_NAME)?.["id"];
-  if (typeof found === "number") return found;
-  return addCard(db, {
-    lane: recipient,
-    title: "Scheduled messages",
-    name: SCHEDULE_LOG_NAME,
-    kind: "standing",
-  }).id;
+  return (
+    laneCardOf(db, recipient) ?? logCardOf(db, recipient, SCHEDULE_LOG_NAME, "Scheduled messages")
+  );
 }
 
 export function firedSchedules(db: DatabaseSync, now: number): string[] {

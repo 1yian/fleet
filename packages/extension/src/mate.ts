@@ -7,6 +7,7 @@ import { dispatch, type Launch } from "./dispatch.ts";
 import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
+import type { Telling } from "./telling.ts";
 import { boardText, cardText, errorText, EXTRA_COLUMNS, SELECTIONS } from "./views.ts";
 
 const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${card.title}`;
@@ -190,14 +191,17 @@ function registerSchedules(pi: ExtensionAPI, link: Link): void {
 const YIELD = "yield";
 const silent = { render: () => [], invalidate: () => undefined };
 
-function registerYield(pi: ExtensionAPI): void {
+function registerYield(pi: ExtensionAPI, telling: Telling | undefined): void {
   pi.registerTool({
     name: YIELD,
     label: "Yield",
     description:
-      "Ends this turn silently when routine fleet notifications leave no update for the user. Finish required card actions and answer any reply owed with comment or hold first, in earlier blocks or in this one. Yield may share its block with them: the turn ends when the block finishes, whatever the other calls return, and a failed call shows its error only on the next turn. When the next step depends on a result, call yield in a later block. Write no chat text before or after it. Never use it instead of delivering outcomes, findings, review or merge requests, decisions, or real blockers.",
+      "Ends this turn silently when routine fleet notifications leave no update for the user. Finish required card actions and answer any reply owed with comment or hold first, in earlier blocks or in this one. Yield may share its block with them: the turn ends when the block finishes, whatever the other calls return, and a failed call shows its error only on the next turn. When the next step depends on a result, call yield in a later block. Write no chat text before or after it. Never use it instead of delivering outcomes, findings, review or merge requests, decisions, or real blockers. As main it is refused while the captain has written since you last brought a decision up and the decision that is due is not presented yet: the refusal names it. It is also refused after presented in a turn that has no chat text.",
     parameters: Type.Object({}),
-    execute: () => Promise.resolve({ content: [], details: {}, terminate: true }),
+    execute: async () => {
+      await telling?.allowYield();
+      return { content: [], details: {}, terminate: true };
+    },
     renderShell: "self",
     renderCall: () => silent,
     renderResult: () => silent,
@@ -210,7 +214,7 @@ function registerYield(pi: ExtensionAPI): void {
     yielded = false;
   });
   pi.on("tool_execution_end", (event) => {
-    yielded ||= event.toolName === YIELD;
+    yielded ||= event.toolName === YIELD && !event.isError;
     const result: unknown = event.result;
     if (event.parentToolCallId === undefined && isRecord(result)) results.push(result);
     if (yielded) for (const each of results) each["terminate"] = true;
@@ -224,8 +228,9 @@ export function registerMate(
   lanes: LaneStates | undefined,
   main: boolean,
   complaints: Complaints,
+  telling: Telling | undefined,
 ): void {
-  registerYield(pi);
+  registerYield(pi, telling);
   pi.registerTool({
     name: "card_new",
     label: "New card",

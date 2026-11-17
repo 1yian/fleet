@@ -1,7 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { idlePark, waitLine, type DatedWait, type Entry, type Pulse } from "@fleet/protocol";
-import { factsFrom, finishedOpen, type Standing } from "./status.ts";
+import { rotationOf, type Rotation } from "./marks.ts";
+import { factsFrom, finishedOpen } from "./status.ts";
 import { cardEntries, type Loaded, mainLane, parentOf } from "./store.ts";
+import { firstLine } from "./text.ts";
 import { MINUTE, type Timings } from "./timing.ts";
 import { canSee, holdFor, sightOf } from "./waits.ts";
 
@@ -22,12 +24,6 @@ export function actingLane(db: DatabaseSync, card: number, lane: string): string
 export const minutesSince = (now: number, since: number): number =>
   Math.round((now - since) / MINUTE);
 
-const firstLine = (text: string): string =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line !== "") ?? "";
-
 type Group = "act" | "captain" | "watched";
 
 const acts = ({ group }: { readonly group: Group }): boolean => group !== "watched";
@@ -38,6 +34,7 @@ interface Item {
   readonly to: string;
   readonly line: string;
   readonly group: Group;
+  readonly due?: true;
 }
 
 const BUNDLE = "decisions";
@@ -48,16 +45,23 @@ export function entryFor(db: DatabaseSync, lane: string, entry: Entry): Entry | 
   return holdFor(db, lane, entry);
 }
 
-function captainItem(
-  db: DatabaseSync,
-  card: Loaded["card"],
-  standing: Standing,
-  now: number,
-): Item {
-  const main = mainLane(db);
+function captainItem(db: DatabaseSync, loaded: Loaded, rotation: Rotation, now: number): Item {
+  const { card, standing } = loaded;
   const question = firstLine(standing.facts.hold?.question ?? "");
-  const line = `c-${String(card.id)} ${card.title} - waiting on the captain (${waited(now, standing.since)}): ${question}`;
-  return { card: card.id, since: standing.since, to: main, line, group: "captain" };
+  const title = `c-${String(card.id)} ${card.title}`;
+  const base = {
+    card: card.id,
+    since: standing.since,
+    to: mainLane(db),
+    group: "captain" as const,
+  };
+  if (rotation.due?.card.id === card.id)
+    return { ...base, line: `Bring this one up now: ${title}: ${question}`, due: true };
+  const shown = rotation.shown.has(card.id) ? " (shown since his last message)" : "";
+  return {
+    ...base,
+    line: `${title} - waiting on the captain (${waited(now, standing.since)}): ${question}${shown}`,
+  };
 }
 
 function mateItem(db: DatabaseSync, loaded: Loaded, now: number): Item[] {
@@ -109,14 +113,14 @@ function openItems(
   cards: readonly Loaded[],
   waits: ReadonlyMap<number, DatedWait>,
   pulses: ReadonlyMap<number, Pulse>,
+  rotation: Rotation,
   now: number,
 ): Item[] {
   return cards.flatMap((loaded) => {
     const wait = waits.get(loaded.card.id);
     const pulse = pulses.get(loaded.card.id);
     if (wait !== undefined) return [waitItem(db, loaded, wait, now)];
-    if (loaded.standing.status === "needs-you")
-      return [captainItem(db, loaded.card, loaded.standing, now)];
+    if (loaded.standing.status === "needs-you") return [captainItem(db, loaded, rotation, now)];
     const mate = mateItem(db, loaded, now);
     const neglect = neglectItem(db, loaded, pulse, now);
     return [...mate, ...neglect.filter(({ to }) => mate.every((item) => item.to !== to))];
@@ -163,18 +167,29 @@ function leadOf(acting: readonly Item[], watched: readonly Item[]): string {
   return `information: ${plural(watched.length, "dated wait", "dated waits")}, nothing needs action`;
 }
 
+const NO_DATE = "Do not hold a card with a date to quiet it:";
+
+function captainHeading(captain: readonly Item[]): string {
+  if (!captain.some(({ due }) => due === true))
+    return `Waiting on the captain. None is due: he has not written to you since you last brought a decision up, or he is away. Write to him about none of these, and yield unless the list has other work for you. ${NO_DATE}`;
+  const others = captain.length - 1;
+  const count = others === 0 ? "" : `, and "+${String(others)} more waiting" for the others`;
+  return `Waiting on the captain. He has written to you since you last brought a decision up. Bring up the first item now, in one short chat message: the decision and your recommendation${count}. Then call presented(card). Bring up no other one. ${NO_DATE}`;
+}
+
+const dueFirst = (items: readonly Item[]): Item[] =>
+  items.toSorted((a, b) => Number(b.due === true) - Number(a.due === true));
+
 function bundleText(items: readonly Item[]): string {
   const watched = inGroup(items, "watched");
+  const captain = inGroup(items, "captain");
   const lead = leadOf(items.filter(acts), watched);
   const sections = [
     ...group(
       "You can settle or close these yourself. Act on each now. A dated wait that says nothing is running is an idle park: start what it waits on, or clear the hold and act:",
       inGroup(items, "act"),
     ),
-    ...group(
-      "Waiting on the captain. If he wrote to you since your last list of these, bring them up again as one short list with your recommendation for each. If he did not, or he said afk, he is away: leave them for the catch-up. This list is a reminder to you, not a prompt to write to him. Do not hold a card with a date to quiet it:",
-      inGroup(items, "captain"),
-    ),
+    ...group(captainHeading(captain), dueFirst(captain)),
     ...group(
       "Dated waits with something running, an outside date, or the captain's later. Information only, no action now:",
       watched,
@@ -191,8 +206,11 @@ export function bundleMatches(
   now: number,
   t: Timings,
 ): BundleMatch[] {
+  const rotation = rotationOf(db, open);
   const byMate = Map.groupBy(
-    openItems(db, open, waits, pulses, now).sort((a, b) => a.since - b.since || a.card - b.card),
+    openItems(db, open, waits, pulses, rotation, now).sort(
+      (a, b) => a.since - b.since || a.card - b.card,
+    ),
     ({ to }) => to,
   );
   return [...byMate].flatMap(([to, items]): BundleMatch[] => {

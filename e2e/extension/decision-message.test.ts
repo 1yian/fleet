@@ -46,12 +46,14 @@ test("a real merge arrival delivers the original chat, reminder and optional wal
     );
     assert.match(
       contract,
-      /While active, its one-at-a-time presentation replaces the reminder and catch-up decision lists/,
+      /While active, its one-at-a-time presentation replaces the reminder's due decision and the catch-up's pending decision/,
     );
     assert.match(
       contract,
-      /bring every one up again as one short list with your recommendation for each/,
+      /One decision at a time, rotating to the one shown least recently\.\*\* Each reply to him answers him first, then ends with at most one pending decision/,
     );
+    assert.match(contract, /plus a count of the others: `\+N more waiting`/);
+    assert.doesNotMatch(contract, /not a prompt to write to the captain|first interruption/);
     assert.match(contract, /Still tell him each new outcome once, as it happens/);
     assert.doesNotMatch(contract, /about 80 words|Exactly four interruptions|\/d\b/);
     assert.equal((await cardd.board()).holds.find((hold) => hold.card === card.id)?.merge, true);

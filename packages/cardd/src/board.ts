@@ -18,6 +18,7 @@ import {
 import { attemptsOf } from "./attempts.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
+import { isMark } from "./marks.ts";
 import { behindOf, neglectOf, pulseOf, type Neglect } from "./pulse.ts";
 import { allSchedules } from "./schedules.ts";
 import { openReplies } from "./replies.ts";
@@ -33,6 +34,7 @@ import {
   mainLane,
   type Loaded,
 } from "./store.ts";
+import { firstLine } from "./text.ts";
 import type { Timings } from "./timing.ts";
 import { entryFor } from "./bundle.ts";
 import { canSee, datedWait, sightOf } from "./waits.ts";
@@ -78,19 +80,13 @@ function requireCaptainsHold(db: DatabaseSync, card: Card, seen: number): Hold {
 }
 
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
-const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind);
+const inThread = (entry: Entry): boolean => !MATES_ONLY.has(entry.kind) && !isMark(entry);
 
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
   inThread(entry) &&
   (laneCard ||
     entry.fields["for"] === "captain" ||
     !(entry.kind === "comment" && entry.author.startsWith("mate:")));
-
-const firstLine = (text: string): string =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line !== "") ?? "";
 
 function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hold?: Hold): string {
   const withMain = hold?.holder === "main" ? hold.entry : undefined;

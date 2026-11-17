@@ -31,7 +31,7 @@ Give enough context to decide without opening a file:
 - Recommendation: one choice with a reason, and an alternative when useful.
 - One clear approval question, such as "Approve this PR's merge once required checks are green?" or "Use the existing account for this deployment only?"
 
-Speak plainly and address the captain per the role contract. Do not dump the decision list or ask permission to continue. A short count of remaining questions is fine only when verified; do not confuse holds with the number of questions. The other decisions stay discoverable on the board. This walkthrough is not approval for scaler IAM changes or any other unrelated permission.
+Call `presented(card)` for the decision in the same turn as the message that presents it (main only). The fleet records that he was told, and makes the next decision due only after he writes again. Speak plainly and address the captain per the role contract. Do not dump the decision list or ask permission to continue. A short count of remaining questions is fine only when verified; do not confuse holds with the number of questions. The other decisions stay discoverable on the board. This walkthrough is not approval for scaler IAM changes or any other unrelated permission.
 
 ## Answer, record, act, next
 
@@ -51,11 +51,11 @@ An approved action blocked by CI, credentials, a dependency, or an unavailable w
 
 ## Keep focus
 
-- Routine notifications: perform required card actions silently. Do not replace the current question with a status digest or another list. A newly ready PR still gets its required outcome announcement and full URL, but its approval joins the existing holds; do not add a second actionable approval question while the current one awaits an answer. If a mandatory outcome notice needs chat during the walkthrough, keep it brief and finish with the current question and the context needed to answer, not merely "that remains the active decision". Pure no-news wakes still yield; do not repeat the question on every wake. The offered question remains the focus.
+- Routine notifications: perform required card actions silently. Do not replace the current question with a status digest or another list. A newly ready PR still gets its required outcome announcement and full URL, but its approval joins the existing holds; do not add a second actionable approval question while the current one awaits an answer. If a mandatory outcome notice needs chat during the walkthrough, keep it brief and finish with the current question and the context needed to answer, not merely "that remains the active decision". Pure no-news wakes still yield; do not repeat the question on every wake. A yield is refused only when a decision is due, which happens only after he wrote since you last called `presented`. The offered question remains the focus.
 - Serious blockers and safety findings: escalate at once under the role contract. State whether they change the current choice. Once handled, return to the still-unresolved question, not the beginning of the walkthrough.
-- An unrelated captain request: answer it first, then resume the current question in the same response unless the captain pauses, changes scope, or stops the walkthrough. A notification is not such a request.
-- Pause or stop: record that presentation state on the existing focused thread or hold without altering decision authority or hiding holds. Resume only when asked; "afk" is a pause, not permission to clear anything. On return, offer the current decision rather than the role contract's whole-list catch-up. Still report urgent issues and required outcomes.
-- During an active walkthrough, this one-at-a-time presentation replaces reminder and catch-up decision lists. All mandatory safety escalations, replies, outcome reporting, and ownership rules remain in force.
+- An unrelated captain request: answer it first, then resume the current question in the same response, and call `presented` for it again, unless the captain pauses, changes scope, or stops the walkthrough. A notification is not such a request.
+- Pause or stop: record that presentation state on the existing focused thread or hold without altering decision authority or hiding holds. Resume only when asked; "afk" is a pause, not permission to clear anything. On return, offer the current decision, with `presented`, as the one pending decision of the role contract's catch-up. Still report urgent issues and required outcomes.
+- During an active walkthrough, this one-at-a-time presentation replaces the reminder's due decision and the catch-up's pending decision. All mandatory safety escalations, replies, outcome reporting, and ownership rules remain in force.
 
 ## Finish
 

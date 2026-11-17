@@ -4,6 +4,7 @@ import { ApprovesArg } from "./approval.ts";
 import { COMPLAINT_OPS } from "./complaints.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
+import { MARK_OPS } from "./marks.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { NextSchema } from "./next.ts";
@@ -22,6 +23,7 @@ export * from "./branch.ts";
 export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
 export * from "./http.ts";
+export { CAPTAIN_LOG_NAME } from "./marks.ts";
 export * from "./next.ts";
 export { ActedSchema, LATER_EXAMPLES, laterLine, type LaterResult } from "./later.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
@@ -363,6 +365,7 @@ export const OPS = {
     result: Type.Boolean(),
   },
   ...COMPLAINT_OPS,
+  ...MARK_OPS,
   ...SCHEDULE_OPS,
   ...STANDING_OPS,
   ...INCIDENT_OPS,

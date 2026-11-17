@@ -43,6 +43,7 @@ import { registerMate } from "./mate.ts";
 import { registerRestart } from "./restart.ts";
 import { registerQuestions } from "./questions.ts";
 import { standingRules } from "./standing.ts";
+import { Telling } from "./telling.ts";
 import { registerStow } from "./stow.ts";
 import { ensureFilesTab } from "./files/tab.ts";
 import { recordSkills } from "./files/skills.ts";
@@ -317,7 +318,9 @@ function start(
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
     const launch = { url, piArgs: piArgs(), extension: EXTENSION, lost: tellLaunchLost(pi) };
-    registerMate(pi, link, launch, lanes, lane === "main", complaints);
+    const telling = lane === "main" ? new Telling(pi, link) : undefined;
+    telling?.register();
+    registerMate(pi, link, launch, lanes, lane === "main", complaints, telling);
     registerRestart(pi, link, launch, lane === "main" ? HOME() : undefined);
     stow = registerStow(pi, HOME(), lane, link);
     registerPlan(pi, link);

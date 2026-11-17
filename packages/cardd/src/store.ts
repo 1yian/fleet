@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   ActivitySchema,
+  CAPTAIN_LOG_NAME,
   CardSchema,
   check,
   DELIVERIES,
@@ -288,17 +289,20 @@ export function loadCard(db: DatabaseSync, id: number): Loaded {
   return loaded(db, row, Date.now());
 }
 
+const NOT_CAPTAIN_LOG = `NOT (kind = 'standing' AND name = '${CAPTAIN_LOG_NAME}'
+  AND lane = (SELECT name FROM lanes WHERE parent IS NULL))`;
+
 export function loadCards(db: DatabaseSync): Loaded[] {
   const now = Date.now();
-  return json(db, `SELECT ${CARD_JSON} AS j FROM cards ORDER BY id`).map((row) =>
-    loaded(db, row, now),
-  );
+  const sql = `SELECT ${CARD_JSON} AS j FROM cards WHERE ${NOT_CAPTAIN_LOG} ORDER BY id`;
+  return json(db, sql).map((row) => loaded(db, row, now));
 }
 
 export function loadOpenCards(db: DatabaseSync): Loaded[] {
   const now = Date.now();
   const sql = `SELECT ${CARD_JSON} AS j FROM cards
-    WHERE NOT EXISTS (SELECT 1 FROM entries WHERE card = cards.id AND kind = 'cleanup') ORDER BY id`;
+    WHERE ${NOT_CAPTAIN_LOG} AND NOT EXISTS (SELECT 1 FROM entries WHERE card = cards.id AND kind = 'cleanup')
+    ORDER BY id`;
   return json(db, sql).map((row) => loaded(db, row, now));
 }
 
