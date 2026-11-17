@@ -384,7 +384,14 @@ export const OPS = {
       replyTo: ReplyTo,
       ...LandingFields,
     }),
-    result: CardSchema,
+    result: Type.Object({
+      ...CardSchema.properties,
+      advice: Type.Optional(
+        Type.String({
+          description: "What the fleet tells the worker about this report, if anything",
+        }),
+      ),
+    }),
   },
 } as const;
 export type OpName = keyof typeof OPS;

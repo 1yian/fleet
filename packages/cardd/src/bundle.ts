@@ -104,6 +104,28 @@ function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefine
   return [{ card: card.id, since, to: mainLane(db), line, group: "act" as const }];
 }
 
+function endedPause({ standing }: Loaded, now: number): number | undefined {
+  const { pausedUntil } = standing.facts;
+  const working = standing.status === "working" || standing.status === "in-review";
+  return working && pausedUntil !== null && pausedUntil <= now ? pausedUntil : undefined;
+}
+
+const workerSince = (entries: readonly Entry[], at: number): boolean =>
+  entries.some((entry) => entry.author.startsWith("worker:") && entry.createdAt > at);
+
+function pauseItem(loaded: Loaded, pulse: Pulse | undefined, now: number): Item[] {
+  const { card, entries } = loaded;
+  const ended = endedPause(loaded, now);
+  if (ended === undefined || pulse === undefined || pulse.running?.by === "job") return [];
+  if (workerSince(entries, ended)) return [];
+  const paused = entries.findLast(
+    (entry) => entry.kind === "report" && entry.fields["status"] === "paused",
+  );
+  const name = `c-${String(card.id)} ${card.title}`;
+  const line = `${name} - its worker's pause ended ${waited(now, ended)} ago and nothing ran since: "${firstLine(paused?.body ?? "")}"`;
+  return [{ card: card.id, since: ended, to: card.lane, line, group: "act" }];
+}
+
 function openItems(
   db: DatabaseSync,
   cards: readonly Loaded[],
@@ -117,9 +139,9 @@ function openItems(
     if (wait !== undefined) return [waitItem(db, loaded, wait, now)];
     if (loaded.standing.status === "needs-you")
       return [captainItem(db, loaded.card, loaded.standing, now)];
-    const mate = mateItem(db, loaded, now);
+    const own = [...mateItem(db, loaded, now), ...pauseItem(loaded, pulse, now)];
     const neglect = neglectItem(db, loaded, pulse, now);
-    return [...mate, ...neglect.filter(({ to }) => mate.every((item) => item.to !== to))];
+    return [...own, ...neglect.filter(({ to }) => own.every((item) => item.to !== to))];
   });
 }
 

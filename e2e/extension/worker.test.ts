@@ -169,7 +169,9 @@ test("a worker that pauses on an outside event with a date is accepted and shows
   h.onModel(() => ({ text: "waiting" }));
   await worker("start");
 
-  assert.match(toolResults(await h.waitForCall(1))[0] ?? "", /^Reported paused/);
+  const result = toolResults(await h.waitForCall(1))[0] ?? "";
+  assert.match(result, /^Reported paused/);
+  assert.match(result, /Nothing runs for this pause\..*start a run_long watcher for it\.$/);
   assert.equal(await status(fleet.main, card), "paused");
 });
 

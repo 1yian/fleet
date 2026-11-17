@@ -152,7 +152,8 @@ export class WorkerRun {
         const card = await this.link.call("report", args);
         this.latest = { status: params.status, until };
         await this.settlePane(params.status === "blocked");
-        const text = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
+        const reported = `Reported ${params.status}. c-${String(card.id)} is now ${card.status}.`;
+        const text = card.advice === undefined ? reported : `${reported} ${card.advice}`;
         return { content: [{ type: "text", text }], details: {} };
       },
     });

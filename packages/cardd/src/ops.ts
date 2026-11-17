@@ -92,7 +92,14 @@ function ownCard(db: DatabaseSync, session: Session, id: number): Card {
   return card;
 }
 
-function reportRoute(db: DatabaseSync, card: Card, status: ReportStatus): string[] {
+const NOTHING_RUNS =
+  "Nothing runs for this pause. Your mate was told, and is told again if the pause ends and nothing ran since. If you wait on a task that finishes on its own, start a run_long watcher for it.";
+
+function unwatchedPause(db: DatabaseSync, session: Session, status: ReportStatus): boolean {
+  return status === "paused" && runningJobs(db, session.id).length === 0;
+}
+
+function reportRoute(db: DatabaseSync, card: Card, mateHears: boolean): string[] {
   const entries = cardEntries(db, card.id);
   const comment = entries.findLast(
     (entry) =>
@@ -101,7 +108,7 @@ function reportRoute(db: DatabaseSync, card: Card, status: ReportStatus): string
   );
   const report = entries.findLast((entry) => entry.kind === "report");
   const firstAfterComment = comment !== undefined && comment.id > (report?.id ?? 0);
-  return firstAfterComment || TO_MATE.has(status) ? [card.lane] : [];
+  return firstAfterComment || mateHears ? [card.lane] : [];
 }
 
 function reportRecipients(
@@ -109,8 +116,10 @@ function reportRecipients(
   session: Session,
   card: Card,
   args: OpArgs<"report">,
+  unwatched: boolean,
 ): string[] {
-  if (args.replyTo === undefined) return reportRoute(db, card, args.status);
+  if (args.replyTo === undefined)
+    return reportRoute(db, card, TO_MATE.has(args.status) || unwatched);
   requireOwedBy(db, card, args.replyTo, `worker:${session.id}`);
   return [card.lane];
 }
@@ -348,7 +357,8 @@ const HANDLERS: Record<OpName, Handler> = {
     requireCommentsRead(db, session.id, args.status);
     const card = openCardWithPr(db, session.card, args.pr);
     if (stopsNothing(db, card, args.status)) return { value: card, notify: [] };
-    const to = reportRecipients(db, session, card, args);
+    const unwatched = unwatchedPause(db, session, args.status);
+    const to = reportRecipients(db, session, card, args, unwatched);
     const withdrawn =
       args.merged === true
         ? withdrawMerge(db, card, "merged")
@@ -376,7 +386,9 @@ const HANDLERS: Record<OpName, Handler> = {
     const statusAfter = statusWith(db, card, asked === undefined ? [report] : [report, asked]);
     addEntry(db, { ...report, fields: { ...fields, statusAfter } }, to);
     const merge = asked === undefined ? [] : writeMergeQuestion(db, card, asked);
-    return { value: getCard(db, card.id), notify: [...to, ...withdrawn, ...merge] };
+    const advice = unwatched ? { advice: NOTHING_RUNS } : {};
+    const value = { ...getCard(db, card.id), ...advice };
+    return { value, notify: [...to, ...withdrawn, ...merge] };
   },
 };
 
