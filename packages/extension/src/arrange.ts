@@ -32,8 +32,15 @@ function mateLane(label: string): string | undefined {
   return undefined;
 }
 
-const bare = (label: string): string =>
-  label.startsWith(WORKER_MARK) ? label.slice(WORKER_MARK.length) : label;
+function bare(space: Space): string {
+  const label = space.label.startsWith(WORKER_MARK)
+    ? space.label.slice(WORKER_MARK.length)
+    : space.label;
+  const prefix = lanePrefix(space);
+  return prefix !== "" && label.startsWith(prefix) ? label.slice(prefix.length) : label;
+}
+
+const lanePrefix = (space: Space): string => (space.lane === undefined ? "" : `[${space.lane}] `);
 
 const byCard = (a: Space, b: Space): number =>
   (a.card ?? Number.MAX_SAFE_INTEGER) - (b.card ?? Number.MAX_SAFE_INTEGER);
@@ -73,7 +80,8 @@ function arrangement(spaces: readonly Space[]): Arrangement {
   const labels = new Map<string, string>();
   for (const space of spaces) {
     if (heads.has(space)) continue;
-    const label = hosted.has(space) ? `${WORKER_MARK}${bare(space.label)}` : bare(space.label);
+    const prefix = hosted.has(space) ? WORKER_MARK : lanePrefix(space);
+    const label = `${prefix}${bare(space)}`;
     if (label !== space.label) labels.set(space.id, label);
   }
   const loose = spaces.filter((space) => !heads.has(space) && !hosted.has(space));
