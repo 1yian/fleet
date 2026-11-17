@@ -231,8 +231,9 @@ test("E makes a scratch for a local-only repository that has no origin at all", 
 test("scratch reset takes a new name when the timestamp name is already a branch", () => {
   edit(agents());
   const old = branchOf(scratchOf());
+  const start = Date.now();
   for (let ahead = 0; ahead < 30; ahead += 1) {
-    const stamp = new Date(Date.now() + ahead * 1000)
+    const stamp = new Date(start + ahead * 1000)
       .toISOString()
       .replace(/\.\d+Z$/, "")
       .replace(/[-:]/g, "")

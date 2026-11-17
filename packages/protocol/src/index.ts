@@ -1,6 +1,7 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
 import { ApprovesArg } from "./approval.ts";
+import { COMPLAINT_OPS } from "./complaints.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
@@ -18,6 +19,7 @@ export * from "./address.ts";
 export * from "./approval.ts";
 export { laidOut } from "./question.ts";
 export * from "./branch.ts";
+export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
 export * from "./http.ts";
 export * from "./next.ts";
@@ -360,6 +362,7 @@ export const OPS = {
     args: Type.Object({}),
     result: Type.Boolean(),
   },
+  ...COMPLAINT_OPS,
   ...SCHEDULE_OPS,
   ...STANDING_OPS,
   ...INCIDENT_OPS,
