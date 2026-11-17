@@ -286,6 +286,25 @@ function toWorkerOf(db: DatabaseSync, card: Card, open: Hold): string[] {
   return worker === undefined ? [] : [worker];
 }
 
+function requireNoteMayClear(db: DatabaseSync, card: Card, open: Hold, own: boolean): void {
+  const name = `c-${String(card.id)}`;
+  if (open.holder === "captain" || open.merge)
+    throw new Error(`${name} waits on the captain: clear it with his exact words`);
+  if (own) return;
+  if (open.holder !== "main")
+    throw new Error(`${name} waits on ${card.lane}'s mate, who resolves it or escalates it`);
+  if (holdsUnlandedWork(db, card))
+    throw new Error(
+      `${name} holds finished work that has not landed, so whether to keep, land, or discard it is the captain's call: escalate it with hold(card, to="captain", question, options), or clear it with his exact words`,
+    );
+}
+
+function holdsUnlandedWork(db: DatabaseSync, card: Card): boolean {
+  if (card.kind !== "ship" || mergeSubject(db, card) === undefined) return false;
+  const { workerDone, merged, emptyBranch } = finishFrom(cardEntries(db, card.id));
+  return workerDone && !merged && !emptyBranch;
+}
+
 export function release(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.release.args, raw);
   const { card, own } = reachable(db, session, args.card);
@@ -301,10 +320,7 @@ export function release(db: DatabaseSync, session: Session, raw: unknown): Done 
     requireCaptainWords(db, args.words, source);
     return answerHold(db, session.lane, card, open, { ...args, words: args.words, source });
   }
-  if (open.holder === "captain" || open.merge)
-    throw new Error(`${name} waits on the captain: clear it with his exact words`);
-  if (!own && open.holder !== "main")
-    throw new Error(`${name} waits on ${card.lane}'s mate, who resolves it or escalates it`);
+  requireNoteMayClear(db, card, open, own);
   const fields = { hold: open.entry, occurrence: open.occurrence };
   const body = args.note ?? "";
   const draft: Draft = {
