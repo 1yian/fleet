@@ -62,8 +62,8 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
     summarized(db, batch)
   )
     return [];
-  const first = rows[0];
-  const card = first === undefined ? undefined : cardOf(db, first.session);
+  const anchor = rows.find((row) => row.state === "completed");
+  const card = anchor === undefined ? undefined : cardOf(db, anchor.session);
   if (card === undefined) return [];
   const hosts = [...new Set(rows.map((row) => row.host))].sort();
   const counts = (found: readonly Maintenance[]): string =>
