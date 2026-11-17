@@ -21,6 +21,7 @@ export interface Hold {
   readonly question: string;
   readonly options: readonly string[];
   readonly merge: boolean;
+  readonly unlanded: boolean;
   readonly originalMerge: boolean;
   readonly approves: readonly string[];
   readonly keys: readonly string[];
@@ -79,6 +80,7 @@ function holdFrom(tally: Tally, entry: Entry): void {
     question: entry.body,
     options,
     merge,
+    unlanded: entry.fields["unlanded"] === true,
     originalMerge,
     approves,
     until: typeof until === "number" ? until : null,
@@ -103,6 +105,7 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       question: entry.body,
       options: [],
       merge: false,
+      unlanded: false,
       originalMerge: false,
       approves: [],
       keys: [key],

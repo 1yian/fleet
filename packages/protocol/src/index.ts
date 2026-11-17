@@ -259,6 +259,12 @@ export const OPS = {
         }),
       ),
       approves: ApprovesArg,
+      unlanded: Type.Optional(
+        Type.Boolean({
+          description:
+            "This hold asks whether to keep, land, or discard finished work that has not landed, including preserved work with no PR. Main must escalate it or clear it with the captain's exact words, never a note",
+        }),
+      ),
       to: Type.Optional(
         Type.Enum(["main", "captain"], {
           description:

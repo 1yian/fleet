@@ -25,62 +25,18 @@ afterEach(async () => {
 const toolResults = (turns: Turn[]): string[] =>
   turns.filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
 
-async function holdForMain(
-  cleo: Session,
-  title: string,
-  question: string,
-  finish: boolean,
-): Promise<Card> {
+async function holdForMain(cleo: Session, title: string): Promise<{ card: Card; worker: Session }> {
   const card = await newCard(cleo, title);
   const worker = await fleet.cardd.connect(await begin(cleo, card));
-  await cleo.call("hold", { card: card.id, question, options: OPTIONS });
-  if (finish) await worker.call("report", { status: "done", text: "PR ready", pr: PR });
-  return card;
+  await cleo.call("hold", {
+    card: card.id,
+    question: "Which host should run the checks?",
+    options: OPTIONS,
+  });
+  return { card, worker };
 }
 
-test("main cannot clear a second mate's hold on finished unlanded work with its own note: it escalates, and the captain's words clear it, while an operational hold still clears with a note", async () => {
-  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
-  const unlanded = await holdForMain(
-    cleo,
-    "Restore the stock worker browser",
-    "PR 255 will not merge. Keep or discard the preserved work?",
-    true,
-  );
-  const operational = await holdForMain(
-    cleo,
-    "Ads exports",
-    "Which API version should the export use?",
-    false,
-  );
-  assert.equal(await status(cleo, unlanded), "with-mate");
-  assert.equal(await status(cleo, operational), "with-mate");
-  assert.equal(await fleet.cardd.act(unlanded.id, { kind: "comment", text: CAPTAIN_WORDS }), 200);
-
-  h.onModel(() => ({
-    tool: "hold",
-    args: { card: unlanded.id, clear: true, note: "Preserve it for now." },
-  }));
-  h.onModel(() => ({
-    tool: "hold",
-    args: {
-      card: unlanded.id,
-      to: "captain",
-      question: "Keep or discard the preserved work of PR 255? I recommend discard.",
-      options: OPTIONS,
-    },
-  }));
-  h.onModel(() => ({
-    tool: "hold",
-    args: { card: unlanded.id, clear: true, note: "Preserve it anyway." },
-  }));
-  h.onModel(() => ({
-    tool: "hold",
-    args: { card: unlanded.id, clear: true, words: CAPTAIN_WORDS },
-  }));
-  h.onModel(() => ({
-    tool: "hold",
-    args: { card: operational.id, clear: true, note: "Use v2, the spec says so." },
-  }));
+async function runMain(calls: number): Promise<string[]> {
   h.onModel(() => ({ text: "handled" }));
   h.startPi(
     "main",
@@ -88,35 +44,92 @@ test("main cannot clear a second mate's hold on finished unlanded work with its 
     [EXTENSION],
   );
   await h.waitFor((e) => e["type"] === "fleet_connected", "main to connect");
+  return toolResults(await h.waitForCall(calls + 1));
+}
 
-  const results = toolResults(await h.waitForCall(6));
-  assert.equal(
-    results[0],
-    `c-${String(unlanded.id)} holds finished work that has not landed, so whether to keep, land, or discard it is the captain's call: escalate it with hold(card, to="captain", question, options), or clear it with his exact words`,
-  );
-  assert.equal(results[1], `Held. c-${String(unlanded.id)} is now needs-you.`);
+const refusal = (card: Card): string =>
+  `c-${String(card.id)} holds finished work that has not landed, so whether to keep, land, or discard it is the captain's call: escalate it with hold(card, to="captain", question, options), or clear it with his exact words`;
+
+test("rewriting a finished PR's hold reserves disposition for captain words", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const { card, worker } = await holdForMain(cleo, "Restore the stock worker browser");
+  await worker.call("report", { status: "done", text: "PR ready", pr: PR });
+  await cleo.call("hold", {
+    card: card.id,
+    question: "Keep or discard the preserved work?",
+    options: OPTIONS,
+  });
+  assert.equal(await status(cleo, card), "with-mate");
+  assert.equal(await fleet.cardd.act(card.id, { kind: "comment", text: CAPTAIN_WORDS }), 200);
+
+  h.onModel(() => ({ tool: "hold", args: { card: card.id, clear: true, note: "Preserve it." } }));
+  h.onModel(() => ({
+    tool: "hold",
+    args: { card: card.id, to: "captain", question: "Keep or discard it?", options: OPTIONS },
+  }));
+  h.onModel(() => ({ tool: "hold", args: { card: card.id, clear: true, note: "Keep it." } }));
+  h.onModel(() => ({
+    tool: "hold",
+    args: { card: card.id, clear: true, words: CAPTAIN_WORDS },
+  }));
+  const results = await runMain(4);
+  assert.equal(results[0], refusal(card));
+  assert.equal(results[1], `Held. c-${String(card.id)} is now needs-you.`);
   assert.equal(
     results[2],
-    `c-${String(unlanded.id)} waits on the captain: clear it with his exact words`,
+    `c-${String(card.id)} waits on the captain: clear it with his exact words`,
   );
-  assert.match(results[3] ?? "", new RegExp(`^Cleared\\. c-${String(unlanded.id)} is now `));
-  assert.match(results[4] ?? "", new RegExp(`^Cleared\\. c-${String(operational.id)} is now `));
+  assert.match(results[3] ?? "", new RegExp(`^Cleared\\. c-${String(card.id)} is now `));
 
-  const kinds = async (card: Card): Promise<string[]> =>
-    (await fleet.cardd.thread(card.id)).entries.map((entry) => entry.kind);
-  const unlandedKinds = await kinds(unlanded);
-  assert.ok(!unlandedKinds.includes("release"));
+  const { entries } = await fleet.cardd.thread(card.id);
+  assert.ok(!entries.some((entry) => entry.kind === "release"));
   assert.deepEqual(
-    unlandedKinds.filter((kind) => kind === "hold" || kind === "answer").slice(0, 3),
-    ["hold", "hold", "answer"],
+    entries
+      .filter((entry) => entry.kind === "hold")
+      .map((entry) => entry.fields["unlanded"] === true),
+    [false, true, true, false],
   );
-  const answer = (await fleet.cardd.thread(unlanded.id)).entries.find(
-    (entry) => entry.kind === "answer",
-  );
+  assert.equal(entries.at(-1)?.fields["merge"], true);
+  const answer = entries.find((entry) => entry.kind === "answer");
   assert.equal(answer?.body, CAPTAIN_WORDS);
   assert.equal(answer.fields["source"], "record");
-  const released = (await fleet.cardd.thread(operational.id)).entries.find(
-    (entry) => entry.kind === "release",
+});
+
+test("explicit PR-less disposition marks survive identical rewrites and refuse main's note", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const { card, worker } = await holdForMain(cleo, "Preserved branch without a PR");
+  await worker.call("report", { status: "done", text: "Work preserved, PR creation failed" });
+  const question = "Keep or discard the preserved branch?";
+  await cleo.call("hold", { card: card.id, question, options: OPTIONS });
+  await cleo.call("hold", { card: card.id, question, options: OPTIONS, unlanded: true });
+  await cleo.call("hold", { card: card.id, question, options: OPTIONS, unlanded: false });
+  h.onModel(() => ({ tool: "hold", args: { card: card.id, clear: true, note: "Discard it." } }));
+  const results = await runMain(1);
+  assert.equal(results[0], refusal(card));
+  const { entries } = await fleet.cardd.thread(card.id);
+  assert.ok(!entries.some((entry) => entry.kind === "release"));
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.kind === "hold")
+      .map((entry) => entry.fields["unlanded"] === true),
+    [false, false, true],
   );
-  assert.equal(released?.body, "Use v2, the spec says so.");
+});
+
+test("operational holds remain main's to note-clear before and after worker completion", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const finished = await holdForMain(cleo, "Post-build checks");
+  await finished.worker.call("report", { status: "done", text: "PR ready", pr: PR });
+  const unfinished = await holdForMain(cleo, "Ads exports");
+  for (const { card } of [finished, unfinished]) {
+    h.onModel(() => ({ tool: "hold", args: { card: card.id, clear: true, note: "Use P620." } }));
+  }
+  const results = await runMain(2);
+  for (const [index, { card }] of [finished, unfinished].entries()) {
+    assert.match(results[index] ?? "", new RegExp(`^Cleared\\. c-${String(card.id)} is now `));
+    const { entries } = await fleet.cardd.thread(card.id);
+    const released = entries.find((entry) => entry.kind === "release");
+    assert.equal(released?.body, "Use P620.");
+    assert.equal(released.author, "mate:main");
+  }
 });
