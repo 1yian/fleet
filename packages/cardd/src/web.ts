@@ -6,9 +6,11 @@ import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { reviewDecision, reviewPreview } from "./review-completion.ts";
-import { reviewPage } from "./review-page.ts";
+import { reviewFeedback, reviewPage, sendAndEnd } from "./review-page.ts";
+import { lavishRequest, launchReview, type ReviewSession } from "./review-session.ts";
+import { mergeQuestion, writeMergeQuestion } from "./holds.ts";
 import { factsFrom, holdDeferred } from "./status.ts";
-import { cardEntries, getCard, transaction } from "./store.ts";
+import { addEntry, cardEntries, getCard, parentOf, transaction, workerOf } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
 
@@ -21,12 +23,14 @@ const TYPES: Readonly<Record<string, string>> = {
   ".json": "application/json",
 };
 
-function readBody(request: IncomingMessage): Promise<string> {
+function readBody(request: IncomingMessage, limit = Infinity): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
     request.setEncoding("utf8");
     request.on("data", (chunk: string) => {
+      if (body.length > limit) return;
       body += chunk;
+      if (body.length > limit) reject(new Error("request body is too large"));
     });
     request.on("end", () => {
       resolve(body);
@@ -65,6 +69,11 @@ export class Web {
   private readonly hosts = new Set<string>();
   private readonly access: Access | undefined;
   private readonly reviewOrigins: ReadonlyMap<string, string>;
+  private readonly artifactOrigin: URL | undefined;
+  private readonly reviews = new Map<
+    number,
+    { round: number; launch: Promise<ReviewSession>; owned?: ReviewSession }
+  >();
 
   allow(authorities: readonly string[]): void {
     for (const authority of authorities) {
@@ -78,6 +87,7 @@ export class Web {
   }
 
   async channel(request: IncomingMessage): Promise<Channel | "refused"> {
+    if (this.isArtifactHost(request)) return "refused";
     const access = this.access;
     if (access === undefined) return "tailnet";
     const header = request.headers.host;
@@ -158,6 +168,83 @@ export class Web {
     this.files = files === undefined ? undefined : resolve(files);
     this.access = access;
     this.reviewOrigins = reviewOrigins;
+    const raw = process.env["CARDD_REVIEW_ARTIFACT_ORIGIN"];
+    if (raw !== undefined) {
+      const url = new URL(raw);
+      if (
+        access === undefined ||
+        raw !== url.origin ||
+        url.protocol !== "https:" ||
+        url.hostname.replace(/\.$/, "") === access.host ||
+        [...reviewOrigins.values()].some(
+          (origin) =>
+            new URL(origin).hostname.replace(/\.$/, "") === url.hostname.replace(/\.$/, ""),
+        )
+      )
+        throw new Error(
+          "review artifacts need their own HTTPS hostname, separate from board and source hosts",
+        );
+      this.artifactOrigin = url;
+    }
+  }
+
+  private isArtifactHost(request: IncomingMessage): boolean {
+    return (
+      this.artifactOrigin !== undefined &&
+      request.headers.host?.toLowerCase() === this.artifactOrigin.host
+    );
+  }
+
+  async answerArtifact(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    if (!this.isArtifactHost(request)) return false;
+    const url = URL.parse(request.url ?? "/", "http://artifact");
+    if (url === null) {
+      response.writeHead(400).end();
+      return true;
+    }
+    const sdk = url.pathname === "/sdk.js";
+    const key = sdk ? /^[a-f0-9]{16}$/.exec(url.searchParams.get("key") ?? "")?.[0] : undefined;
+    const token = /^\/review-artifact\/([a-f0-9-]{36})$/.exec(url.pathname)?.[1];
+    const owned = [...this.reviews.values()].find(
+      ({ owned }) =>
+        owned !== undefined &&
+        (sdk
+          ? key !== undefined && owned.url.pathname === `/session/${key}`
+          : owned.token === token),
+    )?.owned;
+    if (request.method !== "GET" || owned === undefined || owned.ended()) {
+      response.writeHead(404).end();
+      return true;
+    }
+    try {
+      const artifact = new URL(
+        sdk ? "/sdk.js" : owned.url.pathname.replace("/session/", "/artifact/") + "/index.html",
+        owned.url,
+      );
+      for (const key of ["artifact_revision", "artifact_load_token"]) {
+        const value = url.searchParams.get(key);
+        if (value !== null) artifact.searchParams.set(key, value);
+      }
+      if (key !== undefined) artifact.searchParams.set("key", key);
+      const upstream = await lavishRequest(artifact);
+      if (!upstream.ok) {
+        await upstream.body?.cancel();
+        response.writeHead(404).end();
+      } else {
+        response
+          .writeHead(200, {
+            "content-type": sdk ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8",
+            "cache-control": "no-store",
+            "content-security-policy": "sandbox allow-scripts",
+            "referrer-policy": "no-referrer",
+          })
+          .end(Buffer.from(await upstream.arrayBuffer()));
+      }
+    } catch {
+      if (response.headersSent) response.destroy();
+      else response.writeHead(502).end();
+    }
+    return true;
   }
 
   watch(socket: WebSocket): void {
@@ -223,33 +310,108 @@ export class Web {
     response: ServerResponse,
     round: { card: number; round: number },
   ): Promise<void> {
-    if (request.method !== "GET")
-      throw new StaleCard(
-        "Stock Lavish cannot bind completion to this review round; answer on the board",
-      );
-    const entries = cardEntries(this.db, round.card);
-    const hold = factsFrom(entries).hold;
-    const now = Date.now();
-    if (hold?.entry !== round.round || holdDeferred(hold, now))
-      throw new StaleCard("review hold is not due or no longer current");
-    const decision = reviewDecision(entries, hold);
-    if (!decision.bindingCurrent) throw new StaleCard("review hold is no longer current");
-    const session = reviewPreview(hold, decision, this.reviewOrigins, now);
-    if (session === undefined) {
-      reply(response, 404, {
-        ok: false,
-        error: "review preview is unavailable; answer on the board",
-      });
+    const { card, round: entry } = round;
+    const refuse = (): never => {
+      if (request.method === "POST")
+        console.warn(`ignored Lavish completion for card ${card}, round ${entry}`);
+      throw new StaleCard("review round or session is no longer current; answer on the board");
+    };
+    const current = () => {
+      const entries = cardEntries(this.db, card);
+      const hold = factsFrom(entries).hold;
+      if (hold?.entry !== entry || holdDeferred(hold, Date.now()) || !reviewDecision(entries, hold))
+        return undefined;
+      return hold;
+    };
+    const hold = current() ?? refuse();
+    const source = reviewPreview(hold, this.reviewOrigins, Date.now());
+    const origin = this.artifactOrigin;
+    if (source === undefined || origin === undefined) {
+      if (request.method === "POST") refuse();
+      reply(response, 404, { ok: false, error: "review is unavailable; answer on the board" });
       return;
     }
-    await reviewPage(response, session);
+    let review = this.reviews.get(card);
+    if (request.method === "GET") {
+      if (review?.round !== entry) {
+        review?.owned?.stop();
+        review = { round: entry, launch: launchReview(source) };
+        this.reviews.set(card, review);
+      }
+      const owned = await review.launch;
+      if (current() === undefined || this.reviews.get(card) !== review || owned.ended()) {
+        owned.stop();
+        refuse();
+      }
+      review.owned = owned;
+      const page = await reviewPage(owned, origin);
+      if (current() === undefined || this.reviews.get(card) !== review) refuse();
+      response.writeHead(200, page.headers).end(page.html);
+      return;
+    }
+    if (
+      request.method !== "POST" ||
+      request.headers["content-type"] !== "application/x-www-form-urlencoded"
+    )
+      refuse();
+    const form = new URLSearchParams(await readBody(request, 125000));
+    const owned = review?.round === entry ? review.owned : undefined;
+    if (
+      owned === undefined ||
+      owned.ended() ||
+      form.get("session") !== owned.token ||
+      current() === undefined ||
+      this.reviews.get(card) !== review
+    )
+      return refuse();
+    const feedback = reviewFeedback(form);
+    if (!(await sendAndEnd(owned.url, feedback))) return refuse();
+    const notify = transaction(this.db, () => {
+      const open = current();
+      if (open === undefined || this.reviews.get(card) !== review) return refuse();
+      const work = getCard(this.db, card);
+      const recipients = [work.lane, parentOf(this.db, work.lane), workerOf(this.db, card)].filter(
+        (id): id is string => typeof id === "string",
+      );
+      addEntry(
+        this.db,
+        {
+          card,
+          author: "captain",
+          kind: "review-feedback",
+          body: [...feedback.annotations.map(({ prompt }) => prompt), feedback.words]
+            .filter((words) => words.trim() !== "")
+            .join("\n\n"),
+          fields: {
+            source: "lavish",
+            round: entry,
+            session: owned.url.pathname,
+            keys: open.keys,
+            annotations: feedback.annotations,
+          },
+        },
+        recipients,
+      );
+      const merge = mergeQuestion(this.db, work, []);
+      if (merge !== undefined) recipients.push(...writeMergeQuestion(this.db, work, merge));
+      return new Set(recipients);
+    });
+    owned.stop();
+    this.reviews.delete(card);
+    for (const session of notify) this.flush(session);
+    this.changed(true);
+    response.writeHead(303, { location: "/" }).end();
   }
 
   private async route(request: IncomingMessage, channel: Channel): Promise<unknown> {
     const path = new URL(request.url ?? "/", "http://board").pathname;
     const card = /^\/api\/card\/(\d+)$/.exec(path)?.[1];
     if (request.method === "GET" && path === "/api/board")
-      return boardView(this.db, this.timing, channel === "public" ? this.reviewOrigins : undefined);
+      return boardView(
+        this.db,
+        this.timing,
+        channel === "public" && this.artifactOrigin !== undefined ? this.reviewOrigins : undefined,
+      );
     if (request.method === "GET" && path === "/api/version") return version(this.db);
     if (request.method === "GET" && card !== undefined) return thread(this.db, Number(card));
     if (request.method === "POST" && path === "/api/action") return this.act(request);

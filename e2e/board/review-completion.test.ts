@@ -28,9 +28,15 @@ async function fixture(t: TestContext) {
     await lavish.stop();
   });
   const origin = `http://127.0.0.1:${lavish.env["LAVISH_AXI_PORT"] ?? ""}`;
+  const upstream = await Edge.start(new URL(origin));
+  t.after(() => upstream.stop());
   const reportedOrigin = "http://p620.example.test:7331";
   const cardd = await Cardd.start(
-    { ...site.env, CARDD_REVIEW_ORIGINS: `${reportedOrigin}=${origin}` },
+    {
+      ...site.env,
+      CARDD_REVIEW_ORIGINS: `${reportedOrigin}=https://127.0.0.1:${upstream.port}`,
+      CARDD_REVIEW_ARTIFACT_ORIGIN: "https://review.example.test",
+    },
     [...site.flags, "--board", BOARD],
   );
   t.after(() => cardd.stop());
@@ -42,7 +48,9 @@ async function fixture(t: TestContext) {
   t.after(() => edge.stop());
   edge.token = site.token();
   const browser = await chromium.launch({
-    args: [`--host-resolver-rules=MAP ${PUBLIC_HOST} 127.0.0.1:${String(edge.port)}`],
+    args: [
+      `--host-resolver-rules=MAP ${PUBLIC_HOST} 127.0.0.1:${String(edge.port)}, MAP review.example.test 127.0.0.1:${String(edge.port)}`,
+    ],
   });
   t.after(() => browser.close());
   const page = await (await browser.newContext({ ignoreHTTPSErrors: true })).newPage();
@@ -122,20 +130,24 @@ async function submitStock(session: string, endSession: boolean): Promise<void> 
   assert.equal(response.status, 200, await response.text());
 }
 
-function submitFleet(page: Page, path: string, words: string): Promise<number> {
+function submitFleet(page: Page, path: string, words: string, session = ""): Promise<number> {
   return page.evaluate(
-    async ({ path, words }) => {
-      const response = await fetch(path, { method: "POST", body: new URLSearchParams({ words }) });
+    async ({ path, words, session }) => {
+      const response = await fetch(path, {
+        method: "POST",
+        body: new URLSearchParams({ words, session }),
+      });
       return response.status;
     },
-    { path, words },
+    { path, words, session },
   );
 }
 
-test("stock Lavish preview preserves drafts without completing a reopenable review", async (t) => {
+test("Fleet completes owned stock Lavish rounds without trusting worker sessions", async (t) => {
   const { mate, page, edge, site, stock, hold, base, cardd } = await fixture(t);
   const target = await hold("Plan");
   const direct = await hold("Direct");
+  const empty = await hold("No notes");
   const deferred = await hold("Later");
   const unmapped = await hold("Unmapped", "http://unconfigured.example.test:7331");
   const reviewUrl = new URL(target.path(target.round), HOME).href;
@@ -181,23 +193,23 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
   const question = page.getByRole("article").filter({ hasText: "Finish Plan" });
   const unmappedQuestion = page.getByRole("article").filter({ hasText: "Finish Unmapped" });
   await unmappedQuestion.getByRole("button", { name: "Your words" }).waitFor();
-  assert.equal(await unmappedQuestion.getByRole("link", { name: "Preview review" }).count(), 0);
+  assert.equal(await unmappedQuestion.getByRole("link", { name: "Open review" }).count(), 0);
   assert.equal((await page.goto(new URL(unmapped.path(unmapped.round), HOME).href))?.status(), 404);
   assert.equal((await page.goto(HOME))?.status(), 200);
   const frameRequests: string[] = [];
   page.on("response", (response) => {
-    if (response.url().includes("/artifact/"))
+    if (response.url().includes("/review-artifact/"))
       frameRequests.push(`HTTP ${String(response.status())}`);
   });
   page.on("requestfailed", (request) => {
-    if (request.url().includes("/artifact/"))
+    if (request.url().includes("/review-artifact/"))
       frameRequests.push(request.failure()?.errorText ?? "request failed");
   });
   page.on("console", (message) => {
     if (message.type() === "error")
       frameRequests.push(message.text().replace(/\?[^'" ]+/g, "?[redacted]"));
   });
-  await question.getByRole("link", { name: "Preview review" }).click();
+  await question.getByRole("link", { name: "Open review" }).click();
   assert.equal(page.url(), reviewUrl);
   const artifact = page.frameLocator('iframe[title="Review artifact"]');
   const heading = artifact.getByRole("heading", { name: "Plan" });
@@ -219,14 +231,12 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
   for (const words of [long, ANNOTATION]) {
     await annotation.fill(words);
     await artifact.getByRole("button", { name: "Queue", exact: true }).click();
-    await page
-      .getByRole("listitem")
-      .filter({ hasText: `Plan: ${words}` })
-      .waitFor();
+    await page.getByRole("listitem").filter({ hasText: words }).waitFor();
     if (words === long) await heading.click();
   }
   assert.equal(await page.getByRole("listitem").count(), 2);
-  assert.equal(await page.getByRole("button", { name: "Send & End" }).count(), 0);
+  const send = page.getByRole("button", { name: "Send & End" });
+  assert.equal(await send.isDisabled(), true);
   await heading.evaluate(() => {
     const sdk = Reflect.get(window, "lavish") as {
       endSession: () => void;
@@ -235,7 +245,7 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
     sdk.endSession();
     sdk.sendQueuedPrompts();
   });
-  await page.getByText("This preview cannot send or end the review.").waitFor();
+  await page.getByText("Confirm the queue with Send & End below.").waitFor();
   assert.equal(await status(mate, target.card), "needs-you");
   assert.deepEqual(await target.answers(), []);
   await submitStock(target.session, true);
@@ -245,19 +255,30 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
   );
   const board = await page.context().newPage();
   assert.equal((await board.goto(HOME))?.status(), 200);
-  for (const words of [WORDS, ""]) {
-    assert.equal(await submitFleet(board, target.path(target.round), words), 409);
-    assert.equal((await target.view()).hold?.entry, target.round);
-    assert.deepEqual(await target.answers(), []);
-  }
-  await submitStock(target.session, false);
-  await target.update();
-  await assert.rejects(target.bind(), /a new review needs a fresh Lavish session link/);
+  const generation = await page.locator('input[name="session"]').inputValue();
+  assert.equal(await submitFleet(board, target.path(target.round), WORDS), 409);
   assert.equal((await target.view()).hold?.entry, target.round);
+  await page.getByRole("button", { name: "Discard rejected annotation" }).click();
+  await page.getByRole("textbox", { name: "Feedback" }).fill(WORDS);
+  await send.click();
+  await page.waitForURL(HOME);
+  const delivered = await target.worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback",
+    "the delivered review",
+  );
+  const feedback = `${ANNOTATION}\n\n${WORDS}`;
+  assert.equal(delivered.body, feedback);
+  assert.equal(delivered.fields["round"], target.round);
+  assert.notEqual(delivered.fields["session"], new URL(target.session).pathname);
+  assert.equal((await target.view()).hold, null);
+  await submitStock(target.session, false);
+  const replacement = await target.replace();
+  await target.update();
+  assert.equal((await target.view()).hold?.entry, replacement);
   assert.equal(
     await cardd.act(target.card.id, {
       kind: "answer",
-      hold: target.round,
+      hold: replacement,
       choice: "Old answer",
       written: true,
     }),
@@ -266,7 +287,7 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
   assert.equal(
     await cardd.act(target.card.id, {
       kind: "hold",
-      hold: target.round,
+      hold: replacement,
       said: "in 3 hours",
       zone: "UTC",
     }),
@@ -274,19 +295,16 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
   );
   assert.equal((await page.goto(reviewUrl))?.status(), 409);
   assert.equal((await page.goto(HOME))?.status(), 200);
-  await question.getByRole("button", { name: "Your words" }).waitFor();
-  assert.equal(await question.getByRole("link", { name: "Preview review" }).count(), 0);
-  await question.getByRole("button", { name: "Your words" }).click();
-  await question.getByRole("textbox", { name: "Your words" }).fill(WORDS);
-  await question.getByRole("textbox", { name: "Your words" }).press("Enter");
-  await question.getByText("Finish Plan").waitFor({ state: "detached" });
-  assert.deepEqual(
-    (await target.answers()).map(({ body }) => body),
-    [WORDS],
-  );
-  const replacement = await target.replace();
-  assert.notEqual(replacement, target.round);
-  assert.equal(await submitFleet(page, target.path(target.round), "Duplicate"), 409);
+  await page
+    .getByRole("article")
+    .filter({ hasText: "Finish Direct" })
+    .getByRole("button", { name: "Your words" })
+    .waitFor();
+  assert.equal(await question.getByRole("button", { name: "Your words" }).count(), 0);
+  assert.equal(await question.getByRole("button", { name: "Later" }).count(), 0);
+  assert.equal(await submitFleet(page, target.path(target.round), "Duplicate", generation), 409);
+  const rebound = await target.bind();
+  assert.notEqual(rebound, replacement);
   assert.equal(
     await cardd.act(target.card.id, {
       kind: "answer",
@@ -296,15 +314,15 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
     }),
     409,
   );
-  assert.equal((await target.view()).hold?.entry, replacement);
+  assert.equal((await target.view()).hold?.entry, rebound);
   assert.deepEqual(
     (await target.answers()).map(({ body }) => body),
-    [WORDS],
+    [feedback],
   );
   assert.equal(
     await cardd.act(target.card.id, {
       kind: "answer",
-      hold: replacement,
+      hold: rebound,
       choice: "Replacement reviewed",
       written: true,
     }),
@@ -324,6 +342,14 @@ test("stock Lavish preview preserves drafts without completing a reopenable revi
     left: [],
   });
   assert.equal(await status(mate, target.card), "done");
+  assert.equal((await page.goto(new URL(empty.path(empty.round), HOME).href))?.status(), 200);
+  await page.getByRole("button", { name: "Send & End" }).click();
+  await page.waitForURL(HOME);
+  assert.equal((await empty.view()).hold, null);
+  assert.deepEqual(
+    (await empty.answers()).map(({ body }) => body),
+    [""],
+  );
   const fallback = page.getByRole("article").filter({ hasText: "Finish Direct" });
   await fallback.getByRole("button", { name: "Your words" }).click();
   await fallback.getByRole("textbox", { name: "Your words" }).fill("Approved on the board");

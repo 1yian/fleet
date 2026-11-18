@@ -70,11 +70,6 @@ export function reviewRequests(
       throw new Error(`decision key ${key} does not name the review session as a standalone link`);
     return request.id;
   });
-  if (
-    !(open.review === session && matchesRequests(open, requests)) &&
-    entries.some((entry) => entry.kind === "hold" && entry.fields["review"] === session)
-  )
-    throw new Error("a new review needs a fresh Lavish session link");
   return requests;
 }
 
@@ -89,23 +84,22 @@ function matchesRequests(hold: Hold, requests: readonly number[]): boolean {
 }
 
 export function reviewDecision(entries: readonly Entry[], hold: Hold) {
-  if (hold.review === undefined) return { seen: hold.entry, bindingCurrent: false };
-  const requests = hold.keys.map((key) => latestRequest(entries, key)?.id ?? 0);
-  return {
-    seen: requests.reduce((latest, id) => Math.max(latest, id), hold.entry),
-    bindingCurrent: matchesRequests(hold, requests),
-  };
+  return (
+    hold.review !== undefined &&
+    matchesRequests(
+      hold,
+      hold.keys.map((key) => latestRequest(entries, key)?.id ?? 0),
+    )
+  );
 }
 
 export function reviewPreview(
   hold: Hold,
-  decision: ReturnType<typeof reviewDecision>,
   origins: ReadonlyMap<string, string>,
   now: number,
 ): URL | undefined {
   if (
     hold.review === undefined ||
-    !decision.bindingCurrent ||
     hold.holder !== "captain" ||
     hold.merge ||
     hold.unlanded ||

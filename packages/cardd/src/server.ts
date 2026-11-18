@@ -244,6 +244,7 @@ class Hub {
   }
 
   async answerHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (await this.web.answerArtifact(request, response)) return;
     const channel = await this.web.channel(request);
     if (channel === "refused") this.web.refuse(response);
     else if (channel === "public") await this.web.answer(request, response, channel);
