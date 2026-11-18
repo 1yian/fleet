@@ -112,14 +112,22 @@ function selectedPaths(tracked) {
     .filter((path) => sourceExtensions.includes(extname(path)))
     .filter((path) => !ignoredByConfig(path));
   if (!paths.length) throw new Error("No tracked source files selected.");
-  const skipped = paths.filter((path) => /[._-]min\./.test(basename(path)));
-  if (skipped.length)
-    throw new Error(`Oxlint cannot lint minified filenames: ${skipped.join(", ")}`);
   return paths;
 }
 
+function minifiedNameFailures(paths) {
+  return paths
+    .filter((path) => /[._-]min\./.test(basename(path)))
+    .map(
+      (path) =>
+        `${path}: error fleet/minified-name: Oxlint cannot lint files with a minified filename.`,
+    );
+}
+
 function baselineFailures(tracked) {
-  const found = tracked.filter((path) => basename(path) === suppressionBaseline);
+  const found = tracked.filter(
+    (path) => basename(path) === suppressionBaseline && !ignoredByConfig(path),
+  );
   if (existsSync(suppressionBaseline) && !found.includes(suppressionBaseline))
     found.push(suppressionBaseline);
   return found.map(
@@ -133,9 +141,9 @@ function lint() {
     throw new Error("npm run lint always checks the complete project.");
   const tracked = trackedPaths();
   const paths = selectedPaths(tracked);
-  const baselines = baselineFailures(tracked);
-  if (baselines.length) {
-    for (const failure of baselines) console.error(failure);
+  const refusals = [...baselineFailures(tracked), ...minifiedNameFailures(paths)];
+  if (refusals.length) {
+    for (const failure of refusals) console.error(failure);
     return 1;
   }
   const forbiddenDirectives = forbiddenDirectivePattern();
