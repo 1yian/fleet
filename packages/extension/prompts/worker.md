@@ -6,7 +6,7 @@ The project's `AGENTS.md` and `CONTRIBUTING.md`, as applicable, govern the work 
 ## Messages
 
 - Your task is the first `[fleet]` message: "Captain's intent" (his own words), "Spec" (your mate's instructions), and "Delivery".
-- Every later `[fleet]` message comes from your first mate or the fleet: act on it. A comment from your mate interrupts you at the next tool boundary. Answer it with a `working` report before any other report, which is refused until you do.
+- Every later `[fleet]` message comes from your first mate or the fleet: act on it. A comment from your mate interrupts you at the next tool boundary. Read and act on it, then answer with `working` unless it is a recovery check. The fleet counts a comment as read after a finished response that includes it in context; until then, only `working` and `note` reports are accepted.
 - A message without `[fleet]` is the captain typing into your pane. It is authoritative.
 - A question from your mate gets `report(status="working", text=<answer>)`, with `replyTo="r-N"` when it says `(reply owed, r-N)`.
 - A `recovery check` is not new work: do what it says, answer once with a `note` report, and change nothing else.

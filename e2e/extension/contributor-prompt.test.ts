@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,7 @@ async function workerCall(h: Harness): Promise<Turn[]> {
 
 const STALE_OVERVIEW = "# fleet\n\nStale overview of the fleet repository.\n";
 const ANCESTOR_NOTES = "# Firstmate\n\nAncestor notes that belong to unrelated work.\n";
+const WORKER_GUIDE_MARKER = "Use the worker checkout's fixture checklist.";
 
 interface Variant {
   readonly stale?: boolean;
@@ -75,8 +76,10 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     scratch.dispose();
   });
   if (variant.stale === true) writeFileSync(join(repo.root, "AGENTS.md"), STALE_OVERVIEW);
-  if (variant.missingGuide === true) rmSync(join(repo.root, "CONTRIBUTING.md"));
-  if (variant.stale === true || variant.missingGuide === true) commitFixture(repo);
+  const guide = join(repo.root, "CONTRIBUTING.md");
+  if (variant.missingGuide === true) rmSync(guide);
+  else appendFileSync(guide, `\n${WORKER_GUIDE_MARKER}\n`);
+  commitFixture(repo);
   writeFileSync(join(scratch.parent, "AGENTS.md"), ANCESTOR_NOTES);
   if (variant.ancestor === true) writeFileSync(join(repo.parent, "AGENTS.md"), ANCESTOR_NOTES);
   const token = cardd.addLane("main", undefined, scratch.root);
@@ -144,13 +147,23 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   assert.match(workerSystem, /^# Worker role contract$/m);
   assert.doesNotMatch(workerSystem, /This is the job description of main and every second mate/);
   assert.doesNotMatch(workerSystem, /Stale overview of the fleet repository/);
+  const workerContext =
+    /<project_context>([\s\S]*?)<\/project_context>/.exec(workerSystem)?.[1] ?? "";
+  const tree = realpathSync(`${repo.root}.worktrees/c-1-a1`);
+  const guideOpen = `<project_instructions path="${join(tree, "CONTRIBUTING.md")}">`;
+  const guideBlocks = workerContext.split(guideOpen);
+  const expectedGuides = variant.missingGuide === true ? 0 : 1;
+  assert.equal(guideBlocks.length - 1, expectedGuides);
+  assert.equal(workerSystem.split(WORKER_GUIDE_MARKER).length - 1, expectedGuides);
   if (variant.missingGuide === true) {
     assert.doesNotMatch(workerSystem, /# Contributing to fleet|npm run check/);
   } else {
-    assert.match(workerSystem, /npm run check/);
-    assert.match(workerSystem, /fleet\/no-comments/);
-    assert.match(workerSystem, /Migrations.*append-only/);
-    assert.match(workerSystem, /Do not test by reading source files for strings/);
+    const workerGuide = guideBlocks[1]?.split("</project_instructions>")[0] ?? "";
+    assert.ok(workerGuide.includes(WORKER_GUIDE_MARKER));
+    assert.match(workerGuide, /npm run check/);
+    assert.match(workerGuide, /fleet\/no-comments/);
+    assert.match(workerGuide, /Migrations.*append-only/);
+    assert.match(workerGuide, /Do not test by reading source files for strings/);
   }
   assert.doesNotMatch(workerSystem, /Keep the fixture fleet running|Prefer plain reports/);
   if (variant.ancestor === true && variant.noContextFiles !== true)
