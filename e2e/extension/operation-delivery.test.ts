@@ -177,7 +177,10 @@ test("ops refuses a missing completion report and cannot close Done", async () =
   dispatchOperation();
   h.onModel(async () => {
     await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-    return { tool: "report", args: { status: "done", text: "Operation complete", evidence: report } };
+    return {
+      tool: "report",
+      args: { status: "done", text: "Operation complete", evidence: report },
+    };
   }, "worker");
   h.onModel(
     (turns) =>

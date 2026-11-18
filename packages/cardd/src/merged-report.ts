@@ -157,8 +157,10 @@ async function readableEvidence(
   path: string,
 ): Promise<boolean> {
   const attempt = db
-    .prepare(`SELECT a.host, a.n FROM attempts a JOIN sessions s ON s.attempt = a.id
-              WHERE a.card = ? AND s.id = ?`)
+    .prepare(
+      `SELECT a.host, a.n FROM attempts a JOIN sessions s ON s.attempt = a.id
+              WHERE a.card = ? AND s.id = ?`,
+    )
     .get(card.id, session);
   const host = attempt?.["host"];
   const n = attempt?.["n"];
@@ -178,7 +180,9 @@ async function readableEvidence(
       tree,
     ]);
     return await new Promise((resolve) => {
-      runOnTransport(file, args, { timeout: 30_000 }, (error) => resolve(error === null));
+      runOnTransport(file, args, { timeout: 30_000 }, (error) => {
+        resolve(error === null);
+      });
     });
   } catch {
     return false;
@@ -228,7 +232,7 @@ export async function reverifyAtClose(
   if ("mode" in args && args.mode !== "done") return { merged: false };
   const operation = db.prepare("SELECT 1 FROM cards WHERE id = ? AND delivery = 'ops'");
   if (operation.get(args.card) !== undefined) {
-    if ("landed" in args && args.landed === false) return { merged: false };
+    if ("landed" in args && !args.landed) return { merged: false };
     const { card } = reachable(db, session, args.card);
     return verifyOperationAtClose(db, hosts, card);
   }
