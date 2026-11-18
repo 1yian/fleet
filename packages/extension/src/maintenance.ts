@@ -221,11 +221,13 @@ export async function requestAndAwait(
     }
   };
   let rows = await first();
+  const enrolled = rows;
   while (open(rows) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     rows = await link.call("maintenance.status", { batch }).catch(() => rows);
   }
   if (rows.some((row) => row.state === "reloading"))
     rows = await link.call("maintenance.status", { batch, failUnverified: true });
-  return rows;
+  const kept = enrolled.filter((row) => !rows.some((each) => each.id === row.id));
+  return [...rows, ...kept].sort((a, b) => a.id - b.id);
 }

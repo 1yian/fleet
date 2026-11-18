@@ -373,12 +373,15 @@ function requestTarget(
   target: Target,
   t: Timings,
 ): string[] {
-  const member = db
-    .prepare(
-      "SELECT 1 FROM maintenance_batches b JOIN maintenance m ON m.id = b.maintenance WHERE b.batch = ? AND m.session = ?",
-    )
-    .get(raw.batch, target.id);
-  if (member !== undefined) return [];
+  const member =
+    raw.kind === "reload" &&
+    db
+      .prepare(
+        `SELECT 1 FROM maintenance m WHERE m.session = ?1
+         AND (m.batch = ?2 OR m.id IN (SELECT maintenance FROM maintenance_batches WHERE batch = ?2))`,
+      )
+      .get(target.id, raw.batch) !== undefined;
+  if (member) return [];
   const open = db
     .prepare(
       "SELECT id FROM maintenance WHERE session = ? AND kind = ? AND state IN ('pending', 'reloading')",

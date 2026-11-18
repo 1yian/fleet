@@ -351,3 +351,36 @@ test("immediate failures name the card, host and process in the rows main reads,
     rows,
   );
 });
+
+test("retrying the original batch of a request outstanding before batches existed does not group its receipt", async () => {
+  const card = await newCard(fleet.main, "retried across the upgrade");
+  const token = await begin(fleet.main, card);
+  const worker = await fleet.cardd.connect(token, [], true, false, true);
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  const inserted = db
+    .prepare(
+      `INSERT INTO maintenance (batch, requester, session, kind, state, detail, updated_at)
+       VALUES ('legacy', 'main', ?, 'reload', 'reloading', 'reloading', ?)`,
+    )
+    .run(`c-${String(card.id)}-a1`, Date.now());
+  db.close();
+  await fleet.main.call("maintenance.request", { batch: "legacy", kind: "reload" });
+  await worker.close();
+  sessions.push(await fleet.cardd.connect(token, [], true, false, true, true));
+  const id = Number(inserted.lastInsertRowid);
+  const told = await fleet.main.waitForEntry(
+    (entry) => entry.fields["maintenance"] === id && entry.fields["state"] === "completed",
+    "the individual completed notice",
+  );
+  assert.match(told.body, /reload completed - reconnected on a new process/);
+  assert.equal(fleet.cardd.summaryCount(), 0);
+});
+
+test("a hello whose runtime is not a generated id is refused", async () => {
+  const token = await begin(fleet.main, await newCard(fleet.main, "forged runtime"));
+  for (const runtime of ["", "a runtime", "ABCDEF12-1234-1234-1234-123456789ABC"]) {
+    const refused = await fleet.cardd.connect(token, [], true, false, true, true, runtime);
+    assert.equal(refused.welcome, undefined, runtime);
+    assert.notEqual(refused.closeCode, undefined, runtime);
+  }
+});
