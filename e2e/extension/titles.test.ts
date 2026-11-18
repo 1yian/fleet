@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { basename } from "node:path";
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
+import { tempDir } from "../support/run-root.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -295,7 +296,15 @@ test("a second mate that starts in a workspace with the wrong label corrects it,
   const workspace = String(records([created["workspace"]])[0]?.["workspace_id"]);
   const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
   const pi = ["pi", "--continue", ...mateArgs(h)].map((arg) => `'${arg}'`).join(" ");
-  await lab.submit(pane, `cd '${cleoHome}' && ${pi}`);
+  const recorder = tempDir("herdr-recorder-");
+  const herdrCalls = join(recorder, "calls.log");
+  writeFileSync(herdrCalls, "");
+  writeFileSync(
+    join(recorder, "herdr"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${herdrCalls}'\nPATH="\${PATH#*:}"\nexec herdr "$@"\n`,
+  );
+  chmodSync(join(recorder, "herdr"), 0o755);
+  await lab.submit(pane, `cd '${cleoHome}' && PATH='${recorder}':"$PATH" ${pi}`);
 
   await until("the workspace to read 2ndmate-cleo", labels, (now) => {
     return now.get(workspace) === "2ndmate-cleo";
@@ -306,15 +315,26 @@ test("a second mate that starts in a workspace with the wrong label corrects it,
     (out) => out === "cleo: running\n",
   );
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
-  await until("the workspace to still read 2ndmate-cleo", labels, (now) => {
-    return now.get(workspace) === "2ndmate-cleo";
-  });
+  const calls = readFileSync(herdrCalls, "utf8").split("\n");
+  assert.ok(
+    calls.some((call) => call.startsWith("workspace rename")),
+    JSON.stringify(calls),
+  );
+  assert.deepEqual(
+    calls.filter((call) => call.startsWith("tab ")),
+    [],
+  );
   const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
   assert.equal(tabs.length, 1, JSON.stringify(tabs));
   const panes = await lab.run(["pane", "list", "--workspace", workspace]);
   assert.deepEqual(
     records(panes["panes"]).map((each) => each["pane_id"]),
     [pane],
+  );
+  const running = await lab.foreground(pane);
+  assert.ok(
+    running.some((each) => each.endsWith(":pi")),
+    JSON.stringify(running),
   );
   assert.deepEqual([...(await labels()).values()], ["2ndmate-cleo"]);
 });

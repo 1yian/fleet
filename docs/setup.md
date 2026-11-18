@@ -677,6 +677,14 @@ A mate or worker that gets a message from `cardd` that it cannot read, as when `
 
 A host updates with the code it already has. A host whose checkout predates `fleet update` cannot take part, so update it once by hand: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`, then `fleet restart` on that host.
 
+### One-time cleanup after the file explorer was removed
+
+After the update that removed the file explorer, a mate workspace may still hold an old tab named Files. It runs Yazi, through the wrapper at `state/files/bin/ff` in the lane home. It no longer works, because `fleet files` is gone.
+
+Main closes each such tab once during the rollout. Main first confirms that the tab's panes run Yazi or that wrapper, for example with `herdr pane process-info --pane <pane>`. Main never closes a tab only because of its label, and never closes any other pane or tab. Nothing in the fleet closes these tabs by itself.
+
+Saved state under `state/files` and the cached Yazi under `~/.cache/fleet` stay on disk. Delete them by hand if you want the space back.
+
 ## Moving from the earlier layout
 
 Before this layout, main's home was `~/fleet-homes/main`, each mate's settings were in `~/.config/fleet/<lane>.json`, mates ran from `~/.fleet/app`, and `fleet up` started them. Migration only copies. It changes nothing in cardd, so every card, entry, and live worker stays. It never deletes an old home, an old conversation, or a record.
