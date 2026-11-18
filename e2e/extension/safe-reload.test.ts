@@ -306,12 +306,13 @@ test("a successful multi-host update summarizes real replacements once, includin
   assert.equal(after.entries.filter((entry) => entry.fields["maintenance"] === id).length, 1);
 });
 
-test("an update whose target lane is removed mid-update still reports that target as a failure, and the summary counts it", async () => {
+test("an update whose target lane is removed mid-update reports an already-failed and a still-pending removed target honestly, and the summary counts them", async () => {
   script();
   const control = await fleet.cardd.connect(fleet.mainToken);
   await control.call("lane.stopping", { lane: "ghost" });
   await control.close();
   fleet.cardd.addLane("unused", "main");
+  const waiting = fleet.cardd.addLane("waiting", "main");
   await fleet.startMain();
   const busy = await fleet.startWorker("busy", "local");
   const paused = await fleet.startWorker("paused", "p620");
@@ -322,13 +323,20 @@ test("an update whose target lane is removed mid-update still reports that targe
   );
   const was = { busy: await before(busy), paused: await before(paused) };
   fleet.landCode();
+  await (await fleet.cardd.connect(waiting, [], true, false, true)).close();
   await fleet.lab.submit(fleet.mainPane, "/updatefleet");
   await until(
-    () => (fleet.cardd.maintenanceStateOf("unused") === "failed" ? true : undefined),
-    "the unused lane to fail at enrollment",
+    () =>
+      fleet.cardd.maintenanceStateOf("unused") === "failed" &&
+      fleet.cardd.maintenanceStateOf("waiting") === "pending"
+        ? true
+        : undefined,
+    "the unused lane to fail and the waiting lane to be pending at enrollment",
   );
-  const removed = fleet.cardd.admin("lane", "remove", "unused");
-  assert.equal(removed.status, 0, removed.stderr);
+  for (const lane of ["unused", "waiting"]) {
+    const removed = fleet.cardd.admin("lane", "remove", lane);
+    assert.equal(removed.status, 0, removed.stderr);
+  }
   const report = await until(
     () => fleet.userTexts("mate").find((text) => text.startsWith("[fleet] update:")),
     "the update report",
@@ -337,9 +345,14 @@ test("an update whose target lane is removed mid-update still reports that targe
     report,
     /- unused \(mate\): reload failed - not connected \(stopped, held, or down\), so it was left as it is \[c-\d+, host unknown, process unknown\]/,
   );
+  assert.match(
+    report,
+    /- waiting \(mate\): reload failed - no longer reported \(its lane was removed\), so it is not verified/,
+  );
+  assert.equal(report.includes("- waiting (mate): reload completed"), false);
   fleet.open("busy-gate");
   await onNewCode(busy, was.busy);
   await onNewCode(paused, was.paused);
-  await mainHears([busy, paused], "4 reloaded and verified, 1 failed");
+  await mainHears([busy, paused], "4 reloaded and verified, 1 failed, 1 removed with their lane");
   assert.equal(fleet.cardd.summaryCount(), 1);
 });
