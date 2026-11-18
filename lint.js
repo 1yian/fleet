@@ -3,6 +3,7 @@ import console from "node:console";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 import process from "node:process";
+import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseSync } from "oxc-parser";
 import config from "./.oxlintrc.json" with { type: "json" };
@@ -91,15 +92,30 @@ function forbiddenDirectivePattern() {
   return new RegExp(policy);
 }
 
+function decodePath(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    const escaped = [...bytes].map((byte) => `\\x${byte.toString(16).padStart(2, "0")}`).join("");
+    throw new Error(`${escaped}: error fleet/unsupported-path: Tracked path is not valid UTF-8.`);
+  }
+}
+
 function gitPaths() {
   const result = spawnSync("git", ["ls-files", "-z", "--cached"], {
-    encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0 || result.stderr)
-    throw new Error(`git ls-files failed: ${result.stderr}`);
-  return result.stdout.split("\0").filter(Boolean);
+  if (result.status !== 0 || result.stderr.length)
+    throw new Error(`git ls-files failed: ${result.stderr.toString()}`);
+  const paths = [];
+  let start = 0;
+  for (let end = 0; end < result.stdout.length; end += 1) {
+    if (result.stdout[end] !== 0) continue;
+    if (end > start) paths.push(decodePath(result.stdout.subarray(start, end)));
+    start = end + 1;
+  }
+  return paths;
 }
 
 function existsInWorkingTree(path) {
@@ -112,31 +128,65 @@ function existsInWorkingTree(path) {
   }
 }
 
-function trackedPaths() {
-  return gitPaths().filter((path) => !ignoredByConfig(path) && existsInWorkingTree(path));
+function segmentMatcher(segment, pattern) {
+  if (/[?[\]{}!\\]|\*\*/.test(segment))
+    throw new Error(
+      `${pattern}: error fleet/unsupported-ignore-pattern: Unsupported glob syntax in ignorePatterns.`,
+    );
+  const source = segment
+    .split("*")
+    .map((part) => part.replace(/[.+^$()|]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${source}$`);
 }
 
-function ignoredByConfig(path) {
-  const directories = path.split("/").slice(0, -1);
-  return config.ignorePatterns.some((pattern) => {
+function ignoreMatchers() {
+  return config.ignorePatterns.map((pattern) => {
     const anywhere = pattern.startsWith("**/");
-    const wanted = pattern
-      .replace(/^\*\*\//, "")
-      .replace(/\/$/, "")
-      .split("/");
-    const starts = anywhere ? directories.keys() : [0];
-    return [...starts].some((start) =>
-      wanted.every((segment, offset) => directories[start + offset] === segment),
-    );
+    const directoryOnly = pattern.endsWith("/");
+    const body = pattern.slice(anywhere ? 3 : 0, directoryOnly ? -1 : undefined);
+    return {
+      anywhere,
+      directoryOnly,
+      segments: body.split("/").map((segment) => segmentMatcher(segment, pattern)),
+    };
   });
 }
 
+function ignoredBy(matchers, path) {
+  const parts = path.split("/");
+  return matchers.some(({ anywhere, directoryOnly, segments }) => {
+    const limit = directoryOnly ? parts.length - 1 : parts.length;
+    const last = anywhere ? limit - segments.length : 0;
+    for (let start = 0; start <= last; start += 1)
+      if (segments.every((segment, offset) => segment.test(parts[start + offset]))) return true;
+    return false;
+  });
+}
+
+function trackedPaths() {
+  const matchers = ignoreMatchers();
+  return gitPaths().filter((path) => !ignoredBy(matchers, path) && existsInWorkingTree(path));
+}
+
 function selectedPaths(tracked) {
-  const paths = tracked
-    .filter((path) => sourceExtensions.includes(extname(path)))
-    .filter((path) => !ignoredByConfig(path));
+  const paths = tracked.filter((path) => sourceExtensions.includes(extname(path)));
   if (!paths.length) throw new Error("No tracked source files selected.");
   return paths;
+}
+
+function verifyAgainstOxlint(paths) {
+  const selection = runOxlint(["--debug", "files"], paths, "pipe");
+  if (selection.status !== 0 || selection.stderr)
+    throw new Error(`Oxlint selection failed: ${selection.stderr || selection.stdout}`);
+  const reported = new Set(selection.stdout.split("\n").filter(Boolean));
+  const expected = new Set(paths);
+  const differing = [
+    ...paths.filter((path) => !reported.has(path)),
+    ...[...reported].filter((path) => !expected.has(path)),
+  ];
+  if (differing.length)
+    throw new Error(`Oxlint selected a different file list than lint.js: ${differing.join(", ")}`);
 }
 
 function minifiedNameFailures(paths) {
@@ -149,9 +199,7 @@ function minifiedNameFailures(paths) {
 }
 
 function baselineFailures(tracked) {
-  const found = tracked.filter(
-    (path) => basename(path) === suppressionBaseline && !ignoredByConfig(path),
-  );
+  const found = tracked.filter((path) => basename(path) === suppressionBaseline);
   if (existsSync(suppressionBaseline) && !found.includes(suppressionBaseline))
     found.push(suppressionBaseline);
   return found.map(
@@ -170,6 +218,7 @@ function lint() {
     for (const failure of refusals) console.error(failure);
     return 1;
   }
+  verifyAgainstOxlint(paths);
   const forbiddenDirectives = forbiddenDirectivePattern();
   const failures = [
     ...membershipFailures(paths),
