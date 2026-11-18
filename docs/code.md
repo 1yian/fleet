@@ -213,6 +213,7 @@ A scout closes Done only when the close names what happens next (`next-step.ts`)
 
 ### Dispatch and herdr
 
+- The `dispatch` tool first resolves the host through this lane's transport map, before creating a card. A globally registered project clone does not give the lane a transport. An unsupported host leaves no card, attempt, branch, or workspace. This is a configuration check, not a connection probe. A later connection failure keeps the card and any attempt already created, so failed work stays visible. `e2e/extension/dispatch-preflight.test.ts` covers the refusal, corrected dispatch, repeated dispatch, and connection failures before and after attempt creation.
 - `dispatch.ts`: `cardd` creates or finds the attempt. Each host step then looks for its own result by the names that derive from the attempt ID, so a retry after a lost connection never starts a second worker.
 - herdr counts an agent as ready when it idles, and a worker starts on its task at once, so herdr's own wait often runs out. Dispatch does not rely on it: the pane shows whether Pi started. herdr's minimum wait is just above 3 s.
 - herdr refuses a start and types nothing when the shell is not at its prompt yet, or when it still holds the agent name of a worker that died a moment ago, for up to about 4 s on CI. A refused start goes again at once. A command lost before the shell goes once more. herdr refuses a pane where Pi runs, so no second Pi starts.
