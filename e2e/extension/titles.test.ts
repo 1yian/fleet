@@ -98,8 +98,24 @@ test("main reads 1stmate and a second mate reads 2ndmate-<lane>, in herdr and in
     return JSON.stringify(now) === JSON.stringify(expected);
   });
   assert.deepEqual(seen, expected);
+  const workspace = [...(await labels())].find(([, label]) => label === "2ndmate-cleo")?.[0];
+  assert.ok(workspace);
+  await lab.run(["tab", "create", "--workspace", workspace, "--cwd", scratch.root, "--no-focus"]);
+  await lab.run([
+    "workspace",
+    "report-metadata",
+    workspace,
+    "--source",
+    "fleet",
+    "--token",
+    "lane=cleo",
+    "--token",
+    "card=913",
+  ]);
   assert.equal(fleet(["status"]), "cleo: running\n");
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
+  assert.equal(fleet(["stop", "cleo"]), "cleo: stopped\n");
+  assert.deepEqual([...(await labels()).values()], ["1stmate"]);
 });
 
 async function startWithoutRenaming(pane: string): Promise<void> {
@@ -157,6 +173,26 @@ test("lane lifecycle still finds a live legacy mate without renaming it", async 
   assert.deepEqual(await labels(), new Map([[worker, "└ old-follower"]]));
 });
 
+test("up reuses an idle legacy workspace in the lane home", async () => {
+  const created = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    cleoHome,
+    "--label",
+    "fleet-cleo",
+    "--no-focus",
+  ]);
+  const legacy = String(records([created["workspace"]])[0]?.["workspace_id"]);
+  assert.equal(fleet(["status"]), "cleo: down\n");
+  assert.equal(fleet(["up"]), "cleo: started in 2ndmate-cleo\n");
+  const started = await until("the reused workspace to get its canonical title", labels, (now) =>
+    [...now.values()].includes("2ndmate-cleo"),
+  );
+  assert.deepEqual(started, new Map([[legacy, "2ndmate-cleo"]]));
+  assert.equal(fleet(["status"]), "cleo: running\n");
+});
+
 test("a worker named fleet-<lane> is never taken for that lane's mate", async () => {
   const created = await lab.run([
     "workspace",
@@ -185,6 +221,7 @@ test("a worker named fleet-<lane> is never taken for that lane's mate", async ()
   assert.equal(fleet(["status"]), "cleo: down\n");
   fleet(["arrange"]);
   assert.equal((await labels()).get(worker), "[cleo] fleet-cleo");
+  await lab.run(["workspace", "rename", worker, "fleet-cleo"]);
   assert.equal(fleet(["up"]), "cleo: started in 2ndmate-cleo\n");
   const started = await until("cleo's workspace", labels, (now) =>
     [...now.values()].includes("2ndmate-cleo"),

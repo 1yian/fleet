@@ -12,9 +12,15 @@ export function isWorkerWorkspace(row: Record<string, unknown>): boolean {
   return isRecord(tokens) && (field(tokens, "lane") || field(tokens, "card")) !== undefined;
 }
 
-export async function liveLegacyMate(workspace: string, lane: string): Promise<boolean> {
+export async function workspaceRootPane(
+  workspace: string,
+): Promise<Record<string, unknown> | undefined> {
   const panes = await herdr("local", ["pane", "list", "--workspace", workspace]);
-  const root = records(panes["panes"])[0];
+  return records(panes["panes"])[0];
+}
+
+export async function liveLegacyMate(workspace: string, lane: string): Promise<boolean> {
+  const root = await workspaceRootPane(workspace);
   const pane = field(root, "pane_id");
   const cwd = field(root, "cwd");
   if (pane === undefined || cwd === undefined) return false;

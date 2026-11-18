@@ -143,14 +143,25 @@ const rowAfter = (lines: readonly string[], text: string, offset: number): strin
   lines[lines.findIndex((line) => line.includes(text)) + offset] ?? "";
 
 async function moveOpsToP620(): Promise<void> {
-  const running = await open(far, "2ndmate-ops", p620.root);
-  await far.submit(running.pane, "sleep 600");
+  p620.fleet(["up", "ops"], {
+    HERDR_SESSION: far.name,
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+  });
   await until(
     () => (statusOf(p620, far.name)["ops"] === "running" ? true : undefined),
     "ops to run on p620",
     () => Promise.resolve(JSON.stringify(statusOf(p620, far.name))),
   );
-  assert.equal(statusOf(here, lab.name)["ops"], "stopped");
+}
+
+async function busyOldHome(): Promise<void> {
+  const old = await open(lab, "2ndmate-ops", `${here.root}.worktrees/lane-ops`);
+  await lab.submit(old.pane, "sleep 600");
+  await until(
+    () => (statusOf(here, lab.name)["ops"] === "running" ? true : undefined),
+    "lifecycle status to see the busy old home",
+    () => Promise.resolve(JSON.stringify(statusOf(here, lab.name))),
+  );
 }
 
 async function updateFleet(pane: string): Promise<void> {
@@ -169,7 +180,7 @@ async function updateFleet(pane: string): Promise<void> {
 }
 
 test("a main whose host is local, and a lane that moved hosts, tell each worker where its mate runs, and herdr shows it beside the Git row", async () => {
-  await open(lab, "2ndmate-ops", here.root);
+  await busyOldHome();
   await moveOpsToP620();
   const pane = await startMain(lab, here, h);
   const alpha = await open(lab, "ops-alpha", here.root);
@@ -210,27 +221,26 @@ test("a main whose host is local, and a lane that moved hosts, tell each worker 
   await untilScreen("the lane prefix, Git row and restored hint", client, awayFrame);
 });
 
-test("a lane that runs nowhere and has homes on two hosts keeps the mate host its workers already have", async () => {
+test("a busy non-mate shell cannot replace stored placement when neither home has a mate", async () => {
   const pane = await startMain(lab, here, h);
-  const worker = await open(lab, "ops-alpha", here.root);
-  await mark(lab, worker.id, "lane=ops", "mate=gone-host");
-  assert.equal(statusOf(here, lab.name)["ops"], "stopped");
+  await busyOldHome();
+  const worker = await open(far, "ops-alpha", p620.root);
+  await mark(far, worker.id, "lane=ops", "mate=gone-host");
   assert.equal(statusOf(p620, far.name)["ops"], "stopped");
 
   await updateFleet(pane);
 
-  const kept = await tokensOf(lab, "[ops] ops-alpha");
+  const kept = await tokensOf(far, "[ops] ops-alpha");
   assert.equal(kept["mate"], "gone-host");
   assert.equal(kept["away"], "\u2197 mate on gone-host");
 });
 
-test("fleet arrange in a second mate's home uses that home's Fleet name, not the checkout's local", async () => {
-  configureMain(p620, cardd.url, tokens["main"], { host: "local" });
+test("arrange preserves hints without an identity and refreshes them with the lane home's name", async () => {
   const inside = await open(lab, "inside", here.root);
   await mark(lab, inside.id, "lane=aa", `mate=${REMOTE}`);
   const outside = await open(lab, "outside", here.root);
   const otherHost = "annex.us.example";
-  await mark(lab, outside.id, "lane=bb", `mate=${otherHost}`);
+  await mark(lab, outside.id, "lane=bb", `mate=${otherHost}`, "away=↗ mate on saved-host");
   const env = { ...process.env };
   delete env["FLEET_HOST"];
   const launch = join(
@@ -241,7 +251,11 @@ test("fleet arrange in a second mate's home uses that home's Fleet name, not the
     "src",
     "launch.ts",
   );
-  const session = { ...env, HERDR_SESSION: lab.name };
+  const session = { ...env, HERDR_SESSION: lab.name, PATH: `${BIN}:${process.env["PATH"] ?? ""}` };
+  execFileSync("node", [p620.launch, "arrange"], { env: session });
+  assert.equal((await tokensOf(lab, "[aa] inside"))["away"], undefined);
+  assert.equal((await tokensOf(lab, "[bb] outside"))["away"], "↗ mate on saved-host");
+
   execFileSync("node", [launch, "arrange"], { env: session });
 
   assert.equal((await tokensOf(lab, "[aa] inside"))["away"], undefined);

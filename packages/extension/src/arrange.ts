@@ -78,7 +78,7 @@ async function matesOf(spaces: readonly Space[]): Promise<Map<string, Space>> {
   for (const space of spaces) {
     if (space.worker || !space.label.startsWith(legacyMatePrefix)) continue;
     const lane = space.label.slice(legacyMatePrefix.length);
-    if (await liveLegacyMate(space.id, lane)) mates.set(lane, space);
+    if (!mates.has(lane) && (await liveLegacyMate(space.id, lane))) mates.set(lane, space);
   }
   return mates;
 }
@@ -117,7 +117,7 @@ function sidebarMetadata(space: Space, groupedHere: boolean, here: string): stri
 function arrangement(
   spaces: readonly Space[],
   mates: ReadonlyMap<string, Space>,
-  here: string,
+  here: string | undefined,
 ): Arrangement {
   const heads = new Map([...mates].map(([lane, space]) => [space, lane]));
   const hosted = hostedWorkers(spaces, mates, heads);
@@ -129,8 +129,10 @@ function arrangement(
     const prefix = groupedHere ? WORKER_MARK : lanePrefix(space);
     const label = `${prefix}${bare(space)}`;
     if (label !== space.label) labels.set(space.id, label);
-    const args = sidebarMetadata(space, groupedHere, here);
-    if (args.length > 0) metadata.set(space.id, args);
+    if (here !== undefined) {
+      const args = sidebarMetadata(space, groupedHere, here);
+      if (args.length > 0) metadata.set(space.id, args);
+    }
   }
   const rest = spaces.filter((space) => !heads.has(space) && !hosted.has(space));
   const unowned = rest.filter((space) => space.lane === undefined);
@@ -218,7 +220,7 @@ export async function arrangeHere(host?: string): Promise<void> {
   const { order, labels, metadata } = arrangement(
     spaces,
     await matesOf(spaces),
-    sidebarHostName(host),
+    host === undefined || host === "" ? undefined : sidebarHostName(host),
   );
   for (const [id, label] of labels) await herdr("local", ["workspace", "rename", id, label]);
   for (const [id, args] of metadata)
@@ -229,7 +231,7 @@ export async function arrangeHere(host?: string): Promise<void> {
 }
 
 export async function arrangeOn(host: string, root: string | undefined): Promise<void> {
-  if (isLocal(host)) await arrangeHere();
+  if (isLocal(host)) await arrangeHere(sidebarHostName());
   else await onFleetRoot(host, root, ["arrange", "--host", host]);
 }
 

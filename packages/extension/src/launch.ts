@@ -8,6 +8,7 @@ import {
   existingHome,
   homeOf,
   laneHomes,
+  placementStatus,
   provision,
   reconfigure,
   restart,
@@ -98,6 +99,7 @@ function parseCommandLine() {
     allowPositionals: true,
     options: {
       json: { type: "boolean" },
+      placement: { type: "boolean" },
       undo: { type: "boolean" },
       check: { type: "boolean" },
       maintenance: { type: "boolean" },
@@ -232,6 +234,10 @@ if (command === "up" || command === "restart") {
 
 switch (command ?? "") {
   case "status": {
+    if (values.placement === true) {
+      console.log(JSON.stringify(await placementStatus(root)));
+      break;
+    }
     const lanes = await status(root);
     if (values.json === true) console.log(JSON.stringify(lanes));
     else
@@ -256,7 +262,11 @@ switch (command ?? "") {
   }
   case "arrange": {
     const running = fileURLToPath(new URL("../../..", import.meta.url));
-    const named = values.host ?? process.env["FLEET_HOST"] ?? readLaneConfig(running)?.host;
+    const configured = process.env["FLEET_HOST"] || undefined;
+    const home =
+      values.host === undefined && configured === undefined ? readLaneConfig(running) : undefined;
+    const named =
+      values.host ?? configured ?? (home === undefined ? undefined : (home.host ?? "local"));
     await arrangeHere(named).catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exit(1);
