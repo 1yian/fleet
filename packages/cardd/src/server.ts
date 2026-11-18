@@ -1,4 +1,3 @@
-import type { KeyObject } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { DatabaseSync } from "node:sqlite";
@@ -103,7 +102,7 @@ class Hub {
     files: string | undefined,
     hosts: Hosts,
     access: Access | undefined,
-    reviewSigner: KeyObject | undefined,
+    reviewOrigins: ReadonlySet<string>,
   ) {
     this.health = new LoopHealth(
       { sockets: () => this.open, sessions: () => this.bySession.size },
@@ -120,7 +119,7 @@ class Hub {
       },
       files,
       access,
-      reviewSigner,
+      reviewOrigins,
     );
   }
 
@@ -342,13 +341,13 @@ export async function serve(
     hostnames,
     hosts,
     access,
-    reviewSigner,
+    reviewOrigins,
   }: {
     files?: string | undefined;
     hostnames: readonly string[];
     hosts: Hosts;
     access?: AccessConfig | undefined;
-    reviewSigner?: KeyObject | undefined;
+    reviewOrigins: ReadonlySet<string>;
   },
 ): Promise<string> {
   db.prepare(
@@ -360,7 +359,7 @@ export async function serve(
     files,
     hosts,
     access === undefined ? undefined : new Access(access, timing),
-    reviewSigner,
+    reviewOrigins,
   );
   hub.fillRepos();
   setInterval(() => {

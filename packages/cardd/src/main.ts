@@ -6,7 +6,7 @@ import { openDatabase } from "./db.ts";
 import { fillRepo, type Hosts } from "./pulls.ts";
 import { stampLogLines } from "./log.ts";
 import { serve } from "./server.ts";
-import { reviewKey } from "./review-completion.ts";
+import { reviewOrigins } from "./review-completion.ts";
 import { DELIVERIES } from "@fleet/protocol";
 import { setCardDelivery } from "./attempts.ts";
 import { parsePlan, setNextPlan, showPlans } from "./plans.ts";
@@ -135,7 +135,7 @@ if (command === "serve") {
     hostnames: values.hostname,
     hosts,
     access,
-    reviewSigner: reviewKey(process.env["CARDD_REVIEW_PUBLIC_KEY"]),
+    reviewOrigins: reviewOrigins(process.env["CARDD_REVIEW_ORIGINS"], access?.host),
   });
   console.log(`cardd listening on ${url}`);
   if (access !== undefined)

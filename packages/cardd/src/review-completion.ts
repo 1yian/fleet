@@ -1,39 +1,41 @@
-import { createPublicKey, type KeyObject } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { check, type Entry } from "@fleet/protocol";
-import { jwtVerify } from "jose";
-import Type, { type Static } from "typebox";
+import Type from "typebox";
 import { factsFrom, type Hold } from "./status.ts";
 import { addEntry, cardEntries, getCard, parentOf } from "./store.ts";
 
 const Session = Type.String({ pattern: "^https?://[^/]+/session/[a-f0-9]{8,64}$", maxLength: 512 });
-const Completion = Type.Object({
-  card: Type.Integer({ minimum: 1 }),
-  round: Type.Integer({ minimum: 1 }),
-  session: Session,
-  action: Type.Literal("send-and-end"),
-  words: Type.String({ maxLength: 2000 }),
-});
-
-type Receipt = Static<typeof Completion>;
-
-export function reviewKey(pem: string | undefined): KeyObject | undefined {
-  if (pem === undefined) return undefined;
-  const key = createPublicKey(pem);
-  if (key.asymmetricKeyType !== "ed25519")
-    throw new Error("review completion needs an Ed25519 public key");
-  return key;
+interface Round {
+  readonly card: number;
+  readonly round: number;
 }
 
-export async function readCompletion(key: KeyObject, token: string): Promise<Receipt> {
-  const { payload } = await jwtVerify(token, key, {
-    algorithms: ["EdDSA"],
-    audience: "fleet-review-completion",
-    typ: "fleet-review-completion+jwt",
-    requiredClaims: ["exp", "iat"],
-    maxTokenAge: "5 minutes",
-  });
-  return check(Completion, payload);
+interface Receipt extends Round {
+  readonly session: string;
+  readonly words: string;
+}
+
+export function reviewOrigins(
+  raw: string | undefined,
+  boardHost: string | undefined,
+): ReadonlySet<string> {
+  if (raw === undefined) return new Set();
+  if (boardHost === undefined)
+    throw new Error("review origins require Cloudflare Access for the board");
+  const origins = raw.trim().split(/\s+/);
+  for (const origin of origins) {
+    const url = new URL(origin);
+    const loopback = ["127.0.0.1", "[::1]"].includes(url.hostname);
+    if (
+      url.origin !== origin ||
+      url.hostname === boardHost ||
+      (url.protocol !== "https:" && !(loopback && url.protocol === "http:"))
+    )
+      throw new Error(
+        "review origins must be HTTPS origins separate from the board (HTTP loopback is for labs)",
+      );
+  }
+  return new Set(origins);
 }
 
 function latestRequest(entries: readonly Entry[], key: string): Entry | undefined {
@@ -65,7 +67,7 @@ export function reviewRequests(
   });
 }
 
-function matchingHold(entries: readonly Entry[], receipt: Receipt): Hold | undefined {
+function matchingHold(entries: readonly Entry[], receipt: Round): Hold | undefined {
   const open = factsFrom(entries).hold;
   if (open?.holder !== "captain" || open.entry !== receipt.round || open.merge || open.unlanded)
     return undefined;
@@ -75,18 +77,31 @@ function matchingHold(entries: readonly Entry[], receipt: Receipt): Hold | undef
   return open;
 }
 
+function recorded(entries: readonly Entry[], round: Round): boolean {
+  return entries.some(
+    (entry) =>
+      entry.kind === "review-feedback" &&
+      entry.fields["source"] === "lavish" &&
+      entry.fields["round"] === round.round,
+  );
+}
+
+export const RECORDED_REVIEW = Symbol("recorded review");
+
+export function boundReviewPage(
+  db: DatabaseSync,
+  round: Round,
+): string | typeof RECORDED_REVIEW | undefined {
+  const entries = cardEntries(db, round.card);
+  if (recorded(entries, round)) return RECORDED_REVIEW;
+  return matchingHold(entries, round)?.review;
+}
+
 export function settleReview(db: DatabaseSync, receipt: Receipt): readonly string[] | undefined {
   const entries = cardEntries(db, receipt.card);
-  const round = entries.find((entry) => entry.id === receipt.round && entry.kind === "hold");
-  if (round?.fields["review"] !== receipt.session) return undefined;
-  if (
-    entries.some(
-      (entry) => entry.kind === "review-feedback" && entry.fields["round"] === receipt.round,
-    )
-  )
-    return [];
+  if (recorded(entries, receipt)) return [];
   const open = matchingHold(entries, receipt);
-  if (open === undefined) return undefined;
+  if (open?.review !== receipt.session) return undefined;
   const { lane } = getCard(db, receipt.card);
   const parent = parentOf(db, lane);
   const notify = parent === null ? [lane] : [lane, parent];

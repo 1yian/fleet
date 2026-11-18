@@ -1,4 +1,3 @@
-import type { KeyObject } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
@@ -7,7 +6,8 @@ import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { mergeQuestion, writeMergeQuestion } from "./holds.ts";
-import { readCompletion, settleReview } from "./review-completion.ts";
+import { boundReviewPage, RECORDED_REVIEW, settleReview } from "./review-completion.ts";
+import { reviewPage, sendAndEnd } from "./review-page.ts";
 import { getCard, transaction } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
@@ -26,11 +26,15 @@ const READS: Readonly<Record<string, (db: DatabaseSync, timing: Timings) => unkn
   "/api/version": version,
 };
 
-function readBody(request: IncomingMessage): Promise<string> {
+function readBody(request: IncomingMessage, limit = Infinity): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
     request.setEncoding("utf8");
-    request.on("data", (chunk: string) => (body += chunk));
+    request.on("data", (chunk: string) => {
+      if (body.length > limit) return;
+      body += chunk;
+      if (body.length > limit) reject(new Error("request body is too large"));
+    });
     request.on("end", () => {
       resolve(body);
     });
@@ -67,7 +71,7 @@ function originHostname(origin: string): string | undefined {
 export class Web {
   private readonly hosts = new Set<string>();
   private readonly access: Access | undefined;
-  private readonly reviewSigner: KeyObject | undefined;
+  private readonly reviewOrigins: ReadonlySet<string>;
 
   allow(authorities: readonly string[]): void {
     for (const authority of authorities) {
@@ -153,14 +157,14 @@ export class Web {
     flush: (session: string) => void,
     files: string | undefined,
     access: Access | undefined,
-    reviewSigner: KeyObject | undefined,
+    reviewOrigins: ReadonlySet<string>,
   ) {
     this.db = db;
     this.timing = timing;
     this.flush = flush;
     this.files = files === undefined ? undefined : resolve(files);
     this.access = access;
-    this.reviewSigner = reviewSigner;
+    this.reviewOrigins = reviewOrigins;
   }
 
   watch(socket: WebSocket): void {
@@ -200,11 +204,15 @@ export class Web {
         });
         return;
       }
-      if (
-        request.method === "POST" &&
-        new URL(request.url ?? "/", "http://board").pathname === "/api/review-completion"
-      ) {
-        await this.completeReview(request, response);
+      const path = new URL(request.url ?? "/", "http://board").pathname;
+      const review = /^\/review\/(\d+)\/(\d+)$/.exec(path);
+      if (review !== null) {
+        if (channel !== "public") this.refuse(response);
+        else
+          await this.review(request, response, {
+            card: Number(review[1]),
+            round: Number(review[2]),
+          });
         return;
       }
       const value = await this.route(request);
@@ -217,21 +225,64 @@ export class Web {
     }
   }
 
-  private async completeReview(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const signer = this.reviewSigner;
-    if (signer === undefined) {
-      reply(response, 404, { ok: false });
+  private async review(
+    request: IncomingMessage,
+    response: ServerResponse,
+    round: { card: number; round: number },
+  ): Promise<void> {
+    const page = boundReviewPage(this.db, round);
+    if (page === RECORDED_REVIEW) {
+      response.writeHead(303, { location: "/" }).end();
       return;
     }
-    const authorization = request.headers.authorization;
-    const receipt =
-      authorization?.startsWith("Bearer ") === true
-        ? await readCompletion(signer, authorization.slice(7)).catch(() => undefined)
-        : undefined;
-    if (receipt === undefined) {
-      reply(response, 401, { ok: false });
+    if (page === undefined) throw new StaleCard("review hold is no longer current");
+    const session = new URL(page);
+    if (!this.reviewOrigins.has(session.origin)) {
+      reply(response, 404, {
+        ok: false,
+        error: "review origin is not configured; answer on the board",
+      });
       return;
     }
+    if (request.method === "GET") {
+      await reviewPage(response, session);
+      return;
+    }
+    await this.submitReview(request, response, round, session);
+  }
+
+  private async submitReview(
+    request: IncomingMessage,
+    response: ServerResponse,
+    round: { card: number; round: number },
+    session: URL,
+  ): Promise<void> {
+    if (
+      request.method !== "POST" ||
+      request.headers["content-type"] !== "application/x-www-form-urlencoded"
+    )
+      throw new Error("submit feedback from the Fleet review form");
+    const words = new URLSearchParams(await readBody(request, 25000)).get("words");
+    if (words === null || words.length > 2000)
+      throw new Error("review feedback is missing or too long");
+    if (boundReviewPage(this.db, round) !== session.href)
+      throw new StaleCard("review hold is no longer current");
+    if (!(await sendAndEnd(session, words))) {
+      if (boundReviewPage(this.db, round) !== RECORDED_REVIEW) {
+        reply(response, 409, {
+          ok: false,
+          error: "Lavish did not accept this review; answer on the board",
+        });
+        return;
+      }
+    }
+    this.recordReview(response, { ...round, session: session.href, words });
+  }
+
+  private recordReview(
+    response: ServerResponse,
+    receipt: Parameters<typeof settleReview>[1],
+  ): void {
     const notify = transaction(this.db, () => {
       const settled = settleReview(this.db, receipt);
       if (settled === undefined || settled.length === 0) return settled;
@@ -247,7 +298,7 @@ export class Web {
     }
     for (const session of notify) this.flush(session);
     if (notify.length > 0) this.changed(true);
-    reply(response, 200, { ok: true });
+    response.writeHead(303, { location: "/" }).end();
   }
 
   private async route(request: IncomingMessage): Promise<unknown> {
