@@ -1,19 +1,17 @@
-import type { DatabaseSync } from "node:sqlite";
-import { check, type Entry } from "@fleet/protocol";
-import Type from "typebox";
-import { factsFrom, holdDeferred, type Hold } from "./status.ts";
-import { addEntry, cardEntries, getCard, parentOf } from "./store.ts";
+import type { Entry } from "@fleet/protocol";
+import { holdDeferred, type Hold } from "./status.ts";
 
-const Session = Type.String({ pattern: "^https?://[^/]+/session/[a-f0-9]{8,64}$", maxLength: 512 });
-interface Round {
-  readonly card: number;
-  readonly round: number;
-}
-
-interface Receipt extends Round {
-  readonly session: string;
-  readonly words: string;
-  readonly annotations: readonly { readonly prompt: string }[];
+function stockSession(value: string): URL | undefined {
+  const url = URL.parse(value);
+  if (
+    value.length > 512 ||
+    url === null ||
+    !["http:", "https:"].includes(url.protocol) ||
+    !/^\/session\/[a-f0-9]{16}$/.test(url.pathname) ||
+    value !== url.origin + url.pathname
+  )
+    return undefined;
+  return url;
 }
 
 export function reviewOrigins(
@@ -25,17 +23,18 @@ export function reviewOrigins(
   if (boardHost === undefined)
     throw new Error("review origins require Cloudflare Access for the board");
   for (const mapping of raw.trim().split(/\s+/)) {
-    const [reported, upstream = reported, extra] = mapping.split("=");
-    const source = new URL(reported ?? "");
-    const target = new URL(upstream ?? "");
-    const loopback = ["127.0.0.1", "[::1]"].includes(target.hostname);
+    const [reported, upstream, extra] = mapping.split("=");
+    if (!reported || !upstream || extra !== undefined)
+      throw new Error("review origins must use reported-origin=upstream-origin");
+    const source = new URL(reported);
+    const target = new URL(upstream);
     if (
-      extra !== undefined ||
       source.origin !== reported ||
       !["http:", "https:"].includes(source.protocol) ||
       target.origin !== upstream ||
       target.hostname.replace(/\.$/, "") === boardHost ||
-      (target.protocol !== "https:" && !(loopback && target.protocol === "http:")) ||
+      (target.protocol !== "https:" &&
+        !(target.hostname === "127.0.0.1" && target.protocol === "http:")) ||
       origins.has(source.origin)
     )
       throw new Error(
@@ -61,59 +60,60 @@ export function reviewRequests(
   open: Hold | undefined,
   session: string,
 ): number[] {
-  check(Session, session);
-  const url = new URL(session);
-  if (url.href !== session || url.username !== "" || url.password !== "")
-    throw new Error("the review session must be a canonical Lavish URL");
+  if (stockSession(session) === undefined)
+    throw new Error("the review session must be a canonical stock Lavish URL");
   if (open?.fromWorker !== true || open.keys.length === 0)
     throw new Error("a review hold needs open worker decision keys");
-  return open.keys.map((key) => {
+  const requests = open.keys.map((key) => {
     const request = latestRequest(entries, key);
     if (!request?.body.split(/\s+/).includes(session))
       throw new Error(`decision key ${key} does not name the review session as a standalone link`);
     return request.id;
   });
+  if (
+    !(open.review === session && matchesRequests(open, requests)) &&
+    entries.some((entry) => entry.kind === "hold" && entry.fields["review"] === session)
+  )
+    throw new Error("a new review needs a fresh Lavish session link");
+  return requests;
 }
 
-function matchingHold(entries: readonly Entry[], receipt: Round): Hold | undefined {
-  const open = factsFrom(entries).hold;
+function matchesRequests(hold: Hold, requests: readonly number[]): boolean {
+  const bound = hold.reviewRequests;
+  return (
+    bound !== undefined &&
+    requests.length > 0 &&
+    requests.length === bound.length &&
+    requests.every((id, at) => id !== 0 && id === bound[at])
+  );
+}
+
+export function reviewDecision(entries: readonly Entry[], hold: Hold) {
+  if (hold.review === undefined) return { seen: hold.entry, bindingCurrent: false };
+  const requests = hold.keys.map((key) => latestRequest(entries, key)?.id ?? 0);
+  return {
+    seen: requests.reduce((latest, id) => Math.max(latest, id), hold.entry),
+    bindingCurrent: matchesRequests(hold, requests),
+  };
+}
+
+export function reviewPreview(
+  hold: Hold,
+  decision: ReturnType<typeof reviewDecision>,
+  origins: ReadonlyMap<string, string>,
+  now: number,
+): URL | undefined {
   if (
-    open?.holder !== "captain" ||
-    open.entry !== receipt.round ||
-    open.merge ||
-    open.unlanded ||
-    holdDeferred(open, Date.now())
+    hold.review === undefined ||
+    !decision.bindingCurrent ||
+    hold.holder !== "captain" ||
+    hold.merge ||
+    hold.unlanded ||
+    holdDeferred(hold, now)
   )
     return undefined;
-  const requests = open.keys.map((key) => latestRequest(entries, key)?.id);
-  if (requests.length === 0 || JSON.stringify(open.reviewRequests) !== JSON.stringify(requests))
-    return undefined;
-  return open;
-}
-
-export function boundReviewPage(db: DatabaseSync, round: Round): string | undefined {
-  return matchingHold(cardEntries(db, round.card), round)?.review;
-}
-
-export function settleReview(db: DatabaseSync, receipt: Receipt): readonly string[] | undefined {
-  const entries = cardEntries(db, receipt.card);
-  const open = matchingHold(entries, receipt);
-  if (open?.review !== receipt.session) return undefined;
-  const { lane } = getCard(db, receipt.card);
-  const parent = parentOf(db, lane);
-  const notify = parent === null ? [lane] : [lane, parent];
-  addEntry(
-    db,
-    {
-      card: receipt.card,
-      author: "captain",
-      kind: "review-feedback",
-      body: [...receipt.annotations.map(({ prompt }) => prompt), receipt.words]
-        .filter((words) => words.trim() !== "")
-        .join("\n\n"),
-      fields: { source: "lavish", round: receipt.round, session: receipt.session, keys: open.keys },
-    },
-    notify,
-  );
-  return notify;
+  const reported = stockSession(hold.review);
+  if (reported === undefined) return undefined;
+  const upstream = origins.get(reported.origin);
+  return upstream === undefined ? undefined : new URL(reported.pathname, upstream);
 }

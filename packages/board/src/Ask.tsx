@@ -103,7 +103,7 @@ function AskBody(props: Props) {
               className="quiet-action"
               href={`/review/${String(question.card)}/${String(question.hold)}`}
             >
-              Open review
+              Preview review
             </a>
           ) : null}
           {originalMerge ? null : (

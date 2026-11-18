@@ -37,6 +37,7 @@ import type { Timings } from "./timing.ts";
 import { entryFor } from "./bundle.ts";
 import { canSee, datedWait, sightOf } from "./waits.ts";
 import { laterAt } from "./later.ts";
+import { reviewDecision, reviewPreview } from "./review-completion.ts";
 
 export class StaleCard extends Error {}
 
@@ -47,9 +48,7 @@ const sameList = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((each, at) => each === b[at]);
 
 const sameHold = (a: Hold, b: Hold): boolean =>
-  (a.review === undefined && b.review === undefined
-    ? a.occurrence === b.occurrence
-    : a.entry === b.entry) &&
+  a.occurrence === b.occurrence &&
   a.holder === b.holder &&
   a.question === b.question &&
   a.merge === b.merge &&
@@ -63,11 +62,14 @@ function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
   const name = `c-${String(card.id)}`;
   if (open === undefined || holdDeferred(open, Date.now()))
     throw new StaleCard(`${name} is no longer waiting for your answer, so nothing was recorded`);
-  const upToSeen = entries.slice(0, entries.findIndex((entry) => entry.id === seen) + 1);
-  const shown = factsFrom(upToSeen).hold;
-  if (shown === undefined || !sameHold(open, shown))
-    throw new StaleCard(`${name}'s decision changed, so nothing was recorded`);
-  return open;
+  if (open.review !== undefined) {
+    if (reviewDecision(entries, open).seen === seen) return open;
+  } else {
+    const upToSeen = entries.slice(0, entries.findIndex((entry) => entry.id === seen) + 1);
+    const shown = factsFrom(upToSeen).hold;
+    if (shown !== undefined && sameHold(open, shown)) return open;
+  }
+  throw new StaleCard(`${name}'s decision changed, so nothing was recorded`);
 }
 
 function requireCaptainsHold(db: DatabaseSync, card: Card, seen: number): Hold {
@@ -128,22 +130,35 @@ function boardCard(db: DatabaseSync, each: Loaded, neglect: Neglect): BoardCard 
 }
 
 const BOARD_TTL = 1000;
-const cached = new WeakMap<DatabaseSync, { changes: number; at: number; board: Board }>();
+const cached = new WeakMap<
+  DatabaseSync,
+  { changes: number; at: number; origins: ReadonlyMap<string, string> | undefined; board: Board }
+>();
 
 const changesOf = (db: DatabaseSync): number =>
   Number(db.prepare("SELECT total_changes() AS n").get()?.["n"]);
 
-export function boardView(db: DatabaseSync, timing: Timings): Board {
+export function boardView(
+  db: DatabaseSync,
+  timing: Timings,
+  origins?: ReadonlyMap<string, string>,
+): Board {
   const now = Date.now();
   const changes = changesOf(db);
   const last = cached.get(db);
-  if (last?.changes === changes && now - last.at < BOARD_TTL) return last.board;
-  const board = buildBoard(db, now, timing);
-  cached.set(db, { changes, at: now, board });
+  if (last?.changes === changes && last.origins === origins && now - last.at < BOARD_TTL)
+    return last.board;
+  const board = buildBoard(db, now, timing, origins);
+  cached.set(db, { changes, at: now, origins, board });
   return board;
 }
 
-function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
+function buildBoard(
+  db: DatabaseSync,
+  now: number,
+  timing: Timings,
+  origins: ReadonlyMap<string, string> | undefined,
+): Board {
   const holds: Board["holds"] = [];
   const loaded = loadCards(db);
   const statuses = new Map(loaded.map(({ card }) => [card.id, card.status]));
@@ -153,16 +168,19 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
     const { hold } = each.standing.facts;
     const open = card.status !== "done" && card.status !== "dropped";
     if (open && !isScheduleLog(card) && hold !== undefined && askingCaptain(hold, now)) {
-      const { entry, question, options, merge, originalMerge, author } = hold;
+      const { question, options, merge, originalMerge, author } = hold;
+      const decision = reviewDecision(each.entries, hold);
+      const preview =
+        origins === undefined ? undefined : reviewPreview(hold, decision, origins, now);
       holds.push({
         card: card.id,
-        hold: entry,
+        hold: decision.seen,
         question,
         options: [...options],
         merge,
         originalMerge,
         author,
-        ...(hold.review === undefined || merge || hold.unlanded ? {} : { review: true }),
+        ...(preview === undefined ? {} : { review: true }),
       });
     }
     return card;

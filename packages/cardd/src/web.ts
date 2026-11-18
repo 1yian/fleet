@@ -5,10 +5,10 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
-import { mergeQuestion, writeMergeQuestion } from "./holds.ts";
-import { boundReviewPage, settleReview } from "./review-completion.ts";
-import { reviewFeedback, reviewPage, sendAndEnd } from "./review-page.ts";
-import { getCard, transaction } from "./store.ts";
+import { reviewDecision, reviewPreview } from "./review-completion.ts";
+import { reviewPage } from "./review-page.ts";
+import { factsFrom, holdDeferred } from "./status.ts";
+import { cardEntries, getCard, transaction } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
 
@@ -21,19 +21,12 @@ const TYPES: Readonly<Record<string, string>> = {
   ".json": "application/json",
 };
 
-const READS: Readonly<Record<string, (db: DatabaseSync, timing: Timings) => unknown>> = {
-  "/api/board": boardView,
-  "/api/version": version,
-};
-
-function readBody(request: IncomingMessage, limit = Infinity): Promise<string> {
+function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
     request.setEncoding("utf8");
     request.on("data", (chunk: string) => {
-      if (body.length > limit) return;
       body += chunk;
-      if (body.length > limit) reject(new Error("request body is too large"));
     });
     request.on("end", () => {
       resolve(body);
@@ -215,7 +208,7 @@ export class Web {
           });
         return;
       }
-      const value = await this.route(request);
+      const value = await this.route(request, channel);
       if (value === undefined)
         this.serveFile(new URL(request.url ?? "/", "http://board").pathname, response);
       else reply(response, 200, value);
@@ -230,62 +223,34 @@ export class Web {
     response: ServerResponse,
     round: { card: number; round: number },
   ): Promise<void> {
-    const binding = boundReviewPage(this.db, round);
-    if (binding === undefined) throw new StaleCard("review hold is not due or no longer current");
-    const reported = new URL(binding);
-    const upstream = this.reviewOrigins.get(reported.origin);
-    if (upstream === undefined) {
+    if (request.method !== "GET")
+      throw new StaleCard(
+        "Stock Lavish cannot bind completion to this review round; answer on the board",
+      );
+    const entries = cardEntries(this.db, round.card);
+    const hold = factsFrom(entries).hold;
+    const now = Date.now();
+    if (hold?.entry !== round.round || holdDeferred(hold, now))
+      throw new StaleCard("review hold is not due or no longer current");
+    const decision = reviewDecision(entries, hold);
+    if (!decision.bindingCurrent) throw new StaleCard("review hold is no longer current");
+    const session = reviewPreview(hold, decision, this.reviewOrigins, now);
+    if (session === undefined) {
       reply(response, 404, {
         ok: false,
-        error: "review origin is not configured; answer on the board",
+        error: "review preview is unavailable; answer on the board",
       });
       return;
     }
-    const session = new URL(reported.pathname, upstream);
-    if (request.method === "GET") {
-      await reviewPage(response, session);
-      return;
-    }
-    if (
-      request.method !== "POST" ||
-      request.headers["content-type"] !== "application/x-www-form-urlencoded"
-    )
-      throw new Error("submit feedback from the Fleet review form");
-    const feedback = reviewFeedback(new URLSearchParams(await readBody(request, 125000)));
-    if (boundReviewPage(this.db, round) !== binding)
-      throw new StaleCard("review hold is no longer current");
-    if (!(await sendAndEnd(session, feedback)))
-      throw new StaleCard("Lavish did not accept this review; answer on the board");
-    this.recordReview(response, { ...round, session: binding, ...feedback });
+    await reviewPage(response, session);
   }
 
-  private recordReview(
-    response: ServerResponse,
-    receipt: Parameters<typeof settleReview>[1],
-  ): void {
-    const notify = transaction(this.db, () => {
-      const settled = settleReview(this.db, receipt);
-      if (settled === undefined) return settled;
-      const card = getCard(this.db, receipt.card);
-      const merge = mergeQuestion(this.db, card, []);
-      return merge === undefined
-        ? settled
-        : [...new Set([...settled, ...writeMergeQuestion(this.db, card, merge)])];
-    });
-    if (notify === undefined) {
-      reply(response, 409, { ok: false, error: "review hold is no longer current" });
-      return;
-    }
-    for (const session of notify) this.flush(session);
-    this.changed(true);
-    response.writeHead(303, { location: "/" }).end();
-  }
-
-  private async route(request: IncomingMessage): Promise<unknown> {
+  private async route(request: IncomingMessage, channel: Channel): Promise<unknown> {
     const path = new URL(request.url ?? "/", "http://board").pathname;
     const card = /^\/api\/card\/(\d+)$/.exec(path)?.[1];
-    const read = request.method === "GET" ? READS[path] : undefined;
-    if (read !== undefined) return read(this.db, this.timing);
+    if (request.method === "GET" && path === "/api/board")
+      return boardView(this.db, this.timing, channel === "public" ? this.reviewOrigins : undefined);
+    if (request.method === "GET" && path === "/api/version") return version(this.db);
     if (request.method === "GET" && card !== undefined) return thread(this.db, Number(card));
     if (request.method === "POST" && path === "/api/action") return this.act(request);
     return undefined;
