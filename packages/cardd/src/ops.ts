@@ -39,6 +39,7 @@ import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
+import { operationTrees } from "./operation-close.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { listSchedules, removeSchedule, setSchedule } from "./schedules.ts";
@@ -408,8 +409,7 @@ function landingOf(db: DatabaseSync, card: Card, args: OpArgs<"report">): Landin
     return { merged: true, pr: card.pr };
   }
   if (args.status !== "done" || card.kind !== "ship") return {};
-  if (card.delivery === "ops")
-    return { landing: `operation evidence: ${String(args.evidence)}; no PR expected` };
+  if (card.delivery === "ops") return { landing: "operation: no PR expected" };
   if (card.delivery === "local-only") return localLandingFields(db, card);
   if (card.pr !== null) return { pr: card.pr };
   return { prNote: "no PR URL reported: the worker reports it with report(pr=<full url>)" };
@@ -454,7 +454,10 @@ async function performStored(
       : undefined;
   const closeCheck =
     op === "close.begin" || op === "close.finish"
-      ? await reverifyAtClose(db, hosts, op, args)
+      ? {
+          ...(await reverifyAtClose(db, hosts, op, args)),
+          ...(await operationTrees(db, hosts, session, op, args)),
+        }
       : undefined;
   return transaction(db, () => {
     const result = HANDLERS[op](

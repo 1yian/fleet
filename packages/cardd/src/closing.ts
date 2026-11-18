@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card, type Next } from "@fleet/protocol";
+import { check, OPS, type Card, type Entry, type Next } from "@fleet/protocol";
 import { endLiveAttempts } from "./attempts.ts";
 import { settleClosedCard } from "./maintenance.ts";
 import { requireOrdinary } from "./change.ts";
@@ -7,6 +7,12 @@ import { closeCardIncidents } from "./incident-lifecycle.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import { nextLine, requireNext, type NextStep } from "./next-step.ts";
+import {
+  operationHandoffOf,
+  recordOperationTrees,
+  requireVerified,
+  type TreeCheck,
+} from "./operation-close.ts";
 import {
   addEntry,
   cardEntries,
@@ -21,6 +27,7 @@ import {
 export interface CloseCheck {
   readonly merged: boolean;
   readonly unknown?: string;
+  readonly trees?: readonly TreeCheck[];
 }
 
 interface Done {
@@ -83,7 +90,7 @@ function closable(
   mode: "done" | "dropped";
   verify: boolean;
   land: boolean;
-  operation?: { session: string; evidence: string };
+  operation?: { entry: Entry; session: string; evidence: string };
   next: NextStep | undefined;
 } {
   const { card } = reachable(db, session, args.card);
@@ -97,32 +104,14 @@ function closable(
     );
   }
   const closing = outcome(db, card, args.landed, closeCheck);
-  const operation = closing.mode === "done" ? operationHandoff(db, card) : undefined;
+  const operation =
+    closing.mode === "done" && card.delivery === "ops" ? operationHandoffOf(db, card) : undefined;
   return {
     card,
     ...closing,
     ...(operation === undefined ? {} : { operation }),
     next: requireNext(db, session, card, closing.mode, args.next),
   };
-}
-
-function operationHandoff(
-  db: DatabaseSync,
-  card: Card,
-): { session: string; evidence: string } | undefined {
-  if (card.delivery !== "ops") return undefined;
-  const report = cardEntries(db, card.id).findLast(
-    (entry) =>
-      entry.kind === "report" &&
-      entry.author.startsWith("worker:") &&
-      entry.fields["status"] === "done",
-  );
-  const evidence = report?.fields["evidence"];
-  if (report === undefined || typeof evidence !== "string")
-    throw new Error(
-      `c-${String(card.id)} cannot close Done: its worker has not handed back ops completion evidence`,
-    );
-  return { session: report.author.slice("worker:".length), evidence };
 }
 
 export function closeBegin(
@@ -133,6 +122,10 @@ export function closeBegin(
 ): Done {
   const args = check(OPS["close.begin"].args, raw);
   const { card, mode, verify, land, operation } = closable(db, session, args, closeCheck);
+  if (operation !== undefined && closeCheck?.trees === undefined)
+    throw new Error(`c-${String(card.id)}: the ops worktree check did not run`);
+  const unverified =
+    operation === undefined ? [] : recordOperationTrees(db, card, closeCheck?.trees ?? []);
   const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
@@ -156,7 +149,9 @@ export function closeBegin(
     value: {
       mode,
       verify,
-      ...(operation === undefined ? {} : { operation }),
+      ...(operation === undefined
+        ? {}
+        : { operation: { session: operation.session, evidence: operation.evidence, unverified } }),
       land,
       attempts,
       refresh: shipCardClonesToRefresh(db, card),
@@ -193,10 +188,7 @@ export function closeFinish(
     { card: args.card, landed: args.mode === "done", next: args.next },
     closeCheck,
   );
-  if (operation !== undefined && (args.archives.length > 0 || args.left.length > 0))
-    throw new Error(
-      `c-${String(card.id)} cannot close Done: its attempts were archived or left unverified, so the operation did not finish cleanly. Close it with landed=false`,
-    );
+  if (operation !== undefined) requireVerified(db, card, operation.entry);
   const now = Date.now();
   closeCardIncidents(db, card.id, now);
   endLiveAttempts(db, card.id, now);

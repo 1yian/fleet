@@ -1,11 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
-import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
+import { check, evidenceScope, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import type { Hosts } from "./pulls.ts";
-import { getCard, listProjects } from "./store.ts";
-import { cardEntries } from "./store.ts";
+import { cardEntries, getCard, listProjects } from "./store.ts";
 import { finishFrom } from "./status.ts";
 
 export function routeFor(hosts: Hosts, host: string): readonly string[] {
@@ -132,6 +131,10 @@ function requireOperationEvidence(card: Card, args: OpArgs<"report">): void {
   if (args.evidence === undefined)
     throw new Error(
       "ops completion requires evidence: an absolute path to a report in $FLEET_SCRATCH",
+    );
+  if (evidenceScope(card.id, args.evidence) === undefined)
+    throw new Error(
+      "ops evidence must be a file in this card's $FLEET_SCRATCH folder, outside its tmp folder",
     );
 }
 

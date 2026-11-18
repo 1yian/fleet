@@ -5,7 +5,13 @@ import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
-import { requireEvidence } from "./close-evidence.ts";
+import {
+  describe,
+  retainedEvidence,
+  verifyOperation,
+  type Attempt,
+  type Processes,
+} from "./close-operation.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
   fileURLToPath(new URL("./archive.sh", import.meta.url)),
@@ -17,8 +23,6 @@ const STOP_PROCS_SCRIPT = [
   SERVICE_SCRIPT,
   readFileSync(fileURLToPath(new URL("./stop-procs.sh", import.meta.url)), "utf8"),
 ].join("\n");
-
-type Attempt = OpResult<"close.begin">["attempts"][number];
 
 const ORIGIN_BASE_IF_FETCHED = `origin=""
 if git -C "$clone" rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null; then
@@ -127,16 +131,9 @@ interface Unlanded {
 }
 
 async function unlandedCounts(attempt: Attempt): Promise<Unlanded> {
-  const { host, clone, session } = attempt;
+  const { host, clone, branch, base, session } = attempt;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
-  return countsAt(
-    attempt,
-    field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`,
-  );
-}
-
-async function countsAt(attempt: Attempt, path: string): Promise<Unlanded> {
-  const { host, clone, branch, base } = attempt;
+  const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
   const out = await onHelper(host, [
     "sh",
     "-c",
@@ -152,14 +149,6 @@ async function countsAt(attempt: Attempt, path: string): Promise<Unlanded> {
   const tagged = (tag: string) =>
     rest.filter((line) => line.startsWith(`${tag} `)).map((line) => line.slice(2));
   return { ahead, dirty, commits: tagged("c"), files: tagged("f") };
-}
-
-function describe({ ahead, dirty }: { ahead: number; dirty: number }, base: string): string {
-  const parts = [
-    ahead > 0 ? `${String(ahead)} commit${ahead === 1 ? "" : "s"} not on ${base}` : "",
-    dirty > 0 ? `${String(dirty)} uncommitted file${dirty === 1 ? "" : "s"}` : "",
-  ].filter((part) => part !== "");
-  return parts.join(" and ");
 }
 
 async function inspect(attempt: Attempt): Promise<Unlanded> {
@@ -197,7 +186,7 @@ interface Retired {
   spared: string[];
 }
 
-function processesOf(session: string, out: string): { stopped: string[]; spared: string[] } {
+function processesOf(session: string, out: string): Processes {
   const stopped: string[] = [];
   const spared: string[] = [];
   for (const line of out.split("\n").filter((each) => each !== "")) {
@@ -212,30 +201,11 @@ function processesOf(session: string, out: string): { stopped: string[]; spared:
   return { stopped, spared };
 }
 
-async function requireNoOperationChanges(
-  card: number,
-  attempt: Attempt,
-  path: string,
-): Promise<void> {
-  const found = await countsAt(attempt, path);
-  const what = describe(found, attempt.base);
-  if (what === "") return;
-  const detail = [
-    ...found.commits.map((commit) => `  commit ${attempt.session}: ${commit}`),
-    ...found.files.map((file) => `  file ${attempt.session}: ${file}`),
-  ];
-  throw new Error(
-    `c-${String(card)} was not closed. ${attempt.session} on ${attempt.host} has ${what}, left in place:\n${detail.join("\n")}\nAn ops card cannot end Done with unexpected code changes, even with confirm=true. Dispatch product changes separately, or close with landed=false and a reason to archive them as Dropped.`,
-  );
-}
-
-type Guard = (attempt: Attempt, path: string) => Promise<void>;
-
 async function stopWriters(
   attempt: Attempt,
   tree: Record<string, unknown> | undefined,
   path: string,
-): Promise<{ stopped: string[]; spared: string[] }> {
+): Promise<Processes> {
   if (tree === undefined) return { stopped: [], spared: [] };
   const { host, session } = attempt;
   const workspace = field(tree, "open_workspace_id");
@@ -244,7 +214,7 @@ async function stopWriters(
   return processesOf(session, found + (await releaseAll(host, path)));
 }
 
-async function retire(attempt: Attempt, guard: Guard | undefined): Promise<Retired> {
+async function retire(attempt: Attempt, verified: Processes | undefined): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
@@ -252,11 +222,12 @@ async function retire(attempt: Attempt, guard: Guard | undefined): Promise<Retir
   const own = field(tree, "branch");
   const drop = own === undefined || own === branch ? [branch] : [branch, own];
   const path = field(tree, "path") ?? "";
-  const processes = await stopWriters(attempt, tree, path);
-  await guard?.(attempt, path === "" ? `${clone}.worktrees/${session}` : path);
-  if (tree !== undefined) {
+  const processes = verified ?? (await stopWriters(attempt, tree, path));
+  if (tree !== undefined && verified === undefined) {
     await onHelper(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
+  } else if (tree !== undefined) {
+    await onHelper(host, ["git", "-C", clone, "worktree", "remove", path]);
   }
   const out = `${archiveDir}/${session}.tar.zst`;
   let archive = "";
@@ -372,29 +343,21 @@ async function retireAll(id: number, plan: OpResult<"close.begin">): Promise<Ret
     spared: [],
     left: [],
   };
-  const guard: Guard | undefined =
-    plan.operation === undefined
-      ? undefined
-      : (attempt, path) => requireNoOperationChanges(id, attempt, path);
+  const verified =
+    plan.operation === undefined ? undefined : await verifyOperation(id, plan, stopWriters);
   for (const attempt of plan.attempts) {
     try {
-      const retired = await retire(attempt, guard);
+      const retired = await retire(attempt, verified?.get(attempt.session));
       if (retired.archive !== null) done.archives.push(`${attempt.host}:${retired.archive}`);
       done.stopped.push(...retired.stopped);
       done.spared.push(...retired.spared);
     } catch (error) {
-      if (attempt.live || guard !== undefined || !(error instanceof HostUnreachable)) throw error;
+      if (attempt.live || verified !== undefined || !(error instanceof HostUnreachable))
+        throw error;
       done.left.push({ session: attempt.session, host: attempt.host, reason: error.message });
     }
   }
   return done;
-}
-
-async function unready(id: number, plan: OpResult<"close.begin">, confirmed: boolean) {
-  const warning = await unlandedWarning(id, plan, confirmed);
-  if (warning !== undefined || plan.operation === undefined) return warning;
-  await requireEvidence(id, plan);
-  return undefined;
 }
 
 async function teardown(
@@ -404,7 +367,7 @@ async function teardown(
 ): Promise<string> {
   const { card: id, text, confirm, next } = request;
   const moved = plan.land ? await landLocally(id, plan) : "";
-  const warning = await unready(id, plan, confirm === true);
+  const warning = await unlandedWarning(id, plan, confirm === true);
   if (warning !== undefined) return warning;
   const { archives, stopped, spared, left } = await retireAll(id, plan);
   const finish = {
@@ -421,7 +384,8 @@ async function teardown(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
   const landing = moved === "" ? "" : ` ${moved}`;
-  return `c-${String(card.id)} is ${card.status}.${landing}${outcome(archives, left, found, { stopped, spared })}`;
+  const evidence = retainedEvidence(id, plan);
+  return `c-${String(card.id)} is ${card.status}.${landing}${evidence}${outcome(archives, left, found, { stopped, spared })}`;
 }
 
 function outcome(

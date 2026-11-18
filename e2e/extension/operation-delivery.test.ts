@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -128,11 +129,11 @@ const [cwd, script] = process.argv.slice(2);
 spawn("sh", ["-c", script], { cwd, detached: true, stdio: "ignore" }).unref();
 `;
 
-function startLateWriter(): { tool: string; args: { command: string } } {
+function startWriter(onTerm: string): { tool: string; args: { command: string } } {
   const launcher = join(h.dir, "launch.cjs");
   const pidFile = join(h.dir, "writer.pid");
   writeFileSync(launcher, LAUNCHER);
-  const script = `echo $$ > "${pidFile}"; trap "echo late > late.txt; exit 0" TERM; while :; do sleep 0.05; done`;
+  const script = `echo $$ > "${pidFile}"; trap "${onTerm}; exit 0" TERM; while :; do sleep 0.05; done`;
   const wait = `i=0; while [ ! -s "${pidFile}" ]; do i=$((i+1)); [ $i -gt 100 ] && exit 1; sleep 0.1; done`;
   return {
     tool: "bash",
@@ -192,9 +193,12 @@ test("ops runs offline, hands evidence over in its own field, closes clean, and 
   assert.match(open ?? "", /delivery: ops/);
   assert.match(open ?? "", new RegExp(`report: "?${report}"?`));
   assert.doesNotMatch(open ?? "", /retained/);
-  assert.equal(closed, "c-1 is done.");
   const retained = closedFolders();
   assert.equal(retained.length, 1);
+  assert.equal(
+    closed,
+    `c-1 is done. Evidence kept at local:${join(hostScratch(), retained[0] ?? "", "operation.md")}.`,
+  );
   assert.match(
     after ?? "",
     new RegExp(`retained: "?local:${hostScratch()}/c-1\\.closed-\\*/operation\\.md"?`),
@@ -216,33 +220,41 @@ test("ops runs offline, hands evidence over in its own field, closes clean, and 
   assert.match(forbidden.stderr, /ops is card-only/);
 });
 
-test("ops refuses a done handoff without evidence, evidence on other statuses, and PR or merge claims", async () => {
+test("ops refuses a done handoff without evidence, with evidence outside its card scratch folder, on other statuses, or with PR or merge claims", async () => {
   dispatchOperation();
-  const attempt = { status: "done", text: "finished" };
+  const refusal = (turns: Turn[], expected: RegExp): void => {
+    assert.match(toolResults(turns).at(-1) ?? "", expected);
+  };
   h.onModel(async () => {
     await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-    return { tool: "report", args: attempt };
+    return { tool: "report", args: { status: "done", text: "finished" } };
   }, "worker");
   h.onModel((turns) => {
-    assert.match(toolResults(turns).at(-1) ?? "", /ops completion requires evidence/);
+    refusal(turns, /ops completion requires evidence/);
     return { tool: "report", args: { status: "working", text: "going", evidence: report } };
   }, "worker");
   h.onModel((turns) => {
-    assert.match(
-      toolResults(turns).at(-1) ?? "",
-      /evidence is only for the done report of an ops card/,
-    );
+    refusal(turns, /evidence is only for the done report of an ops card/);
+    return { tool: "report", args: written(join(scratch.parent, "evidence", "operation.md")).args };
+  }, "worker");
+  h.onModel((turns) => {
+    refusal(turns, /ops evidence must be a file in this card's \$FLEET_SCRATCH folder/);
     return {
       tool: "report",
-      args: { ...written(report).args, pr: "https://github.com/acme/fleet/pull/8", merged: true },
+      args: written(join(hostScratch(), "c-1", "tmp", "operation.md")).args,
     };
   }, "worker");
   h.onModel((turns) => {
-    assert.match(toolResults(turns).at(-1) ?? "", /ops work does not report a PR or merge/);
+    refusal(turns, /ops evidence must be a file in this card's \$FLEET_SCRATCH folder/);
+    const claim = { pr: "https://github.com/acme/fleet/pull/8", merged: true };
+    return { tool: "report", args: { ...written(report).args, ...claim } };
+  }, "worker");
+  h.onModel((turns) => {
+    refusal(turns, /ops work does not report a PR or merge/);
     return { tool: "report", args: { ...written(report).args, status: "merged" } };
   }, "worker");
   h.onModel((turns) => {
-    assert.match(toolResults(turns).at(-1) ?? "", /ops work does not report a PR or merge/);
+    refusal(turns, /ops work does not report a PR or merge/);
     return written(report);
   }, "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
@@ -250,7 +262,7 @@ test("ops refuses a done handoff without evidence, evidence on other statuses, a
   h.onModel(() => ({ text: "closed" }), "mate");
   await start();
   const turns = await finished(4);
-  assert.equal(toolResults(turns).at(-1), "c-1 is done.");
+  assert.match(toolResults(turns).at(-1) ?? "", /^c-1 is done\. Evidence kept at local:/);
   const thread = await cardd.thread(1);
   assert.equal(thread.card.pr, null);
   assert.equal(
@@ -262,24 +274,33 @@ test("ops refuses a done handoff without evidence, evidence on other statuses, a
 
 const UNREADABLE = [
   {
-    name: "outside the card's scratch folder",
-    place: (): string => join(scratch.parent, "evidence", "operation.md"),
+    name: "in the scratch folder of another host root",
+    place: (): string => join(scratch.parent, "scratch", "c-1", "operation.md"),
     remove: false,
+    link: false,
   },
   {
-    name: "in the tmp folder that close removes",
-    place: (): string => join(hostScratch(), "c-1", "tmp", "operation.md"),
+    name: "a symlink inside the scratch folder",
+    place: (): string => report,
     remove: false,
+    link: true,
   },
-  { name: "gone before close", place: (): string => report, remove: true },
+  { name: "gone before close", place: (): string => report, remove: true, link: false },
 ];
 
-for (const { name, place, remove } of UNREADABLE) {
-  test(`ops refuses Done and keeps the attempt when the evidence is ${name}`, async () => {
+for (const { name, place, remove, link } of UNREADABLE) {
+  test(`ops refuses Done, removes nothing, and names no path when the evidence is ${name}`, async () => {
     dispatchOperation();
     h.onModel(async () => {
       await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-      return written(place());
+      if (!link) return written(place());
+      const real = join(hostScratch(), "c-1", "real.md");
+      written(real);
+      symlinkSync(real, report);
+      return {
+        tool: "report",
+        args: { status: "done", text: "Operation complete", evidence: report },
+      };
     }, "worker");
     h.onModel(() => ({ text: "reported" }), "worker");
     h.onModel(() => {
@@ -288,16 +309,66 @@ for (const { name, place, remove } of UNREADABLE) {
     }, "mate");
     h.onModel(() => ({ text: "close attempted" }), "mate");
     await start();
-    const turns = await finished(4);
-    assert.match(
-      toolResults(turns).at(-1) ?? "",
-      /cannot close Done.*not a readable report in the card's scratch folder/,
-    );
+    const refused = toolResults(await finished(4)).at(-1) ?? "";
+    assert.match(refused, /cannot close Done: its ops evidence is not a regular report file/);
+    assert.doesNotMatch(refused, /operation\.md|real\.md|failed|ENOENT/);
     assert.equal((await cardd.thread(1)).card.status, "with-mate");
     assert.equal(existsSync(tree), true);
     assert.equal(existsSync(`${scratch.root}.archive`), false);
   });
 }
+
+test("ops refuses Done when a writer removes the evidence while close stops it", async () => {
+  dispatchOperation();
+  h.onModel(async () => {
+    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+    return startWriter(`rm -f ${report}`);
+  }, "worker");
+  h.onModel(() => written(report), "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Operation complete" } }), "mate");
+  h.onModel(() => ({ text: "close attempted" }), "mate");
+  await start();
+  const refused = toolResults(await finished(4)).at(-1) ?? "";
+  assert.match(refused, /cannot close Done: its ops evidence is not a regular report file/);
+  assert.equal(alive(Number(readFileSync(join(h.dir, "writer.pid"), "utf8").trim())), false);
+  assert.equal(existsSync(report), false);
+  assert.equal((await cardd.thread(1)).card.status, "with-mate");
+  assert.equal(existsSync(tree), true);
+});
+
+test("a steer after done cancels the handoff for the board and for close alike", async () => {
+  dispatchOperation();
+  const seen: string[] = [];
+  h.onModel(async () => {
+    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+    return written(report);
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  h.onModel(() => ({ text: "noted" }), "worker");
+  h.onModel(() => ({ tool: "board", args: { card: 1 } }), "mate");
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    return { tool: "comment", args: { card: 1, text: "Check one more thing first." } };
+  }, "mate");
+  h.onModel(() => ({ tool: "board", args: { card: 1 } }), "mate");
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    return { tool: "close", args: { card: 1, summary: "Operation complete" } };
+  }, "mate");
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    return { text: "close attempted" };
+  }, "mate");
+  await start();
+  await finished(7);
+  const [before, after, refused] = seen;
+  assert.match(before ?? "", new RegExp(`report: "?${report}"?`));
+  assert.doesNotMatch(after ?? "", /report: /);
+  assert.match(refused ?? "", /the worker has not reported done/);
+  assert.notEqual((await cardd.thread(1)).card.status, "done");
+  assert.equal(existsSync(tree), true);
+});
 
 test("ops refuses Done for unexpected commits and files even with confirm, and preserves them until an explicit drop", async () => {
   dispatchOperation();
@@ -364,7 +435,7 @@ test("ops refuses Done for a writer that is still running when close stops it, a
   const seen: string[] = [];
   h.onModel(async () => {
     await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-    return startLateWriter();
+    return startWriter("echo late > late.txt");
   }, "worker");
   h.onModel(() => written(report), "worker");
   h.onModel(() => ({ text: "reported" }), "worker");

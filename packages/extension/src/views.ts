@@ -1,5 +1,7 @@
 import {
+  evidenceScope,
   idlePark,
+  operationHandoff,
   waitLine,
   type BoardCard,
   type CardView,
@@ -233,22 +235,19 @@ function reportPath(entries: readonly Entry[]): string | undefined {
   return undefined;
 }
 
-function operationEvidence(entries: readonly Entry[]): string | undefined {
-  const handoff = entries.findLast(
-    (entry) => entry.kind === "report" && entry.fields["status"] !== "note",
-  );
-  const evidence = handoff?.fields["evidence"];
-  return handoff?.fields["status"] === "done" && typeof evidence === "string"
+function operationEvidence(card: number, entries: readonly Entry[]): string | undefined {
+  const evidence = operationHandoff(entries)?.fields["evidence"];
+  return typeof evidence === "string" && evidenceScope(card, evidence) !== undefined
     ? evidence
     : undefined;
 }
 
 function retainedEvidence(evidence: string, view: CardView): string | undefined {
-  if (view.card.status !== "done" && view.card.status !== "dropped") return undefined;
-  const folder = new RegExp(`^(.*/scratch)/c-${String(view.card.id)}/(.+)$`).exec(evidence);
-  if (folder === null) return undefined;
+  if (view.card.status !== "done") return undefined;
+  const scope = evidenceScope(view.card.id, evidence);
+  if (scope === undefined) return undefined;
   const host = view.attempts.at(-1)?.host ?? "local";
-  return `${host}:${folder[1] ?? ""}/c-${String(view.card.id)}.closed-*/${folder[2] ?? ""}`;
+  return `${host}:${scope.folder}.closed-*/${scope.rel}`;
 }
 
 function reportFields(view: CardView): Record<string, string> {
@@ -256,7 +255,7 @@ function reportFields(view: CardView): Record<string, string> {
     const report = reportPath(view.entries);
     return report === undefined ? {} : { report };
   }
-  const report = operationEvidence(view.entries);
+  const report = operationEvidence(view.card.id, view.entries);
   if (report === undefined) return {};
   const retained = retainedEvidence(report, view);
   return retained === undefined ? { report } : { report, retained };
