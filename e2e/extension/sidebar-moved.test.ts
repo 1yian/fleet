@@ -205,7 +205,7 @@ test("a main whose host is local, and a lane that moved hosts, tell each worker 
   await updateFleet(pane);
 
   const placement = records(JSON.parse(execFileSync("sh", argv, { env, encoding: "utf8" })));
-  assert.deepEqual(placement, [{ lane: "ops", mate: true }]);
+  assert.deepEqual(placement, [{ lane: "ops", mate: true, host: REMOTE }]);
   const moved = await tokensOf(lab, "└ ops-alpha");
   assert.equal(moved["mate"], REMOTE);
   assert.equal(moved["away"], undefined);
