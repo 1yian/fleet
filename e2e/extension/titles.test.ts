@@ -282,7 +282,7 @@ test("a mate Pi that only inherited a worker pane's herdr environment leaves tha
   assert.ok(![...seen.values()].includes("1stmate"), JSON.stringify([...seen.values()]));
 });
 
-test("a second mate that starts in a workspace with the wrong label corrects it and keeps its panes", async () => {
+test("a second mate that starts in a workspace with the wrong label corrects it, adds no tab, and keeps its panes", async () => {
   const created = await lab.run([
     "workspace",
     "create",
@@ -300,19 +300,12 @@ test("a second mate that starts in a workspace with the wrong label corrects it 
   await until("the workspace to read 2ndmate-cleo", labels, (now) => {
     return now.get(workspace) === "2ndmate-cleo";
   });
-  const filesTab = await until(
-    "the Files tab",
-    async () =>
-      records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]).find(
-        (each) => each["label"] === "Files",
-      ),
-    (found) => found !== undefined,
-  );
+  await h.waitFor((event) => event["type"] === "fleet_connected", "the mate Pi to join the fleet");
+  const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
+  assert.equal(tabs.length, 1, JSON.stringify(tabs));
   const panes = await lab.run(["pane", "list", "--workspace", workspace]);
   assert.deepEqual(
-    records(panes["panes"])
-      .filter((each) => each["tab_id"] !== filesTab?.["tab_id"])
-      .map((each) => each["pane_id"]),
+    records(panes["panes"]).map((each) => each["pane_id"]),
     [pane],
   );
   await until(

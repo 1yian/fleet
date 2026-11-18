@@ -4,14 +4,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { HostUnreachable, NoTransport, onHost } from "./host.ts";
 import type { Link } from "./link.ts";
 
-export const SYNC_FUNCTIONS = readFileSync(
-  fileURLToPath(new URL("./sync.sh", import.meta.url)),
-  "utf8",
-);
+const SYNC_FUNCTIONS = readFileSync(fileURLToPath(new URL("./sync.sh", import.meta.url)), "utf8");
 
 export const ADD_WORKTREE = `${SYNC_FUNCTIONS}
 set -eu
-clone=$1 path=$2 branch=$3 base=$4 from=$5 who=\${6:-worker}
+clone=$1 path=$2 branch=$3 base=$4 from=$5
 if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
   git -C "$clone" worktree add -q "$path" "$branch"
   exit 0
@@ -19,7 +16,7 @@ fi
 start=$base
 if [ "$from" = origin ] && git -C "$clone" remote get-url origin >/dev/null 2>&1; then
   if ! fetch_origin "$clone"; then
-    echo "could not fetch origin in $clone, so the $who would start from a stale base: $(fetch_reason)" >&2
+    echo "could not fetch origin in $clone, so the worker would start from a stale base: $(fetch_reason)" >&2
     exit 1
   fi
   start=origin/$base

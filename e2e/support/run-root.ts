@@ -1,8 +1,8 @@
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { GROUPS_ENV, groupScopes, openGroupScope } from "./marked.ts";
 import { guardRoot } from "./reaper-client.ts";
-import { cacheDirectory, runBase } from "./run-folders.ts";
+import { runBase } from "./run-folders.ts";
 
 const outerTmpdir = runBase();
 
@@ -36,6 +36,3 @@ if (assigned === undefined) {
 export function tempDir(prefix: string): string {
   return mkdtempSync(join(runRoot, prefix));
 }
-
-const cacheBase = assigned === undefined ? outerTmpdir : dirname(outerTmpdir);
-export const sharedCacheDir = (): string => cacheDirectory(cacheBase);

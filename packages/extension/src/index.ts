@@ -46,8 +46,6 @@ import { registerRestart } from "./restart.ts";
 import { registerQuestions } from "./questions.ts";
 import { standingRules } from "./standing.ts";
 import { registerStow } from "./stow.ts";
-import { ensureFilesTab } from "./files/tab.ts";
-import { recordSkills } from "./files/skills.ts";
 import { titleMate } from "./titles.ts";
 import { registerUpdate } from "./updating.ts";
 import { WorkerRun } from "./worker.ts";
@@ -64,15 +62,6 @@ interface Config {
 
 const EXTENSION = fileURLToPath(import.meta.url);
 const HOME = (): string => process.cwd();
-
-async function filesSetup(pi: ExtensionAPI, ctx: ExtensionContext, home: string): Promise<void> {
-  await ensureFilesTab(home).catch((error: unknown) => {
-    announce(ctx, [
-      `the Files tab did not start: ${error instanceof Error ? error.message : String(error)}`,
-    ]);
-  });
-  recordSkills(pi, home);
-}
 
 function forwardedBws(text: string | undefined): BwsConfig | undefined {
   if (text === undefined || text === "") return undefined;
@@ -479,9 +468,6 @@ export default function fleet(pi: ExtensionAPI): void {
       ctx,
       extensionsReady,
     );
-    if (found.lane !== undefined) {
-      titleMate(pi, found.lane).catch(() => undefined);
-      filesSetup(pi, ctx, HOME()).catch(() => undefined);
-    }
+    if (found.lane !== undefined) titleMate(pi, found.lane).catch(() => undefined);
   });
 }
