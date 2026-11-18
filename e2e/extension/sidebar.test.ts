@@ -145,16 +145,45 @@ async function openWorker(name: string, card: number): Promise<string> {
   return String(records([made["workspace"]])[0]?.["workspace_id"]);
 }
 
-const EXPECTED_AFTER_UPDATE = [...GROUPED, "\u2514 stale-owner", "[yang] yang-a", "[yang] yang-b"];
+const EXPECTED_AFTER_UPDATE = [
+  ...GROUPED,
+  "└ stale-owner",
+  "[held] held-worker",
+  "[yang] yang-a",
+  "[yang] yang-b",
+];
 
 test("/updatefleet leaves each mate's workspace followed by its own workers, whatever order the restarts and the workers' creation left", async () => {
   await lab.run(["workspace", "create", "--cwd", here.root, "--label", "~", "--no-focus"]);
   tokens["yang"] = cardd.addLane("yang", "main");
+  const heldToken = cardd.addLane("held", "main");
+  tokens["held"] = heldToken;
+  here.addLane("held", { url: cardd.url, token: heldToken, hold: true });
   const pane = await startMain(lab, here, h);
   await allRunPi();
   const cards = new Map<string, number>();
   for (const [lane, name] of WORKERS) cards.set(name, await newCard(lane, name));
   for (const [, name] of [...WORKERS].reverse()) await openWorker(name, cards.get(name) ?? 0);
+  const ops = records((await lab.run(["workspace", "list"]))["workspaces"]).find(
+    (row) => row["label"] === "2ndmate-ops",
+  );
+  const opsId = optionalString(ops ?? {}, "workspace_id");
+  assert.ok(opsId);
+  await lab.run([
+    "tab",
+    "create",
+    "--workspace",
+    opsId,
+    "--cwd",
+    join(sites, `c-${String(cards.get("ops-alpha"))}-a1`),
+    "--no-focus",
+  ]);
+  await tagged("held-worker", await newCard("held", "held-worker"), {
+    lane: "held",
+    mate: "previous-host",
+  });
+  const status: unknown = JSON.parse(here.fleet(["status", "--json"], { HERDR_SESSION: lab.name }));
+  assert.ok(records(status).some((row) => row["lane"] === "held" && row["state"] === "stopped"));
   const stale = await openWorker("stale-owner", await newCard("ops", "stale-owner"));
   await lab.run([
     "workspace",
@@ -203,6 +232,8 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
   const labels = ["\u2514 main-one", "\u2514 far-one", "\u2514 ops-alpha", "\u2514 stale-owner"];
   const mates = await Promise.all(labels.map(async (label) => (await tokensOf(label))["mate"]));
   assert.deepEqual(mates, [FLEET_HOST, FLEET_HOST, FLEET_HOST, FLEET_HOST]);
+  assert.equal((await tokensOf("2ndmate-ops"))["lane"], undefined);
+  assert.equal((await tokensOf("[held] held-worker"))["mate"], "previous-host");
   process.stderr.write(`sidebar after the update: ${JSON.stringify(await sidebar())}\n`);
 });
 

@@ -59,7 +59,7 @@ async function everyLane(
 
 export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
   const here = sidebarHostName();
-  const copies = new Map([[config.lane, [{ host: here, running: true }]]]);
+  const runningHosts = new Map([[config.lane, [here]]]);
   for (const host of hostsOf(config)) {
     const out = (await fleet(config, host, ["status", "--placement", "--json"]))
       .trim()
@@ -74,19 +74,14 @@ export async function mateHosts(config: LaneConfig): Promise<Map<string, string>
       const running = row["mate"];
       if (lane === "" || typeof running !== "boolean")
         throw new Error(`invalid mate placement on ${host}`);
-      if (host === "local" && lane === config.lane) continue;
-      copies.set(lane, [
-        ...(copies.get(lane) ?? []),
-        { host: host === "local" ? here : host, running },
-      ]);
+      if (!running || (host === "local" && lane === config.lane)) continue;
+      runningHosts.set(lane, [...(runningHosts.get(lane) ?? []), host === "local" ? here : host]);
     }
   }
   const found = new Map<string, string>();
-  for (const [lane, homes] of copies) {
-    const running = homes.filter((home) => home.running);
-    const only = running.length === 0 && homes.length === 1 ? homes : running;
-    const [home] = only;
-    if (home !== undefined && only.length === 1) found.set(lane, home.host);
+  for (const [lane, hosts] of runningHosts) {
+    const [host] = hosts;
+    if (host !== undefined && hosts.length === 1) found.set(lane, host);
   }
   return found;
 }

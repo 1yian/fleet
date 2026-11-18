@@ -40,11 +40,21 @@ let tokens: Record<string, string>;
 beforeEach(async () => {
   h = await Harness.start();
   here = new Scratch();
+  const launcher = join(here.root, "bin/fleet");
+  const current = readFileSync(launcher, "utf8");
+  writeFileSync(
+    launcher,
+    current.replace("\n", '\nif [ "$2" = "--placement" ]; then exit 2; fi\n'),
+  );
+  git(here.root, "commit", "-qam", "fixture: CLI before placement queries");
+  const old = git(here.root, "rev-parse", "HEAD");
+  writeFileSync(launcher, current);
+  git(here.root, "commit", "-qam", "fixture: upgrade CLI");
   const remote = addRemote(here.root);
   p620 = new Scratch("fleet");
   git(p620.root, "remote", "add", "origin", remote);
   git(p620.root, "fetch", "-q", "origin");
-  git(p620.root, "reset", "-q", "--hard", "origin/main");
+  git(p620.root, "reset", "-q", "--hard", old);
   cardd = await Cardd.start();
   tokens = { main: cardd.addLane("main", undefined, here.root) };
   const env = { ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` };
@@ -182,6 +192,9 @@ async function updateFleet(pane: string): Promise<void> {
 test("a main whose host is local, and a lane that moved hosts, tell each worker where its mate runs, and herdr shows it beside the Git row", async () => {
   await busyOldHome();
   await moveOpsToP620();
+  const argv = [join(p620.root, "bin/fleet"), "status", "--placement", "--json"];
+  const env = { ...process.env, HERDR_SESSION: far.name };
+  assert.throws(() => execFileSync("sh", argv, { env }), { status: 2 });
   const pane = await startMain(lab, here, h);
   const alpha = await open(lab, "ops-alpha", here.root);
   await mark(lab, alpha.id, "lane=ops", "mate=gone-host");
@@ -191,6 +204,8 @@ test("a main whose host is local, and a lane that moved hosts, tell each worker 
 
   await updateFleet(pane);
 
+  const placement = records(JSON.parse(execFileSync("sh", argv, { env, encoding: "utf8" })));
+  assert.deepEqual(placement, [{ lane: "ops", mate: true }]);
   const moved = await tokensOf(lab, "└ ops-alpha");
   assert.equal(moved["mate"], REMOTE);
   assert.equal(moved["away"], undefined);
@@ -236,6 +251,10 @@ test("a busy non-mate shell cannot replace stored placement when neither home ha
 });
 
 test("arrange preserves hints without an identity and refreshes them with the lane home's name", async () => {
+  const heldEnv = { HERDR_SESSION: lab.name };
+  assert.throws(() => p620.fleet(["status", "--placement"], heldEnv), { status: 2 });
+  assert.throws(() => p620.fleet(["up", "ops", "--placement", "--json"], heldEnv), { status: 2 });
+  assert.equal(statusOf(p620, lab.name)["ops"], "stopped");
   const inside = await open(lab, "inside", here.root);
   await mark(lab, inside.id, "lane=aa", `mate=${REMOTE}`);
   const outside = await open(lab, "outside", here.root);

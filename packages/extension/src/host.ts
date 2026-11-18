@@ -10,6 +10,8 @@ export class HostUnreachable extends Error {}
 
 export class NoTransport extends HostUnreachable {}
 
+export class WorkspaceNotFound extends Error {}
+
 const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
 
 function ownNames(): string[] {
@@ -160,7 +162,13 @@ function resultOf(stdout: string, host: string, name: string): Record<string, un
   if (stdout.trim() === "") return {};
   const reply: unknown = JSON.parse(stdout);
   if (!isRecord(reply)) throw new Error(`herdr ${name} on ${host} returned no JSON object`);
-  if (isRecord(reply["error"])) throw new Error(scrub(String(reply["error"]["message"])));
+  const error = reply["error"];
+  if (isRecord(error)) {
+    const message = scrub(String(error["message"]));
+    if (error["code"] === "workspace_not_found" || message === "workspace_not_found")
+      throw new WorkspaceNotFound(message);
+    throw new Error(message);
+  }
   return isRecord(reply["result"]) ? reply["result"] : {};
 }
 

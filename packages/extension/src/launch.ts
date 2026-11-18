@@ -70,14 +70,23 @@ if (process.argv.slice(2).some((arg) => arg === "--token" || arg.startsWith("--t
   process.exit(2);
 }
 
-if (process.argv[2] === "files") process.exit(await runFiles(process.argv.slice(3)));
+const cliArgs = process.argv.slice(2);
+if (cliArgs[0] === "files") process.exit(await runFiles(cliArgs.slice(1)));
 
-const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
-  if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
-  const value = all[index + 1];
-  out.push(VALUE_OPTIONS.has(arg) && value !== undefined ? `${arg}=${value}` : arg);
-  return out;
-}, []);
+const placement =
+  cliArgs.length === 3 &&
+  cliArgs[0] === "status" &&
+  cliArgs[1] === "--placement" &&
+  cliArgs[2] === "--json";
+const argv = (placement ? ["status", "--json"] : cliArgs).reduce<string[]>(
+  (out, arg, index, all) => {
+    if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
+    const value = all[index + 1];
+    out.push(VALUE_OPTIONS.has(arg) && value !== undefined ? `${arg}=${value}` : arg);
+    return out;
+  },
+  [],
+);
 
 if (argv.some((arg) => arg === "--help" || arg === "-h")) {
   console.log(USAGE);
@@ -99,7 +108,6 @@ function parseCommandLine() {
     allowPositionals: true,
     options: {
       json: { type: "boolean" },
-      placement: { type: "boolean" },
       undo: { type: "boolean" },
       check: { type: "boolean" },
       maintenance: { type: "boolean" },
@@ -234,7 +242,7 @@ if (command === "up" || command === "restart") {
 
 switch (command ?? "") {
   case "status": {
-    if (values.placement === true) {
+    if (placement) {
       console.log(JSON.stringify(await placementStatus(root)));
       break;
     }

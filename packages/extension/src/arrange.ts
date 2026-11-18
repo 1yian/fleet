@@ -1,6 +1,6 @@
 import { createConnection } from "node:net";
 import { hostname } from "node:os";
-import { field, herdr, isLocal, onFleetRoot, onHost, records } from "./host.ts";
+import { field, herdr, isLocal, onFleetRoot, onHost, records, WorkspaceNotFound } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import { isWorkerWorkspace, legacyMatePrefix, liveLegacyMate } from "./titles.ts";
 
@@ -257,7 +257,9 @@ export async function tagWorker(
     `lane=${owner.lane}`,
     ...card,
     ...mate,
-  ]);
+  ]).catch((error: unknown) => {
+    if (!(error instanceof WorkspaceNotFound)) throw error;
+  });
 }
 
 export async function claimFollowers(lane: string, workspace: string): Promise<void> {
@@ -312,9 +314,9 @@ export async function tagWorkers(
   for (const pane of records((await herdr(host, ["pane", "list"]))["panes"])) {
     const workspace = field(pane, "workspace_id");
     if (workspace === undefined || done.has(workspace)) continue;
+    done.add(workspace);
     const owner = missingOwner(pane, known.get(workspace), laneOfCard);
     if (owner === undefined) continue;
-    done.add(workspace);
     await tagWorker(host, workspace, { ...owner, mate: mateHosts.get(owner.lane) });
   }
 }
