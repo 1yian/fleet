@@ -112,6 +112,8 @@ test("main reads 1stmate and a second mate reads 2ndmate-<lane>, in herdr and in
     "--token",
     "card=913",
   ]);
+  fleet(["arrange"]);
+  assert.equal((await labels()).get(workspace), "2ndmate-cleo");
   assert.equal(fleet(["status"]), "cleo: running\n");
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
   assert.equal(fleet(["stop", "cleo"]), "cleo: stopped\n");

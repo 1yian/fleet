@@ -71,7 +71,6 @@ const mainFirst = (a: string, b: string): number => {
 async function matesOf(spaces: readonly Space[]): Promise<Map<string, Space>> {
   const mates = new Map<string, Space>();
   for (const space of spaces) {
-    if (space.worker) continue;
     const lane = mateLane(space.label);
     if (lane !== undefined && !mates.has(lane)) mates.set(lane, space);
   }
@@ -101,7 +100,7 @@ function hostedWorkers(
 
 const isPlacementHost = (name: string): boolean => name !== "" && name !== "local";
 
-export function sidebarHostName(name = process.env["FLEET_HOST"]): string {
+export function sidebarHostName(name: string | undefined): string {
   return name !== undefined && isPlacementHost(name)
     ? name
     : (hostname().toLowerCase().split(".")[0] ?? "").trim();
@@ -231,7 +230,7 @@ export async function arrangeHere(host?: string): Promise<void> {
 }
 
 export async function arrangeOn(host: string, root: string | undefined): Promise<void> {
-  if (isLocal(host)) await arrangeHere(sidebarHostName());
+  if (isLocal(host)) await arrangeHere(sidebarHostName(process.env["FLEET_HOST"]));
   else await onFleetRoot(host, root, ["arrange", "--host", host]);
 }
 
@@ -281,6 +280,7 @@ async function correctMates(
 ): Promise<void> {
   for (const space of spaces) {
     const mate = mateHosts.get(space.lane ?? "");
+    if (mateLane(space.label) !== undefined) continue;
     if (space.lane !== undefined && mate !== undefined && mate !== space.mate)
       await tagWorker(host, space.id, { lane: space.lane, mate });
   }
@@ -314,9 +314,11 @@ export async function tagWorkers(
   for (const pane of records((await herdr(host, ["pane", "list"]))["panes"])) {
     const workspace = field(pane, "workspace_id");
     if (workspace === undefined || done.has(workspace)) continue;
-    done.add(workspace);
-    const owner = missingOwner(pane, known.get(workspace), laneOfCard);
+    const space = known.get(workspace);
+    if (space !== undefined && mateLane(space.label) !== undefined) continue;
+    const owner = missingOwner(pane, space, laneOfCard);
     if (owner === undefined) continue;
+    done.add(workspace);
     await tagWorker(host, workspace, { ...owner, mate: mateHosts.get(owner.lane) });
   }
 }

@@ -205,10 +205,17 @@ export async function status(root: string): Promise<Status[]> {
   return out;
 }
 
-export async function placementStatus(root: string): Promise<{ lane: string; mate: boolean }[]> {
-  const out: { lane: string; mate: boolean }[] = [];
+export async function placementStatus(
+  root: string,
+): Promise<{ lane: string; mate: boolean; host?: string }[]> {
+  const out: { lane: string; mate: boolean; host?: string }[] = [];
   for (const info of laneHomes(root)) {
-    out.push({ lane: info.lane, mate: (await workspaceOf(info, true)) !== undefined });
+    const mate = (await workspaceOf(info, true)) !== undefined;
+    out.push({
+      lane: info.lane,
+      mate,
+      ...(info.config.host === undefined ? {} : { host: info.config.host }),
+    });
   }
   return out;
 }

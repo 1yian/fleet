@@ -31,7 +31,7 @@ export async function claimWorkspace(
   await tagWorker(host, workspace, {
     lane: card.lane,
     card: card.id,
-    mate: sidebarHostName(),
+    mate: sidebarHostName(process.env["FLEET_HOST"]),
   }).catch(() => undefined);
   await arrangeOn(host, rootOf(host)).catch(() => undefined);
 }
