@@ -98,6 +98,39 @@ for part in $rel; do
 done
 [ -f "$report" ] && [ -r "$report" ]`;
 
+const RETAINED_EVIDENCE_SCRIPT = `set -eu
+${CARD_NUMBER_ONLY}
+root=${SHELL_HOST_DIR}/scratch
+rel=$2
+case /$rel/ in *//* | */./* | */../* | /tmp/*) exit 1 ;; esac
+chain() {
+  (
+    set -f
+    IFS=/
+    path=$1
+    for part in $rel; do
+      path=$path/$part
+      if [ -L "$path" ]; then exit 1; fi
+    done
+  )
+}
+found=
+for closed in "$root/c-$1.closed-"*; do
+  [ -d "$closed" ] && [ ! -L "$closed" ] || continue
+  if chain "$closed" && [ -f "$closed/$rel" ] && [ -r "$closed/$rel" ]; then found=$closed/$rel; fi
+done
+[ -n "$found" ]
+echo "$found"`;
+
+export const retainedEvidenceCommand = (card: number, rel: string): string[] => [
+  "sh",
+  "-c",
+  RETAINED_EVIDENCE_SCRIPT,
+  "retained",
+  String(card),
+  rel,
+];
+
 export const checkEvidenceCommand = (card: number, report: string): string[] => [
   "sh",
   "-c",

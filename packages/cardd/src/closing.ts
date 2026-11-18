@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card, type Entry, type Next } from "@fleet/protocol";
+import { check, operationHandoff, OPS, type Card, type Next } from "@fleet/protocol";
 import { endLiveAttempts } from "./attempts.ts";
 import { settleClosedCard } from "./maintenance.ts";
 import { requireOrdinary } from "./change.ts";
@@ -7,12 +7,6 @@ import { closeCardIncidents } from "./incident-lifecycle.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import { nextLine, requireNext, type NextStep } from "./next-step.ts";
-import {
-  operationHandoffOf,
-  recordOperationTrees,
-  requireVerified,
-  type TreeCheck,
-} from "./operation-close.ts";
 import {
   addEntry,
   cardEntries,
@@ -27,7 +21,6 @@ import {
 export interface CloseCheck {
   readonly merged: boolean;
   readonly unknown?: string;
-  readonly trees?: readonly TreeCheck[];
 }
 
 interface Done {
@@ -90,7 +83,7 @@ function closable(
   mode: "done" | "dropped";
   verify: boolean;
   land: boolean;
-  operation?: { entry: Entry; session: string; evidence: string };
+  operation?: { session: string; evidence: string; handoff: number };
   next: NextStep | undefined;
 } {
   const { card } = reachable(db, session, args.card);
@@ -105,13 +98,26 @@ function closable(
   }
   const closing = outcome(db, card, args.landed, closeCheck);
   const operation =
-    closing.mode === "done" && card.delivery === "ops" ? operationHandoffOf(db, card) : undefined;
+    closing.mode === "done" && card.delivery === "ops" ? handoffOf(db, card) : undefined;
   return {
     card,
     ...closing,
     ...(operation === undefined ? {} : { operation }),
     next: requireNext(db, session, card, closing.mode, args.next),
   };
+}
+
+function handoffOf(
+  db: DatabaseSync,
+  card: Card,
+): { session: string; evidence: string; handoff: number } {
+  const entry = operationHandoff(cardEntries(db, card.id));
+  const evidence = entry?.fields["evidence"];
+  if (entry === undefined || typeof evidence !== "string")
+    throw new Error(
+      `c-${String(card.id)} cannot close Done: its worker has not handed back ops completion evidence`,
+    );
+  return { session: entry.author.slice("worker:".length), evidence, handoff: entry.id };
 }
 
 export function closeBegin(
@@ -122,10 +128,6 @@ export function closeBegin(
 ): Done {
   const args = check(OPS["close.begin"].args, raw);
   const { card, mode, verify, land, operation } = closable(db, session, args, closeCheck);
-  if (operation !== undefined && closeCheck?.trees === undefined)
-    throw new Error(`c-${String(card.id)}: the ops worktree check did not run`);
-  const unverified =
-    operation === undefined ? [] : recordOperationTrees(db, card, closeCheck?.trees ?? []);
   const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
@@ -149,9 +151,7 @@ export function closeBegin(
     value: {
       mode,
       verify,
-      ...(operation === undefined
-        ? {}
-        : { operation: { session: operation.session, evidence: operation.evidence, unverified } }),
+      ...(operation === undefined ? {} : { operation }),
       land,
       attempts,
       refresh: shipCardClonesToRefresh(db, card),
@@ -182,13 +182,12 @@ export function closeFinish(
   closeCheck?: CloseCheck,
 ): Done {
   const args = check(OPS["close.finish"].args, raw);
-  const { card, next, operation } = closable(
+  const { card, next } = closable(
     db,
     session,
     { card: args.card, landed: args.mode === "done", next: args.next },
     closeCheck,
   );
-  if (operation !== undefined) requireVerified(db, card, operation.entry);
   const now = Date.now();
   closeCardIncidents(db, card.id, now);
   endLiveAttempts(db, card.id, now);

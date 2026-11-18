@@ -39,7 +39,6 @@ import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
-import { operationTrees } from "./operation-close.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { listSchedules, removeSchedule, setSchedule } from "./schedules.ts";
@@ -454,10 +453,7 @@ async function performStored(
       : undefined;
   const closeCheck =
     op === "close.begin" || op === "close.finish"
-      ? {
-          ...(await reverifyAtClose(db, hosts, op, args)),
-          ...(await operationTrees(db, hosts, session, op, args)),
-        }
+      ? await reverifyAtClose(db, hosts, op, args)
       : undefined;
   return transaction(db, () => {
     const result = HANDLERS[op](

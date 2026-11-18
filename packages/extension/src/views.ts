@@ -1,7 +1,5 @@
 import {
-  evidenceScope,
   idlePark,
-  operationHandoff,
   waitLine,
   type BoardCard,
   type CardView,
@@ -9,6 +7,7 @@ import {
   type Status,
 } from "@fleet/protocol";
 import { encode } from "@toon-format/toon";
+import type { EvidenceShown } from "./evidence-view.ts";
 
 const ORDER = [
   "needs-you",
@@ -217,6 +216,7 @@ function boardHelp(query: BoardQuery, rows: number, closed: number, hidden: numb
 export interface CardQuery {
   readonly entries?: number;
   readonly full?: boolean;
+  readonly evidence?: EvidenceShown | undefined;
 }
 
 const ENTRY_LIMIT = 10;
@@ -235,30 +235,16 @@ function reportPath(entries: readonly Entry[]): string | undefined {
   return undefined;
 }
 
-function operationEvidence(card: number, entries: readonly Entry[]): string | undefined {
-  const evidence = operationHandoff(entries)?.fields["evidence"];
-  return typeof evidence === "string" && evidenceScope(card, evidence) !== undefined
-    ? evidence
-    : undefined;
-}
-
-function retainedEvidence(evidence: string, view: CardView): string | undefined {
-  if (view.card.status !== "done") return undefined;
-  const scope = evidenceScope(view.card.id, evidence);
-  if (scope === undefined) return undefined;
-  const host = view.attempts.at(-1)?.host ?? "local";
-  return `${host}:${scope.folder}.closed-*/${scope.rel}`;
-}
-
-function reportFields(view: CardView): Record<string, string> {
+function reportFields(view: CardView, shown: EvidenceShown | undefined): Record<string, string> {
   if (view.card.delivery !== "ops") {
     const report = reportPath(view.entries);
     return report === undefined ? {} : { report };
   }
-  const report = operationEvidence(view.card.id, view.entries);
-  if (report === undefined) return {};
-  const retained = retainedEvidence(report, view);
-  return retained === undefined ? { report } : { report, retained };
+  if (shown === undefined) return {};
+  if (shown.kind === "read") return { report: shown.path };
+  if (shown.kind === "retained") return { retained: shown.path };
+  if (shown.kind === "unconfirmed") return { retained: "retention not confirmed" };
+  return { evidence: "reported but not verified: do not read it, close checks it" };
 }
 
 type Cut = (text: string, max: number) => string;
@@ -331,7 +317,7 @@ export function cardText(view: CardView, query: CardQuery): string {
   const { card } = view;
   const record = about(view, clip);
   record["attempts"] = view.attempts.length === 0 ? "0 (never dispatched)" : view.attempts;
-  Object.assign(record, reportFields(view));
+  Object.assign(record, reportFields(view, query.evidence));
   if (card.intent !== "") record["intent"] = clip(card.intent, 300);
   if (card.spec !== "") record["spec"] = clip(card.spec, 300);
   const total = view.entries.length;

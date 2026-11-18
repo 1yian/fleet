@@ -8,6 +8,7 @@ import type { Link } from "./link.ts";
 import {
   describe,
   retainedEvidence,
+  retireOperation,
   verifyOperation,
   type Attempt,
   type Processes,
@@ -222,12 +223,15 @@ async function retire(attempt: Attempt, verified: Processes | undefined): Promis
   const own = field(tree, "branch");
   const drop = own === undefined || own === branch ? [branch] : [branch, own];
   const path = field(tree, "path") ?? "";
-  const processes = verified ?? (await stopWriters(attempt, tree, path));
-  if (tree !== undefined && verified === undefined) {
+  if (verified !== undefined) {
+    if (path === "") throw new Error(`${session} has no registered worktree on ${host} to retire`);
+    await retireOperation(attempt, path, drop);
+    return { archive: null, ...verified };
+  }
+  const processes = await stopWriters(attempt, tree, path);
+  if (tree !== undefined) {
     await onHelper(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
-  } else if (tree !== undefined) {
-    await onHelper(host, ["git", "-C", clone, "worktree", "remove", path]);
   }
   const out = `${archiveDir}/${session}.tar.zst`;
   let archive = "";
@@ -336,7 +340,11 @@ interface Retirement {
   readonly left: { session: string; host: string; reason: string }[];
 }
 
-async function retireAll(id: number, plan: OpResult<"close.begin">): Promise<Retirement> {
+async function retireAll(
+  id: number,
+  plan: OpResult<"close.begin">,
+  replan: () => Promise<OpResult<"close.begin">>,
+): Promise<Retirement> {
   const done: Retirement = {
     archives: [],
     stopped: [],
@@ -344,7 +352,7 @@ async function retireAll(id: number, plan: OpResult<"close.begin">): Promise<Ret
     left: [],
   };
   const verified =
-    plan.operation === undefined ? undefined : await verifyOperation(id, plan, stopWriters);
+    plan.operation === undefined ? undefined : await verifyOperation(id, plan, stopWriters, replan);
   for (const attempt of plan.attempts) {
     try {
       const retired = await retire(attempt, verified?.get(attempt.session));
@@ -369,7 +377,9 @@ async function teardown(
   const moved = plan.land ? await landLocally(id, plan) : "";
   const warning = await unlandedWarning(id, plan, confirm === true);
   if (warning !== undefined) return warning;
-  const { archives, stopped, spared, left } = await retireAll(id, plan);
+  const { archives, stopped, spared, left } = await retireAll(id, plan, () =>
+    planOf(link, request),
+  );
   const finish = {
     card: id,
     mode: plan.mode,

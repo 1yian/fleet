@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { newCard, startFleet, type Fleet } from "../support/fleet.ts";
-import { tempDir } from "../support/run-root.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -104,25 +100,6 @@ async function operationCard(
   return { card: made.id, session: begun.session, worker: await fleet.cardd.connect(begun.token) };
 }
 
-function localRepo(name: string): string {
-  const repo = join(tempDir("ops-repo-"), name);
-  mkdirSync(repo);
-  const git = (...args: string[]): string =>
-    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", repo, ...args], {
-      encoding: "utf8",
-    });
-  git("init", "-q", "-b", "main");
-  git("commit", "-q", "--allow-empty", "-m", "init");
-  fleet.cardd.addProject(name, { local: repo });
-  return repo;
-}
-
-function addTree(repo: string, session: string): string {
-  const tree = `${repo}.worktrees/${session}`;
-  execFileSync("git", ["-C", repo, "worktree", "add", "-q", "-b", `task-${session}`, tree, "main"]);
-  return tree;
-}
-
 test("only the done report of an ops card carries evidence from its own scratch folder", async () => {
   const product = await newCard(fleet.main, "Change the product");
   const begun = check(
@@ -176,65 +153,42 @@ test("only the done report of an ops card carries evidence from its own scratch 
   );
 });
 
-test("an attempt that cannot be checked is listed as unverified and blocks a direct finish", async () => {
+test("close.begin on an ops card only reads: it names the effective handoff, adds nothing, and a steer cancels it", async () => {
   const { card, session, worker } = await operationCard();
-  await worker.call("report", { status: "done", text: "finished", evidence: evidenceOf(card) });
+  const evidence = evidenceOf(card);
+  await worker.call("report", { status: "done", text: "finished", evidence });
+  const before = (await fleet.cardd.thread(card)).entries.length;
   const plan = check(OPS["close.begin"].result, await fleet.main.call("close.begin", { card }));
   assert.equal(plan.mode, "done");
   assert.deepEqual(plan.refresh, []);
   const { operation } = plan;
   assert.ok(operation);
   assert.equal(operation.session, session);
-  assert.equal(operation.evidence, evidenceOf(card));
-  assert.match(operation.unverified.join(" "), /could not be checked/);
-  await assert.rejects(
-    fleet.main.call("close.finish", { card, mode: "done", text: "Done.", archives: [], left: [] }),
-    /no clean check of every attempt's worktree/,
+  assert.equal(operation.evidence, evidence);
+  const reports = (await fleet.cardd.thread(card)).entries.filter(
+    (entry) => entry.kind === "report" && entry.fields["status"] === "done",
   );
-  assert.equal((await fleet.cardd.thread(card)).card.status, "with-mate");
-});
-
-test("a direct finish with no begin is refused, and the checked worktree lets close finish", async () => {
-  const repo = localRepo("shop");
-  const { card, session, worker } = await operationCard("shop", "local");
-  const tree = addTree(repo, session);
-  await worker.call("report", { status: "done", text: "finished", evidence: evidenceOf(card) });
-  const finish = { card, mode: "done", text: "Done.", archives: [], left: [] };
-  await assert.rejects(
-    fleet.main.call("close.finish", finish),
-    /no clean check of every attempt's worktree/,
-  );
-  const plan = check(OPS["close.begin"].result, await fleet.main.call("close.begin", { card }));
-  assert.deepEqual(plan.operation?.unverified, []);
-  const notes = (await fleet.cardd.thread(card)).entries.filter(
-    (entry) => entry.author === "cardd" && entry.fields["operationVerified"] !== undefined,
-  );
-  assert.equal(notes.length, 1);
-  assert.equal(
-    execFileSync("git", ["-C", tree, "status", "--porcelain"], { encoding: "utf8" }),
-    "",
-  );
-  await fleet.main.call("close.finish", finish);
-  assert.equal((await fleet.cardd.thread(card)).card.status, "done");
-});
-
-test("a check older than the worker's handoff is stale, and a dirty worktree is not verified", async () => {
-  const repo = localRepo("depot");
-  const { card, session, worker } = await operationCard("depot", "local");
-  const tree = addTree(repo, session);
-  const evidence = evidenceOf(card);
-  await worker.call("report", { status: "done", text: "finished", evidence });
-  const finish = { card, mode: "done", text: "Done.", archives: [], left: [] };
-  await fleet.main.call("close.begin", { card });
+  assert.equal(operation.handoff, reports.at(-1)?.id);
+  assert.equal((await fleet.cardd.thread(card)).entries.length, before);
   await worker.call("report", { status: "done", text: "finished again", evidence });
-  await assert.rejects(fleet.main.call("close.finish", finish), /no clean check/);
-  writeFileSync(join(tree, "late.txt"), "late\n");
-  const dirty = check(OPS["close.begin"].result, await fleet.main.call("close.begin", { card }));
-  assert.match(dirty.operation?.unverified.join(" ") ?? "", /1 uncommitted file/);
-  await assert.rejects(fleet.main.call("close.finish", finish), /no clean check/);
-  execFileSync("rm", [join(tree, "late.txt")]);
-  const clean = check(OPS["close.begin"].result, await fleet.main.call("close.begin", { card }));
-  assert.deepEqual(clean.operation?.unverified, []);
-  await fleet.main.call("close.finish", finish);
-  assert.equal((await fleet.cardd.thread(card)).card.status, "done");
+  const again = check(OPS["close.begin"].result, await fleet.main.call("close.begin", { card }));
+  assert.ok((again.operation?.handoff ?? 0) > operation.handoff);
+  await fleet.main.call("comment", { card, text: "Check one more thing first." });
+  await assert.rejects(
+    fleet.main.call("close.begin", { card }),
+    /the worker has not reported done/,
+  );
+});
+
+test("the web thread shows that ops evidence was reported, never its path", async () => {
+  const { card, worker } = await operationCard();
+  await worker.call("report", {
+    status: "done",
+    text: "finished",
+    evidence: evidenceOf(card),
+  });
+  const thread = await fleet.cardd.thread(card);
+  const handoff = thread.entries.find((entry) => entry.fields["evidence"] !== undefined);
+  assert.equal(handoff?.fields["evidence"], true);
+  assert.doesNotMatch(JSON.stringify(thread), /scratch/);
 });

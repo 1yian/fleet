@@ -241,7 +241,13 @@ export function cardView(db: DatabaseSync, id: number, lane: string, timing: Tim
 
 export const thread = (db: DatabaseSync, id: number): Thread => ({
   card: getCard(db, id),
-  entries: cardEntries(db, id).filter(inThread),
+  entries: cardEntries(db, id)
+    .filter(inThread)
+    .map((entry) =>
+      entry.fields["evidence"] === undefined
+        ? entry
+        : { ...entry, fields: { ...entry.fields, evidence: true } },
+    ),
 });
 
 function answerOnBoard(
