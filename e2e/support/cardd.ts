@@ -191,6 +191,11 @@ export class Cardd {
     );
   }
 
+  maintenanceStateOf(session: string): string | undefined {
+    const state = this.scalar("SELECT state AS v FROM maintenance WHERE session = ?", session);
+    return typeof state === "string" ? state : undefined;
+  }
+
   runtimeRecorded(session: string): string | undefined {
     const runtime = this.scalar("SELECT runtime AS v FROM sessions WHERE id = ?", session);
     return typeof runtime === "string" ? runtime : undefined;

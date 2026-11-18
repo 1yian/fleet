@@ -305,3 +305,41 @@ test("a successful multi-host update summarizes real replacements once, includin
   const after = check(OPS.card.result, await fleet.ghost.call("card", { card: busy.card }));
   assert.equal(after.entries.filter((entry) => entry.fields["maintenance"] === id).length, 1);
 });
+
+test("an update whose target lane is removed mid-update still reports that target as a failure, and the summary counts it", async () => {
+  script();
+  const control = await fleet.cardd.connect(fleet.mainToken);
+  await control.call("lane.stopping", { lane: "ghost" });
+  await control.close();
+  fleet.cardd.addLane("unused", "main");
+  await fleet.startMain();
+  const busy = await fleet.startWorker("busy", "local");
+  const paused = await fleet.startWorker("paused", "p620");
+  await until(() => (reached("busy", "started") ? true : undefined), "busy's turn");
+  await until(
+    async () => ((await fleet.cardOf(paused.card)).status === "paused" ? true : undefined),
+    "the far worker to pause",
+  );
+  const was = { busy: await before(busy), paused: await before(paused) };
+  fleet.landCode();
+  await fleet.lab.submit(fleet.mainPane, "/updatefleet");
+  await until(
+    () => (fleet.cardd.maintenanceStateOf("unused") === "failed" ? true : undefined),
+    "the unused lane to fail at enrollment",
+  );
+  const removed = fleet.cardd.admin("lane", "remove", "unused");
+  assert.equal(removed.status, 0, removed.stderr);
+  const report = await until(
+    () => fleet.userTexts("mate").find((text) => text.startsWith("[fleet] update:")),
+    "the update report",
+  );
+  assert.match(
+    report,
+    /- unused \(mate\): reload failed - not connected \(stopped, held, or down\), so it was left as it is \[c-\d+, host unknown, process unknown\]/,
+  );
+  fleet.open("busy-gate");
+  await onNewCode(busy, was.busy);
+  await onNewCode(paused, was.paused);
+  await mainHears([busy, paused], "4 reloaded and verified, 1 failed");
+  assert.equal(fleet.cardd.summaryCount(), 1);
+});

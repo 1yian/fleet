@@ -31,6 +31,9 @@ export const pendingFor = (db: DatabaseSync, session: string): Maintenance[] =>
 
 const TERMINAL = "('completed', 'failed')";
 
+const IN_FLIGHT =
+  "an earlier update's reload was already in progress, so this update could not verify it";
+
 const UNSUPPORTED =
   "runs code from before safe reloads, so it was left running: restart it by hand";
 
@@ -193,7 +196,7 @@ function settle(
   ];
 }
 
-export function dropMaintenance(db: DatabaseSync, lane: string): string[] {
+export function dropMaintenance(db: DatabaseSync, lane: string): void {
   const batches = db
     .prepare(
       `SELECT DISTINCT b.batch AS batch, b.requester AS requester FROM maintenance_batches b
@@ -221,9 +224,7 @@ export function dropMaintenance(db: DatabaseSync, lane: string): string[] {
     "DELETE FROM maintenance_batches WHERE requester = ? OR maintenance IN (SELECT id FROM maintenance WHERE requester = ?)",
   ).run(lane, lane);
   db.prepare("DELETE FROM maintenance WHERE session = ? OR requester = ?").run(lane, lane);
-  return batches.flatMap((batch) =>
-    summarize(db, String(batch["batch"]), String(batch["requester"])),
-  );
+  for (const batch of batches) summarize(db, String(batch["batch"]), String(batch["requester"]));
 }
 
 export function settleClosedCard(db: DatabaseSync, card: number): string[] {
@@ -379,14 +380,17 @@ function requestTarget(
 ): string[] {
   const open = db
     .prepare(
-      "SELECT id FROM maintenance WHERE session = ? AND kind = ? AND state IN ('pending', 'reloading')",
+      "SELECT id, state FROM maintenance WHERE session = ? AND kind = ? AND state IN ('pending', 'reloading')",
     )
     .get(target.id, raw.kind);
-  if (open !== undefined) {
+  const started = open?.["state"] === "reloading" && raw.kind === "reload";
+  if (open !== undefined && !started) {
     attach(db, raw.batch, caller.id, raw.kind, Number(open["id"]));
     return [target.id];
   }
-  const { state, detail } = outcome(target, Date.now(), t);
+  const { state, detail } = started
+    ? { state: "failed" as const, detail: IN_FLIGHT }
+    : outcome(target, Date.now(), t);
   const inserted = db
     .prepare(
       `INSERT OR IGNORE INTO maintenance (batch, requester, session, kind, state, process, runtime, detail, updated_at)

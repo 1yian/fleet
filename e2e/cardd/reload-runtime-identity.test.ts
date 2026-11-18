@@ -180,7 +180,7 @@ test("a request that was outstanding before batches existed still notifies main 
   assert.equal(fleet.cardd.summaryCount(), 0);
 });
 
-test("a request outstanding before batches existed keeps its individual notice when a later update also counts it", async () => {
+test("a request outstanding before batches existed keeps its individual notice, and a later update does not credit itself with it", async () => {
   const card = await newCard(fleet.main, "outstanding across an update");
   const token = await begin(fleet.main, card);
   const worker = await fleet.cardd.connect(token, [], true, false, true);
@@ -200,12 +200,15 @@ test("a request outstanding before batches existed keeps its individual notice w
     (entry) => entry.fields["maintenance"] === id && entry.fields["state"] === "completed",
     "the individual completed notice",
   );
-  const summary = await fleet.main.waitForEntry(
-    (entry) => entry.fields["maintenanceBatch"] === "later",
-    "the later batch's summary",
+  assert.equal(fleet.cardd.summaryCount(), 0);
+  const later = check(
+    OPS["maintenance.status"].result,
+    await fleet.main.call("maintenance.status", { batch: "later" }),
   );
-  assert.match(summary.body, /1 reloaded and verified, 0 failed/);
-  assert.equal(fleet.cardd.summaryCount(), 1);
+  assert.deepEqual(
+    later.map((row) => row.state),
+    ["failed"],
+  );
 });
 
 test("the batch aggregate and status stay with the registered root, while individual receipts keep their audience", async () => {

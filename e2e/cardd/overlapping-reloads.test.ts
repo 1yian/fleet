@@ -140,3 +140,45 @@ test("a finalized reload batch rejects late new and already-pending targets on r
     await fleet.cardd.stop();
   }
 });
+
+test("a later batch is not credited with a reload that was already in progress for an earlier one", async () => {
+  const fleet = await startFleet();
+  const connections = [fleet.main];
+  try {
+    const card = await newCard(fleet.main, "in flight");
+    const token = await begin(fleet.main, card);
+    const worker = await fleet.cardd.connect(token, [], true, false, true);
+    connections.push(worker);
+    const request = async (batch: string) =>
+      check(
+        OPS["maintenance.request"].result,
+        await fleet.main.call("maintenance.request", { batch, kind: "reload" }),
+      );
+    const [first] = await request("A");
+    assert.ok(first);
+    await worker.call("maintenance.ack", { id: first.id, state: "reloading", detail: "started" });
+    const [second] = await request("B");
+    assert.ok(second);
+    assert.notEqual(second.id, first.id);
+    assert.equal(second.state, "failed");
+    assert.match(second.detail, /already in progress, so this update could not verify it/);
+    connections.push(await fleet.cardd.connect(token, [], true, false, true, true));
+    const summary = await fleet.main.waitForEntry(
+      (entry) => entry.fields["maintenanceBatch"] === "A",
+      "A's summary",
+    );
+    assert.match(summary.body, /1 reloaded and verified, 0 failed/);
+    const later = check(
+      OPS["maintenance.status"].result,
+      await fleet.main.call("maintenance.status", { batch: "B" }),
+    );
+    assert.deepEqual(
+      later.map((row) => row.state),
+      ["failed"],
+    );
+    assert.equal(fleet.cardd.summaryCount(), 1);
+  } finally {
+    await Promise.all(connections.map((session) => session.close()));
+    await fleet.cardd.stop();
+  }
+});
