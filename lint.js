@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import console from "node:console";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -91,19 +91,29 @@ function forbiddenDirectivePattern() {
   return new RegExp(policy);
 }
 
-function gitPaths(flag) {
-  const result = spawnSync("git", ["ls-files", "-z", flag], {
+function gitPaths() {
+  const result = spawnSync("git", ["ls-files", "-z", "--cached"], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr}`);
+  if (result.status !== 0 || result.stderr)
+    throw new Error(`git ls-files failed: ${result.stderr}`);
   return result.stdout.split("\0").filter(Boolean);
 }
 
+function existsInWorkingTree(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function trackedPaths() {
-  const deleted = new Set(gitPaths("--deleted"));
-  return gitPaths("--cached").filter((path) => !deleted.has(path));
+  return gitPaths().filter((path) => !ignoredByConfig(path) && existsInWorkingTree(path));
 }
 
 function ignoredByConfig(path) {
