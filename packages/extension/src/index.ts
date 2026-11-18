@@ -203,6 +203,11 @@ function contractForMates(pi: ExtensionAPI): void {
     }
     return undefined;
   });
+  pi.on("agent_start", (_event, ctx) => {
+    const path = join(HOME(), "AGENTS.md");
+    const content = readPromptFile(path);
+    if (content === undefined || content.trim() === "") abortWithoutMateContract(ctx, path);
+  });
 }
 
 function appendRolePrompt(pi: ExtensionAPI, role: "mate" | "worker"): void {

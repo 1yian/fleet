@@ -209,14 +209,23 @@ export class LiveFleet {
 
   landCode(): string {
     let tip = "";
-    const contracts = {
-      worker: "packages/extension/prompts/worker.md",
-      mate: "AGENTS.md",
-    };
-    for (const [role, file] of Object.entries(contracts)) {
-      const text = `${readFileSync(join(this.here.root, file), "utf8")}\n${NEW_CODE}\n`;
-      tip = landOnRemote(this.remote, `${NEW_CODE} ${role}`, file, text);
-    }
+    const worker = "packages/extension/prompts/worker.md";
+    tip = landOnRemote(
+      this.remote,
+      `${NEW_CODE} worker`,
+      worker,
+      `${readFileSync(join(this.here.root, worker), "utf8")}\n${NEW_CODE}\n`,
+    );
+    const mate = join("packages", "extension", "src", "index.ts");
+    const source = readFileSync(join(this.here.root, mate), "utf8");
+    const tail = "${event.systemPrompt}${MUTABLE_TAIL}";
+    if (source.split(tail).length !== 2) throw new Error(`${mate} has no mate prompt tail to mark`);
+    tip = landOnRemote(
+      this.remote,
+      `${NEW_CODE} mate`,
+      mate,
+      source.replace(tail, `${tail}\n${NEW_CODE}`),
+    );
     return tip;
   }
 
