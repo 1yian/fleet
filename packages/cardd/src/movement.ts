@@ -14,7 +14,6 @@ const MOVEMENT: ReadonlySet<string> = new Set([
   "cleanup",
 ]);
 const AUTOMATIC: ReadonlySet<string> = new Set([SCHEDULE, SCRIPT]);
-const NO_NEWS: ReadonlySet<unknown> = new Set(["working", "note"]);
 
 export interface Run {
   readonly id: number;
@@ -61,7 +60,7 @@ function repeatedReports(entries: readonly Entry[]): ReadonlySet<number> {
   for (const entry of entries) {
     if (entry.kind !== "report") continue;
     const status = entry.fields["status"];
-    if (NO_NEWS.has(status) && NO_NEWS.has(before)) repeated.add(entry.id);
+    if (status === "working" && before === "working") repeated.add(entry.id);
     before = status;
   }
   return repeated;
@@ -73,11 +72,25 @@ const changes =
     MOVEMENT.has(entry.kind) && !AUTOMATIC.has(entry.author) && !repeated.has(entry.id);
 
 const finishes =
-  (again: ReadonlySet<number>) =>
+  (again: ReadonlySet<number>, differs: ReadonlySet<number>) =>
   (entry: Entry): boolean =>
     entry.kind === "job-result" &&
     entry.fields["lost"] !== true &&
-    !again.has(Number(entry.fields["job"]));
+    (!again.has(Number(entry.fields["job"])) || differs.has(entry.id));
+
+function changedExits(entries: readonly Entry[], runs: readonly Run[]): ReadonlySet<number> {
+  const labels = new Map(runs.map((run) => [run.id, run.label]));
+  const last = new Map<string, unknown>();
+  const differs = new Set<number>();
+  for (const entry of entries) {
+    const label = labels.get(Number(entry.fields["job"]));
+    const code = entry.fields["exitCode"];
+    if (entry.kind !== "job-result" || label === undefined || typeof code !== "number") continue;
+    if (last.has(label) && last.get(label) !== code) differs.add(entry.id);
+    last.set(label, code);
+  }
+  return differs;
+}
 
 function startedAgain(runs: readonly Run[], since: number): ReadonlySet<number> {
   const later = runs.filter((run) =>
@@ -94,7 +107,7 @@ export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movemen
   const base = Math.max(card.createdAt, changed, progressAt(db, card.id));
   const runs = runsOf(db, card.id);
   const again = startedAgain(runs, base);
-  const finished = entries.findLast(finishes(again))?.createdAt ?? 0;
+  const finished = entries.findLast(finishes(again, changedExits(entries, runs)))?.createdAt ?? 0;
   const running = runs.filter((run) => run.running);
   return {
     movedAt: Math.max(base, finished),

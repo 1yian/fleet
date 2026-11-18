@@ -100,8 +100,8 @@ function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefine
   if (pulse.state !== "idle") return [];
   const name = `c-${String(card.id)} ${card.title}`;
   const since = pulse.movedAt;
-  const doing = pulse.running === null ? "nothing running" : `only ${pulse.running.what},`;
-  const line = `${name} - idle ${waited(now, since)}, ${doing} and no stated reason`;
+  const doing = pulse.running === null ? "nothing running" : "only a job that repeats a wait";
+  const line = `${name} - idle ${waited(now, since)}, ${doing}, and no stated reason`;
   return [{ card: card.id, since, to: mainLane(db), line, group: "act" as const }];
 }
 

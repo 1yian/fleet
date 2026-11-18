@@ -25,10 +25,12 @@ A lane's mate reads `behind` with every step in another lane counted as open and
 
 A worker that waits can say so over and over without anything changing. These repeats are not real changes, so they never move a card:
 
-- A `working` or `note` report right after another `working` or `note` report. The first one after any other status counts, and so does every report of another status.
-- A job that the worker starts again under the same label when an earlier run of that label began after the last real change, and the result of that run. The first run of a label counts as before.
+- A `working` report right after another `working` report. The first one after any other status counts, and a `note` always counts.
+- A job that the worker starts again under the same label when an earlier run of that label began after the last real change, and the result of that run. The first run of a label counts as before. A re-run whose exit code differs from the previous result of that label counts, such as a pass after a timeout.
 
-A commit or a file change in the worker's copy (`progress_at`) and any entry from someone else (a comment, hold, release, answer, or review feedback) are real changes. After one, the next run of a label is a first run again.
+A commit or a file change in the worker's copy (`progress_at`) and any entry from someone else (a comment, hold, release, answer, or review feedback) are real changes. After one, the next run of a label is a first run again. A poll that writes a log inside the checkout counts as progress.
+
+The fleet reads this from the live attempt's entries and jobs, so a replaced worker starts clean. A Lavish poll is refused until the card holds a decision, but only when the job starts, and only when the command text shows the poll. A wrapper script or a non-Lavish poll is not recognised: it is caught only by the idle rule after 4 hours.
 
 A running job covers silence and reported blocks only while it is not such a repeat. A repeat is shown as `running` with `run again with nothing changed`, the card counts as idle from the last real change, and the idle limits below apply as they always did: main after 4 hours, the captain after 24. Nobody has to say anything for this: it is how a worker that polls the same page for a day shows up.
 

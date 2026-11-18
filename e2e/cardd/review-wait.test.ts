@@ -16,6 +16,8 @@ const NOT_POLLS = {
   reply: `lavish-axi reply ${BOARD} --agent-reply "I will poll again after your answer"`,
   search: "grep -n poll notes.txt",
   sibling: `lavish-axi-notes poll ${BOARD}`,
+  printed: `make build | tee build.log; echo "to wait, run lavish-axi poll ${BOARD}" >&2`,
+  echoed: "echo lavish-axi poll the page",
 };
 
 let fleet: Fleet;

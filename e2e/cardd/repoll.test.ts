@@ -120,7 +120,7 @@ test("a long job that the worker starts again under the same label with nothing 
   assert.match(
     list.body,
     new RegExp(
-      `c-${String(card.id)} Wait for the approval - idle \\d+ min, only job ${String(live)} \\(approval-poll\\), run again with nothing changed, and no stated reason`,
+      `c-${String(card.id)} Wait for the approval - idle \\d+ min, only a job that repeats a wait, and no stated reason`,
     ),
   );
   assert.doesNotMatch(list.body, /Run the long suite/);
@@ -132,4 +132,37 @@ test("a long job that the worker starts again under the same label with nothing 
     return pulse.state === "running" ? pulse : undefined;
   }, "the card to run again once something changed");
   assert.equal(covered.notice, "none");
+});
+
+test("a note after a working report is news, and a re-run that exits differently moves the card", async () => {
+  const card = await newCard(cleo, "Wait for the approval");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  worker.send({ t: "activity", state: "idle" });
+  await worker.call("report", { status: "working", text: "Looking into it." });
+  ageCard(fleet.cardd, card, IDLE_LIMIT + MINUTE);
+  await worker.call("report", { status: "note", text: "Found the cause in the loader." });
+  const noted = await until(async () => {
+    const pulse = await pulseOf(card);
+    return Date.now() - pulse.movedAt < MINUTE ? pulse : undefined;
+  }, "the note to move the card");
+  assert.equal(noted.notice, "none");
+
+  await rePoll(worker, 1);
+  await rePoll(worker, 2);
+  ageCard(fleet.cardd, card, IDLE_LIMIT + MINUTE);
+  const repeat = await startJob(worker, "approval-poll", "poll the page # 3");
+  await worker.call("job.finish", { job: repeat, exitCode: 124, outputTail: "timed out" });
+  const stale = await until(async () => {
+    const pulse = await pulseOf(card);
+    return pulse.state === "idle" ? pulse : undefined;
+  }, "the repeated timeouts to leave the card idle");
+  assert.ok(Date.now() - stale.movedAt > IDLE_LIMIT, "repeated timeouts are not movement");
+
+  const passed = await startJob(worker, "approval-poll", "poll the page # 4");
+  await worker.call("job.finish", { job: passed, exitCode: 0, outputTail: "feedback arrived" });
+  const moved = await until(async () => {
+    const pulse = await pulseOf(card);
+    return Date.now() - pulse.movedAt < MINUTE ? pulse : undefined;
+  }, "the passing re-run to move the card");
+  assert.equal(moved.notice, "none");
 });
