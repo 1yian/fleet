@@ -94,7 +94,7 @@ function forbiddenDirectivePattern() {
 
 function decodePath(bytes) {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     const escaped = [...bytes].map((byte) => `\\x${byte.toString(16).padStart(2, "0")}`).join("");
     throw new Error(`${escaped}: error fleet/unsupported-path: Tracked path is not valid UTF-8.`);
@@ -128,11 +128,14 @@ function existsInWorkingTree(path) {
   }
 }
 
+function unsupportedPattern(pattern) {
+  return new Error(
+    `${pattern}: error fleet/unsupported-ignore-pattern: Unsupported glob syntax in ignorePatterns.`,
+  );
+}
+
 function segmentMatcher(segment, pattern) {
-  if (/[?[\]{}!\\]|\*\*/.test(segment))
-    throw new Error(
-      `${pattern}: error fleet/unsupported-ignore-pattern: Unsupported glob syntax in ignorePatterns.`,
-    );
+  if (!segment || /[?[\]{}\\]|\*\*/.test(segment)) throw unsupportedPattern(pattern);
   const source = segment
     .split("*")
     .map((part) => part.replace(/[.+^$()|]/g, "\\$&"))
@@ -142,11 +145,11 @@ function segmentMatcher(segment, pattern) {
 
 function ignoreMatchers() {
   return config.ignorePatterns.map((pattern) => {
-    const anywhere = pattern.startsWith("**/");
+    if (/^[#!/]|\s$/.test(pattern)) throw unsupportedPattern(pattern);
     const directoryOnly = pattern.endsWith("/");
-    const body = pattern.slice(anywhere ? 3 : 0, directoryOnly ? -1 : undefined);
+    const body = pattern.replace(/^\*\*\//, "").replace(/\/$/, "");
     return {
-      anywhere,
+      anywhere: pattern.startsWith("**/") || !body.includes("/"),
       directoryOnly,
       segments: body.split("/").map((segment) => segmentMatcher(segment, pattern)),
     };
@@ -164,9 +167,18 @@ function ignoredBy(matchers, path) {
   });
 }
 
-function trackedPaths() {
+function minifiedName(path) {
+  return /[._-]min\./.test(basename(path));
+}
+
+function discover() {
   const matchers = ignoreMatchers();
-  return gitPaths().filter((path) => !ignoredBy(matchers, path) && existsInWorkingTree(path));
+  const existing = gitPaths().filter(existsInWorkingTree);
+  const sources = existing.filter((path) => sourceExtensions.includes(extname(path)));
+  return {
+    tracked: existing.filter((path) => !ignoredBy(matchers, path)),
+    candidates: sources.filter((path) => !minifiedName(path)),
+  };
 }
 
 function selectedPaths(tracked) {
@@ -175,8 +187,8 @@ function selectedPaths(tracked) {
   return paths;
 }
 
-function verifyAgainstOxlint(paths) {
-  const selection = runOxlint(["--debug", "files"], paths, "pipe");
+function verifyAgainstOxlint(candidates, paths) {
+  const selection = runOxlint(["--debug", "files"], candidates, "pipe");
   if (selection.status !== 0 || selection.stderr)
     throw new Error(`Oxlint selection failed: ${selection.stderr || selection.stdout}`);
   const reported = new Set(selection.stdout.split("\n").filter(Boolean));
@@ -191,7 +203,7 @@ function verifyAgainstOxlint(paths) {
 
 function minifiedNameFailures(paths) {
   return paths
-    .filter((path) => /[._-]min\./.test(basename(path)))
+    .filter(minifiedName)
     .map(
       (path) =>
         `${path}: error fleet/minified-name: Oxlint cannot lint files with a minified filename.`,
@@ -211,14 +223,14 @@ function baselineFailures(tracked) {
 function lint() {
   if (process.argv.length !== 2)
     throw new Error("npm run lint always checks the complete project.");
-  const tracked = trackedPaths();
+  const { tracked, candidates } = discover();
   const paths = selectedPaths(tracked);
   const refusals = [...baselineFailures(tracked), ...minifiedNameFailures(paths)];
   if (refusals.length) {
     for (const failure of refusals) console.error(failure);
     return 1;
   }
-  verifyAgainstOxlint(paths);
+  verifyAgainstOxlint(candidates, paths);
   const forbiddenDirectives = forbiddenDirectivePattern();
   const failures = [
     ...membershipFailures(paths),
