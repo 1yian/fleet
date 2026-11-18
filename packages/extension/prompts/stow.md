@@ -42,7 +42,7 @@ Sweep this conversation for knowledge that exists only here: a preference the ca
 - A preference that holds across lanes goes in main's `data/captain-shared.md`. As main, edit it, and keep a first line that says it is main-authoritative and read-only in second mates' homes. As a second mate, never edit your copy: `comment(lane=<your lane>, text)` main with the preference in the captain's words.
 - An operating fact of this home goes in `data/learnings.md`.
 - A note about one card belongs on that card: `comment` on it. An investigation finding belongs in a report file under `data/reports/`.
-- Knowledge that nearly every contributor to one project needs belongs in that project's committed `AGENTS.md`. Never write it yourself: only a human adds to it. Tell the captain in your receipt.
+- Knowledge that nearly every contributor to one project needs belongs in that project's committed `AGENTS.md`, or in `CONTRIBUTING.md` for this fleet repository, whose workers get that guide in place of `AGENTS.md`. Never write either yourself: only a human adds to it. Tell the captain in your receipt.
 - Knowledge that every user of the fleet needs belongs in this repository's tracked files. Do not write it here: it ships through a ship card, and the captain merges it.
 
 Keep the fleet's delivery posture and the captain's private strategy out of project memory.

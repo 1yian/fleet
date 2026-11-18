@@ -162,6 +162,16 @@ function contributorGuideForWorkers(pi: ExtensionAPI): void {
   });
 }
 
+function contractForMates(pi: ExtensionAPI): void {
+  pi.on("before_agent_start", (event) => {
+    const path = join(HOME(), "AGENTS.md");
+    const files = event.systemPromptOptions.contextFiles;
+    if (!existsSync(path) || files.some((file) => resolve(file.path) === path)) return undefined;
+    files.push({ path, content: readFileSync(path, "utf8") });
+    return undefined;
+  });
+}
+
 function appendRolePrompt(pi: ExtensionAPI, role: "mate" | "worker"): void {
   pi.on("before_agent_start", (event) => ({
     systemPrompt:
@@ -333,6 +343,7 @@ function start(
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
   if (role === "worker") contributorGuideForWorkers(pi);
+  else contractForMates(pi);
   appendRolePrompt(pi, role);
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);

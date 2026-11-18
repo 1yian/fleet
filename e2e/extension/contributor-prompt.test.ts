@@ -33,6 +33,7 @@ interface Variant {
   readonly stale?: boolean;
   readonly noContextFiles?: boolean;
   readonly ancestor?: boolean;
+  readonly mateNoContextFiles?: boolean;
 }
 
 function commitStaleOverview(repo: Scratch): void {
@@ -109,7 +110,8 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
       evidence(`${name}-worker`, turns);
       return { text: "Contributor instructions received." };
     }, "mate");
-  const pane = await startMain(lab, scratch, h, false, args);
+  const mateStart = variant.mateNoContextFiles === true ? [...args, "--no-context-files"] : args;
+  const pane = await startMain(lab, scratch, h, false, mateStart);
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   await lab.submit(pane, "Inspect contributor prompt routing.");
   const mate = await h.waitForCall(0, "mate", 90_000);
@@ -156,4 +158,8 @@ test("a fleet worker started without context files gets only CONTRIBUTING.md", a
 
 test("a fleet worker keeps an unrelated ancestor Firstmate file while getting CONTRIBUTING.md", async (t) => {
   await run(t, "ancestor", { ancestor: true });
+});
+
+test("a mate started without context files still gets the Firstmate contract", async (t) => {
+  await run(t, "mate-no-context", { mateNoContextFiles: true });
 });

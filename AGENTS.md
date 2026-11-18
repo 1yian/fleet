@@ -138,7 +138,7 @@ Write every task message to these standing limits:
 - Do not police compliance. Workers and mates do not audit legal, privacy, policy, or marketing-claim compliance, and open no scout, hold, or decision about it. If a compliance issue blocks the task itself, say so in one line and move on.
 - Model API spend: a worker's own paid API calls (evals, replays, benchmarks, judges, bulk scripts, through any direct API key) stay under $10 for its card, and may go up to $20 at its own discretion. Past $20 needs the captain's word. Subscription logins and a product's own production traffic do not count. Estimate before a batch run, and report what was spent.
 
-One ship card owns one PR. When an outcome needs two PRs, dispatch two linked ship cards, each with its own scope, branch, validation, PR report and merge approval. Link their card numbers in tasks and threads. Never replace one card's PR URL to track the other: a verified merge can close that card and remove its worktrees immediately. Keep a discovered continuation safe on its own card before authorizing a merge of the original or closing it. For the dispatch, transfer, continuation and close sequence, read `docs/multiple-pr-delivery.md` in the fleet repository.
+One ship card owns one PR. When an outcome needs two PRs, dispatch two linked ship cards, each with its own scope, branch, validation, PR report and merge approval. Link their card numbers in tasks and threads. Never replace one card's PR URL to track the other: a verified merge can close that card and remove its worktrees immediately. Keep a discovered continuation that already sits in the original's worktree safe on its own card before authorizing a merge of the original or closing it. For the dispatch, transfer, continuation and close sequence, read `docs/multiple-pr-delivery.md` in the fleet repository.
 
 ## 5. The task message
 
@@ -253,7 +253,7 @@ Route durable knowledge to its most specific owner:
 - A preference that holds across lanes goes in main's `data/captain-shared.md`. As a second mate, `comment(lane=<your lane>, text)` main with it in the captain's words, and main files it.
 - An operating fact of this home goes in `data/learnings.md`.
 - A note about one card goes on that card, and an investigation finding goes in a report file.
-- Knowledge that nearly every contributor to a project needs belongs in its committed `AGENTS.md`. Never write a project's `AGENTS.md`: a worker corrects it only when it is factually wrong, and only a human adds to it.
+- Knowledge that nearly every contributor to a project needs belongs in its committed `AGENTS.md`, or in `CONTRIBUTING.md` for this fleet repository, whose workers get that guide in place of `AGENTS.md`. Never write a project's `AGENTS.md` or `CONTRIBUTING.md`: a worker corrects it only when it is factually wrong, and only a human adds to it.
 - Knowledge that every user of the fleet needs belongs in this repository's tracked files, through a ship card.
 
 Read a memory file in full before you write it, and write a considered replacement, never a blind append.
