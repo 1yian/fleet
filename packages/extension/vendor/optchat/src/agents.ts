@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readPromptFile } from '../../../src/prompt-file.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -45,6 +46,7 @@ const stoppedReport = (cause: StopCause, text = '') => `${STOPPED[cause]}${text 
 interface Options { recoverHistory?: boolean; parentSession?: string; usage?: UsageLedger; createSession?: typeof createAgentSession;
   /** Names of the built-in extensions the main session loaded (see `loadedBuiltins`). */
   builtins?: () => Iterable<string>;
+  guardedContextPath?: string | undefined;
   /** Journals the reports a main-agent spawn has so far while its other children still run (none: the batch was delivered), so a crash cannot lose them. */
   hold?: (batch: string, texts: string[]) => void;
   /** Read on every spawn, so a changed profile setting applies to the next one. Missing settings take their defaults. */
@@ -119,8 +121,13 @@ const interruptedWith = (texts: string[]) => `${INTERRUPTED}${texts.join('\n\n')
 
 /** Pi reads AGENTS.md/CLAUDE.md only at session start and /reload. Re-reading the files Pi loaded picks up edits each run and keeps
  * the session's own choices (`-nc`, its agent dir); a file that can't be read is skipped, as Pi does. A new file still needs /reload. */
-export function refreshContextFiles(options: { contextFiles: Array<{ path: string; content: string }> }) {
-  options.contextFiles = options.contextFiles.flatMap(({ path }) => { try { return [{ path, content: readFileSync(path, 'utf8') }]; } catch { return []; } });
+export function refreshContextFiles(options: { contextFiles: Array<{ path: string; content: string }> }, guardedPath?: string) {
+  options.contextFiles = options.contextFiles.flatMap(({ path }) => {
+    try {
+      const content = guardedPath !== undefined && resolve(path) === guardedPath ? readPromptFile(path) : readFileSync(path, 'utf8');
+      return content === undefined ? [] : [{ path, content }];
+    } catch { return []; }
+  });
 }
 export class Children {
   private readonly running = new Map<string, LiveRun>();
@@ -322,7 +329,7 @@ export class Children {
         pi.on('before_agent_start', event => {
           event.systemPromptOptions.customPrompt = allowSearch(`${SUBAGENT}\n\n${VIEW_DOC}${memorySearch ? SEARCH_DOC : ''}`, memorySearch);
           event.systemPromptOptions.sections.instructions = [this.instructions(), delegates ? delegation(maxAgents, this.choice()) : NO_DELEGATION, STEERABLE, connected ? CONNECTED : NOT_CONNECTED].filter(Boolean).join('\n\n');
-          refreshContextFiles(event.systemPromptOptions);
+          refreshContextFiles(event.systemPromptOptions, this.options.guardedContextPath);
         });
         pi.on('before_provider_request', async (event, ctx) => {
           // Set by launch for a sibling's first request; a stop or an interrupt aborts the request, which ends the wait.

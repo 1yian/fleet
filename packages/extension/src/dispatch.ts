@@ -207,7 +207,12 @@ export async function dispatch(
         String(HERDR_READY_WAIT_MS),
         "--",
       ],
-      fleetArgs({ url: launch.url, token: plan.token, role: "worker", repo: plan.repo }),
+      fleetArgs({
+        url: launch.url,
+        token: plan.token,
+        role: "worker",
+        fleetProject: plan.fleetProject,
+      }),
       [
         "--session-id",
         plan.session,
@@ -276,7 +281,13 @@ export async function replaceWorker(
         String(HERDR_READY_WAIT_MS),
         "--",
       ],
-      fleetArgs({ url: launch.url, token: plan.token, role: "worker", repo: plan.repo, avoid }),
+      fleetArgs({
+        url: launch.url,
+        token: plan.token,
+        role: "worker",
+        fleetProject: plan.fleetProject,
+        avoid,
+      }),
       [
         "--session-id",
         plan.session,

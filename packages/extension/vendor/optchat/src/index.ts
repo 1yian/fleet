@@ -59,7 +59,7 @@ export const version = ((): string | undefined => {
 })();
 const brand = version ? `OptChat v${version}` : 'OptChat';
 
-export interface OptChatCapabilities { connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[]; foldTokens?: number; foldAfterIdle?: (model: ExtensionContext['model']) => number | undefined }
+export interface OptChatCapabilities { guardedContextPath?: string; connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[]; foldTokens?: number; foldAfterIdle?: (model: ExtensionContext['model']) => number | undefined }
 
 export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilities = {}) {
   const transientMessages = new WeakSet<AgentMessage>();
@@ -216,6 +216,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       if (recovered) ctx.ui.notify(`Recovered ${recovered} unanswered inputs into ${name}'s memory. Ask to continue them when ready.`, 'info');
       const children = new Children(memory, ctx.modelRegistry, () => config.subagent, () => `${instructions(dir)}\n\n${IMPORT_GUIDANCE}`,
         deliverReport, text => ctx.ui.notify(text, 'error'), dir, { recoverHistory: capabilities.connectedWindows !== false, parentSession: sessionId, usage, builtins: () => loadedBuiltins(pi), settings: () => config, hold: holdReports,
+          guardedContextPath: capabilities.guardedContextPath,
           summarizeHandoff: createHandoffSummarizer(ctx.modelRegistry, () => config.compactor, message => usage.compression(message, 'compactor', sessionId)) });
       const loggedReports = new Set(memory.root.map(e => e.receipt));
       // Reports a crash held back with their unfinished siblings are delivered now, as they are.
@@ -406,7 +407,7 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     syncSearch(a.config);
     event.systemPromptOptions.customPrompt = allowSearch(`${MASTER}\n\n${modelsHint(a.config.subagent)}\n\n${VIEW_DOC}${a.config.previousExchange ? CONTINUITY : ''}${a.config.memorySearch ? SEARCH_DOC : ''}`, a.config.memorySearch);
     event.systemPromptOptions.sections.instructions = `${instructions(a.dir)}\n\n${IMPORT_GUIDANCE}`;
-    refreshContextFiles(event.systemPromptOptions);
+    refreshContextFiles(event.systemPromptOptions, capabilities.guardedContextPath);
     prompt = event.systemPrompt;
   });
   const DUPLICATE_REPORT = '(duplicate report, already delivered)';

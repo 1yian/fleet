@@ -1,5 +1,6 @@
+import { readPromptFile } from "./prompt-file.ts";
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -57,7 +58,7 @@ interface Config {
   readonly role: "worker" | "mate";
   readonly lane?: string;
   readonly notes: readonly string[];
-  readonly repo?: string;
+  readonly fleetProject?: boolean;
   readonly secrets?: { readonly bws: Bws; readonly env: Readonly<Record<string, string>> };
 }
 
@@ -93,7 +94,7 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
   const token = value("fleet-token", "FLEET_TOKEN");
   const role = value("fleet-role", "FLEET_ROLE");
   const named = process.env["FLEET_LANE"];
-  const repo = pi.getFlag("fleet-repo");
+  const fleetProject = pi.getFlag("fleet-project");
   if (url === undefined || token === undefined || (role !== "worker" && role !== "mate"))
     return undefined;
   const secrets = secretsOf(forwardedBws(value("fleet-bws", "FLEET_BWS")));
@@ -102,7 +103,9 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
     token,
     role,
     notes: [],
-    ...(role === "worker" && typeof repo === "string" ? { repo } : {}),
+    ...(role === "worker" && (fleetProject === "true" || fleetProject === "false")
+      ? { fleetProject: fleetProject === "true" }
+      : {}),
     ...(role === "worker" || named === undefined || named === "" ? {} : { lane: named }),
     ...(secrets === undefined ? {} : { secrets }),
   };
@@ -164,28 +167,15 @@ function gitCommonDir(cwd: string): string | undefined {
   }
 }
 
-function isFleetCheckout(root: string, repo: string | undefined): boolean {
-  if (repo !== undefined) return repo.toLowerCase() === "1yian/fleet";
+function isFleetCheckout(root: string, fleetProject: boolean | undefined): boolean {
+  if (fleetProject !== undefined) return fleetProject;
   const common = gitCommonDir(root);
   return common !== undefined && common === gitCommonDir(dirname(EXTENSION));
 }
 
-function readPromptFile(path: string): string | undefined {
-  try {
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      return fstatSync(fd).isFile() ? readFileSync(fd, "utf8") : undefined;
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return undefined;
-  }
-}
-
-function contributorGuideForWorkers(pi: ExtensionAPI, repo: string | undefined): void {
+function contributorGuideForWorkers(pi: ExtensionAPI, fleetProject: boolean | undefined): void {
   const root = HOME();
-  if (!isFleetCheckout(root, repo)) return;
+  if (!isFleetCheckout(root, fleetProject)) return;
   const agents = join(root, "AGENTS.md");
   const guide = join(root, "CONTRIBUTING.md");
   pi.on("before_agent_start", (event) => {
@@ -203,9 +193,10 @@ function contractForMates(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event) => {
     const path = join(HOME(), "AGENTS.md");
     const files = event.systemPromptOptions.contextFiles;
-    if (files.some((file) => resolve(file.path) === path)) return undefined;
+    const own = files.findIndex((file) => resolve(file.path) === path);
+    if (own !== -1) files.splice(own, 1);
     const content = readPromptFile(path);
-    if (content !== undefined) files.push({ path, content });
+    if (content !== undefined) files.splice(own === -1 ? files.length : own, 0, { path, content });
     return undefined;
   });
 }
@@ -311,7 +302,7 @@ function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["ro
 
 function start(
   pi: ExtensionAPI,
-  { url, token, role, lane, repo }: Config,
+  { url, token, role, lane, fleetProject }: Config,
   sessionFile: string | undefined,
   compact: () => void,
   ctx: ExtensionContext,
@@ -380,7 +371,7 @@ function start(
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
-  if (role === "worker") contributorGuideForWorkers(pi, repo);
+  if (role === "worker") contributorGuideForWorkers(pi, fleetProject);
   else contractForMates(pi);
   appendRolePrompt(pi, role);
   if (role === "mate") {
@@ -425,7 +416,10 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
-  pi.registerFlag("fleet-repo", { type: "string", description: "Registered worker repository" });
+  pi.registerFlag("fleet-project", {
+    type: "string",
+    description: "Whether the registered worker project is Fleet (true or false)",
+  });
   pi.registerFlag(STALE_RELOAD_FLAG, {
     type: "string",
     description:

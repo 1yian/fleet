@@ -149,7 +149,7 @@ export interface Begun {
   readonly name: string;
   readonly lane: string;
   readonly delivery: Delivery | null;
-  readonly repo?: string;
+  readonly fleetProject?: boolean;
   readonly model?: string;
 }
 
@@ -158,7 +158,7 @@ function placeOf(
   card: Card,
   host: string,
   session: string,
-): Pick<Begun, "clone" | "base" | "branch" | "name" | "lane" | "repo"> {
+): Pick<Begun, "clone" | "base" | "branch" | "name" | "lane" | "fleetProject"> {
   if (card.project === null)
     throw new Error(`c-${String(card.id)} has no project, so it cannot be dispatched`);
   const row = db
@@ -178,9 +178,7 @@ function placeOf(
     branch,
     name: card.name,
     lane: card.lane,
-    ...(typeof repo === "string"
-      ? { repo: /^[a-z\d-]+\/[a-z\d_.-]+$/i.test(repo) ? repo : "" }
-      : {}),
+    ...(typeof repo === "string" ? { fleetProject: repo.toLowerCase() === "1yian/fleet" } : {}),
   };
 }
 

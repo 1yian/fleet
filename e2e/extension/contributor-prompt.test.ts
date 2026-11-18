@@ -162,7 +162,7 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
       evidence(`${name}-worker`, turns);
       return { text: "Contributor instructions received." };
     }, "mate");
-  const mateNoContext = variant.mateNoContextFiles === true || variant.linkedPrompts === true;
+  const mateNoContext = variant.mateNoContextFiles === true;
   const mateStart = mateNoContext ? [...args, "--no-context-files"] : args;
   const pane = await startMain(lab, scratch, h, false, mateStart);
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
@@ -271,8 +271,12 @@ test("a non-fleet registration retains its project context despite a Fleet displ
   await run(t, "unrelated-registration", { unrelated: true });
 });
 
-test("worker guide and mate fallback reject symlinked prompt files", async (t) => {
+test("native mate context and worker guide reject symlinked prompt files", async (t) => {
   await run(t, "linked-prompts", { linkedPrompts: true });
+});
+
+test("mate fallback rejects a symlinked contract when native discovery is disabled", async (t) => {
+  await run(t, "linked-fallback", { linkedPrompts: true, mateNoContextFiles: true });
 });
 
 test("a mate started without context files still gets the Firstmate contract", async (t) => {

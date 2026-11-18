@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -113,6 +114,31 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
+
+test("mate memory refresh does not load a symlink substituted for the home contract", async () => {
+  installMemory();
+  h.onModel(() => ({ text: "First reply" }), "mate");
+  h.onModel(() => ({ text: "Second reply" }), "mate");
+  const args = mateArgs(h).filter((arg) => arg !== "--no-context-files");
+  const pane = await startMain(lab, scratch, h, false, args);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  await lab.submit(pane, "Read the current instructions.");
+  const first = await h.waitForCall(0, "mate");
+  assert.ok(isMains(first));
+  assert.ok(mentions(first, "The first mate's memory."));
+  await h.waitFor((event) => event["type"] === "settled", "the first reply to settle");
+  const marker = "Inert fixture outside the mate home.";
+  const target = join(memoryHome, "fixture.txt");
+  const contract = join(scratch.root, "AGENTS.md");
+  writeFileSync(target, marker);
+  rmSync(contract);
+  symlinkSync(target, contract);
+  await lab.submit(pane, "Read the refreshed instructions.");
+  const refreshed = await h.waitForCall(1, "mate");
+  assert.ok(mentions(refreshed, "The first mate's memory."));
+  assert.ok(!isMains(refreshed));
+  assert.ok(!mentions(refreshed, marker));
+});
 
 test("with memory on, main yields silently and keeps idle and mid-turn fleet messages in conversation memory", async () => {
   installMemory();

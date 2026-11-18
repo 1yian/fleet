@@ -129,7 +129,7 @@ export default async function firstmateOptChat(pi: ExtensionAPI): Promise<void> 
     prepare,
     receipt,
   });
-  await optchat(integration, { connectedWindows: false, viewBudget: config.viewBudget, foldTokens: config.foldTokens, foldAfterIdle: config.foldOnCacheExpiry ? cacheLifetimeMs : undefined, transientCustomTypes: operationalTypes });
+  await optchat(integration, { guardedContextPath: resolve(home, "AGENTS.md"), connectedWindows: false, viewBudget: config.viewBudget, foldTokens: config.foldTokens, foldAfterIdle: config.foldOnCacheExpiry ? cacheLifetimeMs : undefined, transientCustomTypes: operationalTypes });
   pi.registerCommand("firstmate-memory", {
     description: "Show this supervisor's conversation-memory profile and activation receipt",
     handler: async (_args, ctx) => {
