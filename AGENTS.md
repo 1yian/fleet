@@ -253,7 +253,7 @@ Route durable knowledge to its most specific owner:
 - A preference that holds across lanes goes in main's `data/captain-shared.md`. As a second mate, `comment(lane=<your lane>, text)` main with it in the captain's words, and main files it.
 - An operating fact of this home goes in `data/learnings.md`.
 - A note about one card goes on that card, and an investigation finding goes in a report file.
-- Knowledge that nearly every contributor to a project needs belongs in its committed `AGENTS.md`, or in `CONTRIBUTING.md` for this fleet repository, whose workers get that guide in place of `AGENTS.md`. Never write a project's `AGENTS.md` or `CONTRIBUTING.md`: a worker corrects it only when it is factually wrong, and only a human adds to it.
+- Knowledge that nearly every contributor to a project needs belongs in its committed `AGENTS.md`, or in `CONTRIBUTING.md` for this fleet repository, whose workers get that guide in place of `AGENTS.md`. Never write a project's `AGENTS.md`: a worker corrects it only when it is factually wrong, and only a human adds to it. Fleet contributor-guide changes go through a ship card.
 - Knowledge that every user of the fleet needs belongs in this repository's tracked files, through a ship card.
 
 Read a memory file in full before you write it, and write a considered replacement, never a blind append.

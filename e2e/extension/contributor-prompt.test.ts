@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -31,13 +31,13 @@ const ANCESTOR_NOTES = "# Firstmate\n\nAncestor notes that belong to unrelated w
 
 interface Variant {
   readonly stale?: boolean;
+  readonly missingGuide?: boolean;
   readonly noContextFiles?: boolean;
   readonly ancestor?: boolean;
   readonly mateNoContextFiles?: boolean;
 }
 
-function commitStaleOverview(repo: Scratch): void {
-  writeFileSync(join(repo.root, "AGENTS.md"), STALE_OVERVIEW);
+function commitFixture(repo: Scratch): void {
   execFileSync("git", ["-C", repo.root, "add", "-A"]);
   execFileSync("git", [
     "-C",
@@ -48,7 +48,7 @@ function commitStaleOverview(repo: Scratch): void {
     "user.email=scratch@example.com",
     "commit",
     "-qm",
-    "stale overview",
+    "worker prompt fixture",
   ]);
 }
 
@@ -57,7 +57,9 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   const repo = new Scratch();
   const cardd = await Cardd.start();
   const h = await Harness.start();
-  const args = mateArgs(h).filter((arg) => arg !== "--no-builtin-tools");
+  const args = mateArgs(h).filter(
+    (arg) => arg !== "--no-builtin-tools" && arg !== "--no-context-files",
+  );
   const workerArgs = variant.noContextFiles === true ? [...args, "--no-context-files"] : args;
   const bin = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
   const lab = await HerdrLab.start({
@@ -72,7 +74,10 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     repo.dispose();
     scratch.dispose();
   });
-  if (variant.stale === true) commitStaleOverview(repo);
+  if (variant.stale === true) writeFileSync(join(repo.root, "AGENTS.md"), STALE_OVERVIEW);
+  if (variant.missingGuide === true) rmSync(join(repo.root, "CONTRIBUTING.md"));
+  if (variant.stale === true || variant.missingGuide === true) commitFixture(repo);
+  writeFileSync(join(scratch.parent, "AGENTS.md"), ANCESTOR_NOTES);
   if (variant.ancestor === true) writeFileSync(join(repo.parent, "AGENTS.md"), ANCESTOR_NOTES);
   const token = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, token, { workerArgs });
@@ -117,11 +122,19 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   const mate = await h.waitForCall(0, "mate", 90_000);
   const worker = await workerCall(h);
   const mateSystem = systemOf(mate);
-  assert.match(mateSystem, /^# Firstmate$/m);
-  assert.match(mateSystem, /This is the job description of main and every second mate/);
-  assert.ok(
-    mateSystem.indexOf("# Firstmate") < mateSystem.indexOf("Keep the fixture fleet running"),
-  );
+  const projectContext =
+    /<project_context>([\s\S]*?)<\/project_context>/.exec(mateSystem)?.[1] ?? "";
+  const homeOpen = `<project_instructions path="${join(realpathSync(scratch.root), "AGENTS.md")}">`;
+  const homeBlocks = projectContext.split(homeOpen);
+  assert.equal(homeBlocks.length, 2);
+  const homeContract = homeBlocks[1]?.split("</project_instructions>")[0] ?? "";
+  assert.match(homeContract, /^# Firstmate$/m);
+  const jobDescription = /This is the job description of main and every second mate/g;
+  assert.match(homeContract, jobDescription);
+  assert.equal([...mateSystem.matchAll(jobDescription)].length, 1);
+  assert.ok(mateSystem.indexOf(homeOpen) < mateSystem.indexOf("Keep the fixture fleet running"));
+  if (variant.mateNoContextFiles === true) assert.ok(!mateSystem.includes(ANCESTOR_NOTES.trim()));
+  else assert.ok(projectContext.includes(ANCESTOR_NOTES.trim()));
   assert.match(mateSystem, /Prefer plain reports/);
   assert.match(mateSystem, /Keep this lane focused/);
   assert.match(mateSystem, /Use the isolated lab/);
@@ -131,10 +144,14 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   assert.match(workerSystem, /^# Worker role contract$/m);
   assert.doesNotMatch(workerSystem, /This is the job description of main and every second mate/);
   assert.doesNotMatch(workerSystem, /Stale overview of the fleet repository/);
-  assert.match(workerSystem, /npm run check/);
-  assert.match(workerSystem, /fleet\/no-comments/);
-  assert.match(workerSystem, /Migrations.*append-only/);
-  assert.match(workerSystem, /Do not test by reading source files for strings/);
+  if (variant.missingGuide === true) {
+    assert.doesNotMatch(workerSystem, /# Contributing to fleet|npm run check/);
+  } else {
+    assert.match(workerSystem, /npm run check/);
+    assert.match(workerSystem, /fleet\/no-comments/);
+    assert.match(workerSystem, /Migrations.*append-only/);
+    assert.match(workerSystem, /Do not test by reading source files for strings/);
+  }
   assert.doesNotMatch(workerSystem, /Keep the fixture fleet running|Prefer plain reports/);
   if (variant.ancestor === true && variant.noContextFiles !== true)
     assert.match(workerSystem, /Ancestor notes that belong to unrelated work/);
@@ -158,6 +175,10 @@ test("a fleet worker started without context files gets only CONTRIBUTING.md", a
 
 test("a fleet worker keeps an unrelated ancestor Firstmate file while getting CONTRIBUTING.md", async (t) => {
   await run(t, "ancestor", { ancestor: true });
+});
+
+test("a fleet worker without a contributor guide keeps unrelated context but not the mate contract", async (t) => {
+  await run(t, "missing-guide", { missingGuide: true, ancestor: true });
 });
 
 test("a mate started without context files still gets the Firstmate contract", async (t) => {

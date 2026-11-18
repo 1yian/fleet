@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,18 +147,29 @@ function charter(): string {
 
 const mateContract = (): string => charter() + standingRules(HOME());
 
-const FLEET_WORKER_MARKER = join("packages", "extension", "prompts", "worker.md");
-
 function contributorGuideForWorkers(pi: ExtensionAPI): void {
+  const root = HOME();
+  const marker = spawnSync(
+    "git",
+    ["ls-files", "--error-unmatch", "--", ".pi/extensions/fleet.ts"],
+    {
+      cwd: root,
+      stdio: "ignore",
+    },
+  );
+  if (marker.status !== 0) return;
+  const agents = join(root, "AGENTS.md");
+  const guide = join(root, "CONTRIBUTING.md");
   pi.on("before_agent_start", (event) => {
-    const root = resolve(event.systemPromptOptions.cwd);
-    const guide = join(root, "CONTRIBUTING.md");
-    if (!existsSync(join(root, FLEET_WORKER_MARKER)) || !existsSync(guide)) return undefined;
     const files = event.systemPromptOptions.contextFiles;
-    const entry = { path: guide, content: readFileSync(guide, "utf8") };
-    const own = files.findIndex((file) => resolve(file.path) === join(root, "AGENTS.md"));
-    if (own === -1) files.push(entry);
-    else files[own] = entry;
+    const own = files.findIndex((file) => resolve(file.path) === agents);
+    if (own !== -1) files.splice(own, 1);
+    if (existsSync(guide)) {
+      files.splice(own === -1 ? files.length : own, 0, {
+        path: guide,
+        content: readFileSync(guide, "utf8"),
+      });
+    }
     return undefined;
   });
 }
