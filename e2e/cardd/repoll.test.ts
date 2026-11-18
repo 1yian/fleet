@@ -186,3 +186,22 @@ test("a repeated poll and a fresh suite on one card: the suite covers, and both 
   assert.equal(pulse.running?.what, `job ${String(suite)} (suite) and 1 more`);
   assert.ok(poll < suite);
 });
+
+test("after a re-run that exits differently, the next run of that label is a first run again", async () => {
+  const card = await newCard(cleo, "Wait for the approval");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", { status: "working", text: "Waiting for the approval." });
+  await rePoll(worker, 1);
+  await rePoll(worker, 2);
+  const passed = await startJob(worker, "approval-poll", "poll the page # 3");
+  await worker.call("job.finish", { job: passed, exitCode: 0, outputTail: "feedback arrived" });
+  await startJob(worker, "approval-poll", "poll the page # 4");
+  worker.send({ t: "activity", state: "waiting" });
+
+  const pulse = await until(async () => {
+    const found = await pulseOf(card);
+    return found.state === "running" ? found : undefined;
+  }, "the run after the changed exit to cover the card");
+  assert.equal(pulse.notice, "none");
+  assert.match(pulse.running?.what ?? "", /^job \d+ \(approval-poll\)$/);
+});

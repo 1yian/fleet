@@ -107,8 +107,10 @@ export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movemen
   const changed = entries.findLast(changes(repeated))?.createdAt ?? 0;
   const base = Math.max(card.createdAt, changed, progressAt(db, card.id));
   const runs = runsOf(db, card.id);
-  const again = startedAgain(runs, base);
-  const finished = entries.findLast(finishes(again, changedExits(entries, runs)))?.createdAt ?? 0;
+  const differs = changedExits(entries, runs);
+  const exitAt = entries.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;
+  const again = startedAgain(runs, Math.max(base, exitAt));
+  const finished = entries.findLast(finishes(again, differs))?.createdAt ?? 0;
   const running = runs.filter((run) => run.running);
   return {
     movedAt: Math.max(base, finished),

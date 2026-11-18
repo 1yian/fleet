@@ -5,7 +5,7 @@ const LAVISH = /^lavish-axi(?:@[\w.-]+)?$/;
 const LAVISH_CLI = /(?:^|\/)lavish-axi\/dist\/cli\.mjs$/;
 const ASSIGNMENT = /^[A-Za-z_]\w*=/;
 
-const TOKEN = /([;|&\n])|((?:'[^']*'|"(?:\\[^]|[^"\\])*"|\\[^]|[^\s;|&'"\\])+)/g;
+const TOKEN = /(;|\||&&)|(#)|((?:'[^']*'|"(?:\\[^]|[^"\\])*"|\\[^]|&(?!&)|[^\s;|&'"\\<>])+)/g;
 const PIECE = /'([^']*)'|"((?:\\[^]|[^"\\])*)"|\\([^])|([^'"\\]+)/g;
 
 function unquote(word: string): string {
@@ -19,7 +19,8 @@ function unquote(word: string): string {
 function commandsOf(command: string): string[][] {
   const commands: string[][] = [];
   let words: string[] = [];
-  for (const [, separator, word] of command.matchAll(TOKEN)) {
+  for (const [, separator, comment, word] of command.matchAll(TOKEN)) {
+    if (comment !== undefined) break;
     if (separator === undefined) words.push(unquote(word ?? ""));
     else if (words.length > 0) {
       commands.push(words);
@@ -35,7 +36,7 @@ function invokes(first: string, args: readonly string[]): boolean {
   if (first === "node") return LAVISH_CLI.test(args[0] ?? "") && args[1] === "poll";
   if (first !== "npx") return false;
   const [tool = "", verb = ""] = args[0] === "--yes" ? args.slice(1) : args;
-  return LAVISH.test(tool) && verb === "poll";
+  return tool === "lavish-axi" && verb === "poll";
 }
 
 function polls(words: readonly string[]): boolean {

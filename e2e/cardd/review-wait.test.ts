@@ -11,7 +11,7 @@ const POLLS = {
   plain: `lavish-axi poll ${BOARD} --owner fleet-c-1`,
   npx: `npx --yes lavish-axi poll '${BOARD}'`,
   versioned: "lavish-axi@1.2.3 poll page.html",
-  npxVersioned: "npx --yes lavish-axi@1.2.3 poll page.html",
+  redirected: `lavish-axi poll>poll.log ${BOARD}`,
   quotedNode: `node "$HOME/node_modules/lavish-axi/dist/cli.mjs" poll ${BOARD}`,
   chained: `cd /scratch && lavish-axi poll ${BOARD}`,
   pinned: `set -o pipefail; LAVISH_AXI_STATE_DIR=/scratch/c-1600/lavish-state LAVISH_AXI_PORT=8791 LAVISH_AXI_NO_OPEN=1 node /npx/node_modules/lavish-axi/dist/cli.mjs poll ${BOARD} --owner fleet-c-1 2>&1 | tee /scratch/c-1684/poll-delivery-20.txt`,
@@ -23,6 +23,7 @@ const NOT_POLLS = {
   printed: `make build | tee build.log; echo "to wait, run lavish-axi poll ${BOARD}" >&2`,
   echoed: "echo lavish-axi poll the page",
   escaped: `echo usage \\; lavish-axi poll ${BOARD}`,
+  commented: `npm test # if approval is needed; lavish-axi poll ${BOARD}`,
   version: "npx --version lavish-axi poll",
   otherNode: "node scripts/lavish-axi.mjs poll page.html",
 };

@@ -26,7 +26,7 @@ A lane's mate reads `behind` with every step in another lane counted as open and
 A worker that waits can say so over and over without anything changing. These repeats are not real changes, so they never move a card:
 
 - A `working` report right after another `working` report. The first one after any other status counts, and a `note` always counts.
-- A job that the worker starts again under the same label when an earlier run of that label began after the last real change, and the result of that run. The first run of a label counts as before. A re-run whose exit code differs from the previous result of that label counts, such as a pass after a timeout.
+- A job that the worker starts again under the same label when an earlier run of that label began after the last real change, and the result of that run. The first run of a label counts as before. A re-run whose exit code differs from the previous result of that label counts, such as a pass after a timeout. The next run of that label after it is a first run again.
 
 A commit or a file change in the worker's copy (`progress_at`) and any entry from someone else (a comment, hold, release, answer, or review feedback) are real changes. After one, the next run of a label is a first run again. A poll that writes a log inside the checkout counts as progress.
 
