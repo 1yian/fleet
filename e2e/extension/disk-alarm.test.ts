@@ -178,7 +178,7 @@ async function crossWhileBusy(): Promise<void> {
   assert.deepEqual(heldKeys(), []);
 }
 
-test("main hears once when a host's filesystem passes 75%, and again only after it drops below 70% and crosses 75% again", async () => {
+test("main hears once when a host's filesystem reaches 75%, and again only after it drops below 70% and reaches 75% again", async () => {
   for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, here, h);
   await untilProbes(3);
@@ -188,7 +188,7 @@ test("main hears once when a host's filesystem passes 75%, and again only after 
   const [first] = await untilAlarms(1);
   assert.equal(
     first,
-    "[fleet] disk: far: /tmp (tmpfs) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp by inodes: /tmp/fleet-c-1300 88,085 inodes; /tmp/fleet-c-1289 67,375 inodes; /tmp/node-compile-cache 21,377 inodes. This is said once. It is said again only after /tmp drops below 70% and crosses 75% again.",
+    "[fleet] disk: far: /tmp (tmpfs) is at 96% of its inodes (1,004,848 of 1,048,576), at or over the 75% alarm. Largest under /tmp by inodes: /tmp/fleet-c-1300 88,085 inodes; /tmp/fleet-c-1289 67,375 inodes; /tmp/node-compile-cache 21,377 inodes. This is said once. It is said again only after its inodes drop below 70% and reach 75% again.",
   );
 
   for (const inodes of [1_040_000, 780_000, 800_000, 780_000, 800_000, 780_000, 800_000]) {
@@ -202,6 +202,11 @@ test("main hears once when a host's filesystem passes 75%, and again only after 
   assert.deepEqual(heldKeys(), CROSSED, "70% does not re-arm it");
   report({ inodes: 733_000, bytes: 40 * GIB });
   await untilHeld([]);
+  const listed = callsOf("largest");
+  report({ inodes: 780_000, bytes: 40 * GIB });
+  await afterProbes(3);
+  assert.equal(alarmsOf(lastCall()).length, 1, "below 75% an unheld alarm does not fire");
+  assert.equal(callsOf("largest"), listed, "below 75% nothing is listed");
   report({ inodes: 786_432, bytes: 40 * GIB });
   const alarms = await untilAlarms(2);
   assert.match(alarms[1] ?? "", /is at 75% of its inodes \(786,432 of 1,048,576\)/);
@@ -226,7 +231,7 @@ test("main names the directories of every watched root on the filesystem that cr
   const [alarm] = await untilAlarms(1);
   assert.equal(
     alarm,
-    "[fleet] disk: far: /tmp (/dev/nvme0n1p2) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp, /home/far/.fleet by inodes: /home/far/.fleet/node-compile-cache 700,000 inodes; /home/far/.fleet/scratch 250,000 inodes; /tmp/fleet-c-1300 4,000 inodes. This is said once. It is said again only after /tmp drops below 70% and crosses 75% again.",
+    "[fleet] disk: far: /tmp (/dev/nvme0n1p2) is at 96% of its inodes (1,004,848 of 1,048,576), at or over the 75% alarm. Largest under /tmp, /home/far/.fleet by inodes: /home/far/.fleet/node-compile-cache 700,000 inodes; /home/far/.fleet/scratch 250,000 inodes; /tmp/fleet-c-1300 4,000 inodes. This is said once. It is said again only after its inodes drop below 70% and reach 75% again.",
   );
   const asked = readFileSync(log, "utf8")
     .split("\n")
@@ -243,7 +248,7 @@ test("main names space when space is what crossed, and counts inodes and space s
   const [space] = await untilAlarms(1);
   assert.match(
     space ?? "",
-    /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 81% of its space \(100\.0 GB of 124\.0 GB\), over the 75% alarm\. Largest under \/tmp by space: \/tmp\/fleet-c-1300 5\.0 GB;/,
+    /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 81% of its space \(100\.0 GB of 124\.0 GB\), at or over the 75% alarm\. Largest under \/tmp by space: \/tmp\/fleet-c-1300 5\.0 GB;/,
   );
   report({ inodes: 1_000_000, bytes: 100 * GIB });
   const alarms = await untilAlarms(2);
@@ -462,7 +467,7 @@ test("a directory listing that never works is retried for three checks, then mai
   const [alarm] = await untilAlarms(1);
   assert.match(
     alarm ?? "",
-    /is at 96% of its inodes \(1,004,848 of 1,048,576\), over the 75% alarm\. The largest directories could not be read\. /,
+    /is at 96% of its inodes \(1,004,848 of 1,048,576\), at or over the 75% alarm\. The largest directories could not be read\. /,
   );
   assert.equal(callsOf("largest"), 3);
   await afterProbes(4);

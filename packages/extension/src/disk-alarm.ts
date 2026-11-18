@@ -106,8 +106,8 @@ function described(host: string, crossing: Crossing, found?: Breakdown): string 
   const what = metric === "inodes" ? "its inodes" : "its space";
   const alarm = `${String(ALARM_PERCENT)}%`;
   const rearm = `${String(REARM_PERCENT)}%`;
-  const once = `This is said once. It is said again only after ${use.path} drops below ${rearm} and crosses ${alarm} again.`;
-  const level = `${String(Math.round(percent))}% of ${what} (${sizesOf(crossing)}), over the ${alarm} alarm.`;
+  const once = `This is said once. It is said again only after ${what} drops below ${rearm} and reaches ${alarm} again.`;
+  const level = `${String(Math.round(percent))}% of ${what} (${sizesOf(crossing)}), at or over the ${alarm} alarm.`;
   return `${host}: ${name} is at ${level} ${largestOf(crossing, found)} ${once}`;
 }
 
