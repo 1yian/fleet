@@ -71,7 +71,7 @@ export class FilesMates {
         ...h.piEnv("mate"),
         FILES_EDITOR_LOG: fleet.editorLog,
         PATH: path,
-        XDG_CACHE_HOME: sharedCacheDir,
+        XDG_CACHE_HOME: sharedCacheDir(),
         XDG_STATE_HOME: join(fleet.userHome, ".local", "state"),
       });
       return new FilesMates({ fleet, h, lab, lane });

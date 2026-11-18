@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { basename } from "node:path";
 
 interface Marked {
   readonly pid: number;
-  readonly command: string;
+  readonly identity: string;
 }
 
 export interface Swept {
@@ -27,53 +28,81 @@ export function killGroup(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function hasMarker(pid: number, marker: RegExp): boolean {
+function linuxIdentity(pid: number, marker: RegExp): string | undefined {
   try {
-    return readFileSync(`/proc/${String(pid)}/environ`, "utf8")
-      .split("\0")
-      .some((entry) => marker.test(entry));
+    const stat = readFileSync(`/proc/${String(pid)}/stat`, "utf8");
+    const started = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    const env = readFileSync(`/proc/${String(pid)}/environ`, "utf8");
+    if (env.split("\0").some((entry) => marker.test(entry))) return started;
   } catch {
-    return false;
+    return undefined;
   }
+  return undefined;
+}
+
+function macSnapshot(environment: boolean): Map<number, string> {
+  const table = execFileSync(
+    "ps",
+    [
+      environment ? "-Exww" : "-xww",
+      "-U",
+      String(process.getuid?.()),
+      "-o",
+      "pid=,lstart=,command=",
+    ],
+    { encoding: "utf8", maxBuffer: 1 << 26 },
+  );
+  const rows = new Map<number, string>();
+  for (const line of table.split("\n")) {
+    const found = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (found?.[2] !== undefined) rows.set(Number(found[1]), found[2]);
+  }
+  return rows;
 }
 
 function markedProcesses(marker: RegExp): Marked[] {
   if (process.platform === "linux") {
     return readdirSync("/proc").flatMap((entry) => {
       const pid = Number(entry);
-      return Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid && hasMarker(pid, marker)
-        ? [{ pid, command: "" }]
-        : [];
+      if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return [];
+      const identity = linuxIdentity(pid, marker);
+      return identity === undefined ? [] : [{ pid, identity }];
     });
   }
-  const table = execFileSync("ps", ["axeww", "-o", "pid=,command="], {
-    encoding: "utf8",
-    maxBuffer: 1 << 30,
-  });
-  return table.split("\n").flatMap((line) => {
-    const found = /^\s*(\d+)\s+(.*)$/.exec(line);
-    const pid = Number(found?.[1]);
-    const command = found?.[2] ?? "";
-    return pid > 0 && pid !== process.pid && command.split(" ").some((entry) => marker.test(entry))
-      ? [{ pid, command: "" }]
-      : [];
+  const argv = macSnapshot(false);
+  const full = macSnapshot(true);
+  const current = macSnapshot(false);
+  return [...argv].flatMap(([pid, identity]) => {
+    const withEnv = full.get(pid);
+    const owns =
+      pid !== process.pid &&
+      current.get(pid) === identity &&
+      withEnv?.startsWith(`${identity} `) === true &&
+      withEnv.slice(identity.length + 1).split(" ").some((entry) => marker.test(entry));
+    return owns ? [{ pid, identity }] : [];
   });
 }
 
-function describe({ pid, command }: Marked): string {
+function describe({ pid }: Marked): string {
   try {
-    const argv = readFileSync(`/proc/${String(pid)}/cmdline`, "utf8")
-      .split("\0")
-      .join(" ");
-    return `${String(pid)} ${argv.trim().slice(0, 300)}`;
+    const name =
+      process.platform === "linux"
+        ? basename(readlinkSync(`/proc/${String(pid)}/exe`))
+        : execFileSync("ps", ["-o", "ucomm=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    return `${String(pid)} ${name}`;
   } catch {
-    return `${String(pid)} ${command.slice(0, 160)}`;
+    return String(pid);
   }
 }
 
 function killMarked(left: readonly Marked[], marker: RegExp): void {
-  for (const { pid } of left) {
-    if (process.platform === "linux" && !hasMarker(pid, marker)) continue;
+  const mac =
+    process.platform === "linux"
+      ? undefined
+      : new Map(markedProcesses(marker).map(({ pid, identity }) => [pid, identity]));
+  for (const { pid, identity } of left) {
+    const current = mac === undefined ? linuxIdentity(pid, marker) : mac.get(pid);
+    if (current !== identity) continue;
     try {
       process.kill(pid, "SIGKILL");
     } catch {

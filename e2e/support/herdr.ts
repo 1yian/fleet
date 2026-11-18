@@ -1,4 +1,5 @@
 import { execFile, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { guardCleanup, killGroup, spawnGuarded } from "./guarded.ts";
@@ -8,10 +9,9 @@ import { tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
-let labCount = 0;
 
 export class HerdrLab {
-  readonly name = `fleet-lab-${String(process.pid)}-${String(++labCount)}`;
+  readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
   readonly config = join(tempDir("herdr-config-"), "config.toml");
   private server: ChildProcess | undefined;
   env: Record<string, string> = {};
@@ -34,7 +34,7 @@ export class HerdrLab {
     const deadline = Date.now() + WAIT_MS;
     while (!(await lab.running())) {
       if (Date.now() > deadline) throw new Error(`herdr lab ${lab.name} did not start`);
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return lab;
   }

@@ -1,18 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import {
-  closeSync,
-  globSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { randomBytes } from "node:crypto";
+import { closeSync, globSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { envMarker, killGroup, sweepMarked } from "./support/marked.ts";
-import { diskBase, staleFolders } from "./support/run-folders.ts";
+import { envMarker, killGroup, sweepMarked, type Swept } from "./support/marked.ts";
+import { cacheDirectory, runBase, sweepStaleFolders } from "./support/run-folders.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SUITE_PREFIX = "fe-";
@@ -43,12 +36,17 @@ const markerOf = (token: string, indexed = false): RegExp =>
   envMarker("FLEET_E2E_RUN", token, indexed);
 
 function concurrency(): number {
-  const named = Number(process.env["FLEET_E2E_CONCURRENCY"]);
-  if (Number.isInteger(named) && named > 0) return named;
-  return Math.min(
+  const cap = Math.min(
     MAX_DEFAULT_FILES,
     Math.max(1, Math.floor(availableParallelism() / CORES_PER_FILE)),
   );
+  const override = process.env["FLEET_E2E_CONCURRENCY"];
+  if (override === undefined) return cap;
+  const width = Number(override);
+  if (!/^\d+$/.test(override) || width < 1 || width > cap) {
+    throw new Error(`FLEET_E2E_CONCURRENCY must be an integer from 1 to ${String(cap)}`);
+  }
+  return width;
 }
 
 function countsIn(log: string): Record<string, number> {
@@ -94,18 +92,16 @@ function report(outcome: Outcome): void {
 
 class Suite {
   readonly dir: string;
-  readonly id: string;
-  readonly base: string;
+  private readonly id = randomBytes(16).toString("hex");
+  private readonly cache: string;
   private readonly running = new Set<ChildProcess>();
   private stopping = false;
   private started = 0;
 
   constructor(base: string) {
-    this.base = base;
-    this.id = `${SUITE_PREFIX}${String(process.pid)}`;
-    this.dir = join(base, this.id);
-    rmSync(this.dir, { recursive: true, force: true });
-    mkdirSync(this.dir);
+    this.cache = cacheDirectory(base);
+    this.dir = join(base, `${SUITE_PREFIX}${String(process.pid)}`);
+    mkdirSync(this.dir, { mode: 0o700 });
   }
 
   get interrupted(): boolean {
@@ -116,31 +112,49 @@ class Suite {
     const queue = [...files];
     const outcomes: Outcome[] = [];
     const lane = async (): Promise<void> => {
-      for (let file = queue.shift(); file !== undefined && !this.stopping; file = queue.shift()) {
-        const outcome = await this.runFile(file);
-        outcomes.push(outcome);
-        report(outcome);
+      try {
+        while (!this.stopping) {
+          const file = queue.shift();
+          if (file === undefined) return;
+          const outcome = await this.runFile(file);
+          outcomes.push(outcome);
+          report(outcome);
+        }
+      } catch (error) {
+        this.stop("SIGKILL");
+        throw error;
       }
     };
-    await Promise.all(Array.from({ length: Math.min(width, files.length) }, lane));
+    const drained = await Promise.allSettled(
+      Array.from({ length: Math.min(width, files.length) }, lane),
+    );
+    const fault = drained.find((result) => result.status === "rejected");
+    if (fault !== undefined) throw fault.reason;
     return outcomes;
   }
 
   stop(signal: NodeJS.Signals): void {
     this.stopping = true;
     this.signalAll(signal);
+    if (signal !== "SIGKILL") {
+      setTimeout(() => {
+        this.signalAll("SIGKILL");
+      }, TERM_GRACE_MS).unref();
+    }
   }
 
-  signalAll(signal: NodeJS.Signals): void {
+  private signalAll(signal: NodeJS.Signals): void {
     for (const child of this.running) {
       if (child.pid !== undefined) killGroup(child.pid, signal);
     }
   }
 
-  async finish(): Promise<{ swept: readonly string[]; stuck: number }> {
-    const { named, survivors } = await sweepMarked(markerOf(this.id, true), LEFTOVER_GRACE_MS);
-    rmSync(this.dir, { recursive: true, force: true });
-    return { swept: named, stuck: survivors };
+  async finish(): Promise<Swept> {
+    try {
+      return await sweepMarked(markerOf(this.id, true), LEFTOVER_GRACE_MS);
+    } finally {
+      rmSync(this.dir, { recursive: true, force: true });
+    }
   }
 
   private async runFile(file: string): Promise<Outcome> {
@@ -148,17 +162,25 @@ class Suite {
     const root = join(this.dir, String(index));
     mkdirSync(root);
     const logPath = `${root}.log`;
-    const fd = openSync(logPath, "w");
+    const fd = openSync(logPath, "wx", 0o600);
     const began = Date.now();
-    const child = spawn(
-      process.execPath,
-      ["--test", `--test-timeout=${String(TEST_TIMEOUT_MS)}`, "--test-reporter=spec", file],
-      { cwd: ROOT, env: this.env(index, root), detached: true, stdio: ["ignore", fd, fd] },
-    );
-    closeSync(fd);
-    this.running.add(child);
-    const { code, signal, timedOut } = await exitOf(child);
-    this.running.delete(child);
+    const { code, signal, timedOut } = await (async () => {
+      try {
+        const child = spawn(
+          process.execPath,
+          ["--test", `--test-timeout=${String(TEST_TIMEOUT_MS)}`, "--test-reporter=spec", file],
+          { cwd: ROOT, env: this.env(index, root), detached: true, stdio: ["ignore", fd, fd] },
+        );
+        this.running.add(child);
+        try {
+          return await exitOf(child);
+        } finally {
+          this.running.delete(child);
+        }
+      } finally {
+        closeSync(fd);
+      }
+    })();
     const { named, survivors } = await sweepMarked(
       markerOf(`${this.id}.${String(index)}`),
       LEFTOVER_GRACE_MS,
@@ -186,7 +208,8 @@ class Suite {
       FLEET_E2E_ROOT: root,
       FLEET_E2E_TMPDIR: this.dir,
       FLEET_E2E_RUN: `${this.id}.${String(index)}`,
-      FLEET_E2E_CACHE: join(this.base, "fleet-e2e-cache"),
+      FLEET_E2E_CACHE: this.cache,
+      FORCE_COLOR: "0",
     };
   }
 }
@@ -194,10 +217,6 @@ class Suite {
 function summarize(outcomes: readonly Outcome[], wallMs: number, width: number): void {
   const total = (name: string): number =>
     outcomes.reduce((sum, outcome) => sum + (outcome.counts[name] ?? 0), 0);
-  console.log("\nslowest files:");
-  for (const outcome of [...outcomes].sort((a, b) => b.ms - a.ms).slice(0, 10)) {
-    console.log(`  ${(outcome.ms / 1000).toFixed(1).padStart(7)}s ${outcome.file}`);
-  }
   const fileMs = outcomes.reduce((all, outcome) => all + outcome.ms, 0);
   console.log(
     `\n${String(outcomes.length)} files, ${String(total("tests"))} tests, ${String(total("pass"))} passed, ${String(total("fail"))} failed, ${String(total("skipped"))} skipped`,
@@ -205,25 +224,6 @@ function summarize(outcomes: readonly Outcome[], wallMs: number, width: number):
   console.log(
     `wall ${(wallMs / 60_000).toFixed(1)} min with ${String(width)} files at a time, ${(fileMs / 60_000).toFixed(1)} min of file time in all`,
   );
-}
-
-function writeReport(
-  path: string,
-  outcomes: readonly Outcome[],
-  wallMs: number,
-  width: number,
-): void {
-  const files = outcomes.map(({ file, ms, code, signal, timedOut, swept, stuck, counts }) => ({
-    file,
-    ms,
-    code,
-    signal,
-    timedOut,
-    swept,
-    stuck,
-    counts,
-  }));
-  writeFileSync(path, `${JSON.stringify({ wallMs, concurrency: width, files }, null, 2)}\n`);
 }
 
 function filesToRun(): string[] {
@@ -235,28 +235,18 @@ function watchSignals(suite: Suite): void {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => {
       suite.stop(signal);
-      setTimeout(() => {
-        suite.signalAll("SIGKILL");
-      }, TERM_GRACE_MS).unref();
     });
-  }
-}
-
-function sweepStaleSuites(base: string): void {
-  for (const name of staleFolders(base, SUITE_PREFIX)) {
-    rmSync(join(base, name), { recursive: true, force: true });
   }
 }
 
 function conclude(
   suite: Suite,
   outcomes: readonly Outcome[],
-  after: { swept: readonly string[]; stuck: number },
+  after: Swept,
 ): number {
-  for (const line of after.swept) console.log(`swept after the suite: ${line}`);
   const bad = outcomes.filter(failed).length;
-  const swept = outcomes.reduce((sum, outcome) => sum + outcome.swept.length, after.swept.length);
-  const stuck = outcomes.reduce((sum, outcome) => sum + outcome.stuck, after.stuck);
+  const swept = outcomes.reduce((sum, outcome) => sum + outcome.swept.length, after.named.length);
+  const stuck = outcomes.reduce((sum, outcome) => sum + outcome.stuck, after.survivors);
   console.log(
     suite.interrupted
       ? "interrupted"
@@ -266,31 +256,35 @@ function conclude(
 }
 
 async function main(): Promise<number> {
-  const base = process.env["FLEET_E2E_TMPDIR"] ?? diskBase();
-  mkdirSync(base, { recursive: true });
-  sweepStaleSuites(base);
+  const width = concurrency();
   const files = filesToRun();
   if (files.length === 0) {
     console.error("no end-to-end test files");
     return 1;
   }
+  const base = runBase();
+  sweepStaleFolders(base, "suite");
   const suite = new Suite(base);
-  const width = concurrency();
   const began = Date.now();
   const deadline = setTimeout(() => {
     console.error(`End-to-end suite exceeded ${String(SUITE_MINUTES)} minutes`);
     suite.stop("SIGKILL");
   }, SUITE_MINUTES * 60_000);
   watchSignals(suite);
-  console.log(`${String(files.length)} files, ${String(width)} at a time, in ${suite.dir}`);
-  const outcomes = await suite.run(files, width);
-  clearTimeout(deadline);
-  const after = await suite.finish();
-  const wallMs = Date.now() - began;
-  summarize(outcomes, wallMs, width);
-  const reportPath = process.env["FLEET_E2E_REPORT"];
-  if (reportPath !== undefined && reportPath !== "")
-    writeReport(reportPath, outcomes, wallMs, width);
+  let outcomes: Outcome[];
+  let after: Swept;
+  try {
+    console.log(`${String(files.length)} files, ${String(width)} at a time, in ${suite.dir}`);
+    outcomes = await suite.run(files, width);
+  } finally {
+    try {
+      after = await suite.finish();
+      for (const line of after.named) console.log(`swept after the suite: ${line}`);
+    } finally {
+      clearTimeout(deadline);
+    }
+  }
+  summarize(outcomes, Date.now() - began, width);
   return conclude(suite, outcomes, after);
 }
 

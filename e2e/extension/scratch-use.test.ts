@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { isRecord, parseRecord, records } from "../support/json.ts";
-import { ROOMY_DISK } from "../support/roomy-disk.ts";
 import { tempDir } from "../support/run-root.ts";
 import { fleet, fleetResult } from "../support/scratch-files.ts";
 
@@ -137,15 +136,21 @@ test("scratch reports the use of the filesystems it writes to, and names the lar
   const filesystems = records(report["filesystems"]);
   const tmp = filesystems.find((each) => each["path"] === "/tmp");
   assert.ok(tmp !== undefined, "the report names /tmp");
-  const usedBlocks = ROOMY_DISK.blocks - ROOMY_DISK.bfree;
-  assert.equal(tmp["bytesUsed"], usedBlocks * ROOMY_DISK.bsize, "bytes used match statfs");
-  assert.equal(
-    tmp["bytesTotal"],
-    (usedBlocks + ROOMY_DISK.bavail) * ROOMY_DISK.bsize,
-    "bytes total are what is used plus what a user can still write",
-  );
-  assert.equal(tmp["inodesUsed"], ROOMY_DISK.files - ROOMY_DISK.ffree, "inodes used match statfs");
-  assert.equal(tmp["inodesTotal"], ROOMY_DISK.files, "inodes total match statfs");
+  const onTmpDevice = statSync(dir).dev === statSync("/tmp").dev;
+  assert.equal(filesystems.length, onTmpDevice ? 1 : 2);
+  assert.equal(Array.isArray(tmp["roots"]) && tmp["roots"].includes(dir), onTmpDevice);
+  assert.ok(filesystems.some((row) => Array.isArray(row["roots"]) && row["roots"].includes(dir)));
+  for (const row of filesystems) {
+    const path = row["path"];
+    assert.ok(typeof path === "string");
+    const seen = statfsSync(path);
+    const used = (seen.blocks - seen.bfree) * seen.bsize;
+    const total = used + seen.bavail * seen.bsize;
+    assert.ok(total > 0 && Math.abs(Number(row["bytesUsed"]) - used) < total * 0.05);
+    assert.ok(Math.abs(Number(row["bytesTotal"]) - total) < total * 0.05);
+    assert.ok(Math.abs(Number(row["inodesUsed"]) - (seen.files - seen.ffree)) <= seen.files * 0.05);
+    assert.ok(Math.abs(Number(row["inodesTotal"]) - seen.files) <= seen.files * 0.05);
+  }
   assert.ok(isRecord(report) && typeof report["host"] === "string");
 
   const byInodes = parseRecord(

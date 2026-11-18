@@ -19,6 +19,7 @@
         "support/capture-tool.ts",
         "support/orphan-runner.ts",
         "support/leak-fixture.ts",
+        "support/suite-fixture.ts",
         "support/reaper.ts",
         "support/roomy-disk.ts",
         "support/fake-no-mistakes.ts",
