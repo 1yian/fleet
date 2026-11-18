@@ -3,12 +3,13 @@ import {
   check,
   MaintenanceSchema,
   maintenanceLine,
+  type Entry,
   type Maintenance,
   type OpArgs,
 } from "@fleet/protocol";
 import { sanitize } from "./incident-kinds.ts";
 import { stopOf, untilOf } from "./lane-stop.ts";
-import { json, laneCardOf, addEntry, type Session } from "./store.ts";
+import { json, laneCardOf, addEntry, mainLane, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
 const SELECT = `SELECT json_object('id', m.id, 'batch', m.batch, 'session', m.session,
@@ -29,6 +30,9 @@ export const pendingFor = (db: DatabaseSync, session: string): Maintenance[] =>
   );
 
 const TERMINAL = "('completed', 'failed')";
+
+const UNSUPPORTED =
+  "runs code from before safe reloads, so it was left running: restart it by hand";
 
 const batchRows = (db: DatabaseSync, batch: string): Maintenance[] =>
   rowsOf(
@@ -57,7 +61,7 @@ const summarized = (db: DatabaseSync, batch: string): boolean =>
 
 interface Member {
   readonly host: string;
-  readonly state: "pending" | "reloading" | "completed" | "failed" | "removed";
+  readonly state: Maintenance["state"] | "removed";
 }
 
 const tally = (members: readonly Member[]): string => {
@@ -75,20 +79,16 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
     ...db
       .prepare("SELECT gone, host FROM maintenance_batches WHERE batch = ? AND maintenance IS NULL")
       .all(batch)
-      .map((row): Member => {
-        const state = row["gone"];
-        return {
-          host: String(row["host"]),
-          state: state === "completed" || state === "failed" ? state : "removed",
-        };
-      }),
+      .map((row): Member => ({
+        host: String(row["host"]),
+        state: row["gone"] === "failed" ? "failed" : "removed",
+      })),
   ];
-  const anchor = live.find((row) => row.state === "completed") ?? live[0];
+  const anchor = live.find((row) => row.state === "completed");
   const card = anchor === undefined ? undefined : cardOf(db, anchor.session);
   if (
     card === undefined ||
     members.some((member) => member.state === "pending" || member.state === "reloading") ||
-    !members.some((member) => member.state === "completed") ||
     summarized(db, batch)
   )
     return [];
@@ -121,36 +121,47 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
   return [requester];
 }
 
-function identityOf(row: Maintenance, card: number, process: unknown): string {
+function identityOf(row: Maintenance, card: number, runtime: unknown): string {
   const host = row.host === "" ? "unknown" : row.host;
-  const id = typeof process === "string" ? process : "unknown";
+  const id = typeof runtime === "string" ? runtime : "unknown";
   return ` [c-${String(card)}, host ${host}, process ${id}]`;
+}
+
+export function identified(db: DatabaseSync, lane: string, entry: Entry): Entry {
+  const id = entry.fields["maintenance"];
+  if (entry.fields["state"] !== "failed" || entry.fields["kind"] !== "reload") return entry;
+  if (typeof id !== "number" || lane !== mainLane(db)) return entry;
+  const [row] = rowsOf(db, "m.id = ?", id);
+  if (row === undefined) return entry;
+  const runtime = db.prepare("SELECT runtime FROM maintenance WHERE id = ?").get(id)?.["runtime"];
+  return { ...entry, body: `${entry.body}${identityOf(row, entry.card, runtime)}` };
 }
 
 function receipt(db: DatabaseSync, id: number): string[] {
   const [row] = rowsOf(db, "m.id = ?", id);
-  const owner = db
-    .prepare("SELECT requester, session, process FROM maintenance WHERE id = ?")
-    .get(id);
+  const owner = db.prepare("SELECT requester, session FROM maintenance WHERE id = ?").get(id);
   const card = cardOf(db, String(owner?.["session"]));
   if (row === undefined || card === undefined) return [];
   const requester = String(owner?.["requester"]);
-  const failedReload = row.state === "failed" && row.kind === "reload";
-  const identity = failedReload ? identityOf(row, card, owner?.["process"]) : "";
-  const body = `${maintenanceLine(row)}${identity}`;
+  const grouped =
+    db.prepare("SELECT 1 FROM maintenance_batches WHERE maintenance = ?").get(id) !== undefined;
   const quiet = row.state === "completed";
   const fields = { maintenance: id, batch: row.batch, kind: row.kind, state: row.state, quiet };
-  const recipients = quiet && row.kind === "reload" ? [] : [requester];
-  addEntry(db, { card, author: "maintenance", kind: "note", body, fields }, recipients);
+  const recipients = quiet && grouped ? [] : [requester];
+  addEntry(
+    db,
+    { card, author: "maintenance", kind: "note", body: maintenanceLine(row), fields },
+    recipients,
+  );
   return recipients;
 }
 
-function name(db: DatabaseSync, id: number, process: string | null): void {
+function name(db: DatabaseSync, id: number, runtime: string | null): void {
   const [row] = rowsOf(db, "m.id = ?", id);
   const card = row === undefined ? undefined : cardOf(db, row.session);
   if (row === undefined || card === undefined) return;
   db.prepare("UPDATE maintenance SET detail = ? WHERE id = ?").run(
-    `${row.detail}${identityOf(row, card, process)}`,
+    `${row.detail}${identityOf(row, card, runtime)}`,
     id,
   );
 }
@@ -187,7 +198,7 @@ export function dropMaintenance(db: DatabaseSync, lane: string): string[] {
     .all(lane, lane);
   db.prepare(
     `UPDATE maintenance_batches SET host = coalesce((SELECT host FROM sessions WHERE id = ?), ''),
-       gone = (SELECT CASE WHEN m.state IN ('completed', 'failed') THEN m.state ELSE 'removed' END
+       gone = (SELECT CASE WHEN m.state = 'failed' THEN 'failed' ELSE 'removed' END
                FROM maintenance m WHERE m.id = maintenance_batches.maintenance),
        maintenance = NULL
      WHERE requester != ? AND maintenance IN (SELECT id FROM maintenance WHERE session = ?)`,
@@ -219,15 +230,34 @@ export function adoptMaintenance(
   session: string,
   started: boolean,
   supported: boolean,
+  runtime: string | undefined,
 ): string[] {
-  db.prepare("UPDATE sessions SET maintenance = ? WHERE id = ?").run(Number(supported), session);
-  if (!started) return [];
-  const open = db
-    .prepare("SELECT id FROM maintenance WHERE session = ? AND state = 'reloading'")
-    .all(session);
-  return open.flatMap((row) =>
-    settle(db, Number(row["id"]), "completed", "reconnected on a new process"),
+  db.prepare("UPDATE sessions SET maintenance = ?, runtime = ? WHERE id = ?").run(
+    Number(supported),
+    runtime ?? null,
+    session,
   );
+  const refused = supported
+    ? []
+    : db
+        .prepare(
+          "SELECT id FROM maintenance WHERE session = ? AND state = 'pending' AND kind = 'reload'",
+        )
+        .all(session);
+  const replaced =
+    started && runtime !== undefined
+      ? db
+          .prepare(
+            "SELECT id FROM maintenance WHERE session = ? AND state = 'reloading' AND (runtime IS NULL OR runtime != ?)",
+          )
+          .all(session, runtime)
+      : [];
+  return [
+    ...refused.flatMap((row) => settle(db, Number(row["id"]), "failed", UNSUPPORTED)),
+    ...replaced.flatMap((row) =>
+      settle(db, Number(row["id"]), "completed", "reconnected on a new process"),
+    ),
+  ];
 }
 
 export function expireMaintenance(db: DatabaseSync, now: number, t: Timings): string[] {
@@ -256,13 +286,14 @@ interface Target {
   readonly connected: boolean;
   readonly supported: boolean;
   readonly process: string | null;
+  readonly runtime: string | null;
   readonly seen: number;
 }
 
 function targets(db: DatabaseSync, requester: string, kind: string, now: number): Target[] {
   const rows = db
     .prepare(
-      `SELECT s.id AS id, s.role AS role, s.process AS process, s.maintenance AS supported, coalesce(s.last_seen, 0) AS seen,
+      `SELECT s.id AS id, s.role AS role, s.process AS process, s.runtime AS runtime, s.maintenance AS supported, coalesce(s.last_seen, 0) AS seen,
          s.stopping_until AS until, s.state IN ('idle', 'running', 'waiting') AS connected
        FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt
        WHERE s.id != ? AND s.state NOT IN ('starting', 'closed')
@@ -278,6 +309,7 @@ function targets(db: DatabaseSync, requester: string, kind: string, now: number)
     connected: row["connected"] === 1,
     supported: row["supported"] === 1,
     process: typeof row["process"] === "string" ? row["process"] : null,
+    runtime: typeof row["runtime"] === "string" ? row["runtime"] : null,
     seen: Number(row["seen"]),
   }));
 }
@@ -294,11 +326,7 @@ function outcome(
       state: "failed",
       detail: "not connected (stopped, held, or down), so it was left as it is",
     };
-  if (!target.supported)
-    return {
-      state: "failed",
-      detail: "runs code from before safe reloads, so it was left running: restart it by hand",
-    };
+  if (!target.supported) return { state: "failed", detail: UNSUPPORTED };
   return {
     state: "pending",
     detail: "waiting for a safe point: its turn and any job finish first",
@@ -350,15 +378,25 @@ function requestTarget(
   const { state, detail } = outcome(target, Date.now(), t);
   const inserted = db
     .prepare(
-      `INSERT OR IGNORE INTO maintenance (batch, requester, session, kind, state, process, detail, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO maintenance (batch, requester, session, kind, state, process, runtime, detail, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(raw.batch, caller.id, target.id, raw.kind, state, target.process, detail, Date.now());
+    .run(
+      raw.batch,
+      caller.id,
+      target.id,
+      raw.kind,
+      state,
+      target.process,
+      target.runtime,
+      detail,
+      Date.now(),
+    );
   if (inserted.changes === 0) return [];
   const id = Number(inserted.lastInsertRowid);
   attach(db, raw.batch, caller.id, raw.kind, id);
   if (state === "pending") return [target.id];
-  if (raw.kind === "reload") name(db, id, target.process);
+  if (raw.kind === "reload") name(db, id, target.runtime);
   return [];
 }
 
@@ -368,7 +406,8 @@ export function requestMaintenance(
   raw: OpArgs<"maintenance.request">,
   t: Timings,
 ): { value: Maintenance[]; notify: string[] } {
-  if (caller.lane !== "main") throw new Error("only main can ask the fleet to reload or stow");
+  if (caller.lane !== mainLane(db))
+    throw new Error("only main can ask the fleet to reload or stow");
   if (summarized(db, raw.batch)) return { value: batchRows(db, raw.batch), notify: [] };
   const notify = targets(db, caller.id, raw.kind, t.wall()).flatMap((target) =>
     requestTarget(db, caller, raw, target, t),
@@ -381,7 +420,7 @@ export function maintenanceStatus(
   caller: Session,
   args: OpArgs<"maintenance.status">,
 ): { value: Maintenance[]; notify: string[] } {
-  if (caller.lane !== "main")
+  if (caller.lane !== mainLane(db))
     throw new Error("only the requester can read a batch or end reload verification");
   const notify =
     args.failUnverified === true
@@ -421,8 +460,11 @@ export function acknowledgeMaintenance(
       : args.state === "failed"
         ? settle(db, args.id, "failed", sanitize(args.detail))
         : (db
-            .prepare("UPDATE maintenance SET state = ?, detail = ?, updated_at = ? WHERE id = ?")
-            .run(args.state, args.detail, Date.now(), args.id),
+            .prepare(
+              `UPDATE maintenance SET state = ?, detail = ?, updated_at = ?,
+                 runtime = (SELECT runtime FROM sessions WHERE id = ?) WHERE id = ?`,
+            )
+            .run(args.state, args.detail, Date.now(), caller.id, args.id),
           []);
   return { value: readMaintenance(db, caller, args.id), notify };
 }

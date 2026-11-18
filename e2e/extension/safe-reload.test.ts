@@ -135,8 +135,20 @@ async function mainHears(
   assert.equal(summaries.length, 1, told.join("\n"));
   assert.ok(summaries[0]?.includes(expected));
   assert.equal(told.filter((line) => line.includes("reload completed -")).length, 0);
+  assert.equal(fleet.cardd.summaryCount(), 1);
+  await assert.rejects(
+    fleet.ghost.call("maintenance.status", { batch: "any" }),
+    /only the requester/,
+  );
   for (const worker of workers) {
     const history = await fleet.ghost.call("card", { card: worker.card });
+    const visible = check(OPS.card.result, history).entries;
+    assert.equal(
+      visible.filter((entry) => entry.fields["maintenanceBatch"] !== undefined).length,
+      0,
+    );
+    const thread = JSON.stringify(await fleet.cardd.thread(worker.card));
+    assert.equal(thread.includes("Reload batch"), false);
     assert.ok(
       check(OPS.card.result, history).entries.some((entry) =>
         entry.body.includes(
@@ -185,7 +197,7 @@ test("update_fleet reloads every worker and second mate at its safe point, never
   assert.match(
     failure ?? "",
     new RegExp(
-      `^- ghost \\(mate\\): reload failed - runs code from before safe reloads, so it was left running: restart it by hand \\[c-\\d+, host unknown, process ${fleet.cardd.processRecorded("ghost") ?? "missing"}\\]$`,
+      `^- ghost \\(mate\\): reload failed - runs code from before safe reloads, so it was left running: restart it by hand \\[c-\\d+, host unknown, process ${fleet.cardd.runtimeRecorded("ghost") ?? "missing"}\\]$`,
     ),
   );
   assert.deepEqual(section, [

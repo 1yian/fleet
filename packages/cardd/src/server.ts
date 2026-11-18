@@ -299,6 +299,7 @@ class Hub {
         session.id,
         message.started === true,
         message.maintenance === true,
+        message.runtime,
       );
       confirm(this.db, session.id, message.inFile);
       return told;

@@ -71,7 +71,7 @@ for (const skip of [false, true]) {
         "main to hear the individual failure notice",
       );
       assert.ok(notice.includes(skip ? "no replacement hello" : HELPER_ERROR), notice);
-      const recorded = fleet.cardd.processRecorded(worker.session);
+      const recorded = fleet.cardd.runtimeRecorded(worker.session);
       assert.ok(recorded);
       assert.ok(
         notice.endsWith(` [c-${String(worker.card)}, host p620, process ${recorded}]`),
