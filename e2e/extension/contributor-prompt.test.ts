@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, join, relative } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "../support/cardd.ts";
@@ -41,7 +41,7 @@ interface Variant {
   readonly noContextFiles?: boolean;
   readonly ancestor?: boolean;
   readonly mateNoContextFiles?: boolean;
-  readonly restartAfterRename?: boolean;
+  readonly localOrigin?: "absolute" | "relative";
 }
 
 function commitFixture(root: string): void {
@@ -82,9 +82,19 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     scratch.dispose();
   });
   const projectRoot =
-    variant.restartAfterRename === true ? join(repo.parent, "local-clone") : repo.root;
-  if (variant.restartAfterRename === true) {
+    variant.localOrigin === undefined ? repo.root : join(repo.parent, "local-clone");
+  if (variant.localOrigin !== undefined) {
     execFileSync("git", ["clone", "--quiet", "--", scratch.root, projectRoot]);
+    if (variant.localOrigin === "relative") {
+      execFileSync("git", [
+        "-C",
+        projectRoot,
+        "remote",
+        "set-url",
+        "origin",
+        relative(projectRoot, scratch.root),
+      ]);
+    }
   } else {
     execFileSync("git", [
       "-C",
@@ -146,12 +156,17 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   await lab.submit(pane, "Inspect contributor prompt routing.");
   const mate = await h.waitForCall(0, "mate", 90_000);
-  let worker = await workerCall(h);
+  const worker = await workerCall(h);
   const tree = realpathSync(`${projectRoot}.worktrees/c-1-a1`);
-  if (variant.restartAfterRename === true) {
+  assertWorkerGuide(systemOf(worker), tree, variant);
+  if (variant.localOrigin !== undefined) {
     execFileSync("git", ["-C", tree, "mv", ".pi/extensions/fleet.ts", "fleet-renamed.ts"]);
     await lab.submit(pane, restartRequest);
-    worker = await workerCall(h, "Your session was restarted on the same card and conversation.");
+    const replacement = await workerCall(
+      h,
+      "Your session was restarted on the same card and conversation.",
+    );
+    assertWorkerGuide(systemOf(replacement), tree, variant);
   }
   const mateSystem = systemOf(mate);
   const projectContext =
@@ -172,7 +187,9 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   assert.match(mateSystem, /Use the isolated lab/);
   assert.doesNotMatch(mateSystem, /npm run check|fleet\/no-comments|Migrations.*append-only/);
   assert.doesNotMatch(mateSystem, /^# Worker role contract$/m);
-  const workerSystem = systemOf(worker);
+}
+
+function assertWorkerGuide(workerSystem: string, tree: string, variant: Variant): void {
   assert.match(workerSystem, /^# Worker role contract$/m);
   assert.doesNotMatch(workerSystem, /This is the job description of main and every second mate/);
   assert.doesNotMatch(workerSystem, /Stale overview of the fleet repository/);
@@ -223,7 +240,11 @@ test("a fleet worker without a contributor guide keeps unrelated context but not
 });
 
 test("a restarted fleet worker in a local clone keeps its own guide after a staged extension rename", async (t) => {
-  await run(t, "restart-after-rename", { restartAfterRename: true });
+  await run(t, "restart-after-rename", { localOrigin: "absolute" });
+});
+
+test("a fleet worker with a relative origin gets its own guide on dispatch and replacement", async (t) => {
+  await run(t, "relative-origin", { localOrigin: "relative" });
 });
 
 test("a mate started without context files still gets the Firstmate contract", async (t) => {

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
@@ -180,11 +180,18 @@ function localGitDir(root: string, origin: string): string | undefined {
     return undefined;
   }
   if (!path) return undefined;
-  if (path.startsWith("-")) path = `./${path}`;
-  return (
-    gitIdentity(root, ["rev-parse", "--resolve-git-dir", `${path}/.git`]) ??
-    gitIdentity(root, ["rev-parse", "--resolve-git-dir", path])
-  );
+  let base = root;
+  if (!isAbsolute(path)) {
+    const first = gitIdentity(root, ["worktree", "list", "--porcelain", "-z"])?.split("\0", 1)[0];
+    if (!first?.startsWith("worktree ")) return undefined;
+    base = first.slice("worktree ".length);
+    if (path.startsWith("-")) path = `./${path}`;
+  }
+  const gitDir =
+    gitIdentity(base, ["rev-parse", "--resolve-git-dir", `${path}/.git`]) ??
+    gitIdentity(base, ["rev-parse", "--resolve-git-dir", path]);
+  if (gitDir === undefined) return undefined;
+  return isAbsolute(gitDir) ? gitDir : `${base}/${gitDir}`;
 }
 
 function isFleetCheckout(root: string): boolean {
