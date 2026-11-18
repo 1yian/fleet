@@ -32,6 +32,8 @@ export interface Hold {
   readonly openedAt: number;
   readonly author: string;
   readonly entry: number;
+  readonly review: string | undefined;
+  readonly reviewRequests: readonly number[] | undefined;
 }
 
 export interface Basis {
@@ -88,6 +90,10 @@ function holdFrom(tally: Tally, entry: Entry): void {
     remaining: parseCards(entry.fields["remaining"]),
     author: entry.author,
     entry: entry.id,
+    review: text(entry, "review"),
+    reviewRequests: Array.isArray(entry.fields["reviewRequests"])
+      ? parseCards(entry.fields["reviewRequests"])
+      : undefined,
   };
   if (open === undefined) {
     const opened = { occurrence: ++tally.occurrences, openedAt: entry.createdAt };
@@ -116,6 +122,8 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       openedAt: entry.createdAt,
       author: entry.author,
       entry: entry.id,
+      review: undefined,
+      reviewRequests: undefined,
     };
   } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };
 }
@@ -184,6 +192,7 @@ const REPORT_EFFECTS: Partial<Record<string, ReportEffect>> = {
     decide(tally, entry, key);
   },
   resolved: (_basis, tally, _entry, key) => {
+    if (tally.hold?.holder === "captain" && tally.hold.review !== undefined) return;
     answerKey(tally, key);
     resume(tally);
   },
@@ -244,7 +253,10 @@ const ENTRY_EFFECTS: Partial<Record<string, (basis: Basis, tally: Tally, entry: 
     REPORT_EFFECTS[text(entry, "status") ?? ""]?.(basis, tally, entry, text(entry, "key") ?? "");
   },
   "review-feedback": (_basis, tally, entry) => {
-    if (answerKey(tally, text(entry, "resolves") ?? "")) resume(tally);
+    if (entry.fields["source"] === "lavish" && tally.hold?.entry === entry.fields["round"]) {
+      for (const key of textsOf(entry.fields["keys"])) answerKey(tally, key);
+      resume(tally);
+    } else if (answerKey(tally, text(entry, "resolves") ?? "")) resume(tally);
   },
   cleanup: (_basis, tally, entry) => {
     tally.hold = undefined;

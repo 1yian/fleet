@@ -1,3 +1,4 @@
+import type { KeyObject } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
@@ -5,6 +6,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
+import { mergeQuestion, writeMergeQuestion } from "./holds.ts";
+import { readCompletion, settleReview } from "./review-completion.ts";
 import { getCard, transaction } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
@@ -64,6 +67,7 @@ function originHostname(origin: string): string | undefined {
 export class Web {
   private readonly hosts = new Set<string>();
   private readonly access: Access | undefined;
+  private readonly reviewSigner: KeyObject | undefined;
 
   allow(authorities: readonly string[]): void {
     for (const authority of authorities) {
@@ -149,12 +153,14 @@ export class Web {
     flush: (session: string) => void,
     files: string | undefined,
     access: Access | undefined,
+    reviewSigner: KeyObject | undefined,
   ) {
     this.db = db;
     this.timing = timing;
     this.flush = flush;
     this.files = files === undefined ? undefined : resolve(files);
     this.access = access;
+    this.reviewSigner = reviewSigner;
   }
 
   watch(socket: WebSocket): void {
@@ -194,6 +200,13 @@ export class Web {
         });
         return;
       }
+      if (
+        request.method === "POST" &&
+        new URL(request.url ?? "/", "http://board").pathname === "/api/review-completion"
+      ) {
+        await this.completeReview(request, response);
+        return;
+      }
       const value = await this.route(request);
       if (value === undefined)
         this.serveFile(new URL(request.url ?? "/", "http://board").pathname, response);
@@ -202,6 +215,39 @@ export class Web {
       const message = error instanceof Error ? error.message : String(error);
       reply(response, error instanceof StaleCard ? 409 : 400, { ok: false, error: message });
     }
+  }
+
+  private async completeReview(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const signer = this.reviewSigner;
+    if (signer === undefined) {
+      reply(response, 404, { ok: false });
+      return;
+    }
+    const authorization = request.headers.authorization;
+    const receipt =
+      authorization?.startsWith("Bearer ") === true
+        ? await readCompletion(signer, authorization.slice(7)).catch(() => undefined)
+        : undefined;
+    if (receipt === undefined) {
+      reply(response, 401, { ok: false });
+      return;
+    }
+    const notify = transaction(this.db, () => {
+      const settled = settleReview(this.db, receipt);
+      if (settled === undefined || settled.length === 0) return settled;
+      const card = getCard(this.db, receipt.card);
+      const merge = mergeQuestion(this.db, card, []);
+      return merge === undefined
+        ? settled
+        : [...new Set([...settled, ...writeMergeQuestion(this.db, card, merge)])];
+    });
+    if (notify === undefined) {
+      reply(response, 409, { ok: false, error: "review hold is no longer current" });
+      return;
+    }
+    for (const session of notify) this.flush(session);
+    if (notify.length > 0) this.changed(true);
+    reply(response, 200, { ok: true });
   }
 
   private async route(request: IncomingMessage): Promise<unknown> {

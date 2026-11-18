@@ -162,6 +162,7 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
         merge,
         originalMerge,
         author,
+        ...(hold.review === undefined ? {} : { review: hold.review }),
       });
     }
     return card;

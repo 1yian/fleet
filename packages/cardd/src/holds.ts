@@ -1,10 +1,19 @@
 import type { DatabaseSync } from "node:sqlite";
-import { APPROVE_MERGE, MERGE_OPTIONS, check, OPS, type Card, type Holder } from "@fleet/protocol";
+import {
+  APPROVE_MERGE,
+  MERGE_OPTIONS,
+  check,
+  OPS,
+  type Card,
+  type Entry,
+  type Holder,
+} from "@fleet/protocol";
 import { localLanding } from "./attempts.ts";
 import { requireCaptainWords, yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { askersOf, isCaptainsReply, requireOwedBy } from "./replies.ts";
+import { reviewRequests } from "./review-completion.ts";
 import { factsFrom, finishFrom, type Facts, type Hold } from "./status.ts";
 import {
   addEntry,
@@ -86,6 +95,8 @@ function isSame(
   next: {
     holder: Holder;
     question: string;
+    review: string | undefined;
+    reviewRequests: readonly number[] | undefined;
     until: number | null;
     options: readonly string[];
     approves: readonly string[];
@@ -99,7 +110,8 @@ function isSame(
     open.until === next.until &&
     open.options.join("\n") === next.options.join("\n") &&
     open.approves.join("\n") === next.approves.join("\n") &&
-    JSON.stringify([open.wait, open.remaining]) === JSON.stringify([next.wait, next.remaining])
+    JSON.stringify([open.wait, open.remaining, open.review, open.reviewRequests]) ===
+      JSON.stringify([next.wait, next.remaining, next.review, next.reviewRequests])
   );
 }
 
@@ -208,13 +220,32 @@ function announceHold(
   return [...new Set([...heard, ...asker])];
 }
 
+function boundReview(
+  db: DatabaseSync,
+  session: Session,
+  entries: readonly Entry[],
+  open: Hold | undefined,
+  target: Holder,
+  protectedWork: boolean,
+  review: string | undefined,
+) {
+  if (review === undefined) return { review, reviewRequests: undefined };
+  if (target !== "captain" || protectedWork || parentOf(db, session.lane) !== null)
+    throw new Error("only main can bind a captain hold for review alone");
+  return { review, reviewRequests: reviewRequests(entries, open, review) };
+}
+
+function requireFuture(until: number | undefined): void {
+  if (until !== undefined && until <= Date.now()) throw new Error("until must be in the future");
+}
+
 export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const args = check(OPS.hold.args, raw);
   const { card, own } = reachable(db, session, args.card);
-  if (args.until !== undefined && args.until <= Date.now())
-    throw new Error("until must be in the future");
+  requireFuture(args.until);
   const dated = dating(db, session, card.id, args);
-  const facts = factsFrom(cardEntries(db, card.id));
+  const entries = cardEntries(db, card.id);
+  const facts = factsFrom(entries);
   const open = facts.hold;
   requireMainsHold(card, own, open);
   const current = open?.holder ?? "owner";
@@ -222,6 +253,15 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   requireClimb(db, session, card, current, target);
   const base = rewritten(facts, target, args.until);
   const unlanded = marksUnlanded(db, card, args.unlanded, base.unlanded);
+  const binding = boundReview(
+    db,
+    session,
+    entries,
+    open,
+    target,
+    base.merge || unlanded,
+    args.review,
+  );
   const options = args.options ?? base.options;
   const approves = approvingOptions(card, open, args);
   const replyTo = args.replyTo;
@@ -229,6 +269,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
   const same = isSame(open, {
     holder: target,
     question: args.question,
+    ...binding,
     until: base.until,
     options,
     approves,
@@ -244,6 +285,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     options,
     approves,
     ...(escalated ? { escalated } : {}),
+    ...binding,
     replyTo,
   };
   const draft: Draft = {
