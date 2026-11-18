@@ -46,6 +46,7 @@ jobs:
               - ".pi/extensions/**"
               - "lint.js"
               - "typecheck.js"
+              - "projects.js"
               - "lint-plugin.js"
               - "knip.json"
               - ".dependency-cruiser.cjs"

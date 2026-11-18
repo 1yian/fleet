@@ -2,23 +2,12 @@ import { spawnSync } from "node:child_process";
 import console from "node:console";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import config from "./.oxlintrc.json" with { type: "json" };
+import { projects } from "./projects.js";
 
 const compiler = fileURLToPath(import.meta.resolve("tsrs/package.json")).replace(
   /package.json$/,
   "bin/tsrs",
 );
-
-function projects() {
-  const values = config.settings?.fleet?.projects;
-  if (
-    !Array.isArray(values) ||
-    !values.length ||
-    !values.every((value) => typeof value === "string" && value.length)
-  )
-    throw new Error("Missing or invalid Fleet projects policy.");
-  return values;
-}
 
 function typecheck() {
   for (const project of projects()) {

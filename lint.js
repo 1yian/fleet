@@ -7,6 +7,7 @@ import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
 import { parseSync } from "oxc-parser";
 import config from "./.oxlintrc.json" with { type: "json" };
+import { projects } from "./projects.js";
 
 const executable = fileURLToPath(import.meta.resolve("oxlint/package.json")).replace(
   /package.json$/,
@@ -61,7 +62,7 @@ function discoverProgram(project) {
 
 function membershipFailures(paths) {
   const extensions = policyList("projectExtensions");
-  const files = new Set(policyList("projects").flatMap(discoverProgram));
+  const files = new Set(projects().flatMap(discoverProgram));
   return paths
     .filter((path) => extensions.includes(extname(path)))
     .filter((path) => !files.has(normalizedPath(path)))
@@ -170,7 +171,7 @@ function ignoredBy(matchers, path) {
   const parts = path.split("/");
   return matchers.some(({ anywhere, directoryOnly, segments }) => {
     const limit = directoryOnly ? parts.length - 1 : parts.length;
-    const last = anywhere ? limit - segments.length : 0;
+    const last = anywhere ? limit - segments.length : Math.min(0, limit - segments.length);
     for (let start = 0; start <= last; start += 1)
       if (segments.every((segment, offset) => segment.test(parts[start + offset]))) return true;
     return false;
