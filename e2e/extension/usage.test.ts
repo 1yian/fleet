@@ -30,10 +30,14 @@ test("fleet with an unknown option prints a short error and usage, not a stack t
   assert.doesNotMatch(run.stderr, /\n\s+at /);
 });
 
-test("fleet files, the removed explorer command, is refused and usage no longer offers it", () => {
-  const run = fleet(["files", "roots"]);
-  assert.notEqual(run.status, 0);
-  assert.match(run.stderr, /usage: fleet status \|/);
-  assert.doesNotMatch(run.stderr, /\bfiles \[roots/);
+test("fleet files, the removed explorer command, fails with a short error and usage, not a stack trace", () => {
+  for (const args of [["files"], ["files", "roots"]]) {
+    const run = fleet(args);
+    assert.equal(run.status, 2, run.stderr);
+    assert.match(run.stderr, /^fleet: /);
+    assert.match(run.stderr, /usage: fleet status \|/);
+    assert.doesNotMatch(run.stderr, /\n\s+at /);
+    assert.doesNotMatch(run.stderr, /\bfiles \[roots/);
+  }
   assert.doesNotMatch(fleet(["--help"]).stdout, /\bfiles\b/);
 });

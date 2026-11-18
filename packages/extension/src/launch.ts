@@ -90,12 +90,16 @@ if (argv.some((arg) => arg === "--help" || arg === "-h")) {
   process.exit(0);
 }
 
+function usageError(message: string): never {
+  console.error(`fleet: ${message}\n${USAGE}`);
+  process.exit(2);
+}
+
 function parse(): ReturnType<typeof parseCommandLine> {
   try {
     return parseCommandLine();
   } catch (error) {
-    console.error(`fleet: ${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
-    process.exit(2);
+    return usageError(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -419,5 +423,5 @@ switch (command ?? "") {
       console.log(line);
     break;
   default:
-    throw new Error(USAGE);
+    usageError(command === undefined ? "Missing command" : `Unknown command '${command}'`);
 }

@@ -679,9 +679,9 @@ A host updates with the code it already has. A host whose checkout predates `fle
 
 ### One-time cleanup after the file explorer was removed
 
-After the update that removed the file explorer, a mate workspace may still hold an old tab named Files. It runs Yazi, through the wrapper at `state/files/bin/ff` in the lane home. It no longer works, because `fleet files` is gone.
+After the update that removed the file explorer, a mate workspace may still hold an old tab named Files. It runs Yazi, started by the old launcher. It no longer works, because `fleet files` is gone.
 
-Main closes each such tab once during the rollout. Main first confirms that the tab's panes run Yazi or that wrapper, for example with `herdr pane process-info --pane <pane>`. Main never closes a tab only because of its label, and never closes any other pane or tab. Nothing in the fleet closes these tabs by itself.
+Main closes each such tab once during the rollout, and only with positive Fleet provenance. The old launcher started Yazi directly with `YAZI_CONFIG_HOME` pointing at the lane home's `state/files/yazi`. Main confirms that the tab's pane runs Yazi with that lane-specific config, for example in the pane's process environment or command (`herdr pane process-info --pane <pane>`, then compare with the lane home path), and that the tab sits in that lane's workspace. If Main cannot confirm this, it leaves the tab alone, even when the tab is named Files. Main never closes any other tab or pane. Nothing in the fleet closes tabs by itself.
 
 Saved state under `state/files` and the cached Yazi under `~/.cache/fleet` stay on disk. Delete them by hand if you want the space back.
 

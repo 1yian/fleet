@@ -295,16 +295,44 @@ test("a second mate that starts in a workspace with the wrong label corrects it,
   ]);
   const workspace = String(records([created["workspace"]])[0]?.["workspace_id"]);
   const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+  const originalTabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
+  const originalTab = String(originalTabs[0]?.["tab_id"]);
+  assert.equal(originalTabs.length, 1, JSON.stringify(originalTabs));
   const pi = ["pi", "--continue", ...mateArgs(h)].map((arg) => `'${arg}'`).join(" ");
   const recorder = tempDir("herdr-recorder-");
   const herdrCalls = join(recorder, "calls.log");
   writeFileSync(herdrCalls, "");
   writeFileSync(
     join(recorder, "herdr"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${herdrCalls}'\nPATH="\${PATH#*:}"\nexec herdr "$@"\n`,
+    [
+      "#!/bin/sh",
+      `printf 'attempt %s %s\\n' "$$" "$*" >> '${herdrCalls}'`,
+      'PATH="${PATH#*:}"',
+      'herdr "$@"',
+      "status=$?",
+      `printf 'finish %s %s\\n' "$$" "$*" >> '${herdrCalls}'`,
+      'exit "$status"',
+      "",
+    ].join("\n"),
   );
   chmodSync(join(recorder, "herdr"), 0o755);
   await lab.submit(pane, `cd '${cleoHome}' && PATH='${recorder}':"$PATH" ${pi}`);
+
+  const settled = (): Promise<string[]> => {
+    const calls = readFileSync(herdrCalls, "utf8")
+      .split("\n")
+      .filter((line) => line !== "");
+    const finished = new Set(
+      calls.filter((call) => call.startsWith("finish ")).map((call) => call.split(" ")[1]),
+    );
+    const pending = calls.filter(
+      (call) => call.startsWith("attempt ") && !finished.has(call.split(" ")[1]),
+    );
+    const renamed = calls.some(
+      (call) => call.startsWith("finish ") && call.includes(" workspace rename "),
+    );
+    return Promise.resolve(renamed ? pending : ["no rename yet"]);
+  };
 
   await until("the workspace to read 2ndmate-cleo", labels, (now) => {
     return now.get(workspace) === "2ndmate-cleo";
@@ -315,17 +343,21 @@ test("a second mate that starts in a workspace with the wrong label corrects it,
     (out) => out === "cleo: running\n",
   );
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
-  const calls = readFileSync(herdrCalls, "utf8").split("\n");
-  assert.ok(
-    calls.some((call) => call.startsWith("workspace rename")),
-    JSON.stringify(calls),
+  await until(
+    "every herdr request of the mate to finish",
+    settled,
+    (pending) => pending.length === 0,
   );
+  const calls = readFileSync(herdrCalls, "utf8").split("\n");
   assert.deepEqual(
-    calls.filter((call) => call.startsWith("tab ")),
+    calls.filter((call) => / tab create\b/.test(call)),
     [],
   );
   const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
-  assert.equal(tabs.length, 1, JSON.stringify(tabs));
+  assert.deepEqual(
+    tabs.map((each) => each["tab_id"]),
+    [originalTab],
+  );
   const panes = await lab.run(["pane", "list", "--workspace", workspace]);
   assert.deepEqual(
     records(panes["panes"]).map((each) => each["pane_id"]),
