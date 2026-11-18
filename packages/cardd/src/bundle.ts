@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { idlePark, waitLine, type DatedWait, type Entry, type Pulse } from "@fleet/protocol";
+import { movementOf } from "./movement.ts";
 import { factsFrom, finishedOpen, type Standing } from "./status.ts";
 import { cardEntries, type Loaded, mainLane, parentOf } from "./store.ts";
 import { MINUTE, type Timings } from "./timing.ts";
@@ -100,7 +101,8 @@ function neglectItem(db: DatabaseSync, { card }: Loaded, pulse: Pulse | undefine
   if (pulse.state !== "idle") return [];
   const name = `c-${String(card.id)} ${card.title}`;
   const since = pulse.movedAt;
-  const line = `${name} - idle ${waited(now, since)}, nothing running and no stated reason`;
+  const doing = pulse.running === null ? "nothing running" : "only a job that repeats a wait,";
+  const line = `${name} - idle ${waited(now, since)}, ${doing} and no stated reason`;
   return [{ card: card.id, since, to: mainLane(db), line, group: "act" as const }];
 }
 
@@ -113,10 +115,16 @@ function endedPause({ standing }: Loaded, now: number): number | undefined {
 const workerSince = (entries: readonly Entry[], at: number): boolean =>
   entries.some((entry) => entry.author.startsWith("worker:") && entry.createdAt > at);
 
-function pauseItem(loaded: Loaded, pulse: Pulse | undefined, now: number): Item[] {
+function pauseItem(
+  db: DatabaseSync,
+  loaded: Loaded,
+  pulse: Pulse | undefined,
+  now: number,
+): Item[] {
   const { card, entries } = loaded;
   const ended = endedPause(loaded, now);
-  if (ended === undefined || pulse === undefined || pulse.running?.by === "job") return [];
+  if (ended === undefined || pulse === undefined) return [];
+  if (movementOf(db, loaded).fresh.length > 0) return [];
   if (workerSince(entries, ended)) return [];
   const paused = entries.findLast(
     (entry) => entry.kind === "report" && entry.fields["status"] === "paused",
@@ -139,7 +147,7 @@ function openItems(
     if (wait !== undefined) return [waitItem(db, loaded, wait, now)];
     if (loaded.standing.status === "needs-you")
       return [captainItem(db, loaded.card, loaded.standing, now)];
-    const own = [...mateItem(db, loaded, now), ...pauseItem(loaded, pulse, now)];
+    const own = [...mateItem(db, loaded, now), ...pauseItem(db, loaded, pulse, now)];
     const neglect = neglectItem(db, loaded, pulse, now);
     return [...own, ...neglect.filter(({ to }) => own.every((item) => item.to !== to))];
   });

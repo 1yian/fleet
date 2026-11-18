@@ -349,7 +349,7 @@ test("a job that was marked lost while its process lives is running again on its
   const worker = await fleet.cardd.connect(token);
   const { job } = check(
     OPS["job.start"].result,
-    await worker.call("job.start", { label: "poll", command: "lavish-axi poll" }),
+    await worker.call("job.start", { label: "poll", command: "sleep 9" }),
   );
   await reach(fleet.main, card, "job-lost-open", 1);
   const listed = async (): Promise<number[]> =>
@@ -383,7 +383,7 @@ test("a dropped lost job stays lost when its wrapper heartbeats again", async ()
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   const { job } = check(
     OPS["job.start"].result,
-    await worker.call("job.start", { label: "poll", command: "lavish-axi poll" }),
+    await worker.call("job.start", { label: "poll", command: "sleep 9" }),
   );
   await reach(fleet.main, card, "job-lost-open", 1);
   await worker.call("job.drop", { job });

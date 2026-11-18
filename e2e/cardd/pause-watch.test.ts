@@ -186,3 +186,30 @@ test("a listed pause ends when its worker reports or its mate steers, and the ot
   assert.ok(!after.body.includes(reported.card.title), "a later worker report ended its pause");
   assert.ok(!after.body.includes(steered.card.title), "a steer ended its pause");
 });
+
+test("a watcher that only repeats its earlier run does not hide an ended pause from the mate", async () => {
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const { card, worker } = await pausedWorker(cleo, "Watch the provider");
+  const waiting = "waiting for the provider";
+  await pauseOf(worker, waiting, Date.now() + PAUSE_MS);
+  for (const round of [1, 2]) {
+    const job = check(
+      OPS["job.start"].result,
+      await worker.call("job.start", {
+        label: "provider-watch",
+        command: `watch # ${String(round)}`,
+      }),
+    ).job;
+    if (round === 1) await worker.call("job.finish", { job, exitCode: 124, outputTail: "" });
+    else
+      beats.push(
+        setInterval(() => {
+          worker.call("job.alive", { job }).catch(() => undefined);
+        }, 20),
+      );
+  }
+  worker.send({ t: "activity", state: "waiting" });
+
+  const list = await listing(cleo, "pause ended", "the list that names the ended pause");
+  assert.ok(list.body.includes(`c-${String(card.id)} Watch the provider`), list.body);
+});

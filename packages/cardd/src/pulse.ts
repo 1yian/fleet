@@ -1,19 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { idlePark } from "@fleet/protocol";
-import type {
-  Activity,
-  DatedWait,
-  Entry,
-  Notice,
-  Pulse,
-  PulseState,
-  Status,
-} from "@fleet/protocol";
-import { runningJobSql } from "./jobs.ts";
+import type { Activity, DatedWait, Notice, Pulse, PulseState, Status } from "@fleet/protocol";
+import { movementOf, type Movement, type Run } from "./movement.ts";
 import { pausedNow } from "./status.ts";
 import { activityOf, type Loaded } from "./store.ts";
 import type { Timings } from "./timing.ts";
-import { SCHEDULE, SCRIPT } from "./wakes.ts";
 
 export interface Neglect {
   readonly now: number;
@@ -39,53 +30,22 @@ interface Reading {
   readonly since: number;
 }
 
-const MOVEMENT: ReadonlySet<string> = new Set([
-  "comment",
-  "report",
-  "hold",
-  "release",
-  "answer",
-  "review-feedback",
-  "job-result",
-  "cleanup",
-]);
-const AUTOMATIC: ReadonlySet<string> = new Set([SCHEDULE, SCRIPT]);
 const DOWN: ReadonlySet<string> = new Set(["starting", "exited", "lost"]);
 const WORKING: ReadonlySet<Status> = new Set(["working", "in-review"]);
 const WITH_WORKER: ReadonlySet<Status> = new Set(["working", "in-review", "merging", "paused"]);
 
-function moves(entry: Entry): boolean {
-  if (!MOVEMENT.has(entry.kind) || AUTOMATIC.has(entry.author)) return false;
-  return !(entry.kind === "job-result" && entry.fields["lost"] === true);
+function named(runs: readonly Run[]): string {
+  const [first] = runs;
+  if (first === undefined) return "";
+  const job = `job ${String(first.id)} (${first.label})`;
+  return runs.length === 1 ? job : `${job} and ${String(runs.length - 1)} more`;
 }
 
-function progressAt(db: DatabaseSync, card: number): number {
-  const at = db
-    .prepare(
-      `SELECT max(s.progress_at) AS at FROM sessions s JOIN attempts a ON a.id = s.attempt
-       WHERE a.card = ?`,
-    )
-    .get(card)?.["at"];
-  return typeof at === "number" ? at : 0;
-}
-
-function movedAt(db: DatabaseSync, { card, entries }: Loaded): number {
-  const entry = entries.findLast(moves)?.createdAt ?? 0;
-  return Math.max(card.createdAt, entry, progressAt(db, card.id));
-}
-
-function runningJobs(db: DatabaseSync, card: number): string | undefined {
-  const jobs = db
-    .prepare(
-      `SELECT j.id AS id, j.label AS label FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE a.card = ? AND a.state IN ('starting', 'active') AND ${runningJobSql("j.state")}
-       ORDER BY j.id`,
-    )
-    .all(card);
-  const [first] = jobs;
-  if (first === undefined) return undefined;
-  const named = `job ${String(first["id"])} (${String(first["label"])})`;
-  return jobs.length === 1 ? named : `${named} and ${String(jobs.length - 1)} more`;
+function runningOf(activity: Activity | null, { fresh, again }: Movement): Pulse["running"] {
+  if (fresh.length > 0) return { by: "job", what: named([...fresh, ...again]) };
+  if (activity?.state === "running") return { by: "turn", what: "a turn" };
+  if (again.length === 0) return null;
+  return { by: "job", what: `${named(again)}, run again with nothing changed` };
 }
 
 function reported(basis: Basis): Reading | undefined {
@@ -115,7 +75,9 @@ const putOff = ({ wait }: Basis): boolean => wait?.watch === "later";
 const pausedOf = ({ loaded, env }: Basis): boolean => pausedNow(loaded.standing, env.now);
 
 const covered = (basis: Basis): boolean =>
-  basis.running?.by === "job" || (basis.wait !== null && !idlePark(basis.wait)) || pausedOf(basis);
+  (basis.running?.by === "job" && !basis.again) ||
+  (basis.wait !== null && !idlePark(basis.wait)) ||
+  pausedOf(basis);
 
 function needOf(basis: Basis): Reading | undefined {
   const { card, standing } = basis.loaded;
@@ -132,7 +94,7 @@ function readingOf(basis: Basis): Reading {
   const { standing } = loaded;
   const need = needOf(basis);
   if (need !== undefined) return need;
-  if (running !== null) return { state: "running", since: moved };
+  if (running !== null && !basis.again) return { state: "running", since: moved };
   if (wait !== null) return { state: idlePark(wait) ? "parked" : "waiting", since: wait.since };
   if (pausedOf(basis)) return { state: "waiting", since: standing.since };
   return { state: "idle", since: moved };
@@ -156,6 +118,7 @@ interface Basis {
   readonly wait: DatedWait | null;
   readonly activity: Activity | null;
   readonly running: Pulse["running"];
+  readonly again: boolean;
   readonly moved: number;
   readonly env: Neglect;
 }
@@ -215,14 +178,10 @@ export function pulseOf(
   const { card } = loaded;
   if (card.kind === "standing" || card.status === "done" || card.status === "dropped") return null;
   const activity = activityOf(db, card, false);
-  const jobs = runningJobs(db, card.id);
-  const running: Pulse["running"] =
-    jobs !== undefined
-      ? { by: "job", what: jobs }
-      : activity?.state === "running"
-        ? { by: "turn", what: "a turn" }
-        : null;
-  const basis = { loaded, wait, activity, running, moved: movedAt(db, loaded), env };
+  const movement = movementOf(db, loaded);
+  const running = runningOf(activity, movement);
+  const again = running?.by === "job" && movement.fresh.length === 0;
+  const basis = { loaded, wait, activity, running, again, moved: movement.movedAt, env };
   const reading = readingOf(basis);
   const owner = ownerOf(db, basis);
   return {
