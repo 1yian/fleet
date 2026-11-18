@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -34,10 +41,12 @@ async function workerCall(h: Harness, message?: string): Promise<Turn[]> {
 const STALE_OVERVIEW = "# fleet\n\nStale overview of the fleet repository.\n";
 const ANCESTOR_NOTES = "# Firstmate\n\nAncestor notes that belong to unrelated work.\n";
 const WORKER_GUIDE_MARKER = "Use the worker checkout's fixture checklist.";
+const LINK_TARGET_MARKER = "Inert text outside the prompt checkout.";
 
 interface Variant {
   readonly stale?: boolean;
   readonly missingGuide?: boolean;
+  readonly linkedPrompts?: boolean;
   readonly noContextFiles?: boolean;
   readonly ancestor?: boolean;
   readonly mateNoContextFiles?: boolean;
@@ -99,7 +108,15 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   }
   if (variant.stale === true) writeFileSync(join(projectRoot, "AGENTS.md"), STALE_OVERVIEW);
   const guide = join(projectRoot, "CONTRIBUTING.md");
-  if (variant.missingGuide === true) rmSync(guide);
+  if (variant.linkedPrompts === true) {
+    const target = join(repo.parent, "prompt-fixture.txt");
+    writeFileSync(target, LINK_TARGET_MARKER);
+    const mateContract = join(scratch.root, "AGENTS.md");
+    rmSync(mateContract);
+    symlinkSync(target, mateContract);
+    rmSync(guide);
+    symlinkSync(target, guide);
+  } else if (variant.missingGuide === true) rmSync(guide);
   else appendFileSync(guide, `\n${WORKER_GUIDE_MARKER}\n`);
   commitFixture(projectRoot);
   writeFileSync(join(scratch.parent, "AGENTS.md"), ANCESTOR_NOTES);
@@ -145,7 +162,8 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
       evidence(`${name}-worker`, turns);
       return { text: "Contributor instructions received." };
     }, "mate");
-  const mateStart = variant.mateNoContextFiles === true ? [...args, "--no-context-files"] : args;
+  const mateNoContext = variant.mateNoContextFiles === true || variant.linkedPrompts === true;
+  const mateStart = mateNoContext ? [...args, "--no-context-files"] : args;
   const pane = await startMain(lab, scratch, h, false, mateStart);
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   await lab.submit(pane, "Inspect contributor prompt routing.");
@@ -167,14 +185,19 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     /<project_context>([\s\S]*?)<\/project_context>/.exec(mateSystem)?.[1] ?? "";
   const homeOpen = `<project_instructions path="${join(realpathSync(scratch.root), "AGENTS.md")}">`;
   const homeBlocks = projectContext.split(homeOpen);
-  assert.equal(homeBlocks.length, 2);
-  const homeContract = homeBlocks[1]?.split("</project_instructions>")[0] ?? "";
-  assert.match(homeContract, /^# Firstmate$/m);
-  const jobDescription = /This is the job description of main and every second mate/g;
-  assert.match(homeContract, jobDescription);
-  assert.equal([...mateSystem.matchAll(jobDescription)].length, 1);
-  assert.ok(mateSystem.indexOf(homeOpen) < mateSystem.indexOf("Keep the fixture fleet running"));
-  if (variant.mateNoContextFiles === true) assert.ok(!mateSystem.includes(ANCESTOR_NOTES.trim()));
+  if (variant.linkedPrompts === true) {
+    assert.equal(homeBlocks.length, 1);
+    assert.ok(!mateSystem.includes(LINK_TARGET_MARKER));
+  } else {
+    assert.equal(homeBlocks.length, 2);
+    const homeContract = homeBlocks[1]?.split("</project_instructions>")[0] ?? "";
+    assert.match(homeContract, /^# Firstmate$/m);
+    const jobDescription = /This is the job description of main and every second mate/g;
+    assert.match(homeContract, jobDescription);
+    assert.equal([...mateSystem.matchAll(jobDescription)].length, 1);
+    assert.ok(mateSystem.indexOf(homeOpen) < mateSystem.indexOf("Keep the fixture fleet running"));
+  }
+  if (mateNoContext) assert.ok(!mateSystem.includes(ANCESTOR_NOTES.trim()));
   else assert.ok(projectContext.includes(ANCESTOR_NOTES.trim()));
   assert.match(mateSystem, /Prefer plain reports/);
   assert.match(mateSystem, /Keep this lane focused/);
@@ -197,10 +220,11 @@ function assertWorkerGuide(workerSystem: string, tree: string, variant: Variant)
     /<project_context>([\s\S]*?)<\/project_context>/.exec(workerSystem)?.[1] ?? "";
   const guideOpen = `<project_instructions path="${join(tree, "CONTRIBUTING.md")}">`;
   const guideBlocks = workerContext.split(guideOpen);
-  const expectedGuides = variant.missingGuide === true ? 0 : 1;
+  const expectedGuides = variant.missingGuide === true || variant.linkedPrompts === true ? 0 : 1;
   assert.equal(guideBlocks.length - 1, expectedGuides);
   assert.equal(workerSystem.split(WORKER_GUIDE_MARKER).length - 1, expectedGuides);
-  if (variant.missingGuide === true) {
+  assert.ok(!workerSystem.includes(LINK_TARGET_MARKER));
+  if (expectedGuides === 0) {
     assert.doesNotMatch(workerSystem, /# Contributing to fleet|npm run check/);
   } else {
     const workerGuide = guideBlocks[1]?.split("</project_instructions>")[0] ?? "";
@@ -245,6 +269,10 @@ test("a fleet worker cloned from a bare mirror gets its guide on dispatch and re
 
 test("a non-fleet registration retains its project context despite a Fleet display name and origin", async (t) => {
   await run(t, "unrelated-registration", { unrelated: true });
+});
+
+test("worker guide and mate fallback reject symlinked prompt files", async (t) => {
+  await run(t, "linked-prompts", { linkedPrompts: true });
 });
 
 test("a mate started without context files still gets the Firstmate contract", async (t) => {

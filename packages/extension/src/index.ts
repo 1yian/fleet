@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -170,6 +170,19 @@ function isFleetCheckout(root: string, repo: string | undefined): boolean {
   return common !== undefined && common === gitCommonDir(dirname(EXTENSION));
 }
 
+function readPromptFile(path: string): string | undefined {
+  try {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      return fstatSync(fd).isFile() ? readFileSync(fd, "utf8") : undefined;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 function contributorGuideForWorkers(pi: ExtensionAPI, repo: string | undefined): void {
   const root = HOME();
   if (!isFleetCheckout(root, repo)) return;
@@ -179,12 +192,9 @@ function contributorGuideForWorkers(pi: ExtensionAPI, repo: string | undefined):
     const files = event.systemPromptOptions.contextFiles;
     const own = files.findIndex((file) => resolve(file.path) === agents);
     if (own !== -1) files.splice(own, 1);
-    if (existsSync(guide)) {
-      files.splice(own === -1 ? files.length : own, 0, {
-        path: guide,
-        content: readFileSync(guide, "utf8"),
-      });
-    }
+    const content = readPromptFile(guide);
+    if (content !== undefined)
+      files.splice(own === -1 ? files.length : own, 0, { path: guide, content });
     return undefined;
   });
 }
@@ -193,8 +203,9 @@ function contractForMates(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event) => {
     const path = join(HOME(), "AGENTS.md");
     const files = event.systemPromptOptions.contextFiles;
-    if (!existsSync(path) || files.some((file) => resolve(file.path) === path)) return undefined;
-    files.push({ path, content: readFileSync(path, "utf8") });
+    if (files.some((file) => resolve(file.path) === path)) return undefined;
+    const content = readPromptFile(path);
+    if (content !== undefined) files.push({ path, content });
     return undefined;
   });
 }
