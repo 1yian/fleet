@@ -679,7 +679,7 @@ A host updates with the code it already has. A host whose checkout predates `fle
 
 ### One-time cleanup after the file explorer was removed
 
-Fleet no longer opens a Files tab. A Files tab left by an earlier version stays open until someone closes it by hand, and nothing in Fleet closes it (job tabs still close as before).
+Fleet no longer opens a Files tab and never targets one. A Files tab left by an earlier version stays open until someone closes it by hand, or until its workspace closes. Job tabs still close as before.
 
 Saved state under `state/files` and the cached Yazi under `~/.cache/fleet` stay on disk. Delete them by hand if you want the space back.
 

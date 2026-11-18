@@ -423,5 +423,5 @@ switch (command ?? "") {
       console.log(line);
     break;
   default:
-    usageError(command === undefined ? "Missing command" : `Unknown command '${command}'`);
+    usageError(`Unknown command '${command ?? ""}'`);
 }
