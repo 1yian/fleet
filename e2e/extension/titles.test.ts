@@ -363,9 +363,20 @@ test("a second mate that starts in a workspace with the wrong label corrects it,
     records(panes["panes"]).map((each) => each["pane_id"]),
     [pane],
   );
-  const running = await lab.foreground(pane);
+  const info = records([
+    (await lab.run(["pane", "process-info", "--pane", pane]))["process_info"],
+  ])[0];
+  const running = records(info?.["foreground_processes"]);
   assert.ok(
-    running.some((each) => each.endsWith(":pi")),
+    running.some((each) => {
+      const argv = Array.isArray(each["argv"]) ? each["argv"] : [];
+      const script = typeof argv[1] === "string" ? argv[1] : "";
+      return (
+        each["argv0"] === "pi" ||
+        each["name"] === "pi" ||
+        (argv[0] === "node" && script.split("/").pop() === "pi")
+      );
+    }),
     JSON.stringify(running),
   );
   assert.deepEqual([...(await labels()).values()], ["2ndmate-cleo"]);
