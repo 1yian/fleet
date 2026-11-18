@@ -30,7 +30,6 @@
   "settings": {
     "fleet": {
       "projects": [".", "packages/board"],
-      "projectExtensions": [".ts", ".tsx", ".mts", ".cts", ".mjs"],
       "forbiddenDirectives": "(?:oxlint|eslint)(?:-|\\s)|^\\s*(?:global|globals|exported)\\b"
     }
   },

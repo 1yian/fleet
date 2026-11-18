@@ -44,6 +44,8 @@ jobs:
               - ".oxlintrc.json"
               - "**/oxlint-suppressions.json"
               - ".pi/extensions/**"
+              - "**/*.{js,cjs,mjs,ts,tsx,mts,cts}"
+              - "**/tsconfig*.json"
               - "lint.js"
               - "typecheck.js"
               - "projects.js"

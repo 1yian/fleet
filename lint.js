@@ -19,6 +19,9 @@ const compiler = fileURLToPath(import.meta.resolve("tsrs/package.json")).replace
 );
 const arguments_ = ["--disable-nested-config", "--no-ignore", "--max-warnings", "0"];
 const sourceExtensions = [".js", ".cjs", ".mjs", ".ts", ".tsx", ".mts", ".cts"];
+const membershipExtensions = sourceExtensions.filter(
+  (extension) => extension !== ".js" && extension !== ".cjs",
+);
 const suppressionBaseline = "oxlint-suppressions.json";
 
 function runNode(script, args, stdio) {
@@ -36,17 +39,6 @@ function runOxlint(extra, paths, stdio) {
   return runNode(executable, [...arguments_, ...extra, "--", ...paths], stdio);
 }
 
-function policyList(name) {
-  const values = config.settings?.fleet?.[name];
-  if (
-    !Array.isArray(values) ||
-    !values.length ||
-    !values.every((value) => typeof value === "string" && value.length)
-  )
-    throw new Error(`Missing or invalid Fleet ${name} policy.`);
-  return values;
-}
-
 function normalizedPath(path) {
   return realpathSync(resolve(path));
 }
@@ -61,10 +53,9 @@ function discoverProgram(project) {
 }
 
 function membershipFailures(paths) {
-  const extensions = policyList("projectExtensions");
   const files = new Set(projects().flatMap(discoverProgram));
   return paths
-    .filter((path) => extensions.includes(extname(path)))
+    .filter((path) => membershipExtensions.includes(extname(path)))
     .filter((path) => !files.has(normalizedPath(path)))
     .map(
       (path) =>
