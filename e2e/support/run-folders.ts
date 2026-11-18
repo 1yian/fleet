@@ -9,10 +9,9 @@ import {
   type Stats,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 const CANDIDATES = ["/var/tmp", tmpdir()];
-const SUITE_DIR = /^fe-([1-9]\d*)$/;
 const FILE_DIR = /^fr-([1-9]\d*)-[a-zA-Z0-9]{6}$/;
 
 function diskBase(): string {
@@ -49,11 +48,10 @@ export function runBase(): string {
 }
 
 export function cacheDirectory(base: string): string {
-  const path = process.env["FLEET_E2E_CACHE"] ?? join(base, "fleet-e2e-cache");
-  if (!isPrivateDirectory(lstatSync(dirname(path)))) {
-    throw new Error(`end-to-end cache parent must be owned by this user and private: ${path}`);
+  if (!isPrivateDirectory(lstatSync(base))) {
+    throw new Error(`end-to-end cache base must be owned by this user and private: ${base}`);
   }
-  return privateDirectory(path);
+  return privateDirectory(join(base, "fleet-e2e-cache"));
 }
 
 function processAlive(pid: number): boolean {
@@ -65,11 +63,10 @@ function processAlive(pid: number): boolean {
   }
 }
 
-export function sweepStaleFolders(base: string, kind: "suite" | "file"): void {
-  const form = kind === "suite" ? SUITE_DIR : FILE_DIR;
+export function sweepStaleFileFolders(base: string): void {
   for (const entry of readdirSync(base, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const pid = Number(form.exec(entry.name)?.[1]);
+    const pid = Number(FILE_DIR.exec(entry.name)?.[1]);
     if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || processAlive(pid)) continue;
     const path = join(base, entry.name);
     const stat = lstatSync(path, { throwIfNoEntry: false });

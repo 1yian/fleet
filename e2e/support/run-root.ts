@@ -1,16 +1,16 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { cacheDirectory, runBase, sweepStaleFolders } from "./run-folders.ts";
+import { dirname, join } from "node:path";
+import { cacheDirectory, runBase, sweepStaleFileFolders } from "./run-folders.ts";
 
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const outerTmpdir = runBase();
 
-const assigned = process.env["FLEET_E2E_ROOT"];
+const assigned = process.env["FLEET_E2E_ROOT"] || undefined;
 Reflect.deleteProperty(process.env, "FLEET_E2E_ROOT");
 
 function claimRoot(): string {
-  if (assigned !== undefined && assigned !== "") return realpathSync(assigned);
-  sweepStaleFolders(outerTmpdir, "file");
+  if (assigned !== undefined) return realpathSync(assigned);
+  sweepStaleFileFolders(outerTmpdir);
   const root = mkdtempSync(join(outerTmpdir, `fr-${String(process.pid)}-`));
   const remove = (): void => {
     rmSync(root, { recursive: true, force: true });
@@ -29,12 +29,7 @@ const runRoot = claimRoot();
 process.env["TMPDIR"] = runRoot;
 process.env["FLEET_HOST_DIR"] = join(runRoot, "host");
 process.env["FLEET_TMP_SOURCE_DIR"] = join(runRoot, "old-tmp");
-const inheritedXdg = process.env["FLEET_E2E_XDG"];
-if (inheritedXdg === undefined || process.env["XDG_CONFIG_HOME"] !== inheritedXdg) {
-  const xdg = join(runRoot, "xdg");
-  process.env["XDG_CONFIG_HOME"] = xdg;
-  process.env["FLEET_E2E_XDG"] = xdg;
-}
+process.env["XDG_CONFIG_HOME"] = join(runRoot, "xdg");
 if (process.env["NODE_COMPILE_CACHE"] !== undefined) {
   process.env["NODE_COMPILE_CACHE"] = join(runRoot, "node-compile-cache");
 }
@@ -43,4 +38,5 @@ export function tempDir(prefix: string): string {
   return mkdtempSync(join(runRoot, prefix));
 }
 
-export const sharedCacheDir = (): string => cacheDirectory(outerTmpdir);
+const cacheBase = assigned === undefined ? outerTmpdir : dirname(outerTmpdir);
+export const sharedCacheDir = (): string => cacheDirectory(cacheBase);

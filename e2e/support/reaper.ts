@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
+import { killGroup } from "./marked.ts";
 
 const watched = new Map<number, string>();
 const hooks = new Map<string, string[]>();
@@ -45,7 +46,7 @@ function sweep(root: number): void {
       signal(pid, "SIGSTOP");
     }
   }
-  signal(-root, "SIGKILL");
+  killGroup(root, "SIGKILL");
   for (const pid of frozen) signal(pid, "SIGKILL");
 }
 

@@ -1,14 +1,21 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { closeSync, globSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  globSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { envMarker, killGroup, sweepMarked, type Swept } from "./support/marked.ts";
-import { cacheDirectory, runBase, sweepStaleFolders } from "./support/run-folders.ts";
+import { runBase } from "./support/run-folders.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const SUITE_PREFIX = "fe-";
 const SUITE_MINUTES = 120;
 const FILE_MINUTES = 20;
 const TEST_TIMEOUT_MS = 300_000;
@@ -32,8 +39,8 @@ interface Outcome {
 const failed = (outcome: Outcome): boolean =>
   outcome.code !== 0 || outcome.timedOut || outcome.stuck > 0;
 
-const markerOf = (token: string, indexed = false): RegExp =>
-  envMarker("FLEET_E2E_RUN", token, indexed);
+const markerOf = (token: string, suite = false): RegExp =>
+  envMarker("FLEET_E2E_RUN", token, `${suite ? "\\.\\d+" : ""}(?:/[^/]+)*`);
 
 function concurrency(): number {
   const cap = Math.min(
@@ -92,16 +99,15 @@ function report(outcome: Outcome): void {
 
 class Suite {
   readonly dir: string;
-  private readonly id = randomBytes(16).toString("hex");
-  private readonly cache: string;
+  private readonly id = [process.env["FLEET_E2E_RUN"], randomBytes(16).toString("hex")]
+    .filter(Boolean)
+    .join("/");
   private readonly running = new Set<ChildProcess>();
   private stopping = false;
   private started = 0;
 
   constructor(base: string) {
-    this.cache = cacheDirectory(base);
-    this.dir = join(base, `${SUITE_PREFIX}${String(process.pid)}`);
-    mkdirSync(this.dir, { mode: 0o700 });
+    this.dir = mkdtempSync(join(base, "fe-"));
   }
 
   get interrupted(): boolean {
@@ -160,7 +166,7 @@ class Suite {
   private async runFile(file: string): Promise<Outcome> {
     const index = this.started++;
     const root = join(this.dir, String(index));
-    mkdirSync(root);
+    mkdirSync(root, { mode: 0o700 });
     const logPath = `${root}.log`;
     const fd = openSync(logPath, "wx", 0o600);
     const began = Date.now();
@@ -208,7 +214,6 @@ class Suite {
       FLEET_E2E_ROOT: root,
       FLEET_E2E_TMPDIR: this.dir,
       FLEET_E2E_RUN: `${this.id}.${String(index)}`,
-      FLEET_E2E_CACHE: this.cache,
       FORCE_COLOR: "0",
     };
   }
@@ -219,7 +224,7 @@ function summarize(outcomes: readonly Outcome[], wallMs: number, width: number):
     outcomes.reduce((sum, outcome) => sum + (outcome.counts[name] ?? 0), 0);
   const fileMs = outcomes.reduce((all, outcome) => all + outcome.ms, 0);
   console.log(
-    `\n${String(outcomes.length)} files, ${String(total("tests"))} tests, ${String(total("pass"))} passed, ${String(total("fail"))} failed, ${String(total("skipped"))} skipped`,
+    `\n${String(outcomes.length)} files, ${String(total("tests"))} tests, ${String(total("pass"))} passed, ${String(total("fail"))} failed, ${String(total("cancelled"))} cancelled, ${String(total("skipped"))} skipped`,
   );
   console.log(
     `wall ${(wallMs / 60_000).toFixed(1)} min with ${String(width)} files at a time, ${(fileMs / 60_000).toFixed(1)} min of file time in all`,
@@ -262,9 +267,7 @@ async function main(): Promise<number> {
     console.error("no end-to-end test files");
     return 1;
   }
-  const base = runBase();
-  sweepStaleFolders(base, "suite");
-  const suite = new Suite(base);
+  const suite = new Suite(runBase());
   const began = Date.now();
   const deadline = setTimeout(() => {
     console.error(`End-to-end suite exceeded ${String(SUITE_MINUTES)} minutes`);

@@ -2,9 +2,9 @@ import { execFile, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { guardCleanup, killGroup, spawnGuarded } from "./guarded.ts";
+import { guardCleanup, spawnGuarded } from "./guarded.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
-import { envMarker, sweepMarked } from "./marked.ts";
+import { envMarker, killGroup, sweepMarked } from "./marked.ts";
 import { tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
@@ -13,6 +13,7 @@ const WAIT_MS = 30_000;
 export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
   readonly config = join(tempDir("herdr-config-"), "config.toml");
+  private readonly ownership = randomBytes(16).toString("hex");
   private server: ChildProcess | undefined;
   env: Record<string, string> = {};
   private disarm = (): void => undefined;
@@ -27,7 +28,13 @@ export class HerdrLab {
       env["FLEET_E2E_HERDR_SERVER"] ?? "herdr",
       ["server", "--session", lab.name],
       {
-        env: { ...process.env, ...env, HERDR_SESSION: lab.name, HERDR_CONFIG_PATH: lab.config },
+        env: {
+          ...process.env,
+          ...env,
+          HERDR_SESSION: lab.name,
+          HERDR_CONFIG_PATH: lab.config,
+          FLEET_E2E_HERDR: lab.ownership,
+        },
         stdio: "ignore",
       },
     );
@@ -119,7 +126,7 @@ export class HerdrLab {
     const server = this.server;
     if (server?.exitCode !== null || server.signalCode !== null) return;
     const exited = new Promise((resolve) => server.once("exit", resolve));
-    killGroup(server.pid ?? 0);
+    killGroup(server.pid ?? 0, "SIGKILL");
     await exited;
   }
 
@@ -128,10 +135,10 @@ export class HerdrLab {
     const server = this.server;
     if (server?.exitCode === null && server.signalCode === null) {
       const exited = new Promise((resolve) => server.once("exit", resolve));
-      killGroup(server.pid ?? 0);
+      killGroup(server.pid ?? 0, "SIGKILL");
       await exited;
     }
-    await sweepMarked(envMarker("HERDR_SESSION", this.name), 0);
+    await sweepMarked(envMarker("FLEET_E2E_HERDR", this.ownership), 0);
     await this.text(["session", "delete", this.name]);
     this.disarm();
   }

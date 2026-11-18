@@ -132,17 +132,21 @@ test("scratch reports the use of the filesystems it writes to, and names the lar
   }
   writeFileSync(join(tree, "few", "big.bin"), Buffer.alloc(8 * 1024 * 1024, 1));
 
-  const report = parseRecord(fleet(["scratch", "--json"], { FLEET_HOST_DIR: dir }).trim());
+  const report = parseRecord(
+    fleet(["scratch", "--json"], { FLEET_HOST_DIR: dir, TMPDIR: dir }).trim(),
+  );
   const filesystems = records(report["filesystems"]);
-  const tmp = filesystems.find((each) => each["path"] === "/tmp");
-  assert.ok(tmp !== undefined, "the report names /tmp");
-  const onTmpDevice = statSync(dir).dev === statSync("/tmp").dev;
-  assert.equal(filesystems.length, onTmpDevice ? 1 : 2);
-  assert.equal(Array.isArray(tmp["roots"]) && tmp["roots"].includes(dir), onTmpDevice);
-  assert.ok(filesystems.some((row) => Array.isArray(row["roots"]) && row["roots"].includes(dir)));
-  for (const row of filesystems) {
-    const path = row["path"];
-    assert.ok(typeof path === "string");
+  const expected =
+    statSync(dir).dev === statSync("/tmp").dev
+      ? [{ path: "/tmp", roots: ["/tmp", dir] }]
+      : [
+          { path: "/tmp", roots: ["/tmp"] },
+          { path: dir, roots: [dir] },
+        ];
+  assert.deepEqual(filesystems.map(({ path, roots }) => ({ path, roots })), expected);
+  for (const [index, { path }] of expected.entries()) {
+    const row = filesystems[index];
+    assert.ok(row !== undefined);
     const seen = statfsSync(path);
     const used = (seen.blocks - seen.bfree) * seen.bsize;
     const total = used + seen.bavail * seen.bsize;

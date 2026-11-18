@@ -2,6 +2,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import "./hermetic-env.ts";
+import { killGroup } from "./marked.ts";
 
 const REAPER = fileURLToPath(new URL("./reaper.ts", import.meta.url));
 let reaper: ChildProcess | undefined;
@@ -23,15 +24,6 @@ export function guardCleanup(name: string, argv: readonly string[]): () => void 
   };
 }
 
-export function killGroup(pid: number): void {
-  if (pid <= 0) return;
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    return;
-  }
-}
-
 export function spawnGuarded(
   command: string,
   args: readonly string[],
@@ -42,7 +34,7 @@ export function spawnGuarded(
   if (pid !== undefined) {
     tell(`watch ${String(pid)}`);
     child.once("exit", () => {
-      killGroup(pid);
+      killGroup(pid, "SIGKILL");
       tell(`release ${String(pid)}`);
     });
   }

@@ -14,13 +14,11 @@ export interface Swept {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const envMarker = (name: string, value: string, indexed = false): RegExp =>
-  new RegExp(
-    `^${name}=${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${indexed ? "\\.\\d+" : ""}$`,
-  );
+export const envMarker = (name: string, value: string, suffix = ""): RegExp =>
+  new RegExp(`^${name}=${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${suffix}$`);
 
 export function killGroup(pid: number, signal: NodeJS.Signals): void {
-  if (pid <= 0) return;
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 2_147_483_647) return;
   try {
     process.kill(-pid, signal);
   } catch {
