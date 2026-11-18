@@ -1,5 +1,5 @@
-import { arrangeOn, tagWorker } from "./arrange.ts";
-import { field, herdr, ownHostName, records, rootOf, rootPane } from "./host.ts";
+import { arrangeOn, sidebarHostName, tagWorker } from "./arrange.ts";
+import { field, herdr, records, rootOf, rootPane } from "./host.ts";
 
 export async function openWorkerWorkspace(
   host: string,
@@ -31,7 +31,7 @@ export async function claimWorkspace(
   await tagWorker(host, workspace, {
     lane: card.lane,
     card: card.id,
-    mate: ownHostName(),
+    mate: sidebarHostName(),
   }).catch(() => undefined);
   await arrangeOn(host, rootOf(host)).catch(() => undefined);
 }

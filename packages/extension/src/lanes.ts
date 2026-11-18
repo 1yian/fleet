@@ -5,7 +5,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
-import { HostUnreachable, onFleetRoot, onHost, ownHostName, records } from "./host.ts";
+import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
+import { sidebarHostName } from "./arrange.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { readShared } from "./standing.ts";
@@ -63,13 +64,13 @@ export async function mateHosts(config: LaneConfig): Promise<Map<string, string>
     const running = text(row, "state") === "running";
     copies.set(lane, [...(copies.get(lane) ?? []), { host, running }]);
   }
-  const found = new Map([[config.lane, ownHostName()]]);
+  const found = new Map([[config.lane, sidebarHostName()]]);
   for (const [lane, homes] of copies) {
     const running = homes.filter((home) => home.running);
     const only = running.length === 0 && homes.length === 1 ? homes : running;
     const [home] = only;
     if (home !== undefined && only.length === 1)
-      found.set(lane, home.host === "local" ? ownHostName() : home.host);
+      found.set(lane, home.host === "local" ? sidebarHostName() : home.host);
   }
   return found;
 }

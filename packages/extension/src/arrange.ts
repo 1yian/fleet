@@ -1,5 +1,6 @@
 import { createConnection } from "node:net";
-import { field, herdr, isLocal, onFleetRoot, onHost, ownsHostName, records } from "./host.ts";
+import { hostname } from "node:os";
+import { field, herdr, isLocal, onFleetRoot, onHost, records } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 
 const SOCKET_WAIT_MS = 5000;
@@ -86,8 +87,21 @@ function hostedWorkers(spaces: readonly Space[], mates: ReadonlyMap<string, Spac
   return hosted;
 }
 
+const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
+
+function sidebarNames(): string[] {
+  const named = process.env["FLEET_HOST"];
+  const own = named === undefined || named === "" || named === "local" ? hostname() : named;
+  return [own.toLowerCase(), firstLabel(own)];
+}
+
+export const sidebarHostName = (): string => sidebarNames().at(-1) ?? "local";
+
+const ownsSidebarHost = (host: string): boolean =>
+  host === "local" || sidebarNames().includes(host.toLowerCase());
+
 function sidebarMetadata(space: Space, groupedHere: boolean): string[] {
-  const remoteMate = space.mate !== undefined && !ownsHostName(space.mate) ? space.mate : undefined;
+  const remoteMate = space.mate !== undefined && !ownsSidebarHost(space.mate) ? space.mate : undefined;
   const away = groupedHere || remoteMate === undefined ? undefined : awayHint(remoteMate);
   const args: string[] = [];
   if (groupedHere && remoteMate !== undefined) args.push("--clear-token", "mate");
