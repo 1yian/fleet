@@ -10,7 +10,7 @@ import "./hermetic-env.ts";
 import "./tool-stubs.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
-const ROOMY_DISK = fileURLToPath(new URL("./roomy-disk.ts", import.meta.url));
+const ROOMY_DISK = new URL("./roomy-disk.ts", import.meta.url).href;
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
 
