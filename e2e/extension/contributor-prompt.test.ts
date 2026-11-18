@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join, relative } from "node:path";
+import { delimiter, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "../support/cardd.ts";
@@ -41,7 +41,8 @@ interface Variant {
   readonly noContextFiles?: boolean;
   readonly ancestor?: boolean;
   readonly mateNoContextFiles?: boolean;
-  readonly localOrigin?: "absolute" | "relative";
+  readonly mirror?: boolean;
+  readonly unrelated?: boolean;
 }
 
 function commitFixture(root: string): void {
@@ -81,21 +82,12 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     repo.dispose();
     scratch.dispose();
   });
-  const projectRoot =
-    variant.localOrigin === undefined ? repo.root : join(repo.parent, "local-clone");
-  if (variant.localOrigin !== undefined) {
-    execFileSync("git", ["clone", "--quiet", "--", scratch.root, projectRoot]);
-    if (variant.localOrigin === "relative") {
-      execFileSync("git", [
-        "-C",
-        projectRoot,
-        "remote",
-        "set-url",
-        "origin",
-        relative(projectRoot, scratch.root),
-      ]);
-    }
-  } else {
+  const projectRoot = variant.mirror === true ? join(repo.parent, "mirror-clone") : repo.root;
+  if (variant.mirror === true) {
+    const mirror = join(repo.parent, "mirror.git");
+    execFileSync("git", ["clone", "--quiet", "--mirror", "--", scratch.root, mirror]);
+    execFileSync("git", ["clone", "--quiet", "--", mirror, projectRoot]);
+  } else if (variant.unrelated === true) {
     execFileSync("git", [
       "-C",
       projectRoot,
@@ -114,7 +106,9 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   if (variant.ancestor === true) writeFileSync(join(repo.parent, "AGENTS.md"), ANCESTOR_NOTES);
   const token = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, token, { workerArgs });
-  cardd.addProject("fleet", { local: projectRoot }, undefined, "local-only");
+  const project = variant.unrelated === true ? "fleet" : "fleet-tools";
+  const identity = variant.unrelated === true ? "acme/site" : "1yian/fleet";
+  cardd.addProject(project, { local: projectRoot }, identity, "local-only");
   mkdirSync(join(scratch.root, "data"), { recursive: true });
   for (const [file, text] of Object.entries({
     "charter.md": "## Lab charter\n\nKeep the fixture fleet running.\n",
@@ -130,7 +124,7 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
       title: "Contributor prompt reaches the worker",
       name: "contributor-prompt",
       kind: "ship",
-      project: "fleet",
+      project,
       intent: "Inspect contributor instructions",
       task: "Inspect your repository instructions without changing files.",
       host: "local",
@@ -159,7 +153,7 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   const worker = await workerCall(h);
   const tree = realpathSync(`${projectRoot}.worktrees/c-1-a1`);
   assertWorkerGuide(systemOf(worker), tree, variant);
-  if (variant.localOrigin !== undefined) {
+  if (variant.mirror === true) {
     execFileSync("git", ["-C", tree, "mv", ".pi/extensions/fleet.ts", "fleet-renamed.ts"]);
     await lab.submit(pane, restartRequest);
     const replacement = await workerCall(
@@ -191,6 +185,12 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
 
 function assertWorkerGuide(workerSystem: string, tree: string, variant: Variant): void {
   assert.match(workerSystem, /^# Worker role contract$/m);
+  if (variant.unrelated === true) {
+    assert.ok(workerSystem.includes(`<project_instructions path="${join(tree, "AGENTS.md")}">`));
+    assert.match(workerSystem, /This is the job description of main and every second mate/);
+    assert.ok(!workerSystem.includes(WORKER_GUIDE_MARKER));
+    return;
+  }
   assert.doesNotMatch(workerSystem, /This is the job description of main and every second mate/);
   assert.doesNotMatch(workerSystem, /Stale overview of the fleet repository/);
   const workerContext =
@@ -239,12 +239,12 @@ test("a fleet worker without a contributor guide keeps unrelated context but not
   await run(t, "missing-guide", { missingGuide: true, ancestor: true });
 });
 
-test("a restarted fleet worker in a local clone keeps its own guide after a staged extension rename", async (t) => {
-  await run(t, "restart-after-rename", { localOrigin: "absolute" });
+test("a fleet worker cloned from a bare mirror gets its guide on dispatch and replacement after a staged rename", async (t) => {
+  await run(t, "mirror-replacement", { mirror: true });
 });
 
-test("a fleet worker with a relative origin gets its own guide on dispatch and replacement", async (t) => {
-  await run(t, "relative-origin", { localOrigin: "relative" });
+test("a non-fleet registration retains its project context despite a Fleet display name and origin", async (t) => {
+  await run(t, "unrelated-registration", { unrelated: true });
 });
 
 test("a mate started without context files still gets the Firstmate contract", async (t) => {

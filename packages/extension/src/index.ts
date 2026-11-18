@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
@@ -57,6 +57,7 @@ interface Config {
   readonly role: "worker" | "mate";
   readonly lane?: string;
   readonly notes: readonly string[];
+  readonly repo?: string;
   readonly secrets?: { readonly bws: Bws; readonly env: Readonly<Record<string, string>> };
 }
 
@@ -92,6 +93,7 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
   const token = value("fleet-token", "FLEET_TOKEN");
   const role = value("fleet-role", "FLEET_ROLE");
   const named = process.env["FLEET_LANE"];
+  const repo = pi.getFlag("fleet-repo");
   if (url === undefined || token === undefined || (role !== "worker" && role !== "mate"))
     return undefined;
   const secrets = secretsOf(forwardedBws(value("fleet-bws", "FLEET_BWS")));
@@ -100,6 +102,7 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
     token,
     role,
     notes: [],
+    ...(role === "worker" && typeof repo === "string" ? { repo } : {}),
     ...(role === "worker" || named === undefined || named === "" ? {} : { lane: named }),
     ...(secrets === undefined ? {} : { secrets }),
   };
@@ -147,74 +150,29 @@ function charter(): string {
 
 const mateContract = (): string => charter() + standingRules(HOME());
 
-function gitIdentity(cwd: string, args: readonly string[]): string | undefined {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8", timeout: 2_000 });
-  return result.status === 0 ? result.stdout.replace(/\n$/, "") : undefined;
-}
-
-function gitCommonDir(cwd: string, gitDir?: string): string | undefined {
-  const args = gitDir === undefined ? [] : [`--git-dir=${gitDir}`];
-  const common = gitIdentity(cwd, [
-    ...args,
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-common-dir",
-  ]);
-  if (!common) return undefined;
+function gitCommonDir(cwd: string): string | undefined {
+  const result = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 2_000,
+  });
+  if (result.status !== 0) return undefined;
   try {
-    return realpathSync(common);
+    return realpathSync(result.stdout.replace(/\n$/, ""));
   } catch {
     return undefined;
   }
 }
 
-function localGitDir(root: string, origin: string): string | undefined {
-  let path = origin;
-  if (origin.startsWith("file://")) {
-    try {
-      path = fileURLToPath(origin);
-    } catch {
-      return undefined;
-    }
-  } else if (/^[^/]*:/.test(origin)) {
-    return undefined;
-  }
-  if (!path) return undefined;
-  let base = root;
-  if (!isAbsolute(path)) {
-    const first = gitIdentity(root, ["worktree", "list", "--porcelain", "-z"])?.split("\0", 1)[0];
-    if (!first?.startsWith("worktree ")) return undefined;
-    base = first.slice("worktree ".length);
-    if (path.startsWith("-")) path = `./${path}`;
-  }
-  const gitDir =
-    gitIdentity(base, ["rev-parse", "--resolve-git-dir", `${path}/.git`]) ??
-    gitIdentity(base, ["rev-parse", "--resolve-git-dir", path]);
-  if (gitDir === undefined) return undefined;
-  return isAbsolute(gitDir) ? gitDir : `${base}/${gitDir}`;
-}
-
-function isFleetCheckout(root: string): boolean {
+function isFleetCheckout(root: string, repo: string | undefined): boolean {
+  if (repo !== undefined) return repo.toLowerCase() === "1yian/fleet";
   const common = gitCommonDir(root);
-  if (common === undefined) return false;
-  const fleet = gitCommonDir(dirname(EXTENSION));
-  if (common === fleet) return true;
-  const origin = gitIdentity(root, ["config", "--local", "--get", "remote.origin.url"]);
-  if (origin === undefined) return false;
-  if (
-    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)1yian\/fleet(?:\.git)?\/?$/.test(
-      origin,
-    )
-  )
-    return true;
-  if (fleet === undefined) return false;
-  const source = localGitDir(root, origin);
-  return source !== undefined && gitCommonDir(root, source) === fleet;
+  return common !== undefined && common === gitCommonDir(dirname(EXTENSION));
 }
 
-function contributorGuideForWorkers(pi: ExtensionAPI): void {
+function contributorGuideForWorkers(pi: ExtensionAPI, repo: string | undefined): void {
   const root = HOME();
-  if (!isFleetCheckout(root)) return;
+  if (!isFleetCheckout(root, repo)) return;
   const agents = join(root, "AGENTS.md");
   const guide = join(root, "CONTRIBUTING.md");
   pi.on("before_agent_start", (event) => {
@@ -342,7 +300,7 @@ function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["ro
 
 function start(
   pi: ExtensionAPI,
-  { url, token, role, lane }: Config,
+  { url, token, role, lane, repo }: Config,
   sessionFile: string | undefined,
   compact: () => void,
   ctx: ExtensionContext,
@@ -411,7 +369,7 @@ function start(
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
-  if (role === "worker") contributorGuideForWorkers(pi);
+  if (role === "worker") contributorGuideForWorkers(pi, repo);
   else contractForMates(pi);
   appendRolePrompt(pi, role);
   if (role === "mate") {
@@ -456,6 +414,7 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
+  pi.registerFlag("fleet-repo", { type: "string", description: "Registered worker repository" });
   pi.registerFlag(STALE_RELOAD_FLAG, {
     type: "string",
     description:

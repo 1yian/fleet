@@ -29,7 +29,7 @@ The project's `AGENTS.md` and `CONTRIBUTING.md`, as applicable, govern the work 
    - `paused`: waiting on a time or an outside event, with `until`. Start a `run_long` watcher first if the wait is on something that finishes by itself.
    - `resolved`: a decision or blocker you opened cleared on its own, same `key`.
    - `done`, `merged`, `failed` (say why).
-   Every run ends with `done`, `failed`, `blocked`, `needs-decision`, `paused`, or a running `run_long` job.
+   Every run ends with `done`, `merged`, `failed`, `blocked`, `needs-decision`, `paused`, or a running `run_long` job.
 5. **Retries.** Fix errors confined to your copy and retry only with new evidence or a concrete correction. After two attempts with no progress, report `blocked`. Credentials, outside permissions or quota, destructive changes, and shared infrastructure are never local fixes: escalate them.
 6. **Long commands** (over about two minutes) go through `run_long`. Never background them yourself. Never signal a process by name or pattern: only a PID you started. A lost job: run it again or `drop_job` it.
 7. **Shared things.** Never create, remove, move, or prune a worktree, or write into another one. Keep secrets out of reports, PRs, and comments.

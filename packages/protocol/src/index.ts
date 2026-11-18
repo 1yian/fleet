@@ -175,6 +175,7 @@ const AttemptPlan = Type.Object({
   name: Type.String(),
   lane: Type.String(),
   delivery: Nullable(Delivery),
+  repo: Type.Optional(Type.String({ pattern: "^(?:[A-Za-z0-9-]+/[A-Za-z0-9_.-]+)?$" })),
   model: Type.Optional(Type.String({ pattern: MODEL_PIN })),
 });
 
