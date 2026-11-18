@@ -64,14 +64,14 @@ afterEach(async (t) => {
 });
 
 function report(
-  { inodes, bytes }: { inodes: number; bytes: number },
+  { inodes, bytes, inodesTotal = INODES }: { inodes: number; bytes: number; inodesTotal?: number },
   roots?: readonly string[],
 ): void {
   const row: JsonRecord = {
     path: "/tmp",
     ...(roots === undefined ? {} : { roots: [...roots] }),
     inodesUsed: inodes,
-    inodesTotal: INODES,
+    inodesTotal,
     bytesUsed: bytes,
     bytesTotal: 124 * GIB,
   };
@@ -178,7 +178,7 @@ async function crossWhileBusy(): Promise<void> {
   assert.deepEqual(heldKeys(), []);
 }
 
-test("main hears once when a host's filesystem passes 75%, and again only after it drops below and crosses again", async () => {
+test("main hears once when a host's filesystem passes 75%, and again only after it drops below 70% and crosses 75% again", async () => {
   for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, here, h);
   await untilProbes(3);
@@ -188,23 +188,23 @@ test("main hears once when a host's filesystem passes 75%, and again only after 
   const [first] = await untilAlarms(1);
   assert.equal(
     first,
-    "[fleet] disk: far: /tmp (tmpfs) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp by inodes: /tmp/fleet-c-1300 88,085 inodes; /tmp/fleet-c-1289 67,375 inodes; /tmp/node-compile-cache 21,377 inodes. This is said once. It is said again only after /tmp drops below 75% and crosses it again.",
+    "[fleet] disk: far: /tmp (tmpfs) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp by inodes: /tmp/fleet-c-1300 88,085 inodes; /tmp/fleet-c-1289 67,375 inodes; /tmp/node-compile-cache 21,377 inodes. This is said once. It is said again only after /tmp drops below 70% and crosses 75% again.",
   );
 
-  await afterProbes(5);
-  report({ inodes: 1_040_000, bytes: 50 * GIB });
-  await afterProbes(5);
-  assert.equal(alarmsOf(lastCall()).length, 1, "still over 75%, so nothing more was said");
-  assert.deepEqual(heldKeys(), ["far|/tmp|inodes"]);
+  for (const inodes of [1_040_000, 780_000, 800_000, 780_000, 800_000, 780_000, 800_000]) {
+    report({ inodes, bytes: 40 * GIB });
+    await afterProbes(3);
+  }
+  assert.equal(alarmsOf(lastCall()).length, 1, "oscillating around 75% does not re-arm it");
 
-  report({ inodes: 600_000, bytes: 40 * GIB });
+  report({ inodes: 700_000, inodesTotal: 1_000_000, bytes: 40 * GIB });
   await afterProbes(3);
-  assert.deepEqual(heldKeys(), []);
-  assert.equal(alarmsOf(lastCall()).length, 1);
-
-  report({ inodes: 900_000, bytes: 40 * GIB });
+  assert.deepEqual(heldKeys(), CROSSED, "70% does not re-arm it");
+  report({ inodes: 733_000, bytes: 40 * GIB });
+  await untilHeld([]);
+  report({ inodes: 786_432, bytes: 40 * GIB });
   const alarms = await untilAlarms(2);
-  assert.match(alarms[1] ?? "", /is at 86% of its inodes \(900,000 of 1,048,576\)/);
+  assert.match(alarms[1] ?? "", /is at 75% of its inodes \(786,432 of 1,048,576\)/);
   await afterProbes(4);
   assert.equal(alarmsOf(lastCall()).length, 2);
 });
@@ -226,7 +226,7 @@ test("main names the directories of every watched root on the filesystem that cr
   const [alarm] = await untilAlarms(1);
   assert.equal(
     alarm,
-    "[fleet] disk: far: /tmp (/dev/nvme0n1p2) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp, /home/far/.fleet by inodes: /home/far/.fleet/node-compile-cache 700,000 inodes; /home/far/.fleet/scratch 250,000 inodes; /tmp/fleet-c-1300 4,000 inodes. This is said once. It is said again only after /tmp drops below 75% and crosses it again.",
+    "[fleet] disk: far: /tmp (/dev/nvme0n1p2) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp, /home/far/.fleet by inodes: /home/far/.fleet/node-compile-cache 700,000 inodes; /home/far/.fleet/scratch 250,000 inodes; /tmp/fleet-c-1300 4,000 inodes. This is said once. It is said again only after /tmp drops below 70% and crosses 75% again.",
   );
   const asked = readFileSync(log, "utf8")
     .split("\n")
