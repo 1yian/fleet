@@ -1,5 +1,6 @@
 import {
   idlePark,
+  operationHandoff,
   waitLine,
   type BoardCard,
   type CardView,
@@ -7,7 +8,6 @@ import {
   type Status,
 } from "@fleet/protocol";
 import { encode } from "@toon-format/toon";
-import type { EvidenceShown } from "./evidence-view.ts";
 
 const ORDER = [
   "needs-you",
@@ -216,7 +216,6 @@ function boardHelp(query: BoardQuery, rows: number, closed: number, hidden: numb
 export interface CardQuery {
   readonly entries?: number;
   readonly full?: boolean;
-  readonly evidence?: EvidenceShown | undefined;
 }
 
 const ENTRY_LIMIT = 10;
@@ -235,16 +234,14 @@ function reportPath(entries: readonly Entry[]): string | undefined {
   return undefined;
 }
 
-function reportFields(view: CardView, shown: EvidenceShown | undefined): Record<string, string> {
+function reportFields(view: CardView): Record<string, string> {
   if (view.card.delivery !== "ops") {
     const report = reportPath(view.entries);
     return report === undefined ? {} : { report };
   }
-  if (shown === undefined) return {};
-  if (shown.kind === "read") return { report: shown.path };
-  if (shown.kind === "retained") return { retained: shown.path };
-  if (shown.kind === "unconfirmed") return { retained: "retention not confirmed" };
-  return { evidence: "reported but not verified: do not read it, close checks it" };
+  return typeof operationHandoff(view.entries)?.fields["evidence"] === "string"
+    ? { evidence: "reported; close verifies it on the worker's host, so there is nothing to read" }
+    : {};
 }
 
 type Cut = (text: string, max: number) => string;
@@ -317,7 +314,7 @@ export function cardText(view: CardView, query: CardQuery): string {
   const { card } = view;
   const record = about(view, clip);
   record["attempts"] = view.attempts.length === 0 ? "0 (never dispatched)" : view.attempts;
-  Object.assign(record, reportFields(view, query.evidence));
+  Object.assign(record, reportFields(view));
   if (card.intent !== "") record["intent"] = clip(card.intent, 300);
   if (card.spec !== "") record["spec"] = clip(card.spec, 300);
   const total = view.entries.length;

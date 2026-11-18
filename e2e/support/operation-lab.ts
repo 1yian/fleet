@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
@@ -43,6 +43,9 @@ beforeEach(async () => {
       FLEET_FAKE_AGENT: "mate",
       HERDR_SESSION: lab.name,
       FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", SHELL]),
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "protocol.ext.allow",
+      GIT_CONFIG_VALUE_0: "always",
     },
     [EXTENSION],
   );
@@ -56,9 +59,16 @@ afterEach(async (t) => {
   scratch.dispose();
 });
 
+const originLog = (): string => join(h.dir, "origin-calls.log");
+
+export const originCalls = (): string =>
+  existsSync(originLog()) ? readFileSync(originLog(), "utf8") : "";
+
 export function dispatchOperation(): void {
   h.onModel(() => {
-    git(scratch.root, "remote", "add", "origin", join(scratch.parent, "unreachable.git"));
+    const script = join(h.dir, "origin.sh");
+    writeFileSync(script, `#!/bin/sh\necho "$@" >> "${originLog()}"\nexit 1\n`, { mode: 0o755 });
+    git(scratch.root, "remote", "add", "origin", `ext::${script} %S`);
     return { tool: "board", args: {} };
   }, "mate");
   h.onModel(

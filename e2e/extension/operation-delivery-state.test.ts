@@ -211,6 +211,47 @@ test("ops refuses Done when its registered worktree is gone, and keeps the card 
   h.onModel(() => ({ text: "close attempted" }), "mate");
   await start();
   const refused = toolResults(await finished(4)).at(-1) ?? "";
-  assert.match(refused, /has no registered worktree on local to check, so nothing was removed/);
+  assert.match(refused, /could not be verified clean or already retired, so nothing was removed/);
+  assert.equal((await cardd.thread(1)).card.status, "with-mate");
+});
+
+test("a Dropped ops close is refused, with everything left in place, when the archive cannot hold the work", async () => {
+  dispatchOperation();
+  const seen: string[] = [];
+  let left = "";
+  h.onModel(async () => {
+    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+    writeFileSync(join(tree, "kept.txt"), "left on the branch\n");
+    git(tree, "add", "kept.txt");
+    git(tree, "commit", "-qm", "left on the branch");
+    left = git(tree, "rev-parse", "HEAD");
+    git(tree, "checkout", "-q", "--detach", "main");
+    writeFileSync(join(tree, "untracked.txt"), "also here\n");
+    return written(report);
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  const drop = { tool: "close", args: { card: 1, summary: "Not approved", landed: false } };
+  h.onModel(() => drop, "mate");
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    mkdirSync(join(tree, "state"), { recursive: true });
+    writeFileSync(join(tree, "state", "leak.txt"), "ignored\n");
+    return drop;
+  }, "mate");
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    return { text: "refused" };
+  }, "mate");
+  await start();
+  await finished(5);
+  assert.match(seen[0] ?? "", /c-1 was not dropped\. c-1-a1 on local has commits on branch c-1-a1/);
+  assert.match(
+    seen[1] ?? "",
+    /commits on branch c-1-a1 that the archive would not hold; 1 ignored files/,
+  );
+  assert.equal(git(scratch.root, "rev-parse", "refs/heads/c-1-a1"), left);
+  assert.equal(existsSync(tree), true);
+  assert.equal(existsSync(join(tree, "untracked.txt")), true);
+  assert.equal(existsSync(`${scratch.root}.archive`), false);
   assert.equal((await cardd.thread(1)).card.status, "with-mate");
 });

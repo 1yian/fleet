@@ -201,7 +201,7 @@ function withIncidents(
 function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: unknown): string {
   if (merged) return "Close it now with close(card, summary).";
   if (delivery === "ops")
-    return "Call board(card=N): read the evidence only where it names a verified report, then close(card, summary). No PR is expected. Unexpected commits, refs or files prevent Done, even with confirm=true; dispatch product changes separately or close with landed=false to archive them as Dropped.";
+    return "Call close(card, summary) without the evidence report's path in the summary: close verifies the evidence and the worktrees, then retires them. No PR is expected. Unexpected commits, refs or files prevent Done, even with confirm=true; dispatch product changes separately or close with landed=false to archive them as Dropped when the archive can hold them.";
   if (kind === "ship" && delivery === "local-only")
     return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   if (kind === "scout")

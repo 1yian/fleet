@@ -1,4 +1,10 @@
-import { evidenceScope, type OpResult } from "@fleet/protocol";
+import {
+  evidenceScope,
+  OPERATION_TREE_SCRIPT,
+  parseOperationTree,
+  type OpResult,
+} from "@fleet/protocol";
+import type { Link } from "./link.ts";
 import { field, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
 import { checkEvidenceCommand } from "./scratch.ts";
 
@@ -8,6 +14,7 @@ type Plan = OpResult<"close.begin">;
 export interface Processes {
   stopped: string[];
   spared: string[];
+  alive: string[];
 }
 
 export type StopWriters = (
@@ -15,6 +22,11 @@ export type StopWriters = (
   tree: Record<string, unknown>,
   path: string,
 ) => Promise<Processes>;
+
+interface Placed {
+  readonly path: string;
+  readonly processes: Processes;
+}
 
 export function describe({ ahead, dirty }: { ahead: number; dirty: number }, base: string): string {
   const parts = [
@@ -24,59 +36,33 @@ export function describe({ ahead, dirty }: { ahead: number; dirty: number }, bas
   return parts.join(" and ");
 }
 
-const TREE_SCRIPT = `set -eu
-wt=$1 clone=$2 base=$3 branch=$4
-[ -d "$wt" ] || { echo "no worktree at $wt" >&2; exit 1; }
-real=$(cd "$wt" && pwd -P)
-top=$(git -C "$wt" rev-parse --show-toplevel)
-[ "$top" = "$real" ] || { echo "$wt is not a worktree root" >&2; exit 1; }
-git -C "$clone" rev-parse --verify -q "refs/heads/$base^{commit}" >/dev/null
-head=$(git -C "$wt" rev-parse HEAD)
-refs=HEAD
-cur=$(git -C "$wt" symbolic-ref -q HEAD || true)
-for ref in "$cur" "refs/heads/$branch"; do
-  if [ -n "$ref" ] && git -C "$wt" show-ref --verify -q "$ref"; then refs="$refs $ref"; fi
-done
-ahead=$(git -C "$wt" rev-list --count $refs --not "refs/heads/$base")
-commits=$(git -C "$wt" log --oneline -n 10 $refs --not "refs/heads/$base")
-files=$(git -C "$wt" status --porcelain --untracked-files=all --ignored)
-dirty=$(printf '%s' "$files" | grep -c '' || true)
-echo "$head $ahead $dirty"
-if [ -n "$commits" ]; then printf '%s\\n' "$commits" | sed 's/^/c /'; fi
-if [ -n "$files" ]; then printf '%s\\n' "$files" | head -n 20 | sed 's/^/f /'; fi`;
-
 const RETIRE_SCRIPT = `set -eu
-wt=$1 clone=$2 base=$3
-shift 3
+wt=$1 clone=$2 base=$3 branch=$4
+[ "$branch" != "$base" ]
 git -C "$clone" worktree remove "$wt"
-for branch in "$@"; do
-  if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
-    ahead=$(git -C "$clone" rev-list --count "refs/heads/$branch" --not "refs/heads/$base")
-    [ "$ahead" -eq 0 ] || { echo "$branch is ahead of $base" >&2; exit 1; }
-    git -C "$clone" branch -D "$branch" >/dev/null
-  fi
-done
+if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then
+  ahead=$(git -C "$clone" rev-list --count "refs/heads/$branch" --not "refs/heads/$base")
+  [ "$ahead" -eq 0 ] || { echo "$branch is ahead of $base" >&2; exit 1; }
+  git -C "$clone" branch -D "$branch" >/dev/null
+fi
 [ ! -e "$wt" ]
-for branch in "$@"; do
-  if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then exit 1; fi
-done`;
+if git -C "$clone" show-ref --verify -q "refs/heads/$branch"; then exit 1; fi`;
 
-interface Tree {
-  readonly ahead: number;
-  readonly dirty: number;
-  readonly commits: string[];
-  readonly files: string[];
-}
-
-function parseTree(output: string): Tree {
-  const [counts = "", ...rest] = output.trimEnd().split("\n");
-  const [head = "", ahead = "", dirty = ""] = counts.trim().split(" ");
-  if (head === "" || !/^\d+$/.test(ahead) || !/^\d+$/.test(dirty))
-    throw new Error("the worktree check printed nothing usable");
-  const tagged = (tag: string): string[] =>
-    rest.filter((line) => line.startsWith(`${tag} `)).map((line) => line.slice(2));
-  return { ahead: Number(ahead), dirty: Number(dirty), commits: tagged("c"), files: tagged("f") };
-}
+const ARCHIVE_COVERS_SCRIPT = `set -eu
+wt=$1 base=$2 branch=$3 out=$4
+if git -C "$wt" show-ref --verify -q "refs/heads/$branch"; then
+  extra=$(git -C "$wt" rev-list --count "refs/heads/$branch" --not HEAD "refs/heads/$base")
+  if [ "$extra" -gt 0 ]; then echo "commits on branch $branch that the archive would not hold"; fi
+fi
+ignored=$(git -C "$wt" status --porcelain --ignored | grep -c '^!!' || true)
+if [ "$ignored" -gt 0 ]; then echo "$ignored ignored files that the archive would not hold"; fi
+if [ -f "$out" ]; then
+  ahead=$(git -C "$wt" rev-list --count HEAD --not "refs/heads/$base")
+  changed=$(git -C "$wt" status --porcelain | grep -c '' || true)
+  if [ "$ahead" -gt 0 ] || [ "$changed" -gt 0 ]; then
+    echo "an archive already exists, so the current work would not be saved in it"
+  fi
+fi`;
 
 async function requireEvidence(card: number, evidence: string, attempt: Attempt): Promise<void> {
   try {
@@ -94,8 +80,8 @@ async function requireClean(card: number, attempt: Attempt, path: string): Promi
   const { host, session, clone, base, branch } = attempt;
   let found;
   try {
-    found = parseTree(
-      await onHelper(host, ["sh", "-c", TREE_SCRIPT, "tree", path, clone, base, branch]),
+    found = parseOperationTree(
+      await onHelper(host, ["sh", "-c", OPERATION_TREE_SCRIPT, "tree", path, clone, base, branch]),
     );
   } catch (error) {
     if (error instanceof HostUnreachable) throw error;
@@ -111,28 +97,40 @@ async function requireClean(card: number, attempt: Attempt, path: string): Promi
     ...found.files.map((file) => `  file ${session}: ${file}`),
   ];
   throw new Error(
-    `c-${String(card)} was not closed. ${session} on ${host} has ${what}, left in place:\n${detail.join("\n")}\nAn ops card cannot end Done with unexpected code changes, even with confirm=true. Dispatch product changes separately, or close with landed=false and a reason to archive them as Dropped.`,
+    `c-${String(card)} was not closed. ${session} on ${host} has ${what}, left in place:\n${detail.join("\n")}\nAn ops card cannot end Done with unexpected code changes, even with confirm=true. Dispatch product changes separately, or close with landed=false and a reason to archive them as Dropped when the archive can hold them.`,
   );
 }
 
-function sameBinding(before: Plan, now: Plan): boolean {
-  const names = (plan: Plan): string => plan.attempts.map((each) => each.session).join(",");
-  return (
-    before.operation?.handoff === now.operation?.handoff &&
-    before.operation?.evidence === now.operation?.evidence &&
-    names(before) === names(now)
+async function stopped(
+  card: number,
+  attempt: Attempt,
+  stop: StopWriters,
+): Promise<Placed | undefined> {
+  const listed = await herdr(
+    attempt.host,
+    ["worktree", "list", "--cwd", attempt.clone],
+    !attempt.live,
   );
+  const tree = worktreeOf(listed, attempt.session);
+  const path = field(tree, "path");
+  if (tree === undefined || path === undefined) return undefined;
+  const processes = await stop(attempt, tree, path);
+  if (processes.alive.length > 0)
+    throw new Error(
+      `c-${String(card)} was not closed. ${attempt.session} still has running processes after the stop: ${processes.alive.join("; ")}. Nothing was removed`,
+    );
+  return { path, processes };
 }
 
-export async function verifyOperation(
+async function verifyOperation(
   card: number,
   plan: Plan,
   stop: StopWriters,
-  replan: () => Promise<Plan>,
-): Promise<Map<string, Processes>> {
+  verify: () => Promise<unknown>,
+): Promise<Map<string, Placed>> {
   const { operation } = plan;
-  const stopped = new Map<string, Processes>();
-  if (operation === undefined) return stopped;
+  const placed = new Map<string, Placed>();
+  if (operation === undefined) return placed;
   const holder = plan.attempts.find((each) => each.session === operation.session);
   if (holder === undefined)
     throw new Error(
@@ -140,33 +138,50 @@ export async function verifyOperation(
     );
   await requireEvidence(card, operation.evidence, holder);
   for (const attempt of plan.attempts) {
-    const listed = await herdr(
-      attempt.host,
-      ["worktree", "list", "--cwd", attempt.clone],
-      !attempt.live,
-    );
-    const tree = worktreeOf(listed, attempt.session);
-    const path = field(tree, "path");
-    if (tree === undefined || path === undefined)
-      throw new Error(
-        `c-${String(card)} was not closed. ${attempt.session} has no registered worktree on ${attempt.host} to check, so nothing was removed. Close with landed=false and a reason to archive it as Dropped`,
-      );
-    stopped.set(attempt.session, await stop(attempt, tree, path));
-    await requireClean(card, attempt, path);
+    const found = await stopped(card, attempt, stop);
+    if (found === undefined) continue;
+    await requireClean(card, attempt, found.path);
+    placed.set(attempt.session, found);
   }
   await requireEvidence(card, operation.evidence, holder);
-  if (!sameBinding(plan, await replan()))
-    throw new Error(
-      `c-${String(card)} was not closed. The worker's handoff or the card's attempts changed while close was checking them, so nothing was removed. Close it again`,
-    );
-  return stopped;
+  await verify();
+  return placed;
 }
 
-export async function retireOperation(
-  attempt: Attempt,
-  path: string,
-  branches: readonly string[],
+export async function requireArchivable(
+  card: number,
+  plan: Plan,
+  stop: StopWriters,
 ): Promise<void> {
+  for (const attempt of plan.attempts) {
+    let found;
+    try {
+      found = await stopped(card, attempt, stop);
+    } catch (error) {
+      if (attempt.live || !(error instanceof HostUnreachable)) throw error;
+      continue;
+    }
+    if (found === undefined) continue;
+    const out = `${attempt.clone}.archive/${attempt.session}.tar.zst`;
+    const said = await onHelper(attempt.host, [
+      "sh",
+      "-c",
+      ARCHIVE_COVERS_SCRIPT,
+      "covers",
+      found.path,
+      attempt.base,
+      attempt.branch,
+      out,
+    ]);
+    const blocks = said.split("\n").filter((line) => line !== "");
+    if (blocks.length > 0)
+      throw new Error(
+        `c-${String(card)} was not dropped. ${attempt.session} on ${attempt.host} has ${blocks.join("; ")}. Nothing was removed: have the work moved or saved by hand, then close again`,
+      );
+  }
+}
+
+async function retireOne(attempt: Attempt, path: string): Promise<void> {
   await onHelper(attempt.host, [
     "sh",
     "-c",
@@ -175,17 +190,50 @@ export async function retireOperation(
     path,
     attempt.clone,
     attempt.base,
-    ...branches,
+    attempt.branch,
   ]);
 }
 
-export function retainedEvidence(
+const RETAINED_SCRIPT = '[ -f "$1" ] && [ ! -L "$1" ] && [ -r "$1" ]';
+
+export async function retainedEvidence(
   card: number,
-  plan: OpResult<"close.begin">,
-): string {
+  plan: Plan,
+  closed: Readonly<Record<string, string>>,
+): Promise<string> {
   const { operation } = plan;
   const host = plan.attempts.find((each) => each.session === operation?.session)?.host;
   const scope = operation === undefined ? undefined : evidenceScope(card, operation.evidence);
   if (operation === undefined || host === undefined || scope === undefined) return "";
-  return ` Evidence kept at ${host}:${scope.folder}/${scope.rel}.`;
+  const folder = closed[host];
+  const unconfirmed = " Evidence retention not confirmed.";
+  if (folder === undefined) return unconfirmed;
+  const kept = `${folder}/${scope.rel}`;
+  try {
+    await onHelper(host, ["sh", "-c", RETAINED_SCRIPT, "retained", kept]);
+    return ` Evidence kept at ${host}:${kept}.`;
+  } catch {
+    return unconfirmed;
+  }
+}
+
+export async function retireOperationAttempts(
+  link: Link,
+  id: number,
+  plan: Plan,
+  stop: StopWriters,
+  done: { stopped: string[]; spared: string[]; retiredOn: Set<string> },
+): Promise<void> {
+  const handoff = plan.operation?.handoff ?? 0;
+  const placed = await verifyOperation(id, plan, stop, () =>
+    link.call("close.verify", { card: id, handoff }),
+  );
+  for (const attempt of plan.attempts) {
+    done.retiredOn.add(attempt.host);
+    const found = placed.get(attempt.session);
+    if (found === undefined) continue;
+    await retireOne(attempt, found.path);
+    done.stopped.push(...found.processes.stopped);
+    done.spared.push(...found.processes.spared);
+  }
 }

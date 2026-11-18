@@ -39,6 +39,7 @@ import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
 import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
+import { checkReceipt, observeRetirement, recordReceipt } from "./operation-close.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { listSchedules, removeSchedule, setSchedule } from "./schedules.ts";
@@ -181,6 +182,10 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "close.begin": (db, session, raw, _timing, _note, closeCheck) =>
     closeBegin(db, session, raw, closeCheck),
+  "close.verify": (db, session, raw, _timing, _note, closeCheck) => ({
+    value: recordReceipt(db, session, raw, closeCheck?.receipt),
+    notify: [],
+  }),
   "close.finish": (db, session, raw, _timing, _note, closeCheck) =>
     closeFinish(db, session, raw, closeCheck),
   hold,
@@ -379,7 +384,7 @@ const HANDLERS: Record<OpName, Handler> = {
       card: card.id,
       author: `worker:${session.id}`,
       kind: "report",
-      body: args.text,
+      body: reportBody(card, args),
       fields,
     };
     const asked =
@@ -394,6 +399,12 @@ const HANDLERS: Record<OpName, Handler> = {
     return { value, notify: [...to, ...withdrawn, ...merge] };
   },
 };
+
+function reportBody(card: Card, args: OpArgs<"report">): string {
+  return card.delivery === "ops" && args.evidence !== undefined
+    ? args.text.replaceAll(args.evidence, "the evidence report")
+    : args.text;
+}
 
 function openCardWithPr(db: DatabaseSync, id: number, pr: string | undefined): Card {
   requireOpen(db, getCard(db, id));
@@ -435,6 +446,23 @@ export async function performOp(
   return keepingRefusals(db, () => performStored(db, session, op, args, timing, hosts));
 }
 
+async function closeChecks(
+  db: DatabaseSync,
+  session: Session,
+  op: OpName,
+  args: unknown,
+  hosts: Hosts,
+): Promise<CloseCheck | undefined> {
+  if (op === "close.verify")
+    return { merged: false, receipt: await checkReceipt(db, hosts, session, args) };
+  if (op === "close.finish")
+    return {
+      ...(await reverifyAtClose(db, hosts, op, args)),
+      observed: await observeRetirement(db, hosts, session, args),
+    };
+  return op === "close.begin" ? reverifyAtClose(db, hosts, op, args) : undefined;
+}
+
 async function performStored(
   db: DatabaseSync,
   session: Session,
@@ -451,10 +479,7 @@ async function performStored(
     op === "report" && session.card !== null
       ? await emptyLocalBranch(db, hosts, session.card, report?.args ?? args)
       : undefined;
-  const closeCheck =
-    op === "close.begin" || op === "close.finish"
-      ? await reverifyAtClose(db, hosts, op, args)
-      : undefined;
+  const closeCheck = await closeChecks(db, session, op, args, hosts);
   return transaction(db, () => {
     const result = HANDLERS[op](
       db,

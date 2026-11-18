@@ -26,6 +26,7 @@ import {
   h,
   hostScratch,
   lab,
+  originCalls,
   report,
   scratch,
   start,
@@ -57,7 +58,7 @@ test("ops runs offline, hands evidence over in its own field, closes clean, and 
   }, "mate");
   h.onModel((turns) => {
     seen.push(toolResults(turns).at(-1) ?? "");
-    return { tool: "close", args: { card: 1, summary: "Operation verified" } };
+    return { tool: "close", args: { card: 1, summary: `Operation verified: ${report}` } };
   }, "mate");
   h.onModel((turns) => {
     seen.push(toolResults(turns).at(-1) ?? "");
@@ -71,21 +72,16 @@ test("ops runs offline, hands evidence over in its own field, closes clean, and 
   await finished(6);
   const [open, closed, after] = seen;
   assert.match(open ?? "", /delivery: ops/);
-  assert.match(open ?? "", new RegExp(`^\\s*report: "?${report}"?`, "m"));
-  assert.doesNotMatch(open ?? "", /retained/);
+  assert.match(open ?? "", /^\s*evidence: "?reported; close verifies/m);
+  assert.doesNotMatch(open ?? "", /^\s*report: |operation\.md/m);
   const retained = closedFolders();
   assert.equal(retained.length, 1);
-  assert.equal(
-    closed,
-    `c-1 is done. Evidence kept at local:${join(hostScratch(), retained[0] ?? "", "operation.md")}.`,
-  );
   const exact = join(hostScratch(), retained[0] ?? "", "operation.md");
-  assert.match(
-    after ?? "",
-    new RegExp(`retained: "?local:${exact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"?`),
-  );
-  assert.doesNotMatch(after ?? "", /\*/);
-  assert.doesNotMatch(JSON.stringify(await cardd.thread(1)), /scratch/);
+  assert.equal(closed, `c-1 is done. Evidence kept at local:${exact}.`);
+  assert.doesNotMatch(after ?? "", /retained|operation\.md|scratch/);
+  const web = JSON.stringify(await cardd.thread(1));
+  assert.doesNotMatch(web, /scratch|operationReceipt|operation\.md/);
+  assert.equal(originCalls(), "");
   assert.match(
     readFileSync(join(hostScratch(), retained[0] ?? "", "operation.md"), "utf8"),
     /Observed state: ready/,
@@ -158,28 +154,25 @@ test("ops refuses a done handoff without evidence, with evidence outside its car
 const UNREADABLE = [
   {
     name: "in the scratch folder of another host root",
-    verified: false,
     remove: false,
     link: false,
     place: (): string => join(scratch.parent, "scratch", "c-1", "operation.md"),
   },
   {
     name: "a symlink to a private file outside the scratch folder",
-    verified: false,
     remove: false,
     link: true,
     place: (): string => report,
   },
   {
     name: "gone before close",
-    verified: true,
     remove: true,
     link: false,
     place: (): string => report,
   },
 ];
 
-for (const { name, place, remove, link, verified } of UNREADABLE) {
+for (const { name, place, remove, link } of UNREADABLE) {
   test(`ops refuses Done, removes nothing, and names no path when the evidence is ${name}`, async () => {
     dispatchOperation();
     const seen: string[] = [];
@@ -206,12 +199,8 @@ for (const { name, place, remove, link, verified } of UNREADABLE) {
     await start();
     const refused = toolResults(await finished(5)).at(-1) ?? "";
     const [board = ""] = seen;
-    if (verified) assert.match(board, /^\s*report: /m);
-    else {
-      assert.doesNotMatch(board, /^\s*report: /m);
-      assert.match(board, /reported but not verified: do not read it/);
-      assert.doesNotMatch(board, /private/);
-    }
+    assert.match(board, /^\s*evidence: "?reported; close verifies/m);
+    assert.doesNotMatch(board, /^\s*report: |operation\.md|private/m);
     assert.match(refused, /cannot close Done: its ops evidence is not a regular report file/);
     assert.doesNotMatch(refused, /operation\.md|private|failed|ENOENT/);
     assert.equal((await cardd.thread(1)).card.status, "with-mate");
@@ -265,8 +254,8 @@ test("a steer after done cancels the handoff for the board and for close alike",
   await start();
   await finished(7);
   const [before, after, refused] = seen;
-  assert.match(before ?? "", new RegExp(`report: "?${report}"?`));
-  assert.doesNotMatch(after ?? "", /report: /);
+  assert.match(before ?? "", /^\s*evidence: "?reported; close verifies/m);
+  assert.doesNotMatch(after ?? "", /evidence: /);
   assert.match(refused ?? "", /the worker has not reported done/);
   assert.notEqual((await cardd.thread(1)).card.status, "done");
   assert.equal(existsSync(tree), true);

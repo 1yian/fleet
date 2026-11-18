@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { tempDir } from "../support/run-root.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -191,4 +195,123 @@ test("the web thread shows that ops evidence was reported, never its path", asyn
   const handoff = thread.entries.find((entry) => entry.fields["evidence"] !== undefined);
   assert.equal(handoff?.fields["evidence"], true);
   assert.doesNotMatch(JSON.stringify(thread), /scratch/);
+});
+
+function localRepo(name: string): string {
+  const repo = join(tempDir("ops-repo-"), name);
+  mkdirSync(repo);
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", repo, ...args], {
+      encoding: "utf8",
+    });
+  git("init", "-q", "-b", "main");
+  git("commit", "-q", "--allow-empty", "-m", "init");
+  fleet.cardd.addProject(name, { local: repo });
+  return repo;
+}
+
+const gitIn = (repo: string, ...args: string[]): string =>
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", repo, ...args], {
+    encoding: "utf8",
+  }).trim();
+
+function addTree(repo: string, session: string): string {
+  const tree = `${repo}.worktrees/${session}`;
+  gitIn(repo, "worktree", "add", "-q", "-b", session, tree, "main");
+  return tree;
+}
+
+const finishArgs = (card: number): Record<string, unknown> => ({
+  card,
+  mode: "done",
+  text: "Done.",
+  archives: [],
+  left: [],
+});
+
+async function handedOff(project: string): Promise<{
+  card: number;
+  session: string;
+  worker: Session;
+  repo: string;
+  tree: string;
+  handoff: number;
+}> {
+  const repo = localRepo(project);
+  const { card, session, worker } = await operationCard(project, "local");
+  const tree = addTree(repo, session);
+  await worker.call("report", { status: "done", text: "finished", evidence: evidenceOf(card) });
+  const plan = check(OPS["close.begin"].result, await fleet.main.call("close.begin", { card }));
+  return { card, session, worker, repo, tree, handoff: plan.operation?.handoff ?? 0 };
+}
+
+test("a direct finish with no receipt is refused, and a verified then retired attempt closes Done", async () => {
+  const { card, session, repo, tree, handoff } = await handedOff("shop");
+  await assert.rejects(
+    fleet.main.call("close.finish", finishArgs(card)),
+    /has no verified receipt for the current handoff and observed retirement/,
+  );
+  const verified = await fleet.main.call("close.verify", { card, handoff });
+  assert.ok(typeof verified === "object" && verified !== null);
+  await assert.rejects(
+    fleet.main.call("close.finish", finishArgs(card)),
+    /has no verified receipt for the current handoff and observed retirement/,
+  );
+  gitIn(repo, "worktree", "remove", tree);
+  gitIn(repo, "branch", "-D", session);
+  await fleet.main.call("close.finish", finishArgs(card));
+  const thread = await fleet.cardd.thread(card);
+  assert.equal(thread.card.status, "done");
+  assert.doesNotMatch(JSON.stringify(thread), /operationReceipt/);
+});
+
+test("a missing tree with no receipt, a stale handoff, dirt and a moved clone each refuse the receipt or the finish", async () => {
+  const gone = await handedOff("depot");
+  gitIn(gone.repo, "worktree", "remove", gone.tree);
+  await assert.rejects(
+    fleet.main.call("close.verify", { card: gone.card, handoff: gone.handoff }),
+    /could not be verified clean or already retired, so nothing was removed/,
+  );
+
+  const stale = await handedOff("annex");
+  await assert.rejects(
+    fleet.main.call("close.verify", { card: stale.card, handoff: stale.handoff - 1 }),
+    /handoff changed/,
+  );
+  await fleet.main.call("close.verify", { card: stale.card, handoff: stale.handoff });
+  await stale.worker.call("report", {
+    status: "done",
+    text: "finished again",
+    evidence: evidenceOf(stale.card),
+  });
+  gitIn(stale.repo, "worktree", "remove", stale.tree);
+  gitIn(stale.repo, "branch", "-D", stale.session);
+  await assert.rejects(
+    fleet.main.call("close.finish", finishArgs(stale.card)),
+    /has no verified receipt for the current handoff/,
+  );
+
+  const dirty = await handedOff("yard");
+  writeFileSync(join(dirty.tree, "late.txt"), "late\n");
+  await assert.rejects(
+    fleet.main.call("close.verify", { card: dirty.card, handoff: dirty.handoff }),
+    /could not be verified clean or already retired/,
+  );
+  mkdirSync(join(dirty.tree, "state"));
+  gitIn(dirty.tree, "checkout", "-q", "-b", "other-work");
+  execFileSync("rm", [join(dirty.tree, "late.txt")]);
+  await assert.rejects(
+    fleet.main.call("close.verify", { card: dirty.card, handoff: dirty.handoff }),
+    /could not be verified clean or already retired/,
+  );
+
+  const moved = await handedOff("lot");
+  await fleet.main.call("close.verify", { card: moved.card, handoff: moved.handoff });
+  gitIn(moved.repo, "worktree", "remove", moved.tree);
+  gitIn(moved.repo, "branch", "-D", moved.session);
+  fleet.cardd.moveClone("lot", "local", `${moved.repo}-elsewhere`);
+  await assert.rejects(
+    fleet.main.call("close.finish", finishArgs(moved.card)),
+    /has no verified receipt for the current handoff and observed retirement/,
+  );
 });

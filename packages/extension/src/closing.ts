@@ -8,8 +8,8 @@ import type { Link } from "./link.ts";
 import {
   describe,
   retainedEvidence,
-  retireOperation,
-  verifyOperation,
+  requireArchivable,
+  retireOperationAttempts,
   type Attempt,
   type Processes,
 } from "./close-operation.ts";
@@ -190,16 +190,20 @@ interface Retired {
 function processesOf(session: string, out: string): Processes {
   const stopped: string[] = [];
   const spared: string[] = [];
+  const alive: string[] = [];
   for (const line of out.split("\n").filter((each) => each !== "")) {
     const [pid = "", how = "", ...command] = line.split("\t");
     const named = `${session} pid ${pid} (${command.join(" ").trim()})`;
     if (how === "ADOPTED") spared.push(named);
-    else
+    else if (how === "ALIVE") {
+      alive.push(named);
+      stopped.push(`${named} still running`);
+    } else
       stopped.push(
         `${named} ${how === "TERM" ? "stopped by TERM" : how === "KILL" ? "needed KILL" : "still running"}`,
       );
   }
-  return { stopped, spared };
+  return { stopped, spared, alive };
 }
 
 async function stopWriters(
@@ -207,7 +211,7 @@ async function stopWriters(
   tree: Record<string, unknown> | undefined,
   path: string,
 ): Promise<Processes> {
-  if (tree === undefined) return { stopped: [], spared: [] };
+  if (tree === undefined) return { stopped: [], spared: [], alive: [] };
   const { host, session } = attempt;
   const workspace = field(tree, "open_workspace_id");
   if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
@@ -215,7 +219,7 @@ async function stopWriters(
   return processesOf(session, found + (await releaseAll(host, path)));
 }
 
-async function retire(attempt: Attempt, verified: Processes | undefined): Promise<Retired> {
+async function retire(attempt: Attempt): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
@@ -223,11 +227,6 @@ async function retire(attempt: Attempt, verified: Processes | undefined): Promis
   const own = field(tree, "branch");
   const drop = own === undefined || own === branch ? [branch] : [branch, own];
   const path = field(tree, "path") ?? "";
-  if (verified !== undefined) {
-    if (path === "") throw new Error(`${session} has no registered worktree on ${host} to retire`);
-    await retireOperation(attempt, path, drop);
-    return { archive: null, ...verified };
-  }
   const processes = await stopWriters(attempt, tree, path);
   if (tree !== undefined) {
     await onHelper(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
@@ -341,9 +340,9 @@ interface Retirement {
 }
 
 async function retireAll(
+  link: Link,
   id: number,
   plan: OpResult<"close.begin">,
-  replan: () => Promise<OpResult<"close.begin">>,
 ): Promise<Retirement> {
   const done: Retirement = {
     archives: [],
@@ -351,17 +350,20 @@ async function retireAll(
     spared: [],
     left: [],
   };
-  const verified =
-    plan.operation === undefined ? undefined : await verifyOperation(id, plan, stopWriters, replan);
+  if (plan.operation !== undefined) {
+    await retireOperationAttempts(link, id, plan, stopWriters, done);
+    return done;
+  }
+  if (plan.ops === true) await requireArchivable(id, plan, stopWriters);
   for (const attempt of plan.attempts) {
     try {
-      const retired = await retire(attempt, verified?.get(attempt.session));
+      const retired = await retire(attempt);
+      done.retiredOn.add(attempt.host);
       if (retired.archive !== null) done.archives.push(`${attempt.host}:${retired.archive}`);
       done.stopped.push(...retired.stopped);
       done.spared.push(...retired.spared);
     } catch (error) {
-      if (attempt.live || verified !== undefined || !(error instanceof HostUnreachable))
-        throw error;
+      if (attempt.live || !(error instanceof HostUnreachable)) throw error;
       done.left.push({ session: attempt.session, host: attempt.host, reason: error.message });
     }
   }
@@ -377,9 +379,7 @@ async function teardown(
   const moved = plan.land ? await landLocally(id, plan) : "";
   const warning = await unlandedWarning(id, plan, confirm === true);
   if (warning !== undefined) return warning;
-  const { archives, stopped, spared, left } = await retireAll(id, plan, () =>
-    planOf(link, request),
-  );
+  const { archives, stopped, spared, left, retiredOn } = await retireAll(link, id, plan);
   const finish = {
     card: id,
     mode: plan.mode,
@@ -394,8 +394,8 @@ async function teardown(
     plan.refresh.filter((each) => !hostsJustUnreachable.has(each.host)),
   );
   const landing = moved === "" ? "" : ` ${moved}`;
-  const evidence = retainedEvidence(id, plan);
-  return `c-${String(card.id)} is ${card.status}.${landing}${evidence}${outcome(archives, left, found, { stopped, spared })}`;
+  const evidence = await retainedEvidence(id, plan, scratch.closed);
+  return `c-${String(card.id)} is ${card.status}.${landing}${evidence}${outcome(archives, left, found, { stopped, spared, scratch })}`;
 }
 
 function outcome(

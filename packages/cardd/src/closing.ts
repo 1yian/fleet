@@ -7,6 +7,7 @@ import { closeCardIncidents } from "./incident-lifecycle.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import { nextLine, requireNext, type NextStep } from "./next-step.ts";
+import { requireRetired, type Observed, type Receipt } from "./operation-close.ts";
 import {
   addEntry,
   cardEntries,
@@ -21,6 +22,8 @@ import {
 export interface CloseCheck {
   readonly merged: boolean;
   readonly unknown?: string;
+  readonly observed?: Observed | undefined;
+  readonly receipt?: Receipt | undefined;
 }
 
 interface Done {
@@ -152,6 +155,7 @@ export function closeBegin(
       mode,
       verify,
       ...(operation === undefined ? {} : { operation }),
+      ...(card.delivery === "ops" ? { ops: true } : {}),
       land,
       attempts,
       refresh: shipCardClonesToRefresh(db, card),
@@ -182,12 +186,17 @@ export function closeFinish(
   closeCheck?: CloseCheck,
 ): Done {
   const args = check(OPS["close.finish"].args, raw);
-  const { card, next } = closable(
+  const { card, next, operation } = closable(
     db,
     session,
     { card: args.card, landed: args.mode === "done", next: args.next },
     closeCheck,
   );
+  if (operation !== undefined) requireRetired(db, card, operation.handoff, closeCheck?.observed);
+  const text =
+    operation === undefined
+      ? args.text
+      : args.text.replaceAll(operation.evidence, "the evidence report");
   const now = Date.now();
   closeCardIncidents(db, card.id, now);
   endLiveAttempts(db, card.id, now);
@@ -207,7 +216,7 @@ export function closeFinish(
       card: card.id,
       author: `mate:${session.lane}`,
       kind: "cleanup",
-      body: next === undefined ? args.text : `${nextLine(next)}\n${args.text}`,
+      body: next === undefined ? text : `${nextLine(next)}\n${text}`,
       fields: closed,
     },
     to,
