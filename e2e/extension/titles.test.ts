@@ -300,7 +300,15 @@ test("a second mate that starts in a workspace with the wrong label corrects it,
   await until("the workspace to read 2ndmate-cleo", labels, (now) => {
     return now.get(workspace) === "2ndmate-cleo";
   });
-  await h.waitFor((event) => event["type"] === "fleet_connected", "the mate Pi to join the fleet");
+  await until(
+    "cleo to run",
+    () => Promise.resolve(fleet(["status"])),
+    (out) => out === "cleo: running\n",
+  );
+  assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
+  await until("the workspace to still read 2ndmate-cleo", labels, (now) => {
+    return now.get(workspace) === "2ndmate-cleo";
+  });
   const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
   assert.equal(tabs.length, 1, JSON.stringify(tabs));
   const panes = await lab.run(["pane", "list", "--workspace", workspace]);
@@ -308,11 +316,5 @@ test("a second mate that starts in a workspace with the wrong label corrects it,
     records(panes["panes"]).map((each) => each["pane_id"]),
     [pane],
   );
-  await until(
-    "cleo to run",
-    () => Promise.resolve(fleet(["status"])),
-    (out) => out === "cleo: running\n",
-  );
-  assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
   assert.deepEqual([...(await labels()).values()], ["2ndmate-cleo"]);
 });
