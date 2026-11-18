@@ -66,6 +66,16 @@ interface Tally {
   pausedUntil: number | null;
 }
 
+function reviewOf(entry: Entry, open: Hold | undefined): Pick<Hold, "review" | "reviewRequests"> {
+  const review = entry.fields["review"];
+  const requests = entry.fields["reviewRequests"];
+  const carried = typeof review === "string" ? review : open?.review;
+  return {
+    review: review === false ? undefined : carried,
+    reviewRequests: Array.isArray(requests) ? parseCards(requests) : open?.reviewRequests,
+  };
+}
+
 function holdFrom(tally: Tally, entry: Entry): void {
   const merge = entry.fields["merge"] === true;
   const until = entry.fields["until"];
@@ -90,10 +100,7 @@ function holdFrom(tally: Tally, entry: Entry): void {
     remaining: parseCards(entry.fields["remaining"]),
     author: entry.author,
     entry: entry.id,
-    review: entry.fields["review"] === false ? undefined : (text(entry, "review") ?? open?.review),
-    reviewRequests: Array.isArray(entry.fields["reviewRequests"])
-      ? parseCards(entry.fields["reviewRequests"])
-      : open?.reviewRequests,
+    ...reviewOf(entry, open),
   };
   if (open === undefined) {
     const opened = { occurrence: ++tally.occurrences, openedAt: entry.createdAt };
@@ -254,10 +261,7 @@ const ENTRY_EFFECTS: Partial<Record<string, (basis: Basis, tally: Tally, entry: 
     REPORT_EFFECTS[text(entry, "status") ?? ""]?.(basis, tally, entry, text(entry, "key") ?? "");
   },
   "review-feedback": (_basis, tally, entry) => {
-    if (entry.fields["source"] === "lavish" && tally.hold?.entry === entry.fields["round"]) {
-      for (const key of textsOf(entry.fields["keys"])) answerKey(tally, key);
-      resume(tally);
-    } else if (answerKey(tally, text(entry, "resolves") ?? "")) resume(tally);
+    if (answerKey(tally, text(entry, "resolves") ?? "")) resume(tally);
   },
   cleanup: (_basis, tally, entry) => {
     tally.hold = undefined;

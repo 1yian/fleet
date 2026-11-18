@@ -8,9 +8,7 @@ export function requireCaptainWords(db: DatabaseSync, words: string, source: str
   const said =
     squashed !== "" &&
     db
-      .prepare(
-        "SELECT body FROM entries WHERE author = 'captain' AND NOT (kind = 'review-feedback' AND coalesce(json_extract(fields, '$.source'), '') = 'lavish')",
-      )
+      .prepare("SELECT body FROM entries WHERE author = 'captain'")
       .all()
       .some((row) => squash(String(row["body"])).includes(squashed));
   if (!said) {

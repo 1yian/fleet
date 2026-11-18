@@ -19,29 +19,35 @@ const Annotations = Type.Array(
 );
 
 function draftFits(annotations: unknown[], max: number): boolean {
+  const limits: Record<string, number> = {
+    prompt: 4000,
+    selector: 2000,
+    tag: 100,
+    uid: 200,
+    text: 1000,
+  };
+  const shape = (note: object): boolean =>
+    Object.entries(limits).every(([key, limit]) => {
+      const value: unknown = Reflect.get(note, key);
+      return typeof value === "string" && value.length <= limit;
+    });
+  const target = (note: object): boolean => {
+    const value: unknown = Reflect.get(note, "target");
+    return (
+      value === undefined || (value !== null && typeof value === "object" && !Array.isArray(value))
+    );
+  };
+  const one = (note: unknown): boolean =>
+    note !== null &&
+    typeof note === "object" &&
+    shape(note) &&
+    target(note) &&
+    /\S/.test(String(Reflect.get(note, "prompt"))) &&
+    Reflect.get(note, "tag") !== "layout-warnings" &&
+    JSON.stringify(note).length <= 8000;
   return (
     annotations.length <= 30 &&
-    annotations.every((note) => {
-      if (note === null || typeof note !== "object") return false;
-      for (const [key, limit] of Object.entries({
-        prompt: 4000,
-        selector: 2000,
-        tag: 100,
-        uid: 200,
-        text: 1000,
-      })) {
-        const value: unknown = Reflect.get(note, key);
-        if (typeof value !== "string" || value.length > limit) return false;
-      }
-      const target: unknown = Reflect.get(note, "target");
-      return (
-        /\S/.test(String(Reflect.get(note, "prompt"))) &&
-        Reflect.get(note, "tag") !== "layout-warnings" &&
-        (target === undefined ||
-          (target !== null && typeof target === "object" && !Array.isArray(target))) &&
-        JSON.stringify(note).length <= 8000
-      );
-    }) &&
+    annotations.every(one) &&
     new URLSearchParams({ annotations: JSON.stringify(annotations) }).toString().length <= max
   );
 }
@@ -121,90 +127,108 @@ const queue = document.querySelector('#queue');
 const notice = document.querySelector('#notice');
 const field = document.querySelector('#annotations');
 const form = document.querySelector('form');
-const draftFits = ${draftFits.toString()};
-let sending = false;
+const feedback = form.elements.words;
 const send = document.querySelector('#send');
+const draftFits = ${draftFits.toString()};
 const drafts = [];
 const rejected = [];
+const late = [];
+let sending = false;
+let ended = false;
 function mode() {
-  frame.contentWindow.postMessage({ type: 'lavish:setAnnotationMode', enabled: annotate.checked }, '*');
+  frame.contentWindow.postMessage({ type: 'lavish:setAnnotationMode', enabled: annotate.checked && !sending }, '*');
+}
+function freeze(on) {
+  sending = on;
+  feedback.readOnly = on;
+  annotate.disabled = on;
+  frame.inert = on;
+  mode();
+  update();
+}
+function item(text, label, drop) {
+  const row = document.createElement('li');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.disabled = sending;
+  button.onclick = drop;
+  row.append(text + ' ', button);
+  return row;
 }
 function update() {
   field.value = JSON.stringify(drafts.map(({ prompt }) => prompt));
-  send.disabled = sending || rejected.length > 0;
-  queue.replaceChildren(...drafts.map(({ prompt }, index) => {
-    const item = document.createElement('li');
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.textContent = 'Remove';
-    remove.onclick = () => { drafts.splice(index, 1); update(); };
-    item.append((prompt.text ? prompt.text + ': ' : '') + prompt.prompt + ' ', remove);
-    return item;
-  }), ...rejected.map((text, index) => {
-    const item = document.createElement('li');
-    const discard = document.createElement('button');
-    discard.type = 'button';
-    discard.textContent = 'Discard rejected annotation';
-    discard.onclick = () => { rejected.splice(index, 1); update(); };
-    item.append('Cannot send this annotation: ' + text + ' ', discard);
-    return item;
-  }));
+  send.disabled = sending || ended || rejected.length > 0;
+  queue.replaceChildren(
+    ...drafts.map(({ prompt }, index) =>
+      item((prompt.text ? prompt.text + ': ' : '') + prompt.prompt, 'Remove', () => { drafts.splice(index, 1); update(); })),
+    ...rejected.map((text, index) =>
+      item('Cannot send this annotation: ' + text, 'Discard rejected annotation', () => { rejected.splice(index, 1); update(); })),
+  );
+}
+function accept(prompt) {
+  try {
+    const { prompt: words, selector, tag, uid, text, target, attachments, _lavishQueueKey: key } = prompt;
+    const note = { prompt: words, selector, tag, uid, text, ...(target === undefined ? {} : { target }) };
+    const at = typeof key === 'string' && key ? drafts.findIndex((draft) => draft.key === key) : -1;
+    const next = drafts.map((draft) => draft.prompt);
+    next.splice(at < 0 ? next.length : at, at < 0 ? 0 : 1, note);
+    if (attachments?.length || !draftFits(next, ${String(ANNOTATION_LIMIT)})) throw new Error();
+    drafts.splice(at < 0 ? drafts.length : at, at < 0 ? 0 : 1, { key, prompt: note });
+    notice.textContent = 'Annotation queued. Confirm the feedback below.';
+  } catch {
+    rejected.push(typeof prompt?.prompt === 'string' ? prompt.prompt : 'Invalid annotation');
+    notice.textContent = 'Discard the rejected draft or answer on the board.';
+  }
+  update();
 }
 annotate.addEventListener('change', mode);
 frame.addEventListener('load', mode);
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (sending || rejected.length) return;
+  if (sending || ended || rejected.length) return;
   const body = new URLSearchParams(new FormData(form));
-  if (body.toString().length > ${REVIEW_BODY_LIMIT}) {
+  if (body.toString().length > ${String(REVIEW_BODY_LIMIT)}) {
     notice.textContent = 'Feedback is too large. Remove a draft or shorten your feedback.';
     return;
   }
-  sending = true;
-  send.disabled = true;
+  freeze(true);
   try {
     const result = await fetch(location.href, { method: 'POST', body, redirect: 'error' });
-    if (result.status === 204) { location.assign('/'); return; }
+    if (result.status === 204) {
+      ended = true;
+      if (!late.length) { location.assign('/'); return; }
+      notice.textContent = 'The review ended. These annotations arrived while sending and were not delivered; copy them before leaving.';
+      rejected.push(...late.splice(0).map((each) => String(each?.prompt ?? 'Invalid annotation')));
+      freeze(false);
+      return;
+    }
     const refusal = await result.json();
     notice.textContent = refusal.error || 'Could not send review feedback.';
   } catch {
     notice.textContent = 'Could not send review feedback. Your draft is still here.';
   }
-  sending = false;
-  update();
+  freeze(false);
+  for (const prompt of late.splice(0)) accept(prompt);
 });
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (event.source !== frame.contentWindow || event.origin !== 'null' ||
       !msg || msg.artifact_load_token !== frame.dataset.token) return;
-  if (msg.type === 'lavish:toggleAnnotationMode') {
+  if (msg.type === 'lavish:toggleAnnotationMode' && !sending) {
     annotate.checked = !annotate.checked;
     mode();
   }
   if (msg.type === 'lavish:uploadAttachment') {
     const error = 'Images are only supported in direct Lavish. Remove the image to queue here.';
-    rejected.push(error);
-    update();
+    if (!sending) { rejected.push(error); update(); }
     event.source.postMessage({ type: 'lavish:attachmentResult', nonce: msg.nonce,
       localId: msg.localId, ok: false, error }, '*');
   }
   if (msg.type === 'lavish:sendQueuedPrompts') notice.textContent = 'Confirm the queue with Send & End below.';
   if (msg.type !== 'lavish:queuePrompt') return;
-  try {
-    const { prompt, selector, tag, uid, text, target, attachments, _lavishQueueKey: key } = msg.prompt;
-    const note = { prompt, selector, tag, uid, text, ...(target === undefined ? {} : { target }) };
-    const at = typeof key === 'string' && key ? drafts.findIndex((draft) => draft.key === key) : -1;
-    const next = drafts.map((draft) => draft.prompt);
-    next.splice(at < 0 ? next.length : at, at < 0 ? 0 : 1, note);
-    if (attachments?.length || !draftFits(next, ${ANNOTATION_LIMIT})) throw new Error();
-    drafts.splice(at < 0 ? drafts.length : at, at < 0 ? 0 : 1, { key, prompt: note });
-    notice.textContent = 'Annotation queued. Confirm the feedback below.';
-    update();
-  } catch {
-    rejected.push(typeof msg.prompt?.prompt === 'string' ? msg.prompt.prompt : 'Invalid annotation');
-    notice.textContent = 'Discard the rejected draft or answer on the board.';
-    update();
-  }
+  if (sending) late.push(msg.prompt);
+  else accept(msg.prompt);
 });
 update();
 frame.src = frame.dataset.source;
