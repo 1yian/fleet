@@ -18,24 +18,18 @@ function evidence(name: string, turns: readonly Turn[]): void {
   writeFileSync(join(dir, `${name}.json`), JSON.stringify(turns, null, 2));
 }
 
-async function workerCall(h: Harness, guided: boolean): Promise<Turn[]> {
+async function workerCall(h: Harness): Promise<Turn[]> {
   for (let call = 0; ; call += 1) {
     const turns = await h.waitForCall(call, "mate", 90_000);
-    if (
-      systemOf(turns).includes("# Worker role contract") &&
-      (!guided || turns.some((turn) => turn.role === "toolResult"))
-    )
-      return turns;
+    if (systemOf(turns).includes("# Worker role contract")) return turns;
   }
 }
 
-test("mates load runtime instructions while a dispatched fleet contributor follows the worker-only guide", async (t) => {
+test("mates load AGENTS.md as their contract while a dispatched fleet worker gets CONTRIBUTING.md in its place", async (t) => {
   const scratch = new Scratch();
   const cardd = await Cardd.start();
   const h = await Harness.start();
-  const args = mateArgs(h).filter(
-    (arg) => !["--no-context-files", "--no-builtin-tools"].includes(arg),
-  );
+  const args = mateArgs(h).filter((arg) => arg !== "--no-builtin-tools");
   const bin = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
   const lab = await HerdrLab.start({
     ...h.piEnv("mate"),
@@ -81,34 +75,33 @@ test("mates load runtime instructions while a dispatched fleet contributor follo
         dispatched = true;
         return dispatch;
       }
-      if (turns.some((turn) => turn.role === "toolResult")) {
-        evidence("worker-with-guide", turns);
-        return { text: "Contributor instructions received." };
-      }
-      evidence("worker-first", turns);
-      if (!systemOf(turns).includes("CONTRIBUTING.md")) return { text: "No contributor pointer." };
-      return { tool: "read", args: { path: "CONTRIBUTING.md" } };
+      evidence("worker", turns);
+      return { text: "Contributor instructions received." };
     }, "mate");
   const pane = await startMain(lab, scratch, h, false, args);
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   await lab.submit(pane, "Inspect contributor prompt routing.");
   const mate = await h.waitForCall(0, "mate", 90_000);
-  const worker = await workerCall(h, false);
+  const worker = await workerCall(h);
   evidence("mate", mate);
-  assert.match(systemOf(mate), /^# Firstmate$/m);
-  assert.match(systemOf(mate), /Keep the fixture fleet running/);
-  assert.match(systemOf(mate), /Prefer plain reports/);
-  assert.match(systemOf(mate), /Keep this lane focused/);
-  assert.match(systemOf(mate), /Use the isolated lab/);
-  assert.doesNotMatch(systemOf(mate), /npm run check|fleet\/no-comments|Migrations.*append-only/);
-  assert.match(systemOf(worker), /^# Worker role contract$/m);
-  assert.doesNotMatch(systemOf(worker), /^# Firstmate$/m);
-  assert.match(systemOf(worker), /Workers.*CONTRIBUTING\.md/);
-  assert.doesNotMatch(systemOf(worker), /Keep the fixture fleet running|Prefer plain reports/);
-  const guided = await workerCall(h, true);
-  const guide = guided.findLast((turn) => turn.role === "toolResult")?.text ?? "";
-  assert.match(guide, /npm run check/);
-  assert.match(guide, /fleet\/no-comments/);
-  assert.match(guide, /Migrations.*append-only/);
-  assert.match(guide, /Do not test by reading source files for strings/);
+  const mateSystem = systemOf(mate);
+  assert.match(mateSystem, /^# Firstmate$/m);
+  assert.match(mateSystem, /This is the job description of main and every second mate/);
+  assert.ok(
+    mateSystem.indexOf("# Firstmate") < mateSystem.indexOf("Keep the fixture fleet running"),
+  );
+  assert.match(mateSystem, /Prefer plain reports/);
+  assert.match(mateSystem, /Keep this lane focused/);
+  assert.match(mateSystem, /Use the isolated lab/);
+  assert.doesNotMatch(mateSystem, /npm run check|fleet\/no-comments|Migrations.*append-only/);
+  assert.doesNotMatch(mateSystem, /^# Worker role contract$/m);
+  const workerSystem = systemOf(worker);
+  assert.match(workerSystem, /^# Worker role contract$/m);
+  assert.doesNotMatch(workerSystem, /^# Firstmate$/m);
+  assert.doesNotMatch(workerSystem, /This is the job description of main and every second mate/);
+  assert.match(workerSystem, /npm run check/);
+  assert.match(workerSystem, /fleet\/no-comments/);
+  assert.match(workerSystem, /Migrations.*append-only/);
+  assert.match(workerSystem, /Do not test by reading source files for strings/);
+  assert.doesNotMatch(workerSystem, /Keep the fixture fleet running|Prefer plain reports/);
 });

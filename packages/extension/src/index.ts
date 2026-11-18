@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
@@ -37,7 +37,7 @@ import { registerPlan } from "./plan.ts";
 import { processId } from "./process-id.ts";
 import { reportActivity, trackRun } from "./progress.ts";
 import { MUTABLE_TAIL } from "./cache-ttl.ts";
-import { ROLE_PROMPTS } from "./prompts.ts";
+import { WORKER_PROMPT } from "./prompts.ts";
 import { MaintenanceQueue, STALE_RELOAD_FLAG } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
 import { registerRestart } from "./restart.ts";
@@ -146,9 +146,26 @@ function charter(): string {
 
 const mateContract = (): string => charter() + standingRules(HOME());
 
+const MATE_CONTRACT = "# Firstmate\n";
+
+function contributorGuideForWorkers(pi: ExtensionAPI): void {
+  pi.on("before_agent_start", (event) => {
+    const files = event.systemPromptOptions.contextFiles;
+    const at = files.findIndex((file) => file.content.startsWith(MATE_CONTRACT));
+    const found = files[at];
+    if (found === undefined) return undefined;
+    const path = join(dirname(found.path), "CONTRIBUTING.md");
+    files[at] = { path, content: readFileSync(path, "utf8") };
+    return undefined;
+  });
+}
+
 function appendRolePrompt(pi: ExtensionAPI, role: "mate" | "worker"): void {
   pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? MUTABLE_TAIL : ""}`,
+    systemPrompt:
+      role === "mate"
+        ? `${event.systemPrompt}${MUTABLE_TAIL}`
+        : `${event.systemPrompt}\n\n${WORKER_PROMPT}`,
   }));
 }
 
@@ -313,6 +330,7 @@ function start(
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
+  if (role === "worker") contributorGuideForWorkers(pi);
   appendRolePrompt(pi, role);
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);

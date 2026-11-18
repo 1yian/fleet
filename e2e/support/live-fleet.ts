@@ -209,8 +209,11 @@ export class LiveFleet {
 
   landCode(): string {
     let tip = "";
-    for (const role of ["worker", "mate"]) {
-      const file = `packages/extension/prompts/${role}.md`;
+    const contracts = {
+      worker: "packages/extension/prompts/worker.md",
+      mate: "AGENTS.md",
+    };
+    for (const [role, file] of Object.entries(contracts)) {
       const text = `${readFileSync(join(this.here.root, file), "utf8")}\n${NEW_CODE}\n`;
       tip = landOnRemote(this.remote, `${NEW_CODE} ${role}`, file, text);
     }

@@ -4,7 +4,7 @@ Firstmate, rebuilt: cards in one SQLite store (`cardd`), one `fleet` Pi extensio
 
 See [docs/spec.md](docs/spec.md) for the design and [docs/build-plan.md](docs/build-plan.md) for the build order.
 
-Discuss decisions in chat or answer on the board. Ask for a [decision walkthrough](docs/decision-walkthrough.md) to take them one at a time. The [pane](docs/pane.md) shows the board URL, without decision counts or a strip.
+Discuss decisions in chat or answer on the board. The [pane](docs/pane.md) shows the board URL, without decision counts or a strip.
 
 See [how to deliver one outcome in two PRs](docs/multiple-pr-delivery.md).
 

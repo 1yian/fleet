@@ -105,7 +105,7 @@ export const secondMateProfileSkip =
     : "";
 
 export function mateArgs(h: Harness): string[] {
-  const drop = new Set(["--no-extensions", "--no-approve"]);
+  const drop = new Set(["--no-extensions", "--no-approve", "--no-context-files"]);
   return ["--approve", ...h.piArgs().filter((arg) => !drop.has(arg))];
 }
 

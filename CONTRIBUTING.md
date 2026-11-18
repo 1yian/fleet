@@ -1,5 +1,7 @@
 # Contributing to fleet
 
+This repository is Firstmate, rebuilt: `cardd`, the `fleet` Pi extension, and a board. Its `AGENTS.md` is the job description of the mates, which run in checkouts of it. As a worker in this repository, follow your worker role contract and this guide, not `AGENTS.md`.
+
 Read [docs/spec.md](docs/spec.md) for the design and [docs/build-plan.md](docs/build-plan.md) for the build order.
 
 ## Commands
