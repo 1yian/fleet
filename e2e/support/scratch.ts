@@ -23,7 +23,7 @@ export class Scratch {
   private readonly dir: string;
 
   constructor(name = "fleet") {
-    this.dir = tempDir("scratch-");
+    this.dir = tempDir("s-");
     this.root = join(this.dir, name);
     mkdirSync(this.root, { recursive: true });
     const files = git(REPO, "ls-files", "--cached", "--others", "--exclude-standard", "-z")

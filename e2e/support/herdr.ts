@@ -20,18 +20,19 @@ export class HerdrLab {
   private readonly groups = openGroupScope(tempDir("herdr-groups-"));
   private server: ChildProcess | undefined;
   env: Record<string, string> = {};
+  owned: Record<string, string> = {};
   private disarm = (): void => undefined;
 
   static async start(env: Record<string, string>): Promise<HerdrLab> {
     const lab = new HerdrLab();
     writeFileSync(lab.config, "onboarding = false\n");
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
-    lab.env = {
-      ...env,
+    lab.owned = {
       [LAB_GROUPS_ENV]: lab.groups,
       FLEET_E2E_DETACH: OWNED_LAUNCH,
       HERDR_CONFIG_PATH: lab.config,
     };
+    lab.env = { ...env, ...lab.owned };
     guardScope(lab.groups);
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawnGuarded(
@@ -148,7 +149,7 @@ export class HerdrLab {
   async stop(): Promise<void> {
     await this.text(["session", "stop", this.name]).catch(() => "");
     try {
-      const result = await sweepGroups(this.groups, 0);
+      const result = await sweepGroups(this.groups, 5_000);
       if (result.unresolved.length > 0) throw new Error(`could not stop owned Herdr lab ${this.name}`);
     } catch (error) {
       retainRunRoot();
