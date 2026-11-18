@@ -52,12 +52,12 @@ function cardOf(db: DatabaseSync, session: string): number | undefined {
   return typeof row?.["lane"] === "string" ? laneCardOf(db, row["lane"]) : undefined;
 }
 
-const summarized = (db: DatabaseSync, batch: string): boolean =>
+const summarized = (db: DatabaseSync, batch: string, card: number): boolean =>
   db
     .prepare(
-      "SELECT 1 FROM entries WHERE author = 'maintenance' AND json_extract(fields, '$.maintenanceBatch') = ?",
+      "SELECT 1 FROM entries WHERE card = ? AND author = 'maintenance' AND json_extract(fields, '$.maintenanceBatch') = ?",
     )
-    .get(batch) !== undefined;
+    .get(card, batch) !== undefined;
 
 interface Member {
   readonly host: string;
@@ -89,7 +89,7 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
   if (
     card === undefined ||
     members.some((member) => member.state === "pending" || member.state === "reloading") ||
-    summarized(db, batch)
+    summarized(db, batch, card)
   )
     return [];
   const hosts = [...new Set(members.map((member) => member.host))].sort();

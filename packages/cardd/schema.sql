@@ -9,6 +9,8 @@ CREATE INDEX entries_check_bundle ON entries (json_extract(fields, '$.condition'
 
 CREATE INDEX entries_cleanup ON entries (card) WHERE kind = 'cleanup';
 
+CREATE INDEX maintenance_batches_by_request ON maintenance_batches (maintenance);
+
 CREATE UNIQUE INDEX one_live_attempt ON attempts (card) WHERE state IN ('starting', 'active');
 
 CREATE UNIQUE INDEX one_live_incident ON incidents (actor)

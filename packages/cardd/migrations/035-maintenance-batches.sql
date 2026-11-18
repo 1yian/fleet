@@ -7,5 +7,6 @@ CREATE TABLE maintenance_batches (
   CHECK ((maintenance IS NULL) = (gone IS NOT NULL)),
   UNIQUE (batch, maintenance)
 ) STRICT;
+CREATE INDEX maintenance_batches_by_request ON maintenance_batches (maintenance);
 ALTER TABLE maintenance ADD COLUMN runtime TEXT;
 ALTER TABLE sessions ADD COLUMN runtime TEXT;
