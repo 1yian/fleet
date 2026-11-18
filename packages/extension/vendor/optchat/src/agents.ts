@@ -121,10 +121,10 @@ const interruptedWith = (texts: string[]) => `${INTERRUPTED}${texts.join('\n\n')
 /** Pi reads AGENTS.md/CLAUDE.md only at session start and /reload. Re-reading the files Pi loaded picks up edits each run and keeps
  * the session's own choices (`-nc`, its agent dir); a file that can't be read is skipped, as Pi does. A new file still needs /reload. */
 export function refreshContextFiles(options: { contextFiles: Array<{ path: string; content: string }> }, guardedPath?: string) {
-  options.contextFiles = options.contextFiles.flatMap(({ path }) => {
+  options.contextFiles = options.contextFiles.flatMap(({ path, content: loaded }) => {
     try {
-      const content = guardedPath !== undefined && resolve(path) === guardedPath ? readPromptFile(path) : readFileSync(path, 'utf8');
-      return content === undefined ? [] : [{ path, content }];
+      if (guardedPath !== undefined && resolve(path) === guardedPath) return readPromptFile(path) === undefined ? [] : [{ path, content: loaded }];
+      return [{ path, content: readFileSync(path, 'utf8') }];
     } catch { return []; }
   });
 }

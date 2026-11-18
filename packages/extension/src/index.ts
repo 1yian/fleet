@@ -190,23 +190,26 @@ function contributorGuideForWorkers(pi: ExtensionAPI, fleetProject: boolean | un
 }
 
 function contractForMates(pi: ExtensionAPI): void {
-  pi.on("before_agent_start", (event, ctx) => {
-    const path = join(HOME(), "AGENTS.md");
-    const files = event.systemPromptOptions.contextFiles;
-    const own = files.findIndex((file) => resolve(file.path) === path);
-    if (own !== -1) files.splice(own, 1);
+  const path = join(HOME(), "AGENTS.md");
+  const loaded = readPromptFile(path);
+  const present = (ctx: ExtensionContext): boolean => {
     const content = readPromptFile(path);
-    if (content === undefined || content.trim() === "") abortWithoutMateContract(ctx, path);
-    else {
-      files.splice(own === -1 ? files.length : own, 0, { path, content });
+    if (content !== undefined && content.trim() !== "") {
       if (ctx.hasUI) ctx.ui.setWidget("fleet-mate-contract", undefined);
+      return true;
     }
+    abortWithoutMateContract(ctx, path);
+    return false;
+  };
+  pi.on("before_agent_start", (event, ctx) => {
+    if (!present(ctx)) return undefined;
+    const files = event.systemPromptOptions.contextFiles;
+    if (loaded !== undefined && !files.some((file) => resolve(file.path) === path))
+      files.push({ path, content: loaded });
     return undefined;
   });
   pi.on("agent_start", (_event, ctx) => {
-    const path = join(HOME(), "AGENTS.md");
-    const content = readPromptFile(path);
-    if (content === undefined || content.trim() === "") abortWithoutMateContract(ctx, path);
+    present(ctx);
   });
 }
 
