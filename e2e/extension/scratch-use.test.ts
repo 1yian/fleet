@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, statfsSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { isRecord, parseRecord, records } from "../support/json.ts";
@@ -118,6 +119,51 @@ test("a watched root that cannot be read is skipped and the others still answer,
   assert.ok(none.stderr.includes(`none of ${missing} could be read`), none.stderr);
 });
 
+const BYTE_SLACK = 128 * 2 ** 20;
+const INODE_SLACK = 5000;
+
+function osReading(path: string): {
+  bytesUsed: number;
+  bytesTotal: number;
+  inodesUsed: number;
+  inodesTotal: number;
+} {
+  const row = (args: string[]): { header: string[]; cells: string[] } => {
+    const lines = execFileSync("df", [...args, path], { encoding: "utf8" })
+      .trim()
+      .split("\n");
+    return {
+      header: (lines[0] ?? "")
+        .trim()
+        .split(/\s+/)
+        .map((cell) => cell.toLowerCase()),
+      cells: (lines.at(-1) ?? "").trim().split(/\s+/),
+    };
+  };
+  const bytes = row(["-Pk"]);
+  const used = Number(bytes.cells[2]) * 1024;
+  const available = Number(bytes.cells[3]) * 1024;
+  const inodes = row(["-i"]);
+  const iused = Number(inodes.cells[inodes.header.indexOf("iused")]);
+  const ifree = Number(inodes.cells[inodes.header.indexOf("ifree")]);
+  return {
+    bytesUsed: used,
+    bytesTotal: used + available,
+    inodesUsed: iused,
+    inodesTotal: iused + ifree,
+  };
+}
+
+function assertNear(actual: unknown, expected: number, slack: number, what: string): void {
+  assert.equal(typeof actual, "number", what);
+  assert.ok(
+    typeof actual === "number" &&
+      actual > 0 &&
+      Math.abs(actual - expected) <= Math.max(expected * 0.25, slack),
+    `${what}: reported ${String(actual)}, the OS reports ${String(expected)}`,
+  );
+}
+
 test("scratch reports the use of the filesystems it writes to, and names the largest directories by inodes or by space", () => {
   const dir = tempDir("fleet-host-dir-");
   const tree = tempDir("fleet-tree-");
@@ -132,15 +178,31 @@ test("scratch reports the use of the filesystems it writes to, and names the lar
   }
   writeFileSync(join(tree, "few", "big.bin"), Buffer.alloc(8 * 1024 * 1024, 1));
 
-  const report = parseRecord(fleet(["scratch", "--json"], { FLEET_HOST_DIR: dir }).trim());
+  const report = parseRecord(
+    fleet(["scratch", "--json"], { FLEET_HOST_DIR: dir, TMPDIR: dir }).trim(),
+  );
   const filesystems = records(report["filesystems"]);
-  const tmp = filesystems.find((each) => each["path"] === "/tmp");
-  assert.ok(tmp !== undefined, "the report names /tmp");
-  const total = Number(tmp["bytesTotal"]);
-  const used = Number(tmp["bytesUsed"]);
-  const seen = statfsSync("/tmp");
-  const expected = (seen.blocks - seen.bfree) * seen.bsize;
-  assert.ok(total > 0 && Math.abs(used - expected) < total * 0.05, "bytes used match statfs");
+  const expected =
+    statSync(dir).dev === statSync("/tmp").dev
+      ? [{ path: "/tmp", roots: ["/tmp", dir] }]
+      : [
+          { path: "/tmp", roots: ["/tmp"] },
+          { path: dir, roots: [dir] },
+        ];
+  assert.deepEqual(
+    filesystems.map(({ path, roots }) => ({ path, roots })),
+    expected,
+  );
+  for (const [index, { path }] of expected.entries()) {
+    const row = filesystems[index];
+    assert.ok(row !== undefined);
+    const os = osReading(path);
+    assert.ok(os.bytesUsed > 0 && os.inodesUsed > 0, `${path} reads as empty to the OS`);
+    assertNear(row["bytesUsed"], os.bytesUsed, BYTE_SLACK, `${path} bytesUsed`);
+    assertNear(row["bytesTotal"], os.bytesTotal, BYTE_SLACK, `${path} bytesTotal`);
+    assertNear(row["inodesUsed"], os.inodesUsed, INODE_SLACK, `${path} inodesUsed`);
+    assertNear(row["inodesTotal"], os.inodesTotal, INODE_SLACK, `${path} inodesTotal`);
+  }
   assert.ok(isRecord(report) && typeof report["host"] === "string");
 
   const byInodes = parseRecord(

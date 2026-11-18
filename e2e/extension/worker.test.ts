@@ -265,24 +265,28 @@ test("a message lost before the session file existed is delivered again after a 
   );
 });
 
-test("a comment queued while the worker was down is delivered after a crash, and the worker hands off in the response that held it", async () => {
+test("a comment queued while the worker was down is delivered once after a crash, and the worker hands off after taking it in", async () => {
   const held = gate();
   h.onModel(async () => {
     await held.wait;
     return { text: "never sent" };
   });
   const pi = await worker("the task message");
-  await h.waitFor(delivered(START), "the task message delivered");
+  await h.waitForCall(0);
   await pi.kill();
   held.open();
   await comment("queued while the worker was down");
 
+  h.onModel(async () => {
+    await h.waitFor(delivered(OLDER), "the queued comment delivered");
+    return { text: "reading it" };
+  });
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "done after the crash" } }));
   await worker();
   await fleet.main.waitForEntries(1);
-  const first = await h.waitForCall(1);
+  const last = h.calls.at(-1) ?? [];
 
-  assert.equal(count(first, fleetText("queued while the worker was down")), 1);
+  assert.equal(count(last, fleetText("queued while the worker was down")), 1);
   assert.deepEqual(reports(fleet.main), [["done", "done after the crash"]]);
 });
 

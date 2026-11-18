@@ -37,13 +37,23 @@ const created = await lab.run([
 ]);
 const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
 await lab.submit(pane, sleeper);
+const sleeperPid = await (async () => {
+  for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
+    const running = (await lab.foreground(pane)).find((each) => /^\d+:sleep\b/.test(each));
+    if (running !== undefined) return Number(running.split(":")[0]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`the pane never ran ${sleeper}`);
+})();
 
 console.log(
   JSON.stringify({
     ready: true,
     sleeper,
+    sleeperPid,
     panePi,
     lab: lab.name,
+    xdg: process.env["XDG_CONFIG_HOME"],
     dirs: [scratch.parent, h.dir, fleet.cardd.db],
   }),
 );

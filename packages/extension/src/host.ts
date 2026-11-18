@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { hostname } from "node:os";
 import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
+import { spawnDetached } from "./detached.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -83,10 +83,13 @@ let starting: Promise<void> | undefined;
 function startServer(session: string | undefined): Promise<void> {
   starting ??= (async () => {
     const select = session === undefined ? [] : ["--session", session];
-    const server = spawn("sh", ["-c", RAISE_OPEN_FILES, "herdr", "herdr", "server", ...select], {
-      detached: true,
-      stdio: "ignore",
-    });
+    const server = spawnDetached(
+      "sh",
+      ["-c", RAISE_OPEN_FILES, "herdr", "herdr", "server", ...select],
+      {
+        stdio: "ignore",
+      },
+    );
     server.unref();
     const child = { exited: false };
     server.once("exit", () => {

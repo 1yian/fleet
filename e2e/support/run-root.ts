@@ -1,60 +1,41 @@
-import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { GROUPS_ENV, groupScopes, openGroupScope } from "./marked.ts";
+import { guardRoot } from "./reaper-client.ts";
+import { cacheDirectory, runBase } from "./run-folders.ts";
 
-const PREFIX = "fr-";
-const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+const outerTmpdir = runBase();
 
-const outerTmpdir = realpathSync(process.env["FLEET_E2E_TMPDIR"] ?? "/tmp");
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
-  }
+export function retainRunRoot(): void {
+  writeFileSync(join(runRoot, "unresolved-groups"), "", { mode: 0o600 });
 }
 
-function sweepStaleRoots(): void {
-  for (const name of readdirSync(outerTmpdir)) {
-    if (!name.startsWith(PREFIX)) continue;
-    const owner = Number(name.slice(PREFIX.length).split("-")[0]);
-    if (Number.isInteger(owner) && owner > 0 && !alive(owner)) {
-      try {
-        rmSync(join(outerTmpdir, name), { recursive: true, force: true });
-      } catch {
-        continue;
-      }
-    }
-  }
-}
+const assigned = (process.env["FLEET_E2E_ROOT"] ?? "") || undefined;
+Reflect.deleteProperty(process.env, "FLEET_E2E_ROOT");
 
-function claimRoot(): string {
-  sweepStaleRoots();
-  const root = mkdtempSync(join(outerTmpdir, `${PREFIX}${String(process.pid)}-`));
-  const remove = (): void => {
-    rmSync(root, { recursive: true, force: true });
-  };
-  process.on("exit", remove);
-  for (const name of SIGNALS) {
-    process.once(name, () => {
-      remove();
-      process.kill(process.pid, name);
-    });
-  }
-  return root;
-}
-
-const runRoot = claimRoot();
+const runRoot =
+  assigned === undefined
+    ? mkdtempSync(join(outerTmpdir, `fr-${String(process.pid)}-`))
+    : realpathSync(assigned);
 process.env["TMPDIR"] = runRoot;
 process.env["FLEET_HOST_DIR"] = join(runRoot, "host");
 process.env["FLEET_TMP_SOURCE_DIR"] = join(runRoot, "old-tmp");
+process.env["XDG_CONFIG_HOME"] = join(runRoot, "xdg");
 if (process.env["NODE_COMPILE_CACHE"] !== undefined) {
   process.env["NODE_COMPILE_CACHE"] = join(runRoot, "node-compile-cache");
+}
+
+if (assigned === undefined) {
+  const directScope = join(runRoot, "groups");
+  mkdirSync(directScope, { mode: 0o700 });
+  openGroupScope(directScope);
+  process.env[GROUPS_ENV] = JSON.stringify([...groupScopes(), directScope]);
+  guardRoot(runRoot, directScope);
 }
 
 export function tempDir(prefix: string): string {
   return mkdtempSync(join(runRoot, prefix));
 }
 
-export const sharedCacheDir = join(outerTmpdir, "fleet-e2e-cache");
+const cacheBase = assigned === undefined ? outerTmpdir : dirname(outerTmpdir);
+export const sharedCacheDir = (): string => cacheDirectory(cacheBase);

@@ -124,6 +124,7 @@ export async function startDispatchLab({
       FLEET_URL: cardd.url,
       FLEET_TOKEN: mainToken,
       FLEET_ROLE: "mate",
+      ...lab.owned,
       FLEET_FAKE_AGENT: "mate",
       HERDR_SESSION: lab.name,
       ...env,

@@ -8,7 +8,7 @@ import { until, replayed, stopMain } from "../support/disk-session.ts";
 import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { publishRecord, type JsonRecord } from "../support/json.ts";
-import { configureMain, Scratch, startMain } from "../support/scratch.ts";
+import { configureMain, roomyDiskEnv, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -25,7 +25,6 @@ let here: Scratch;
 let far: Scratch;
 let usage: string;
 let log: string;
-
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
@@ -52,6 +51,7 @@ beforeEach(async () => {
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "300",
+    ...roomyDiskEnv(),
   });
 });
 afterEach(async (t) => {

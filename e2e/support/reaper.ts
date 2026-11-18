@@ -1,16 +1,13 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { groupIdentity, signalOwnedGroup, sweepGroups } from "./marked.ts";
 
 const watched = new Map<number, string>();
 const hooks = new Map<string, string[]>();
-
-function startOf(pid: number): string {
-  try {
-    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).trim();
-  } catch {
-    return "";
-  }
-}
+const scopes = new Set<string>();
+const roots = new Set<string>();
 
 function descendantsOf(root: number): number[] {
   const table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
@@ -35,7 +32,7 @@ function signal(pid: number, name: "SIGSTOP" | "SIGKILL"): void {
   }
 }
 
-function sweep(root: number): void {
+function sweep(root: number, identity: string): void {
   const frozen = new Set<number>();
   for (;;) {
     const fresh = [root, ...descendantsOf(root)].filter((pid) => !frozen.has(pid));
@@ -45,8 +42,14 @@ function sweep(root: number): void {
       signal(pid, "SIGSTOP");
     }
   }
-  signal(-root, "SIGKILL");
+  signalOwnedGroup(root, identity, "SIGKILL");
   for (const pid of frozen) signal(pid, "SIGKILL");
+}
+
+function pathOf(line: string, verb: string): string {
+  const parsed: unknown = JSON.parse(line.slice(verb.length + 1));
+  if (typeof parsed !== "string") throw new Error("reaper path must be a string");
+  return parsed;
 }
 
 function argvOf(text: string): string[] {
@@ -58,12 +61,14 @@ const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const [verb = "", text = ""] = line.split(" ", 2);
   const pid = Number(text);
-  if (verb === "watch") watched.set(pid, startOf(pid));
+  if (verb === "watch") watched.set(pid, line.slice(verb.length + text.length + 2));
   else if (verb === "release") watched.delete(pid);
   else if (verb === "hook") hooks.set(text, argvOf(line.slice(verb.length + text.length + 2)));
   else if (verb === "unhook") hooks.delete(text);
+  else if (verb === "scope") scopes.add(pathOf(line, verb));
+  else if (verb === "root") roots.add(pathOf(line, verb));
 });
-lines.on("close", () => {
+function runHooks(): void {
   for (const [file = "", ...args] of hooks.values()) {
     try {
       execFileSync(file, args, { stdio: "ignore", timeout: 20_000 });
@@ -71,7 +76,36 @@ lines.on("close", () => {
       continue;
     }
   }
-  for (const [pid, began] of watched) {
-    if (began !== "" && startOf(pid) === began) sweep(pid);
+}
+
+async function sweepScopes(): Promise<boolean> {
+  let proved = true;
+  for (const scope of scopes) {
+    try {
+      const { unresolved } = await sweepGroups(scope, 0);
+      if (unresolved.length > 0) proved = false;
+    } catch {
+      proved = false;
+    }
   }
+  return proved;
+}
+
+async function teardown(): Promise<void> {
+  runHooks();
+  for (const [pid, began] of watched) {
+    if (began !== "" && groupIdentity(pid) === began) sweep(pid, began);
+  }
+  const proved = await sweepScopes();
+  for (const root of roots) {
+    if (proved && !existsSync(join(root, "unresolved-groups"))) {
+      rmSync(root, { recursive: true, force: true });
+    } else {
+      process.stderr.write(`unresolved process ownership; kept ${root}\n`);
+    }
+  }
+}
+
+lines.on("close", () => {
+  void teardown();
 });

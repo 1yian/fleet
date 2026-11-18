@@ -164,12 +164,13 @@ test("Enter on an ignored file opens it writable, with a space in its name", asy
   await goTo("gd", join(fleet.home, "data"));
   await files.hover("with space");
   await files.press("enter");
-  await files.sees("spaced");
+  await files.sees(/^\s*spaced\s*$/m, "Neovim to show the file on its own line");
   await files.type("iZ");
+  await files.sees(/^\s*Zspaced\s*$/m, "Neovim to show the edit");
   await files.press("esc");
   await files.type(":wq");
   await files.press("enter");
-  await files.sees("with space.md");
+  await files.sees(new RegExp(`^${escaped(join(fleet.home, "data"))}(\\s.*)?$`, "m"));
   assert.equal(readFileSync(dataFile("with space.md"), "utf8"), "Zspaced\n");
 });
 

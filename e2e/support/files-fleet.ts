@@ -116,7 +116,7 @@ export class FilesFleet {
       HOME: this.userHome,
       PI_CODING_AGENT_DIR: join(this.userHome, ".pi", "agent"),
       PATH: [this.bin, process.env["PATH"] ?? ""].join(delimiter),
-      XDG_CACHE_HOME: sharedCacheDir,
+      XDG_CACHE_HOME: sharedCacheDir(),
       ...extra,
     };
   }

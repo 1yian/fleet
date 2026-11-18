@@ -38,21 +38,15 @@ function descendantsOf(root: number): number[] {
   return found;
 }
 
-function pgrep(pattern: string): number[] {
-  try {
-    return execFileSync("pgrep", ["-f", pattern], { encoding: "utf8" })
-      .split("\n")
-      .filter((line) => line !== "")
-      .map(Number);
-  } catch {
-    return [];
-  }
-}
-
 const alive = ({ pid, command }: Running): boolean => commandOf(pid) === command;
 
-function labListed(lab: string): boolean {
-  const listing = execFileSync("herdr", ["session", "list"], { encoding: "utf8" });
+const labEnv = (xdg: string): NodeJS.ProcessEnv => ({ ...process.env, XDG_CONFIG_HOME: xdg });
+
+function labListed(lab: string, xdg: string): boolean {
+  const listing = execFileSync("herdr", ["session", "list"], {
+    encoding: "utf8",
+    env: labEnv(xdg),
+  });
   return listing.split("\n").some((line) => line.trim().split(/\s+/)[0] === lab);
 }
 
@@ -80,10 +74,10 @@ function killIfAlive(each: Running): void {
   }
 }
 
-function removeLab(lab: string): void {
+function removeLab(lab: string, xdg: string): void {
   for (const verb of ["stop", "delete"]) {
     try {
-      execFileSync("herdr", ["session", verb, lab], { stdio: "ignore" });
+      execFileSync("herdr", ["session", verb, lab], { stdio: "ignore", env: labEnv(xdg) });
     } catch {
       process.stderr.write(`could not ${verb} herdr session ${lab}\n`);
     }
@@ -102,13 +96,9 @@ test("SIGKILL of a test runner removes its cardd, direct Pi, shell-owned Pi, pan
   });
   const runnerPid = Number(runner.pid);
   const sleeper = String(ready["sleeper"]);
-  for (const deadline = Date.now() + WAIT_MS; pgrep(sleeper).length === 0;) {
-    assert.ok(Date.now() < deadline, `the pane never ran ${sleeper}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
   const known = [
     ...descendantsOf(runnerPid).filter((pid) => !commandOf(pid).includes("reaper.ts")),
-    ...pgrep(sleeper),
+    Number(ready["sleeperPid"]),
   ];
   const running: Running[] = [...new Set(known)]
     .map((pid) => ({ pid, command: commandOf(pid) }))
@@ -122,17 +112,18 @@ test("SIGKILL of a test runner removes its cardd, direct Pi, shell-owned Pi, pan
   const missing = kinds.filter((kind) => !running.some((each) => kind.test(each.command)));
   const panePi = running.find((each) => each.pid === ready["panePi"]);
   const lab = String(ready["lab"]);
-  const listedBefore = labListed(lab);
+  const xdg = String(ready["xdg"]);
+  const listedBefore = labListed(lab, xdg);
   runner.kill("SIGKILL");
   await exited;
 
   const deadline = Date.now() + WAIT_MS;
   let left = running.filter(alive);
-  let listedAfter = labListed(lab);
+  let listedAfter = labListed(lab, xdg);
   while ((left.length > 0 || listedAfter) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
     left = left.filter(alive);
-    listedAfter = labListed(lab);
+    listedAfter = labListed(lab, xdg);
   }
   const dirs = Array.isArray(ready["dirs"]) ? ready["dirs"].map(String) : [];
   try {
@@ -158,7 +149,7 @@ test("SIGKILL of a test runner removes its cardd, direct Pi, shell-owned Pi, pan
   } finally {
     runner.stdout.destroy();
     runner.stderr.destroy();
-    if (left.length > 0 || listedAfter) removeLab(lab);
+    if (left.length > 0 || listedAfter) removeLab(lab, xdg);
     for (const each of left) killIfAlive(each);
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
   }

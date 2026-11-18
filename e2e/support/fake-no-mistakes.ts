@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnOwned } from "./marked.ts";
 
 const SELF = fileURLToPath(import.meta.url);
 const EXECUTABLE = join(dirname(SELF), "no-mistakes");
@@ -37,7 +38,7 @@ function ask(root: string): Promise<number | undefined> {
 }
 
 function launch(...words: string[]): number {
-  const child = spawn(process.execPath, [SELF, ...words], { detached: true, stdio: "ignore" });
+  const child = spawnOwned(process.execPath, [SELF, ...words], { stdio: "ignore" });
   child.unref();
   return Number(child.pid);
 }
