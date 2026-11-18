@@ -134,9 +134,12 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   assert.match(workerSystem, /Migrations.*append-only/);
   assert.match(workerSystem, /Do not test by reading source files for strings/);
   assert.doesNotMatch(workerSystem, /Keep the fixture fleet running|Prefer plain reports/);
-  if (variant.ancestor === true)
+  if (variant.ancestor === true && variant.noContextFiles !== true)
     assert.match(workerSystem, /Ancestor notes that belong to unrelated work/);
-  else assert.doesNotMatch(workerSystem, /^# Firstmate$/m);
+  else {
+    assert.doesNotMatch(workerSystem, /Ancestor notes that belong to unrelated work/);
+    assert.doesNotMatch(workerSystem, /^# Firstmate$/m);
+  }
 }
 
 test("a dispatched fleet worker gets CONTRIBUTING.md in place of AGENTS.md while the mate keeps AGENTS.md", async (t) => {
@@ -147,8 +150,8 @@ test("a fleet worker in a worktree that still has the older AGENTS.md overview g
   await run(t, "stale", { stale: true });
 });
 
-test("a fleet worker started without context files still gets CONTRIBUTING.md", async (t) => {
-  await run(t, "no-context", { noContextFiles: true });
+test("a fleet worker started without context files gets only CONTRIBUTING.md", async (t) => {
+  await run(t, "no-context", { noContextFiles: true, ancestor: true });
 });
 
 test("a fleet worker keeps an unrelated ancestor Firstmate file while getting CONTRIBUTING.md", async (t) => {
