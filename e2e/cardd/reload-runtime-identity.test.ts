@@ -378,9 +378,72 @@ test("retrying the original batch of a request outstanding before batches existe
 
 test("a hello whose runtime is not a generated id is refused", async () => {
   const token = await begin(fleet.main, await newCard(fleet.main, "forged runtime"));
-  for (const runtime of ["", "a runtime", "ABCDEF12-1234-1234-1234-123456789ABC"]) {
+  for (const runtime of [
+    "",
+    "a runtime",
+    "ABCDEF12-1234-4234-8234-123456789ABC",
+    "00000000-0000-0000-0000-000000000000",
+    "12345678-1234-1234-8234-123456789abc",
+    "12345678-1234-4234-c234-123456789abc",
+  ]) {
     const refused = await fleet.cardd.connect(token, [], true, false, true, true, runtime);
     assert.equal(refused.welcome, undefined, runtime);
     assert.notEqual(refused.closeCode, undefined, runtime);
   }
+});
+
+test("retrying a batch that already exists enrolls no new target, so a legacy receipt stays unsummarized", async () => {
+  const card = await newCard(fleet.main, "legacy member");
+  const token = await begin(fleet.main, card);
+  const worker = await fleet.cardd.connect(token, [], true, false, true);
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  const inserted = db
+    .prepare(
+      `INSERT INTO maintenance (batch, requester, session, kind, state, detail, updated_at)
+       VALUES ('legacy', 'main', ?, 'reload', 'reloading', 'reloading', ?)`,
+    )
+    .run(`c-${String(card.id)}-a1`, Date.now());
+  db.close();
+  const late = await begin(fleet.main, await newCard(fleet.main, "arrives before the retry"));
+  const lateWorker = await fleet.cardd.connect(late, [], true, false, true);
+  sessions.push(lateWorker);
+  const retry = check(
+    OPS["maintenance.request"].result,
+    await fleet.main.call("maintenance.request", { batch: "legacy", kind: "reload" }),
+  );
+  assert.deepEqual(
+    retry.map((row) => row.session),
+    [`c-${String(card.id)}-a1`],
+  );
+  await worker.close();
+  sessions.push(await fleet.cardd.connect(token, [], true, false, true, true));
+  await fleet.main.waitForEntry(
+    (entry) =>
+      entry.fields["maintenance"] === Number(inserted.lastInsertRowid) &&
+      entry.fields["state"] === "completed",
+    "the individual completed notice",
+  );
+  assert.equal(fleet.cardd.summaryCount(), 0);
+});
+
+test("retrying a batch does not re-enroll a lane that was removed from it while another target is pending", async () => {
+  const kept = await newCard(fleet.main, "stays pending");
+  const keptToken = await begin(fleet.main, kept);
+  const worker = await fleet.cardd.connect(keptToken, [], true, false, true);
+  sessions.push(worker);
+  const gone = fleet.cardd.addLane("gone", "main");
+  await (await fleet.cardd.connect(gone, [], true, false, true)).close();
+  await fleet.main.call("maintenance.request", { batch: "tomb", kind: "reload" });
+  const removed = fleet.cardd.admin("lane", "remove", "gone");
+  assert.equal(removed.status, 0, removed.stderr);
+  const again = fleet.cardd.addLane("gone", "main");
+  await (await fleet.cardd.connect(again, [], true, false, true)).close();
+  const retry = check(
+    OPS["maintenance.request"].result,
+    await fleet.main.call("maintenance.request", { batch: "tomb", kind: "reload" }),
+  );
+  assert.deepEqual(
+    retry.map((row) => row.session),
+    [`c-${String(kept.id)}-a1`],
+  );
 });

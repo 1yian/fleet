@@ -205,7 +205,7 @@ test("update_fleet reloads every worker and second mate at its safe point, never
     "Reloaded and verified:",
     `- ${paused.session} (worker on p620): reload completed - ${NOW_LINE}`,
     `- far (mate): reload completed - ${NOW_LINE}`,
-    "Waiting for a safe point, not yet reloaded (main hears one summary when the batch finishes):",
+    "Waiting for a safe point, not yet reloaded:",
     `- ${busy.session} (worker on local): reload pending - ${SAFE_POINT}`,
     `- ${job.session} (worker on local): reload pending - ${SAFE_POINT}`,
     `- ops (mate): reload pending - ${SAFE_POINT}`,

@@ -72,8 +72,16 @@ test("the update report keeps what main was told at enrollment about a target wh
       lines.join("\n"),
     );
     assert.ok(
-      lines.some((line) => line.startsWith("- pending-mate (mate): reload pending - ")),
+      lines.some((line) =>
+        line.startsWith(
+          "- pending-mate (mate): reload failed - no longer reported (its lane was removed), so it is not verified",
+        ),
+      ),
       lines.join("\n"),
+    );
+    assert.equal(
+      lines.some((line) => line.includes("pending-mate") && line.includes("reload pending")),
+      false,
     );
     assert.equal(
       lines.some((line) => line.includes("reload completed") && line.includes("pending-mate")),

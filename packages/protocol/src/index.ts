@@ -418,7 +418,9 @@ const ClientMessage = Type.Union([
     running: Type.Optional(Type.Boolean()),
     started: Type.Optional(Type.Boolean()),
     runtime: Type.Optional(
-      Type.String({ pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }),
+      Type.String({
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      }),
     ),
   }),
   Type.Object({ t: Type.Literal("read"), entry: Type.Integer() }),

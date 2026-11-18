@@ -373,15 +373,6 @@ function requestTarget(
   target: Target,
   t: Timings,
 ): string[] {
-  const member =
-    raw.kind === "reload" &&
-    db
-      .prepare(
-        `SELECT 1 FROM maintenance m WHERE m.session = ?1
-         AND (m.batch = ?2 OR m.id IN (SELECT maintenance FROM maintenance_batches WHERE batch = ?2))`,
-      )
-      .get(target.id, raw.batch) !== undefined;
-  if (member) return [];
   const open = db
     .prepare(
       "SELECT id FROM maintenance WHERE session = ? AND kind = ? AND state IN ('pending', 'reloading')",
@@ -414,6 +405,14 @@ function requestTarget(
   return state === "pending" ? [target.id] : [];
 }
 
+const known = (db: DatabaseSync, batch: string): boolean =>
+  db
+    .prepare(
+      `SELECT 1 WHERE EXISTS (SELECT 1 FROM maintenance WHERE batch = ?1)
+         OR EXISTS (SELECT 1 FROM maintenance_batches WHERE batch = ?1)`,
+    )
+    .get(batch) !== undefined;
+
 export function requestMaintenance(
   db: DatabaseSync,
   caller: Session,
@@ -422,7 +421,7 @@ export function requestMaintenance(
 ): { value: Maintenance[]; notify: string[] } {
   if (caller.lane !== mainLane(db))
     throw new Error("only main can ask the fleet to reload or stow");
-  if (summarized(db, raw.batch))
+  if (raw.kind === "reload" && known(db, raw.batch))
     return { value: projected(db, batchRows(db, raw.batch)), notify: [] };
   const notify = targets(db, caller.id, raw.kind, t.wall()).flatMap((target) =>
     requestTarget(db, caller, raw, target, t),

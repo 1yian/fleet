@@ -178,7 +178,9 @@ const sections = (kind: Maintenance["kind"]) => {
   return [
     [kind === "stow" ? "Stowed and verified" : "Reloaded and verified", "completed"],
     [
-      `Waiting for a safe point, not yet ${done} (${kind === "reload" ? "main hears one summary when the batch finishes" : "main hears when each finishes"})`,
+      kind === "reload"
+        ? `Waiting for a safe point, not yet ${done}`
+        : `Waiting for a safe point, not yet ${done} (main hears when each finishes)`,
       "open",
     ],
     [`Unable to ${kind}`, "failed"],
@@ -228,6 +230,16 @@ export async function requestAndAwait(
   }
   if (rows.some((row) => row.state === "reloading"))
     rows = await link.call("maintenance.status", { batch, failUnverified: true });
-  const kept = enrolled.filter((row) => !rows.some((each) => each.id === row.id));
+  const kept = enrolled
+    .filter((row) => !rows.some((each) => each.id === row.id))
+    .map((row): Maintenance =>
+      row.state === "pending" || row.state === "reloading"
+        ? {
+            ...row,
+            state: "failed",
+            detail: "no longer reported (its lane was removed), so it is not verified",
+          }
+        : row,
+    );
   return [...rows, ...kept].sort((a, b) => a.id - b.id);
 }
