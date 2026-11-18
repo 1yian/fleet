@@ -42,7 +42,7 @@ jobs:
               - "package-lock.json"
               - "tsconfig.json"
               - ".oxlintrc.json"
-              - "oxlint-suppressions.json"
+              - "**/oxlint-suppressions.json"
               - ".pi/**"
               - "lint.js"
               - "lint-plugin.js"

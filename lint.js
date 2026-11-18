@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import console from "node:console";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, extname, matchesGlob, resolve } from "node:path";
+import { basename, extname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { parseSync } from "oxc-parser";
@@ -102,9 +102,18 @@ function trackedPaths() {
 }
 
 function ignoredByConfig(path) {
-  return config.ignorePatterns.some((pattern) =>
-    matchesGlob(path, pattern.endsWith("/") ? `${pattern}**` : pattern),
-  );
+  const directories = path.split("/").slice(0, -1);
+  return config.ignorePatterns.some((pattern) => {
+    const anywhere = pattern.startsWith("**/");
+    const wanted = pattern
+      .replace(/^\*\*\//, "")
+      .replace(/\/$/, "")
+      .split("/");
+    const starts = anywhere ? directories.keys() : [0];
+    return [...starts].some((start) =>
+      wanted.every((segment, offset) => directories[start + offset] === segment),
+    );
+  });
 }
 
 function selectedPaths(tracked) {
