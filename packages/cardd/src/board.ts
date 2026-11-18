@@ -81,9 +81,7 @@ function requireCaptainsHold(db: DatabaseSync, card: Card, seen: number): Hold {
 
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
 const inThread = (entry: Entry): boolean =>
-  !MATES_ONLY.has(entry.kind) &&
-  entry.fields["maintenance"] !== "batch" &&
-  entry.fields["operationReceipt"] === undefined;
+  !MATES_ONLY.has(entry.kind) && entry.fields["maintenance"] !== "batch";
 
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
   inThread(entry) &&

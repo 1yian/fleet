@@ -7,7 +7,6 @@ import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { NextSchema } from "./next.ts";
-import { CLOSE_VERIFY, OPERATION_PLAN_FIELDS } from "./operation.ts";
 import { ActivityMessage, CompletionEvidence, LandingFields } from "./progress.ts";
 import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
@@ -24,7 +23,7 @@ export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
 export * from "./http.ts";
 export * from "./next.ts";
-export * from "./operation.ts";
+export * from "./handoff.ts";
 export { ActedSchema, LATER_EXAMPLES, laterLine, type LaterResult } from "./later.ts";
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
@@ -305,7 +304,6 @@ export const OPS = {
     result: Type.Object({
       mode: Type.Enum(["done", "dropped"]),
       verify: Type.Boolean(),
-      ...OPERATION_PLAN_FIELDS,
       land: Type.Boolean(),
       attempts: Type.Array(
         Type.Object({
@@ -327,7 +325,6 @@ export const OPS = {
       ),
     }),
   },
-  "close.verify": CLOSE_VERIFY,
   "close.finish": {
     roles: ["mate"],
     args: Type.Object({

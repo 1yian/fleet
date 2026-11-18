@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, operationHandoff, OPS, type Card, type Next } from "@fleet/protocol";
+import { check, OPS, type Card, type Next } from "@fleet/protocol";
 import { endLiveAttempts } from "./attempts.ts";
 import { settleClosedCard } from "./maintenance.ts";
 import { requireOrdinary } from "./change.ts";
@@ -7,7 +7,6 @@ import { closeCardIncidents } from "./incident-lifecycle.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import { nextLine, requireNext, type NextStep } from "./next-step.ts";
-import { requireRetired, type Observed, type Receipt } from "./operation-close.ts";
 import {
   addEntry,
   cardEntries,
@@ -22,8 +21,6 @@ import {
 export interface CloseCheck {
   readonly merged: boolean;
   readonly unknown?: string;
-  readonly observed?: Observed | undefined;
-  readonly receipt?: Receipt | undefined;
 }
 
 interface Done {
@@ -86,11 +83,14 @@ function closable(
   mode: "done" | "dropped";
   verify: boolean;
   land: boolean;
-  operation?: { session: string; evidence: string; handoff: number };
   next: NextStep | undefined;
 } {
   const { card } = reachable(db, session, args.card);
   const name = `c-${String(card.id)}`;
+  if (card.delivery === "ops")
+    throw new Error(
+      `${name} delivers ops; closing an operation is not available until authoritative retirement lands (tracked on its own card); leave it open`,
+    );
   requireOrdinary(db, card);
   if (card.status === "done" || card.status === "dropped")
     throw new Error(`${name} is already ${card.status}`);
@@ -100,27 +100,7 @@ function closable(
     );
   }
   const closing = outcome(db, card, args.landed, closeCheck);
-  const operation =
-    closing.mode === "done" && card.delivery === "ops" ? handoffOf(db, card) : undefined;
-  return {
-    card,
-    ...closing,
-    ...(operation === undefined ? {} : { operation }),
-    next: requireNext(db, session, card, closing.mode, args.next),
-  };
-}
-
-function handoffOf(
-  db: DatabaseSync,
-  card: Card,
-): { session: string; evidence: string; handoff: number } {
-  const entry = operationHandoff(cardEntries(db, card.id));
-  const evidence = entry?.fields["evidence"];
-  if (entry === undefined || typeof evidence !== "string")
-    throw new Error(
-      `c-${String(card.id)} cannot close Done: its worker has not handed back ops completion evidence`,
-    );
-  return { session: entry.author.slice("worker:".length), evidence, handoff: entry.id };
+  return { card, ...closing, next: requireNext(db, session, card, closing.mode, args.next) };
 }
 
 export function closeBegin(
@@ -130,7 +110,7 @@ export function closeBegin(
   closeCheck?: CloseCheck,
 ): Done {
   const args = check(OPS["close.begin"].args, raw);
-  const { card, mode, verify, land, operation } = closable(db, session, args, closeCheck);
+  const { card, mode, verify, land } = closable(db, session, args, closeCheck);
   const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
@@ -154,8 +134,6 @@ export function closeBegin(
     value: {
       mode,
       verify,
-      ...(operation === undefined ? {} : { operation }),
-      ...(card.delivery === "ops" ? { ops: true } : {}),
       land,
       attempts,
       refresh: shipCardClonesToRefresh(db, card),
@@ -168,7 +146,7 @@ function shipCardClonesToRefresh(
   db: DatabaseSync,
   card: Card,
 ): { project: string; host: string; path: string; base: string }[] {
-  if (card.kind !== "ship" || card.delivery === "local-only" || card.delivery === "ops") return [];
+  if (card.kind !== "ship" || card.delivery === "local-only") return [];
   const project = listProjects(db).find((each) => each.name === card.project);
   if (project === undefined) return [];
   return project.clones.map(({ host, path }) => ({
@@ -179,14 +157,6 @@ function shipCardClonesToRefresh(
   }));
 }
 
-function withoutEvidencePaths(db: DatabaseSync, card: Card, text: string): string {
-  if (card.delivery !== "ops") return text;
-  return cardEntries(db, card.id).reduce((shown, entry) => {
-    const path = entry.fields["evidence"];
-    return typeof path === "string" ? shown.replaceAll(path, "the evidence report") : shown;
-  }, text);
-}
-
 export function closeFinish(
   db: DatabaseSync,
   session: Session,
@@ -194,14 +164,12 @@ export function closeFinish(
   closeCheck?: CloseCheck,
 ): Done {
   const args = check(OPS["close.finish"].args, raw);
-  const { card, next, operation } = closable(
+  const { card, next } = closable(
     db,
     session,
     { card: args.card, landed: args.mode === "done", next: args.next },
     closeCheck,
   );
-  if (operation !== undefined) requireRetired(db, card, operation.handoff, closeCheck?.observed);
-  const text = withoutEvidencePaths(db, card, args.text);
   const now = Date.now();
   closeCardIncidents(db, card.id, now);
   endLiveAttempts(db, card.id, now);
@@ -221,7 +189,7 @@ export function closeFinish(
       card: card.id,
       author: `mate:${session.lane}`,
       kind: "cleanup",
-      body: next === undefined ? text : `${nextLine(next)}\n${text}`,
+      body: next === undefined ? args.text : `${nextLine(next)}\n${args.text}`,
       fields: closed,
     },
     to,

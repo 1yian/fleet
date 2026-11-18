@@ -38,8 +38,7 @@ import { requireReviewDecision } from "./reviews.ts";
 import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
-import { normalizeReport } from "./merged-report.ts";
-import { closeChecks, recordReceipt, retireVerified } from "./operation-close.ts";
+import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { listSchedules, removeSchedule, setSchedule } from "./schedules.ts";
@@ -182,10 +181,6 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "close.begin": (db, session, raw, _timing, _note, closeCheck) =>
     closeBegin(db, session, raw, closeCheck),
-  "close.verify": (db, session, raw, _timing, _note, closeCheck) => ({
-    value: recordReceipt(db, session, raw, closeCheck?.receipt),
-    notify: [],
-  }),
   "close.finish": (db, session, raw, _timing, _note, closeCheck) =>
     closeFinish(db, session, raw, closeCheck),
   hold,
@@ -384,7 +379,7 @@ const HANDLERS: Record<OpName, Handler> = {
       card: card.id,
       author: `worker:${session.id}`,
       kind: "report",
-      body: reportBody(card, args),
+      body: reportBody(db, card, args),
       fields,
     };
     const asked =
@@ -400,10 +395,17 @@ const HANDLERS: Record<OpName, Handler> = {
   },
 };
 
-function reportBody(card: Card, args: OpArgs<"report">): string {
-  return card.delivery === "ops" && args.evidence !== undefined
-    ? args.text.replaceAll(args.evidence, "the evidence report")
-    : args.text;
+function reportBody(db: DatabaseSync, card: Card, args: OpArgs<"report">): string {
+  if (card.delivery !== "ops") return args.text;
+  const paths = [
+    args.evidence,
+    ...cardEntries(db, card.id).map((entry) => entry.fields["evidence"]),
+  ];
+  return paths.reduce<string>(
+    (text, path) =>
+      typeof path === "string" ? text.replaceAll(path, "the evidence report") : text,
+    args.text,
+  );
 }
 
 function openCardWithPr(db: DatabaseSync, id: number, pr: string | undefined): Card {
@@ -462,8 +464,11 @@ async function performStored(
     op === "report" && session.card !== null
       ? await emptyLocalBranch(db, hosts, session.card, report?.args ?? args)
       : undefined;
-  const closeCheck = await closeChecks(db, session, op, args, hosts);
-  const done = transaction(db, () => {
+  const closeCheck =
+    op === "close.begin" || op === "close.finish"
+      ? await reverifyAtClose(db, hosts, op, args)
+      : undefined;
+  return transaction(db, () => {
     const result = HANDLERS[op](
       db,
       session,
@@ -476,6 +481,4 @@ async function performStored(
     noteControl(db, session.id, op);
     return result;
   });
-  if (op === "close.verify") await retireVerified(hosts, closeCheck?.receipt);
-  return done;
 }

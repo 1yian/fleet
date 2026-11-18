@@ -240,7 +240,10 @@ function reportFields(view: CardView): Record<string, string> {
     return report === undefined ? {} : { report };
   }
   return typeof operationHandoff(view.entries)?.fields["evidence"] === "string"
-    ? { evidence: "reported; close verifies it on the worker's host, so there is nothing to read" }
+    ? {
+        evidence:
+          "reported, not verified: do not read it, and closing an ops card is not available yet",
+      }
     : {};
 }
 

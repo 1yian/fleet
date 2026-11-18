@@ -1,5 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
@@ -113,39 +112,3 @@ export async function start(): Promise<void> {
 
 export const finished = (call: number): Promise<Turn[]> =>
   h.waitForCall(call, "mate", WORKER_WAIT_MS);
-
-export const closedFolders = (): string[] =>
-  readdirSync(hostScratch()).filter((name) => name.startsWith("c-1.closed-"));
-
-const LAUNCHER = `
-const { spawn } = require("node:child_process");
-const [cwd, script] = process.argv.slice(2);
-spawn("sh", ["-c", script], { cwd, detached: true, stdio: "ignore" }).unref();
-`;
-
-export function startWriter(onTerm: string): { tool: string; args: { command: string } } {
-  const launcher = join(h.dir, "launch.cjs");
-  const pidFile = join(h.dir, "writer.pid");
-  writeFileSync(launcher, LAUNCHER);
-  const script = `echo $$ > "${pidFile}"; trap "${onTerm}; exit 0" TERM; while :; do sleep 0.05; done`;
-  const wait = `i=0; while [ ! -s "${pidFile}" ]; do i=$((i+1)); [ $i -gt 100 ] && exit 1; sleep 0.1; done`;
-  return {
-    tool: "bash",
-    args: { command: `node "${launcher}" "$PWD" '${script}'\n${wait}` },
-  };
-}
-
-export const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-export function archivedUntracked(archive: string, file: string): string {
-  const packed = execFileSync("zstd", ["-dc", archive]);
-  const untracked = execFileSync("tar", ["-xOf", "-", "c-1-a1/untracked.tar"], { input: packed });
-  return execFileSync("tar", ["-xOf", "-", file], { input: untracked, encoding: "utf8" });
-}

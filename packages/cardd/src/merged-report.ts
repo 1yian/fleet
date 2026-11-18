@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
-import { check, evidenceScope, OPS, type Card, type OpArgs } from "@fleet/protocol";
+import { check, inEvidenceScope, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import type { Hosts } from "./pulls.ts";
@@ -132,7 +132,7 @@ function requireOperationEvidence(card: Card, args: OpArgs<"report">): void {
     throw new Error(
       "ops completion requires evidence: an absolute path to a report in $FLEET_SCRATCH",
     );
-  if (evidenceScope(card.id, args.evidence) === undefined)
+  if (!inEvidenceScope(card.id, args.evidence))
     throw new Error(
       "ops evidence must be a file in this card's $FLEET_SCRATCH folder, outside its tmp folder",
     );
