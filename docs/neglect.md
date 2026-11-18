@@ -12,31 +12,26 @@ A standing card (a lane home or a schedule holder) and a closed card have no pul
 | `notice`  | Who has to be told: `none`, `main`, `captain`, or `urgent` (red).                                 |
 | `owner`   | The captain, main, a lane's mate, or a worker with its host.                                      |
 | `running` | A turn or a job (named) that runs for the card now, or nothing.                                   |
-| `movedAt` | The last real change (see below): a report, comment, hold, release, answer, job end, or progress. |
+| `movedAt` | The latest [real change](#what-counts-as-a-real-change), or card creation if none.               |
 | `since`   | How long the state has held. Each state counts from its own evidence.                             |
 | `waits`   | The captain, main, a mate, a date (see `datedWait`), a pause, or nothing stated.                  |
 | `behind`  | For a held card: how many open steps it names in `remaining`, and how many of them started.       |
 
 A lane's mate reads `behind` with every step in another lane counted as open and not started. The real count would show whether that card is queued, started, or closed, which `remaining` hides on purpose (`elsewhere`). Main and the board see the real count.
 
-`movedAt` never reads `cards.last_activity`, which every reconnect resets. A schedule's wake, a reminder, a restart note, a connect, and a lost job are not movement.
-
 ## What counts as a real change
 
-A worker that waits can say so over and over without anything changing. These repeats are not real changes, so they never move a card:
+`movedAt` advances on a comment, hold, release, answer, review feedback, cleanup, report, job result, or checkout progress (`progress_at`), with the exceptions below. A `working` report does not count if the preceding report was also `working`, even if its text differs. A `note` report counts. Automated wakes and lost job results do not count. `movedAt` never reads `cards.last_activity`, which every reconnect resets.
 
-- A `working` report right after another `working` report. The first one after any other status counts, and a `note` always counts.
-- A job that the worker starts again under the same label when an earlier run of that label began after the last real change, and the result of that run. The first run of a label counts as before. A re-run whose exit code differs from the previous result of that label counts, such as a pass after a timeout. The next run of that label after it is a first run again.
+A job is a repeat if an earlier run of the same label in the live attempt began strictly after the cutoff. The cutoff is the latest of card creation, a counted entry other than a job result, checkout progress, or a change of exit code. An exit-code change is measured against the preceding recorded exit code for that label in the live attempt, such as a pass after a timeout. It can reset the cutoff for all labels. A repeat with no exit-code change does not advance `movedAt`. A normal job finish can advance `movedAt` without resetting the cutoff.
 
-A commit or a file change in the worker's copy (`progress_at`) and any entry from someone else (a comment, hold, release, answer, or review feedback) are real changes. After one, the next run of a label is a first run again. A poll that writes a log inside the checkout counts as progress.
+Repeat detection uses jobs from the live attempt, while the movement clock still reads card history and recorded progress. A poll that changes a log inside the checkout can count as progress. See [Review pages](code.md#review-pages) for how to put a feedback wait on a decision hold.
 
-The fleet reads this from the live attempt's entries and jobs, so a replaced worker starts clean. A Lavish poll is refused until the card holds a decision, but only when the job starts, and only when the command text shows the poll. A wrapper script or a non-Lavish poll is not recognised: it is caught only by the idle rule after 4 hours.
-
-A running job covers silence and reported blocks only while it is not such a repeat. A repeat is shown as `running` with `run again with nothing changed`, the card counts as idle from the last real change, and the idle limits below apply as they always did: main after 4 hours, the captain after 24. Nobody has to say anything for this: it is how a worker that polls the same page for a day shows up. When a first run covers the card, the repeated waits still count in the `running` job count.
+A repeated job does not cover silence or a reported block. If no fresh job or active turn takes precedence in `running`, the repeat is shown there as `run again with nothing changed`. With no other reason to wait or raise attention, the card is idle from `movedAt`. If a fresh job is running, it is named first and the count includes the repeats.
 
 ## States
 
-Captain decisions come first. A live long job, an armed dated hold, or a future worker checkpoint then covers silence and reported blocks. Remaining needs and inactivity use the rows below.
+Captain decisions come first. A job that covers the card, an armed dated hold, or a future worker checkpoint can suppress silence and reported blocks, but not a broken worker. Remaining needs and inactivity use the rows below.
 
 | State     | A card is in it when                                                                                                                | Counts from                |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
@@ -67,7 +62,7 @@ The limits are `idleMain`, `idleCaptain`, `parked`, and `parkedUrgent` in `timin
 
 Main is told in the ten minute reminder (see [The timed check](code.md#the-timed-check)). The reminder for neglect goes to main for every lane, and never to the mate that owns the card:
 
-- An idle card past 4 hours is an item to act on, in the first group. It is any card whose state is idle: Queued, Working, In review, With mate, or Merging, finished or not. Its mate keeps the reminders it already had. A card that main already has in its own list, such as a hold with main, is listed once.
+- An idle card past 4 hours is an item to act on, in the first group. It is any card whose state is idle: Queued, Working, In review, With mate, or Merging, finished or not. If the only running work is a repeat, the reminder says `only a job that repeats a wait` rather than `nothing running`. Its mate keeps the reminders it already had. A card that main already has in its own list, such as a hold with main, is listed once.
 - An idle park is listed for action by its holder: start what it waits on, or clear the hold. It ages from the hold first opening.
 - Armed dated holds stay information-only regardless of age. A declared watcher need not be verifiable by fleet. An outside date needs no polling. A future worker checkpoint is also quiet until its date.
 
@@ -75,4 +70,4 @@ The captain hears decisions and escalations through main's chat and sees holds o
 
 ## Evidence
 
-`e2e/cardd/pulse.test.ts` and `e2e/cardd/neglect.test.ts` exercise preserved server pulse and reminder behavior, including covered waits. `e2e/extension/pane.test.ts` and `e2e/board/attention.test.ts` verify that post-feedback neglect displays are absent while decisions remain answerable.
+`e2e/cardd/pulse.test.ts` and `e2e/cardd/neglect.test.ts` exercise server pulse and reminders, including covered waits. `e2e/cardd/repoll.test.ts` checks repeat-job coverage and movement. `e2e/extension/pane.test.ts` and `e2e/board/attention.test.ts` verify that post-feedback neglect displays are absent while decisions remain answerable.
