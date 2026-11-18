@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
@@ -102,6 +102,19 @@ test("cancelling one suite leaves its concurrent peer alone", { timeout: 30_000 
   const base = tempDir("suite-");
   const alias = join(tempDir("alias-"), "tmp");
   symlinkSync(base, alias);
+  const unrelated = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+    detached: true,
+    env: {},
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  const unrelatedExit = once(unrelated, "exit");
+  t.after(async () => {
+    unrelated.stdin.end();
+    await unrelatedExit;
+  });
+  await once(unrelated, "spawn");
+  const unrelatedPid = unrelated.pid;
+  assert.ok(unrelatedPid !== undefined && running(unrelatedPid));
   const cancelled = await launch(t, alias, "detached");
   const peer = await launch(t, alias, "normal");
   const [left, right] = await Promise.all([cancelled.ready(), peer.ready()]);
@@ -112,6 +125,7 @@ test("cancelling one suite leaves its concurrent peer alone", { timeout: 30_000 
   cancelled.stop();
   assert.equal(await cancelled.result, 1, cancelled.output());
   assert.equal(running(left.pid), false, "the detached fixture must be gone");
+  assert.ok(running(unrelatedPid), "the unrelated process must still be alive");
   assert.equal(existsSync(dirname(left.root)), false);
   assert.ok(running(right.pid), "the peer must still be able to finish");
   right.release();
@@ -153,6 +167,21 @@ test("a log setup error drains active lanes before removing the suite", { timeou
     assert.ok(drained >= 0 && drained < fault, output);
   }
   assert.equal(existsSync(suite), false);
+});
+
+test("the runner rejects a private base under a replaceable ancestor", (t) => {
+  const shared = tempDir("shared-");
+  const base = join(shared, "base");
+  chmodSync(shared, 0o777);
+  t.after(() => chmodSync(shared, 0o700));
+  assert.throws(
+    () => execFileSync(process.execPath, [RUNNER, FIXTURE], {
+      env: { ...process.env, FLEET_E2E_TMPDIR: base, FLEET_E2E_CONCURRENCY: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+    /replaceable end-to-end directory/,
+  );
+  assert.equal(existsSync(base), false);
 });
 
 test("the suite counts tests cancelled by Node", { timeout: 30_000 }, async (t) => {

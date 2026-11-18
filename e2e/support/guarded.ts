@@ -2,7 +2,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import { Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import "./hermetic-env.ts";
-import { killGroup } from "./marked.ts";
+import { registerGroup } from "./marked.ts";
 
 const REAPER = fileURLToPath(new URL("./reaper.ts", import.meta.url));
 let reaper: ChildProcess | undefined;
@@ -10,6 +10,7 @@ let reaper: ChildProcess | undefined;
 function tell(message: string): void {
   if (reaper === undefined) {
     reaper = spawn("node", [REAPER], { detached: true, stdio: ["pipe", "ignore", "inherit"] });
+    registerGroup(reaper.pid);
     reaper.unref();
     reaper.stdin?.on("error", () => undefined);
     if (reaper.stdin instanceof Socket) reaper.stdin.unref();
@@ -32,9 +33,9 @@ export function spawnGuarded(
   const child = spawn(command, args, { ...options, detached: true });
   const pid = child.pid;
   if (pid !== undefined) {
-    tell(`watch ${String(pid)}`);
+    const identity = registerGroup(pid, options.env ?? process.env);
+    if (identity !== undefined) tell(`watch ${String(pid)} ${identity}`);
     child.once("exit", () => {
-      killGroup(pid, "SIGKILL");
       tell(`release ${String(pid)}`);
     });
   }

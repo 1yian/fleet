@@ -1,9 +1,15 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cacheDirectory, runBase, sweepStaleFileFolders } from "./run-folders.ts";
 
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const outerTmpdir = runBase();
+
+let retainRoot = false;
+export function retainRunRoot(): void {
+  retainRoot = true;
+  writeFileSync(join(runRoot, "unresolved-groups"), "", { mode: 0o600 });
+}
 
 const assigned = process.env["FLEET_E2E_ROOT"] || undefined;
 Reflect.deleteProperty(process.env, "FLEET_E2E_ROOT");
@@ -13,7 +19,7 @@ function claimRoot(): string {
   sweepStaleFileFolders(outerTmpdir);
   const root = mkdtempSync(join(outerTmpdir, `fr-${String(process.pid)}-`));
   const remove = (): void => {
-    rmSync(root, { recursive: true, force: true });
+    if (!retainRoot) rmSync(root, { recursive: true, force: true });
   };
   process.on("exit", remove);
   for (const name of SIGNALS) {

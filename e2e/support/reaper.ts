@@ -1,17 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
-import { killGroup } from "./marked.ts";
+import { groupIdentity, signalOwnedGroup } from "./marked.ts";
 
 const watched = new Map<number, string>();
 const hooks = new Map<string, string[]>();
-
-function startOf(pid: number): string {
-  try {
-    return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).trim();
-  } catch {
-    return "";
-  }
-}
 
 function descendantsOf(root: number): number[] {
   const table = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
@@ -36,7 +28,7 @@ function signal(pid: number, name: "SIGSTOP" | "SIGKILL"): void {
   }
 }
 
-function sweep(root: number): void {
+function sweep(root: number, identity: string): void {
   const frozen = new Set<number>();
   for (;;) {
     const fresh = [root, ...descendantsOf(root)].filter((pid) => !frozen.has(pid));
@@ -46,7 +38,7 @@ function sweep(root: number): void {
       signal(pid, "SIGSTOP");
     }
   }
-  killGroup(root, "SIGKILL");
+  signalOwnedGroup(root, identity, "SIGKILL");
   for (const pid of frozen) signal(pid, "SIGKILL");
 }
 
@@ -59,7 +51,7 @@ const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const [verb = "", text = ""] = line.split(" ", 2);
   const pid = Number(text);
-  if (verb === "watch") watched.set(pid, startOf(pid));
+  if (verb === "watch") watched.set(pid, line.slice(verb.length + text.length + 2));
   else if (verb === "release") watched.delete(pid);
   else if (verb === "hook") hooks.set(text, argvOf(line.slice(verb.length + text.length + 2)));
   else if (verb === "unhook") hooks.delete(text);
@@ -73,6 +65,6 @@ lines.on("close", () => {
     }
   }
   for (const [pid, began] of watched) {
-    if (began !== "" && startOf(pid) === began) sweep(pid);
+    if (began !== "" && groupIdentity(pid) === began) sweep(pid, began);
   }
 });

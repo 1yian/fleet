@@ -1,19 +1,22 @@
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { guardCleanup, spawnGuarded } from "./guarded.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
-import { envMarker, killGroup, sweepMarked } from "./marked.ts";
-import { tempDir } from "./run-root.ts";
+import { LAB_GROUPS_ENV, signalOwnedGroup, sweepGroups } from "./marked.ts";
+import { retainRunRoot, tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
+const LAB_HERDR = fileURLToPath(new URL("./lab-herdr.ts", import.meta.url));
+const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
   readonly config = join(tempDir("herdr-config-"), "config.toml");
-  private readonly ownership = randomBytes(16).toString("hex");
+  private readonly groups = tempDir("herdr-groups-");
   private server: ChildProcess | undefined;
   env: Record<string, string> = {};
   private disarm = (): void => undefined;
@@ -22,7 +25,23 @@ export class HerdrLab {
     const lab = new HerdrLab();
     writeFileSync(lab.config, "onboarding = false\n");
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
-    lab.env = { ...env };
+    const path = env["PATH"] ?? process.env["PATH"] ?? "";
+    const real = execFileSync("sh", ["-c", "command -v herdr"], {
+      env: { ...process.env, PATH: path },
+      encoding: "utf8",
+    }).trim();
+    const bin = tempDir("herdr-bin-");
+    writeFileSync(
+      join(bin, "herdr"),
+      `#!/bin/sh\nif [ "$1" = server ]; then exec ${quote(process.execPath)} ${quote(LAB_HERDR)} ${quote(real)} "$@"; fi\nexec ${quote(real)} "$@"\n`,
+      { mode: 0o700 },
+    );
+    lab.env = {
+      ...env,
+      PATH: `${bin}${delimiter}${path}`,
+      [LAB_GROUPS_ENV]: lab.groups,
+      HERDR_CONFIG_PATH: lab.config,
+    };
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawnGuarded(
       env["FLEET_E2E_HERDR_SERVER"] ?? "herdr",
@@ -33,7 +52,7 @@ export class HerdrLab {
           ...env,
           HERDR_SESSION: lab.name,
           HERDR_CONFIG_PATH: lab.config,
-          FLEET_E2E_HERDR: lab.ownership,
+          [LAB_GROUPS_ENV]: lab.groups,
         },
         stdio: "ignore",
       },
@@ -124,21 +143,27 @@ export class HerdrLab {
 
   async killServer(): Promise<void> {
     const server = this.server;
-    if (server?.exitCode !== null || server.signalCode !== null) return;
-    const exited = new Promise((resolve) => server.once("exit", resolve));
-    killGroup(server.pid ?? 0, "SIGKILL");
-    await exited;
+    if (server === undefined || server.exitCode !== null || server.signalCode !== null) return;
+    const pid = server.pid;
+    if (pid === undefined) return;
+    const identity = readFileSync(join(this.groups, String(pid)), "utf8");
+    signalOwnedGroup(pid, identity, "SIGKILL");
+    const result = await sweepGroups(this.groups, 0);
+    if (result.survivors > 0) {
+      retainRunRoot();
+      throw new Error(`could not stop owned Herdr server ${String(pid)}`);
+    }
   }
 
   async stop(): Promise<void> {
     await this.text(["session", "stop", this.name]).catch(() => "");
-    const server = this.server;
-    if (server?.exitCode === null && server.signalCode === null) {
-      const exited = new Promise((resolve) => server.once("exit", resolve));
-      killGroup(server.pid ?? 0, "SIGKILL");
-      await exited;
+    try {
+      const result = await sweepGroups(this.groups, 0);
+      if (result.survivors > 0) throw new Error(`could not stop owned Herdr lab ${this.name}`);
+    } catch (error) {
+      retainRunRoot();
+      throw error;
     }
-    await sweepMarked(envMarker("FLEET_E2E_HERDR", this.ownership), 0);
     await this.text(["session", "delete", this.name]);
     this.disarm();
   }

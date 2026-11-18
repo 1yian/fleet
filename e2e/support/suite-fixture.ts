@@ -4,6 +4,7 @@ import { connect } from "node:net";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { registerGroup } from "./marked.ts";
 
 const port = Number(process.env["SUITE_FIXTURE_PORT"]);
 const root = process.env["FLEET_E2E_ROOT"] ?? "";
@@ -23,6 +24,7 @@ test("wait for the controlling test", options, async (t) => {
       detached: true,
       stdio: "ignore",
     });
+    registerGroup(child.pid);
     await once(child, "exit");
   } else if (mode === "detached") {
     const child = spawn(
@@ -34,6 +36,7 @@ test("wait for the controlling test", options, async (t) => {
       ],
       { detached: true, stdio: "ignore" },
     );
+    registerGroup(child.pid);
     await once(child, "exit");
   } else {
     const socket = connect(port, "127.0.0.1");

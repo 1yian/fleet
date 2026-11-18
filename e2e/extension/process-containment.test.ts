@@ -15,6 +15,7 @@ import {
 } from "../support/dispatch-lab.ts";
 import { guardCleanup } from "../support/guarded.ts";
 import type { Harness, Pi } from "../support/harness.ts";
+import { GROUPS_ENV } from "../support/marked.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
@@ -30,7 +31,9 @@ const cgroupWithoutBus = detected({ ...process.env, XDG_RUNTIME_DIR: noBus }) ==
 const SERVER = `
 const { createServer } = require("node:net");
 const { writeFileSync } = require("node:fs");
-const [portFile] = process.argv.slice(2);
+const { registerGroup } = require(${JSON.stringify(fileURLToPath(new URL("../support/marked.ts", import.meta.url)))});
+const [portFile, scopes] = process.argv.slice(2);
+registerGroup(process.pid, { ${GROUPS_ENV}: scopes });
 writeFileSync(portFile + ".pid", String(process.pid));
 createServer().listen(0, "127.0.0.1", function () {
   writeFileSync(portFile, String(this.address().port));
@@ -86,7 +89,8 @@ function detachedServerCommand(): { command: string; portFile: string } {
   const portFile = join(h.dir, "server.port");
   const script = join(h.dir, "server.cjs");
   writeFileSync(script, SERVER);
-  const start = `(cd /tmp && env -i setsid '${process.execPath}' '${script}' '${portFile}' </dev/null >/dev/null 2>&1 &) &`;
+  const scopes = (process.env[GROUPS_ENV] ?? "").replaceAll("'", "'\\''");
+  const start = `(cd /tmp && env -i setsid '${process.execPath}' '${script}' '${portFile}' '${scopes}' </dev/null >/dev/null 2>&1 &) &`;
   const wait = `i=0; while [ ! -s '${portFile}' ]; do i=$((i+1)); [ $i -gt 100 ] && { echo "server did not start"; exit 1; }; sleep 0.1; done`;
   return { command: `(${start}) ; ${wait}`, portFile };
 }

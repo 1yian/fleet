@@ -1,24 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, readlinkSync } from "node:fs";
-import { basename } from "node:path";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
-interface Marked {
-  readonly pid: number;
-  readonly identity: string;
-}
+export const GROUPS_ENV = "FLEET_E2E_GROUPS";
+export const LAB_GROUPS_ENV = "FLEET_E2E_LAB_GROUPS";
 
 export interface Swept {
   readonly named: readonly string[];
   readonly survivors: number;
 }
 
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const validPid = (pid: number): boolean =>
+  Number.isSafeInteger(pid) && pid > 1 && pid <= 2_147_483_647;
 
-export const envMarker = (name: string, value: string, suffix = ""): RegExp =>
-  new RegExp(`^${name}=${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${suffix}$`);
-
-export function killGroup(pid: number, signal: NodeJS.Signals): void {
-  if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 2_147_483_647) return;
+function killGroup(pid: number, signal: NodeJS.Signals): void {
+  if (!validPid(pid)) return;
   try {
     process.kill(-pid, signal);
   } catch {
@@ -26,101 +23,91 @@ export function killGroup(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function linuxIdentity(pid: number, marker: RegExp): string | undefined {
+export function groupIdentity(pid: number): string | undefined {
+  if (!validPid(pid)) return undefined;
   try {
-    const stat = readFileSync(`/proc/${String(pid)}/stat`, "utf8");
-    const started = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
-    const env = readFileSync(`/proc/${String(pid)}/environ`, "utf8");
-    if (env.split("\0").some((entry) => marker.test(entry))) return started;
+    if (process.platform === "linux") {
+      const stat = readFileSync(`/proc/${String(pid)}/stat`, "utf8");
+      const [state, , group, ...rest] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      return Number(group) === pid && state !== "Z" ? rest[16] : undefined;
+    }
+    const row = execFileSync("ps", ["-p", String(pid), "-o", "pgid=,stat=,lstart="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const [group, state = "", ...started] = row.split(/\s+/);
+    if (Number(group) === pid && state !== "" && !state.startsWith("Z") && started.length > 0)
+      return started.join(" ");
   } catch {
     return undefined;
   }
   return undefined;
 }
 
-function macSnapshot(environment: boolean): Map<number, string> {
-  const table = execFileSync(
-    "ps",
-    [
-      environment ? "-Exww" : "-xww",
-      "-U",
-      String(process.getuid?.()),
-      "-o",
-      "pid=,lstart=,command=",
-    ],
-    { encoding: "utf8", maxBuffer: 1 << 26 },
-  );
-  const rows = new Map<number, string>();
-  for (const line of table.split("\n")) {
-    const found = /^\s*(\d+)\s+(.*)$/.exec(line);
-    if (found?.[2] !== undefined) rows.set(Number(found[1]), found[2]);
-  }
-  return rows;
+export function groupScopes(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env[GROUPS_ENV] ?? "").split("\n").filter(isAbsolute);
 }
 
-function markedProcesses(marker: RegExp): Marked[] {
-  if (process.platform === "linux") {
-    return readdirSync("/proc").flatMap((entry) => {
-      const pid = Number(entry);
-      if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return [];
-      const identity = linuxIdentity(pid, marker);
-      return identity === undefined ? [] : [{ pid, identity }];
-    });
+export function registerGroup(
+  pid: number | undefined,
+  env = process.env,
+  started = pid === undefined ? undefined : groupIdentity(pid),
+): string | undefined {
+  if (pid === undefined || !validPid(pid)) return undefined;
+  const lab = env[LAB_GROUPS_ENV];
+  const scopes = new Set([...groupScopes(env), ...(lab !== undefined && isAbsolute(lab) ? [lab] : [])]);
+  for (const scope of scopes) {
+    writeFileSync(join(scope, String(pid)), started ?? "", { mode: 0o600 });
   }
-  const argv = macSnapshot(false);
-  const full = macSnapshot(true);
-  const current = macSnapshot(false);
-  return [...argv].flatMap(([pid, identity]) => {
-    const withEnv = full.get(pid);
-    const owns =
-      pid !== process.pid &&
-      current.get(pid) === identity &&
-      withEnv?.startsWith(`${identity} `) === true &&
-      withEnv.slice(identity.length + 1).split(" ").some((entry) => marker.test(entry));
-    return owns ? [{ pid, identity }] : [];
+  return started;
+}
+
+export function signalOwnedGroup(pid: number | undefined, started: string | undefined, signal: NodeJS.Signals): void {
+  if (pid !== undefined && started !== undefined && groupIdentity(pid) === started)
+    killGroup(pid, signal);
+}
+
+function liveGroups(): Set<number> {
+  try {
+    const rows = execFileSync("ps", ["-A", "-o", "pgid=,stat="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return new Set(rows.split("\n").flatMap((row) => {
+      const [group, state] = row.trim().split(/\s+/);
+      return state !== undefined && !state.startsWith("Z") ? [Number(group)] : [];
+    }));
+  } catch {
+    throw new Error("could not verify end-to-end process groups");
+  }
+}
+
+function outstanding(scope: string): { pid: number; started: string }[] {
+  const entries = readdirSync(scope);
+  if (entries.length === 0) return [];
+  const live = liveGroups();
+  return entries.flatMap((name) => {
+    const pid = Number(name);
+    if (!validPid(pid) || !live.has(pid)) return [];
+    return [{ pid, started: readFileSync(join(scope, name), "utf8") }];
   });
 }
 
-function describe({ pid }: Marked): string {
-  try {
-    const name =
-      process.platform === "linux"
-        ? basename(readlinkSync(`/proc/${String(pid)}/exe`))
-        : execFileSync("ps", ["-o", "ucomm=", "-p", String(pid)], { encoding: "utf8" }).trim();
-    return `${String(pid)} ${name}`;
-  } catch {
-    return String(pid);
-  }
-}
-
-function killMarked(left: readonly Marked[], marker: RegExp): void {
-  const mac =
-    process.platform === "linux"
-      ? undefined
-      : new Map(markedProcesses(marker).map(({ pid, identity }) => [pid, identity]));
-  for (const { pid, identity } of left) {
-    const current = mac === undefined ? linuxIdentity(pid, marker) : mac.get(pid);
-    if (current !== identity) continue;
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      continue;
-    }
-  }
-}
-
-export async function sweepMarked(marker: RegExp, graceMs: number): Promise<Swept> {
+export async function sweepGroups(scope: string, graceMs: number): Promise<Swept> {
   const deadline = Date.now() + graceMs;
-  let left = markedProcesses(marker);
+  let left = outstanding(scope);
   while (left.length > 0 && Date.now() < deadline) {
-    await wait(200);
-    left = markedProcesses(marker);
+    await delay(100);
+    left = outstanding(scope);
   }
-  const named = left.map(describe);
-  for (let round = 0; left.length > 0 && round < 10; round += 1) {
-    killMarked(left, marker);
-    await wait(100);
-    left = markedProcesses(marker);
+  const named = left.map(({ pid }) => `${String(pid)} process group`);
+  if (left.length > 0) {
+    for (const { pid, started } of left) signalOwnedGroup(pid, started, "SIGKILL");
+    const deadline = Date.now() + 1_000;
+    do {
+      await delay(50);
+      left = outstanding(scope);
+    } while (left.length > 0 && Date.now() < deadline);
   }
   return { named, survivors: left.length };
 }
