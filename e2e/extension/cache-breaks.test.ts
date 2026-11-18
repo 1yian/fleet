@@ -7,7 +7,13 @@ import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, optionalString, parseRecord } from "../support/json.ts";
-import { configureMain, Scratch, settingsArgs, startMain } from "../support/scratch.ts";
+import {
+  configureMain,
+  roomyDiskEnv,
+  Scratch,
+  settingsArgs,
+  startMain,
+} from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -32,7 +38,11 @@ beforeEach(async () => {
     join(h.dir, "agent", "settings.json"),
     JSON.stringify({ defaultProvider: "tier", defaultModel: "auto" }),
   );
-  lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
+  lab = await HerdrLab.start({
+    ...h.piEnv("mate"),
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    ...roomyDiskEnv(),
+  });
   configureMain(scratch, cardd.url, mainToken);
 });
 afterEach(async (t) => {

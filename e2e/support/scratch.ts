@@ -10,8 +10,13 @@ import "./hermetic-env.ts";
 import "./tool-stubs.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
+const ROOMY_DISK = fileURLToPath(new URL("./roomy-disk.ts", import.meta.url));
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+
+export const roomyDiskEnv = (): Record<string, string> => ({
+  NODE_OPTIONS: `${process.env["NODE_OPTIONS"] ?? ""} --import=${ROOMY_DISK}`.trim(),
+});
 
 export class Scratch {
   readonly root: string;

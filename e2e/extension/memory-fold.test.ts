@@ -6,7 +6,13 @@ import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import { configureMain, Scratch, settingsArgs, startMain } from "../support/scratch.ts";
+import {
+  configureMain,
+  roomyDiskEnv,
+  Scratch,
+  settingsArgs,
+  startMain,
+} from "../support/scratch.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const FAKE_MODEL = fileURLToPath(new URL("../support/fake-model.ts", import.meta.url));
@@ -33,7 +39,11 @@ beforeEach(async () => {
   writeFileSync(join(scratch.root, "state", "cost-notice"), String(Date.now()));
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   memoryHome = tempDir("fleet-memory-");
-  lab = await HerdrLab.start({ ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
+  lab = await HerdrLab.start({
+    ...h.piEnv("mate"),
+    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    ...roomyDiskEnv(),
+  });
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);
