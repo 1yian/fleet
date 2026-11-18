@@ -52,7 +52,12 @@ const summarized = (db: DatabaseSync, batch: string): boolean =>
     )
     .get(batch) !== undefined;
 
-function summarize(db: DatabaseSync, batch: string, requester: string): string[] {
+function summarize(
+  db: DatabaseSync,
+  batch: string,
+  requester: string,
+  gone: readonly Maintenance[] = [],
+): string[] {
   const rows = batchRows(db, batch);
   if (
     rows.length === 0 ||
@@ -66,10 +71,15 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
   const card = anchor === undefined ? undefined : cardOf(db, anchor.session);
   if (card === undefined) return [];
   const hosts = [...new Set(rows.map((row) => row.host))].sort();
-  const counts = (found: readonly Maintenance[]): string =>
-    `${String(found.filter((row) => row.state === "completed").length)} reloaded and verified, ${String(found.filter((row) => row.state === "failed").length)} failed`;
+  const total = (found: readonly Maintenance[], extra: readonly Maintenance[] = []): string => {
+    const failed = [...found, ...extra].filter((row) => row.state === "failed").length;
+    const removed = extra.filter((row) => row.state !== "failed").length;
+    const gone = removed === 0 ? "" : `, ${String(removed)} removed with their lane`;
+    return `${String(found.filter((row) => row.state === "completed").length)} reloaded and verified, ${String(failed)} failed${gone}`;
+  };
+  const counts = (found: readonly Maintenance[]): string => total(found);
   const body = [
-    `Reload batch ${batch} finished: ${counts(rows)}; 0 pending. Failures are not verified successes.`,
+    `Reload batch ${batch} finished: ${total(rows, gone)}; 0 pending. Failures and removals are not verified successes.`,
     ...hosts.map(
       (host) =>
         `- ${host === "" ? "host unspecified" : host}: ${counts(rows.filter((row) => row.host === host))}`,
@@ -97,6 +107,11 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
   return [requester];
 }
 
+function identityOf(state: string, card: number, process: unknown): string {
+  if (state !== "failed") return "";
+  return ` [c-${String(card)}${typeof process === "string" ? `, process ${process}` : ""}]`;
+}
+
 function settle(
   db: DatabaseSync,
   id: number,
@@ -111,11 +126,13 @@ function settle(
     .run(state, detail, now, id);
   if (changed.changes === 0) return [];
   const [row] = rowsOf(db, "m.id = ?", id);
-  const owner = db.prepare("SELECT requester, session FROM maintenance WHERE id = ?").get(id);
+  const owner = db
+    .prepare("SELECT requester, session, process FROM maintenance WHERE id = ?")
+    .get(id);
   const card = cardOf(db, String(owner?.["session"]));
   if (row === undefined || card === undefined) return [];
   const requester = String(owner?.["requester"]);
-  const body = maintenanceLine({ ...row, state, detail });
+  const body = `${maintenanceLine({ ...row, state, detail })}${identityOf(state, card, owner?.["process"])}`;
   const quiet = state === "completed";
   const fields = { maintenance: id, batch: row.batch, kind: row.kind, state, quiet };
   const recipients = quiet && row.kind === "reload" ? [] : [requester];
@@ -129,6 +146,26 @@ function settle(
       summarize(db, String(batch["batch"]), String(batch["requester"])),
     ),
   ];
+}
+
+export function dropMaintenance(db: DatabaseSync, lane: string): string[] {
+  const batches = db
+    .prepare(
+      `SELECT DISTINCT b.batch AS batch, b.requester AS requester FROM maintenance_batches b
+       JOIN maintenance m ON m.id = b.maintenance WHERE m.session = ?`,
+    )
+    .all(lane)
+    .map((row) => ({ batch: String(row["batch"]), requester: String(row["requester"]) }));
+  const gone = batches.map(({ batch }) =>
+    batchRows(db, batch).filter((row) => row.session === lane),
+  );
+  db.prepare(
+    "DELETE FROM maintenance_batches WHERE requester = ? OR maintenance IN (SELECT id FROM maintenance WHERE session = ? OR requester = ?)",
+  ).run(lane, lane, lane);
+  db.prepare("DELETE FROM maintenance WHERE session = ? OR requester = ?").run(lane, lane);
+  return batches.flatMap(({ batch, requester }, index) =>
+    summarize(db, batch, requester, gone[index] ?? []),
+  );
 }
 
 export function adoptMaintenance(

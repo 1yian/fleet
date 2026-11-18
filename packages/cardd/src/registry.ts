@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { dropMaintenance } from "./maintenance.ts";
 import { loadOpenCards, transaction } from "./store.ts";
 
 const text = (value: unknown): string => String(value);
@@ -91,10 +92,7 @@ export function removeLane(db: DatabaseSync, lane: string): string {
     db.prepare("DELETE FROM deliveries WHERE session = ?").run(lane);
     db.prepare("UPDATE lanes SET card = NULL WHERE name = ?").run(lane);
     db.prepare("DELETE FROM cards WHERE lane = ?").run(lane);
-    db.prepare(
-      "DELETE FROM maintenance_batches WHERE requester = ? OR maintenance IN (SELECT id FROM maintenance WHERE session = ? OR requester = ?)",
-    ).run(lane, lane, lane);
-    db.prepare("DELETE FROM maintenance WHERE session = ? OR requester = ?").run(lane, lane);
+    dropMaintenance(db, lane);
     db.prepare("DELETE FROM sessions WHERE role = 'mate' AND lane = ?").run(lane);
     db.prepare("DELETE FROM lanes WHERE name = ?").run(lane);
     const dropped = schedules === 0 ? "" : `, with ${String(schedules)} of its schedules`;

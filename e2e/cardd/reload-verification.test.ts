@@ -165,9 +165,11 @@ for (const mixed of [false, true]) {
         (entry) => entry.fields["maintenance"] === secondRequest.id,
         "the individual failure",
       );
-      assert.ok(failure.body.includes(`${secondRequest.session} (worker on p620)`));
-      assert.ok(
-        failure.body.includes("no replacement hello before the update verification deadline"),
+      assert.match(
+        failure.body,
+        new RegExp(
+          `^${secondRequest.session} \\(worker on p620\\): reload failed - no replacement hello before the update verification deadline \\[c-${String(second.card.id)}, process [0-9a-f-]{36}\\]$`,
+        ),
       );
       assert.equal(failure.card, second.card.id);
     } else {

@@ -56,6 +56,22 @@ for (const skip of [false, true]) {
       assert.match(line, /reload failed/);
       assert.ok(line.includes(skip ? "no replacement hello" : HELPER_ERROR), line);
       assert.equal(report.includes(HELPER_LEAK), false);
+      const notice = await until(
+        () =>
+          fleet.h
+            .callsOf("mate")
+            .flat()
+            .find(
+              (turn) =>
+                turn.role === "user" &&
+                turn.text.startsWith(
+                  `[fleet] maintenance: ${worker.session} (worker on p620): reload failed - `,
+                ),
+            )?.text,
+        "main to hear the individual failure notice",
+      );
+      assert.ok(notice.includes(skip ? "no replacement hello" : HELPER_ERROR), notice);
+      assert.match(notice, new RegExp(`\\[c-${String(worker.card)}, process [0-9a-f-]{36}\\]$`));
       assert.equal(await fleet.piIn(worker.pane), undefined);
       const after = await fleet.cardOf(worker.card);
       assert.equal(after.status, before.status);
