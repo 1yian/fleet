@@ -91,14 +91,19 @@ function forbiddenDirectivePattern() {
   return new RegExp(policy);
 }
 
-function trackedPaths() {
-  const result = spawnSync("git", ["ls-files", "-z"], {
+function gitPaths(flag) {
+  const result = spawnSync("git", ["ls-files", "-z", flag], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr}`);
   return result.stdout.split("\0").filter(Boolean);
+}
+
+function trackedPaths() {
+  const deleted = new Set(gitPaths("--deleted"));
+  return gitPaths("--cached").filter((path) => !deleted.has(path));
 }
 
 function ignoredByConfig(path) {
