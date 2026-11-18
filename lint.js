@@ -32,7 +32,7 @@ function runNode(script, args, stdio) {
 }
 
 function runOxlint(extra, paths, stdio) {
-  return runNode(executable, [...arguments_, ...extra, ...paths], stdio);
+  return runNode(executable, [...arguments_, ...extra, "--", ...paths], stdio);
 }
 
 function policyList(name) {
@@ -92,13 +92,23 @@ function forbiddenDirectivePattern() {
   return new RegExp(policy);
 }
 
+function escapedPath(text) {
+  return JSON.stringify(text).slice(1, -1);
+}
+
 function decodePath(bytes) {
+  let path;
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    path = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     const escaped = [...bytes].map((byte) => `\\x${byte.toString(16).padStart(2, "0")}`).join("");
     throw new Error(`${escaped}: error fleet/unsupported-path: Tracked path is not valid UTF-8.`);
   }
+  if (/[\n\r]/.test(path))
+    throw new Error(
+      `${escapedPath(path)}: error fleet/unsupported-path: Tracked path contains a line break.`,
+    );
+  return path;
 }
 
 function gitPaths() {
