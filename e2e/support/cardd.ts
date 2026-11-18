@@ -174,6 +174,32 @@ export class Cardd {
     db.close();
   }
 
+  summaryCount(): number {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    try {
+      const row = db
+        .prepare(
+          "SELECT count(*) AS n FROM entries WHERE author = 'maintenance' AND json_extract(fields, '$.maintenanceBatch') IS NOT NULL",
+        )
+        .get();
+      return Number(row?.["n"]);
+    } finally {
+      db.close();
+    }
+  }
+
+  processRecorded(session: string): string | undefined {
+    const db = new DatabaseSync(this.db, { timeout: 5000 });
+    try {
+      const process = db.prepare("SELECT process FROM sessions WHERE id = ?").get(session)?.[
+        "process"
+      ];
+      return typeof process === "string" ? process : undefined;
+    } finally {
+      db.close();
+    }
+  }
+
   private sessionState(session: string): unknown {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     try {
@@ -277,7 +303,17 @@ export class Cardd {
     return session;
   }
 
-  private processOf(token: string): string {
+  async replace(old: Session, token: string, request: number): Promise<Session> {
+    await old.call("maintenance.ack", {
+      id: request,
+      state: "reloading",
+      detail: "helper submitted replacement command",
+    });
+    await old.close();
+    return this.connect(token, [], true, false, true, true);
+  }
+
+  processOf(token: string): string {
     const known = this.processes.get(token);
     if (known !== undefined) return known;
     const created = randomUUID();

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Move } from "../support/harness.ts";
-import { check, OPS } from "@fleet/protocol";
+import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { git } from "../support/remote.ts";
 import {
   LiveFleet,
@@ -179,22 +179,26 @@ test("update_fleet reloads every worker and second mate at its safe point, never
   );
   const section = report
     .slice(report.indexOf("Reloads at each"), report.indexOf("Sidebars:"))
-    .trimEnd();
-  assert.equal(
-    section,
-    [
-      "Reloads at each safe point (pending is not completed):",
-      "Reloaded and verified:",
-      `- ${paused.session} (worker on p620): reload completed - ${NOW_LINE}`,
-      `- far (mate): reload completed - ${NOW_LINE}`,
-      "Waiting for a safe point, not yet reloaded (main hears one summary when the batch finishes):",
-      `- ${busy.session} (worker on local): reload pending - ${SAFE_POINT}`,
-      `- ${job.session} (worker on local): reload pending - ${SAFE_POINT}`,
-      `- ops (mate): reload pending - ${SAFE_POINT}`,
-      "Unable to reload:",
-      "- ghost (mate): reload failed - runs code from before safe reloads, so it was left running: restart it by hand",
-    ].join("\n"),
+    .trimEnd()
+    .split("\n");
+  const failure = section.pop();
+  assert.match(
+    failure ?? "",
+    new RegExp(
+      `^- ghost \\(mate\\): reload failed - runs code from before safe reloads, so it was left running: restart it by hand \\[c-\\d+, host unknown, process ${fleet.cardd.processRecorded("ghost") ?? "missing"}\\]$`,
+    ),
   );
+  assert.deepEqual(section, [
+    "Reloads at each safe point (pending is not completed):",
+    "Reloaded and verified:",
+    `- ${paused.session} (worker on p620): reload completed - ${NOW_LINE}`,
+    `- far (mate): reload completed - ${NOW_LINE}`,
+    "Waiting for a safe point, not yet reloaded (main hears one summary when the batch finishes):",
+    `- ${busy.session} (worker on local): reload pending - ${SAFE_POINT}`,
+    `- ${job.session} (worker on local): reload pending - ${SAFE_POINT}`,
+    `- ops (mate): reload pending - ${SAFE_POINT}`,
+    "Unable to reload:",
+  ]);
   assert.notEqual(git(fleet.here.root, "rev-parse", "HEAD"), old);
 
   assert.equal(await fleet.piIn(busy.pane), was.busy.pid);
@@ -272,21 +276,19 @@ test("a successful multi-host update summarizes real replacements once, includin
   assert.ok(receipt);
   const id = receipt.fields["maintenance"];
   assert.equal(typeof id, "number");
-  const owner = await fleet.cardd.connect(busy.token, [], true, false, true, true);
-  try {
-    const duplicate = check(
-      OPS["maintenance.ack"].result,
-      await owner.call("maintenance.ack", {
-        id,
-        state: "failed",
-        detail: "late duplicate helper failure",
-      }),
-    );
-    assert.equal(duplicate.state, "completed");
-    assert.equal(duplicate.detail, NOW_LINE);
-  } finally {
-    await owner.close();
-  }
+  assert.equal(fleet.cardd.summaryCount(), 1);
+  const duplicate = await fleet.cardd.post(busy.token, "maintenance.ack", {
+    id,
+    state: "failed",
+    detail: "late duplicate helper failure",
+  });
+  assert.equal(duplicate.status, 200);
+  const outcome = check(HttpOutcomeSchema, duplicate.body);
+  assert.ok(outcome.ok);
+  const settled = check(OPS["maintenance.ack"].result, outcome.value);
+  assert.equal(settled.state, "completed");
+  assert.equal(settled.detail, NOW_LINE);
+  assert.equal(fleet.cardd.summaryCount(), 1);
   await mainHears([busy, paused], "4 reloaded and verified, 0 failed", "AFTER-DUPLICATE");
   const after = check(OPS.card.result, await fleet.ghost.call("card", { card: busy.card }));
   assert.equal(after.entries.filter((entry) => entry.fields["maintenance"] === id).length, 1);

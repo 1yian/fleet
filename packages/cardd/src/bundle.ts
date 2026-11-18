@@ -44,6 +44,7 @@ interface Item {
 const BUNDLE = "decisions";
 
 export function entryFor(db: DatabaseSync, lane: string, entry: Entry): Entry | undefined {
+  if (entry.fields["maintenance"] === "batch") return lane === mainLane(db) ? entry : undefined;
   const bundle = entry.author === "check" && entry.fields["condition"] === BUNDLE;
   if (bundle) return canSee(db, lane, entry.fields["to"]) ? entry : undefined;
   return holdFor(db, lane, entry);

@@ -19,18 +19,18 @@ test("overlapping reload batches retain verified receipts and shared pending mem
         await fleet.main.call("maintenance.request", { batch, kind: "reload" }),
       );
     const a = await request("A");
-    const x = workers[0];
-    const y = workers[1];
-    const tokenX = tokens[0];
-    const tokenY = tokens[1];
-    assert.ok(x && y && tokenX && tokenY);
-    await x.close();
-    const replacementX = await fleet.cardd.connect(tokenX, [], true, false, true, true);
+    const [x, y] = workers;
+    const [tokenX, tokenY] = tokens;
+    const requestX = a.find((row) => row.session === "c-1-a1");
+    const requestY = a.find((row) => row.session === "c-2-a1");
+    assert.ok(x && y && tokenX && tokenY && requestX && requestY);
+    const replacementX = await fleet.cardd.replace(x, tokenX, requestX.id);
     connections.push(replacementX);
     const b = await request("B");
-    const pending = b.find((row) => row.session === a[1]?.session);
-    assert.equal(pending?.id, a[1]?.id);
-    assert.equal(pending?.batch, "B");
+    const shared = b.find((row) => row.session === "c-2-a1");
+    assert.ok(shared);
+    assert.equal(shared.id, requestY.id);
+    assert.equal(shared.batch, "B");
     assert.deepEqual(
       check(
         OPS["maintenance.status"].result,
@@ -39,19 +39,21 @@ test("overlapping reload batches retain verified receipts and shared pending mem
       ["completed", "pending"],
     );
     await request("B");
-    await y.close();
-    connections.push(await fleet.cardd.connect(tokenY, [], true, false, true, true));
+    const requestX2 = b.find((row) => row.session === "c-1-a1");
+    assert.ok(requestX2);
+    assert.notEqual(requestX2.id, requestX.id);
+    connections.push(await fleet.cardd.replace(y, tokenY, requestY.id));
     const summaryA = await fleet.main.waitForEntry(
       (entry) => entry.fields["maintenanceBatch"] === "A",
       "A to summarize its original membership",
     );
     assert.match(summaryA.body, /2 reloaded and verified, 0 failed/);
-    await replacementX.close();
-    connections.push(await fleet.cardd.connect(tokenX, [], true, false, true, true));
-    await fleet.main.waitForEntry(
+    connections.push(await fleet.cardd.replace(replacementX, tokenX, requestX2.id));
+    const summaryB = await fleet.main.waitForEntry(
       (entry) => entry.fields["maintenanceBatch"] === "B",
       "B to summarize its verified membership",
     );
+    assert.match(summaryB.body, /2 reloaded and verified, 0 failed/);
     await Promise.all(connections.map((session) => session.close()));
     await fleet.cardd.restart();
     const main = await fleet.cardd.connect(fleet.mainToken);
@@ -67,17 +69,17 @@ test("overlapping reload batches retain verified receipts and shared pending mem
         ["completed", "completed"],
       );
     }
-    const entries = (
-      await Promise.all(
-        cards.map(
-          async (card) =>
-            check(OPS.card.result, await main.call("card", { card: card.id })).entries,
-        ),
-      )
-    ).flat();
-    for (const batch of ["A", "B"]) {
-      assert.equal(entries.filter((entry) => entry.fields["maintenanceBatch"] === batch).length, 1);
+    for (const [batch, summary] of [
+      ["A", summaryA],
+      ["B", summaryB],
+    ] as const) {
+      const history = check(OPS.card.result, await main.call("card", { card: summary.card }));
+      assert.equal(
+        history.entries.filter((entry) => entry.fields["maintenanceBatch"] === batch).length,
+        1,
+      );
     }
+    assert.equal(fleet.cardd.summaryCount(), 2);
   } finally {
     await Promise.all(connections.map((session) => session.close()));
     await fleet.cardd.stop();
@@ -92,9 +94,12 @@ test("a finalized reload batch rejects late new and already-pending targets on r
     const token = await begin(fleet.main, card);
     const original = await fleet.cardd.connect(token, [], true, false, true);
     connections.push(original);
-    await fleet.main.call("maintenance.request", { batch: "finalized", kind: "reload" });
-    await original.close();
-    connections.push(await fleet.cardd.connect(token, [], true, false, true, true));
+    const [first] = check(
+      OPS["maintenance.request"].result,
+      await fleet.main.call("maintenance.request", { batch: "finalized", kind: "reload" }),
+    );
+    assert.ok(first);
+    connections.push(await fleet.cardd.replace(original, token, first.id));
     const summary = await fleet.main.waitForEntry(
       (entry) => entry.fields["maintenanceBatch"] === "finalized",
       "the original member's summary",
@@ -125,7 +130,7 @@ test("a finalized reload batch rejects late new and already-pending targets on r
       ),
       expected,
     );
-    const history = check(OPS.card.result, await main.call("card", { card: card.id }));
+    const history = check(OPS.card.result, await main.call("card", { card: summary.card }));
     assert.equal(
       history.entries.filter((entry) => entry.fields["maintenanceBatch"] === "finalized").length,
       1,

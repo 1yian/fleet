@@ -168,7 +168,7 @@ for (const mixed of [false, true]) {
       assert.match(
         failure.body,
         new RegExp(
-          `^${secondRequest.session} \\(worker on p620\\): reload failed - no replacement hello before the update verification deadline \\[c-${String(second.card.id)}, process [0-9a-f-]{36}\\]$`,
+          `^${secondRequest.session} \\(worker on p620\\): reload failed - no replacement hello before the update verification deadline \\[c-${String(second.card.id)}, host p620, process ${fleet.cardd.processOf(second.token)}\\]$`,
         ),
       );
       assert.equal(failure.card, second.card.id);
@@ -195,3 +195,66 @@ for (const mixed of [false, true]) {
     }
   });
 }
+
+test("a hello retried by the same runtime is not a verified reload", async () => {
+  const token = await begin(fleet.main, await newCard(fleet.main, "welcome lost"));
+  const first = await fleet.cardd.connect(token, [], true, false, true, true);
+  sessions.push(first);
+  const [row] = check(
+    OPS["maintenance.request"].result,
+    await fleet.main.call("maintenance.request", { batch: "retry", kind: "reload" }),
+  );
+  assert.ok(row);
+  await first.close();
+  const retried = await fleet.cardd.connect(token, [], true, false, true, true);
+  sessions.push(retried);
+  const read = async (session: Session) =>
+    check(OPS["maintenance.read"].result, await session.call("maintenance.read", { id: row.id }))
+      .state;
+  assert.equal(await read(retried), "pending");
+  sessions.push(await fleet.cardd.replace(retried, token, row.id));
+  const summary = await fleet.main.waitForEntry(
+    (entry) => entry.fields["maintenanceBatch"] === "retry",
+    "the summary after the real replacement",
+  );
+  assert.match(summary.body, /1 reloaded and verified, 0 failed/);
+});
+
+test("immediate failures name the card, host and process in the rows main reads, and mark unknowns as unknown", async () => {
+  const card = await newCard(fleet.main, "old code");
+  const token = await begin(fleet.main, card, "reload", "maverick");
+  sessions.push(await fleet.cardd.connect(token));
+  const mateToken = fleet.cardd.addLane("old-mate", "main");
+  sessions.push(await fleet.cardd.connect(mateToken));
+  fleet.cardd.addLane("never-up", "main");
+  const rows = check(
+    OPS["maintenance.request"].result,
+    await fleet.main.call("maintenance.request", { batch: "immediate", kind: "reload" }),
+  );
+  const detail = (session: string): string =>
+    rows.find((row) => row.session === session)?.detail ?? "";
+  assert.deepEqual(
+    rows.map((row) => row.state),
+    ["failed", "failed", "failed"],
+  );
+  assert.match(
+    detail(`c-${String(card.id)}-a1`),
+    new RegExp(
+      `^runs code from before safe reloads, so it was left running: restart it by hand \\[c-${String(card.id)}, host maverick, process ${fleet.cardd.processOf(token)}\\]$`,
+    ),
+  );
+  assert.match(
+    detail("old-mate"),
+    new RegExp(
+      `^runs code from .* \\[c-\\d+, host unknown, process ${fleet.cardd.processOf(mateToken)}\\]$`,
+    ),
+  );
+  assert.match(detail("never-up"), /^not connected .* \[c-\d+, host unknown, process unknown\]$/);
+  assert.deepEqual(
+    check(
+      OPS["maintenance.status"].result,
+      await fleet.main.call("maintenance.status", { batch: "immediate" }),
+    ),
+    rows,
+  );
+});

@@ -71,7 +71,12 @@ for (const skip of [false, true]) {
         "main to hear the individual failure notice",
       );
       assert.ok(notice.includes(skip ? "no replacement hello" : HELPER_ERROR), notice);
-      assert.match(notice, new RegExp(`\\[c-${String(worker.card)}, process [0-9a-f-]{36}\\]$`));
+      const recorded = fleet.cardd.processRecorded(worker.session);
+      assert.ok(recorded);
+      assert.ok(
+        notice.endsWith(` [c-${String(worker.card)}, host p620, process ${recorded}]`),
+        notice,
+      );
       assert.equal(await fleet.piIn(worker.pane), undefined);
       const after = await fleet.cardOf(worker.card);
       assert.equal(after.status, before.status);
