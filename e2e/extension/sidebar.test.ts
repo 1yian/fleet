@@ -278,7 +278,7 @@ test("workers without a local mate follow the local groups, keep their lane, and
     "[yang-auto] yang-jeep",
   ]);
   assert.equal((await tokensOf("└ cleo-early"))["away"], undefined);
-  assert.equal((await tokensOf("└ cleo-early"))["mate"], undefined);
+  assert.equal((await tokensOf("└ cleo-early"))["mate"], "farhost");
   assert.equal((await tokensOf("[yang-auto] yang-jeep"))["away"], "↗ mate on farhost");
 });
 
@@ -313,7 +313,7 @@ test("a mate on this host never shows an away hint, and a worker named like the 
   assert.equal((await tokensOf("[namer] hostname-worker"))["away"], `↗ mate on ${OWN_HOSTNAME}`);
   assert.equal((await tokensOf("[longlane] far-worker"))["away"], `↗ mate on ${LONG_HOST}`);
   const grouped = await tokensOf("└ fleet-ops");
-  assert.equal(grouped["mate"], undefined);
+  assert.equal(grouped["mate"], "stale-host");
   assert.equal(grouped["away"], undefined);
   assert.equal((await tokensOf("└ ops-beta"))["away"], undefined);
   assert.equal((await tokensOf("[zed] fleet-zed"))["away"], undefined);

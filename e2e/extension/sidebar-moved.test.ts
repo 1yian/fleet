@@ -18,7 +18,7 @@ const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const SESSION_TRANSPORT = fileURLToPath(
   new URL("../support/session-transport.ts", import.meta.url),
 );
-const REMOTE = "annex";
+const REMOTE = "annex.eu.example";
 const OWN_LABEL = hostname().toLowerCase().split(".")[0] ?? "";
 const AWAY_RECIPE = `onboarding = false
 
@@ -169,6 +169,7 @@ async function updateFleet(pane: string): Promise<void> {
 }
 
 test("a main whose host is local, and a lane that moved hosts, tell each worker where its mate runs, and herdr shows it beside the Git row", async () => {
+  await open(lab, "2ndmate-ops", here.root);
   await moveOpsToP620();
   const pane = await startMain(lab, here, h);
   const alpha = await open(lab, "ops-alpha", here.root);
@@ -179,36 +180,34 @@ test("a main whose host is local, and a lane that moved hosts, tell each worker 
 
   await updateFleet(pane);
 
-  const moved = await tokensOf(lab, "[ops] ops-alpha");
+  const moved = await tokensOf(lab, "└ ops-alpha");
   assert.equal(moved["mate"], REMOTE);
-  assert.equal(moved["away"], `\u2197 mate on ${REMOTE}`);
+  assert.equal(moved["away"], undefined);
   const remote = await tokensOf(far, "[main] main-far");
   assert.equal(remote["mate"], OWN_LABEL);
   assert.equal(remote["away"], `\u2197 mate on ${OWN_LABEL}`);
 
-  const shown = await untilScreen("the hint under the Git row", client, (lines) =>
-    lines.some((line) => line.includes(`mate on ${OWN_LABEL}`)),
-  );
-  assert.ok(rowAfter(shown, "[main] main-far", 1).includes("main"), shown.join("\n"));
-  assert.ok(rowAfter(shown, "[main] main-far", 2).includes(`mate on ${OWN_LABEL}`));
+  const awayFrame = (lines: string[]): boolean =>
+    lines.some((line) => line.includes("[main] main-far")) &&
+    rowAfter(lines, "[main] main-far", 1).includes("main") &&
+    rowAfter(lines, "[main] main-far", 2).includes(`mate on ${OWN_LABEL}`);
+  await untilScreen("the hint under the Git row", client, awayFrame);
 
   const localMate = await open(far, "1stmate", here.root);
   p620.fleet(["arrange", "--host", REMOTE], { HERDR_SESSION: far.name });
-  const home = await untilScreen("the worker to move under its mate", client, (lines) =>
-    lines.some((line) => line.includes("\u2514 main-far")),
+  await untilScreen(
+    "the grouped worker with Git and no hint",
+    client,
+    (lines) =>
+      lines.some((line) => line.includes("└ main-far")) &&
+      rowAfter(lines, "└ main-far", 1).includes("main") &&
+      !lines.some((line) => line.includes("mate on")),
   );
-  assert.ok(!home.join("\n").includes("mate on"), home.join("\n"));
-  assert.ok(rowAfter(home, "\u2514 main-far", 1).includes("main"), home.join("\n"));
+  assert.equal((await tokensOf(far, "└ main-far"))["mate"], OWN_LABEL);
 
   await far.run(["workspace", "close", localMate.id]);
   p620.fleet(["arrange", "--host", REMOTE], { HERDR_SESSION: far.name });
-  const ungrouped = await untilScreen("the worker to regain its lane prefix", client, (lines) =>
-    lines.some((line) => line.includes("[main] main-far")),
-  );
-  assert.ok(!ungrouped.join("\n").includes(`mate on ${OWN_LABEL}`), ungrouped.join("\n"));
-  const cleared = await tokensOf(far, "[main] main-far");
-  assert.equal(cleared["mate"], undefined);
-  assert.equal(cleared["away"], undefined);
+  await untilScreen("the lane prefix, Git row and restored hint", client, awayFrame);
 });
 
 test("a lane that runs nowhere and has homes on two hosts keeps the mate host its workers already have", async () => {
@@ -230,7 +229,8 @@ test("fleet arrange in a second mate's home uses that home's Fleet name, not the
   const inside = await open(lab, "inside", here.root);
   await mark(lab, inside.id, "lane=aa", `mate=${REMOTE}`);
   const outside = await open(lab, "outside", here.root);
-  await mark(lab, outside.id, "lane=bb", `mate=${OWN_LABEL}`);
+  const otherHost = "annex.us.example";
+  await mark(lab, outside.id, "lane=bb", `mate=${otherHost}`);
   const env = { ...process.env };
   delete env["FLEET_HOST"];
   const launch = join(
@@ -241,8 +241,40 @@ test("fleet arrange in a second mate's home uses that home's Fleet name, not the
     "src",
     "launch.ts",
   );
-  execFileSync("node", [launch, "arrange"], { env: { ...env, HERDR_SESSION: lab.name } });
+  const session = { ...env, HERDR_SESSION: lab.name };
+  execFileSync("node", [launch, "arrange"], { env: session });
 
   assert.equal((await tokensOf(lab, "[aa] inside"))["away"], undefined);
-  assert.equal((await tokensOf(lab, "[bb] outside"))["away"], `\u2197 mate on ${OWN_LABEL}`);
+  assert.equal((await tokensOf(lab, "[bb] outside"))["away"], `↗ mate on ${otherHost}`);
+
+  await mark(lab, inside.id, "away=↗ mate on stale-host");
+  assert.throws(
+    () => execFileSync("node", [p620.launch, "up", "ops", "--host", otherHost], { env: session }),
+    { status: 2 },
+  );
+  execFileSync("node", [p620.launch, "up", "ops"], { env: session });
+  assert.equal(statusOf(p620, lab.name)["ops"], "running");
+  assert.equal((await tokensOf(lab, "[aa] inside"))["away"], undefined);
+  assert.equal((await tokensOf(lab, "[bb] outside"))["away"], `↗ mate on ${otherHost}`);
+});
+
+test("an authoritative host too long for Herdr clears the superseded placement and hint", async () => {
+  const long = `${"annex".repeat(16)}.example`;
+  configureMain(here, cardd.url, tokens["main"], {
+    host: "local",
+    hosts: { [long]: ["node", SESSION_TRANSPORT, far.name, lab.name] },
+    roots: { [long]: p620.root },
+  });
+  await moveOpsToP620();
+  const pane = await startMain(lab, here, h);
+  const worker = await open(lab, "ops-alpha", here.root);
+  await mark(lab, worker.id, "lane=ops", "card=19", "mate=old-host", "away=↗ mate on old-host");
+
+  await updateFleet(pane);
+
+  const updated = await tokensOf(lab, "[ops] ops-alpha");
+  assert.equal(updated["lane"], "ops");
+  assert.equal(updated["card"], "19");
+  assert.equal(updated["mate"], undefined);
+  assert.equal(updated["away"], undefined);
 });

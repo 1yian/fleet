@@ -25,7 +25,7 @@ import {
   type LaneConfig,
 } from "./lane-config.ts";
 import { withCompileCache } from "./scratch.ts";
-import { mateTitle } from "./titles.ts";
+import { isWorkerWorkspace, legacyMatePrefix, liveLegacyMate, mateTitle } from "./titles.ts";
 
 interface LaneHome {
   readonly lane: string;
@@ -160,9 +160,16 @@ function heldReason(home: string): string | undefined {
 }
 
 async function workspaceOf(lane: string): Promise<string | undefined> {
-  const listed = records((await herdr(["workspace", "list"]))["workspaces"]);
+  const listed = records((await herdr(["workspace", "list"]))["workspaces"]).filter(
+    (row) => !isWorkerWorkspace(row),
+  );
+  for (const row of listed) {
+    if (row["label"] !== `${legacyMatePrefix}${lane}`) continue;
+    const workspace = field(row, "workspace_id");
+    if (workspace !== undefined && (await liveLegacyMate(workspace, lane))) return workspace;
+  }
   return field(
-    listed.find((each) => each["label"] === mateTitle(lane)),
+    listed.find((row) => row["label"] === mateTitle(lane)),
     "workspace_id",
   );
 }
@@ -243,7 +250,7 @@ async function start(root: string, info: LaneHome): Promise<void> {
   mkdirSync(join(info.home, "state"), { recursive: true });
   const starts = [...recentStarts(info.home, Date.now()), Date.now()];
   writeFileSync(startsFile(info.home), `${starts.join("\n")}\n`);
-  await arrangeHere().catch(() => undefined);
+  await arrangeHere(info.config.host).catch(() => undefined);
 }
 
 const named = (root: string, lane: string | undefined): LaneHome[] => {
@@ -279,9 +286,10 @@ export async function up(root: string, only?: string): Promise<Outcome[]> {
 }
 
 async function close(lane: string): Promise<void> {
-  await claimFollowers(lane).catch(() => undefined);
   const workspace = await workspaceOf(lane);
-  if (workspace !== undefined) await herdr(["workspace", "close", workspace]);
+  if (workspace === undefined) return;
+  await claimFollowers(lane, workspace).catch(() => undefined);
+  await herdr(["workspace", "close", workspace]);
 }
 
 export async function stop(root: string, lane: string): Promise<void> {

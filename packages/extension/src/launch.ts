@@ -218,13 +218,11 @@ function lane(): string {
   return name;
 }
 
-if (command === "up" || command === "restart" || command === "arrange") {
-  const running = fileURLToPath(new URL("../../..", import.meta.url));
-  const named = values.host ?? process.env["FLEET_HOST"] ?? readLaneConfig(running)?.host;
-  if (named !== undefined) process.env["FLEET_HOST"] = named;
-}
-
 if (command === "up" || command === "restart") {
+  if (values.host !== undefined) {
+    console.error(USAGE);
+    process.exit(2);
+  }
   const problems = hostProblems(root, values.maintenance !== true);
   if (problems.length > 0) {
     console.error(problems.join("\n"));
@@ -256,12 +254,15 @@ switch (command ?? "") {
       console.log(`${name}: shared preferences ${result}`);
     break;
   }
-  case "arrange":
-    await arrangeHere().catch((error: unknown) => {
+  case "arrange": {
+    const running = fileURLToPath(new URL("../../..", import.meta.url));
+    const named = values.host ?? process.env["FLEET_HOST"] ?? readLaneConfig(running)?.host;
+    await arrangeHere(named).catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exit(1);
     });
     break;
+  }
   case "stop":
     await stop(root, lane());
     console.log(`${lane()}: stopped`);

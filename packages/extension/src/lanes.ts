@@ -58,19 +58,23 @@ async function everyLane(
 }
 
 export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
-  const copies = new Map<string, { host: string; running: boolean }[]>();
+  const here = sidebarHostName();
+  const copies = new Map([[config.lane, [{ host: here, running: true }]]]);
   for (const { host, row } of await everyLane(config)) {
     const lane = text(row, "lane");
+    if (host === "local" && lane === config.lane) continue;
     const running = text(row, "state") === "running";
-    copies.set(lane, [...(copies.get(lane) ?? []), { host, running }]);
+    copies.set(lane, [
+      ...(copies.get(lane) ?? []),
+      { host: host === "local" ? here : host, running },
+    ]);
   }
-  const found = new Map([[config.lane, sidebarHostName()]]);
+  const found = new Map<string, string>();
   for (const [lane, homes] of copies) {
     const running = homes.filter((home) => home.running);
     const only = running.length === 0 && homes.length === 1 ? homes : running;
     const [home] = only;
-    if (home !== undefined && only.length === 1)
-      found.set(lane, home.host === "local" ? sidebarHostName() : home.host);
+    if (home !== undefined && only.length === 1) found.set(lane, home.host);
   }
   return found;
 }

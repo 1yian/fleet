@@ -13,6 +13,7 @@ import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
+const PROBE = fileURLToPath(new URL("../support/probe.ts", import.meta.url));
 
 let cardd: Cardd;
 let h: Harness;
@@ -101,6 +102,61 @@ test("main reads 1stmate and a second mate reads 2ndmate-<lane>, in herdr and in
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
 });
 
+async function startWithoutRenaming(pane: string): Promise<void> {
+  const pi = ["pi", "--continue", ...mateArgs(h), "-e", PROBE].map((arg) => `'${arg}'`).join(" ");
+  await lab.submit(pane, `cd '${cleoHome}' && env -u HERDR_WORKSPACE_ID ${pi}`);
+  await h.waitFor((event) => event["type"] === "fleet_connected", "Pi to connect without renaming");
+}
+
+test("lane lifecycle still finds a live legacy mate without renaming it", async () => {
+  const created = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    cleoHome,
+    "--label",
+    "fleet-cleo",
+    "--no-focus",
+  ]);
+  const legacy = String(records([created["workspace"]])[0]?.["workspace_id"]);
+  const follower = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    scratch.root,
+    "--label",
+    "old-follower",
+    "--no-focus",
+  ]);
+  const worker = String(records([follower["workspace"]])[0]?.["workspace_id"]);
+  await lab.run([
+    "workspace",
+    "report-metadata",
+    worker,
+    "--source",
+    "fleet",
+    "--token",
+    "lane=cleo",
+  ]);
+  fleet(["arrange"]);
+  assert.deepEqual([...(await labels()).values()], ["fleet-cleo", "[cleo] old-follower"]);
+
+  const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+  await startWithoutRenaming(pane);
+  assert.equal(fleet(["status"]), "cleo: running\n");
+  assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
+  fleet(["arrange"]);
+  assert.deepEqual(
+    [...(await labels())],
+    [
+      [legacy, "fleet-cleo"],
+      [worker, "└ old-follower"],
+    ],
+  );
+  assert.equal(fleet(["stop", "cleo"]), "cleo: stopped\n");
+  assert.deepEqual(await labels(), new Map([[worker, "└ old-follower"]]));
+});
+
 test("a worker named fleet-<lane> is never taken for that lane's mate", async () => {
   const created = await lab.run([
     "workspace",
@@ -123,8 +179,12 @@ test("a worker named fleet-<lane> is never taken for that lane's mate", async ()
     "--token",
     "card=913",
   ]);
+  const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+  await startWithoutRenaming(pane);
 
   assert.equal(fleet(["status"]), "cleo: down\n");
+  fleet(["arrange"]);
+  assert.equal((await labels()).get(worker), "[cleo] fleet-cleo");
   assert.equal(fleet(["up"]), "cleo: started in 2ndmate-cleo\n");
   const started = await until("cleo's workspace", labels, (now) =>
     [...now.values()].includes("2ndmate-cleo"),
