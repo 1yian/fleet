@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS } from "@fleet/protocol";
@@ -229,6 +229,16 @@ const finishArgs = (card: number): Record<string, unknown> => ({
   left: [],
 });
 
+const hostScratch = (): string => join(process.env["FLEET_HOST_DIR"] ?? "", "scratch");
+
+function realEvidence(card: number): string {
+  const path = join(hostScratch(), `c-${String(card)}`, "operation.md");
+  mkdirSync(join(path, ".."), { recursive: true });
+  rmSync(path, { force: true });
+  writeFileSync(path, "# Operation\nDone.\n");
+  return path;
+}
+
 async function handedOff(project: string): Promise<{
   card: number;
   session: string;
@@ -236,82 +246,132 @@ async function handedOff(project: string): Promise<{
   repo: string;
   tree: string;
   handoff: number;
+  evidence: string;
 }> {
   const repo = localRepo(project);
   const { card, session, worker } = await operationCard(project, "local");
   const tree = addTree(repo, session);
-  await worker.call("report", { status: "done", text: "finished", evidence: evidenceOf(card) });
+  const evidence = realEvidence(card);
+  await worker.call("report", { status: "done", text: "finished", evidence });
   const plan = check(OPS["close.begin"].result, await fleet.main.call("close.begin", { card }));
-  return { card, session, worker, repo, tree, handoff: plan.operation?.handoff ?? 0 };
+  return { card, session, worker, repo, tree, handoff: plan.operation?.handoff ?? 0, evidence };
 }
 
-test("a direct finish with no receipt is refused, and a verified then retired attempt closes Done", async () => {
-  const { card, session, repo, tree, handoff } = await handedOff("shop");
+const refs = (repo: string): string => gitIn(repo, "for-each-ref", "--format=%(refname)");
+
+test("a direct finish with no receipt is refused, and one verify retires exactly the verified state, resumes, and closes Done", async () => {
+  const { card, repo, tree, handoff } = await handedOff("shop");
+  const before = refs(repo);
   await assert.rejects(
     fleet.main.call("close.finish", finishArgs(card)),
     /has no verified receipt for the current handoff and observed retirement/,
   );
-  const verified = await fleet.main.call("close.verify", { card, handoff });
-  assert.ok(typeof verified === "object" && verified !== null);
-  await assert.rejects(
-    fleet.main.call("close.finish", finishArgs(card)),
-    /has no verified receipt for the current handoff and observed retirement/,
-  );
-  gitIn(repo, "worktree", "remove", tree);
-  gitIn(repo, "branch", "-D", session);
+  assert.deepEqual(await fleet.main.call("close.verify", { card, handoff }), {});
+  assert.equal(existsSync(tree), false);
+  assert.equal(refs(repo), "refs/heads/main");
+  assert.notEqual(before, refs(repo));
+  assert.deepEqual(await fleet.main.call("close.verify", { card, handoff }), {});
   await fleet.main.call("close.finish", finishArgs(card));
   const thread = await fleet.cardd.thread(card);
   assert.equal(thread.card.status, "done");
-  assert.doesNotMatch(JSON.stringify(thread), /operationReceipt/);
+  assert.doesNotMatch(JSON.stringify(thread), /operationReceipt|scratch/);
 });
 
-test("a missing tree with no receipt, a stale handoff, dirt and a moved clone each refuse the receipt or the finish", async () => {
+test("evidence that is missing, a symlink, or outside the host scratch folder refuses the verify and removes nothing", async () => {
   const gone = await handedOff("depot");
+  unlinkSync(gone.evidence);
+  await assert.rejects(
+    fleet.main.call("close.verify", { card: gone.card, handoff: gone.handoff }),
+    /not a regular report file in the card's scratch folder/,
+  );
+  const linked = await handedOff("annex");
+  const target = join(tempDir("private-"), "private.md");
+  writeFileSync(target, "private\n");
+  unlinkSync(linked.evidence);
+  symlinkSync(target, linked.evidence);
+  await assert.rejects(
+    fleet.main.call("close.verify", { card: linked.card, handoff: linked.handoff }),
+    /not a regular report file in the card's scratch folder/,
+  );
+  const outside = await operationCard("web", "maverick");
+  await outside.worker.call("report", {
+    status: "done",
+    text: "finished",
+    evidence: evidenceOf(outside.card),
+  });
+  const plan = check(
+    OPS["close.begin"].result,
+    await fleet.main.call("close.begin", { card: outside.card }),
+  );
+  await assert.rejects(
+    fleet.main.call("close.verify", { card: outside.card, handoff: plan.operation?.handoff ?? 0 }),
+    /not a regular report file in the card's scratch folder/,
+  );
+  for (const each of [gone, linked]) {
+    assert.equal(existsSync(each.tree), true);
+    assert.match(refs(each.repo), new RegExp(each.session));
+  }
+});
+
+test("a missing tree with no receipt, a stale handoff, dirt, another branch and a moved clone each refuse and keep the work", async () => {
+  const gone = await handedOff("yard");
   gitIn(gone.repo, "worktree", "remove", gone.tree);
   await assert.rejects(
     fleet.main.call("close.verify", { card: gone.card, handoff: gone.handoff }),
     /could not be verified clean or already retired, so nothing was removed/,
   );
 
-  const stale = await handedOff("annex");
+  const stale = await handedOff("lot");
   await assert.rejects(
     fleet.main.call("close.verify", { card: stale.card, handoff: stale.handoff - 1 }),
     /handoff changed/,
   );
   await fleet.main.call("close.verify", { card: stale.card, handoff: stale.handoff });
-  await stale.worker.call("report", {
-    status: "done",
-    text: "finished again",
-    evidence: evidenceOf(stale.card),
-  });
-  gitIn(stale.repo, "worktree", "remove", stale.tree);
-  gitIn(stale.repo, "branch", "-D", stale.session);
+  await stale.worker.call("report", { status: "done", text: "again", evidence: stale.evidence });
   await assert.rejects(
     fleet.main.call("close.finish", finishArgs(stale.card)),
     /has no verified receipt for the current handoff/,
   );
 
-  const dirty = await handedOff("yard");
+  const dirty = await handedOff("barn");
   writeFileSync(join(dirty.tree, "late.txt"), "late\n");
   await assert.rejects(
     fleet.main.call("close.verify", { card: dirty.card, handoff: dirty.handoff }),
     /could not be verified clean or already retired/,
   );
-  mkdirSync(join(dirty.tree, "state"));
+  unlinkSync(join(dirty.tree, "late.txt"));
   gitIn(dirty.tree, "checkout", "-q", "-b", "other-work");
-  execFileSync("rm", [join(dirty.tree, "late.txt")]);
   await assert.rejects(
     fleet.main.call("close.verify", { card: dirty.card, handoff: dirty.handoff }),
     /could not be verified clean or already retired/,
   );
+  assert.equal(existsSync(dirty.tree), true);
+  assert.match(refs(dirty.repo), /other-work/);
 
-  const moved = await handedOff("lot");
+  const moved = await handedOff("shed");
   await fleet.main.call("close.verify", { card: moved.card, handoff: moved.handoff });
-  gitIn(moved.repo, "worktree", "remove", moved.tree);
-  gitIn(moved.repo, "branch", "-D", moved.session);
-  fleet.cardd.moveClone("lot", "local", `${moved.repo}-elsewhere`);
+  fleet.cardd.moveClone("shed", "local", `${moved.repo}-elsewhere`);
   await assert.rejects(
     fleet.main.call("close.finish", finishArgs(moved.card)),
     /has no verified receipt for the current handoff and observed retirement/,
   );
+});
+
+test("a Dropped close summary never carries any evidence path the worker reported", async () => {
+  const { card, worker } = await operationCard();
+  const first = evidenceOf(card);
+  const second = first.replace("operation.md", "second.md");
+  await worker.call("report", { status: "done", text: "finished", evidence: first });
+  await fleet.main.call("comment", { card, text: "One more check." });
+  await worker.call("report", { status: "done", text: "again", evidence: second });
+  await fleet.main.call("close.finish", {
+    card,
+    mode: "dropped",
+    text: `Not approved: ${first} and ${second}`,
+    archives: [],
+    left: [],
+  });
+  const thread = await fleet.cardd.thread(card);
+  assert.equal(thread.card.status, "dropped");
+  assert.doesNotMatch(JSON.stringify(thread), /operation\.md|second\.md|scratch/);
 });

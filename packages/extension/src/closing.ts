@@ -219,13 +219,13 @@ async function stopWriters(
   return processesOf(session, found + (await releaseAll(host, path)));
 }
 
-async function retire(attempt: Attempt): Promise<Retired> {
+async function retire(attempt: Attempt, ownedOnly: boolean): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const tree = worktreeOf(listed, session);
   const own = field(tree, "branch");
-  const drop = own === undefined || own === branch ? [branch] : [branch, own];
+  const drop = ownedOnly || own === undefined || own === branch ? [branch] : [branch, own];
   const path = field(tree, "path") ?? "";
   const processes = await stopWriters(attempt, tree, path);
   if (tree !== undefined) {
@@ -357,7 +357,7 @@ async function retireAll(
   if (plan.ops === true) await requireArchivable(id, plan, stopWriters);
   for (const attempt of plan.attempts) {
     try {
-      const retired = await retire(attempt);
+      const retired = await retire(attempt, plan.ops === true);
       done.retiredOn.add(attempt.host);
       if (retired.archive !== null) done.archives.push(`${attempt.host}:${retired.archive}`);
       done.stopped.push(...retired.stopped);

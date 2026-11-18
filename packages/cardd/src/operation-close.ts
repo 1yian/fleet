@@ -1,6 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
   check,
+  OPERATION_EVIDENCE_SCRIPT,
+  OPERATION_RETIRE_SCRIPT,
   OPERATION_RETIRED_SCRIPT,
   OPERATION_TREE_SCRIPT,
   OperationReceiptSchema,
@@ -9,10 +11,11 @@ import {
   parseOperationTree,
   type Card,
   type Entry,
+  type OpName,
 } from "@fleet/protocol";
 import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
-import { routeFor } from "./merged-report.ts";
+import { reverifyAtClose, routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
 import { addEntry, cardEntries, reachable, type Session } from "./store.ts";
 
@@ -26,7 +29,7 @@ interface Target {
   readonly base: string;
 }
 
-type Attempt = Target & { head: string; state: "clean" | "retired" };
+type Attempt = Target & { head: string; tip: string; state: "clean" | "retired" };
 
 export interface Receipt {
   readonly handoff: number;
@@ -81,20 +84,29 @@ function onHost(hosts: Hosts, host: string, argv: readonly string[]): Promise<st
 
 const treePath = (target: Target): string => `${target.clone}.worktrees/${target.session}`;
 
-async function cleanHead(hosts: Hosts, target: Target): Promise<string | undefined> {
+const targetArgs = (target: Target): string[] => [
+  treePath(target),
+  target.clone,
+  target.base,
+  target.branch,
+];
+
+async function cleanState(
+  hosts: Hosts,
+  target: Target,
+): Promise<{ head: string; tip: string } | undefined> {
   try {
     const out = await onHost(hosts, target.host, [
       "sh",
       "-c",
       OPERATION_TREE_SCRIPT,
       "tree",
-      treePath(target),
-      target.clone,
-      target.base,
-      target.branch,
+      ...targetArgs(target),
     ]);
     const found = parseOperationTree(out);
-    return found.ahead === 0 && found.dirty === 0 ? found.head : undefined;
+    return found.ahead === 0 && found.dirty === 0
+      ? { head: found.head, tip: found.tip }
+      : undefined;
   } catch {
     return undefined;
   }
@@ -107,10 +119,7 @@ async function retired(hosts: Hosts, target: Target): Promise<boolean> {
       "-c",
       OPERATION_RETIRED_SCRIPT,
       "retired",
-      treePath(target),
-      target.clone,
-      target.base,
-      target.branch,
+      ...targetArgs(target),
       target.session,
     ]);
     return true;
@@ -126,22 +135,51 @@ function openOperation(db: DatabaseSync, session: Session, id: number): Card {
   return card;
 }
 
-function handoffId(db: DatabaseSync, card: Card): number {
+function handoffOf(db: DatabaseSync, card: Card): Entry {
   const handoff = operationHandoff(cardEntries(db, card.id));
   if (handoff === undefined)
     throw new Error(`c-${String(card.id)} has no effective ops handoff to verify`);
-  return handoff.id;
+  return handoff;
 }
 
-function latestReceipt(entries: readonly Entry[]): { entry: Entry; receipt: Receipt } | undefined {
+function latestReceipt(entries: readonly Entry[]): Receipt | undefined {
   const entry = entries.findLast(
     (each) => each.author === "cardd" && each.fields["operationReceipt"] !== undefined,
   );
-  if (entry === undefined) return undefined;
-  return { entry, receipt: check(OperationReceiptSchema, entry.fields["operationReceipt"]) };
+  return entry === undefined
+    ? undefined
+    : check(OperationReceiptSchema, entry.fields["operationReceipt"]);
 }
 
-export async function checkReceipt(
+async function requireEvidence(
+  hosts: Hosts,
+  card: Card,
+  handoff: Entry,
+  targets: readonly Target[],
+): Promise<void> {
+  const evidence = handoff.fields["evidence"];
+  const holder = targets.find((each) => each.session === handoff.author.slice("worker:".length));
+  const found =
+    holder !== undefined &&
+    typeof evidence === "string" &&
+    (await onHost(hosts, holder.host, [
+      "sh",
+      "-c",
+      OPERATION_EVIDENCE_SCRIPT,
+      "evidence",
+      String(card.id),
+      evidence,
+    ]).then(
+      () => true,
+      () => false,
+    ));
+  if (!found)
+    throw new Error(
+      `c-${String(card.id)} cannot close Done: its ops evidence is not a regular report file in the card's scratch folder. Have the worker fix its handoff, or close with landed=false`,
+    );
+}
+
+async function checkReceipt(
   db: DatabaseSync,
   hosts: Hosts,
   session: Session,
@@ -149,28 +187,30 @@ export async function checkReceipt(
 ): Promise<Receipt> {
   const args = check(OPS["close.verify"].args, raw);
   const card = openOperation(db, session, args.card);
-  const handoff = handoffId(db, card);
-  if (handoff !== args.handoff)
+  const handoff = handoffOf(db, card);
+  if (handoff.id !== args.handoff)
     throw new Error(
       `c-${String(card.id)}: the worker's handoff changed while close was running. Close it again`,
     );
+  const targets = targetsOf(db, card);
+  await requireEvidence(hosts, card, handoff, targets);
   const prior = latestReceipt(cardEntries(db, card.id));
-  const earlier = prior?.receipt.handoff === handoff ? prior.receipt.attempts : [];
+  const earlier = prior?.handoff === handoff.id ? prior.attempts : [];
   const attempts: Attempt[] = [];
   const unresolved: string[] = [];
-  for (const target of targetsOf(db, card)) {
-    const head = await cleanHead(hosts, target);
+  for (const target of targets) {
+    const state = await cleanState(hosts, target);
     const was = earlier.find((each) => keyOf(each) === keyOf(target));
-    if (head !== undefined) attempts.push({ ...target, head, state: "clean" });
+    if (state !== undefined) attempts.push({ ...target, ...state, state: "clean" });
     else if (was !== undefined && (await retired(hosts, target)))
-      attempts.push({ ...target, head: was.head, state: "retired" });
+      attempts.push({ ...target, head: was.head, tip: was.tip, state: "retired" });
     else unresolved.push(target.session);
   }
   if (unresolved.length > 0)
     throw new Error(
       `c-${String(card.id)} cannot close Done: ${unresolved.join(", ")} could not be verified clean or already retired, so nothing was removed`,
     );
-  return { handoff, attempts };
+  return { handoff: handoff.id, attempts };
 }
 
 export function recordReceipt(
@@ -178,18 +218,18 @@ export function recordReceipt(
   session: Session,
   raw: unknown,
   checked: Receipt | undefined,
-): { receipt: number } {
+): Record<string, never> {
   const args = check(OPS["close.verify"].args, raw);
   const card = openOperation(db, session, args.card);
   const targets = targetsOf(db, card).map(keyOf);
   const same =
-    handoffId(db, card) === checked?.handoff &&
+    handoffOf(db, card).id === checked?.handoff &&
     targets.join("\n\n") === checked.attempts.map(keyOf).join("\n\n");
   if (checked === undefined || !same)
     throw new Error(
       `c-${String(card.id)}: the worker's handoff or the card's attempts changed while close was checking them. Close it again`,
     );
-  const receipt = addEntry(
+  addEntry(
     db,
     {
       card: card.id,
@@ -200,10 +240,34 @@ export function recordReceipt(
     },
     [],
   );
-  return { receipt };
+  return {};
 }
 
-export async function observeRetirement(
+export async function retireVerified(hosts: Hosts, receipt: Receipt | undefined): Promise<void> {
+  const failed: string[] = [];
+  for (const attempt of receipt?.attempts ?? []) {
+    if (attempt.state === "retired") continue;
+    try {
+      await onHost(hosts, attempt.host, [
+        "sh",
+        "-c",
+        OPERATION_RETIRE_SCRIPT,
+        "retire",
+        ...targetArgs(attempt),
+        attempt.head,
+        attempt.tip,
+      ]);
+    } catch {
+      failed.push(attempt.session);
+    }
+  }
+  if (failed.length > 0)
+    throw new Error(
+      `${failed.join(", ")} changed after it was verified or could not be removed, so it was left as it is. Close it again`,
+    );
+}
+
+async function observeRetirement(
   db: DatabaseSync,
   hosts: Hosts,
   session: Session,
@@ -227,14 +291,32 @@ export function requireRetired(
   observed: Observed | undefined,
 ): void {
   const found = latestReceipt(cardEntries(db, card.id));
-  const targets = targetsOf(db, card);
-  const held = found?.receipt.handoff === handoff ? found.receipt.attempts.map(keyOf) : [];
-  const covered = (target: Target): boolean => held.includes(keyOf(target));
-  const missing = targets.filter(
-    (target) => !covered(target) || !observed?.retired.includes(keyOf(target)),
+  const held = found?.handoff === handoff ? found.attempts.map(keyOf) : [];
+  const missing = targetsOf(db, card).filter(
+    (target) => !held.includes(keyOf(target)) || !observed?.retired.includes(keyOf(target)),
   );
   if (missing.length > 0)
     throw new Error(
       `c-${String(card.id)} cannot close Done: ${missing.map((each) => each.session).join(", ")} has no verified receipt for the current handoff and observed retirement. Close it with close(card, summary), which verifies and retires the worktrees first`,
     );
+}
+
+export async function closeChecks(
+  db: DatabaseSync,
+  session: Session,
+  op: OpName,
+  args: unknown,
+  hosts: Hosts,
+): Promise<
+  | { merged: boolean; unknown?: string; observed?: Observed | undefined; receipt?: Receipt }
+  | undefined
+> {
+  if (op === "close.verify")
+    return { merged: false, receipt: await checkReceipt(db, hosts, session, args) };
+  if (op === "close.finish")
+    return {
+      ...(await reverifyAtClose(db, hosts, op, args)),
+      observed: await observeRetirement(db, hosts, session, args),
+    };
+  return op === "close.begin" ? reverifyAtClose(db, hosts, op, args) : undefined;
 }

@@ -81,32 +81,6 @@ cache=$dir/node-compile-cache
 mkdir -p "$root" "$cache" "$scratch/${TMP_FOLDER}"
 printf '%s\\n%s\\n' "$scratch" "$cache"`;
 
-const CHECK_EVIDENCE_SCRIPT = `set -eu
-set -f
-${CARD_NUMBER_ONLY}
-scratch=${SHELL_HOST_DIR}/scratch/c-$1
-report=$2
-case $report in "$scratch"/*) ;; *) exit 1 ;; esac
-rel=\${report#"$scratch"/}
-case /$rel/ in *//* | */./* | */../* | /tmp/*) exit 1 ;; esac
-[ -d "$scratch" ] && [ ! -L "$scratch" ] || exit 1
-path=$scratch
-IFS=/
-for part in $rel; do
-  path=$path/$part
-  if [ -L "$path" ]; then exit 1; fi
-done
-[ -f "$report" ] && [ -r "$report" ]`;
-
-export const checkEvidenceCommand = (card: number, report: string): string[] => [
-  "sh",
-  "-c",
-  CHECK_EVIDENCE_SCRIPT,
-  "evidence",
-  String(card),
-  report,
-];
-
 export interface WorkerScratch {
   readonly scratch: string;
   readonly cache: string;

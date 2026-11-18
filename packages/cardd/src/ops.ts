@@ -38,8 +38,8 @@ import { requireReviewDecision } from "./reviews.ts";
 import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
-import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
-import { checkReceipt, observeRetirement, recordReceipt } from "./operation-close.ts";
+import { normalizeReport } from "./merged-report.ts";
+import { closeChecks, recordReceipt, retireVerified } from "./operation-close.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { listSchedules, removeSchedule, setSchedule } from "./schedules.ts";
@@ -446,23 +446,6 @@ export async function performOp(
   return keepingRefusals(db, () => performStored(db, session, op, args, timing, hosts));
 }
 
-async function closeChecks(
-  db: DatabaseSync,
-  session: Session,
-  op: OpName,
-  args: unknown,
-  hosts: Hosts,
-): Promise<CloseCheck | undefined> {
-  if (op === "close.verify")
-    return { merged: false, receipt: await checkReceipt(db, hosts, session, args) };
-  if (op === "close.finish")
-    return {
-      ...(await reverifyAtClose(db, hosts, op, args)),
-      observed: await observeRetirement(db, hosts, session, args),
-    };
-  return op === "close.begin" ? reverifyAtClose(db, hosts, op, args) : undefined;
-}
-
 async function performStored(
   db: DatabaseSync,
   session: Session,
@@ -480,7 +463,7 @@ async function performStored(
       ? await emptyLocalBranch(db, hosts, session.card, report?.args ?? args)
       : undefined;
   const closeCheck = await closeChecks(db, session, op, args, hosts);
-  return transaction(db, () => {
+  const done = transaction(db, () => {
     const result = HANDLERS[op](
       db,
       session,
@@ -493,4 +476,6 @@ async function performStored(
     noteControl(db, session.id, op);
     return result;
   });
+  if (op === "close.verify") await retireVerified(hosts, closeCheck?.receipt);
+  return done;
 }

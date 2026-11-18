@@ -179,6 +179,14 @@ function shipCardClonesToRefresh(
   }));
 }
 
+function withoutEvidencePaths(db: DatabaseSync, card: Card, text: string): string {
+  if (card.delivery !== "ops") return text;
+  return cardEntries(db, card.id).reduce((shown, entry) => {
+    const path = entry.fields["evidence"];
+    return typeof path === "string" ? shown.replaceAll(path, "the evidence report") : shown;
+  }, text);
+}
+
 export function closeFinish(
   db: DatabaseSync,
   session: Session,
@@ -193,10 +201,7 @@ export function closeFinish(
     closeCheck,
   );
   if (operation !== undefined) requireRetired(db, card, operation.handoff, closeCheck?.observed);
-  const text =
-    operation === undefined
-      ? args.text
-      : args.text.replaceAll(operation.evidence, "the evidence report");
+  const text = withoutEvidencePaths(db, card, args.text);
   const now = Date.now();
   closeCardIncidents(db, card.id, now);
   endLiveAttempts(db, card.id, now);

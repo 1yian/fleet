@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { toolResults, WORKER_WAIT_MS } from "../support/dispatch-lab.ts";
+import { branchesOf, toolResults, WORKER_WAIT_MS } from "../support/dispatch-lab.ts";
 import {
   alive,
   archivedUntracked,
@@ -253,5 +253,64 @@ test("a Dropped ops close is refused, with everything left in place, when the ar
   assert.equal(existsSync(tree), true);
   assert.equal(existsSync(join(tree, "untracked.txt")), true);
   assert.equal(existsSync(`${scratch.root}.archive`), false);
+  assert.equal((await cardd.thread(1)).card.status, "with-mate");
+});
+
+test("a Dropped ops close deletes only its recorded task branch and keeps a branch it merely checked out", async () => {
+  dispatchOperation();
+  const seen: string[] = [];
+  h.onModel(async () => {
+    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+    git(scratch.root, "branch", "inspect", "main");
+    git(tree, "checkout", "-q", "inspect");
+    return written(report);
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  h.onModel(
+    () => ({ tool: "close", args: { card: 1, summary: "Not approved", landed: false } }),
+    "mate",
+  );
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    return { text: "dropped" };
+  }, "mate");
+  await start();
+  await finished(4);
+  assert.match(seen[0] ?? "", /^c-1 is dropped\./);
+  assert.deepEqual(branchesOf(scratch.root), ["inspect", "main"]);
+  assert.equal(existsSync(tree), false);
+});
+
+test("a Dropped ops close is refused when only origin's cached base holds the commits, or when the task branch has no worktree", async () => {
+  dispatchOperation();
+  const seen: string[] = [];
+  let cached = "";
+  h.onModel(async () => {
+    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+    writeFileSync(join(tree, "cached.txt"), "held only by the cache\n");
+    git(tree, "add", "cached.txt");
+    git(tree, "commit", "-qm", "held only by the cache");
+    cached = git(tree, "rev-parse", "HEAD");
+    git(scratch.root, "update-ref", "refs/remotes/origin/main", cached);
+    return written(report);
+  }, "worker");
+  h.onModel(() => ({ text: "reported" }), "worker");
+  const drop = { tool: "close", args: { card: 1, summary: "Not approved", landed: false } };
+  h.onModel(() => drop, "mate");
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    git(scratch.root, "update-ref", "-d", "refs/remotes/origin/main");
+    git(scratch.root, "worktree", "remove", "--force", tree);
+    return drop;
+  }, "mate");
+  h.onModel((turns) => {
+    seen.push(toolResults(turns).at(-1) ?? "");
+    return { text: "refused" };
+  }, "mate");
+  await start();
+  await finished(5);
+  assert.match(seen[0] ?? "", /commits that only origin's cached base holds/);
+  assert.match(seen[1] ?? "", /branch c-1-a1 with commits and no worktree/);
+  assert.equal(git(scratch.root, "rev-parse", "refs/heads/c-1-a1"), cached);
   assert.equal((await cardd.thread(1)).card.status, "with-mate");
 });
