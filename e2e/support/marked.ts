@@ -1,14 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { verifyPrivateDirectory } from "./run-folders.ts";
 
 export const GROUPS_ENV = "FLEET_E2E_GROUPS";
 export const LAB_GROUPS_ENV = "FLEET_E2E_LAB_GROUPS";
 
 export interface Swept {
   readonly named: readonly string[];
-  readonly survivors: number;
+  readonly unresolved: readonly number[];
 }
 
 const validPid = (pid: number): boolean =>
@@ -32,6 +34,8 @@ export function groupIdentity(pid: number): string | undefined {
       return Number(group) === pid && state !== "Z" ? rest[16] : undefined;
     }
     const row = execFileSync("ps", ["-p", String(pid), "-o", "pgid=,stat=,lstart="], {
+      timeout: 1_000,
+      killSignal: "SIGKILL",
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -45,7 +49,22 @@ export function groupIdentity(pid: number): string | undefined {
 }
 
 export function groupScopes(env: NodeJS.ProcessEnv = process.env): string[] {
-  return (env[GROUPS_ENV] ?? "").split("\n").filter(isAbsolute);
+  const scopes: unknown = JSON.parse(env[GROUPS_ENV] ?? "[]");
+  if (!Array.isArray(scopes) || !scopes.every((scope): scope is string => typeof scope === "string" && isAbsolute(scope)))
+    throw new Error("invalid end-to-end group registry list");
+  return scopes;
+}
+
+export function openGroupScope(scope: string): string {
+  mkdirSync(join(scope, "open"), { mode: 0o700 });
+  return scope;
+}
+
+function registry(scope: string, state: "open" | "closed"): string {
+  if (!isAbsolute(scope)) throw new Error("end-to-end group registry must be absolute");
+  const path = join(scope, state);
+  verifyPrivateDirectory(path);
+  return path;
 }
 
 export function registerGroup(
@@ -55,9 +74,12 @@ export function registerGroup(
 ): string | undefined {
   if (pid === undefined || !validPid(pid)) return undefined;
   const lab = env[LAB_GROUPS_ENV];
-  const scopes = new Set([...groupScopes(env), ...(lab !== undefined && isAbsolute(lab) ? [lab] : [])]);
+  const scopes = new Set([...groupScopes(env), ...(lab === undefined ? [] : [lab])]);
   for (const scope of scopes) {
-    writeFileSync(join(scope, String(pid)), started ?? "", { mode: 0o600 });
+    const dir = registry(scope, "open");
+    const pending = join(dir, `.pending-${randomUUID()}`);
+    writeFileSync(pending, started ?? "", { flag: "wx", mode: 0o600 });
+    renameSync(pending, join(dir, String(pid)));
   }
   return started;
 }
@@ -70,6 +92,8 @@ export function signalOwnedGroup(pid: number | undefined, started: string | unde
 function liveGroups(): Set<number> {
   try {
     const rows = execFileSync("ps", ["-A", "-o", "pgid=,stat="], {
+      timeout: 1_000,
+      killSignal: "SIGKILL",
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -83,31 +107,37 @@ function liveGroups(): Set<number> {
 }
 
 function outstanding(scope: string): { pid: number; started: string }[] {
-  const entries = readdirSync(scope);
+  const entries = readdirSync(scope, { withFileTypes: true });
   if (entries.length === 0) return [];
   const live = liveGroups();
-  return entries.flatMap((name) => {
-    const pid = Number(name);
+  return entries.flatMap((entry) => {
+    const pid = Number(entry.name);
     if (!validPid(pid) || !live.has(pid)) return [];
-    return [{ pid, started: readFileSync(join(scope, name), "utf8") }];
+    return [{ pid, started: entry.isFile() ? readFileSync(join(scope, entry.name), "utf8") : "" }];
   });
 }
 
 export async function sweepGroups(scope: string, graceMs: number): Promise<Swept> {
+  const closed = join(scope, "closed");
+  if (!existsSync(closed)) renameSync(registry(scope, "open"), closed);
+  const dir = registry(scope, "closed");
   const deadline = Date.now() + graceMs;
-  let left = outstanding(scope);
+  let left = outstanding(dir);
   while (left.length > 0 && Date.now() < deadline) {
     await delay(100);
-    left = outstanding(scope);
+    left = outstanding(dir);
   }
-  const named = left.map(({ pid }) => `${String(pid)} process group`);
+  const candidates = left;
   if (left.length > 0) {
     for (const { pid, started } of left) signalOwnedGroup(pid, started, "SIGKILL");
     const deadline = Date.now() + 1_000;
     do {
       await delay(50);
-      left = outstanding(scope);
+      left = outstanding(dir);
     } while (left.length > 0 && Date.now() < deadline);
   }
-  return { named, survivors: left.length };
+  const unresolved = left.map(({ pid }) => pid);
+  const named = candidates.filter(({ pid }) => !unresolved.includes(pid))
+    .map(({ pid }) => `${String(pid)} process group`);
+  return { named, unresolved };
 }

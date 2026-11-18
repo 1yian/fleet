@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { maintenanceLine, type Maintenance } from "@fleet/protocol";
+import { spawnDetached } from "./detached.ts";
 import { mateRelaunchArgs, readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
 import { LEAVING } from "./worker.ts";
@@ -36,11 +36,10 @@ export function relaunchSelf(
   const kept = lane === undefined ? running : mateRelaunchArgs(running, lane);
   const args = staleAt === undefined ? kept : [...kept, `${STALE_RELOAD_ARG}${String(staleAt)}`];
   const direnv = lane?.direnv;
-  const helper = spawn(
+  const helper = spawnDetached(
     process.execPath,
     [RELAUNCH, String(process.pid), pane, process.cwd(), ...args],
     {
-      detached: true,
       stdio: "ignore",
       env: {
         ...process.env,

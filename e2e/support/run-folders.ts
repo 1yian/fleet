@@ -72,11 +72,15 @@ export function runBase(): string {
     : privateDirectory(join(base, `f${String(process.getuid?.())}`));
 }
 
-export function cacheDirectory(base: string): string {
-  verifyAncestors(base);
-  if (!isPrivateDirectory(lstatSync(base))) {
-    throw new Error(`end-to-end cache base must be owned by this user and private: ${base}`);
+export function verifyPrivateDirectory(path: string): void {
+  verifyAncestors(path);
+  if (!isPrivateDirectory(lstatSync(path))) {
+    throw new Error(`end-to-end directory must be owned by this user and private: ${path}`);
   }
+}
+
+export function cacheDirectory(base: string): string {
+  verifyPrivateDirectory(base);
   return privateDirectory(join(base, "fleet-e2e-cache"));
 }
 

@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { constants } from "node:os";
+import { spawnDetached } from "./detached.ts";
 import { herdr } from "./host.ts";
 import { shimmedEnv } from "./shims.ts";
 import { StringDecoder } from "node:string_decoder";
@@ -131,8 +131,7 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   console.error(
     "[run_long] WARNING: Bash pipefail is enabled, not errexit. A command list returns its last command's status: 'false; true' succeeds. Use 'suite && formatter' or preserve $? explicitly. Intentional || and if recovery retain normal shell semantics; nested shells own their failure policy.",
   );
-  const child = spawn("bash", ["-o", "pipefail", "-c", job.command], {
-    detached: true,
+  const child = spawnDetached("bash", ["-o", "pipefail", "-c", job.command], {
     stdio: ["ignore", "pipe", "pipe"],
     env: shimmedEnv(process.env),
   });

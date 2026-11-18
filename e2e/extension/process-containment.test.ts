@@ -89,7 +89,7 @@ function detachedServerCommand(): { command: string; portFile: string } {
   const portFile = join(h.dir, "server.port");
   const script = join(h.dir, "server.cjs");
   writeFileSync(script, SERVER);
-  const scopes = (process.env[GROUPS_ENV] ?? "").replaceAll("'", "'\\''");
+  const scopes = (process.env[GROUPS_ENV] ?? "[]").replaceAll("'", "'\\''");
   const start = `(cd /tmp && env -i setsid '${process.execPath}' '${script}' '${portFile}' '${scopes}' </dev/null >/dev/null 2>&1 &) &`;
   const wait = `i=0; while [ ! -s '${portFile}' ]; do i=$((i+1)); [ $i -gt 100 ] && { echo "server did not start"; exit 1; }; sleep 0.1; done`;
   return { command: `(${start}) ; ${wait}`, portFile };

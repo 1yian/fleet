@@ -33,7 +33,7 @@ interface Ready {
 async function launch(
   t: TestContext,
   base: string,
-  mode: "normal" | "detached" | "nested" | "cancelled",
+  mode: "normal" | "detached" | "nested" | "cancelled" | "job",
   width = 1,
   fileCount = 1,
 ) {
@@ -46,7 +46,13 @@ async function launch(
     let childPid = "";
     createInterface({ input: connection }).on("line", (line) => {
       if (childPid === "") childPid = line;
-      else report?.resolve({ root: line, pid: Number(childPid), release: () => connection.end() });
+      else {
+        const root: unknown = JSON.parse(line);
+        assert.equal(typeof root, "string");
+        if (typeof root === "string") {
+          report?.resolve({ root, pid: Number(childPid), release: () => connection.end() });
+        }
+      }
     });
   });
   server.listen(0, "127.0.0.1");
@@ -131,6 +137,17 @@ test("cancelling one suite leaves its concurrent peer alone", { timeout: 30_000 
   right.release();
   assert.equal(await peer.result, 0, peer.output());
   assert.equal(existsSync(dirname(right.root)), false);
+});
+
+test("cancelling a suite reaps a real detached job command", { timeout: 30_000 }, async (t) => {
+  const base = tempDir("job-\n-");
+  const runner = await launch(t, base, "job");
+  const job = await runner.ready();
+  assert.ok(running(job.pid));
+  runner.stop();
+  assert.equal(await runner.result, 1, runner.output());
+  assert.equal(running(job.pid), false);
+  assert.equal(existsSync(dirname(job.root)), false);
 });
 
 test("cancelling a containing suite removes its nested workers", { timeout: 30_000 }, async (t) => {

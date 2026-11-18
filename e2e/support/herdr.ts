@@ -1,22 +1,21 @@
-import { execFile, execFileSync, type ChildProcess } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardCleanup, spawnGuarded } from "./guarded.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
-import { LAB_GROUPS_ENV, signalOwnedGroup, sweepGroups } from "./marked.ts";
+import { LAB_GROUPS_ENV, groupIdentity, openGroupScope, signalOwnedGroup, sweepGroups } from "./marked.ts";
 import { retainRunRoot, tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
-const LAB_HERDR = fileURLToPath(new URL("./lab-herdr.ts", import.meta.url));
-const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+const OWNED_LAUNCH = fileURLToPath(new URL("./owned-launch.ts", import.meta.url));
 
 export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
   readonly config = join(tempDir("herdr-config-"), "config.toml");
-  private readonly groups = tempDir("herdr-groups-");
+  private readonly groups = openGroupScope(tempDir("herdr-groups-"));
   private server: ChildProcess | undefined;
   env: Record<string, string> = {};
   private disarm = (): void => undefined;
@@ -25,21 +24,10 @@ export class HerdrLab {
     const lab = new HerdrLab();
     writeFileSync(lab.config, "onboarding = false\n");
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
-    const path = env["PATH"] ?? process.env["PATH"] ?? "";
-    const real = execFileSync("sh", ["-c", "command -v herdr"], {
-      env: { ...process.env, PATH: path },
-      encoding: "utf8",
-    }).trim();
-    const bin = tempDir("herdr-bin-");
-    writeFileSync(
-      join(bin, "herdr"),
-      `#!/bin/sh\nif [ "$1" = server ]; then exec ${quote(process.execPath)} ${quote(LAB_HERDR)} ${quote(real)} "$@"; fi\nexec ${quote(real)} "$@"\n`,
-      { mode: 0o700 },
-    );
     lab.env = {
       ...env,
-      PATH: `${bin}${delimiter}${path}`,
       [LAB_GROUPS_ENV]: lab.groups,
+      FLEET_E2E_DETACH: OWNED_LAUNCH,
       HERDR_CONFIG_PATH: lab.config,
     };
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
@@ -49,10 +37,8 @@ export class HerdrLab {
       {
         env: {
           ...process.env,
-          ...env,
+          ...lab.env,
           HERDR_SESSION: lab.name,
-          HERDR_CONFIG_PATH: lab.config,
-          [LAB_GROUPS_ENV]: lab.groups,
         },
         stdio: "ignore",
       },
@@ -146,20 +132,20 @@ export class HerdrLab {
     if (server === undefined || server.exitCode !== null || server.signalCode !== null) return;
     const pid = server.pid;
     if (pid === undefined) return;
-    const identity = readFileSync(join(this.groups, String(pid)), "utf8");
-    signalOwnedGroup(pid, identity, "SIGKILL");
-    const result = await sweepGroups(this.groups, 0);
-    if (result.survivors > 0) {
+    const identity = readFileSync(join(this.groups, "open", String(pid)), "utf8");
+    if (identity === "" || groupIdentity(pid) !== identity) {
       retainRunRoot();
       throw new Error(`could not stop owned Herdr server ${String(pid)}`);
     }
+    signalOwnedGroup(pid, identity, "SIGKILL");
+    await new Promise<void>((resolve) => { server.once("exit", () => resolve()); });
   }
 
   async stop(): Promise<void> {
     await this.text(["session", "stop", this.name]).catch(() => "");
     try {
       const result = await sweepGroups(this.groups, 0);
-      if (result.survivors > 0) throw new Error(`could not stop owned Herdr lab ${this.name}`);
+      if (result.unresolved.length > 0) throw new Error(`could not stop owned Herdr lab ${this.name}`);
     } catch (error) {
       retainRunRoot();
       throw error;
