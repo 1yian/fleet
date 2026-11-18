@@ -95,6 +95,16 @@ const firstLine = (text: string): string =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
+function evidencePaths(entries: readonly Entry[]): string[] {
+  return entries.flatMap((entry) => {
+    const path = entry.fields["evidence"];
+    return typeof path === "string" ? [path] : [];
+  });
+}
+
+const withoutPaths = (text: string, paths: readonly string[]): string =>
+  paths.reduce((shown, path) => shown.replaceAll(path, "the evidence report"), text);
+
 function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hold?: Hold): string {
   const withMain = hold?.holder === "main" ? hold.entry : undefined;
   const latest = entries.findLast(
@@ -103,8 +113,10 @@ function summaryOf(card: Card, entries: readonly Entry[], laneCard: boolean, hol
       (entry.kind !== "hold" || entry.id === withMain) &&
       entry.fields["routed"] !== true,
   );
-  if (latest !== undefined && latest.id === withMain) return `Asks main: ${firstLine(latest.body)}`;
-  return firstLine(latest?.body ?? card.intent);
+  const paths = evidencePaths(entries);
+  if (latest !== undefined && latest.id === withMain)
+    return `Asks main: ${firstLine(withoutPaths(latest.body, paths))}`;
+  return firstLine(withoutPaths(latest?.body ?? card.intent, paths));
 }
 
 function boardCard(db: DatabaseSync, each: Loaded, neglect: Neglect): BoardCard {
@@ -235,20 +247,26 @@ export function cardView(db: DatabaseSync, id: number, lane: string, timing: Tim
             remaining: hold.remaining.map((step) => stepOf(db, lane, step)),
           },
     attempts: attemptsOf(db, id),
-    entries: each.entries.flatMap((entry) => entryFor(db, lane, entry) ?? []),
+    entries: each.entries
+      .flatMap((entry) => entryFor(db, lane, entry) ?? [])
+      .map((entry) => ({ ...entry, body: withoutPaths(entry.body, evidencePaths(each.entries)) })),
   };
 }
 
-export const thread = (db: DatabaseSync, id: number): Thread => ({
-  card: getCard(db, id),
-  entries: cardEntries(db, id)
-    .filter(inThread)
-    .map((entry) =>
-      entry.fields["evidence"] === undefined
-        ? entry
-        : { ...entry, fields: { ...entry.fields, evidence: true } },
-    ),
-});
+export function thread(db: DatabaseSync, id: number): Thread {
+  const entries = cardEntries(db, id);
+  const paths = evidencePaths(entries);
+  return {
+    card: getCard(db, id),
+    entries: entries.filter(inThread).map((entry) => ({
+      ...entry,
+      body: withoutPaths(entry.body, paths),
+      fields: Object.fromEntries(
+        Object.entries(entry.fields).filter(([key]) => key !== "evidence"),
+      ),
+    })),
+  };
+}
 
 function answerOnBoard(
   db: DatabaseSync,

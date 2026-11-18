@@ -242,7 +242,7 @@ function reportFields(view: CardView): Record<string, string> {
   return typeof operationHandoff(view.entries)?.fields["evidence"] === "string"
     ? {
         evidence:
-          "reported, not verified: do not read it, and closing an ops card is not available yet",
+          "reported, shape-checked only and not verified: do not read it, and closing an ops card is not available yet",
       }
     : {};
 }

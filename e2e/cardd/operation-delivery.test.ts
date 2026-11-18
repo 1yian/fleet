@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, OPS } from "@fleet/protocol";
@@ -157,10 +158,15 @@ test("only the done report of an ops card carries evidence from its own scratch 
   );
 });
 
-test("the web thread shows that ops evidence was reported, never its path, even when a later report names an earlier one", async () => {
+test("the web thread and board summary carry no evidence field and no evidence path, even one named by an earlier report", async () => {
   const { card, worker } = await operationCard();
   const first = evidenceOf(card);
   const second = first.replace("operation.md", "second.md");
+  await worker.call("report", {
+    status: "needs-decision",
+    text: `${second} holds my draft`,
+    key: "draft",
+  });
   await worker.call("report", { status: "done", text: `finished, see ${first}`, evidence: first });
   await fleet.main.call("comment", { card, text: "One more check." });
   await worker.call("report", {
@@ -169,18 +175,21 @@ test("the web thread shows that ops evidence was reported, never its path, even 
     evidence: second,
   });
   const thread = await fleet.cardd.thread(card);
-  const handoffs = thread.entries.filter((entry) => entry.fields["evidence"] !== undefined);
-  assert.equal(handoffs.length, 2);
-  for (const handoff of handoffs) assert.equal(handoff.fields["evidence"], true);
+  for (const entry of thread.entries) assert.equal(entry.fields["evidence"], undefined);
   assert.doesNotMatch(JSON.stringify(thread), /operation\.md|second\.md|scratch/);
+  assert.doesNotMatch(
+    JSON.stringify(await fleet.cardd.board()),
+    /operation\.md|second\.md|scratch/,
+  );
 });
 
 function localRepo(name: string): string {
   const repo = join(tempDir("ops-repo-"), name);
   mkdirSync(repo);
   writeFileSync(join(repo, ".gitignore"), "ignored/\n");
+  writeFileSync(join(repo, "notes.txt"), "tracked notes\n");
   gitIn(repo, "init", "-q", "-b", "main");
-  gitIn(repo, "add", ".gitignore");
+  gitIn(repo, "add", ".gitignore", "notes.txt");
   gitIn(repo, "commit", "-qm", "init");
   fleet.cardd.addProject(name, { local: repo });
   return repo;
@@ -191,7 +200,30 @@ const gitIn = (repo: string, ...args: string[]): string =>
     encoding: "utf8",
   }).trim();
 
-test("closing an ops card is refused by begin and finish in both modes, and leaves the live attempt and every file as they were", async () => {
+const hostScratch = (): string => join(process.env["FLEET_HOST_DIR"] ?? "", "scratch");
+
+function bytesUnder(root: string): Record<string, string> {
+  if (!existsSync(root)) return {};
+  return Object.fromEntries(
+    readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const path = join(entry.parentPath, entry.name);
+        return [path, readFileSync(path, "utf8")];
+      }),
+  );
+}
+
+function rows(sql: string): unknown[] {
+  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true });
+  try {
+    return db.prepare(sql).all();
+  } finally {
+    db.close();
+  }
+}
+
+test("closing an ops card is refused by begin and finish in both modes, and after each refusal the attempt, refs, files and scratch are exactly as they were", async () => {
   const repo = localRepo("shop");
   const { card, session, worker } = await operationCard("shop", "local");
   const tree = `${repo}.worktrees/${session}`;
@@ -199,40 +231,59 @@ test("closing an ops card is refused by begin and finish in both modes, and leav
   writeFileSync(join(tree, "product.txt"), "unexpected product change\n");
   gitIn(tree, "add", "product.txt");
   gitIn(tree, "commit", "-qm", "unexpected product change");
+  writeFileSync(join(tree, "notes.txt"), "tracked notes, edited by the worker\n");
   writeFileSync(join(tree, "untracked.txt"), "preserve me\n");
   mkdirSync(join(tree, "ignored"));
   writeFileSync(join(tree, "ignored", "leak.txt"), "ignored but mine\n");
-  await worker.call("report", { status: "done", text: "finished", evidence: evidenceOf(card) });
-  const head = gitIn(tree, "rev-parse", "HEAD");
-  const branches = gitIn(repo, "branch", "--list");
+  const report = join(hostScratch(), `c-${String(card)}`, "operation.md");
+  mkdirSync(join(report, ".."), { recursive: true });
+  writeFileSync(report, "# Operation\nDone.\n");
+  await worker.call("report", { status: "done", text: "finished", evidence: report });
+  const snapshot = async (): Promise<unknown> => ({
+    head: gitIn(tree, "rev-parse", "HEAD"),
+    refs: gitIn(repo, "for-each-ref", "--format=%(refname) %(objectname)"),
+    status: gitIn(tree, "status", "--porcelain", "--ignored", "--untracked-files=all"),
+    tracked: readFileSync(join(tree, "notes.txt"), "utf8"),
+    untracked: readFileSync(join(tree, "untracked.txt"), "utf8"),
+    ignored: readFileSync(join(tree, "ignored", "leak.txt"), "utf8"),
+    scratch: bytesUnder(hostScratch()),
+    archive: existsSync(`${repo}.archive`),
+    status_: (await fleet.cardd.thread(card)).card.status,
+    attempts: rows("SELECT n, host, state, branch FROM attempts ORDER BY id"),
+    sessions: rows("SELECT id, state FROM sessions WHERE role = 'worker' ORDER BY id"),
+  });
+  const baseline = await snapshot();
   const refusal =
     /delivers ops; closing an operation is not available until authoritative retirement lands \(tracked on its own card\); leave it open/;
-  for (const landed of [undefined, false]) {
-    await assert.rejects(
-      fleet.main.call("close.begin", { card, ...(landed === undefined ? {} : { landed }) }),
-      refusal,
-    );
-    const mode = landed === false ? "dropped" : "done";
-    await assert.rejects(
-      fleet.main.call("close.finish", { card, mode, text: "Done.", archives: [], left: [] }),
-      refusal,
-    );
+  const routes: [string, () => Promise<unknown>][] = [
+    ["begin done", () => fleet.main.call("close.begin", { card })],
+    ["begin dropped", () => fleet.main.call("close.begin", { card, landed: false })],
+    [
+      "finish done",
+      () =>
+        fleet.main.call("close.finish", {
+          card,
+          mode: "done",
+          text: "Done.",
+          archives: [],
+          left: [],
+        }),
+    ],
+    [
+      "finish dropped",
+      () =>
+        fleet.main.call("close.finish", {
+          card,
+          mode: "dropped",
+          text: "Not approved.",
+          archives: [],
+          left: [],
+        }),
+    ],
+  ];
+  for (const [name, route] of routes) {
+    await assert.rejects(route(), refusal, name);
+    assert.deepEqual(await snapshot(), baseline, `${name} changed something`);
   }
-  const thread = await fleet.cardd.thread(card);
-  assert.equal(thread.card.status, "with-mate");
-  assert.equal(
-    thread.entries.some((entry) => entry.kind === "cleanup"),
-    false,
-  );
-  const view = check(OPS.card.result, await fleet.main.call("card", { card }));
-  assert.deepEqual(
-    view.attempts.map((attempt) => attempt.state),
-    ["active"],
-  );
-  assert.equal(gitIn(tree, "rev-parse", "HEAD"), head);
-  assert.equal(gitIn(repo, "branch", "--list"), branches);
-  assert.equal(readFileSync(join(tree, "untracked.txt"), "utf8"), "preserve me\n");
-  assert.equal(readFileSync(join(tree, "ignored", "leak.txt"), "utf8"), "ignored but mine\n");
-  assert.equal(existsSync(`${repo}.archive`), false);
-  await worker.call("report", { status: "working", text: "still here" });
+  assert.equal((await fleet.cardd.thread(card)).card.status, "with-mate");
 });

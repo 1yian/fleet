@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { test } from "node:test";
 import { lastUser, toolResults, WORKER_WAIT_MS, workersOf } from "../support/dispatch-lab.ts";
 import type { Turn } from "../support/harness.ts";
 import {
+  alive,
   cardd,
   dispatchOperation,
   finished,
@@ -15,8 +17,10 @@ import {
   report,
   scratch,
   start,
+  reportFromWorker,
   tree,
   written,
+  workerWrites,
 } from "../support/operation-lab.ts";
 import { git, tip } from "../support/remote.ts";
 
@@ -30,8 +34,9 @@ test("ops dispatches offline with a no-PR contract and hands evidence over witho
     assert.match(contract, /### Delivery: ops/);
     assert.match(contract, /No PR, commit, push, or merge is expected/);
     await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-    return written(report);
+    return workerWrites();
   }, "worker");
+  h.onModel((turns) => reportFromWorker(turns), "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel((turns) => {
     assert.match(lastUser(turns) ?? "", /operation: no PR expected/i);
@@ -46,7 +51,7 @@ test("ops dispatches offline with a no-PR contract and hands evidence over witho
   await finished(4);
   const [board = ""] = seen;
   assert.match(board, /delivery: ops/);
-  assert.match(board, /^\s*evidence: "?reported, not verified: do not read it/m);
+  assert.match(board, /^\s*evidence: "?reported, shape-checked only and not verified/m);
   assert.doesNotMatch(board, /^\s*report: |operation\.md/m);
   const web = JSON.stringify(await cardd.thread(1));
   assert.doesNotMatch(web, /scratch|operation\.md/);
@@ -100,8 +105,9 @@ test("ops accepts evidence only on its done handoff, inside its card scratch fol
   }, "worker");
   h.onModel((turns) => {
     refusal(turns, /ops work does not report a PR or merge/);
-    return written(report);
+    return workerWrites();
   }, "worker");
+  h.onModel((turns) => reportFromWorker(turns), "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel(() => ({ text: "left open" }), "mate");
   await start();
@@ -120,8 +126,9 @@ test("a steer after done cancels the handoff on the board", async () => {
   const seen: string[] = [];
   h.onModel(async () => {
     await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-    return written(report);
+    return workerWrites();
   }, "worker");
+  h.onModel((turns) => reportFromWorker(turns), "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   h.onModel(() => ({ text: "noted" }), "worker");
   h.onModel(() => ({ tool: "board", args: { card: 1 } }), "mate");
@@ -136,28 +143,59 @@ test("a steer after done cancels the handoff on the board", async () => {
   }, "mate");
   await start();
   await finished(5);
-  assert.match(seen[0] ?? "", /^\s*evidence: "?reported, not verified/m);
+  assert.match(seen[0] ?? "", /^\s*evidence: "?reported, shape-checked only and not verified/m);
   assert.doesNotMatch(seen[1] ?? "", /evidence: /);
 });
 
-test("closing an ops card is refused in every mode and changes nothing", async () => {
+test("closing an ops card is refused in every mode, and after each refusal the same worker, refs, files and scratch remain", async () => {
   dispatchOperation();
-  const refused: string[] = [];
-  const before: { head: string; branches: string } = { head: "", branches: "" };
+  const pidFile = join(h.dir, "worker.pid");
+  const snaps: unknown[] = [];
+  const answers: string[] = [];
+  const snapshot = async (): Promise<unknown> => {
+    const db = new DatabaseSync(cardd.db, { readOnly: true });
+    const attempts = db.prepare("SELECT n, host, state, branch FROM attempts ORDER BY id").all();
+    const sessions = db.prepare("SELECT id FROM sessions WHERE role = 'worker' ORDER BY id").all();
+    db.close();
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    return {
+      pid,
+      alive: alive(pid),
+      workers: await workersOf(lab),
+      attempts,
+      sessions,
+      head: git(tree, "rev-parse", "HEAD"),
+      refs: git(scratch.root, "for-each-ref", "--format=%(refname) %(objectname)"),
+      status: git(tree, "status", "--porcelain", "--ignored", "--untracked-files=all"),
+      tracked: readFileSync(join(tree, ".gitignore"), "utf8"),
+      untracked: readFileSync(join(tree, "untracked.txt"), "utf8"),
+      ignored: readFileSync(join(tree, "state", "leak.txt"), "utf8"),
+      scratch: readdirSync(hostScratch(), { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => join(entry.parentPath, entry.name))
+        .map((path) => [path, readFileSync(path, "utf8")]),
+      archive: existsSync(`${scratch.root}.archive`),
+      card: (await cardd.thread(1)).card.status,
+    };
+  };
   h.onModel(async () => {
     await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-    writeFileSync(join(tree, ".gitignore"), "ignored/\n");
-    git(tree, "add", ".gitignore");
     writeFileSync(join(tree, "product.txt"), "unexpected product change\n");
     git(tree, "add", "product.txt");
     git(tree, "commit", "-qm", "unexpected product change");
+    writeFileSync(
+      join(tree, ".gitignore"),
+      `${readFileSync(join(tree, ".gitignore"), "utf8")}# edited\n`,
+    );
     writeFileSync(join(tree, "untracked.txt"), "preserve me\n");
-    mkdirSync(join(tree, "ignored"));
-    writeFileSync(join(tree, "ignored", "leak.txt"), "ignored but mine\n");
-    before.head = git(tree, "rev-parse", "HEAD");
-    before.branches = git(scratch.root, "branch", "--list");
-    return written(report);
+    mkdirSync(join(tree, "state"), { recursive: true });
+    writeFileSync(join(tree, "state", "leak.txt"), "ignored but mine\n");
+    return {
+      tool: "bash",
+      args: { command: `echo $PPID > "${pidFile}"; ${workerWrites().args.command}` },
+    };
   }, "worker");
+  h.onModel((turns) => reportFromWorker(turns), "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
   const attempts = [
     { card: 1, summary: "Done" },
@@ -166,35 +204,38 @@ test("closing an ops card is refused in every mode and changes nothing", async (
     { card: 1, summary: "Not approved", landed: false, confirm: true },
   ];
   attempts.forEach((args, index) => {
-    h.onModel((turns) => {
-      if (index > 0) refused.push(toolResults(turns).at(-1) ?? "");
+    h.onModel(async (turns) => {
+      if (index > 0) {
+        answers.push(toolResults(turns).at(-1) ?? "");
+        snaps.push(await snapshot());
+      } else snaps.push(await snapshot());
       return { tool: "close", args };
     }, "mate");
   });
-  h.onModel((turns) => {
-    refused.push(toolResults(turns).at(-1) ?? "");
+  h.onModel(async (turns) => {
+    answers.push(toolResults(turns).at(-1) ?? "");
+    snaps.push(await snapshot());
     return { text: "left open" };
   }, "mate");
   await start();
   await finished(7);
-  const answers = refused;
+  for (let tries = 0; snaps.length < 5 && tries < 100; tries += 1)
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(snaps.length, 5);
   assert.equal(answers.length, 4);
+  const [baseline] = snaps;
+  assert.equal(JSON.stringify(baseline).includes('"alive":true'), true);
+  assert.equal(JSON.stringify(baseline).includes('"card":"with-mate"'), true);
+  snaps.slice(1).forEach((after, index) => {
+    assert.deepEqual(after, baseline, `after refusal ${String(index + 1)}`);
+  });
   for (const answer of answers)
     assert.match(
       answer,
       /c-1 delivers ops; closing an operation is not available until authoritative retirement lands \(tracked on its own card\); leave it open/,
     );
-  const thread = await cardd.thread(1);
-  assert.equal(thread.card.status, "with-mate");
   assert.equal(
-    thread.entries.some((entry) => entry.kind === "cleanup"),
+    (await cardd.thread(1)).entries.some((entry) => entry.kind === "cleanup"),
     false,
   );
-  assert.equal(git(tree, "rev-parse", "HEAD"), before.head);
-  assert.equal(git(scratch.root, "branch", "--list"), before.branches);
-  assert.equal(readFileSync(join(tree, "untracked.txt"), "utf8"), "preserve me\n");
-  assert.equal(readFileSync(join(tree, "ignored", "leak.txt"), "utf8"), "ignored but mine\n");
-  assert.equal(existsSync(`${scratch.root}.archive`), false);
-  assert.equal(existsSync(join(hostScratch(), "c-1", "operation.md")), true);
-  assert.equal((await workersOf(lab)).length, 1);
 });

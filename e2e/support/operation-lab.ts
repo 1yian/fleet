@@ -1,9 +1,10 @@
+import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
 import { Cardd } from "./cardd.ts";
-import { WORKER_WAIT_MS } from "./dispatch-lab.ts";
+import { toolResults, WORKER_WAIT_MS } from "./dispatch-lab.ts";
 import { Harness, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { git } from "./remote.ts";
@@ -105,6 +106,31 @@ export function written(path: string): { tool: string; args: Record<string, stri
   };
 }
 
+export function workerWrites(): { tool: string; args: { command: string } } {
+  return {
+    tool: "bash",
+    args: {
+      command:
+        'mkdir -p "$FLEET_SCRATCH" && printf "# Operation\\n\\nObserved state: ready. No project changes.\\n" > "$FLEET_SCRATCH/operation.md" && echo "scratch=$FLEET_SCRATCH"',
+    },
+  };
+}
+
+export function reportFromWorker(turns: Turn[]): { tool: string; args: Record<string, string> } {
+  const observed = /scratch=(\S+)/.exec(toolResults(turns).at(-1) ?? "")?.[1] ?? "";
+  assert.equal(observed, join(hostScratch(), "c-1"));
+  const path = join(observed, "operation.md");
+  assert.match(readFileSync(path, "utf8"), /Observed state: ready/);
+  return {
+    tool: "report",
+    args: {
+      status: "done",
+      text: "Operation complete; the evidence report is attached",
+      evidence: path,
+    },
+  };
+}
+
 export async function start(): Promise<void> {
   await h.waitFor((event) => event["type"] === "fleet_connected", "mate connected");
   mate.prompt("Run the approved operation.");
@@ -112,3 +138,12 @@ export async function start(): Promise<void> {
 
 export const finished = (call: number): Promise<Turn[]> =>
   h.waitForCall(call, "mate", WORKER_WAIT_MS);
+
+export const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};

@@ -379,7 +379,7 @@ const HANDLERS: Record<OpName, Handler> = {
       card: card.id,
       author: `worker:${session.id}`,
       kind: "report",
-      body: reportBody(db, card, args),
+      body: args.text,
       fields,
     };
     const asked =
@@ -394,19 +394,6 @@ const HANDLERS: Record<OpName, Handler> = {
     return { value, notify: [...to, ...withdrawn, ...merge] };
   },
 };
-
-function reportBody(db: DatabaseSync, card: Card, args: OpArgs<"report">): string {
-  if (card.delivery !== "ops") return args.text;
-  const paths = [
-    args.evidence,
-    ...cardEntries(db, card.id).map((entry) => entry.fields["evidence"]),
-  ];
-  return paths.reduce<string>(
-    (text, path) =>
-      typeof path === "string" ? text.replaceAll(path, "the evidence report") : text,
-    args.text,
-  );
-}
 
 function openCardWithPr(db: DatabaseSync, id: number, pr: string | undefined): Card {
   requireOpen(db, getCard(db, id));
