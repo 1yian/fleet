@@ -55,7 +55,7 @@ function readSession(session: string): { process: string | null; generation: num
   }
 }
 
-function insertReloading(session: string, process: string): void {
+function insertReloading(session: string, process: string): number {
   const db = new DatabaseSync(fleet?.cardd.db ?? "", { timeout: 5000 });
   try {
     db.exec("BEGIN");
@@ -66,7 +66,9 @@ function insertReloading(session: string, process: string): void {
     db.prepare(
       "INSERT INTO maintenance_batches (batch, requester, maintenance) SELECT batch, requester, id FROM maintenance WHERE batch = ?",
     ).run(`batch-${session}`);
+    const row = db.prepare("SELECT id FROM maintenance WHERE session = ?").get(session);
     db.exec("COMMIT");
+    return Number(row?.["id"]);
   } finally {
     db.close();
   }
@@ -81,6 +83,15 @@ function maintenanceState(session: string): string | undefined {
   } finally {
     db.close();
   }
+}
+
+async function ownerAcknowledges(token: string, id: number): Promise<void> {
+  const acked = await fleet?.cardd.post(token, "maintenance.ack", {
+    id,
+    state: "reloading",
+    detail: "reloading",
+  });
+  assert.equal(acked?.status, 200);
 }
 
 async function staysAt(read: () => number, expected: number): Promise<void> {
@@ -133,7 +144,10 @@ test("an in-process reload keeps the process and still completes a reload", asyn
   const before = readSession(session);
   assert.equal(before.generation, 1);
   assert.notEqual(before.process, null);
-  insertReloading(session, before.process ?? "");
+  const request = insertReloading(session, before.process ?? "");
+  await ownerAcknowledges(token, request);
+  const runtime = fleet.cardd.runtimeRecorded(session);
+  assert.ok(runtime);
   worker.prompt("/probe-reload");
   await fleet.main.waitForEntry(
     (entry) => entry.body.includes(COMPLETED),
@@ -142,6 +156,7 @@ test("an in-process reload keeps the process and still completes a reload", asyn
   const after = readSession(session);
   assert.equal(after.generation, before.generation);
   assert.equal(after.process, before.process);
+  assert.notEqual(fleet.cardd.runtimeRecorded(session), runtime);
   assert.equal(maintenanceState(session), "completed");
 });
 
@@ -161,11 +176,15 @@ test("a reconnect of the same process does not complete a reload", async () => {
   await h.waitForNth((event) => event["type"] === "fleet_connected", 1, "the worker to connect");
   const session = sessionOf(card.id);
   const before = readSession(session);
-  insertReloading(session, before.process ?? "");
+  const request = insertReloading(session, before.process ?? "");
+  await ownerAcknowledges(token, request);
+  const runtime = fleet.cardd.runtimeRecorded(session);
+  assert.ok(runtime);
   await fleet.cardd.restart();
   await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reconnect");
   assert.equal(maintenanceState(session), "reloading");
   assert.equal(readSession(session).generation, before.generation);
+  assert.equal(fleet.cardd.runtimeRecorded(session), runtime);
 });
 
 test("an in-process reload keeps the compaction backoff", async () => {

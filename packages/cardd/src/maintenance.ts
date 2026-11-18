@@ -144,7 +144,9 @@ function receipt(db: DatabaseSync, id: number): string[] {
   if (row === undefined || card === undefined) return [];
   const requester = String(owner?.["requester"]);
   const grouped =
-    db.prepare("SELECT 1 FROM maintenance_batches WHERE maintenance = ?").get(id) !== undefined;
+    db
+      .prepare("SELECT 1 FROM maintenance_batches WHERE maintenance = ? AND batch = ?")
+      .get(id, row.batch) !== undefined;
   const quiet = row.state === "completed";
   const fields = { maintenance: id, batch: row.batch, kind: row.kind, state: row.state, quiet };
   const recipients = quiet && grouped ? [] : [requester];
@@ -156,14 +158,22 @@ function receipt(db: DatabaseSync, id: number): string[] {
   return recipients;
 }
 
-function name(db: DatabaseSync, id: number, runtime: string | null): void {
-  const [row] = rowsOf(db, "m.id = ?", id);
-  const card = row === undefined ? undefined : cardOf(db, row.session);
-  if (row === undefined || card === undefined) return;
-  db.prepare("UPDATE maintenance SET detail = ? WHERE id = ?").run(
-    `${row.detail}${identityOf(row, card, runtime)}`,
-    id,
-  );
+function projected(db: DatabaseSync, rows: readonly Maintenance[]): Maintenance[] {
+  return rows.map((row) => {
+    const card =
+      row.state === "failed" && row.kind === "reload" ? cardOf(db, row.session) : undefined;
+    if (card === undefined) return row;
+    const runtime = db.prepare("SELECT runtime FROM maintenance WHERE id = ?").get(row.id)?.[
+      "runtime"
+    ];
+    return { ...row, detail: `${row.detail}${identityOf(row, card, runtime)}` };
+  });
+}
+
+function actor(db: DatabaseSync, id: number, session: string): void {
+  db.prepare(
+    "UPDATE maintenance SET runtime = (SELECT runtime FROM sessions WHERE id = ?) WHERE id = ?",
+  ).run(session, id);
 }
 
 function settle(
@@ -244,16 +254,19 @@ export function adoptMaintenance(
           "SELECT id FROM maintenance WHERE session = ? AND state = 'pending' AND kind = 'reload'",
         )
         .all(session);
-  const replaced =
-    started && runtime !== undefined
-      ? db
-          .prepare(
-            "SELECT id FROM maintenance WHERE session = ? AND state = 'reloading' AND (runtime IS NULL OR runtime != ?)",
-          )
-          .all(session, runtime)
-      : [];
+  const replaced = started
+    ? db
+        .prepare(
+          `SELECT id FROM maintenance WHERE session = ?1 AND state = 'reloading'
+           AND (kind = 'stow' OR (?2 IS NOT NULL AND (runtime IS NULL OR runtime != ?2)))`,
+        )
+        .all(session, runtime ?? null)
+    : [];
   return [
-    ...refused.flatMap((row) => settle(db, Number(row["id"]), "failed", UNSUPPORTED)),
+    ...refused.flatMap((row) => {
+      actor(db, Number(row["id"]), session);
+      return settle(db, Number(row["id"]), "failed", UNSUPPORTED);
+    }),
     ...replaced.flatMap((row) =>
       settle(db, Number(row["id"]), "completed", "reconnected on a new process"),
     ),
@@ -388,16 +401,14 @@ function requestTarget(
       raw.kind,
       state,
       target.process,
-      target.runtime,
+      raw.kind === "reload" ? target.runtime : null,
       detail,
       Date.now(),
     );
   if (inserted.changes === 0) return [];
   const id = Number(inserted.lastInsertRowid);
   attach(db, raw.batch, caller.id, raw.kind, id);
-  if (state === "pending") return [target.id];
-  if (raw.kind === "reload") name(db, id, target.runtime);
-  return [];
+  return state === "pending" ? [target.id] : [];
 }
 
 export function requestMaintenance(
@@ -408,11 +419,12 @@ export function requestMaintenance(
 ): { value: Maintenance[]; notify: string[] } {
   if (caller.lane !== mainLane(db))
     throw new Error("only main can ask the fleet to reload or stow");
-  if (summarized(db, raw.batch)) return { value: batchRows(db, raw.batch), notify: [] };
+  if (summarized(db, raw.batch))
+    return { value: projected(db, batchRows(db, raw.batch)), notify: [] };
   const notify = targets(db, caller.id, raw.kind, t.wall()).flatMap((target) =>
     requestTarget(db, caller, raw, target, t),
   );
-  return { value: batchRows(db, raw.batch), notify };
+  return { value: projected(db, batchRows(db, raw.batch)), notify };
 }
 
 export function maintenanceStatus(
@@ -435,7 +447,7 @@ export function maintenanceStatus(
             ),
           )
       : [];
-  return { value: batchRows(db, args.batch), notify };
+  return { value: projected(db, batchRows(db, args.batch)), notify };
 }
 
 export function readMaintenance(db: DatabaseSync, caller: Session, id: number): Maintenance {
@@ -451,20 +463,22 @@ export function acknowledgeMaintenance(
 ): { value: Maintenance; notify: string[] } {
   const open = db
     .prepare(
-      "SELECT id FROM maintenance WHERE id = ? AND session = ? AND state IN ('pending', 'reloading')",
+      "SELECT kind, state FROM maintenance WHERE id = ? AND session = ? AND state IN ('pending', 'reloading')",
     )
     .get(args.id, caller.id);
-  const notify =
-    open === undefined
-      ? []
-      : args.state === "failed"
-        ? settle(db, args.id, "failed", sanitize(args.detail))
-        : (db
-            .prepare(
-              `UPDATE maintenance SET state = ?, detail = ?, updated_at = ?,
-                 runtime = (SELECT runtime FROM sessions WHERE id = ?) WHERE id = ?`,
-            )
-            .run(args.state, args.detail, Date.now(), caller.id, args.id),
-          []);
-  return { value: readMaintenance(db, caller, args.id), notify };
+  if (open === undefined) return { value: readMaintenance(db, caller, args.id), notify: [] };
+  const names =
+    open["kind"] === "reload" && (args.state !== "failed" || open["state"] === "pending");
+  if (names) actor(db, args.id, caller.id);
+  if (args.state === "failed") {
+    const notify = settle(db, args.id, "failed", sanitize(args.detail));
+    return { value: readMaintenance(db, caller, args.id), notify };
+  }
+  db.prepare("UPDATE maintenance SET state = ?, detail = ?, updated_at = ? WHERE id = ?").run(
+    args.state,
+    args.detail,
+    Date.now(),
+    args.id,
+  );
+  return { value: readMaintenance(db, caller, args.id), notify: [] };
 }
