@@ -166,3 +166,23 @@ test("a note after a working report is news, and a re-run that exits differently
   }, "the passing re-run to move the card");
   assert.equal(moved.notice, "none");
 });
+
+test("a repeated poll and a fresh suite on one card: the suite covers, and both jobs are counted", async () => {
+  const card = await newCard(cleo, "Wait and test");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", { status: "working", text: "Waiting for the approval." });
+  await rePoll(worker, 1);
+  const poll = await startJob(worker, "approval-poll", "poll the page # 2");
+  const suite = await startJob(worker, "suite", "npm test");
+  worker.send({ t: "activity", state: "waiting" });
+  ageCard(fleet.cardd, card, IDLE_LIMIT + MINUTE);
+
+  const pulse = await until(async () => {
+    const found = await pulseOf(card);
+    return found.running?.what.includes("more") === true ? found : undefined;
+  }, "the pulse to count both jobs");
+  assert.equal(pulse.state, "running");
+  assert.equal(pulse.notice, "none");
+  assert.equal(pulse.running?.what, `job ${String(suite)} (suite) and 1 more`);
+  assert.ok(poll < suite);
+});

@@ -93,12 +93,13 @@ function changedExits(entries: readonly Entry[], runs: readonly Run[]): Readonly
 }
 
 function startedAgain(runs: readonly Run[], since: number): ReadonlySet<number> {
-  const later = runs.filter((run) =>
-    runs.some(
-      (earlier) => earlier.id < run.id && earlier.label === run.label && earlier.at > since,
-    ),
-  );
-  return new Set(later.map(({ id }) => id));
+  const armed = new Set<string>();
+  const later = new Set<number>();
+  for (const run of runs) {
+    if (armed.has(run.label)) later.add(run.id);
+    if (run.at > since) armed.add(run.label);
+  }
+  return later;
 }
 
 export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movement {

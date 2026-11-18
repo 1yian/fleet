@@ -42,7 +42,7 @@ function named(runs: readonly Run[]): string {
 }
 
 function runningOf(activity: Activity | null, { fresh, again }: Movement): Pulse["running"] {
-  if (fresh.length > 0) return { by: "job", what: named(fresh) };
+  if (fresh.length > 0) return { by: "job", what: named([...fresh, ...again]) };
   if (activity?.state === "running") return { by: "turn", what: "a turn" };
   if (again.length === 0) return null;
   return { by: "job", what: `${named(again)}, run again with nothing changed` };

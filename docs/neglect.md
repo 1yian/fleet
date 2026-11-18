@@ -32,7 +32,7 @@ A commit or a file change in the worker's copy (`progress_at`) and any entry fro
 
 The fleet reads this from the live attempt's entries and jobs, so a replaced worker starts clean. A Lavish poll is refused until the card holds a decision, but only when the job starts, and only when the command text shows the poll. A wrapper script or a non-Lavish poll is not recognised: it is caught only by the idle rule after 4 hours.
 
-A running job covers silence and reported blocks only while it is not such a repeat. A repeat is shown as `running` with `run again with nothing changed`, the card counts as idle from the last real change, and the idle limits below apply as they always did: main after 4 hours, the captain after 24. Nobody has to say anything for this: it is how a worker that polls the same page for a day shows up.
+A running job covers silence and reported blocks only while it is not such a repeat. A repeat is shown as `running` with `run again with nothing changed`, the card counts as idle from the last real change, and the idle limits below apply as they always did: main after 4 hours, the captain after 24. Nobody has to say anything for this: it is how a worker that polls the same page for a day shows up. When a first run covers the card, the repeated waits still count in the `running` job count.
 
 ## States
 
