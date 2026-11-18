@@ -6,20 +6,31 @@ A standing card (a lane home or a schedule holder) and a closed card have no pul
 
 ## The pulse
 
-| Field     | Meaning                                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------- |
-| `state`   | One word that sums the card up. See the table below.                                                 |
-| `notice`  | Who has to be told: `none`, `main`, `captain`, or `urgent` (red).                                    |
-| `owner`   | The captain, main, a lane's mate, or a worker with its host.                                         |
-| `running` | A turn or a job (named) that runs for the card now, or nothing.                                      |
-| `movedAt` | The last real movement: a report, comment, hold, release, answer, or finished job, or `progress_at`. |
-| `since`   | How long the state has held. Each state counts from its own evidence.                                |
-| `waits`   | The captain, main, a mate, a date (see `datedWait`), a pause, or nothing stated.                     |
-| `behind`  | For a held card: how many open steps it names in `remaining`, and how many of them started.          |
+| Field     | Meaning                                                                                           |
+| --------- | ------------------------------------------------------------------------------------------------- |
+| `state`   | One word that sums the card up. See the table below.                                              |
+| `notice`  | Who has to be told: `none`, `main`, `captain`, or `urgent` (red).                                 |
+| `owner`   | The captain, main, a lane's mate, or a worker with its host.                                      |
+| `running` | A turn or a job (named) that runs for the card now, or nothing.                                   |
+| `movedAt` | The last real change (see below): a report, comment, hold, release, answer, job end, or progress. |
+| `since`   | How long the state has held. Each state counts from its own evidence.                             |
+| `waits`   | The captain, main, a mate, a date (see `datedWait`), a pause, or nothing stated.                  |
+| `behind`  | For a held card: how many open steps it names in `remaining`, and how many of them started.       |
 
 A lane's mate reads `behind` with every step in another lane counted as open and not started. The real count would show whether that card is queued, started, or closed, which `remaining` hides on purpose (`elsewhere`). Main and the board see the real count.
 
 `movedAt` never reads `cards.last_activity`, which every reconnect resets. A schedule's wake, a reminder, a restart note, a connect, and a lost job are not movement.
+
+## What counts as a real change
+
+A worker that waits can say so over and over without anything changing. These repeats are not real changes, so they never move a card:
+
+- A `working` or `note` report right after another `working` or `note` report. The first one after any other status counts, and so does every report of another status.
+- A job that the worker starts again under the same label when an earlier run of that label began after the last real change, and the result of that run. The first run of a label counts as before.
+
+A commit or a file change in the worker's copy (`progress_at`) and any entry from someone else (a comment, hold, release, answer, or review feedback) are real changes. After one, the next run of a label is a first run again.
+
+A running job covers silence and reported blocks only while it is not such a repeat. A repeat is shown as `running` with `run again with nothing changed`, the card counts as idle from the last real change, and the idle limits below apply as they always did: main after 4 hours, the captain after 24. Nobody has to say anything for this: it is how a worker that polls the same page for a day shows up.
 
 ## States
 
@@ -30,10 +41,10 @@ Captain decisions come first. A live long job, an armed dated hold, or a future 
 | `you`     | Its status is Needs you, or it is a card of the captain's own, unless his own later holds it until its date.                        | The status change          |
 | `broken`  | A worker reported `failed`. Or its worker has not been connected for 2 minutes while the card is Working or In review.              | The report, or last seen   |
 | `stalled` | A worker reported `blocked` or `stopped` 5 minutes ago. Or its running worker has been silent for 5 minutes.                        | The report, or last output |
-| `running` | A turn or a job runs for it.                                                                                                        | `movedAt`                  |
+| `running` | A turn or a job runs for it. A job that only repeats an earlier run does not count.                                                 | `movedAt`                  |
 | `waiting` | A dated hold with a live job, schedule, worker, declared watcher, outside date, or captain deferral. Or a future worker checkpoint. | The hold or pause age      |
 | `parked`  | A dated hold with a missing watcher or no stated reason.                                                                            | The hold age               |
-| `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker.                                             | `movedAt`                  |
+| `idle`    | Nothing runs and nothing says why: a queued card, a card with its mate, an idle worker, a worker that repeats a job.                | `movedAt`                  |
 
 The captain's later is his own choice and his own date, so it is never parked and never an idle park. A hold that says `said` (or a board "later") is `waiting` until its date, however old the hold is, and even on a card of his own. Nobody is asked to act on it: main and the mate see it only in the information list of dated waits, and it stays off Needs you. When its date passes the hold is a decision again, shown on the board.
 

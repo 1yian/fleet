@@ -34,6 +34,7 @@ import {
   writeMergeQuestion,
 } from "./holds.ts";
 import { loadPlan } from "./plans.ts";
+import { requireReviewDecision } from "./reviews.ts";
 import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
@@ -261,6 +262,7 @@ const HANDLERS: Record<OpName, Handler> = {
   },
   "job.start": (db, session, raw, timing) => {
     const args = check(OPS["job.start"].args, raw);
+    requireReviewDecision(db, session, args.command);
     const job = startJob(db, session.id, args);
     return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
   },

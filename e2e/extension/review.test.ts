@@ -10,6 +10,7 @@ import { gate, Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 import { Lavish } from "../support/lavish.ts";
+import { until } from "../support/live-fleet.ts";
 import { Scratch } from "../support/scratch.ts";
 
 let fleet: Fleet;
@@ -118,4 +119,68 @@ test("readiness reaches the mate before polling and captain feedback submitted b
     check(OPS.card.result, await fleet.main.call("card", { card: 1 })).card.status,
     "with-mate",
   );
+});
+
+test("a worker that polls a Lavish page before reporting a decision is refused, and its re-armed poll then waits on a decision its mate can see", async () => {
+  const page = join(h.dir, "approval.html");
+  writeFileSync(page, "<html><body><h1>Approve the vision</h1></body></html>");
+  const opened = execFileSync("lavish-axi", [page, "--no-open"], {
+    env: { ...process.env, ...lavish.env },
+    encoding: "utf8",
+  });
+  const url = /(https?:\/\/\S+\/session\/\w+)/.exec(opened)?.[1] ?? "";
+  const command = `set -o pipefail; lavish-axi poll '${page}' --owner fleet-c-1 2>&1 | tee '${join(h.dir, "poll.txt")}'`;
+  const lastOf = (role: string, turns: readonly { role: string; text: string }[]): string =>
+    turns.findLast((turn) => turn.role === role)?.text ?? "";
+  const board = async () => {
+    const found = check(OPS.board.result, await fleet.main.call("board", {})).find(
+      (each) => each.id === 1,
+    );
+    if (found === undefined) throw new Error("c-1 is not on the board");
+    return found;
+  };
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "approval-poll", command, timeout_minutes: 0.05 },
+  }));
+  h.onModel(async (turns) => {
+    assert.match(
+      lastOf("toolResult", turns),
+      /report needs-decision with a new review key and the page link/,
+    );
+    const card = await board();
+    assert.equal(card.status, "working", "a refused poll holds nothing");
+    assert.notEqual(card.pulse?.running?.by, "job", "a refused poll starts no job");
+    return {
+      tool: "report",
+      args: { status: "needs-decision", key: "approval", text: `Approval needed: ${url}` },
+    };
+  });
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "approval-poll", command, timeout_minutes: 0.05 },
+  }));
+  h.onModel(() => ({ text: "Waiting for the approval." }));
+  h.onModel((turns) => {
+    assert.match(lastOf("user", turns), /exited 124/);
+    return {
+      tool: "run_long",
+      args: { label: "approval-poll", command, timeout_minutes: 2 },
+    };
+  });
+  h.onModel(() => ({ text: "Polling again." }));
+  h.startPi("c-1-a1", env, [join(scratch.root, "packages/extension/src/index.ts")]);
+
+  const asked = await fleet.main.waitForEntry(
+    (entry) => entry.fields["key"] === "approval",
+    "the approval decision",
+  );
+  assert.equal(asked.body, `Approval needed: ${url}`);
+  await h.waitForCall(5, "default", 60_000);
+  const waiting = await until(async () => {
+    const card = await board();
+    return card.pulse?.running?.by === "job" ? card : undefined;
+  }, "the re-armed poll to run");
+  assert.equal(waiting.status, "with-mate");
+  assert.match(waiting.pulse?.running?.what ?? "", /^job 2 \(approval-poll\)/);
 });
