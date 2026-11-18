@@ -1,22 +1,7 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { Socket } from "node:net";
-import { fileURLToPath } from "node:url";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import "./hermetic-env.ts";
-import { registerGroup } from "./marked.ts";
-
-const REAPER = fileURLToPath(new URL("./reaper.ts", import.meta.url));
-let reaper: ChildProcess | undefined;
-
-function tell(message: string): void {
-  if (reaper === undefined) {
-    reaper = spawn("node", [REAPER], { detached: true, stdio: ["pipe", "ignore", "inherit"] });
-    registerGroup(reaper.pid);
-    reaper.unref();
-    reaper.stdin?.on("error", () => undefined);
-    if (reaper.stdin instanceof Socket) reaper.stdin.unref();
-  }
-  reaper.stdin?.write(`${message}\n`);
-}
+import { groupIdentity, spawnOwned } from "./marked.ts";
+import { tell } from "./reaper-client.ts";
 
 export function guardCleanup(name: string, argv: readonly string[]): () => void {
   tell(`hook ${name} ${JSON.stringify(argv)}`);
@@ -30,10 +15,10 @@ export function spawnGuarded(
   args: readonly string[],
   options: SpawnOptions,
 ): ChildProcess {
-  const child = spawn(command, args, { ...options, detached: true });
+  const child = spawnOwned(command, args, options);
   const pid = child.pid;
   if (pid !== undefined) {
-    const identity = registerGroup(pid, options.env ?? process.env);
+    const identity = groupIdentity(pid);
     if (identity !== undefined) tell(`watch ${String(pid)} ${identity}`);
     child.once("exit", () => {
       tell(`release ${String(pid)}`);

@@ -75,31 +75,36 @@ async function runUntilWaiting(signal: NodeJS.Signals, target: "runner" | "test"
 
 const leftovers = (): string[] => readdirSync(outer);
 
+async function untilEmpty(): Promise<void> {
+  for (const deadline = Date.now() + 30_000; leftovers().length > 0; ) {
+    assert.ok(Date.now() < deadline, `the run folder still holds ${leftovers().join(", ")}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 test("a passing run leaves nothing in its run folder", async () => {
   assert.equal(await runToEnd("pass"), 0);
-  assert.deepEqual(leftovers(), []);
+  await untilEmpty();
 });
 
 test("a failing run leaves nothing in its run folder", async () => {
   assert.notEqual(await runToEnd("fail"), 0);
-  assert.deepEqual(leftovers(), []);
+  await untilEmpty();
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   test(`a run cancelled with ${signal} leaves nothing in its run folder`, async () => {
     await runUntilWaiting(signal, "test");
-    assert.deepEqual(leftovers(), []);
+    await untilEmpty();
   });
 }
 
 test("a run whose runner is interrupted leaves nothing in its run folder", async () => {
   await runUntilWaiting("SIGINT", "runner");
-  assert.deepEqual(leftovers(), []);
+  await untilEmpty();
 });
 
-test("a killed run is swept by the next run", async () => {
+test("a killed run is cleaned up by its reaper", async () => {
   await runUntilWaiting("SIGKILL", "test");
-  assert.notDeepEqual(leftovers(), []);
-  assert.equal(await runToEnd("pass"), 0);
-  assert.deepEqual(leftovers(), []);
+  await untilEmpty();
 });

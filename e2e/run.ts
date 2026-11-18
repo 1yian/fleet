@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -18,8 +18,8 @@ import {
   groupIdentity,
   groupScopes,
   openGroupScope,
-  registerGroup,
   signalOwnedGroup,
+  spawnOwned,
   sweepGroups,
   type Swept,
 } from "./support/marked.ts";
@@ -201,27 +201,19 @@ class Suite {
     const logPath = `${root}.log`;
     const fd = openSync(logPath, "wx", 0o600);
     const began = Date.now();
-    const { code, signal, timedOut, abandoned } = await (async () => {
+    const { code, signal, timedOut, abandoned, identity } = await (async () => {
       try {
-        const child = spawn(
+        const child = spawnOwned(
           process.execPath,
           ["--test", `--test-timeout=${String(TEST_TIMEOUT_MS)}`, "--test-reporter=spec", file],
-          { cwd: ROOT, env, detached: true, stdio: ["ignore", fd, fd] },
+          { cwd: ROOT, env, stdio: ["ignore", fd, fd] },
         );
         if (child.pid !== undefined) this.launched++;
         const identity = child.pid === undefined ? undefined : groupIdentity(child.pid);
         const watched = watchChild(child, identity);
         this.running.add(watched);
         try {
-          try {
-            registerGroup(child.pid, env, identity);
-          } catch (error) {
-            this.stop("SIGKILL");
-            const result = await watched.exited;
-            if (result.abandoned || identity === undefined) this.retain(root);
-            throw error;
-          }
-          return await watched.exited;
+          return { ...(await watched.exited), identity };
         } finally {
           this.running.delete(watched);
         }
@@ -229,7 +221,7 @@ class Suite {
         closeSync(fd);
       }
     })();
-    if (abandoned) this.retain(root);
+    if (abandoned || identity === undefined) this.retain(root);
     const { named, unresolved } = await sweepGroups(scope, LEFTOVER_GRACE_MS);
     const retained = existsSync(join(root, "unresolved-groups"));
     const log = readFileSync(logPath, "utf8");

@@ -1,12 +1,14 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { verifyPrivateDirectory } from "./run-folders.ts";
 
 export const GROUPS_ENV = "FLEET_E2E_GROUPS";
 export const LAB_GROUPS_ENV = "FLEET_E2E_LAB_GROUPS";
+const OWNED_LAUNCH = fileURLToPath(new URL("./owned-launch.ts", import.meta.url));
 
 export interface Swept {
   readonly named: readonly string[];
@@ -16,13 +18,21 @@ export interface Swept {
 const validPid = (pid: number): boolean =>
   Number.isSafeInteger(pid) && pid > 1 && pid <= 2_147_483_647;
 
-function killGroup(pid: number, signal: NodeJS.Signals): void {
-  if (!validPid(pid)) return;
+function killGroup(pid: number, signal: NodeJS.Signals): boolean {
+  if (!validPid(pid)) return false;
   try {
-    process.kill(-pid, signal);
+    return process.kill(-pid, signal);
   } catch {
-    return;
+    return false;
   }
+}
+
+export function spawnOwned(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+): ChildProcess {
+  return spawn(process.execPath, [OWNED_LAUNCH, command, ...args], { ...options, detached: true });
 }
 
 export function groupIdentity(pid: number): string | undefined {
@@ -84,9 +94,18 @@ export function registerGroup(
   return started;
 }
 
-export function signalOwnedGroup(pid: number | undefined, started: string | undefined, signal: NodeJS.Signals): void {
-  if (pid !== undefined && started !== undefined && groupIdentity(pid) === started)
-    killGroup(pid, signal);
+export function signalOwnedGroup(
+  pid: number | undefined,
+  started: string | undefined,
+  signal: NodeJS.Signals,
+): boolean {
+  return (
+    pid !== undefined &&
+    started !== undefined &&
+    started !== "" &&
+    groupIdentity(pid) === started &&
+    killGroup(pid, signal)
+  );
 }
 
 function liveGroups(): Set<number> {
@@ -112,14 +131,21 @@ function outstanding(scope: string): { pid: number; started: string }[] {
   const live = liveGroups();
   return entries.flatMap((entry) => {
     const pid = Number(entry.name);
-    if (!validPid(pid) || !live.has(pid)) return [];
+    if (!validPid(pid) || pid === process.pid || !live.has(pid)) return [];
     return [{ pid, started: entry.isFile() ? readFileSync(join(scope, entry.name), "utf8") : "" }];
   });
 }
 
 export async function sweepGroups(scope: string, graceMs: number): Promise<Swept> {
   const closed = join(scope, "closed");
-  if (!existsSync(closed)) renameSync(registry(scope, "open"), closed);
+  if (!existsSync(closed)) {
+    registry(scope, "open");
+    try {
+      renameSync(join(scope, "open"), closed);
+    } catch (error) {
+      if (!existsSync(closed)) throw error;
+    }
+  }
   const dir = registry(scope, "closed");
   const deadline = Date.now() + graceMs;
   let left = outstanding(dir);
@@ -127,17 +153,20 @@ export async function sweepGroups(scope: string, graceMs: number): Promise<Swept
     await delay(100);
     left = outstanding(dir);
   }
-  const candidates = left;
+  const removed = new Set<number>();
   if (left.length > 0) {
-    for (const { pid, started } of left) signalOwnedGroup(pid, started, "SIGKILL");
-    const deadline = Date.now() + 1_000;
+    for (const { pid, started } of left) {
+      if (signalOwnedGroup(pid, started, "SIGKILL")) removed.add(pid);
+    }
+    const settle = Date.now() + 1_000;
     do {
       await delay(50);
       left = outstanding(dir);
-    } while (left.length > 0 && Date.now() < deadline);
+    } while (left.length > 0 && Date.now() < settle);
   }
   const unresolved = left.map(({ pid }) => pid);
-  const named = candidates.filter(({ pid }) => !unresolved.includes(pid))
-    .map(({ pid }) => `${String(pid)} process group`);
+  const named = [...removed]
+    .filter((pid) => !unresolved.includes(pid))
+    .map((pid) => `${String(pid)} process group`);
   return { named, unresolved };
 }

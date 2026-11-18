@@ -42,11 +42,8 @@ const alive = (pid: number): boolean => {
 
 const LAUNCHER = `
 const { spawn } = require("node:child_process");
-const { registerGroup } = require(${JSON.stringify(fileURLToPath(new URL("../support/marked.ts", import.meta.url)))});
 const [cwd, script, ...rest] = process.argv.slice(2);
-const child = spawn("sh", ["-c", script, "sh", ...rest], { cwd, detached: true, stdio: "ignore" });
-registerGroup(child.pid);
-child.unref();
+spawn(process.execPath, [${JSON.stringify(fileURLToPath(new URL("../support/owned-launch.ts", import.meta.url)))}, "sh", "-c", script, "sh", ...rest], { cwd, detached: true, stdio: "ignore" }).unref();
 `;
 
 async function closeWithLeftover(

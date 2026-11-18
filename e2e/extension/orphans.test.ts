@@ -38,17 +38,6 @@ function descendantsOf(root: number): number[] {
   return found;
 }
 
-function pgrep(pattern: string): number[] {
-  try {
-    return execFileSync("pgrep", ["-f", pattern], { encoding: "utf8" })
-      .split("\n")
-      .filter((line) => line !== "")
-      .map(Number);
-  } catch {
-    return [];
-  }
-}
-
 const alive = ({ pid, command }: Running): boolean => commandOf(pid) === command;
 
 const labEnv = (xdg: string): NodeJS.ProcessEnv => ({ ...process.env, XDG_CONFIG_HOME: xdg });
@@ -107,13 +96,9 @@ test("SIGKILL of a test runner removes its cardd, direct Pi, shell-owned Pi, pan
   });
   const runnerPid = Number(runner.pid);
   const sleeper = String(ready["sleeper"]);
-  for (const deadline = Date.now() + WAIT_MS; pgrep(sleeper).length === 0;) {
-    assert.ok(Date.now() < deadline, `the pane never ran ${sleeper}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
   const known = [
     ...descendantsOf(runnerPid).filter((pid) => !commandOf(pid).includes("reaper.ts")),
-    ...pgrep(sleeper),
+    Number(ready["sleeperPid"]),
   ];
   const running: Running[] = [...new Set(known)]
     .map((pid) => ({ pid, command: commandOf(pid) }))

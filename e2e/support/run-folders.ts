@@ -1,19 +1,15 @@
 import {
   accessSync,
   constants,
-  existsSync,
   lstatSync,
   mkdirSync,
-  readdirSync,
   realpathSync,
-  rmSync,
   type Stats,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 const CANDIDATES = ["/var/tmp", tmpdir()];
-const FILE_DIR = /^fr-([1-9]\d*)-[a-zA-Z0-9]{6}$/;
 
 function diskBase(): string {
   for (const dir of CANDIDATES) {
@@ -82,25 +78,4 @@ export function verifyPrivateDirectory(path: string): void {
 export function cacheDirectory(base: string): string {
   verifyPrivateDirectory(base);
   return privateDirectory(join(base, "fleet-e2e-cache"));
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
-  }
-}
-
-export function sweepStaleFileFolders(base: string): void {
-  for (const entry of readdirSync(base, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const pid = Number(FILE_DIR.exec(entry.name)?.[1]);
-    if (!Number.isSafeInteger(pid) || pid > 2_147_483_647 || processAlive(pid)) continue;
-    const path = join(base, entry.name);
-    if (existsSync(join(path, "unresolved-groups"))) continue;
-    const stat = lstatSync(path, { throwIfNoEntry: false });
-    if (stat !== undefined && isPrivateDirectory(stat)) rmSync(path, { recursive: true, force: true });
-  }
 }

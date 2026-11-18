@@ -1,9 +1,11 @@
 import { execFile, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardCleanup, spawnGuarded } from "./guarded.ts";
+import { guardScope } from "./reaper-client.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
 import { LAB_GROUPS_ENV, groupIdentity, openGroupScope, signalOwnedGroup, sweepGroups } from "./marked.ts";
 import { retainRunRoot, tempDir } from "./run-root.ts";
@@ -30,6 +32,7 @@ export class HerdrLab {
       FLEET_E2E_DETACH: OWNED_LAUNCH,
       HERDR_CONFIG_PATH: lab.config,
     };
+    guardScope(lab.groups);
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawnGuarded(
       env["FLEET_E2E_HERDR_SERVER"] ?? "herdr",
@@ -132,13 +135,14 @@ export class HerdrLab {
     if (server === undefined || server.exitCode !== null || server.signalCode !== null) return;
     const pid = server.pid;
     if (pid === undefined) return;
+    const exited = new Promise<void>((resolve) => server.once("exit", () => resolve()));
     const identity = readFileSync(join(this.groups, "open", String(pid)), "utf8");
-    if (identity === "" || groupIdentity(pid) !== identity) {
+    const signaled = signalOwnedGroup(pid, identity, "SIGKILL");
+    const stopped = signaled && (await Promise.race([exited.then(() => true), delay(5_000, false)]));
+    if (!stopped && server.exitCode === null && server.signalCode === null) {
       retainRunRoot();
       throw new Error(`could not stop owned Herdr server ${String(pid)}`);
     }
-    signalOwnedGroup(pid, identity, "SIGKILL");
-    await new Promise<void>((resolve) => { server.once("exit", () => resolve()); });
   }
 
   async stop(): Promise<void> {

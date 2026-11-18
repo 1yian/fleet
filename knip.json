@@ -20,6 +20,7 @@
         "support/orphan-runner.ts",
         "support/leak-fixture.ts",
         "support/suite-fixture.ts",
+        "support/direct-fixture.ts",
         "support/owned-launch.ts",
         "support/reaper.ts",
         "support/roomy-disk.ts",

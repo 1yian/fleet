@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +12,7 @@ import { tempDir } from "../support/run-root.ts";
 
 const RUNNER = fileURLToPath(new URL("../run.ts", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("../support/suite-fixture.ts", import.meta.url));
+const DIRECT_FIXTURE = fileURLToPath(new URL("../support/direct-fixture.ts", import.meta.url));
 
 function running(pid: number): boolean {
   try {
@@ -33,9 +34,10 @@ interface Ready {
 async function launch(
   t: TestContext,
   base: string,
-  mode: "normal" | "detached" | "nested" | "cancelled" | "job",
+  mode: "normal" | "detached" | "nested" | "cancelled" | "job" | "late",
   width = 1,
   fileCount = 1,
+  extraEnv: Record<string, string> = {},
 ) {
   const server = createServer();
   const sockets: Socket[] = [];
@@ -65,6 +67,7 @@ async function launch(
     FLEET_E2E_CONCURRENCY: String(width),
     SUITE_FIXTURE_PORT: String(address.port),
     SUITE_FIXTURE_MODE: mode,
+    ...extraEnv,
   };
   Reflect.deleteProperty(env, "NODE_TEST_CONTEXT");
   const files = Array.from({ length: fileCount }, () => FIXTURE);
@@ -205,4 +208,63 @@ test("the suite counts tests cancelled by Node", { timeout: 30_000 }, async (t) 
   const runner = await launch(t, tempDir("suite-"), "cancelled");
   assert.equal(await runner.result, 1, runner.output());
   assert.match(runner.output(), /1 files, 1 tests, 0 passed, 0 failed, 1 cancelled, 0 skipped/);
+});
+
+test("a launcher that starts after cleanup closed the registry never runs its command", { timeout: 30_000 }, async (t) => {
+  const mark = join(tempDir("late-"), "started");
+  const runner = await launch(t, tempDir("suite-"), "late", 1, 1, { SUITE_FIXTURE_MARK: mark });
+  assert.equal(await runner.result, 0, runner.output());
+  assert.equal(existsSync(mark), false, "the late command ran outside any registry");
+});
+
+test("a killed direct run's reaper finishes owned teardown before its root is removed", { timeout: 40_000 }, async (t) => {
+  const base = tempDir("direct-");
+  const alive = join(base, "hook-saw-root");
+  const server = createServer();
+  const lines: string[] = [];
+  const announced = Promise.withResolvers<{ pid: number; root: string }>();
+  server.on("connection", (connection: Socket) => {
+    createInterface({ input: connection }).on("line", (line) => {
+      lines.push(line);
+      const [pid, root] = lines;
+      if (pid !== undefined && root !== undefined) {
+        announced.resolve({ pid: Number(pid), root: String(JSON.parse(root)) });
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address !== null && typeof address !== "string");
+  const env = {
+    ...process.env,
+    FLEET_E2E_TMPDIR: base,
+    DIRECT_FIXTURE_PORT: String(address.port),
+    DIRECT_FIXTURE_MARK: alive,
+  };
+  for (const name of ["FLEET_E2E_ROOT", "FLEET_E2E_GROUPS", "FLEET_E2E_LAB_GROUPS", "NODE_TEST_CONTEXT"])
+    Reflect.deleteProperty(env, name);
+  const fixture = spawn(process.execPath, [DIRECT_FIXTURE], { env, stdio: "ignore" });
+  const exited = once(fixture, "exit");
+  t.after(async () => {
+    fixture.kill("SIGKILL");
+    await exited;
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+  const { pid, root } = await Promise.race([
+    announced.promise,
+    exited.then(() => {
+      throw new Error("the direct fixture exited before it announced");
+    }),
+  ]);
+  assert.ok(running(pid) && existsSync(root));
+  fixture.kill("SIGTERM");
+  await exited;
+  for (const deadline = Date.now() + 30_000; running(pid) || existsSync(root); ) {
+    assert.ok(Date.now() < deadline, `the registered process or ${root} outlived teardown`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(readFileSync(alive, "utf8").trim(), "alive");
 });
