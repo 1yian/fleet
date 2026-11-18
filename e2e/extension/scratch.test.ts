@@ -55,9 +55,9 @@ afterEach(async () => {
 });
 
 const closedOf = (): string => {
-  const [only, ...more] = closedFoldersOf(hostDir, 1);
-  assert.ok(only !== undefined && more.length === 0, "exactly one closed folder");
-  return join(scratchOf(hostDir), only);
+  assert.deepEqual(closedFoldersOf(hostDir, 1), [], "close never renames the evidence folder");
+  assert.ok(existsSync(card));
+  return card;
 };
 
 function dispatchAndWait(): void {
@@ -67,7 +67,7 @@ function dispatchAndWait(): void {
   h.onModel(() => ({ text: "dispatched" }), "mate");
 }
 
-test("a worker starts with its scratch, temp, and compile cache on disk under the host's fleet folder, and close removes its temp folder at once and keeps its evidence in a closed folder", async () => {
+test("a worker starts with scratch, temp, and compile cache on disk, and close keeps temp content at its exact original path", async () => {
   const { h, mate } = parts;
   let whileOpen: string[] = [];
   dispatchAndWait();
@@ -82,10 +82,14 @@ test("a worker starts with its scratch, temp, and compile cache on disk under th
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
 
   assert.deepEqual(whileOpen, [...EVIDENCE, "tmp/", "tmp/clone.txt"].sort());
-  assert.equal(results.at(-1), "c-1 is done.");
-  assert.equal(existsSync(card), false);
+  assert.match(results.at(-1) ?? "", /^c-1 is done\./);
+  assert.equal(existsSync(card), true);
   const closed = closedOf();
-  assert.deepEqual(listing(closed), EVIDENCE);
+  assert.deepEqual(withoutJiti(listing(closed)), whileOpen);
+  assert.equal(
+    readFileSync(join(closed, "tmp/clone.txt"), "utf8"),
+    "a clone that the worker made\n",
+  );
   const env = readFileSync(join(closed, "env.txt"), "utf8").trim().split("\n");
   assert.deepEqual(env, [card, join(card, "tmp"), join(hostDir, "node-compile-cache")]);
   assert.notEqual(env[1], process.env["TMPDIR"]);
@@ -102,10 +106,10 @@ test("a worker starts with its scratch, temp, and compile cache on disk under th
     `the worker's node processes wrote compile cache entries under the host folder: ${cached.join(", ")}`,
   );
   assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: [] });
-  assert.deepEqual(listing(closed), EVIDENCE);
+  assert.deepEqual(withoutJiti(listing(closed)), whileOpen);
 });
 
-test("a card that wrote nothing but temp files leaves no folder at all after close", async () => {
+test("a card that wrote nothing but temp files keeps its original tmp folder after close", async () => {
   const { h, mate } = parts;
   dispatchAndWait();
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "ran them" } }), "worker");
@@ -115,13 +119,10 @@ test("a card that wrote nothing but temp files leaves no folder at all after clo
   const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
 
   assert.equal(results.at(-1), "c-1 is done.");
-  assert.deepEqual(
-    readdirSync(scratchOf(hostDir)).filter((name) => name.startsWith("c-1")),
-    [],
-  );
+  assert.deepEqual(readdirSync(card).sort(), ["tmp"]);
 });
 
-test("dispatching a card again brings its closed folder back as the card's folder with its evidence, and a tidy afterwards removes none of it", async () => {
+test("dispatch leaves a pre-upgrade closed path untouched and opens a fresh original path", async () => {
   const { h, mate } = parts;
   const closed = seedClosed(hostDir, 1, 30, "earlier evidence");
   dispatchAndWait();
@@ -130,18 +131,18 @@ test("dispatching a card again brings its closed folder back as the card's folde
   mate.prompt("run the tests");
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
 
-  assert.equal(existsSync(closed), false);
-  assert.deepEqual(closedFoldersOf(hostDir, 1), []);
-  assert.deepEqual(withoutJiti(listing(card)), ["report.md", "tmp/"]);
+  assert.equal(existsSync(closed), true);
+  assert.deepEqual(closedFoldersOf(hostDir, 1), [nameOf(closed)]);
+  assert.deepEqual(withoutJiti(listing(card)), ["tmp/"]);
   assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: [] });
-  assert.deepEqual(withoutJiti(listing(card)), ["report.md", "tmp/"]);
-  assert.equal(readFileSync(join(card, "report.md"), "utf8"), "earlier evidence");
+  assert.deepEqual(withoutJiti(listing(card)), ["tmp/"]);
+  assert.equal(readFileSync(join(closed, "report.md"), "utf8"), "earlier evidence");
 });
 
-test("with several closed folders of one card, a dispatch brings back the latest, and the tidy then removes only the ones that are a week old", async () => {
+test("a dispatch and tidy leave every pre-upgrade closed folder in its original place", async () => {
   const { h, mate } = parts;
   seedClosed(hostDir, 1, 9, "oldest");
-  const middle = seedClosed(hostDir, 1, 5, "middle");
+  seedClosed(hostDir, 1, 5, "middle");
   seedClosed(hostDir, 1, 3, "newest");
   dispatchAndWait();
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "ran them" } }), "worker");
@@ -149,21 +150,19 @@ test("with several closed folders of one card, a dispatch brings back the latest
   mate.prompt("run the tests");
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
 
-  assert.equal(readFileSync(join(card, "report.md"), "utf8"), "newest");
-  assert.equal(existsSync(join(card, "tmp")), true);
-  assert.equal(closedFoldersOf(hostDir, 1).length, 2);
-  assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: ["c-1"] });
-  assert.deepEqual(closedFoldersOf(hostDir, 1), [nameOf(middle)]);
+  const before = closedFoldersOf(hostDir, 1);
+  assert.equal(before.length, 3);
+  assert.deepEqual(withoutJiti(listing(card)), ["tmp/"]);
   assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: [] });
-  assert.equal(readFileSync(join(card, "report.md"), "utf8"), "newest");
+  assert.deepEqual(closedFoldersOf(hostDir, 1), before);
   assert.equal(existsSync(join(card, "tmp")), true);
 });
 
-test("a dispatch after the tidy has taken the card's only closed folder starts a fresh folder with a temp folder and no evidence", async () => {
+test("tidy does not delete old paths that have not been explicitly migrated", async () => {
   const { h, mate } = parts;
   const closed = seedClosed(hostDir, 1, 8, "gone with the tidy");
-  assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: ["c-1"] });
-  assert.equal(existsSync(closed), false);
+  assert.deepEqual(tidyByHand(hostDir)["tidied"], { cacheFiles: 0, cards: [] });
+  assert.equal(existsSync(closed), true);
   dispatchAndWait();
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "ran them" } }), "worker");
   await connected(h);
@@ -171,7 +170,7 @@ test("a dispatch after the tidy has taken the card's only closed folder starts a
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
 
   assert.deepEqual(withoutJiti(listing(card)), ["tmp/"]);
-  assert.deepEqual(closedFoldersOf(hostDir, 1), []);
+  assert.deepEqual(closedFoldersOf(hostDir, 1), [nameOf(closed)]);
 });
 
 test("a close that cannot finish leaves the card's folder as it was, with no closed folder, and a tidy by hand removes nothing from it", async () => {
@@ -207,7 +206,7 @@ test("a close that cannot finish leaves the card's folder as it was, with no clo
   assert.deepEqual(closedFoldersOf(hostDir, 1), []);
 });
 
-test("a card whose newest attempt cannot be retired keeps its folder as it was, and the close that finishes it renames the folder once", async () => {
+test("an unretirable attempt keeps its folder, and a successful close preserves that original evidence path", async () => {
   const { h, mate, cardd, mainToken } = parts;
   const down = join(h.dir, "far-down");
   let whileOpen: string[] = [];
@@ -243,12 +242,12 @@ test("a card whose newest attempt cannot be retired keeps its folder as it was, 
   assert.doesNotMatch(results.at(-2) ?? "", /is dropped/);
   assert.ok(whileOpen.includes("tmp/clone.txt") && whileOpen.includes("report.md"));
   assert.deepEqual(afterFailure, whileOpen);
-  assert.equal(results.at(-1), "c-1 is dropped.");
-  assert.equal(existsSync(card), false);
-  assert.deepEqual(listing(closedOf()), EVIDENCE);
+  assert.match(results.at(-1) ?? "", /^c-1 is dropped\./);
+  assert.equal(existsSync(card), true);
+  assert.deepEqual(withoutJiti(listing(closedOf())), whileOpen);
 });
 
-test("a card with two attempts on one host keeps its folder while the newest worker still runs in it, and close renames it only after both are stopped", async () => {
+test("two attempts share their original evidence path until both workers are stopped, and close preserves that path", async () => {
   const { h, mate, cardd, lab } = parts;
   const dropIt = { tool: "close", args: { card: 1, summary: "Dropped.", landed: false } };
   const watching = join(card, "watch.log");
@@ -290,11 +289,11 @@ test("a card with two attempts on one host keeps its folder while the newest wor
   mate.prompt("run the tests");
   const results = toolResults(await h.waitForCall(6, "mate", WORKER_WAIT_MS));
 
-  assert.equal(results.at(-1), "c-1 is dropped.");
+  assert.match(results.at(-1) ?? "", /^c-1 is dropped\./);
   assert.ok(beforeClose.includes("tmp/") && beforeClose.includes("watch.log"));
   assert.deepEqual(closedBefore, [], "nothing was renamed while the newest worker ran");
   assert.ok(afterClose !== undefined);
-  assert.deepEqual(afterClose.folder, [...EVIDENCE, "watch.log", "watcher.pid"].sort());
+  assert.deepEqual(withoutJiti(afterClose.folder), beforeClose);
   assert.deepEqual(
     new Set(afterClose.log.trim().split("\n")),
     new Set(["up"]),
@@ -302,7 +301,7 @@ test("a card with two attempts on one host keeps its folder while the newest wor
   );
   assert.equal(afterClose.alive, false, "the newest worker's process was stopped by close");
   assert.deepEqual(await workersOf(lab), []);
-  assert.equal(existsSync(card), false);
+  assert.equal(existsSync(card), true);
 });
 
 function processAlive(pid: number): boolean {

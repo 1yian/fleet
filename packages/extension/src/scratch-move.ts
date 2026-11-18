@@ -6,8 +6,6 @@ export const MOVE_SCRATCH_SCRIPT = readFileSync(
   "utf8",
 );
 
-export const MOVE_TIMEOUT_MS = 30 * 60_000;
-
 export type Move =
   | {
       readonly kind: "moved";

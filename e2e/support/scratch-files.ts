@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -72,16 +72,11 @@ export function setHostSettings(hostDir: string, settings: Record<string, unknow
   return file;
 }
 
-export const clearHostSettings = (hostDir: string): void => {
-  rmSync(join(hostDir, "host.json"), { force: true });
-};
-
 export const nameOf = (path: string): string => path.split("/").at(-1) ?? "";
 
 export const scratchOf = (hostDir: string): string => join(hostDir, "scratch");
 
-export const epochDaysAgo = (days: number): number =>
-  Math.floor((Date.now() - days * DAY_MS) / 1000);
+const epochDaysAgo = (days: number): number => Math.floor((Date.now() - days * DAY_MS) / 1000);
 
 export function closedFoldersOf(hostDir: string, card: number): string[] {
   const prefix = `c-${String(card)}.closed-`;
