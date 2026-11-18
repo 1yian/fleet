@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, statfsSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { isRecord, parseRecord, records } from "../support/json.ts";
+import { ROOMY_DISK } from "../support/roomy-disk.ts";
 import { tempDir } from "../support/run-root.ts";
 import { fleet, fleetResult } from "../support/scratch-files.ts";
 
@@ -136,11 +137,15 @@ test("scratch reports the use of the filesystems it writes to, and names the lar
   const filesystems = records(report["filesystems"]);
   const tmp = filesystems.find((each) => each["path"] === "/tmp");
   assert.ok(tmp !== undefined, "the report names /tmp");
-  const total = Number(tmp["bytesTotal"]);
-  const used = Number(tmp["bytesUsed"]);
-  const seen = statfsSync("/tmp");
-  const expected = (seen.blocks - seen.bfree) * seen.bsize;
-  assert.ok(total > 0 && Math.abs(used - expected) < total * 0.05, "bytes used match statfs");
+  const usedBlocks = ROOMY_DISK.blocks - ROOMY_DISK.bfree;
+  assert.equal(tmp["bytesUsed"], usedBlocks * ROOMY_DISK.bsize, "bytes used match statfs");
+  assert.equal(
+    tmp["bytesTotal"],
+    (usedBlocks + ROOMY_DISK.bavail) * ROOMY_DISK.bsize,
+    "bytes total are what is used plus what a user can still write",
+  );
+  assert.equal(tmp["inodesUsed"], ROOMY_DISK.files - ROOMY_DISK.ffree, "inodes used match statfs");
+  assert.equal(tmp["inodesTotal"], ROOMY_DISK.files, "inodes total match statfs");
   assert.ok(isRecord(report) && typeof report["host"] === "string");
 
   const byInodes = parseRecord(

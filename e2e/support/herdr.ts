@@ -1,16 +1,17 @@
-import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { execFile, type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { guardCleanup } from "./guarded.ts";
+import { guardCleanup, killGroup, spawnGuarded } from "./guarded.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
+import { envMarker, sweepMarked } from "./marked.ts";
 import { tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
+let labCount = 0;
 
 export class HerdrLab {
-  readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
+  readonly name = `fleet-lab-${String(process.pid)}-${String(++labCount)}`;
   readonly config = join(tempDir("herdr-config-"), "config.toml");
   private server: ChildProcess | undefined;
   env: Record<string, string> = {};
@@ -22,7 +23,7 @@ export class HerdrLab {
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
     lab.env = { ...env };
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
-    lab.server = spawn(
+    lab.server = spawnGuarded(
       env["FLEET_E2E_HERDR_SERVER"] ?? "herdr",
       ["server", "--session", lab.name],
       {
@@ -33,7 +34,7 @@ export class HerdrLab {
     const deadline = Date.now() + WAIT_MS;
     while (!(await lab.running())) {
       if (Date.now() > deadline) throw new Error(`herdr lab ${lab.name} did not start`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     return lab;
   }
@@ -118,7 +119,7 @@ export class HerdrLab {
     const server = this.server;
     if (server?.exitCode !== null || server.signalCode !== null) return;
     const exited = new Promise((resolve) => server.once("exit", resolve));
-    server.kill("SIGKILL");
+    killGroup(server.pid ?? 0);
     await exited;
   }
 
@@ -127,9 +128,10 @@ export class HerdrLab {
     const server = this.server;
     if (server?.exitCode === null && server.signalCode === null) {
       const exited = new Promise((resolve) => server.once("exit", resolve));
-      server.kill("SIGKILL");
+      killGroup(server.pid ?? 0);
       await exited;
     }
+    await sweepMarked(envMarker("HERDR_SESSION", this.name), 0);
     await this.text(["session", "delete", this.name]);
     this.disarm();
   }

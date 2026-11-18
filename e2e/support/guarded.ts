@@ -23,7 +23,8 @@ export function guardCleanup(name: string, argv: readonly string[]): () => void 
   };
 }
 
-function killGroup(pid: number): void {
+export function killGroup(pid: number): void {
+  if (pid <= 0) return;
   try {
     process.kill(-pid, "SIGKILL");
   } catch {

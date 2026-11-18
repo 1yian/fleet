@@ -10,7 +10,7 @@ import { toolResults } from "../support/dispatch-lab.ts";
 import { isRecord, records, type JsonRecord } from "../support/json.ts";
 import { OPS_TURNS, QUIET_TURNS, writeLedger } from "../support/ledger.ts";
 import { cloneWithRemote, landOnRemote, tip } from "../support/remote.ts";
-import { configureMain, mateArgs, roomyDiskEnv, Scratch, startMain } from "../support/scratch.ts";
+import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -46,7 +46,6 @@ beforeEach(async () => {
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "1000",
-    ...roomyDiskEnv(),
   });
 });
 afterEach(async (t) => {

@@ -1,35 +1,28 @@
-import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { diskBase, staleFolders } from "./run-folders.ts";
 
 const PREFIX = "fr-";
+const ROOMY_DISK = new URL("./roomy-disk.ts", import.meta.url).href;
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-const outerTmpdir = realpathSync(process.env["FLEET_E2E_TMPDIR"] ?? "/tmp");
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
-  }
-}
+const outerTmpdir = realpathSync(process.env["FLEET_E2E_TMPDIR"] ?? diskBase());
 
 function sweepStaleRoots(): void {
-  for (const name of readdirSync(outerTmpdir)) {
-    if (!name.startsWith(PREFIX)) continue;
-    const owner = Number(name.slice(PREFIX.length).split("-")[0]);
-    if (Number.isInteger(owner) && owner > 0 && !alive(owner)) {
-      try {
-        rmSync(join(outerTmpdir, name), { recursive: true, force: true });
-      } catch {
-        continue;
-      }
+  for (const name of staleFolders(outerTmpdir, PREFIX)) {
+    try {
+      rmSync(join(outerTmpdir, name), { recursive: true, force: true });
+    } catch {
+      continue;
     }
   }
 }
 
+const assigned = process.env["FLEET_E2E_ROOT"];
+Reflect.deleteProperty(process.env, "FLEET_E2E_ROOT");
+
 function claimRoot(): string {
+  if (assigned !== undefined && assigned !== "") return assigned;
   sweepStaleRoots();
   const root = mkdtempSync(join(outerTmpdir, `${PREFIX}${String(process.pid)}-`));
   const remove = (): void => {
@@ -49,6 +42,16 @@ const runRoot = claimRoot();
 process.env["TMPDIR"] = runRoot;
 process.env["FLEET_HOST_DIR"] = join(runRoot, "host");
 process.env["FLEET_TMP_SOURCE_DIR"] = join(runRoot, "old-tmp");
+const inheritedXdg = process.env["FLEET_E2E_XDG"];
+if (inheritedXdg === undefined || process.env["XDG_CONFIG_HOME"] !== inheritedXdg) {
+  const xdg = join(runRoot, "xdg");
+  process.env["XDG_CONFIG_HOME"] = xdg;
+  process.env["FLEET_E2E_XDG"] = xdg;
+}
+if (!(process.env["NODE_OPTIONS"] ?? "").includes(ROOMY_DISK)) {
+  process.env["NODE_OPTIONS"] =
+    `${process.env["NODE_OPTIONS"] ?? ""} --import=${ROOMY_DISK}`.trim();
+}
 if (process.env["NODE_COMPILE_CACHE"] !== undefined) {
   process.env["NODE_COMPILE_CACHE"] = join(runRoot, "node-compile-cache");
 }
@@ -57,4 +60,5 @@ export function tempDir(prefix: string): string {
   return mkdtempSync(join(runRoot, prefix));
 }
 
-export const sharedCacheDir = join(outerTmpdir, "fleet-e2e-cache");
+export const sharedCacheDir =
+  process.env["FLEET_E2E_CACHE"] ?? join(outerTmpdir, "fleet-e2e-cache");

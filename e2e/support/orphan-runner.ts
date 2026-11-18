@@ -44,6 +44,7 @@ console.log(
     sleeper,
     panePi,
     lab: lab.name,
+    xdg: process.env["XDG_CONFIG_HOME"],
     dirs: [scratch.parent, h.dir, fleet.cardd.db],
   }),
 );
