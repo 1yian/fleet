@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
@@ -147,17 +147,25 @@ function charter(): string {
 
 const mateContract = (): string => charter() + standingRules(HOME());
 
+function gitIdentity(cwd: string, args: readonly string[]): string | undefined {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", timeout: 2_000 });
+  return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+function isFleetCheckout(root: string): boolean {
+  const commonDir = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+  const common = gitIdentity(root, commonDir);
+  if (!common) return false;
+  if (common === gitIdentity(dirname(EXTENSION), commonDir)) return true;
+  const origin = gitIdentity(root, ["config", "--local", "--get", "remote.origin.url"]);
+  return /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)1yian\/fleet(?:\.git)?\/?$/.test(
+    origin ?? "",
+  );
+}
+
 function contributorGuideForWorkers(pi: ExtensionAPI): void {
   const root = HOME();
-  const marker = spawnSync(
-    "git",
-    ["ls-files", "--error-unmatch", "--", ".pi/extensions/fleet.ts"],
-    {
-      cwd: root,
-      stdio: "ignore",
-    },
-  );
-  if (marker.status !== 0) return;
+  if (!isFleetCheckout(root)) return;
   const agents = join(root, "AGENTS.md");
   const guide = join(root, "CONTRIBUTING.md");
   pi.on("before_agent_start", (event) => {

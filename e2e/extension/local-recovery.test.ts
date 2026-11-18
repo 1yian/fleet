@@ -55,25 +55,13 @@ test("the emitted worker contract distinguishes local recovery from unchanged an
     .filter((turn) => turn.role === "system")
     .map((turn) => turn.text)
     .join("\n");
-  assert.match(contract, /Count no-progress attempts, not tool errors\./);
+  assert.match(contract, /Fix errors confined to your copy/);
+  assert.match(contract, /retry only with new evidence or a concrete correction/);
+  assert.match(contract, /After two attempts with no progress, report `blocked`/);
   assert.match(
     contract,
-    /read the current file after an exact-text edit miss and correct the match/,
+    /Credentials, outside permissions or quota, destructive changes, and shared infrastructure are never local fixes/,
   );
-  assert.match(contract, /follow the project's documented setup for a missing local dependency/);
-  assert.match(
-    contract,
-    /If the same failure repeats without either, or two corrected attempts make no progress/,
-  );
-  assert.match(
-    contract,
-    /Credentials, external permissions or quota, destructive changes, and cross-boundary or shared infrastructure are not local recovery/,
-  );
-  assert.match(
-    contract,
-    /does not authorize arbitrary network installs or shared daemon maintenance/,
-  );
-  assert.match(contract, /never overrides a failed validation gate or the delivery rules below/);
   assert.deepEqual(reports(), [["blocked", "Contract received"]]);
 });
 

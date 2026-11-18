@@ -19,10 +19,15 @@ function evidence(name: string, turns: readonly Turn[]): void {
   writeFileSync(join(dir, `${name}.json`), JSON.stringify(turns, null, 2));
 }
 
-async function workerCall(h: Harness): Promise<Turn[]> {
+async function workerCall(h: Harness, message?: string): Promise<Turn[]> {
   for (let call = 0; ; call += 1) {
     const turns = await h.waitForCall(call, "mate", 90_000);
-    if (systemOf(turns).includes("# Worker role contract")) return turns;
+    if (
+      systemOf(turns).includes("# Worker role contract") &&
+      (message === undefined ||
+        turns.some((turn) => turn.role === "user" && turn.text.includes(message)))
+    )
+      return turns;
   }
 }
 
@@ -36,6 +41,7 @@ interface Variant {
   readonly noContextFiles?: boolean;
   readonly ancestor?: boolean;
   readonly mateNoContextFiles?: boolean;
+  readonly restartAfterRename?: boolean;
 }
 
 function commitFixture(repo: Scratch): void {
@@ -84,7 +90,15 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   if (variant.ancestor === true) writeFileSync(join(repo.parent, "AGENTS.md"), ANCESTOR_NOTES);
   const token = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, token, { workerArgs });
-  cardd.addProject("fleet", { local: repo.root }, undefined, "no-mistakes");
+  execFileSync("git", [
+    "-C",
+    repo.root,
+    "remote",
+    "add",
+    "origin",
+    "https://github.com/1yian/fleet",
+  ]);
+  cardd.addProject("fleet", { local: repo.root }, undefined, "local-only");
   mkdirSync(join(scratch.root, "data"), { recursive: true });
   for (const [file, text] of Object.entries({
     "charter.md": "## Lab charter\n\nKeep the fixture fleet running.\n",
@@ -99,18 +113,21 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     args: {
       title: "Contributor prompt reaches the worker",
       name: "contributor-prompt",
-      kind: "scout",
+      kind: "ship",
       project: "fleet",
       intent: "Inspect contributor instructions",
       task: "Inspect your repository instructions without changing files.",
       host: "local",
     },
   } as const;
+  const restartRequest = "Restart the worker in its existing worktree.";
   let dispatched = false;
-  for (let call = 0; call < 12; call += 1)
+  for (let call = 0; call < 20; call += 1)
     h.onModel((turns) => {
       if (!systemOf(turns).includes("# Worker role contract")) {
         evidence(`${name}-mate`, turns);
+        if (turns.at(-1)?.role === "user" && turns.at(-1)?.text === restartRequest)
+          return { tool: "restart_card", args: { card: 1, mode: "replace" } };
         if (dispatched) return { text: "dispatched" };
         dispatched = true;
         return dispatch;
@@ -123,7 +140,13 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   await lab.submit(pane, "Inspect contributor prompt routing.");
   const mate = await h.waitForCall(0, "mate", 90_000);
-  const worker = await workerCall(h);
+  let worker = await workerCall(h);
+  const tree = realpathSync(`${repo.root}.worktrees/c-1-a1`);
+  if (variant.restartAfterRename === true) {
+    execFileSync("git", ["-C", tree, "mv", ".pi/extensions/fleet.ts", "fleet-renamed.ts"]);
+    await lab.submit(pane, restartRequest);
+    worker = await workerCall(h, "Your session was restarted on the same card and conversation.");
+  }
   const mateSystem = systemOf(mate);
   const projectContext =
     /<project_context>([\s\S]*?)<\/project_context>/.exec(mateSystem)?.[1] ?? "";
@@ -149,7 +172,6 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   assert.doesNotMatch(workerSystem, /Stale overview of the fleet repository/);
   const workerContext =
     /<project_context>([\s\S]*?)<\/project_context>/.exec(workerSystem)?.[1] ?? "";
-  const tree = realpathSync(`${repo.root}.worktrees/c-1-a1`);
   const guideOpen = `<project_instructions path="${join(tree, "CONTRIBUTING.md")}">`;
   const guideBlocks = workerContext.split(guideOpen);
   const expectedGuides = variant.missingGuide === true ? 0 : 1;
@@ -192,6 +214,10 @@ test("a fleet worker keeps an unrelated ancestor Firstmate file while getting CO
 
 test("a fleet worker without a contributor guide keeps unrelated context but not the mate contract", async (t) => {
   await run(t, "missing-guide", { missingGuide: true, ancestor: true });
+});
+
+test("a restarted fleet worker keeps its own guide after a staged extension rename", async (t) => {
+  await run(t, "restart-after-rename", { restartAfterRename: true });
 });
 
 test("a mate started without context files still gets the Firstmate contract", async (t) => {
