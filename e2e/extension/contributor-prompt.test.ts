@@ -44,11 +44,11 @@ interface Variant {
   readonly restartAfterRename?: boolean;
 }
 
-function commitFixture(repo: Scratch): void {
-  execFileSync("git", ["-C", repo.root, "add", "-A"]);
+function commitFixture(root: string): void {
+  execFileSync("git", ["-C", root, "add", "-A"]);
   execFileSync("git", [
     "-C",
-    repo.root,
+    root,
     "-c",
     "user.name=scratch",
     "-c",
@@ -81,24 +81,30 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     repo.dispose();
     scratch.dispose();
   });
-  if (variant.stale === true) writeFileSync(join(repo.root, "AGENTS.md"), STALE_OVERVIEW);
-  const guide = join(repo.root, "CONTRIBUTING.md");
+  const projectRoot =
+    variant.restartAfterRename === true ? join(repo.parent, "local-clone") : repo.root;
+  if (variant.restartAfterRename === true) {
+    execFileSync("git", ["clone", "--quiet", "--", scratch.root, projectRoot]);
+  } else {
+    execFileSync("git", [
+      "-C",
+      projectRoot,
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/1yian/fleet",
+    ]);
+  }
+  if (variant.stale === true) writeFileSync(join(projectRoot, "AGENTS.md"), STALE_OVERVIEW);
+  const guide = join(projectRoot, "CONTRIBUTING.md");
   if (variant.missingGuide === true) rmSync(guide);
   else appendFileSync(guide, `\n${WORKER_GUIDE_MARKER}\n`);
-  commitFixture(repo);
+  commitFixture(projectRoot);
   writeFileSync(join(scratch.parent, "AGENTS.md"), ANCESTOR_NOTES);
   if (variant.ancestor === true) writeFileSync(join(repo.parent, "AGENTS.md"), ANCESTOR_NOTES);
   const token = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, token, { workerArgs });
-  execFileSync("git", [
-    "-C",
-    repo.root,
-    "remote",
-    "add",
-    "origin",
-    "https://github.com/1yian/fleet",
-  ]);
-  cardd.addProject("fleet", { local: repo.root }, undefined, "local-only");
+  cardd.addProject("fleet", { local: projectRoot }, undefined, "local-only");
   mkdirSync(join(scratch.root, "data"), { recursive: true });
   for (const [file, text] of Object.entries({
     "charter.md": "## Lab charter\n\nKeep the fixture fleet running.\n",
@@ -141,7 +147,7 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   await lab.submit(pane, "Inspect contributor prompt routing.");
   const mate = await h.waitForCall(0, "mate", 90_000);
   let worker = await workerCall(h);
-  const tree = realpathSync(`${repo.root}.worktrees/c-1-a1`);
+  const tree = realpathSync(`${projectRoot}.worktrees/c-1-a1`);
   if (variant.restartAfterRename === true) {
     execFileSync("git", ["-C", tree, "mv", ".pi/extensions/fleet.ts", "fleet-renamed.ts"]);
     await lab.submit(pane, restartRequest);
@@ -216,7 +222,7 @@ test("a fleet worker without a contributor guide keeps unrelated context but not
   await run(t, "missing-guide", { missingGuide: true, ancestor: true });
 });
 
-test("a restarted fleet worker keeps its own guide after a staged extension rename", async (t) => {
+test("a restarted fleet worker in a local clone keeps its own guide after a staged extension rename", async (t) => {
   await run(t, "restart-after-rename", { restartAfterRename: true });
 });
 

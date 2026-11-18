@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -149,18 +149,60 @@ const mateContract = (): string => charter() + standingRules(HOME());
 
 function gitIdentity(cwd: string, args: readonly string[]): string | undefined {
   const result = spawnSync("git", args, { cwd, encoding: "utf8", timeout: 2_000 });
-  return result.status === 0 ? result.stdout.trim() : undefined;
+  return result.status === 0 ? result.stdout.replace(/\n$/, "") : undefined;
+}
+
+function gitCommonDir(cwd: string, gitDir?: string): string | undefined {
+  const args = gitDir === undefined ? [] : [`--git-dir=${gitDir}`];
+  const common = gitIdentity(cwd, [
+    ...args,
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  if (!common) return undefined;
+  try {
+    return realpathSync(common);
+  } catch {
+    return undefined;
+  }
+}
+
+function localGitDir(root: string, origin: string): string | undefined {
+  let path = origin;
+  if (origin.startsWith("file://")) {
+    try {
+      path = fileURLToPath(origin);
+    } catch {
+      return undefined;
+    }
+  } else if (/^[^/]*:/.test(origin)) {
+    return undefined;
+  }
+  if (!path) return undefined;
+  if (path.startsWith("-")) path = `./${path}`;
+  return (
+    gitIdentity(root, ["rev-parse", "--resolve-git-dir", `${path}/.git`]) ??
+    gitIdentity(root, ["rev-parse", "--resolve-git-dir", path])
+  );
 }
 
 function isFleetCheckout(root: string): boolean {
-  const commonDir = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
-  const common = gitIdentity(root, commonDir);
-  if (!common) return false;
-  if (common === gitIdentity(dirname(EXTENSION), commonDir)) return true;
+  const common = gitCommonDir(root);
+  if (common === undefined) return false;
+  const fleet = gitCommonDir(dirname(EXTENSION));
+  if (common === fleet) return true;
   const origin = gitIdentity(root, ["config", "--local", "--get", "remote.origin.url"]);
-  return /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)1yian\/fleet(?:\.git)?\/?$/.test(
-    origin ?? "",
-  );
+  if (origin === undefined) return false;
+  if (
+    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)1yian\/fleet(?:\.git)?\/?$/.test(
+      origin,
+    )
+  )
+    return true;
+  if (fleet === undefined) return false;
+  const source = localGitDir(root, origin);
+  return source !== undefined && gitCommonDir(root, source) === fleet;
 }
 
 function contributorGuideForWorkers(pi: ExtensionAPI): void {
