@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import console from "node:console";
-import { readFileSync, realpathSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { basename, extname, matchesGlob, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { parseSync } from "oxc-parser";
@@ -15,7 +15,9 @@ const compiler = fileURLToPath(import.meta.resolve("tsrs/package.json")).replace
   /package.json$/,
   "bin/tsrs",
 );
-const arguments_ = ["--disable-nested-config", "--max-warnings", "0", "."];
+const arguments_ = ["--disable-nested-config", "--no-ignore", "--max-warnings", "0"];
+const sourceExtensions = [".js", ".cjs", ".mjs", ".ts", ".tsx", ".mts", ".cts"];
+const suppressionBaseline = "oxlint-suppressions.json";
 
 function runNode(script, args, stdio) {
   const result = spawnSync(process.execPath, [script, ...args], {
@@ -28,8 +30,8 @@ function runNode(script, args, stdio) {
   return result;
 }
 
-function runOxlint(extra, stdio) {
-  return runNode(executable, [...arguments_, ...extra], stdio);
+function runOxlint(extra, paths, stdio) {
+  return runNode(executable, [...arguments_, ...extra, ...paths], stdio);
 }
 
 function policyList(name) {
@@ -89,21 +91,60 @@ function forbiddenDirectivePattern() {
   return new RegExp(policy);
 }
 
+function trackedPaths() {
+  const result = spawnSync("git", ["ls-files", "-z"], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`git ls-files failed: ${result.stderr}`);
+  return result.stdout.split("\0").filter(Boolean);
+}
+
+function ignoredByConfig(path) {
+  return config.ignorePatterns.some((pattern) =>
+    matchesGlob(path, pattern.endsWith("/") ? `${pattern}**` : pattern),
+  );
+}
+
+function selectedPaths(tracked) {
+  const paths = tracked
+    .filter((path) => sourceExtensions.includes(extname(path)))
+    .filter((path) => !ignoredByConfig(path));
+  if (!paths.length) throw new Error("No tracked source files selected.");
+  const skipped = paths.filter((path) => /[._-]min\./.test(basename(path)));
+  if (skipped.length)
+    throw new Error(`Oxlint cannot lint minified filenames: ${skipped.join(", ")}`);
+  return paths;
+}
+
+function baselineFailures(tracked) {
+  const found = tracked.filter((path) => basename(path) === suppressionBaseline);
+  if (existsSync(suppressionBaseline) && !found.includes(suppressionBaseline))
+    found.push(suppressionBaseline);
+  return found.map(
+    (path) =>
+      `${path}: error fleet/no-suppression-baseline: Bulk suppression baselines are not allowed.`,
+  );
+}
+
 function lint() {
   if (process.argv.length !== 2)
     throw new Error("npm run lint always checks the complete project.");
-  const selection = runOxlint(["--debug", "files"], "pipe");
-  if (selection.status !== 0 || selection.stderr)
-    throw new Error(`Oxlint selection failed: ${selection.stderr || selection.stdout}`);
-  const paths = selection.stdout.trim().split("\n");
-  if (!paths[0]) throw new Error("Oxlint selected no files.");
+  const tracked = trackedPaths();
+  const paths = selectedPaths(tracked);
+  const baselines = baselineFailures(tracked);
+  if (baselines.length) {
+    for (const failure of baselines) console.error(failure);
+    return 1;
+  }
   const forbiddenDirectives = forbiddenDirectivePattern();
   const failures = [
     ...membershipFailures(paths),
     ...paths.flatMap((path) => preflightFile(path, forbiddenDirectives)),
   ];
   for (const failure of failures) console.error(failure);
-  const result = runOxlint(["--type-aware"], "inherit");
+  const result = runOxlint(["--type-aware"], paths, "inherit");
   return failures.length ? 1 : result.status;
 }
 
