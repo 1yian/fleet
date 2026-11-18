@@ -43,7 +43,7 @@ jobs:
               - "tsconfig.json"
               - ".oxlintrc.json"
               - "**/oxlint-suppressions.json"
-              - ".pi/**"
+              - ".pi/extensions/**"
               - "lint.js"
               - "lint-plugin.js"
               - "knip.json"
