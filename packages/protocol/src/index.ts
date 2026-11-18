@@ -303,7 +303,7 @@ export const OPS = {
     result: Type.Object({
       mode: Type.Enum(["done", "dropped"]),
       verify: Type.Boolean(),
-      operation: Type.Optional(Type.Literal(true)),
+      operation: Type.Optional(Type.Object({ session: Type.String(), evidence: Type.String() })),
       land: Type.Boolean(),
       attempts: Type.Array(
         Type.Object({

@@ -19,7 +19,7 @@ The project's `AGENTS.md` and `CONTRIBUTING.md`, as applicable, govern the work 
 ## Rules
 
 1. **Merging.** Never push to the default branch or merge on your own. Merge only when your mate's comment says so and the required checks are green: `gh pr merge <url> --squash`, then report `merged` with `pr=<url>`. Red or pending checks, or a failed merge: report `blocked` with the reason. A merge conflict: resolve it as rule 9 says and report `done` again.
-2. **One PR per card.** Open it from your task branch and pass `pr=<full https URL>` on `done` and `merged`. If the work needs a second PR, tell your mate before opening it, never report a second URL on this card, and, if your worktree already holds changes meant for the second PR, do not merge until your mate says they are safe on their own card.
+2. **One PR per card.** In a PR delivery mode (never ops or report), open it from your task branch and pass `pr=<full https URL>` on `done` and `merged`. If the work needs a second PR, tell your mate before opening it, never report a second URL on this card, and, if your worktree already holds changes meant for the second PR, do not merge until your mate says they are safe on their own card.
 3. **Files.** Edit only your copy, and leave it clean before `done`. Scratch output (builds, clones, temp files) goes in `$TMPDIR`. Evidence for your mate or the captain goes in `$FLEET_SCRATCH`, left in place at its original path when the card closes. Never put large folders in `/tmp`. Updated mates and host tools never move or remove scratch, but unreloaded mates and old host tools still can during a rolling update, and a current checkout does not prove a mate reloaded.
 4. **Reports.** One short line each, sparingly. Anything longer goes in a file in `$FLEET_SCRATCH`, and the report names its absolute path without restating it. Statuses:
    - `working`: a phase change your mate would act on. It never ends your turn.
@@ -76,9 +76,9 @@ Never push or open a PR. Your mate lands your branch on the clone's local base b
 You perform an approved operation, not a product change. No PR, commit, push, or merge is expected, and this mode grants no new authority.
 
 1. Perform the operation on the authorized targets only, and verify the resulting state. Change no project files. If product changes are needed, report `blocked` with the evidence.
-2. Write a report to `$FLEET_SCRATCH`: what you did, the targets, before and after state, and remaining work. No secrets.
+2. Write a report directly in `$FLEET_SCRATCH`, such as `$FLEET_SCRATCH/operation.md`, not in its `tmp` folder or `/tmp`: close reads it only from this folder. If `$FLEET_SCRATCH` is empty, report `blocked`. Record what you did, the targets, before and after state, and remaining work. No secrets.
 3. If `git status --short` or commits off the base show changes, report `blocked` with the paths. Never commit, discard, or push them.
-4. Report `done` with text "operation complete: <absolute report path>" and `evidence=<absolute report path>`, with no `pr`. Stop. Your mate reads it and closes the card.
+4. Report `done` with text "operation complete: <absolute report path>" and `evidence=<absolute report path>`, with no `pr`. `evidence` goes only on this done report. Stop. Your mate reads it and closes the card. Close refuses unexpected commits or files and an unreadable report.
 
 ## Delivery: report
 

@@ -4,7 +4,6 @@ import { endLiveAttempts } from "./attempts.ts";
 import { settleClosedCard } from "./maintenance.ts";
 import { requireOrdinary } from "./change.ts";
 import { closeCardIncidents } from "./incident-lifecycle.ts";
-import { latestOperationReport } from "./merged-report.ts";
 import { factsFrom, finishFrom } from "./status.ts";
 import { withEcho } from "./echo.ts";
 import { nextLine, requireNext, type NextStep } from "./next-step.ts";
@@ -22,7 +21,6 @@ import {
 export interface CloseCheck {
   readonly merged: boolean;
   readonly unknown?: string;
-  readonly checkedEvidence?: number;
 }
 
 interface Done {
@@ -85,6 +83,7 @@ function closable(
   mode: "done" | "dropped";
   verify: boolean;
   land: boolean;
+  operation?: { session: string; evidence: string };
   next: NextStep | undefined;
 } {
   const { card } = reachable(db, session, args.card);
@@ -98,14 +97,32 @@ function closable(
     );
   }
   const closing = outcome(db, card, args.landed, closeCheck);
-  if (card.delivery === "ops" && closing.mode === "done") {
-    const report = latestOperationReport(cardEntries(db, card.id));
-    if (report === undefined || report.id !== closeCheck?.checkedEvidence)
-      throw new Error(
-        `${name} cannot close Done: its ops completion evidence is not readable outside the worker's worktree`,
-      );
-  }
-  return { card, ...closing, next: requireNext(db, session, card, closing.mode, args.next) };
+  const operation = closing.mode === "done" ? operationHandoff(db, card) : undefined;
+  return {
+    card,
+    ...closing,
+    ...(operation === undefined ? {} : { operation }),
+    next: requireNext(db, session, card, closing.mode, args.next),
+  };
+}
+
+function operationHandoff(
+  db: DatabaseSync,
+  card: Card,
+): { session: string; evidence: string } | undefined {
+  if (card.delivery !== "ops") return undefined;
+  const report = cardEntries(db, card.id).findLast(
+    (entry) =>
+      entry.kind === "report" &&
+      entry.author.startsWith("worker:") &&
+      entry.fields["status"] === "done",
+  );
+  const evidence = report?.fields["evidence"];
+  if (report === undefined || typeof evidence !== "string")
+    throw new Error(
+      `c-${String(card.id)} cannot close Done: its worker has not handed back ops completion evidence`,
+    );
+  return { session: report.author.slice("worker:".length), evidence };
 }
 
 export function closeBegin(
@@ -115,7 +132,7 @@ export function closeBegin(
   closeCheck?: CloseCheck,
 ): Done {
   const args = check(OPS["close.begin"].args, raw);
-  const { card, mode, verify, land } = closable(db, session, args, closeCheck);
+  const { card, mode, verify, land, operation } = closable(db, session, args, closeCheck);
   const rows = db
     .prepare(
       `SELECT s.id AS session, a.host AS host, a.branch AS branch, coalesce(c.base_branch, p.default_base) AS base,
@@ -139,7 +156,7 @@ export function closeBegin(
     value: {
       mode,
       verify,
-      ...(card.delivery === "ops" ? { operation: true } : {}),
+      ...(operation === undefined ? {} : { operation }),
       land,
       attempts,
       refresh: shipCardClonesToRefresh(db, card),
@@ -152,7 +169,7 @@ function shipCardClonesToRefresh(
   db: DatabaseSync,
   card: Card,
 ): { project: string; host: string; path: string; base: string }[] {
-  if (card.kind !== "ship" || card.delivery === "local-only") return [];
+  if (card.kind !== "ship" || card.delivery === "local-only" || card.delivery === "ops") return [];
   const project = listProjects(db).find((each) => each.name === card.project);
   if (project === undefined) return [];
   return project.clones.map(({ host, path }) => ({
@@ -170,12 +187,16 @@ export function closeFinish(
   closeCheck?: CloseCheck,
 ): Done {
   const args = check(OPS["close.finish"].args, raw);
-  const { card, next } = closable(
+  const { card, next, operation } = closable(
     db,
     session,
     { card: args.card, landed: args.mode === "done", next: args.next },
     closeCheck,
   );
+  if (operation !== undefined && (args.archives.length > 0 || args.left.length > 0))
+    throw new Error(
+      `c-${String(card.id)} cannot close Done: its attempts were archived or left unverified, so the operation did not finish cleanly. Close it with landed=false`,
+    );
   const now = Date.now();
   closeCardIncidents(db, card.id, now);
   endLiveAttempts(db, card.id, now);

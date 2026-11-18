@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
-import { check, OPS, type Card, type Entry, type OpArgs } from "@fleet/protocol";
+import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import type { Hosts } from "./pulls.ts";
-import { cardEntries, getCard, listProjects, reachable, type Session } from "./store.ts";
+import { getCard, listProjects } from "./store.ts";
+import { cardEntries } from "./store.ts";
 import { finishFrom } from "./status.ts";
 
 export function routeFor(hosts: Hosts, host: string): readonly string[] {
@@ -104,10 +105,9 @@ export async function normalizeReport(
   hosts: Hosts,
   card: number,
   raw: unknown,
-  session: string,
 ): Promise<{ args: OpArgs<"report">; note?: string }> {
   const args = check(OPS.report.args, raw);
-  await requireOperationReport(db, hosts, getCard(db, card), args, session);
+  requireOperationEvidence(getCard(db, card), args);
   if (args.status !== "merged") return { args };
   const { merged, note } = await verify(db, hosts, card, args.pr);
   return {
@@ -116,102 +116,23 @@ export async function normalizeReport(
   };
 }
 
-async function requireOperationReport(
-  db: DatabaseSync,
-  hosts: Hosts,
-  card: Card,
-  args: OpArgs<"report">,
-  session: string,
-): Promise<void> {
-  if (card.delivery !== "ops") return;
+function requireOperationEvidence(card: Card, args: OpArgs<"report">): void {
+  if (card.delivery !== "ops") {
+    if (args.evidence !== undefined)
+      throw new Error("evidence is only for the done report of an ops card");
+    return;
+  }
   if (args.status === "merged" || args.merged === true || args.pr !== undefined)
     throw new Error("ops work does not report a PR or merge; dispatch product changes separately");
-  if (args.status !== "done") return;
+  if (args.status !== "done") {
+    if (args.evidence !== undefined)
+      throw new Error("evidence is only for the done report of an ops card");
+    return;
+  }
   if (args.evidence === undefined)
     throw new Error(
-      "ops completion requires evidence: an absolute report path outside the worktree",
+      "ops completion requires evidence: an absolute path to a report in $FLEET_SCRATCH",
     );
-  if (!(await readableEvidence(db, hosts, card, session, args.evidence)))
-    throw new Error(
-      "ops completion evidence must be a readable report outside the worker's worktree",
-    );
-}
-
-const CHECK_EVIDENCE = `
-const { accessSync, constants, existsSync, realpathSync, statSync } = require('node:fs');
-const { isAbsolute, resolve, sep } = require('node:path');
-const [report, tree] = process.argv.slice(1);
-const inside = (path, root) => path === root || path.startsWith(root + sep);
-if (!isAbsolute(report) || inside(resolve(report), resolve(tree))) process.exit(1);
-const file = realpathSync(report);
-if (existsSync(tree) && inside(file, realpathSync(tree))) process.exit(1);
-if (!statSync(file).isFile()) process.exit(1);
-accessSync(file, constants.R_OK);
-`;
-
-async function readableEvidence(
-  db: DatabaseSync,
-  hosts: Hosts,
-  card: Card,
-  session: string,
-  path: string,
-): Promise<boolean> {
-  const attempt = db
-    .prepare(
-      `SELECT a.host, a.n FROM attempts a JOIN sessions s ON s.attempt = a.id
-              WHERE a.card = ? AND s.id = ?`,
-    )
-    .get(card.id, session);
-  const host = attempt?.["host"];
-  const n = attempt?.["n"];
-  if (typeof host !== "string" || typeof n !== "number") return false;
-  const clone = listProjects(db)
-    .find((project) => project.name === card.project)
-    ?.clones.find((place) => place.host === host);
-  if (clone === undefined) return false;
-  const tree = `${clone.path}.worktrees/c-${String(card.id)}-a${String(n)}`;
-  try {
-    const [file = "node", ...args] = routed(routeFor(hosts, host), [
-      "node",
-      "-e",
-      CHECK_EVIDENCE,
-      "--",
-      path,
-      tree,
-    ]);
-    return await new Promise((resolve) => {
-      runOnTransport(file, args, { timeout: 30_000 }, (error) => {
-        resolve(error === null);
-      });
-    });
-  } catch {
-    return false;
-  }
-}
-
-export function latestOperationReport(entries: readonly Entry[]): Entry | undefined {
-  return entries.findLast((entry) => entry.kind === "report" && entry.fields["status"] === "done");
-}
-
-async function verifyOperationAtClose(
-  db: DatabaseSync,
-  hosts: Hosts,
-  card: Card,
-): Promise<{ merged: false; checkedEvidence?: number }> {
-  const entries = cardEntries(db, card.id);
-  if (!finishFrom(entries).workerDone) return { merged: false };
-  const report = latestOperationReport(entries);
-  const evidence = report?.fields["evidence"];
-  if (report === undefined || !report.author.startsWith("worker:") || typeof evidence !== "string")
-    return { merged: false };
-  const readable = await readableEvidence(
-    db,
-    hosts,
-    card,
-    report.author.slice("worker:".length),
-    evidence,
-  );
-  return readable ? { merged: false, checkedEvidence: report.id } : { merged: false };
 }
 
 function unmergedShipPr(db: DatabaseSync, id: number): { card: Card; pr: string } | undefined {
@@ -226,16 +147,9 @@ export async function reverifyAtClose(
   hosts: Hosts,
   op: "close.begin" | "close.finish",
   raw: unknown,
-  session: Session,
-): Promise<{ merged: boolean; unknown?: string; checkedEvidence?: number }> {
+): Promise<{ merged: boolean; unknown?: string }> {
   const args = check(OPS[op].args, raw);
   if ("mode" in args && args.mode !== "done") return { merged: false };
-  const operation = db.prepare("SELECT 1 FROM cards WHERE id = ? AND delivery = 'ops'");
-  if (operation.get(args.card) !== undefined) {
-    if ("landed" in args && !args.landed) return { merged: false };
-    const { card } = reachable(db, session, args.card);
-    return verifyOperationAtClose(db, hosts, card);
-  }
   const target = unmergedShipPr(db, args.card);
   if (target === undefined) return { merged: false };
   const { merged, unknown } = await checkPr(db, hosts, target.card, target.pr);

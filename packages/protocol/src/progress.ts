@@ -10,7 +10,8 @@ export const ActivityMessage = Type.Object({
 export const CompletionEvidence = Type.Optional(
   Type.String({
     pattern: "^/",
-    description: "Absolute path to completion evidence outside the worktree, required for ops done",
+    description:
+      "Only on the done report of an ops card, and required there: the absolute path of your report in $FLEET_SCRATCH, outside the worktree and its tmp folder",
   }),
 );
 

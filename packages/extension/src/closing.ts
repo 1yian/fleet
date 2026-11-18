@@ -5,6 +5,7 @@ import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
 import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
 import type { Link } from "./link.ts";
+import { requireEvidence } from "./close-evidence.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
   fileURLToPath(new URL("./archive.sh", import.meta.url)),
@@ -126,9 +127,16 @@ interface Unlanded {
 }
 
 async function unlandedCounts(attempt: Attempt): Promise<Unlanded> {
-  const { host, clone, branch, base, session } = attempt;
+  const { host, clone, session } = attempt;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
-  const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
+  return countsAt(
+    attempt,
+    field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`,
+  );
+}
+
+async function countsAt(attempt: Attempt, path: string): Promise<Unlanded> {
+  const { host, clone, branch, base } = attempt;
   const out = await onHelper(host, [
     "sh",
     "-c",
@@ -168,7 +176,7 @@ async function unlandedWarning(
   plan: OpResult<"close.begin">,
   confirmed: boolean,
 ): Promise<string | undefined> {
-  if (!plan.verify || (confirmed && plan.operation !== true)) return undefined;
+  if (!plan.verify || confirmed || plan.operation !== undefined) return undefined;
   const left: string[] = [];
   const detail: string[] = [];
   for (const attempt of plan.attempts) {
@@ -180,8 +188,6 @@ async function unlandedWarning(
     for (const file of found.files) detail.push(`  file ${attempt.session}: ${file}`);
   }
   if (left.length === 0) return undefined;
-  if (plan.operation === true)
-    return `c-${String(card)} was not closed. ${left.join("; ")}:\n${detail.join("\n")}\nops cannot confirm unexpected code changes as landed. Dispatch product changes separately, or close with landed=false and a reason to archive them as Dropped.`;
   return `c-${String(card)} was not closed. ${left.join("; ")}:\n${detail.join("\n")}\nIf this work landed elsewhere (another card's branch or PR), call close again with confirm=true: the card ends Done and this work is archived first. If it did not land and should not end Done, land it, or end it with close(card, summary=<why it is dropped>, landed=false).`;
 }
 
@@ -206,20 +212,49 @@ function processesOf(session: string, out: string): { stopped: string[]; spared:
   return { stopped, spared };
 }
 
-async function retire(attempt: Attempt): Promise<Retired> {
+async function requireNoOperationChanges(
+  card: number,
+  attempt: Attempt,
+  path: string,
+): Promise<void> {
+  const found = await countsAt(attempt, path);
+  const what = describe(found, attempt.base);
+  if (what === "") return;
+  const detail = [
+    ...found.commits.map((commit) => `  commit ${attempt.session}: ${commit}`),
+    ...found.files.map((file) => `  file ${attempt.session}: ${file}`),
+  ];
+  throw new Error(
+    `c-${String(card)} was not closed. ${attempt.session} on ${attempt.host} has ${what}, left in place:\n${detail.join("\n")}\nAn ops card cannot end Done with unexpected code changes, even with confirm=true. Dispatch product changes separately, or close with landed=false and a reason to archive them as Dropped.`,
+  );
+}
+
+type Guard = (attempt: Attempt, path: string) => Promise<void>;
+
+async function stopWriters(
+  attempt: Attempt,
+  tree: Record<string, unknown> | undefined,
+  path: string,
+): Promise<{ stopped: string[]; spared: string[] }> {
+  if (tree === undefined) return { stopped: [], spared: [] };
+  const { host, session } = attempt;
+  const workspace = field(tree, "open_workspace_id");
+  if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
+  const found = await onHelper(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
+  return processesOf(session, found + (await releaseAll(host, path)));
+}
+
+async function retire(attempt: Attempt, guard: Guard | undefined): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const tree = worktreeOf(listed, session);
   const own = field(tree, "branch");
   const drop = own === undefined || own === branch ? [branch] : [branch, own];
-  let processes: { stopped: string[]; spared: string[] } = { stopped: [], spared: [] };
+  const path = field(tree, "path") ?? "";
+  const processes = await stopWriters(attempt, tree, path);
+  await guard?.(attempt, path === "" ? `${clone}.worktrees/${session}` : path);
   if (tree !== undefined) {
-    const workspace = field(tree, "open_workspace_id");
-    if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
-    const path = field(tree, "path") ?? "";
-    const found = await onHelper(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
-    processes = processesOf(session, found + (await releaseAll(host, path)));
     await onHelper(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
     await onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
   }
@@ -323,6 +358,45 @@ async function finishClose(
   return card;
 }
 
+interface Retirement {
+  readonly archives: string[];
+  readonly stopped: string[];
+  readonly spared: string[];
+  readonly left: { session: string; host: string; reason: string }[];
+}
+
+async function retireAll(id: number, plan: OpResult<"close.begin">): Promise<Retirement> {
+  const done: Retirement = {
+    archives: [],
+    stopped: [],
+    spared: [],
+    left: [],
+  };
+  const guard: Guard | undefined =
+    plan.operation === undefined
+      ? undefined
+      : (attempt, path) => requireNoOperationChanges(id, attempt, path);
+  for (const attempt of plan.attempts) {
+    try {
+      const retired = await retire(attempt, guard);
+      if (retired.archive !== null) done.archives.push(`${attempt.host}:${retired.archive}`);
+      done.stopped.push(...retired.stopped);
+      done.spared.push(...retired.spared);
+    } catch (error) {
+      if (attempt.live || guard !== undefined || !(error instanceof HostUnreachable)) throw error;
+      done.left.push({ session: attempt.session, host: attempt.host, reason: error.message });
+    }
+  }
+  return done;
+}
+
+async function unready(id: number, plan: OpResult<"close.begin">, confirmed: boolean) {
+  const warning = await unlandedWarning(id, plan, confirmed);
+  if (warning !== undefined || plan.operation === undefined) return warning;
+  await requireEvidence(id, plan);
+  return undefined;
+}
+
 async function teardown(
   link: Link,
   request: CloseRequest,
@@ -330,23 +404,9 @@ async function teardown(
 ): Promise<string> {
   const { card: id, text, confirm, next } = request;
   const moved = plan.land ? await landLocally(id, plan) : "";
-  const warning = await unlandedWarning(id, plan, confirm === true);
+  const warning = await unready(id, plan, confirm === true);
   if (warning !== undefined) return warning;
-  const archives: string[] = [];
-  const stopped: string[] = [];
-  const spared: string[] = [];
-  const left: { session: string; host: string; reason: string }[] = [];
-  for (const attempt of plan.attempts) {
-    try {
-      const retired = await retire(attempt);
-      if (retired.archive !== null) archives.push(`${attempt.host}:${retired.archive}`);
-      stopped.push(...retired.stopped);
-      spared.push(...retired.spared);
-    } catch (error) {
-      if (attempt.live || !(error instanceof HostUnreachable)) throw error;
-      left.push({ session: attempt.session, host: attempt.host, reason: error.message });
-    }
-  }
+  const { archives, stopped, spared, left } = await retireAll(id, plan);
   const finish = {
     card: id,
     mode: plan.mode,

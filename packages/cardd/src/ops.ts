@@ -446,7 +446,7 @@ async function performStored(
 ): Promise<Done> {
   const report =
     op === "report" && session.card !== null
-      ? await normalizeReport(db, hosts, session.card, args, session.id)
+      ? await normalizeReport(db, hosts, session.card, args)
       : undefined;
   const emptyBranch =
     op === "report" && session.card !== null
@@ -454,7 +454,7 @@ async function performStored(
       : undefined;
   const closeCheck =
     op === "close.begin" || op === "close.finish"
-      ? await reverifyAtClose(db, hosts, op, args, session)
+      ? await reverifyAtClose(db, hosts, op, args)
       : undefined;
   return transaction(db, () => {
     const result = HANDLERS[op](

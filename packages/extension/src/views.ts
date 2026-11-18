@@ -227,11 +227,39 @@ function kindOf(entry: Entry): string {
 function reportPath(entries: readonly Entry[]): string | undefined {
   for (const entry of [...entries].reverse()) {
     if (entry.kind !== "report") continue;
-    if (typeof entry.fields["evidence"] === "string") return entry.fields["evidence"];
     const found = /report written:\s*(\S+?)[.,;:]?(?=\s|$)/i.exec(entry.body);
     if (found?.[1] !== undefined) return found[1];
   }
   return undefined;
+}
+
+function operationEvidence(entries: readonly Entry[]): string | undefined {
+  const handoff = entries.findLast(
+    (entry) => entry.kind === "report" && entry.fields["status"] !== "note",
+  );
+  const evidence = handoff?.fields["evidence"];
+  return handoff?.fields["status"] === "done" && typeof evidence === "string"
+    ? evidence
+    : undefined;
+}
+
+function retainedEvidence(evidence: string, view: CardView): string | undefined {
+  if (view.card.status !== "done" && view.card.status !== "dropped") return undefined;
+  const folder = new RegExp(`^(.*/scratch)/c-${String(view.card.id)}/(.+)$`).exec(evidence);
+  if (folder === null) return undefined;
+  const host = view.attempts.at(-1)?.host ?? "local";
+  return `${host}:${folder[1] ?? ""}/c-${String(view.card.id)}.closed-*/${folder[2] ?? ""}`;
+}
+
+function reportFields(view: CardView): Record<string, string> {
+  if (view.card.delivery !== "ops") {
+    const report = reportPath(view.entries);
+    return report === undefined ? {} : { report };
+  }
+  const report = operationEvidence(view.entries);
+  if (report === undefined) return {};
+  const retained = retainedEvidence(report, view);
+  return retained === undefined ? { report } : { report, retained };
 }
 
 type Cut = (text: string, max: number) => string;
@@ -304,8 +332,7 @@ export function cardText(view: CardView, query: CardQuery): string {
   const { card } = view;
   const record = about(view, clip);
   record["attempts"] = view.attempts.length === 0 ? "0 (never dispatched)" : view.attempts;
-  const report = reportPath(view.entries);
-  if (report !== undefined) record["report"] = report;
+  Object.assign(record, reportFields(view));
   if (card.intent !== "") record["intent"] = clip(card.intent, 300);
   if (card.spec !== "") record["spec"] = clip(card.spec, 300);
   const total = view.entries.length;

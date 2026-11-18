@@ -52,7 +52,7 @@ async function worktreePane(
     return { pane, path, workspace };
   }
   if (tree === undefined) {
-    const from = plan.delivery === "local-only" ? "local" : "origin";
+    const from = plan.delivery === "local-only" || plan.delivery === "ops" ? "local" : "origin";
     const args = [plan.clone, path, plan.branch, plan.base, from];
     await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", ...args]);
   }

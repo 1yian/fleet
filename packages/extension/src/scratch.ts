@@ -81,6 +81,37 @@ cache=$dir/node-compile-cache
 mkdir -p "$root" "$cache" "$scratch/${TMP_FOLDER}"
 printf '%s\\n%s\\n' "$scratch" "$cache"`;
 
+const EVIDENCE_CHECK = `const fs = require("node:fs");
+const path = require("node:path");
+const [report, scratch] = process.argv.slice(1);
+const under = (file, root) => file.startsWith(root + path.sep);
+try {
+  if (!path.isAbsolute(report)) throw new Error("it is not an absolute path");
+  const root = fs.realpathSync(scratch);
+  const file = fs.realpathSync(report);
+  if (!under(file, root)) throw new Error("it is outside the card's scratch folder");
+  if (under(file, path.join(root, "tmp"))) throw new Error("it is in tmp, which close removes");
+  if (!fs.statSync(file).isFile()) throw new Error("it is not a file");
+  fs.accessSync(file, fs.constants.R_OK);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}`;
+
+const CHECK_EVIDENCE_SCRIPT = `set -eu
+${CARD_NUMBER_ONLY}
+exec node -e "$3" "$2" "${SHELL_HOST_DIR}/scratch/c-$1"`;
+
+export const checkEvidenceCommand = (card: number, report: string): string[] => [
+  "sh",
+  "-c",
+  CHECK_EVIDENCE_SCRIPT,
+  "evidence",
+  String(card),
+  report,
+  EVIDENCE_CHECK,
+];
+
 export interface WorkerScratch {
   readonly scratch: string;
   readonly cache: string;
