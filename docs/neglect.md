@@ -6,16 +6,16 @@ A standing card (a lane home or a schedule holder) and a closed card have no pul
 
 ## The pulse
 
-| Field     | Meaning                                                                                           |
-| --------- | ------------------------------------------------------------------------------------------------- |
-| `state`   | One word that sums the card up. See the table below.                                              |
-| `notice`  | Who has to be told: `none`, `main`, `captain`, or `urgent` (red).                                 |
-| `owner`   | The captain, main, a lane's mate, or a worker with its host.                                      |
-| `running` | A turn or a job (named) that runs for the card now, or nothing.                                   |
-| `movedAt` | The latest [real change](#what-counts-as-a-real-change), or card creation if none.               |
-| `since`   | How long the state has held. Each state counts from its own evidence.                             |
-| `waits`   | The captain, main, a mate, a date (see `datedWait`), a pause, or nothing stated.                  |
-| `behind`  | For a held card: how many open steps it names in `remaining`, and how many of them started.       |
+| Field     | Meaning                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------- |
+| `state`   | One word that sums the card up. See the table below.                                        |
+| `notice`  | Who has to be told: `none`, `main`, `captain`, or `urgent` (red).                           |
+| `owner`   | The captain, main, a lane's mate, or a worker with its host.                                |
+| `running` | A turn or a job (named) that runs for the card now, or nothing.                             |
+| `movedAt` | The latest [real change](#what-counts-as-a-real-change), or card creation if none.          |
+| `since`   | How long the state has held. Each state counts from its own evidence.                       |
+| `waits`   | The captain, main, a mate, a date (see `datedWait`), a pause, or nothing stated.            |
+| `behind`  | For a held card: how many open steps it names in `remaining`, and how many of them started. |
 
 A lane's mate reads `behind` with every step in another lane counted as open and not started. The real count would show whether that card is queued, started, or closed, which `remaining` hides on purpose (`elsewhere`). Main and the board see the real count.
 
