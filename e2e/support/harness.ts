@@ -1,5 +1,5 @@
 import { type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -264,6 +264,10 @@ export class Harness {
     const workDir = join(this.dir, "work");
     mkdirSync(agentDir, { recursive: true });
     mkdirSync(workDir, { recursive: true });
+    const contract = join(workDir, "AGENTS.md");
+    if (env["FLEET_ROLE"] === "mate" && !existsSync(contract)) {
+      writeFileSync(contract, "# Firstmate\n\nIsolated mate fixture.\n");
+    }
     const args = [
       ["--mode", "rpc", ...this.piArgs(builtinTools), "-e", join(SUPPORT, "probe.ts")],
       extensions.flatMap((path) => ["-e", path]),

@@ -1,6 +1,7 @@
+import { abortWithoutMateContract } from '../../../src/prompt-file.ts';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
@@ -216,7 +217,6 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
       if (recovered) ctx.ui.notify(`Recovered ${recovered} unanswered inputs into ${name}'s memory. Ask to continue them when ready.`, 'info');
       const children = new Children(memory, ctx.modelRegistry, () => config.subagent, () => `${instructions(dir)}\n\n${IMPORT_GUIDANCE}`,
         deliverReport, text => ctx.ui.notify(text, 'error'), dir, { recoverHistory: capabilities.connectedWindows !== false, parentSession: sessionId, usage, builtins: () => loadedBuiltins(pi), settings: () => config, hold: holdReports,
-          guardedContextPath: capabilities.guardedContextPath,
           summarizeHandoff: createHandoffSummarizer(ctx.modelRegistry, () => config.compactor, message => usage.compression(message, 'compactor', sessionId)) });
       const loggedReports = new Set(memory.root.map(e => e.receipt));
       // Reports a crash held back with their unfinished siblings are delivered now, as they are.
@@ -407,7 +407,10 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     syncSearch(a.config);
     event.systemPromptOptions.customPrompt = allowSearch(`${MASTER}\n\n${modelsHint(a.config.subagent)}\n\n${VIEW_DOC}${a.config.previousExchange ? CONTINUITY : ''}${a.config.memorySearch ? SEARCH_DOC : ''}`, a.config.memorySearch);
     event.systemPromptOptions.sections.instructions = `${instructions(a.dir)}\n\n${IMPORT_GUIDANCE}`;
-    refreshContextFiles(event.systemPromptOptions, capabilities.guardedContextPath);
+    const guarded = capabilities.guardedContextPath;
+    const own = guarded === undefined ? undefined : event.systemPromptOptions.contextFiles.find(file => resolve(file.path) === guarded);
+    refreshContextFiles(event.systemPromptOptions, guarded);
+    if (own !== undefined && guarded !== undefined && !event.systemPromptOptions.contextFiles.some(file => resolve(file.path) === guarded && file.content.trim() !== '')) abortWithoutMateContract(ctx, guarded);
     prompt = event.systemPrompt;
   });
   const DUPLICATE_REPORT = '(duplicate report, already delivered)';

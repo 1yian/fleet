@@ -12,6 +12,7 @@ import { delimiter, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "../support/cardd.ts";
+import { FilesPane } from "../support/files-pane.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
@@ -46,7 +47,8 @@ const LINK_TARGET_MARKER = "Inert text outside the prompt checkout.";
 interface Variant {
   readonly stale?: boolean;
   readonly missingGuide?: boolean;
-  readonly linkedPrompts?: boolean;
+  readonly linkedGuide?: boolean;
+  readonly invalidMateContract?: boolean;
   readonly noContextFiles?: boolean;
   readonly ancestor?: boolean;
   readonly mateNoContextFiles?: boolean;
@@ -108,12 +110,15 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   }
   if (variant.stale === true) writeFileSync(join(projectRoot, "AGENTS.md"), STALE_OVERVIEW);
   const guide = join(projectRoot, "CONTRIBUTING.md");
-  if (variant.linkedPrompts === true) {
-    const target = join(repo.parent, "prompt-fixture.txt");
+  const target = join(repo.parent, "prompt-fixture.txt");
+  if (variant.invalidMateContract === true || variant.linkedGuide === true)
     writeFileSync(target, LINK_TARGET_MARKER);
-    const mateContract = join(scratch.root, "AGENTS.md");
+  const mateContract = join(scratch.root, "AGENTS.md");
+  if (variant.invalidMateContract === true) {
     rmSync(mateContract);
     symlinkSync(target, mateContract);
+  }
+  if (variant.linkedGuide === true) {
     rmSync(guide);
     symlinkSync(target, guide);
   } else if (variant.missingGuide === true) rmSync(guide);
@@ -167,6 +172,14 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   const pane = await startMain(lab, scratch, h, false, mateStart);
   await h.waitFor((event) => event["type"] === "fleet_connected", "the mate to connect");
   await lab.submit(pane, "Inspect contributor prompt routing.");
+  if (variant.invalidMateContract === true) {
+    const result = await h.waitFor((event) => event["type"] === "settled", "mate run to settle");
+    assert.equal(result["aborted"], true);
+    assert.equal(h.callsOf("mate").length, 0);
+    const screen = await FilesPane.attach(lab, pane).sees(/restore a readable regular file at/);
+    assert.ok(screen.replace(/\s+/g, "").includes(join(realpathSync(scratch.root), "AGENTS.md")));
+    return;
+  }
   const mate = await h.waitForCall(0, "mate", 90_000);
   const worker = await workerCall(h);
   const tree = realpathSync(`${projectRoot}.worktrees/c-1-a1`);
@@ -185,18 +198,13 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     /<project_context>([\s\S]*?)<\/project_context>/.exec(mateSystem)?.[1] ?? "";
   const homeOpen = `<project_instructions path="${join(realpathSync(scratch.root), "AGENTS.md")}">`;
   const homeBlocks = projectContext.split(homeOpen);
-  if (variant.linkedPrompts === true) {
-    assert.equal(homeBlocks.length, 1);
-    assert.ok(!mateSystem.includes(LINK_TARGET_MARKER));
-  } else {
-    assert.equal(homeBlocks.length, 2);
-    const homeContract = homeBlocks[1]?.split("</project_instructions>")[0] ?? "";
-    assert.match(homeContract, /^# Firstmate$/m);
-    const jobDescription = /This is the job description of main and every second mate/g;
-    assert.match(homeContract, jobDescription);
-    assert.equal([...mateSystem.matchAll(jobDescription)].length, 1);
-    assert.ok(mateSystem.indexOf(homeOpen) < mateSystem.indexOf("Keep the fixture fleet running"));
-  }
+  assert.equal(homeBlocks.length, 2);
+  const homeContract = homeBlocks[1]?.split("</project_instructions>")[0] ?? "";
+  assert.match(homeContract, /^# Firstmate$/m);
+  const jobDescription = /This is the job description of main and every second mate/g;
+  assert.match(homeContract, jobDescription);
+  assert.equal([...mateSystem.matchAll(jobDescription)].length, 1);
+  assert.ok(mateSystem.indexOf(homeOpen) < mateSystem.indexOf("Keep the fixture fleet running"));
   if (mateNoContext) assert.ok(!mateSystem.includes(ANCESTOR_NOTES.trim()));
   else assert.ok(projectContext.includes(ANCESTOR_NOTES.trim()));
   assert.match(mateSystem, /Prefer plain reports/);
@@ -220,7 +228,7 @@ function assertWorkerGuide(workerSystem: string, tree: string, variant: Variant)
     /<project_context>([\s\S]*?)<\/project_context>/.exec(workerSystem)?.[1] ?? "";
   const guideOpen = `<project_instructions path="${join(tree, "CONTRIBUTING.md")}">`;
   const guideBlocks = workerContext.split(guideOpen);
-  const expectedGuides = variant.missingGuide === true || variant.linkedPrompts === true ? 0 : 1;
+  const expectedGuides = variant.missingGuide === true || variant.linkedGuide === true ? 0 : 1;
   assert.equal(guideBlocks.length - 1, expectedGuides);
   assert.equal(workerSystem.split(WORKER_GUIDE_MARKER).length - 1, expectedGuides);
   assert.ok(!workerSystem.includes(LINK_TARGET_MARKER));
@@ -271,12 +279,16 @@ test("a non-fleet registration retains its project context despite a Fleet displ
   await run(t, "unrelated-registration", { unrelated: true });
 });
 
-test("native mate context and worker guide reject symlinked prompt files", async (t) => {
-  await run(t, "linked-prompts", { linkedPrompts: true });
+test("a fleet worker omits a symlinked contributor guide", async (t) => {
+  await run(t, "linked-guide", { linkedGuide: true });
 });
 
-test("mate fallback rejects a symlinked contract when native discovery is disabled", async (t) => {
-  await run(t, "linked-fallback", { linkedPrompts: true, mateNoContextFiles: true });
+test("native mate context blocks a run with a symlinked contract", async (t) => {
+  await run(t, "linked-native", { invalidMateContract: true });
+});
+
+test("mate fallback blocks a run with a symlinked contract", async (t) => {
+  await run(t, "linked-fallback", { invalidMateContract: true, mateNoContextFiles: true });
 });
 
 test("a mate started without context files still gets the Firstmate contract", async (t) => {

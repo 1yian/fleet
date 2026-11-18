@@ -1,4 +1,4 @@
-import { readPromptFile } from "./prompt-file.ts";
+import { abortWithoutMateContract, readPromptFile } from "./prompt-file.ts";
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -190,13 +190,17 @@ function contributorGuideForWorkers(pi: ExtensionAPI, fleetProject: boolean | un
 }
 
 function contractForMates(pi: ExtensionAPI): void {
-  pi.on("before_agent_start", (event) => {
+  pi.on("before_agent_start", (event, ctx) => {
     const path = join(HOME(), "AGENTS.md");
     const files = event.systemPromptOptions.contextFiles;
     const own = files.findIndex((file) => resolve(file.path) === path);
     if (own !== -1) files.splice(own, 1);
     const content = readPromptFile(path);
-    if (content !== undefined) files.splice(own === -1 ? files.length : own, 0, { path, content });
+    if (content === undefined || content.trim() === "") abortWithoutMateContract(ctx, path);
+    else {
+      files.splice(own === -1 ? files.length : own, 0, { path, content });
+      if (ctx.hasUI) ctx.ui.setWidget("fleet-mate-contract", undefined);
+    }
     return undefined;
   });
 }

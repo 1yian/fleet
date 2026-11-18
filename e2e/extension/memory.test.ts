@@ -115,7 +115,7 @@ async function until<T>(read: () => T | undefined, what: string): Promise<T> {
   }
 }
 
-test("mate memory refresh does not load a symlink substituted for the home contract", async () => {
+test("mate memory refresh blocks the run when the home contract becomes a symlink", async () => {
   installMemory();
   h.onModel(() => ({ text: "First reply" }), "mate");
   h.onModel(() => ({ text: "Second reply" }), "mate");
@@ -134,10 +134,12 @@ test("mate memory refresh does not load a symlink substituted for the home contr
   rmSync(contract);
   symlinkSync(target, contract);
   await lab.submit(pane, "Read the refreshed instructions.");
-  const refreshed = await h.waitForCall(1, "mate");
-  assert.ok(mentions(refreshed, "The first mate's memory."));
-  assert.ok(!isMains(refreshed));
-  assert.ok(!mentions(refreshed, marker));
+  const result = await h.waitForNth((event) => event["type"] === "settled", 2, "refresh to settle");
+  assert.equal(result["aborted"], true);
+  assert.equal(h.callsOf("mate").length, 1);
+  const history = (await lab.history(pane)).replace(/\s+/g, "");
+  assert.ok(history.includes("restoreareadableregularfileat"));
+  assert.ok(history.includes(join(realpathSync(scratch.root), "AGENTS.md")));
 });
 
 test("with memory on, main yields silently and keeps idle and mid-turn fleet messages in conversation memory", async () => {
