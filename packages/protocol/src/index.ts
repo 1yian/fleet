@@ -249,9 +249,9 @@ export const OPS = {
     args: Type.Object({
       card: Type.Integer(),
       review: Type.Optional(
-        Type.String({
+        Type.Union([Type.String(), Type.Literal(false)], {
           description:
-            "The exact Lavish session URL when escalating only this review to the captain",
+            "Exact Lavish URL for review alone, or false for Main to present all current worker requests as a board-only decision",
         }),
       ),
       question: Type.String({

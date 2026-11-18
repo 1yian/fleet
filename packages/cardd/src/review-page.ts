@@ -18,10 +18,41 @@ const Annotations = Type.Array(
   { maxItems: 30 },
 );
 
+function draftFits(annotations: unknown[], max: number): boolean {
+  return (
+    annotations.length <= 30 &&
+    annotations.every((note) => {
+      if (note === null || typeof note !== "object") return false;
+      for (const [key, limit] of Object.entries({
+        prompt: 4000,
+        selector: 2000,
+        tag: 100,
+        uid: 200,
+        text: 1000,
+      })) {
+        const value: unknown = Reflect.get(note, key);
+        if (typeof value !== "string" || value.length > limit) return false;
+      }
+      const target: unknown = Reflect.get(note, "target");
+      return (
+        /\S/.test(String(Reflect.get(note, "prompt"))) &&
+        Reflect.get(note, "tag") !== "layout-warnings" &&
+        (target === undefined ||
+          (target !== null && typeof target === "object" && !Array.isArray(target))) &&
+        JSON.stringify(note).length <= 8000
+      );
+    }) &&
+    new URLSearchParams({ annotations: JSON.stringify(annotations) }).toString().length <= max
+  );
+}
+
+export const REVIEW_BODY_LIMIT = 125000;
+const ANNOTATION_LIMIT = REVIEW_BODY_LIMIT - 25000;
+
 export function reviewFeedback(form: URLSearchParams) {
   const words = form.get("words");
   const annotations = check(Annotations, JSON.parse(form.get("annotations") ?? "[]"));
-  if (words === null || words.length > 2000)
+  if (words === null || words.length > 2000 || !draftFits(annotations, ANNOTATION_LIMIT))
     throw new Error("review feedback is missing or too long");
   return { words, annotations };
 }
@@ -71,7 +102,7 @@ export async function reviewPage(
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       "referrer-policy": "same-origin",
-      "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; frame-src ${origin.origin}; frame-ancestors 'none'; form-action 'self'; style-src 'unsafe-inline'`,
+      "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; frame-src ${origin.origin}; frame-ancestors 'none'; connect-src 'self'; form-action 'none'; style-src 'unsafe-inline'`,
     },
     html: `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fleet review</title>
 <style>body{font:1rem system-ui;margin:1rem auto;padding:0 1rem;max-width:100rem}iframe{border:1px solid #888;width:100%;height:65vh}textarea{display:block;box-sizing:border-box;width:100%;min-height:5rem;margin:.5rem 0}button{font:inherit;padding:.4rem .8rem}li{white-space:pre-wrap;overflow-wrap:anywhere}</style>
@@ -89,7 +120,9 @@ const annotate = document.querySelector('#annotate');
 const queue = document.querySelector('#queue');
 const notice = document.querySelector('#notice');
 const field = document.querySelector('#annotations');
-const words = document.querySelector('#words');
+const form = document.querySelector('form');
+const draftFits = ${draftFits.toString()};
+let sending = false;
 const send = document.querySelector('#send');
 const drafts = [];
 const rejected = [];
@@ -98,7 +131,7 @@ function mode() {
 }
 function update() {
   field.value = JSON.stringify(drafts.map(({ prompt }) => prompt));
-  send.disabled = rejected.length > 0;
+  send.disabled = sending || rejected.length > 0;
   queue.replaceChildren(...drafts.map(({ prompt }, index) => {
     const item = document.createElement('li');
     const remove = document.createElement('button');
@@ -119,7 +152,27 @@ function update() {
 }
 annotate.addEventListener('change', mode);
 frame.addEventListener('load', mode);
-words.addEventListener('input', update);
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (sending || rejected.length) return;
+  const body = new URLSearchParams(new FormData(form));
+  if (body.toString().length > ${REVIEW_BODY_LIMIT}) {
+    notice.textContent = 'Feedback is too large. Remove a draft or shorten your feedback.';
+    return;
+  }
+  sending = true;
+  send.disabled = true;
+  try {
+    const result = await fetch(location.href, { method: 'POST', body, redirect: 'error' });
+    if (result.status === 204) { location.assign('/'); return; }
+    const refusal = await result.json();
+    notice.textContent = refusal.error || 'Could not send review feedback.';
+  } catch {
+    notice.textContent = 'Could not send review feedback. Your draft is still here.';
+  }
+  sending = false;
+  update();
+});
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (event.source !== frame.contentWindow || event.origin !== 'null' ||
@@ -130,6 +183,8 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'lavish:uploadAttachment') {
     const error = 'Images are only supported in direct Lavish. Remove the image to queue here.';
+    rejected.push(error);
+    update();
     event.source.postMessage({ type: 'lavish:attachmentResult', nonce: msg.nonce,
       localId: msg.localId, ok: false, error }, '*');
   }
@@ -137,15 +192,11 @@ window.addEventListener('message', (event) => {
   if (msg.type !== 'lavish:queuePrompt') return;
   try {
     const { prompt, selector, tag, uid, text, target, attachments, _lavishQueueKey: key } = msg.prompt;
-    const note = { prompt, selector, tag, uid, text, ...(target ? { target } : {}) };
+    const note = { prompt, selector, tag, uid, text, ...(target === undefined ? {} : { target }) };
     const at = typeof key === 'string' && key ? drafts.findIndex((draft) => draft.key === key) : -1;
-    if (![prompt, selector, tag, uid, text].every((value) => typeof value === 'string') ||
-        !prompt.trim() || prompt.length > 4000 || selector.length > 2000 || tag.length > 100 ||
-        tag === 'layout-warnings' || uid.length > 200 || text.length > 1000 || attachments?.length ||
-        (at < 0 && drafts.length >= 30) || JSON.stringify(note).length > 8000) throw new Error();
     const next = drafts.map((draft) => draft.prompt);
     next.splice(at < 0 ? next.length : at, at < 0 ? 0 : 1, note);
-    if (encodeURIComponent(JSON.stringify(next)).length > 90000) throw new Error();
+    if (attachments?.length || !draftFits(next, ${ANNOTATION_LIMIT})) throw new Error();
     drafts.splice(at < 0 ? drafts.length : at, at < 0 ? 0 : 1, { key, prompt: note });
     notice.textContent = 'Annotation queued. Confirm the feedback below.';
     update();

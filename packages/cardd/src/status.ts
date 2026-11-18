@@ -90,7 +90,7 @@ function holdFrom(tally: Tally, entry: Entry): void {
     remaining: parseCards(entry.fields["remaining"]),
     author: entry.author,
     entry: entry.id,
-    review: text(entry, "review") ?? open?.review,
+    review: entry.fields["review"] === false ? undefined : (text(entry, "review") ?? open?.review),
     reviewRequests: Array.isArray(entry.fields["reviewRequests"])
       ? parseCards(entry.fields["reviewRequests"])
       : open?.reviewRequests,
@@ -192,7 +192,7 @@ const REPORT_EFFECTS: Partial<Record<string, ReportEffect>> = {
     decide(tally, entry, key);
   },
   resolved: (_basis, tally, _entry, key) => {
-    if (tally.hold?.review !== undefined) return;
+    if (tally.hold?.reviewRequests !== undefined) return;
     answerKey(tally, key);
     resume(tally);
   },
@@ -225,7 +225,7 @@ const toWorker = (entry: Entry): boolean =>
 
 function commented(tally: Tally, entry: Entry): void {
   if (entry.author === "captain") {
-    if (tally.hold?.holder === "captain" && tally.hold.review === undefined)
+    if (tally.hold?.holder === "captain" && tally.hold.reviewRequests === undefined)
       tally.hold = { ...tally.hold, holder: "owner" };
     return;
   }

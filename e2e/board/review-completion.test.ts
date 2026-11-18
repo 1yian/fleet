@@ -6,6 +6,7 @@ import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { check, OPS } from "@fleet/protocol";
 import { chromium, type Page } from "playwright";
+import { format } from "../../packages/extension/src/inbox.ts";
 import { boundBoardFile } from "../support/board.ts";
 import { Cardd } from "../support/cardd.ts";
 import { begin, newCard, status } from "../support/fleet.ts";
@@ -75,11 +76,16 @@ async function fixture(t: TestContext) {
     const worker = await cardd.connect(token);
     const link = (source: string) => new URL(new URL(source).pathname, linkOrigin).href;
     const review = link(session);
-    const ask = (url = review) =>
-      worker.call("report", { status: "needs-decision", key: "draft", text: `Ready: ${url}` });
+    const ask = (url = review, key = "draft") =>
+      worker.call("report", { status: "needs-decision", key, text: `Ready: ${url}` });
     const question = `Finish ${title}`;
-    const bind = async (url = review) => {
-      await main.call("hold", { card: card.id, question, to: "captain", review: url });
+    const bind = async (url: string | false = review) => {
+      await main.call("hold", {
+        card: card.id,
+        question: url === false ? "Review both the draft and Markdown decision" : question,
+        to: "captain",
+        review: url,
+      });
       const shown = (await cardd.board()).holds.find((item) => item.card === card.id);
       assert.ok(shown);
       return shown.hold;
@@ -216,6 +222,13 @@ test("Fleet completes owned stock Lavish rounds without trusting worker sessions
   await heading.waitFor({ timeout: 5000 }).catch((error: unknown) => {
     throw new Error(frameRequests.join("; "), { cause: error });
   });
+  const artifactUrl = await page.locator('iframe[title="Review artifact"]').getAttribute("src");
+  assert.ok(artifactUrl);
+  edge.token = undefined;
+  const anonymous = await page.context().newPage();
+  assert.equal((await anonymous.goto(artifactUrl))?.status(), 403);
+  await anonymous.close();
+  edge.token = site.token();
   await page.getByRole("checkbox", { name: "Annotate" }).uncheck();
   const draft = artifact.getByRole("textbox", { name: "Draft note" });
   await draft.fill("Edited without sending");
@@ -271,12 +284,46 @@ test("Fleet completes owned stock Lavish rounds without trusting worker sessions
   assert.equal(delivered.fields["round"], target.round);
   assert.notEqual(delivered.fields["session"], new URL(target.session).pathname);
   assert.equal((await target.view()).hold, null);
-  await submitStock(target.session, false);
-  const replacement = await target.replace();
-  await target.update();
-  assert.equal((await target.view()).hold?.entry, replacement);
+  assert.match(
+    format(delivered, "Plan"),
+    /Inline annotations \(with targets\): .*"selector":"[^"]*h1[^"]*"/,
+  );
+  const handoff = await target.worker.waitForEntry(
+    (entry) => entry.kind === "hold",
+    "the Fleet-owned review notice",
+  );
+  assert.match(format(handoff, "Plan"), /stop any poll of the source session/);
+  await target.worker.call("report", { status: "done", text: "Plan delivered" });
+  const next = { delivered: { evidence: "Plan reviewed", disposition: "No build remains" } };
+  await mate.call("close.begin", { card: target.card.id, next });
+  await mate.call("close.finish", {
+    card: target.card.id,
+    next,
+    mode: "done",
+    text: "Closed",
+    archives: [],
+    left: [],
+  });
+  assert.equal(await status(mate, target.card), "done");
+  assert.deepEqual(
+    (await target.answers()).map(({ kind }) => kind),
+    ["review-feedback"],
+  );
+  const replacement = await empty.replace();
+  assert.equal((await board.goto(new URL(empty.path(replacement), HOME).href))?.status(), 200);
+  await board
+    .frameLocator('iframe[title="Review artifact"]')
+    .getByRole("heading", { name: "No notes-replacement" })
+    .waitFor();
+  const retiredArtifact = await board
+    .locator('iframe[title="Review artifact"]')
+    .getAttribute("src");
+  assert.ok(retiredArtifact);
+  await empty.update("Markdown decision", "other");
+  assert.equal((await board.goto(retiredArtifact))?.status(), 404);
+  assert.equal((await empty.view()).hold?.entry, replacement);
   assert.equal(
-    await cardd.act(target.card.id, {
+    await cardd.act(empty.card.id, {
       kind: "answer",
       hold: replacement,
       choice: "Old answer",
@@ -285,7 +332,7 @@ test("Fleet completes owned stock Lavish rounds without trusting worker sessions
     409,
   );
   assert.equal(
-    await cardd.act(target.card.id, {
+    await cardd.act(empty.card.id, {
       kind: "hold",
       hold: replacement,
       said: "in 3 hours",
@@ -300,10 +347,11 @@ test("Fleet completes owned stock Lavish rounds without trusting worker sessions
     .filter({ hasText: "Finish Direct" })
     .getByRole("button", { name: "Your words" })
     .waitFor();
-  assert.equal(await question.getByRole("button", { name: "Your words" }).count(), 0);
-  assert.equal(await question.getByRole("button", { name: "Later" }).count(), 0);
+  const mixed = page.getByRole("article").filter({ hasText: "Finish No notes" });
+  assert.equal(await mixed.getByRole("button", { name: "Your words" }).count(), 0);
+  assert.equal(await mixed.getByRole("button", { name: "Later" }).count(), 0);
   assert.equal(await submitFleet(page, target.path(target.round), "Duplicate", generation), 409);
-  const rebound = await target.bind();
+  const rebound = await empty.bind(false);
   assert.notEqual(rebound, replacement);
   assert.equal(
     await cardd.act(target.card.id, {
@@ -314,13 +362,13 @@ test("Fleet completes owned stock Lavish rounds without trusting worker sessions
     }),
     409,
   );
-  assert.equal((await target.view()).hold?.entry, rebound);
+  assert.equal((await empty.view()).hold?.entry, rebound);
   assert.deepEqual(
     (await target.answers()).map(({ body }) => body),
     [feedback],
   );
   assert.equal(
-    await cardd.act(target.card.id, {
+    await cardd.act(empty.card.id, {
       kind: "answer",
       hold: rebound,
       choice: "Replacement reviewed",
@@ -330,24 +378,13 @@ test("Fleet completes owned stock Lavish rounds without trusting worker sessions
   );
   assert.equal((await direct.view()).hold?.entry, direct.round);
   assert.deepEqual(await direct.answers(), []);
-  await target.worker.call("report", { status: "done", text: "Plan delivered" });
-  const next = { delivered: { evidence: "Plan reviewed", disposition: "No build remains" } };
-  await mate.call("close.begin", { card: target.card.id, next });
-  await mate.call("close.finish", {
-    card: target.card.id,
-    next,
-    mode: "done",
-    text: "Closed",
-    archives: [],
-    left: [],
-  });
-  assert.equal(await status(mate, target.card), "done");
-  assert.equal((await page.goto(new URL(empty.path(empty.round), HOME).href))?.status(), 200);
+  const noteFree = await hold("Nothing to add");
+  assert.equal((await page.goto(new URL(noteFree.path(noteFree.round), HOME).href))?.status(), 200);
   await page.getByRole("button", { name: "Send & End" }).click();
   await page.waitForURL(HOME);
-  assert.equal((await empty.view()).hold, null);
+  assert.equal((await noteFree.view()).hold, null);
   assert.deepEqual(
-    (await empty.answers()).map(({ body }) => body),
+    (await noteFree.answers()).map(({ body }) => body),
     [""],
   );
   const fallback = page.getByRole("article").filter({ hasText: "Finish Direct" });

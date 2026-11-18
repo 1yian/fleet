@@ -117,6 +117,16 @@ function formatOnce(entry: Entry, name: string): string {
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);
   if (entry.kind === "comment" && field(entry, "wake") !== undefined) return formatWake(entry);
+  if (entry.kind === "review-feedback" && field(entry, "source") === "lavish") {
+    const notes = entry.fields["annotations"];
+    const context =
+      Array.isArray(notes) && notes.length > 0
+        ? `\nInline annotations (with targets): ${JSON.stringify(notes)}`
+        : "";
+    return `[fleet] captain completed the Fleet review on ${card}: ${entry.body || "No notes."}${context}`;
+  }
+  if (entry.kind === "hold" && typeof entry.fields["review"] === "string")
+    return `[fleet] ${card} uses a Fleet-owned review. If you are the worker, stop any poll of the source session and wait for the Fleet inbox answer instead.\n${entry.body}`;
   const who = entry.author.replace(/^mate:/, "");
   const kind =
     entry.kind === "comment" ? laneNote(entry) : ` (${LABELS[entry.kind] ?? entry.kind})`;

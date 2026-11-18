@@ -95,7 +95,7 @@ function isSame(
   next: {
     holder: Holder;
     question: string;
-    review: string | undefined;
+    review: string | false | undefined;
     reviewRequests: readonly number[] | undefined;
     until: number | null;
     options: readonly string[];
@@ -111,7 +111,7 @@ function isSame(
     open.options.join("\n") === next.options.join("\n") &&
     open.approves.join("\n") === next.approves.join("\n") &&
     JSON.stringify([open.wait, open.remaining, open.review, open.reviewRequests]) ===
-      JSON.stringify([next.wait, next.remaining, next.review, next.reviewRequests])
+      JSON.stringify([next.wait, next.remaining, next.review || undefined, next.reviewRequests])
   );
 }
 
@@ -204,9 +204,11 @@ function announceHold(
   dated: Dating,
   target: Holder,
   asker: readonly string[],
+  reviewWorker: string | undefined,
 ): string[] {
   const quiet = dated.wait !== null && "id" in dated.wait;
   const heard = hearers(db, card, session.lane, quiet ? [] : [target]);
+  if (reviewWorker !== undefined) heard.push(reviewWorker);
   if (!quiet) {
     const to = withEcho(db, session, card, [...heard, ...asker]);
     addEntry(db, draft, to);
@@ -227,10 +229,14 @@ function boundReview(
   open: Hold | undefined,
   target: Holder,
   protectedWork: boolean,
-  review: string | undefined,
+  review: string | false | undefined,
 ) {
   if (review === undefined) return { review: open?.review, reviewRequests: open?.reviewRequests };
-  if (target !== "captain" || protectedWork || parentOf(db, session.lane) !== null)
+  if (
+    target !== "captain" ||
+    (review !== false && protectedWork) ||
+    parentOf(db, session.lane) !== null
+  )
     throw new Error("only main can bind a captain hold for review alone");
   return { review, reviewRequests: reviewRequests(entries, open, review) };
 }
@@ -296,7 +302,8 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     fields,
   };
   requireOpen(db, card);
-  const to = announceHold(db, session, card, draft, dated, target, asker);
+  const reviewWorker = typeof args.review === "string" ? workerOf(db, card.id) : undefined;
+  const to = announceHold(db, session, card, draft, dated, target, asker, reviewWorker);
   return { value: getCard(db, card.id), notify: to };
 }
 

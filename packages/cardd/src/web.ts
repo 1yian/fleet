@@ -6,7 +6,7 @@ import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { reviewDecision, reviewPreview } from "./review-completion.ts";
-import { reviewFeedback, reviewPage, sendAndEnd } from "./review-page.ts";
+import { REVIEW_BODY_LIMIT, reviewFeedback, reviewPage, sendAndEnd } from "./review-page.ts";
 import { lavishRequest, launchReview, type ReviewSession } from "./review-session.ts";
 import { mergeQuestion, writeMergeQuestion } from "./holds.ts";
 import { factsFrom, holdDeferred } from "./status.ts";
@@ -114,10 +114,12 @@ export class Web {
       access.note("the Origin is not the public host's https origin");
       return "refused";
     }
+    return (await this.admitsOwner(request)) ? "public" : "refused";
+  }
+
+  private async admitsOwner(request: IncomingMessage): Promise<boolean> {
     const token = request.headers[ACCESS_TOKEN_HEADER];
-    return (await access.admits(typeof token === "string" ? token : undefined))
-      ? "public"
-      : "refused";
+    return (await this.access?.admits(typeof token === "string" ? token : undefined)) === true;
   }
 
   allows(request: IncomingMessage, channel: Channel): boolean {
@@ -197,6 +199,11 @@ export class Web {
 
   async answerArtifact(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
     if (!this.isArtifactHost(request)) return false;
+    if (!(await this.admitsOwner(request))) {
+      this.refuse(response);
+      return true;
+    }
+    this.retireReviews();
     const url = URL.parse(request.url ?? "/", "http://artifact");
     if (url === null) {
       response.writeHead(400).end();
@@ -231,6 +238,12 @@ export class Web {
         await upstream.body?.cancel();
         response.writeHead(404).end();
       } else {
+        const body = Buffer.from(await upstream.arrayBuffer());
+        this.retireReviews();
+        if (![...this.reviews.values()].some((review) => review.owned === owned)) {
+          response.writeHead(404).end();
+          return true;
+        }
         response
           .writeHead(200, {
             "content-type": sdk ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8",
@@ -238,7 +251,7 @@ export class Web {
             "content-security-policy": "sandbox allow-scripts",
             "referrer-policy": "no-referrer",
           })
-          .end(Buffer.from(await upstream.arrayBuffer()));
+          .end(body);
       }
     } catch {
       if (response.headersSent) response.destroy();
@@ -252,7 +265,35 @@ export class Web {
     socket.on("close", () => this.live.delete(socket));
   }
 
+  private currentReview(card: number, round: number) {
+    const entries = cardEntries(this.db, card);
+    const hold = factsFrom(entries).hold;
+    if (
+      hold?.entry !== round ||
+      hold.review === undefined ||
+      hold.holder !== "captain" ||
+      hold.merge ||
+      hold.unlanded ||
+      holdDeferred(hold, Date.now()) ||
+      !reviewDecision(entries, hold)
+    )
+      return undefined;
+    return hold;
+  }
+
+  private retireReviews(): void {
+    for (const [card, review] of this.reviews) {
+      if (this.currentReview(card, review.round) !== undefined) continue;
+      this.reviews.delete(card);
+      void review.launch.then(
+        (owned) => owned.stop(),
+        () => undefined,
+      );
+    }
+  }
+
   changed(urgent = false): void {
+    this.retireReviews();
     if (this.quiet !== undefined && !urgent) {
       this.pending = true;
       return;
@@ -316,13 +357,8 @@ export class Web {
         console.warn(`ignored Lavish completion for card ${card}, round ${entry}`);
       throw new StaleCard("review round or session is no longer current; answer on the board");
     };
-    const current = () => {
-      const entries = cardEntries(this.db, card);
-      const hold = factsFrom(entries).hold;
-      if (hold?.entry !== entry || holdDeferred(hold, Date.now()) || !reviewDecision(entries, hold))
-        return undefined;
-      return hold;
-    };
+    this.retireReviews();
+    const current = () => this.currentReview(card, entry);
     const hold = current() ?? refuse();
     const source = reviewPreview(hold, this.reviewOrigins, Date.now());
     const origin = this.artifactOrigin;
@@ -333,12 +369,18 @@ export class Web {
     }
     let review = this.reviews.get(card);
     if (request.method === "GET") {
-      if (review?.round !== entry) {
+      if (review?.round !== entry || review.owned?.ended()) {
         review?.owned?.stop();
         review = { round: entry, launch: launchReview(source) };
         this.reviews.set(card, review);
       }
-      const owned = await review.launch;
+      let owned: ReviewSession;
+      try {
+        owned = await review.launch;
+      } catch (error) {
+        if (this.reviews.get(card) === review) this.reviews.delete(card);
+        throw error;
+      }
       if (current() === undefined || this.reviews.get(card) !== review || owned.ended()) {
         owned.stop();
         refuse();
@@ -351,10 +393,10 @@ export class Web {
     }
     if (
       request.method !== "POST" ||
-      request.headers["content-type"] !== "application/x-www-form-urlencoded"
+      request.headers["content-type"]?.split(";")[0] !== "application/x-www-form-urlencoded"
     )
       refuse();
-    const form = new URLSearchParams(await readBody(request, 125000));
+    const form = new URLSearchParams(await readBody(request, REVIEW_BODY_LIMIT));
     const owned = review?.round === entry ? review.owned : undefined;
     if (
       owned === undefined ||
@@ -400,7 +442,7 @@ export class Web {
     this.reviews.delete(card);
     for (const session of notify) this.flush(session);
     this.changed(true);
-    response.writeHead(303, { location: "/" }).end();
+    response.writeHead(204).end();
   }
 
   private async route(request: IncomingMessage, channel: Channel): Promise<unknown> {

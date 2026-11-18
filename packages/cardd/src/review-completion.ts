@@ -58,15 +58,18 @@ function latestRequest(entries: readonly Entry[], key: string): Entry | undefine
 export function reviewRequests(
   entries: readonly Entry[],
   open: Hold | undefined,
-  session: string,
+  session: string | false,
 ): number[] {
-  if (stockSession(session) === undefined)
+  if (session !== false && stockSession(session) === undefined)
     throw new Error("the review session must be a canonical stock Lavish URL");
   if (open?.fromWorker !== true || open.keys.length === 0)
     throw new Error("a review hold needs open worker decision keys");
   const requests = open.keys.map((key) => {
     const request = latestRequest(entries, key);
-    if (!request?.body.split(/\s+/).includes(session))
+    if (
+      request === undefined ||
+      (session !== false && !request.body.split(/\s+/).includes(session))
+    )
       throw new Error(`decision key ${key} does not name the review session as a standalone link`);
     return request.id;
   });
@@ -85,7 +88,7 @@ function matchesRequests(hold: Hold, requests: readonly number[]): boolean {
 
 export function reviewDecision(entries: readonly Entry[], hold: Hold) {
   return (
-    hold.review !== undefined &&
+    hold.reviewRequests !== undefined &&
     matchesRequests(
       hold,
       hold.keys.map((key) => latestRequest(entries, key)?.id ?? 0),

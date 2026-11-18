@@ -62,7 +62,7 @@ function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
   const name = `c-${String(card.id)}`;
   if (open === undefined || holdDeferred(open, Date.now()))
     throw new StaleCard(`${name} is no longer waiting for your answer, so nothing was recorded`);
-  if (open.review !== undefined) {
+  if (open.reviewRequests !== undefined) {
     if (open.entry === seen && reviewDecision(entries, open)) return open;
   } else {
     const upToSeen = entries.slice(0, entries.findIndex((entry) => entry.id === seen) + 1);
@@ -169,7 +169,7 @@ function buildBoard(
     const open = card.status !== "done" && card.status !== "dropped";
     if (open && !isScheduleLog(card) && hold !== undefined && askingCaptain(hold, now)) {
       const { question, options, merge, originalMerge, author } = hold;
-      if (hold.review !== undefined && !reviewDecision(each.entries, hold)) return card;
+      if (hold.reviewRequests !== undefined && !reviewDecision(each.entries, hold)) return card;
       const preview = origins === undefined ? undefined : reviewPreview(hold, origins, now);
       holds.push({
         card: card.id,
