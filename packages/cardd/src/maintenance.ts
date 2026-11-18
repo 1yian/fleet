@@ -108,13 +108,7 @@ function summarize(db: DatabaseSync, batch: string, requester: string): string[]
       author: "maintenance",
       kind: "note",
       body,
-      fields: {
-        maintenance: "batch",
-        maintenanceBatch: batch,
-        kind: "reload",
-        state: "completed",
-        quiet: false,
-      },
+      fields: { maintenance: "batch", maintenanceBatch: batch },
     },
     [requester],
   );
@@ -206,6 +200,16 @@ export function dropMaintenance(db: DatabaseSync, lane: string): string[] {
        JOIN maintenance m ON m.id = b.maintenance WHERE m.session = ? AND b.requester != ?`,
     )
     .all(lane, lane);
+  db.prepare(
+    `INSERT INTO maintenance_batches (batch, requester, gone, host)
+     SELECT m.batch, m.requester, CASE WHEN m.state = 'failed' THEN 'failed' ELSE 'removed' END,
+       coalesce((SELECT host FROM sessions WHERE id = ?1), '')
+     FROM maintenance m
+     WHERE m.session = ?1 AND m.requester != ?1 AND m.kind = 'reload'
+       AND NOT EXISTS (
+         SELECT 1 FROM maintenance_batches b WHERE b.batch = m.batch AND b.maintenance = m.id
+       )`,
+  ).run(lane);
   db.prepare(
     `UPDATE maintenance_batches SET host = coalesce((SELECT host FROM sessions WHERE id = ?), ''),
        gone = (SELECT CASE WHEN m.state = 'failed' THEN 'failed' ELSE 'removed' END

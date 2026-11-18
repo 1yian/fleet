@@ -447,3 +447,26 @@ test("retrying a batch does not re-enroll a lane that was removed from it while 
     [`c-${String(kept.id)}-a1`],
   );
 });
+
+test("retrying a legacy batch after its last member's lane was removed enrolls no new target, and nothing is summarized", async () => {
+  fleet.cardd.addLane("legacy-mate", "main");
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  db.prepare(
+    `INSERT INTO maintenance (batch, requester, session, kind, state, detail, updated_at)
+     VALUES ('legacy-last', 'main', 'legacy-mate', 'reload', 'pending', 'waiting', ?)`,
+  ).run(Date.now());
+  db.close();
+  const removed = fleet.cardd.admin("lane", "remove", "legacy-mate");
+  assert.equal(removed.status, 0, removed.stderr);
+  const late = await begin(fleet.main, await newCard(fleet.main, "arrives before the retry"));
+  const worker = await fleet.cardd.connect(late, [], true, false, true);
+  sessions.push(worker);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const retry = check(
+      OPS["maintenance.request"].result,
+      await fleet.main.call("maintenance.request", { batch: "legacy-last", kind: "reload" }),
+    );
+    assert.deepEqual(retry, []);
+  }
+  assert.equal(fleet.cardd.summaryCount(), 0);
+});
