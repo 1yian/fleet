@@ -13,7 +13,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "node lint.js",
-    "typecheck": "tsrs -p . && tsrs -p packages/board",
+    "typecheck": "node typecheck.js",
     "knip": "knip --treat-config-hints-as-errors",
     "deps": "depcruise .",
     "migrations:check": "node packages/cardd/scripts/check-migrations.ts",

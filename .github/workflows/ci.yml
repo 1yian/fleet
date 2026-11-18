@@ -45,6 +45,7 @@ jobs:
               - "**/oxlint-suppressions.json"
               - ".pi/extensions/**"
               - "lint.js"
+              - "typecheck.js"
               - "lint-plugin.js"
               - "knip.json"
               - ".dependency-cruiser.cjs"
