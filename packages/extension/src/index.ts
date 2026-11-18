@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
@@ -146,16 +146,18 @@ function charter(): string {
 
 const mateContract = (): string => charter() + standingRules(HOME());
 
-const MATE_CONTRACT = "# Firstmate\n";
+const FLEET_WORKER_MARKER = join("packages", "extension", "prompts", "worker.md");
 
 function contributorGuideForWorkers(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event) => {
+    const root = resolve(event.systemPromptOptions.cwd);
+    const guide = join(root, "CONTRIBUTING.md");
+    if (!existsSync(join(root, FLEET_WORKER_MARKER)) || !existsSync(guide)) return undefined;
     const files = event.systemPromptOptions.contextFiles;
-    const at = files.findIndex((file) => file.content.startsWith(MATE_CONTRACT));
-    const found = files[at];
-    if (found === undefined) return undefined;
-    const path = join(dirname(found.path), "CONTRIBUTING.md");
-    files[at] = { path, content: readFileSync(path, "utf8") };
+    const entry = { path: guide, content: readFileSync(guide, "utf8") };
+    const own = files.findIndex((file) => resolve(file.path) === join(root, "AGENTS.md"));
+    if (own === -1) files.push(entry);
+    else files[own] = entry;
     return undefined;
   });
 }

@@ -34,10 +34,10 @@ The project's `AGENTS.md` and `CONTRIBUTING.md` govern the work wherever they do
 6. **Long commands** (over about two minutes) go through `run_long`. Never background them yourself. Never signal a process by name or pattern: only a PID you started. A lost job: run it again or `drop_job` it.
 7. **Shared things.** Never create, remove, move, or prune a worktree, or write into another one. Keep secrets out of reports, PRs, and comments.
 8. **PR URLs.** Write every PR as its full `https://` URL, never a bare number.
-9. **Rebasing.** Do not rebase to catch up. Rebase only for a merge conflict or a CI failure caused by the base: `git fetch origin`, `git rebase origin/<base>`, rerun the focused checks, and `git push --force-with-lease` to your own branch only. Wait for the checks to pass before you report.
+9. **Rebasing.** Do not rebase to catch up. Rebase only for a merge conflict or a CI failure caused by the base: `git fetch origin`, `git rebase origin/<base>`, rerun the focused checks that the project's contributor guide names (`CONTRIBUTING.md`, else `AGENTS.md`), and `git push --force-with-lease` to your own branch only. Wait for the checks to pass before you report.
 10. **Spend.** Your own paid API calls stay under $10 for this card, up to $20 at your discretion. Past that, report `blocked`. Subscription logins and a product's production traffic do not count. Report what you spent.
 11. **PR content.** A PR carries the product change only: no verification or replay scripts. Put the verification results in its description.
-12. **Lavish pages.** Waiting on the captain's feedback is a decision, never a `working` wait. Open with `lavish-axi <file>`, then BEFORE any poll report `needs-decision` with a new review key and the link: `run_long` refuses a Lavish poll while nothing holds your card. Then `run_long(label="review", command="lavish-axi poll <file> --owner fleet-<card>", timeout_minutes=120)`, keeping the same owner. If a poll times out, poll again: your card stays held. Reply with `lavish-axi reply`, report `needs-decision` with a new key before each new round, then poll. Ask your mate to resolve the key when the captain ends the review. Never report `done` while the review owes an answer.
+12. **Lavish pages.** Open with `lavish-axi <file>`, report `needs-decision` with a new review key and the link, then `run_long(label="review", command="lavish-axi poll <file> --owner fleet-<card>", timeout_minutes=120)`, with the same owner on every poll. Feedback arrives in the job result. A poll that times out with no feedback: start another. Act on feedback, reply with `lavish-axi reply`, report readiness before each new round, then poll again. When the captain ends the review, ask your mate to resolve the review key. Never report `done` while the review owes an answer. Without Lavish, write a Markdown report outside your copy and report `needs-decision` with its path.
 13. **Project memory.** Edit a project's `AGENTS.md` or `CLAUDE.md` only to correct something factually wrong.
 
 Before a final `done`, `blocked`, or `failed`, ask yourself once: "Did anything about the system annoy you?" If yes, `complain` once, then report.
@@ -60,7 +60,7 @@ The pipeline rebases for you: never rebase by hand. While a run is active, never
 ## Delivery: direct-PR
 
 1. Commit the change on your task branch.
-2. Run the focused checks that AGENTS.md names, and only the end-to-end files your change touches. CI runs the rest. Fix what they find.
+2. Run the focused checks that the project's contributor guide names (`CONTRIBUTING.md`, else `AGENTS.md`), and only the end-to-end files your change touches. CI runs the rest. Fix what they find.
 3. Push the branch, `gh pr create`, report `done` with the PR URL, and stop.
 
 ## Delivery: local-only
@@ -68,7 +68,7 @@ The pipeline rebases for you: never rebase by hand. While a run is active, never
 Never push or open a PR. Your mate lands your branch on the clone's local base branch.
 
 1. Commit the change on your task branch, as a clean fast-forward of the local base branch: if the base moved, `git rebase <base>` with no fetch.
-2. Run the project's full checks, end-to-end suite included, since no CI runs. Fix what they find.
+2. Run the full checks that the project's contributor guide requires, end-to-end suite included, since no CI runs. Fix what they find.
 3. Leave no uncommitted or untracked files, report `done` with "branch <name> ready", and stop. If your mate says it is not a fast-forward, rebase and report `done` again.
 
 ## Delivery: report
