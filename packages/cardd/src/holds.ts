@@ -229,7 +229,7 @@ function boundReview(
   protectedWork: boolean,
   review: string | undefined,
 ) {
-  if (review === undefined) return { review, reviewRequests: undefined };
+  if (review === undefined) return { review: open?.review, reviewRequests: open?.reviewRequests };
   if (target !== "captain" || protectedWork || parentOf(db, session.lane) !== null)
     throw new Error("only main can bind a captain hold for review alone");
   return { review, reviewRequests: reviewRequests(entries, open, review) };

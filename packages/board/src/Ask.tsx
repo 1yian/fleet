@@ -98,7 +98,7 @@ function AskBody(props: Props) {
       ) : null}
       {mode === "options" ? (
         <div className="ask-foot">
-          {question.review !== undefined && window.location.protocol === "https:" ? (
+          {question.review === true && window.location.protocol === "https:" ? (
             <a
               className="quiet-action"
               href={`/review/${String(question.card)}/${String(question.hold)}`}

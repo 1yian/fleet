@@ -21,7 +21,7 @@ import { answerHold, hearers, holdOf, laneOf, rewritten } from "./holds.ts";
 import { behindOf, neglectOf, pulseOf, type Neglect } from "./pulse.ts";
 import { allSchedules } from "./schedules.ts";
 import { openReplies } from "./replies.ts";
-import { factsFrom, type Hold } from "./status.ts";
+import { factsFrom, holdDeferred, type Hold } from "./status.ts";
 import {
   activityOf,
   addEntry,
@@ -40,16 +40,16 @@ import { laterAt } from "./later.ts";
 
 export class StaleCard extends Error {}
 
-const deferred = (hold: Hold, now: number): boolean => hold.until !== null && hold.until > now;
-
 const askingCaptain = (hold: Hold, now: number): boolean =>
-  hold.holder === "captain" && !deferred(hold, now);
+  hold.holder === "captain" && !holdDeferred(hold, now);
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((each, at) => each === b[at]);
 
 const sameHold = (a: Hold, b: Hold): boolean =>
-  a.occurrence === b.occurrence &&
+  (a.review === undefined && b.review === undefined
+    ? a.occurrence === b.occurrence
+    : a.entry === b.entry) &&
   a.holder === b.holder &&
   a.question === b.question &&
   a.merge === b.merge &&
@@ -61,7 +61,7 @@ function requireSeen(db: DatabaseSync, card: Card, seen: number): Hold {
   const entries = cardEntries(db, card.id);
   const open = factsFrom(entries).hold;
   const name = `c-${String(card.id)}`;
-  if (open === undefined || deferred(open, Date.now()))
+  if (open === undefined || holdDeferred(open, Date.now()))
     throw new StaleCard(`${name} is no longer waiting for your answer, so nothing was recorded`);
   const upToSeen = entries.slice(0, entries.findIndex((entry) => entry.id === seen) + 1);
   const shown = factsFrom(upToSeen).hold;
@@ -162,7 +162,7 @@ function buildBoard(db: DatabaseSync, now: number, timing: Timings): Board {
         merge,
         originalMerge,
         author,
-        ...(hold.review === undefined ? {} : { review: hold.review }),
+        ...(hold.review === undefined || merge || hold.unlanded ? {} : { review: true }),
       });
     }
     return card;

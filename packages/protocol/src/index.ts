@@ -446,7 +446,7 @@ export const BoardSchema = Type.Object({
       merge: Type.Boolean(),
       originalMerge: Type.Boolean(),
       author: Type.Optional(Type.String()),
-      review: Type.Optional(Type.String()),
+      review: Type.Optional(Type.Boolean()),
     }),
   ),
   schedules: Type.Array(ScheduleSchema),

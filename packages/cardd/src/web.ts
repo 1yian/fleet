@@ -6,8 +6,8 @@ import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { mergeQuestion, writeMergeQuestion } from "./holds.ts";
-import { boundReviewPage, RECORDED_REVIEW, settleReview } from "./review-completion.ts";
-import { reviewPage, sendAndEnd } from "./review-page.ts";
+import { boundReviewPage, settleReview } from "./review-completion.ts";
+import { reviewFeedback, reviewPage, sendAndEnd } from "./review-page.ts";
 import { getCard, transaction } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
@@ -71,7 +71,7 @@ function originHostname(origin: string): string | undefined {
 export class Web {
   private readonly hosts = new Set<string>();
   private readonly access: Access | undefined;
-  private readonly reviewOrigins: ReadonlySet<string>;
+  private readonly reviewOrigins: ReadonlyMap<string, string>;
 
   allow(authorities: readonly string[]): void {
     for (const authority of authorities) {
@@ -157,7 +157,7 @@ export class Web {
     flush: (session: string) => void,
     files: string | undefined,
     access: Access | undefined,
-    reviewOrigins: ReadonlySet<string>,
+    reviewOrigins: ReadonlyMap<string, string>,
   ) {
     this.db = db;
     this.timing = timing;
@@ -230,53 +230,33 @@ export class Web {
     response: ServerResponse,
     round: { card: number; round: number },
   ): Promise<void> {
-    const page = boundReviewPage(this.db, round);
-    if (page === RECORDED_REVIEW) {
-      response.writeHead(303, { location: "/" }).end();
-      return;
-    }
-    if (page === undefined) throw new StaleCard("review hold is no longer current");
-    const session = new URL(page);
-    if (!this.reviewOrigins.has(session.origin)) {
+    const binding = boundReviewPage(this.db, round);
+    if (binding === undefined) throw new StaleCard("review hold is not due or no longer current");
+    const reported = new URL(binding);
+    const upstream = this.reviewOrigins.get(reported.origin);
+    if (upstream === undefined) {
       reply(response, 404, {
         ok: false,
         error: "review origin is not configured; answer on the board",
       });
       return;
     }
+    const session = new URL(reported.pathname, upstream);
     if (request.method === "GET") {
       await reviewPage(response, session);
       return;
     }
-    await this.submitReview(request, response, round, session);
-  }
-
-  private async submitReview(
-    request: IncomingMessage,
-    response: ServerResponse,
-    round: { card: number; round: number },
-    session: URL,
-  ): Promise<void> {
     if (
       request.method !== "POST" ||
       request.headers["content-type"] !== "application/x-www-form-urlencoded"
     )
       throw new Error("submit feedback from the Fleet review form");
-    const words = new URLSearchParams(await readBody(request, 25000)).get("words");
-    if (words === null || words.length > 2000)
-      throw new Error("review feedback is missing or too long");
-    if (boundReviewPage(this.db, round) !== session.href)
+    const feedback = reviewFeedback(new URLSearchParams(await readBody(request, 125000)));
+    if (boundReviewPage(this.db, round) !== binding)
       throw new StaleCard("review hold is no longer current");
-    if (!(await sendAndEnd(session, words))) {
-      if (boundReviewPage(this.db, round) !== RECORDED_REVIEW) {
-        reply(response, 409, {
-          ok: false,
-          error: "Lavish did not accept this review; answer on the board",
-        });
-        return;
-      }
-    }
-    this.recordReview(response, { ...round, session: session.href, words });
+    if (!(await sendAndEnd(session, feedback)))
+      throw new StaleCard("Lavish did not accept this review; answer on the board");
+    this.recordReview(response, { ...round, session: binding, ...feedback });
   }
 
   private recordReview(
@@ -285,7 +265,7 @@ export class Web {
   ): void {
     const notify = transaction(this.db, () => {
       const settled = settleReview(this.db, receipt);
-      if (settled === undefined || settled.length === 0) return settled;
+      if (settled === undefined) return settled;
       const card = getCard(this.db, receipt.card);
       const merge = mergeQuestion(this.db, card, []);
       return merge === undefined
@@ -297,7 +277,7 @@ export class Web {
       return;
     }
     for (const session of notify) this.flush(session);
-    if (notify.length > 0) this.changed(true);
+    this.changed(true);
     response.writeHead(303, { location: "/" }).end();
   }
 

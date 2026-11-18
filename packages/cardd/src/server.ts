@@ -102,7 +102,7 @@ class Hub {
     files: string | undefined,
     hosts: Hosts,
     access: Access | undefined,
-    reviewOrigins: ReadonlySet<string>,
+    reviewOrigins: ReadonlyMap<string, string>,
   ) {
     this.health = new LoopHealth(
       { sockets: () => this.open, sessions: () => this.bySession.size },
@@ -347,7 +347,7 @@ export async function serve(
     hostnames: readonly string[];
     hosts: Hosts;
     access?: AccessConfig | undefined;
-    reviewOrigins: ReadonlySet<string>;
+    reviewOrigins: ReadonlyMap<string, string>;
   },
 ): Promise<string> {
   db.prepare(
