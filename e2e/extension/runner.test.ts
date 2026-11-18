@@ -71,7 +71,10 @@ async function launch(
   };
   Reflect.deleteProperty(env, "NODE_TEST_CONTEXT");
   const files = Array.from({ length: fileCount }, () => FIXTURE);
-  const child = spawn(process.execPath, [RUNNER, ...files], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [RUNNER, ...files], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let output = "";
   for (const stream of [child.stdout, child.stderr]) {
     stream.setEncoding("utf8").on("data", (data: string) => {
@@ -87,7 +90,9 @@ async function launch(
     child.kill("SIGTERM");
     await result;
     await new Promise<void>((resolve) => {
-      server.close(() => resolve());
+      server.close(() => {
+        resolve();
+      });
     });
   });
   return {
@@ -167,38 +172,45 @@ test("cancelling a containing suite removes its nested workers", { timeout: 30_0
   assert.equal(existsSync(outerSuite), false);
 });
 
-test("a log setup error drains active lanes before removing the suite", { timeout: 30_000 }, async (t) => {
-  const width = availableParallelism() >= 32 ? 2 : 1;
-  const runner = await launch(t, tempDir("suite-"), "detached", width, width + 1);
-  const first = await runner.ready();
-  const other = width === 2 ? await runner.ready(1) : undefined;
-  const suite = dirname(first.root);
-  const blocked = `${String(width)}.log`;
-  mkdirSync(join(suite, blocked));
-  if (other !== undefined) assert.ok(running(other.pid));
-  first.release();
-  assert.equal(await runner.result, 1, runner.output());
-  const output = runner.output();
-  const fault = output.search(/(?:EISDIR|EEXIST).*\.log/);
-  assert.ok(fault >= 0 && output.slice(fault).includes(blocked), output);
-  if (other !== undefined) {
-    assert.equal(running(other.pid), false, "the other lane's detached process must be gone");
-    const drained = output.indexOf(`swept after ${FIXTURE}: ${String(other.pid)} `);
-    assert.ok(drained >= 0 && drained < fault, output);
-  }
-  assert.equal(existsSync(suite), false);
-});
+test(
+  "a log setup error drains active lanes before removing the suite",
+  { timeout: 30_000 },
+  async (t) => {
+    const width = availableParallelism() >= 32 ? 2 : 1;
+    const runner = await launch(t, tempDir("suite-"), "detached", width, width + 1);
+    const first = await runner.ready();
+    const other = width === 2 ? await runner.ready(1) : undefined;
+    const suite = dirname(first.root);
+    const blocked = `${String(width)}.log`;
+    mkdirSync(join(suite, blocked));
+    if (other !== undefined) assert.ok(running(other.pid));
+    first.release();
+    assert.equal(await runner.result, 1, runner.output());
+    const output = runner.output();
+    const fault = output.search(/(?:EISDIR|EEXIST).*\.log/);
+    assert.ok(fault >= 0 && output.slice(fault).includes(blocked), output);
+    if (other !== undefined) {
+      assert.equal(running(other.pid), false, "the other lane's detached process must be gone");
+      const drained = output.indexOf(`swept after ${FIXTURE}: ${String(other.pid)} `);
+      assert.ok(drained >= 0 && drained < fault, output);
+    }
+    assert.equal(existsSync(suite), false);
+  },
+);
 
 test("the runner rejects a private base under a replaceable ancestor", (t) => {
   const shared = tempDir("shared-");
   const base = join(shared, "base");
   chmodSync(shared, 0o777);
-  t.after(() => chmodSync(shared, 0o700));
+  t.after(() => {
+    chmodSync(shared, 0o700);
+  });
   assert.throws(
-    () => execFileSync(process.execPath, [RUNNER, FIXTURE], {
-      env: { ...process.env, FLEET_E2E_TMPDIR: base, FLEET_E2E_CONCURRENCY: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
-    }),
+    () =>
+      execFileSync(process.execPath, [RUNNER, FIXTURE], {
+        env: { ...process.env, FLEET_E2E_TMPDIR: base, FLEET_E2E_CONCURRENCY: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
     /replaceable end-to-end directory/,
   );
   assert.equal(existsSync(base), false);
@@ -210,61 +222,76 @@ test("the suite counts tests cancelled by Node", { timeout: 30_000 }, async (t) 
   assert.match(runner.output(), /1 files, 1 tests, 0 passed, 0 failed, 1 cancelled, 0 skipped/);
 });
 
-test("a launcher that starts after cleanup closed the registry never runs its command", { timeout: 30_000 }, async (t) => {
-  const mark = join(tempDir("late-"), "started");
-  const runner = await launch(t, tempDir("suite-"), "late", 1, 1, { SUITE_FIXTURE_MARK: mark });
-  assert.equal(await runner.result, 0, runner.output());
-  assert.equal(existsSync(mark), false, "the late command ran outside any registry");
-});
+test(
+  "a launcher that starts after cleanup closed the registry never runs its command",
+  { timeout: 30_000 },
+  async (t) => {
+    const mark = join(tempDir("late-"), "started");
+    const runner = await launch(t, tempDir("suite-"), "late", 1, 1, { SUITE_FIXTURE_MARK: mark });
+    assert.equal(await runner.result, 0, runner.output());
+    assert.equal(existsSync(mark), false, "the late command ran outside any registry");
+  },
+);
 
-test("a killed direct run's reaper finishes owned teardown before its root is removed", { timeout: 40_000 }, async (t) => {
-  const base = tempDir("direct-");
-  const alive = join(base, "hook-saw-root");
-  const server = createServer();
-  const lines: string[] = [];
-  const announced = Promise.withResolvers<{ pid: number; root: string }>();
-  server.on("connection", (connection: Socket) => {
-    createInterface({ input: connection }).on("line", (line) => {
-      lines.push(line);
-      const [pid, root] = lines;
-      if (pid !== undefined && root !== undefined) {
-        announced.resolve({ pid: Number(pid), root: String(JSON.parse(root)) });
-      }
+test(
+  "a killed direct run's reaper finishes owned teardown before its root is removed",
+  { timeout: 40_000 },
+  async (t) => {
+    const base = tempDir("direct-");
+    const alive = join(base, "hook-saw-root");
+    const server = createServer();
+    const lines: string[] = [];
+    const announced = Promise.withResolvers<{ pid: number; root: string }>();
+    server.on("connection", (connection: Socket) => {
+      createInterface({ input: connection }).on("line", (line) => {
+        lines.push(line);
+        const [pid, root] = lines;
+        if (pid !== undefined && root !== undefined) {
+          announced.resolve({ pid: Number(pid), root: String(JSON.parse(root)) });
+        }
+      });
     });
-  });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address !== null && typeof address !== "string");
-  const env = {
-    ...process.env,
-    FLEET_E2E_TMPDIR: base,
-    DIRECT_FIXTURE_PORT: String(address.port),
-    DIRECT_FIXTURE_MARK: alive,
-  };
-  for (const name of ["FLEET_E2E_ROOT", "FLEET_E2E_GROUPS", "FLEET_E2E_LAB_GROUPS", "NODE_TEST_CONTEXT"])
-    Reflect.deleteProperty(env, name);
-  const fixture = spawn(process.execPath, [DIRECT_FIXTURE], { env, stdio: "ignore" });
-  const exited = once(fixture, "exit");
-  t.after(async () => {
-    fixture.kill("SIGKILL");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address !== null && typeof address !== "string");
+    const env = {
+      ...process.env,
+      FLEET_E2E_TMPDIR: base,
+      DIRECT_FIXTURE_PORT: String(address.port),
+      DIRECT_FIXTURE_MARK: alive,
+    };
+    for (const name of [
+      "FLEET_E2E_ROOT",
+      "FLEET_E2E_GROUPS",
+      "FLEET_E2E_LAB_GROUPS",
+      "NODE_TEST_CONTEXT",
+    ])
+      Reflect.deleteProperty(env, name);
+    const fixture = spawn(process.execPath, [DIRECT_FIXTURE], { env, stdio: "ignore" });
+    const exited = once(fixture, "exit");
+    t.after(async () => {
+      fixture.kill("SIGKILL");
+      await exited;
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    });
+    const { pid, root } = await Promise.race([
+      announced.promise,
+      exited.then(() => {
+        throw new Error("the direct fixture exited before it announced");
+      }),
+    ]);
+    assert.ok(running(pid) && existsSync(root));
+    fixture.kill("SIGTERM");
     await exited;
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-  });
-  const { pid, root } = await Promise.race([
-    announced.promise,
-    exited.then(() => {
-      throw new Error("the direct fixture exited before it announced");
-    }),
-  ]);
-  assert.ok(running(pid) && existsSync(root));
-  fixture.kill("SIGTERM");
-  await exited;
-  for (const deadline = Date.now() + 30_000; running(pid) || existsSync(root); ) {
-    assert.ok(Date.now() < deadline, `the registered process or ${root} outlived teardown`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.equal(readFileSync(alive, "utf8").trim(), "alive");
-});
+    for (const deadline = Date.now() + 30_000; running(pid) || existsSync(root);) {
+      assert.ok(Date.now() < deadline, `the registered process or ${root} outlived teardown`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(readFileSync(alive, "utf8").trim(), "alive");
+  },
+);

@@ -25,7 +25,6 @@ let here: Scratch;
 let far: Scratch;
 let usage: string;
 let log: string;
-
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();

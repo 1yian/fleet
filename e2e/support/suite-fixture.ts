@@ -32,16 +32,23 @@ test("wait for the controlling test", options, async (t) => {
   } else if (mode === "job") {
     const job = fileURLToPath(new URL("../../packages/extension/src/job.ts", import.meta.url));
     const input = join(root, "job.json");
-    writeFileSync(input, JSON.stringify({
-      url: "http://127.0.0.1:1",
-      token: "fixture",
-      job: 1,
-      command: `exec ${quote(process.execPath)} -e ${quote(`process.kill(process.ppid, 'SIGKILL'); ${announce}`)}`,
-      timeoutMs: 60_000,
-      heartbeatMs: 60_000,
-    }));
+    writeFileSync(
+      input,
+      JSON.stringify({
+        url: "http://127.0.0.1:1",
+        token: "fixture",
+        job: 1,
+        command: `exec ${quote(process.execPath)} -e ${quote(`process.kill(process.ppid, 'SIGKILL'); ${announce}`)}`,
+        timeoutMs: 60_000,
+        heartbeatMs: 60_000,
+      }),
+    );
     const child = spawn(process.execPath, [job, input], { stdio: "inherit" });
-    const [, signal] = (await once(child, "exit")) as [number | null, NodeJS.Signals | null];
+    const signal = await new Promise<NodeJS.Signals | null>((resolve) => {
+      child.once("exit", (_code, killed) => {
+        resolve(killed);
+      });
+    });
     if (signal !== "SIGKILL") throw new Error(`job fixture exited by ${String(signal)}`);
     await delay(60_000, undefined, { signal: t.signal });
   } else if (mode === "detached") {
@@ -55,7 +62,7 @@ test("wait for the controlling test", options, async (t) => {
       child.unref();
     }, 1500);`;
     spawnOwned(process.execPath, ["-e", later], { stdio: "ignore" }).unref();
-    for (const deadline = Date.now() + 10_000; !existsSync(`${mark}.ready`); ) {
+    for (const deadline = Date.now() + 10_000; !existsSync(`${mark}.ready`);) {
       if (Date.now() > deadline) throw new Error("the registered process never started");
       await delay(20);
     }

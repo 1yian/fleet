@@ -68,7 +68,7 @@ lines.on("line", (line) => {
   else if (verb === "scope") scopes.add(pathOf(line, verb));
   else if (verb === "root") roots.add(pathOf(line, verb));
 });
-async function teardown(): Promise<void> {
+function runHooks(): void {
   for (const [file = "", ...args] of hooks.values()) {
     try {
       execFileSync(file, args, { stdio: "ignore", timeout: 20_000 });
@@ -76,9 +76,9 @@ async function teardown(): Promise<void> {
       continue;
     }
   }
-  for (const [pid, began] of watched) {
-    if (began !== "" && groupIdentity(pid) === began) sweep(pid, began);
-  }
+}
+
+async function sweepScopes(): Promise<boolean> {
   let proved = true;
   for (const scope of scopes) {
     try {
@@ -88,6 +88,15 @@ async function teardown(): Promise<void> {
       proved = false;
     }
   }
+  return proved;
+}
+
+async function teardown(): Promise<void> {
+  runHooks();
+  for (const [pid, began] of watched) {
+    if (began !== "" && groupIdentity(pid) === began) sweep(pid, began);
+  }
+  const proved = await sweepScopes();
   for (const root of roots) {
     if (proved && !existsSync(join(root, "unresolved-groups"))) {
       rmSync(root, { recursive: true, force: true });

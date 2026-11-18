@@ -1,11 +1,4 @@
-import {
-  accessSync,
-  constants,
-  lstatSync,
-  mkdirSync,
-  realpathSync,
-  type Stats,
-} from "node:fs";
+import { accessSync, constants, lstatSync, mkdirSync, realpathSync, type Stats } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -40,8 +33,11 @@ function verifyAncestors(path: string): void {
   if (parent !== path) verifyAncestors(parent);
   const stat = lstatSync(path);
   const writable = (stat.mode & 0o022) !== 0;
-  if (!stat.isDirectory() || (stat.uid !== 0 && stat.uid !== process.getuid?.()) ||
-      (writable && (stat.mode & 0o1000) === 0)) {
+  if (
+    !stat.isDirectory() ||
+    (stat.uid !== 0 && stat.uid !== process.getuid?.()) ||
+    (writable && (stat.mode & 0o1000) === 0)
+  ) {
     throw new Error(`replaceable end-to-end directory: ${path}`);
   }
 }

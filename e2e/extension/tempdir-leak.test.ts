@@ -76,7 +76,7 @@ async function runUntilWaiting(signal: NodeJS.Signals, target: "runner" | "test"
 const leftovers = (): string[] => readdirSync(outer);
 
 async function untilEmpty(): Promise<void> {
-  for (const deadline = Date.now() + 30_000; leftovers().length > 0; ) {
+  for (const deadline = Date.now() + 30_000; leftovers().length > 0;) {
     assert.ok(Date.now() < deadline, `the run folder still holds ${leftovers().join(", ")}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

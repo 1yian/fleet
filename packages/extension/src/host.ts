@@ -83,9 +83,13 @@ let starting: Promise<void> | undefined;
 function startServer(session: string | undefined): Promise<void> {
   starting ??= (async () => {
     const select = session === undefined ? [] : ["--session", session];
-    const server = spawnDetached("sh", ["-c", RAISE_OPEN_FILES, "herdr", "herdr", "server", ...select], {
-      stdio: "ignore",
-    });
+    const server = spawnDetached(
+      "sh",
+      ["-c", RAISE_OPEN_FILES, "herdr", "herdr", "server", ...select],
+      {
+        stdio: "ignore",
+      },
+    );
     server.unref();
     const child = { exited: false };
     server.once("exit", () => {

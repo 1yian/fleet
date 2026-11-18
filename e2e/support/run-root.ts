@@ -10,7 +10,7 @@ export function retainRunRoot(): void {
   writeFileSync(join(runRoot, "unresolved-groups"), "", { mode: 0o600 });
 }
 
-const assigned = process.env["FLEET_E2E_ROOT"] || undefined;
+const assigned = (process.env["FLEET_E2E_ROOT"] ?? "") || undefined;
 Reflect.deleteProperty(process.env, "FLEET_E2E_ROOT");
 
 const runRoot =

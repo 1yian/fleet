@@ -133,7 +133,10 @@ function osReading(path: string): {
       .trim()
       .split("\n");
     return {
-      header: (lines[0] ?? "").trim().split(/\s+/).map((cell) => cell.toLowerCase()),
+      header: (lines[0] ?? "")
+        .trim()
+        .split(/\s+/)
+        .map((cell) => cell.toLowerCase()),
       cells: (lines.at(-1) ?? "").trim().split(/\s+/),
     };
   };
@@ -186,7 +189,10 @@ test("scratch reports the use of the filesystems it writes to, and names the lar
           { path: "/tmp", roots: ["/tmp"] },
           { path: dir, roots: [dir] },
         ];
-  assert.deepEqual(filesystems.map(({ path, roots }) => ({ path, roots })), expected);
+  assert.deepEqual(
+    filesystems.map(({ path, roots }) => ({ path, roots })),
+    expected,
+  );
   for (const [index, { path }] of expected.entries()) {
     const row = filesystems[index];
     assert.ok(row !== undefined);

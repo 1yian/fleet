@@ -91,15 +91,21 @@ function watchChild(child: ChildProcess, identity: string | undefined) {
       }, TERM_GRACE_MS);
     } else {
       if (identity === undefined) child.kill(signal);
-      escalation ??= setTimeout(() => stop("SIGKILL"), TERM_GRACE_MS);
+      escalation ??= setTimeout(() => {
+        stop("SIGKILL");
+      }, TERM_GRACE_MS);
     }
   };
   const deadline = setTimeout(() => {
     timedOut = true;
     stop("SIGKILL");
   }, FILE_MINUTES * 60_000);
-  child.once("error", () => result.resolve([1, null]));
-  child.once("exit", (code, signal) => result.resolve([code, signal]));
+  child.once("error", () => {
+    result.resolve([1, null]);
+  });
+  child.once("exit", (code, signal) => {
+    result.resolve([code, signal]);
+  });
   const exited = result.promise.then(([code, signal]) => {
     clearTimeout(deadline);
     clearTimeout(escalation);
@@ -113,7 +119,8 @@ function report(outcome: Outcome): void {
   const seconds = (outcome.ms / 1000).toFixed(1).padStart(6);
   console.log(`${failed(outcome) ? "FAIL" : "ok  "} ${seconds}s ${outcome.file}`);
   for (const line of outcome.swept) console.log(`swept after ${outcome.file}: ${line}`);
-  for (const pid of outcome.unresolved) console.error(`unresolved after ${outcome.file}: ${String(pid)} process group`);
+  for (const pid of outcome.unresolved)
+    console.error(`unresolved after ${outcome.file}: ${String(pid)} process group`);
   if (outcome.retained) console.error(`kept run root after ${outcome.file}: unresolved ownership`);
   if (!failed(outcome)) return;
   const why = outcome.timedOut
@@ -174,9 +181,9 @@ class Suite {
   async finish(): Promise<Swept & { retained: boolean }> {
     const remaining = await Promise.all([...this.scopes].map((scope) => sweepGroups(scope, 0)));
     const unresolved = [...new Set(remaining.flatMap((result) => result.unresolved))];
-    const retained = unresolved.length > 0 || [...this.scopes].some((scope) =>
-      existsSync(join(dirname(scope), "unresolved-groups")),
-    );
+    const retained =
+      unresolved.length > 0 ||
+      [...this.scopes].some((scope) => existsSync(join(dirname(scope), "unresolved-groups")));
     if (retained) console.error(`unresolved process ownership; kept ${this.dir}`);
     else rmSync(this.dir, { recursive: true, force: true });
     return { named: remaining.flatMap((result) => result.named), unresolved, retained };
@@ -254,13 +261,12 @@ function summarize(suite: Suite, wallMs: number, width: number): void {
   const { outcomes, missingFooters } = suite;
   const total = (name: string): number =>
     outcomes.reduce((sum, outcome) => sum + (outcome.counts?.[name] ?? 0), 0);
-  const partial = missingFooters === 0 ? "" : ` (partial counts: ${String(missingFooters)} missing footers)`;
+  const partial =
+    missingFooters === 0 ? "" : ` (partial counts: ${String(missingFooters)} missing footers)`;
   console.log(
     `\n${String(outcomes.length)} files, ${String(total("tests"))} tests, ${String(total("pass"))} passed, ${String(total("fail"))} failed, ${String(total("cancelled"))} cancelled, ${String(total("skipped"))} skipped${partial}`,
   );
-  console.log(
-    `wall ${(wallMs / 60_000).toFixed(1)} min with ${String(width)} files at a time`,
-  );
+  console.log(`wall ${(wallMs / 60_000).toFixed(1)} min with ${String(width)} files at a time`);
 }
 
 function filesToRun(): string[] {
@@ -311,7 +317,8 @@ async function main(): Promise<number> {
     try {
       after = await suite.finish();
       for (const line of after.named) console.log(`swept after the suite: ${line}`);
-      for (const pid of after.unresolved) console.error(`unresolved after the suite: ${String(pid)} process group`);
+      for (const pid of after.unresolved)
+        console.error(`unresolved after the suite: ${String(pid)} process group`);
     } finally {
       clearTimeout(deadline);
       summarize(suite, Date.now() - began, width);

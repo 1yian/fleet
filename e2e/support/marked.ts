@@ -1,6 +1,13 @@
 import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -35,14 +42,16 @@ export function spawnOwned(
   return spawn(process.execPath, [OWNED_LAUNCH, command, ...args], { ...options, detached: true });
 }
 
+function linuxIdentity(pid: number): string | undefined {
+  const stat = readFileSync(`/proc/${String(pid)}/stat`, "utf8");
+  const [state, , group, ...rest] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  return Number(group) === pid && state !== "Z" ? rest[16] : undefined;
+}
+
 export function groupIdentity(pid: number): string | undefined {
   if (!validPid(pid)) return undefined;
   try {
-    if (process.platform === "linux") {
-      const stat = readFileSync(`/proc/${String(pid)}/stat`, "utf8");
-      const [state, , group, ...rest] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      return Number(group) === pid && state !== "Z" ? rest[16] : undefined;
-    }
+    if (process.platform === "linux") return linuxIdentity(pid);
     const row = execFileSync("ps", ["-p", String(pid), "-o", "pgid=,stat=,lstart="], {
       timeout: 1_000,
       killSignal: "SIGKILL",
@@ -60,7 +69,10 @@ export function groupIdentity(pid: number): string | undefined {
 
 export function groupScopes(env: NodeJS.ProcessEnv = process.env): string[] {
   const scopes: unknown = JSON.parse(env[GROUPS_ENV] ?? "[]");
-  if (!Array.isArray(scopes) || !scopes.every((scope): scope is string => typeof scope === "string" && isAbsolute(scope)))
+  if (
+    !Array.isArray(scopes) ||
+    !scopes.every((scope): scope is string => typeof scope === "string" && isAbsolute(scope))
+  )
     throw new Error("invalid end-to-end group registry list");
   return scopes;
 }
@@ -116,10 +128,12 @@ function liveGroups(): Set<number> {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return new Set(rows.split("\n").flatMap((row) => {
-      const [group, state] = row.trim().split(/\s+/);
-      return state !== undefined && !state.startsWith("Z") ? [Number(group)] : [];
-    }));
+    return new Set(
+      rows.split("\n").flatMap((row) => {
+        const [group, state] = row.trim().split(/\s+/);
+        return state !== undefined && !state.startsWith("Z") ? [Number(group)] : [];
+      }),
+    );
   } catch {
     throw new Error("could not verify end-to-end process groups");
   }
@@ -136,16 +150,19 @@ function outstanding(scope: string): { pid: number; started: string }[] {
   });
 }
 
-export async function sweepGroups(scope: string, graceMs: number): Promise<Swept> {
+function closeScope(scope: string): void {
   const closed = join(scope, "closed");
-  if (!existsSync(closed)) {
-    registry(scope, "open");
-    try {
-      renameSync(join(scope, "open"), closed);
-    } catch (error) {
-      if (!existsSync(closed)) throw error;
-    }
+  if (existsSync(closed)) return;
+  registry(scope, "open");
+  try {
+    renameSync(join(scope, "open"), closed);
+  } catch (error) {
+    if (!existsSync(closed)) throw error;
   }
+}
+
+export async function sweepGroups(scope: string, graceMs: number): Promise<Swept> {
+  closeScope(scope);
   const dir = registry(scope, "closed");
   const deadline = Date.now() + graceMs;
   let left = outstanding(dir);

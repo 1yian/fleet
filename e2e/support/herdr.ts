@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { guardCleanup, spawnGuarded } from "./guarded.ts";
 import { guardScope } from "./reaper-client.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
-import { LAB_GROUPS_ENV, groupIdentity, openGroupScope, signalOwnedGroup, sweepGroups } from "./marked.ts";
+import { LAB_GROUPS_ENV, openGroupScope, signalOwnedGroup, sweepGroups } from "./marked.ts";
 import { retainRunRoot, tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
@@ -133,14 +133,19 @@ export class HerdrLab {
 
   async killServer(): Promise<void> {
     const server = this.server;
-    if (server === undefined || server.exitCode !== null || server.signalCode !== null) return;
+    if (server?.exitCode !== null || server.signalCode !== null) return;
     const pid = server.pid;
     if (pid === undefined) return;
-    const exited = new Promise<void>((resolve) => server.once("exit", () => resolve()));
+    const exited = new Promise<void>((resolve) =>
+      server.once("exit", () => {
+        resolve();
+      }),
+    );
     const identity = readFileSync(join(this.groups, "open", String(pid)), "utf8");
     const signaled = signalOwnedGroup(pid, identity, "SIGKILL");
-    const stopped = signaled && (await Promise.race([exited.then(() => true), delay(5_000, false)]));
-    if (!stopped && server.exitCode === null && server.signalCode === null) {
+    const stopped =
+      signaled && (await Promise.race([exited.then(() => true), delay(5_000, false)]));
+    if (!stopped) {
       retainRunRoot();
       throw new Error(`could not stop owned Herdr server ${String(pid)}`);
     }
@@ -150,7 +155,8 @@ export class HerdrLab {
     await this.text(["session", "stop", this.name]).catch(() => "");
     try {
       const result = await sweepGroups(this.groups, 5_000);
-      if (result.unresolved.length > 0) throw new Error(`could not stop owned Herdr lab ${this.name}`);
+      if (result.unresolved.length > 0)
+        throw new Error(`could not stop owned Herdr lab ${this.name}`);
     } catch (error) {
       retainRunRoot();
       throw error;

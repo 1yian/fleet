@@ -38,7 +38,7 @@ const created = await lab.run([
 const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
 await lab.submit(pane, sleeper);
 const sleeperPid = await (async () => {
-  for (const deadline = Date.now() + 30_000; Date.now() < deadline; ) {
+  for (const deadline = Date.now() + 30_000; Date.now() < deadline;) {
     const running = (await lab.foreground(pane)).find((each) => /^\d+:sleep\b/.test(each));
     if (running !== undefined) return Number(running.split(":")[0]);
     await new Promise((resolve) => setTimeout(resolve, 20));
