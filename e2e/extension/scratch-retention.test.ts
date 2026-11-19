@@ -154,7 +154,8 @@ test("parent close drops a child card without publishing or disturbing its evide
     evidence.assertPreserved();
     tidyAgedScratch();
     evidence.assertPreserved();
-    for (const lane of [home, childHome]) assert.equal(existsSync(join(lane, "data/reports")), false);
+    for (const lane of [home, childHome])
+      assert.equal(existsSync(join(lane, "data/reports")), false);
   } finally {
     await owner.close();
   }
