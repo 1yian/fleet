@@ -108,8 +108,9 @@ async function laneFixture(): Promise<{
   const h = await Harness.start();
   cleanups.push(() => h.stop());
   const scratch = new Scratch();
-  cleanups.push(async () => {
+  cleanups.push(() => {
     scratch.dispose();
+    return Promise.resolve();
   });
   const lab = await HerdrLab.start({
     ...h.piEnv("mate"),
@@ -199,7 +200,7 @@ test("a mate that main relaunches from the command line of an older fleet starts
   );
   await reaches(
     lab,
-    async () => pane,
+    () => Promise.resolve(pane),
     () => h.events.find((event) => event["type"] === "fleet_connected"),
     "the relaunched mate to join the fleet",
   );
