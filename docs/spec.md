@@ -259,7 +259,7 @@ Install and update: Firstmate ships as one Pi package. Each host runs `pi instal
 | `runner` | Standing cards only. `mate` or `worker`. |
 | `intent` | The captain's own words for this card. |
 | `spec` | The build instructions from the mate. |
-| `delivery` | `no-mistakes`, `direct-PR`, or `local-only`. Ship cards only. |
+| `delivery` | `no-mistakes`, `direct-PR`, `local-only`, or `ops`. Ship cards only. `ops` is card-only: never a project default, never on a card with a PR. |
 | `base_branch` | The branch to start from and target. |
 | `profile` | The model and effort for the worker. |
 | `pr` | The PR URL, when one exists. |
