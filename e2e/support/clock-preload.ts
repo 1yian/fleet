@@ -19,9 +19,19 @@ if (file !== undefined) {
     return skew;
   };
   globalThis.Date = new Proxy(Date, {
-    construct: (target, args, newTarget) =>
-      Reflect.construct(target, args.length === 0 ? [target.now() + current()] : args, newTarget),
-    get: (target, key) =>
-      key === "now" ? () => target.now() + current() : Reflect.get(target, key),
+    construct: (target, args: unknown[], newTarget): object => {
+      const made: unknown = Reflect.construct(
+        target,
+        args.length === 0 ? [target.now() + current()] : args,
+        newTarget,
+      );
+      if (typeof made !== "object" || made === null) throw new TypeError("Date did not construct");
+      return made;
+    },
+    get: (target, key): unknown => {
+      if (key === "now") return () => target.now() + current();
+      const value: unknown = Reflect.get(target, key);
+      return value;
+    },
   });
 }
