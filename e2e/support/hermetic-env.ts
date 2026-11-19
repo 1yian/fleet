@@ -1,4 +1,5 @@
 import { tempDir } from "./run-root.ts";
+import { seedTiers } from "./tiers-fixture.ts";
 
 const LIVE_ENVIRONMENT = [
   "FLEET_HOSTS",
@@ -18,9 +19,13 @@ const LIVE_ENVIRONMENT = [
   "HERDR_SOCKET_PATH",
   "HERDR_TAB_ID",
   "HERDR_WORKSPACE_ID",
+  "PI_TIERS_CONFIG",
+  "NM_HOME",
 ];
 
 for (const name of LIVE_ENVIRONMENT) Reflect.deleteProperty(process.env, name);
 
 process.env["FLEET_TAILSCALE"] = "false";
 process.env["ELEMENT_HOME"] = tempDir("element-");
+process.env["PI_CODING_AGENT_DIR"] = tempDir("agent-");
+seedTiers(process.env["PI_CODING_AGENT_DIR"]);
