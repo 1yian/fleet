@@ -196,7 +196,7 @@ function registerYield(pi: ExtensionAPI): void {
     name: YIELD,
     label: "Yield",
     description:
-      "Ends this turn silently when routine fleet notifications leave no update for the user. Finish required card actions and answer any reply owed with comment or hold first, in earlier blocks or in this one. Yield may share its block with them: the turn ends when the block finishes, whatever the other calls return, and a failed call shows its error only on the next turn. When the next step depends on a result, call yield in a later block. Write no chat text before or after it. Never use it instead of delivering outcomes, findings, review or merge requests, decisions, or real blockers.",
+      "Ends this turn silently when routine fleet notifications leave no update for the user. Finish required card actions and answer any reply owed with comment or hold first, in earlier blocks or in this one. Yield may share its block with them: the turn ends when the block finishes, whatever the other calls return, and a failed call shows its error only on the next turn. When the next step depends on a result, call yield in a later block. Write no chat text before or after it. Never use it instead of delivering outcomes, findings, review or merge requests, decisions, or real blockers. Never use it to answer a message the user wrote: that always gets a chat reply.",
     parameters: Type.Object({}),
     execute: () => Promise.resolve({ content: [], details: {}, terminate: true }),
     renderShell: "self",

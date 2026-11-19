@@ -50,8 +50,21 @@ test("a real merge arrival delivers the original chat, reminder and optional wal
     );
     assert.match(
       contract,
-      /bring every one up again as one short list with your recommendation for each/,
+      /bring up one, the way section 8 says: one decision, checked on the live board/,
     );
+    assert.match(
+      contract,
+      /Every chat message he writes you gets a chat reply, never a `yield\(\)`/,
+    );
+    assert.match(
+      contract,
+      /Pick only a decision whose hold the board shows still waiting on the captain/,
+    );
+    assert.match(
+      contract,
+      /say so in one plain sentence, such as "No decision is waiting on you\."/,
+    );
+    assert.match(contract, /ask one short clarifying question and nothing else/);
     assert.match(contract, /Still tell him each new outcome once, as it happens/);
     assert.doesNotMatch(contract, /about 80 words|Exactly four interruptions|\/d\b/);
     assert.equal((await cardd.board()).holds.find((hold) => hold.card === card.id)?.merge, true);
