@@ -132,6 +132,9 @@ const sessionText = (): string =>
 
 const heldKeys = (): string[] => sessionFiles().flatMap(replayed);
 
+const alarmCounts = (): number[] =>
+  sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
+
 const sessionAlarms = (): number => sessionText().split(ALARM).length - 1;
 
 const untilHeld = (keys: readonly unknown[]): Promise<void> =>
@@ -400,13 +403,9 @@ test("a new session announces a crossing that is still over the alarm, once", as
   await startMain(lab, here, h);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the new session to connect");
   await until(() => sessionFiles().length === 2, "the second session file");
-  await until(
-    () => sessionFiles().every((file) => readFileSync(file, "utf8").split(ALARM).length === 2),
-    "one alarm in each session",
-  );
+  await until(() => alarmCounts().every((n) => n === 1), "one alarm in each session");
   await afterProbes(5);
-  const counts = sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
-  assert.deepEqual(counts, [1, 1]);
+  assert.deepEqual(alarmCounts(), [1, 1]);
 });
 
 test("a /new typed in the running main announces a crossing that is still over the alarm once in the new session, not again after", async () => {
@@ -418,13 +417,9 @@ test("a /new typed in the running main announces a crossing that is still over t
 
   await lab.submit(pane, "/new");
   await until(() => sessionFiles().length === 2, "the new session's file");
-  await until(
-    () => sessionFiles().every((file) => readFileSync(file, "utf8").split(ALARM).length === 2),
-    "one alarm in each session",
-  );
+  await until(() => alarmCounts().every((n) => n === 1), "one alarm in each session");
   await afterProbes(5);
-  const counts = sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
-  assert.deepEqual(counts, [1, 1]);
+  assert.deepEqual(alarmCounts(), [1, 1]);
   assert.equal(alarmsOf(lastCall()).length, 1, "the new conversation holds its own single alarm");
   assert.deepEqual(sessionFiles().map(replayed), [CROSSED, CROSSED]);
 });
