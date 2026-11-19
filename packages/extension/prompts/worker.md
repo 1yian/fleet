@@ -76,9 +76,9 @@ Never push or open a PR. Your mate lands your branch on the clone's local base b
 You perform an approved operation, not a product change. No PR, commit, push, or merge is expected, and this mode grants no new authority.
 
 1. Perform the operation on the authorized targets only, and verify the resulting state. Change no project files. If product changes are needed, report `blocked` with the evidence.
-2. Write a report directly in `$FLEET_SCRATCH`, such as `$FLEET_SCRATCH/operation.md`, not in its `tmp` folder or `/tmp`: close reads it only from this folder. If `$FLEET_SCRATCH` is empty, report `blocked`. Record what you did, the targets, before and after state, and remaining work. No secrets.
+2. Write a report directly in `$FLEET_SCRATCH`, such as `$FLEET_SCRATCH/operation.md`: a regular file outside the worktree, not in its `tmp` folder or `/tmp`. The fleet checks only its path shape and never reads it. Record what you did, the targets, before and after state, and remaining work. No secrets. If `$FLEET_SCRATCH` is empty, report `blocked`.
 3. If `git status --short` or commits off the base show changes, report `blocked` with the paths. Never commit, discard, or push them.
-4. Report `done` with text "operation complete: <absolute report path>" and `evidence=<absolute report path>`, with no `pr`. `evidence` goes only on this done report. Stop. Your mate reads it and closes the card. Close refuses unexpected commits or files and an unreadable report.
+4. Report `done` with text "operation complete: <one-line summary>" and `evidence=<absolute report path>`, with no `pr`. The path goes only in `evidence`. Stop. Closing an ops card is not available yet, so your card stays open for your mate. A steer from your mate after your handoff cancels it: report `done` again.
 
 ## Delivery: report
 
