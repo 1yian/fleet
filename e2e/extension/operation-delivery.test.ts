@@ -31,7 +31,7 @@ test("ops dispatches offline with a no-PR contract and hands evidence over witho
   h.onModel(async (turns) => {
     assert.match(lastUser(turns) ?? "", /Delivery: ops$/);
     const contract = turns.find((turn) => turn.role === "system")?.text ?? "";
-    assert.match(contract, /### Delivery: ops/);
+    assert.match(contract, /## Delivery: ops/);
     assert.match(contract, /No PR, commit, push, or merge is expected/);
     await h.waitForCall(2, "mate", WORKER_WAIT_MS);
     return workerWrites();
@@ -142,7 +142,7 @@ test("a steer after done cancels the handoff on the board", async () => {
     return { text: "done" };
   }, "mate");
   await start();
-  await finished(5);
+  await finished(7);
   assert.match(seen[0] ?? "", /^\s*evidence: "?reported, shape-checked only and not verified/m);
   assert.doesNotMatch(seen[1] ?? "", /evidence: /);
 });

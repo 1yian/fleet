@@ -161,7 +161,16 @@ export class HerdrLab {
       retainRunRoot();
       throw error;
     }
-    await this.text(["session", "delete", this.name]);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.text(["session", "delete", this.name]);
+        break;
+      } catch (error) {
+        if (attempt >= 50 || !String(error).includes("stop it before deleting")) throw error;
+        await this.text(["session", "stop", this.name]).catch(() => "");
+        await delay(200);
+      }
+    }
     this.disarm();
   }
 
