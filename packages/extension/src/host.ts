@@ -22,7 +22,7 @@ function ownNames(): string[] {
 
 export const ownHostName = (): string => ownNames().at(-1) ?? "local";
 
-export const ownsHostName = (host: string): boolean =>
+const ownsHostName = (host: string): boolean =>
   host === "local" || ownNames().includes(host.toLowerCase());
 
 function transport(host: string): string[] {

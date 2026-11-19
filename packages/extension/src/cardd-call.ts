@@ -14,7 +14,7 @@ function checkResult(op: OpName, value: unknown): unknown {
   return check(OPS[op].result, value);
 }
 
-export const carddHttp = (lane: LaneConfig, path: string): string =>
+const carddHttp = (lane: LaneConfig, path: string): string =>
   lane.url.replace(/^ws/, "http").replace(/\/session$/, path);
 
 export async function callCardd<N extends OpName>(

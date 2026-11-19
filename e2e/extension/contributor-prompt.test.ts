@@ -12,9 +12,9 @@ import { delimiter, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "../support/cardd.ts";
-import { FilesPane } from "../support/files-pane.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
+import { until } from "../support/live-fleet.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const systemOf = (turns: readonly Turn[]): string =>
@@ -234,7 +234,10 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     const result = await h.waitFor((event) => event["type"] === "settled", "mate run to settle");
     assert.equal(result["aborted"], true);
     assert.equal(h.callsOf("mate").length, 0);
-    const screen = await FilesPane.attach(lab, pane).sees(/restore a readable regular file at/);
+    const screen = await until(async () => {
+      const text = await lab.screen(pane);
+      return text.includes("restore a readable regular file at") ? text : undefined;
+    }, "the contract error on screen");
     assert.ok(screen.replace(/\s+/g, "").includes(join(realpathSync(scratch.root), "AGENTS.md")));
     return;
   }

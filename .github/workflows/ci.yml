@@ -204,20 +204,6 @@ jobs:
       - name: Install direnv
         uses: ./.github/actions/install-direnv
         timeout-minutes: 5
-      - name: Install nvim and fzf, which the Files tab end-to-end tests drive (fleet files fetches its own yazi)
-        env:
-          NVIM_VERSION: 0.12.4
-          NVIM_SHA256: 012bf3fcac5ade43914df3f174668bf64d05e049a4f032a388c027b1ebd78628
-          FZF_VERSION: 0.44.1
-          FZF_SHA256: 73d7946f08dae8a330f4233e3eeb71c4ffc411412e3fe8488d608dde3f7a74bd
-        run: |
-          curl -fsSL -o nvim.tar.gz "https://github.com/neovim/neovim/releases/download/v${NVIM_VERSION}/nvim-linux-x86_64.tar.gz"
-          echo "${NVIM_SHA256}  nvim.tar.gz" | sha256sum -c -
-          sudo tar -xzf nvim.tar.gz -C /opt
-          sudo ln -s /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
-          curl -fsSL -o fzf.tar.gz "https://github.com/junegunn/fzf/releases/download/${FZF_VERSION}/fzf-${FZF_VERSION}-linux_amd64.tar.gz"
-          echo "${FZF_SHA256}  fzf.tar.gz" | sha256sum -c -
-          sudo tar -xzf fzf.tar.gz -C /usr/local/bin fzf
       - name: Install lavish-axi, which the review end-to-end tests drive (optional on a host, docs/setup.md)
         run: npm install -g lavish-axi@0.1.90
       - run: npm run build

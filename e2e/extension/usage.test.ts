@@ -29,3 +29,12 @@ test("fleet with an unknown option prints a short error and usage, not a stack t
   assert.match(run.stderr, /usage: fleet status \|/);
   assert.doesNotMatch(run.stderr, /\n\s+at /);
 });
+
+test("fleet files, the removed explorer command, is rejected and absent from help", () => {
+  for (const args of [["files"], ["files", "roots"]]) {
+    const run = fleet(args);
+    assert.notEqual(run.status, 0);
+    assert.equal(run.stdout, "");
+  }
+  assert.doesNotMatch(fleet(["--help"]).stdout, /\bfiles\b/);
+});

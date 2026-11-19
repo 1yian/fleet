@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { basename } from "node:path";
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
+import { tempDir } from "../support/run-root.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
@@ -282,7 +283,7 @@ test("a mate Pi that only inherited a worker pane's herdr environment leaves tha
   assert.ok(![...seen.values()].includes("1stmate"), JSON.stringify([...seen.values()]));
 });
 
-test("a second mate that starts in a workspace with the wrong label corrects it and keeps its panes", async () => {
+test("a second mate that starts in a workspace with the wrong label corrects it, adds no tab, and keeps its panes", async () => {
   const created = await lab.run([
     "workspace",
     "create",
@@ -294,32 +295,89 @@ test("a second mate that starts in a workspace with the wrong label corrects it 
   ]);
   const workspace = String(records([created["workspace"]])[0]?.["workspace_id"]);
   const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+  const originalTabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
+  const originalTab = String(originalTabs[0]?.["tab_id"]);
+  assert.equal(originalTabs.length, 1, JSON.stringify(originalTabs));
   const pi = ["pi", "--continue", ...mateArgs(h)].map((arg) => `'${arg}'`).join(" ");
-  await lab.submit(pane, `cd '${cleoHome}' && ${pi}`);
+  const recorder = tempDir("herdr-recorder-");
+  const herdrCalls = join(recorder, "calls.log");
+  writeFileSync(herdrCalls, "");
+  writeFileSync(
+    join(recorder, "herdr"),
+    [
+      "#!/bin/sh",
+      `printf 'attempt %s %s\\n' "$$" "$*" >> '${herdrCalls}'`,
+      'PATH="${PATH#*:}"',
+      'herdr "$@"',
+      "status=$?",
+      `printf 'finish %s %s\\n' "$$" "$*" >> '${herdrCalls}'`,
+      'exit "$status"',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(join(recorder, "herdr"), 0o755);
+  await lab.submit(pane, `cd '${cleoHome}' && PATH='${recorder}':"$PATH" ${pi}`);
+
+  const settled = (): Promise<string[]> => {
+    const calls = readFileSync(herdrCalls, "utf8")
+      .split("\n")
+      .filter((line) => line !== "");
+    const finished = new Set(
+      calls.filter((call) => call.startsWith("finish ")).map((call) => call.split(" ")[1]),
+    );
+    const pending = calls.filter(
+      (call) => call.startsWith("attempt ") && !finished.has(call.split(" ")[1]),
+    );
+    const renamed = calls.some(
+      (call) => call.startsWith("finish ") && call.includes(" workspace rename "),
+    );
+    return Promise.resolve(renamed ? pending : ["no rename yet"]);
+  };
 
   await until("the workspace to read 2ndmate-cleo", labels, (now) => {
     return now.get(workspace) === "2ndmate-cleo";
   });
-  const filesTab = await until(
-    "the Files tab",
-    async () =>
-      records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]).find(
-        (each) => each["label"] === "Files",
-      ),
-    (found) => found !== undefined,
-  );
-  const panes = await lab.run(["pane", "list", "--workspace", workspace]);
-  assert.deepEqual(
-    records(panes["panes"])
-      .filter((each) => each["tab_id"] !== filesTab?.["tab_id"])
-      .map((each) => each["pane_id"]),
-    [pane],
-  );
   await until(
     "cleo to run",
     () => Promise.resolve(fleet(["status"])),
     (out) => out === "cleo: running\n",
   );
   assert.equal(fleet(["up"]), "cleo: already running in 2ndmate-cleo\n");
+  await until(
+    "every herdr request of the mate to finish",
+    settled,
+    (pending) => pending.length === 0,
+  );
+  const calls = readFileSync(herdrCalls, "utf8").split("\n");
+  assert.deepEqual(
+    calls.filter((call) => / tab create\b/.test(call)),
+    [],
+  );
+  const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
+  assert.deepEqual(
+    tabs.map((each) => each["tab_id"]),
+    [originalTab],
+  );
+  const panes = await lab.run(["pane", "list", "--workspace", workspace]);
+  assert.deepEqual(
+    records(panes["panes"]).map((each) => each["pane_id"]),
+    [pane],
+  );
+  const info = records([
+    (await lab.run(["pane", "process-info", "--pane", pane]))["process_info"],
+  ])[0];
+  const running = records(info?.["foreground_processes"]);
+  assert.ok(
+    running.some((each) => {
+      const argv = Array.isArray(each["argv"]) ? each["argv"] : [];
+      const script = typeof argv[1] === "string" ? argv[1] : "";
+      return (
+        each["argv0"] === "pi" ||
+        each["name"] === "pi" ||
+        (argv[0] === "node" && script.split("/").pop() === "pi")
+      );
+    }),
+    JSON.stringify(running),
+  );
   assert.deepEqual([...(await labels()).values()], ["2ndmate-cleo"]);
 });

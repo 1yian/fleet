@@ -70,8 +70,3 @@ export function verifyPrivateDirectory(path: string): void {
     throw new Error(`end-to-end directory must be owned by this user and private: ${path}`);
   }
 }
-
-export function cacheDirectory(base: string): string {
-  verifyPrivateDirectory(base);
-  return privateDirectory(join(base, "fleet-e2e-cache"));
-}
