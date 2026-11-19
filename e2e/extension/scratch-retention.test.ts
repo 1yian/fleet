@@ -37,7 +37,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  if (lab !== undefined) await stopDispatchLab(lab);
+  await stopDispatchLab(lab);
 });
 
 function evidenceAt(id: number) {
