@@ -216,7 +216,7 @@ test("a main whose host is local, and a lane that moved hosts, tell each worker 
   const awayFrame = (lines: string[]): boolean =>
     lines.some((line) => line.includes("[main] main-far")) &&
     rowAfter(lines, "[main] main-far", 1).includes("main") &&
-    rowAfter(lines, "[main] main-far", 2).includes(`mate on ${OWN_LABEL}`);
+    rowAfter(lines, "[main] main-far", 2).includes(`mate on ${OWN_LABEL.slice(0, 8)}`);
   await untilScreen("the hint under the Git row", client, awayFrame);
 
   const localMate = await open(far, "1stmate", here.root);

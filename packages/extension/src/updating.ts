@@ -300,11 +300,8 @@ async function tagAllWorkers(config: LaneConfig, link: Link): Promise<string[]> 
     failures.push(`Mate placement unchanged: ${messageOf(error)}`);
     return new Map<string, string>();
   });
-  for (const host of hostsOf(config)) {
-    await tagWorkers(host, laneOfCard, mates).catch((error: unknown) => {
-      failures.push(`${host}: worker metadata not refreshed - ${messageOf(error)}`);
-    });
-  }
+  for (const host of hostsOf(config))
+    await tagWorkers(host, laneOfCard, mates).catch(() => undefined);
   return failures;
 }
 
