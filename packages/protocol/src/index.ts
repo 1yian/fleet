@@ -248,6 +248,11 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
+      review: Type.Optional(
+        Type.Union([Type.String(), Type.Literal(false)], {
+          description: "Exact Lavish URL to bind, or false for a board-only decision",
+        }),
+      ),
       question: Type.String({
         minLength: 1,
         description:
@@ -398,7 +403,6 @@ export const OPS = {
 export type OpName = keyof typeof OPS;
 export type OpArgs<O extends OpName> = Static<(typeof OPS)[O]["args"]>;
 export type OpResult<O extends OpName> = Static<(typeof OPS)[O]["result"]>;
-
 export const CLOSE = {
   badMessage: 4000,
   notLive: 4001,
@@ -446,12 +450,12 @@ export const BoardSchema = Type.Object({
       merge: Type.Boolean(),
       originalMerge: Type.Boolean(),
       author: Type.Optional(Type.String()),
+      review: Type.Optional(Type.Boolean()),
     }),
   ),
   schedules: Type.Array(ScheduleSchema),
 });
 export type Board = Static<typeof BoardSchema>;
-
 export const ThreadSchema = Type.Object({ card: CardSchema, entries: Type.Array(EntrySchema) });
 export type Thread = Static<typeof ThreadSchema>;
 

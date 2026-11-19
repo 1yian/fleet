@@ -12,6 +12,7 @@ const reply = (text: string) => ({ content: [{ type: "text" as const, text }], d
 const HoldParams = Type.Object({
   card: CardId,
   question: Type.Optional(OPS.hold.args.properties.question),
+  review: OPS.hold.args.properties.review,
   options: OPS.hold.args.properties.options,
   approves: OPS.hold.args.properties.approves,
   unlanded: OPS.hold.args.properties.unlanded,
@@ -60,6 +61,7 @@ const HoldParams = Type.Object({
 
 const SETTING = [
   "question",
+  "review",
   "options",
   "approves",
   "unlanded",
@@ -105,9 +107,9 @@ export function registerQuestions(
     if (question === undefined) throw new Error("a hold needs its question");
     const { options, approves, unlanded, to, replyTo, job, schedule, worker, watcher, outside } =
       rest;
-    const { remaining } = rest;
+    const { remaining, review } = rest;
     const args = {
-      ...{ card: id, question, options, approves, unlanded, to, replyTo },
+      ...{ card: id, question, options, approves, unlanded, to, replyTo, review },
       ...{ job, schedule, worker, watcher, outside, remaining, said },
       ...(until === undefined ? {} : { until: parseUtc(until) }),
       ...(said === undefined ? {} : { source: sourceOf(said) }),

@@ -102,6 +102,7 @@ class Hub {
     files: string | undefined,
     hosts: Hosts,
     access: Access | undefined,
+    reviewOrigins: ReadonlyMap<string, string>,
   ) {
     this.health = new LoopHealth(
       { sockets: () => this.open, sessions: () => this.bySession.size },
@@ -118,6 +119,7 @@ class Hub {
       },
       files,
       access,
+      reviewOrigins,
     );
   }
 
@@ -242,6 +244,7 @@ class Hub {
   }
 
   async answerHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (await this.web.answerArtifact(request, response)) return;
     const channel = await this.web.channel(request);
     if (channel === "refused") this.web.refuse(response);
     else if (channel === "public") await this.web.answer(request, response, channel);
@@ -340,11 +343,13 @@ export async function serve(
     hostnames,
     hosts,
     access,
+    reviewOrigins,
   }: {
     files?: string | undefined;
     hostnames: readonly string[];
     hosts: Hosts;
     access?: AccessConfig | undefined;
+    reviewOrigins: ReadonlyMap<string, string>;
   },
 ): Promise<string> {
   db.prepare(
@@ -356,6 +361,7 @@ export async function serve(
     files,
     hosts,
     access === undefined ? undefined : new Access(access, timing),
+    reviewOrigins,
   );
   hub.fillRepos();
   setInterval(() => {

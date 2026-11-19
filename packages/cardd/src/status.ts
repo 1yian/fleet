@@ -32,6 +32,8 @@ export interface Hold {
   readonly openedAt: number;
   readonly author: string;
   readonly entry: number;
+  readonly review: string | undefined;
+  readonly reviewRequests: readonly number[] | undefined;
 }
 
 export interface Basis {
@@ -64,6 +66,16 @@ interface Tally {
   pausedUntil: number | null;
 }
 
+function reviewOf(entry: Entry, open: Hold | undefined): Pick<Hold, "review" | "reviewRequests"> {
+  const review = entry.fields["review"];
+  const requests = entry.fields["reviewRequests"];
+  const carried = typeof review === "string" ? review : open?.review;
+  return {
+    review: review === false ? undefined : carried,
+    reviewRequests: Array.isArray(requests) ? parseCards(requests) : open?.reviewRequests,
+  };
+}
+
 function holdFrom(tally: Tally, entry: Entry): void {
   const merge = entry.fields["merge"] === true;
   const until = entry.fields["until"];
@@ -88,6 +100,7 @@ function holdFrom(tally: Tally, entry: Entry): void {
     remaining: parseCards(entry.fields["remaining"]),
     author: entry.author,
     entry: entry.id,
+    ...reviewOf(entry, open),
   };
   if (open === undefined) {
     const opened = { occurrence: ++tally.occurrences, openedAt: entry.createdAt };
@@ -116,6 +129,8 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       openedAt: entry.createdAt,
       author: entry.author,
       entry: entry.id,
+      review: undefined,
+      reviewRequests: undefined,
     };
   } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };
 }
@@ -184,6 +199,7 @@ const REPORT_EFFECTS: Partial<Record<string, ReportEffect>> = {
     decide(tally, entry, key);
   },
   resolved: (_basis, tally, _entry, key) => {
+    if (tally.hold?.reviewRequests !== undefined) return;
     answerKey(tally, key);
     resume(tally);
   },
@@ -216,7 +232,8 @@ const toWorker = (entry: Entry): boolean =>
 
 function commented(tally: Tally, entry: Entry): void {
   if (entry.author === "captain") {
-    if (tally.hold?.holder === "captain") tally.hold = { ...tally.hold, holder: "owner" };
+    if (tally.hold?.holder === "captain" && tally.hold.reviewRequests === undefined)
+      tally.hold = { ...tally.hold, holder: "owner" };
     return;
   }
   tally.awaitingMerge = false;
@@ -270,8 +287,11 @@ export interface Standing {
   readonly facts: Facts;
 }
 
+export const holdDeferred = (hold: Hold, now: number): boolean =>
+  hold.until !== null && hold.until > now;
+
 function holdStatus(hold: Hold, now: number): Status {
-  if (hold.until !== null && hold.until > now) return "waiting";
+  if (holdDeferred(hold, now)) return "waiting";
   return hold.holder === "captain" ? "needs-you" : "with-mate";
 }
 

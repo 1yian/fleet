@@ -228,6 +228,8 @@ jobs:
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
+      - name: Install stock Lavish for the authenticated browser review
+        run: npm install -g lavish-axi@0.1.97
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
 
   tests-required:

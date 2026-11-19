@@ -112,11 +112,25 @@ export function format(entry: Entry, name: string, again = false): string {
   return `${formatOnce(entry, name)}${again ? AGAIN : ""}`;
 }
 
+function formatReview(entry: Entry, card: string): string | undefined {
+  if (entry.kind === "hold" && entry.fields["fleetReview"] === true)
+    return `[fleet] ${card} now has a Fleet-owned review. If you are the worker, stop any poll of the source session and wait for the Fleet inbox answer instead.\n${entry.body}`;
+  if (entry.kind !== "review-feedback" || field(entry, "source") !== "lavish") return undefined;
+  const notes = entry.fields["annotations"];
+  const context =
+    Array.isArray(notes) && notes.length > 0
+      ? `\nInline annotations (with targets): ${JSON.stringify(notes)}`
+      : "";
+  return `[fleet] captain completed the Fleet review on ${card}: ${entry.body || "No notes."}${context}`;
+}
+
 function formatOnce(entry: Entry, name: string): string {
   const card = name === "" ? `c-${String(entry.card)}` : `c-${String(entry.card)} ${name}`;
   if (entry.kind === "report") return formatReport(entry, card);
   if (entry.kind === "job-result") return formatJob(entry, card);
   if (entry.kind === "comment" && field(entry, "wake") !== undefined) return formatWake(entry);
+  const review = formatReview(entry, card);
+  if (review !== undefined) return review;
   const who = entry.author.replace(/^mate:/, "");
   const kind =
     entry.kind === "comment" ? laneNote(entry) : ` (${LABELS[entry.kind] ?? entry.kind})`;

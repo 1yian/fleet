@@ -5,6 +5,9 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
+import { reviewArtifactOrigin } from "./review-completion.ts";
+import { REVIEW_BODY_LIMIT } from "./review-page.ts";
+import { Reviews } from "./review-rounds.ts";
 import { getCard, transaction } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
@@ -18,16 +21,15 @@ const TYPES: Readonly<Record<string, string>> = {
   ".json": "application/json",
 };
 
-const READS: Readonly<Record<string, (db: DatabaseSync, timing: Timings) => unknown>> = {
-  "/api/board": boardView,
-  "/api/version": version,
-};
-
-function readBody(request: IncomingMessage): Promise<string> {
+function readBody(request: IncomingMessage, limit = Infinity): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
     request.setEncoding("utf8");
-    request.on("data", (chunk: string) => (body += chunk));
+    request.on("data", (chunk: string) => {
+      if (body.length > limit) return;
+      body += chunk;
+      if (body.length > limit) reject(new Error("request body is too large"));
+    });
     request.on("end", () => {
       resolve(body);
     });
@@ -64,6 +66,7 @@ function originHostname(origin: string): string | undefined {
 export class Web {
   private readonly hosts = new Set<string>();
   private readonly access: Access | undefined;
+  private readonly reviews: Reviews;
 
   allow(authorities: readonly string[]): void {
     for (const authority of authorities) {
@@ -77,6 +80,7 @@ export class Web {
   }
 
   async channel(request: IncomingMessage): Promise<Channel | "refused"> {
+    if (this.reviews.isArtifactHost(request.headers.host)) return "refused";
     const access = this.access;
     if (access === undefined) return "tailnet";
     const header = request.headers.host;
@@ -103,10 +107,12 @@ export class Web {
       access.note("the Origin is not the public host's https origin");
       return "refused";
     }
+    return (await this.admitsOwner(request)) ? "public" : "refused";
+  }
+
+  private async admitsOwner(request: IncomingMessage): Promise<boolean> {
     const token = request.headers[ACCESS_TOKEN_HEADER];
-    return (await access.admits(typeof token === "string" ? token : undefined))
-      ? "public"
-      : "refused";
+    return (await this.access?.admits(typeof token === "string" ? token : undefined)) === true;
   }
 
   allows(request: IncomingMessage, channel: Channel): boolean {
@@ -149,12 +155,26 @@ export class Web {
     flush: (session: string) => void,
     files: string | undefined,
     access: Access | undefined,
+    reviewOrigins: ReadonlyMap<string, string>,
   ) {
     this.db = db;
     this.timing = timing;
     this.flush = flush;
     this.files = files === undefined ? undefined : resolve(files);
     this.access = access;
+    const artifactOrigin = reviewArtifactOrigin(
+      process.env["CARDD_REVIEW_ARTIFACT_ORIGIN"],
+      access?.host,
+      reviewOrigins,
+    );
+    this.reviews = new Reviews(db, reviewOrigins, artifactOrigin);
+  }
+
+  async answerArtifact(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    if (!this.reviews.isArtifactHost(request.headers.host)) return false;
+    if (await this.admitsOwner(request)) await this.reviews.artifact(request, response);
+    else this.refuse(response);
+    return true;
   }
 
   watch(socket: WebSocket): void {
@@ -163,6 +183,7 @@ export class Web {
   }
 
   changed(urgent = false): void {
+    this.reviews.retire();
     if (this.quiet !== undefined && !urgent) {
       this.pending = true;
       return;
@@ -194,7 +215,18 @@ export class Web {
         });
         return;
       }
-      const value = await this.route(request);
+      const path = new URL(request.url ?? "/", "http://board").pathname;
+      const review = /^\/review\/(\d+)\/(\d+)$/.exec(path);
+      if (review !== null) {
+        if (channel !== "public") this.refuse(response);
+        else
+          await this.review(request, response, {
+            card: Number(review[1]),
+            round: Number(review[2]),
+          });
+        return;
+      }
+      const value = await this.route(request, channel);
       if (value === undefined)
         this.serveFile(new URL(request.url ?? "/", "http://board").pathname, response);
       else reply(response, 200, value);
@@ -204,12 +236,44 @@ export class Web {
     }
   }
 
-  private async route(request: IncomingMessage): Promise<unknown> {
-    const path = new URL(request.url ?? "/", "http://board").pathname;
+  private async review(
+    request: IncomingMessage,
+    response: ServerResponse,
+    round: { card: number; round: number },
+  ): Promise<void> {
+    if (request.method === "GET") {
+      if (!(await this.reviews.page(response, round.card, round.round)))
+        reply(response, 404, { ok: false, error: "review is unavailable; answer on the board" });
+      return;
+    }
+    if (request.method !== "POST")
+      throw new Error("a review is opened with GET and sent with POST");
+    const notify = await this.reviews.submit(
+      round.card,
+      round.round,
+      request.headers["content-type"],
+      () => readBody(request, REVIEW_BODY_LIMIT),
+    );
+    for (const session of notify) this.flush(session);
+    this.changed(true);
+    response.writeHead(204).end();
+  }
+
+  private read(path: string, channel: Channel): unknown {
+    if (path === "/api/board")
+      return boardView(
+        this.db,
+        this.timing,
+        channel === "public" ? this.reviews.available() : undefined,
+      );
+    if (path === "/api/version") return version(this.db);
     const card = /^\/api\/card\/(\d+)$/.exec(path)?.[1];
-    const read = request.method === "GET" ? READS[path] : undefined;
-    if (read !== undefined) return read(this.db, this.timing);
-    if (request.method === "GET" && card !== undefined) return thread(this.db, Number(card));
+    return card === undefined ? undefined : thread(this.db, Number(card));
+  }
+
+  private async route(request: IncomingMessage, channel: Channel): Promise<unknown> {
+    const path = new URL(request.url ?? "/", "http://board").pathname;
+    if (request.method === "GET") return this.read(path, channel);
     if (request.method === "POST" && path === "/api/action") return this.act(request);
     return undefined;
   }
