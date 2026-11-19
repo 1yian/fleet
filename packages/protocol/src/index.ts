@@ -250,8 +250,7 @@ export const OPS = {
       card: Type.Integer(),
       review: Type.Optional(
         Type.Union([Type.String(), Type.Literal(false)], {
-          description:
-            "Exact Lavish URL for review alone, or false for Main to present all current worker requests as a board-only decision",
+          description: "Exact Lavish URL to bind, or false for a board-only decision",
         }),
       ),
       question: Type.String({
