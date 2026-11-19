@@ -3,8 +3,8 @@ import { describeError, type Log } from "./log.ts";
 import type { BridgeState, Outgoing } from "./state.ts";
 import { chunk, extractMedia } from "./text.ts";
 
-function outgoing(text: string): Outgoing {
-  const { clean, paths } = extractMedia(text);
+function outgoing(text: string, home: string): Outgoing {
+  const { clean, paths } = extractMedia(text, home);
   return { parts: chunk(clean), files: paths };
 }
 
@@ -12,15 +12,17 @@ export class Outbox {
   private readonly discord: Discord;
   private readonly state: BridgeState;
   private readonly log: Log;
+  private readonly home: string;
 
-  constructor(discord: Discord, state: BridgeState, log: Log) {
+  constructor(discord: Discord, state: BridgeState, log: Log, home: string) {
     this.discord = discord;
     this.state = state;
     this.log = log;
+    this.home = home;
   }
 
   enqueue(text: string): void {
-    this.state.queue.push(outgoing(text));
+    this.state.queue.push(outgoing(text, this.home));
     void this.drain();
   }
 

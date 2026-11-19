@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -157,6 +157,64 @@ test("main uploads the files its answer names and keeps the text as the caption"
     [{ name: "chart.png", bytes: PICTURE.toString("hex") }],
   );
   assert.equal(posted().length, 1, "the caption was posted again as a separate message");
+});
+
+test("main never uploads its private folders, dotenv files, or a symlink into them", async () => {
+  const folder = tempDir("bridge-private-");
+  const inHome = (name: string, file: string): string => {
+    mkdirSync(join(home(), name), { recursive: true });
+    const path = join(home(), name, file);
+    writeFileSync(path, '{"token":"secret"}');
+    return path;
+  };
+  const config = inHome("config", "lane-token.json");
+  const data = inHome("data", "notes.json");
+  const state = inHome("state", "report.json");
+  const plain = join(folder, ".env");
+  const named = join(folder, "something.env");
+  const link = join(folder, "innocent.json");
+  const chart = join(folder, "chart.png");
+  writeFileSync(plain, "A=1");
+  writeFileSync(named, "A=1");
+  symlinkSync(config, link);
+  writeFileSync(chart, PICTURE);
+  const reply = [
+    "Files:",
+    `MEDIA:${config}`,
+    `![data](${data})`,
+    `\`${state}\``,
+    `MEDIA:${plain}`,
+    `![env](${named})`,
+    `\`${link}\``,
+    `MEDIA:${chart}`,
+  ].join("\n");
+  h.onModel(() => ({ text: reply }));
+  startMain(bridge());
+  await online();
+
+  discord.say({ author: CAPTAIN, content: "Send everything" });
+  const upload = await discord.waitForPost((post) => post.files.length > 0, "the chart upload");
+  await h.waitForCall(0);
+  assert.deepEqual(
+    discord.posts.filter((post) => post.files.length > 0),
+    [upload],
+  );
+  assert.deepEqual(
+    upload.files.map((file) => file.name),
+    ["chart.png"],
+  );
+  assert.equal(
+    upload.content,
+    [
+      "Files:",
+      `MEDIA:${config}`,
+      `![data](${data})`,
+      `\`${state}\``,
+      `MEDIA:${plain}`,
+      `![env](${named})`,
+      `\`${link}\``,
+    ].join("\n"),
+  );
 });
 
 test("a long answer is split under Discord's limit, in order", async () => {

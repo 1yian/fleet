@@ -70,7 +70,7 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
   const log = fileLog(join(directory, "bridge.log"));
   const discord = new Discord(config, log);
   const state = bridgeState();
-  const outbox = new Outbox(discord, state, log);
+  const outbox = new Outbox(discord, state, log, home);
   const typing = new Typing(discord);
   const media = { discord, directory: join(directory, "media"), groq: config.groq };
   const inbox = new Inbox(config, discord, state, media, injector(pi, ctx, log), log);
