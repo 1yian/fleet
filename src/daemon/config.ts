@@ -14,6 +14,8 @@ export interface Config {
     screen: { width: number; height: number };
   };
   broker: { socket: string };
+  notify: { url: string; topicFile: string } | null;
+  captcha: { dir: string; keyFile: string; model: string | null; budgetSeconds: number } | null;
   handoff: { defaultWaitSeconds: number; linkTemplate: string | null };
 }
 
@@ -49,6 +51,8 @@ export function parseConfig(raw: unknown): Config {
   const screen = record(lanes.screen ?? {}, "lanes.screen");
   const handoff = record(root.handoff ?? {}, "handoff");
   const broker = record(root.broker ?? {}, "broker");
+  const notify = root.notify === undefined ? null : record(root.notify, "notify");
+  const captcha = root.captcha === undefined ? null : record(root.captcha, "captcha");
   const linkTemplate = handoff.linkTemplate ?? null;
   if (linkTemplate !== null && (typeof linkTemplate !== "string" || !linkTemplate.includes("{lane}"))) {
     throw new Error("config handoff.linkTemplate must be a string containing {lane}");
@@ -79,6 +83,17 @@ export function parseConfig(raw: unknown): Config {
     broker: {
       socket: typeof broker.socket === "string" ? broker.socket : "/run/fleet-browser-broker/broker.sock",
     },
+    notify: notify
+      ? { url: str(notify, "url", "notify"), topicFile: str(notify, "topicFile", "notify") }
+      : null,
+    captcha: captcha
+      ? {
+          dir: str(captcha, "dir", "captcha"),
+          keyFile: str(captcha, "keyFile", "captcha"),
+          model: typeof captcha.model === "string" && captcha.model !== "" ? captcha.model : null,
+          budgetSeconds: num(captcha, "budgetSeconds", "captcha", 150),
+        }
+      : null,
     handoff: {
       defaultWaitSeconds: num(handoff, "defaultWaitSeconds", "handoff", 1800),
       linkTemplate: linkTemplate as string | null,

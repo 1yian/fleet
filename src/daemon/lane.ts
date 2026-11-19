@@ -4,7 +4,14 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LaneName } from "../shared/lane-name.js";
-import type { Control, Handoff, LaneSnapshot, LaneStatusName, TabInfo } from "../shared/protocol.js";
+import type {
+  AgentStep,
+  Control,
+  Handoff,
+  LaneSnapshot,
+  LaneStatusName,
+  TabInfo,
+} from "../shared/protocol.js";
 import { CdpClient } from "./cdp.js";
 import { assertPinnedChrome, chromeArgs } from "./chrome.js";
 import type { Config } from "./config.js";
@@ -40,7 +47,7 @@ export class Lane extends EventEmitter {
   control: Control = { kind: "agent" };
   handoff: Handoff | null = null;
   activeTarget: string | undefined;
-  private secretFlowActive = false;
+  private step: AgentStep | null = null;
 
   private readonly config: Config;
   private chrome: ChildProcess | null = null;
@@ -136,24 +143,28 @@ export class Lane extends EventEmitter {
       tabs,
       control: this.control,
       handoff: this.handoff,
-      credentialStep: this.secretFlowActive,
+      credentialStep: this.step === "credentials",
+      captchaStep: this.step === "captcha",
       viewLink: this.config.handoff.linkTemplate?.replaceAll("{lane}", this.name) ?? null,
     };
   }
 
-  get tainted(): boolean {
-    return this.secretFlowActive;
+  get currentStep(): AgentStep | null {
+    return this.step;
   }
 
-  beginSecretFlow(): () => void {
-    if (this.secretFlowActive)
-      throw new HttpError(409, "another credential step is already running on this lane");
+  get cdpPort(): number {
+    return this.slot.cdpPort;
+  }
+
+  beginStep(step: AgentStep): () => void {
+    if (this.step) throw new HttpError(409, `another ${this.step} step is already running on this lane`);
     const lock = this.agentLock();
     if (lock) throw new HttpError(409, `lane ${this.name} is ${lock}`);
-    this.secretFlowActive = true;
+    this.step = step;
     this.emit("change");
     return () => {
-      this.secretFlowActive = false;
+      this.step = null;
       this.emit("change");
     };
   }

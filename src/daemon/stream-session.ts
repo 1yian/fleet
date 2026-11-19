@@ -219,10 +219,12 @@ export class StreamSession {
   async command(command: StreamCommand): Promise<void> {
     if (command.t === "control") {
       if (command.on) {
-        if (this.lane.tainted) {
+        if (this.lane.currentStep) {
           throw new HttpError(
             409,
-            "the agent is typing credentials into this lane right now; try again in a few seconds",
+            this.lane.currentStep === "credentials"
+              ? "the agent is typing credentials into this lane right now; try again in a few seconds"
+              : "the agent is solving a captcha on this lane right now; try again in a few seconds",
           );
         }
         if (!this.lane.takeControl(this.viewerId, command.force)) {

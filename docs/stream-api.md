@@ -27,6 +27,7 @@ Lane snapshot:
   "control": { "kind": "agent" },
   "handoff": { "id": "a1b2c3", "lane": "main", "reason": "solve the captcha", "createdAt": 0, "expiresAt": 0, "status": "open" },
   "credentialStep": false,
+  "captchaStep": false,
   "viewLink": "http://maverick.tail7d4c65.ts.net:7878/#/browser/main"
 }
 ```
@@ -35,6 +36,7 @@ Lane snapshot:
 - `error`: always present. `null` unless `status` is `failed`, then a one-line reason (for example the Chrome pin mismatch or a crash loop). The board's `snapshot.error` assumption holds.
 - `control`: `{ "kind": "agent" }` or `{ "kind": "human", "viewerId": "...", "since": 0 }`.
 - `handoff`: `null` or the latest handoff. `status` is `open | done | cancelled | expired`; `resolvedAt` appears once it is not open.
+- `captchaStep`: `true` while the service is solving a captcha for the agent (up to about two minutes). Same effect: the board can show "agent is solving a captcha", and taking control is refused with `409` until it clears. When the solver gives up, a handoff opens and `captchaStep` goes back to `false`.
 - `credentialStep`: `true` while the service is typing a vault secret, one-time code or emailed code into the lane for the agent (usually under ten seconds). The board can show "agent is signing in"; taking control is refused with `409` until it clears.
 - `viewLink`: built from the service's `handoff.linkTemplate` by replacing `{lane}`, the same template the handoff notifications use. On p620 it is `http://maverick.tail7d4c65.ts.net:7878/#/browser/{lane}`. `null` when no template is configured. The lane list route (`#/browser`) is the board's own and the service does not know it.
 - `chromeVersion`, `chromePid` and `display` appear once the lane has started; `tabs` is empty unless `status` is `ready`.
@@ -92,8 +94,12 @@ For a phone the board can do either or both: pinch-zoom the full-resolution fram
 
 ## Handoff lifecycle (agent side, for reference)
 
-The agent runs `fleet-browser handoff "<reason>" [--wait 30m]`: the lane locks to the captain, the agent's herdr rings (phone push arrives with the captcha phase), and the agent waits. `done` (Done button), `cancelled` and `expired` all release the lane. The board sees it through `/v1/events` and the snapshot.
+The agent runs `fleet-browser handoff "<reason>" [--wait 30m]`: the lane locks to the captain, the agent's herdr rings, the host can push a phone notification (see below), and the agent waits. `done` (Done button), `cancelled` and `expired` all release the lane. The board sees it through `/v1/events` and the snapshot.
 
 ## Errors
 
 `{ "error": "..." }` with `400` invalid input, `401` auth, `404` unknown route, `409` control or stream conflict, `500` the lane's browser failed (see `error` in the snapshot).
+
+## Phone notification
+
+When a handoff opens, the service can POST to an ntfy server (`notify.url` plus a secret topic in `notify.topicFile`): title `Browser needs you: <lane>`, priority high, body the handoff reason, and the `Click` header set to `viewLink`, so tapping the notification opens the board page for the lane. Off unless configured with `deploy/notify.sh`. The board does not need to do anything for this.

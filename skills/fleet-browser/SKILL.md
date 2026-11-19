@@ -12,7 +12,8 @@ Your lane has one persistent Chrome. Cookies and logins survive between tasks. R
 3. Act: `click @e3`, `fill @e4 "text"`, `press Enter`, `scroll down`, `wait 2000`, `screenshot /path.png`, `tab list`, `eval "<js>"`.
 4. Sign in with the vault, not by typing: open the sign-in page, then `fleet-browser login <item>`. It types the username, password and one-time code and tells you the result. Two-step prompt alone: `fleet-browser otp <item> --submit`. Emailed link or code: `fleet-browser mail link|code <item> --match "<subject words>" --wait 60s` (add `--submit` for a code). While one of these runs, page reads are paused; wait for it to return.
 5. When `login` says `stuck`, `off-origin` or `needs-otp`, do not retry it: read the hints, check the page with `snapshot -i`, and hand off if you cannot proceed.
-6. When a step needs the captain (captcha you cannot pass, phone approval, payment, terms), run `fleet-browser handoff "<what the captain should do>"`. It locks the lane, notifies the captain, and waits. When it prints `handoff: done`, run `fleet-browser snapshot -i` and continue. On `expired`, report that the step is blocked.
+6. A captcha on the page: `fleet-browser captcha`. It solves hCaptcha, reCAPTCHA v2 and Cloudflare Turnstile. If it cannot, it hands the lane to the captain by itself and returns after Done; then continue with `snapshot -i`. Run it right after the click that triggers the captcha. Never call it in a loop.
+7. When a step needs the captain (captcha you cannot pass, phone approval, payment, terms), run `fleet-browser handoff "<what the captain should do>"`. It locks the lane, notifies the captain, and waits. When it prints `handoff: done`, run `fleet-browser snapshot -i` and continue. On `expired`, report that the step is blocked.
 
 Rules:
 - While the captain drives or a handoff is open, anything that changes the page is refused with a message saying so. `snapshot` and `screenshot` still work.

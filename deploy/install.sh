@@ -21,7 +21,7 @@ LINK_TEMPLATE=${FLEET_BROWSER_LINK_TEMPLATE:-}
 [ -x "$CHROME_PATH" ] || { echo "Chrome not found at $CHROME_PATH" >&2; exit 1; }
 CHROME_VERSION=$("$CHROME_PATH" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
 [ -f "$APP_DIR/dist/daemon/main.js" ] || { echo "build first: $APP_DIR/dist/daemon/main.js is missing" >&2; exit 1; }
-for tool in Xvfb xauth nft taskset unzip curl; do
+for tool in Xvfb xauth nft taskset unzip curl python3; do
   command -v "$tool" >/dev/null || { echo "install $tool" >&2; exit 1; }
 done
 
@@ -41,6 +41,16 @@ if [ ! -x /usr/local/bin/op ] || ! /usr/local/bin/op --version | grep -qx "$OP_V
   install -m 755 "$work/op" /usr/local/bin/op
   rm -rf "$work"
 fi
+
+SOLVER_DIR=$APP_DIR/solver
+SYSTEM_PYTHON=$(command -v /usr/bin/python3 || true)
+[ -x "$SYSTEM_PYTHON" ] || { echo "install /usr/bin/python3 (3.13 or newer) with the venv module" >&2; exit 1; }
+if [ ! -x "$SOLVER_DIR/.venv/bin/python" ]; then
+  "$SYSTEM_PYTHON" -m venv "$SOLVER_DIR/.venv"
+fi
+"$SOLVER_DIR/.venv/bin/pip" install -q --disable-pip-version-check -r "$SOLVER_DIR/requirements.txt"
+SITE_PACKAGES=$("$SOLVER_DIR/.venv/bin/python" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+install -d -m 755 -o "$NAME" -g "$NAME" "$SITE_PACKAGES/hcaptcha_challenger/logs"
 
 if command -v apt-mark >/dev/null && dpkg -s google-chrome-stable >/dev/null 2>&1; then
   apt-mark hold google-chrome-stable >/dev/null
@@ -66,6 +76,13 @@ if [ ! -f "$CONF_DIR/config.json" ]; then
 }
 JSON
 fi
+"$NODE_BIN" -e '
+  const fs = require("fs");
+  const [file, dir, model, keyFile] = process.argv.slice(1);
+  const config = JSON.parse(fs.readFileSync(file, "utf8"));
+  config.captcha = { dir, keyFile, ...(model ? { model } : config.captcha?.model ? { model: config.captcha.model } : {}) };
+  fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+' "$CONF_DIR/config.json" "$SOLVER_DIR" "${FLEET_BROWSER_SOLVER_MODEL:-}" "$CONF_DIR/openai.key"
 chmod 644 "$CONF_DIR/config.json"
 install -d -m 750 -o "$NAME-broker" -g "$NAME-broker" "/etc/$NAME-broker"
 install -d -m 750 -o "$NAME-broker" -g "$NAME-broker" "/etc/$NAME-broker/tokens"

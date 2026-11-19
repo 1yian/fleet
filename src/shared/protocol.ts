@@ -22,6 +22,8 @@ export interface TabInfo {
   url: string;
 }
 
+export type AgentStep = "credentials" | "captcha";
+
 export interface LaneSnapshot {
   lane: LaneName;
   status: LaneStatusName;
@@ -33,6 +35,7 @@ export interface LaneSnapshot {
   control: Control;
   handoff: Handoff | null;
   credentialStep: boolean;
+  captchaStep: boolean;
   viewLink: string | null;
 }
 

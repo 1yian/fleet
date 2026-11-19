@@ -99,6 +99,12 @@ async function routeAgent(daemon: Daemon, req: IncomingMessage, res: ServerRespo
   if (method === "POST" && (action === "login" || action === "otp" || action === "mail")) {
     return agentCredentials(daemon, lane, action, (await readJson(req)) as Record<string, unknown>, res);
   }
+  if (action === "captcha" && method === "POST") {
+    const body = (await readJson(req)) as Record<string, unknown>;
+    const kind =
+      body.kind === "hcaptcha" || body.kind === "recaptcha" || body.kind === "turnstile" ? body.kind : "auto";
+    return json(res, 200, await daemon.captcha.run(lane, body.detect === true ? "detect" : "solve", kind));
+  }
   if (action === "broker-status" && method === "GET")
     return json(res, 200, await daemon.credentials.status(lane));
   return json(res, 404, { error: "not found" });

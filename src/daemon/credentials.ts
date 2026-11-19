@@ -107,7 +107,7 @@ export class Credentials {
   }
 
   async login(lane: Lane, item: string): Promise<LoginResult> {
-    const release = lane.beginSecretFlow();
+    const release = lane.beginStep("credentials");
     let page: PageSession | null = null;
     try {
       page = await PageSession.open(lane);
@@ -197,7 +197,7 @@ export class Credentials {
     item: string,
     submit: boolean,
   ): Promise<{ typed: boolean; url: string; title: string }> {
-    const release = lane.beginSecretFlow();
+    const release = lane.beginStep("credentials");
     let page: PageSession | null = null;
     try {
       page = await PageSession.open(lane);
@@ -268,7 +268,7 @@ export class Credentials {
         throw this.translate(error);
       }
     }
-    const release = lane.beginSecretFlow();
+    const release = lane.beginStep("credentials");
     let page: PageSession | null = null;
     try {
       page = await PageSession.open(lane);

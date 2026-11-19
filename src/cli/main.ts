@@ -1,19 +1,23 @@
 import { AxiError, runAxiCli } from "axi-sdk-js";
 import { cleanOutput, PASS_THROUGH, runAgentBrowser } from "./browser.js";
+import { captchaCommand } from "./captcha.js";
 import { daemon } from "./client.js";
 import { brokerStatus, loginCommand, mailCommand, otpCommand } from "./credentials.js";
 import { parseDuration } from "./duration.js";
-import { listLanes, renderLanes, ringHerdr, watchLanes } from "./lanes.js";
+import { askCaptain, waitForHandoff } from "./handoff.js";
+import { listLanes, renderLanes, watchLanes } from "./lanes.js";
 import { renderStatus } from "./status.js";
 
 const HELP = `usage: fleet-browser <command> [args]
-commands[8]:
+commands[9]:
   (none)                          lane status: browser, control, tabs, pending handoff
   open <url>                      open a page in this lane's persistent Chrome
   snapshot [-i] | click @e | fill @e <text> | type | press | scroll | wait | screenshot <path> | eval | get | find | tab | back | reload
                                   browser verbs, passed to agent-browser (run \`fleet-browser snapshot -i\` first)
   login <item> | otp <item> [--submit] | mail link|code <item> [--match <re>] [--since 10m] [--wait 60s] [--submit]
                                   fill credentials from the lane vault; you never see the secrets
+  captcha [detect] [--kind hcaptcha|recaptcha] [--no-handoff]
+                                  solve the captcha on the page with the vision-model solver; hands the lane to the captain if it cannot
   broker status                   1Password read budget for the account
   handoff "<reason>" [--wait 30m] ask the captain to take over in the board; waits until Done
   handoff wait | cancel | status
@@ -72,6 +76,10 @@ const commands = {
     const { lane, rest } = takeLane(args);
     return mailCommand(lane, rest);
   },
+  captcha: async (args: string[]) => {
+    const { lane, rest } = takeLane(args);
+    return captchaCommand(lane, rest);
+  },
   broker: async (args: string[]) => {
     const { lane } = takeLane(args);
     return brokerStatus(lane);
@@ -115,38 +123,19 @@ async function handoffCommand(args: string[]) {
     if (!current) return { handoff: "none open" };
     return { handoff: (await daemon.cancelHandoff(lane, current.id)).status };
   }
-  let current = await daemon.currentHandoff(lane);
+  if (sub === "wait") return waitForHandoff(lane, await daemon.currentHandoff(lane));
   let waitSeconds = 1800;
-  if (sub !== "wait") {
-    const waitAt = rest.indexOf("--wait");
-    if (waitAt !== -1) {
-      waitSeconds = parseDuration(rest[waitAt + 1] ?? "");
-      rest.splice(waitAt, 2);
-    }
-    const reason = rest.join(" ").trim();
-    if (!reason)
-      throw new AxiError("a reason is required", "NO_REASON", [
-        'Run `fleet-browser handoff "solve the captcha on the page"`',
-      ]);
-    const opened = await daemon.openHandoff(lane, reason, waitSeconds);
-    if (opened.id !== current?.id) ringHerdr(`Browser needs you: ${lane}`, reason);
-    current = opened;
+  const waitAt = rest.indexOf("--wait");
+  if (waitAt !== -1) {
+    waitSeconds = parseDuration(rest[waitAt + 1] ?? "");
+    rest.splice(waitAt, 2);
   }
-  if (current?.status !== "open") return { handoff: current?.status ?? "none open" };
-  const deadline = current.expiresAt;
-  let handoff = current;
-  while (handoff.status === "open" && Date.now() < deadline) {
-    handoff = await daemon.waitHandoff(lane, current.id, 30);
-  }
-  return {
-    handoff: handoff.status,
-    reason: handoff.reason,
-    help: [
-      handoff.status === "done"
-        ? "The captain finished; continue with `fleet-browser snapshot -i`"
-        : "No answer; retry or stop the task",
-    ],
-  };
+  const reason = rest.join(" ").trim();
+  if (!reason)
+    throw new AxiError("a reason is required", "NO_REASON", [
+      'Run `fleet-browser handoff "solve the captcha on the page"`',
+    ]);
+  return askCaptain(lane, reason, waitSeconds);
 }
 
 await runAxiCli({

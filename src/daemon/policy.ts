@@ -30,8 +30,10 @@ const READ_ONLY = [
 
 export function agentCommandError(lane: Lane, method: string): string | null {
   if (ALWAYS_DENIED.has(method)) return `fleet-browser does not allow ${method}`;
-  if (lane.tainted && !TAINT_ALLOWED.some((pattern) => pattern.test(method))) {
-    return `lane ${lane.name} is filling credentials; page reads and scripts are paused until the step finishes`;
+  if (lane.currentStep && !TAINT_ALLOWED.some((pattern) => pattern.test(method))) {
+    return lane.currentStep === "credentials"
+      ? `lane ${lane.name} is filling credentials; page reads and scripts are paused until the step finishes`
+      : `lane ${lane.name} is solving a captcha; page commands are paused until the step finishes`;
   }
   const lock = lane.agentLock();
   if (lock && !READ_ONLY.some((pattern) => pattern.test(method))) {
