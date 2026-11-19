@@ -71,11 +71,7 @@ export function scratchLines(options: ScratchOptions, now: number): string[] {
     tidied === undefined
       ? []
       : [
-          `tidied: ${String(tidied.cacheFiles)} old compile cache files, ${
-            tidied.cards.length === 0
-              ? "no closed card folders"
-              : `closed card folders ${tidied.cards.join(", ")}`
-          }`,
+          `tidied: ${String(tidied.cacheFiles)} old compile cache files; card scratch was left in place`,
         ];
   return [...removed, ...describeUse(), `old /tmp scratch moves to ${tmpScratchDir()}`];
 }
