@@ -7,6 +7,14 @@ export const ActivityMessage = Type.Object({
   progress: Type.Optional(Type.Boolean()),
 });
 
+export const CompletionEvidence = Type.Optional(
+  Type.String({
+    pattern: "^/",
+    description:
+      "Only on the done report of an ops card, and required there: the absolute path of your report in $FLEET_SCRATCH. The fleet checks only the path's shape and records it unverified: it does not read the file or prove that it exists or lies in the card's scratch folder",
+  }),
+);
+
 export const LandingFields = {
   pr: ReportPr,
   merged: Type.Optional(Type.Boolean()),

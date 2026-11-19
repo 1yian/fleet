@@ -87,6 +87,10 @@ function closable(
 } {
   const { card } = reachable(db, session, args.card);
   const name = `c-${String(card.id)}`;
+  if (card.delivery === "ops")
+    throw new Error(
+      `${name} delivers ops; closing an operation is not available until authoritative retirement lands (tracked on its own card); leave it open`,
+    );
   requireOrdinary(db, card);
   if (card.status === "done" || card.status === "dropped")
     throw new Error(`${name} is already ${card.status}`);

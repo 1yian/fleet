@@ -1,11 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
-import { check, OPS, type Card, type OpArgs } from "@fleet/protocol";
+import { check, inEvidenceScope, OPS, type Card, type OpArgs } from "@fleet/protocol";
 import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import type { Hosts } from "./pulls.ts";
-import { getCard, listProjects } from "./store.ts";
-import { cardEntries } from "./store.ts";
+import { cardEntries, getCard, listProjects } from "./store.ts";
 import { finishFrom } from "./status.ts";
 
 export function routeFor(hosts: Hosts, host: string): readonly string[] {
@@ -107,12 +106,36 @@ export async function normalizeReport(
   raw: unknown,
 ): Promise<{ args: OpArgs<"report">; note?: string }> {
   const args = check(OPS.report.args, raw);
+  requireOperationEvidence(getCard(db, card), args);
   if (args.status !== "merged") return { args };
   const { merged, note } = await verify(db, hosts, card, args.pr);
   return {
     args: { ...args, status: merged === true ? "merged" : "done", merged: merged === true },
     ...(note === undefined ? {} : { note }),
   };
+}
+
+function requireOperationEvidence(card: Card, args: OpArgs<"report">): void {
+  if (card.delivery !== "ops") {
+    if (args.evidence !== undefined)
+      throw new Error("evidence is only for the done report of an ops card");
+    return;
+  }
+  if (args.status === "merged" || args.merged === true || args.pr !== undefined)
+    throw new Error("ops work does not report a PR or merge; dispatch product changes separately");
+  if (args.status !== "done") {
+    if (args.evidence !== undefined)
+      throw new Error("evidence is only for the done report of an ops card");
+    return;
+  }
+  if (args.evidence === undefined)
+    throw new Error(
+      "ops completion requires evidence: an absolute path to a report in $FLEET_SCRATCH",
+    );
+  if (!inEvidenceScope(card.id, args.evidence))
+    throw new Error(
+      "ops evidence must be a file in this card's $FLEET_SCRATCH folder, outside its tmp folder",
+    );
 }
 
 function unmergedShipPr(db: DatabaseSync, id: number): { card: Card; pr: string } | undefined {

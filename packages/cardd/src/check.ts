@@ -200,6 +200,8 @@ function withIncidents(
 
 function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: unknown): string {
   if (merged) return "Close it now with close(card, summary).";
+  if (delivery === "ops")
+    return "Closing an ops card is not available yet: leave it open. Do not call close, with or without confirm=true or landed=false.";
   if (kind === "ship" && delivery === "local-only")
     return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   if (kind === "scout")

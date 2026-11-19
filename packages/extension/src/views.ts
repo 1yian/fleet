@@ -1,5 +1,6 @@
 import {
   idlePark,
+  operationHandoff,
   waitLine,
   type BoardCard,
   type CardView,
@@ -233,6 +234,19 @@ function reportPath(entries: readonly Entry[]): string | undefined {
   return undefined;
 }
 
+function reportFields(view: CardView): Record<string, string> {
+  if (view.card.delivery !== "ops") {
+    const report = reportPath(view.entries);
+    return report === undefined ? {} : { report };
+  }
+  return typeof operationHandoff(view.entries)?.fields["evidence"] === "string"
+    ? {
+        evidence:
+          "reported, shape-checked only and not verified: do not read it, and closing an ops card is not available yet",
+      }
+    : {};
+}
+
 type Cut = (text: string, max: number) => string;
 
 const firstLineOf = (text: string): string =>
@@ -303,8 +317,7 @@ export function cardText(view: CardView, query: CardQuery): string {
   const { card } = view;
   const record = about(view, clip);
   record["attempts"] = view.attempts.length === 0 ? "0 (never dispatched)" : view.attempts;
-  const report = reportPath(view.entries);
-  if (report !== undefined) record["report"] = report;
+  Object.assign(record, reportFields(view));
   if (card.intent !== "") record["intent"] = clip(card.intent, 300);
   if (card.spec !== "") record["spec"] = clip(card.spec, 300);
   const total = view.entries.length;

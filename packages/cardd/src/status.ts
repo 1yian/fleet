@@ -2,9 +2,11 @@ import {
   approvedBy,
   approvesOf,
   ATTENTIONS,
+  HANDOFF_REPORTS,
   HOLDERS,
   parseCards,
   parseWait,
+  toWorker,
   type Attention,
   type CardKind,
   type Entry,
@@ -227,9 +229,6 @@ function released(tally: Tally, entry: Entry): void {
   if (entry.fields["withdrawn"] !== true) handBack(tally);
 }
 
-const toWorker = (entry: Entry): boolean =>
-  entry.fields["task"] !== undefined || entry.fields["for"] === "worker";
-
 function commented(tally: Tally, entry: Entry): void {
   if (entry.author === "captain") {
     if (tally.hold?.holder === "captain" && tally.hold.reviewRequests === undefined)
@@ -394,16 +393,6 @@ export interface Finish {
   readonly emptyBranch: boolean;
   readonly at: number;
 }
-
-const HANDOFF_REPORTS: ReadonlySet<string> = new Set([
-  "blocked",
-  "needs-decision",
-  "failed",
-  "stopped",
-  "in-review",
-  "done",
-  "merged",
-]);
 
 const isMerge = (entry: Entry): boolean =>
   entry.kind === "report" && entry.author.startsWith("worker:") && entry.fields["merged"] === true;

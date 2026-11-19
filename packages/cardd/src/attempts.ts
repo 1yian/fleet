@@ -191,6 +191,7 @@ function deliveryOf(db: DatabaseSync, card: Card, asked: Delivery | undefined): 
   }
   const registered = card.project === null ? null : registeredDelivery(db, card.project);
   const mode = asked ?? card.delivery ?? registered;
+  if (mode === "ops" && card.pr !== null) throw new Error("a card with a PR cannot change to ops");
   db.prepare("UPDATE cards SET delivery = ? WHERE id = ? AND delivery IS NOT ?").run(
     mode,
     card.id,
@@ -207,6 +208,8 @@ export function setCardDelivery(db: DatabaseSync, id: number, mode: Delivery): s
       throw new Error(
         `c-${String(id)} is a ${card.kind} card: only a ship card has a delivery mode`,
       );
+    if (mode === "ops" && card.pr !== null)
+      throw new Error("a card with a PR cannot change to ops");
     const live = liveAttempt(db, id);
     if (live !== undefined && card.delivery !== mode)
       throw new Error(
