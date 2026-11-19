@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsrs -p ."
   },
   "dependencies": {
     "@fleet/protocol": "0.0.0",

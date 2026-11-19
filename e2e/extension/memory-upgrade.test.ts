@@ -243,11 +243,13 @@ test("a second mate's plan sits in the tail, after the marker and before its rul
   const home = `${scratch.root}.worktrees/lane-ads`;
   mkdirSync(join(home, "data"), { recursive: true });
   writeFileSync(join(home, "data", "captain.md"), "Prefer short replies.\n");
-  await cardd
-    .connect(mainToken)
-    .then((main) =>
-      main.call("comment", { lane: "ads", text: "Start." }).finally(() => main.close()),
-    );
+  await cardd.connect(mainToken).then(async (main) => {
+    try {
+      await main.call("comment", { lane: "ads", text: "Start." });
+    } finally {
+      await main.close();
+    }
+  });
   await h.waitForCall(0, "mate", WAIT_MS);
 
   const call = h.wire.find((each) => each.role === "mate" && !each.warm);

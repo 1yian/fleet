@@ -12,7 +12,7 @@ Read [docs/spec.md](docs/spec.md) for the design and [docs/build-plan.md](docs/b
 
 ## Rules
 
-- The gates in `eslint.config.js`, `tsconfig.json`, `knip.json`, and `.dependency-cruiser.cjs` are the rules. Inline disable comments do not work. Change a rule only in its config file, and say why in the pull request.
+- The gates in `.oxlintrc.json`, `lint-plugin.js`, `tsconfig.json`, `knip.json`, and `.dependency-cruiser.cjs` are the rules. Inline disable comments do not work. Change a rule only in its config file, and say why in the pull request.
 - No comments in code. The `fleet/no-comments` lint rule fails on any comment. Say it with a name, a type, or a smaller function. A reason that no name can carry goes in [docs/code.md](docs/code.md).
 - Validate data that crosses a process boundary (websocket messages, database rows, environment variables, Pi events) with the schemas in `@fleet/protocol` or a narrowing helper. Trust typed data inside.
 - `cardd`, the extension, and the board share only `@fleet/protocol`. End-to-end tests import only `@fleet/protocol`.
@@ -24,7 +24,7 @@ Read [docs/spec.md](docs/spec.md) for the design and [docs/build-plan.md](docs/b
 - A behavior change needs an end-to-end test. A bug fix needs a test that fails before the fix.
 - Do not wait with fixed sleeps. Wait for an event, an entry, or a state.
 - Do not test by reading source files for strings.
-- A test or a helper stops only what it started itself: its own lab session by its own `--session` name (`HerdrLab` does this), or its own process by pid or process group. It never kills a process by name. One host runs the live herdr server, the lanes, and other workers' tests, so `pkill herdr` or `killall` takes them all down. `eslint.config.js` fails any `pkill` or `killall` in `e2e` code, except in the two tests that check Pi's refusal of them.
+- A test or a helper stops only what it started itself: its own lab session by its own `--session` name (`HerdrLab` does this), or its own process by pid or process group. It never kills a process by name. One host runs the live herdr server, the lanes, and other workers' tests, so `pkill herdr` or `killall` takes them all down. `.oxlintrc.json` fails any `pkill` or `killall` in `e2e` code, except in the two tests that check Pi's refusal of them.
 - A test that starts the fleet uses `Scratch` from `e2e/support/scratch.ts`: a copy of this repository with its own lane homes. Never point a test at the live main, its lanes, `~/.fleet`, or `~/.config/fleet`.
 
 ## Documents
