@@ -25,6 +25,8 @@
         "support/reaper.ts",
         "support/roomy-disk.ts",
         "support/fake-no-mistakes.ts",
+        "support/fake-go.ts",
+        "support/fake-pi.ts",
         "trial/*.ts"
       ]
     },
