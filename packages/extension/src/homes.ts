@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { quote } from "@fleet/protocol/route";
 import { arrangeHere, claimFollowers } from "./arrange.ts";
+import { TRUST_ARG } from "./fleet-args.ts";
 import { field, herdr as herdrOn, paneMissing, piRunning, records, shellIdle } from "./host.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
@@ -271,7 +272,7 @@ async function start(root: string, info: LaneHome): Promise<void> {
     pane = field(isRecord(created["root_pane"]) ? created["root_pane"] : undefined, "pane_id");
   } else pane = field(await workspaceRootPane(workspace), "pane_id");
   if (pane === undefined) throw new Error(`workspace ${mateTitle(info.lane)} has no pane`);
-  const pi = ["pi", "--continue", ...mateStartArgs(info.config.args, info.config.tier)];
+  const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
   const command = withCompileCache(direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi]);
   await herdr(["pane", "run", pane, `cd ${quote(info.home)} && ${command.map(quote).join(" ")}`]);

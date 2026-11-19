@@ -1,4 +1,5 @@
 import { quote } from "@fleet/protocol/route";
+import { TRUST_ARG } from "./fleet-args.ts";
 import { herdr, shellIdle } from "./host.ts";
 import { readLaneConfig } from "./lane-config.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
@@ -34,7 +35,8 @@ export async function runRelaunch(
     await until(() => shellIdle("local", pane), `the shell in pane ${pane}`);
     const direnv = process.env["FLEET_RELAUNCH_DIRENV"] ?? "";
     const resume = args.includes("--session-id") ? [] : ["--continue"];
-    const pi = ["pi", ...resume, ...args];
+    const trust = args.includes(TRUST_ARG) ? [] : [TRUST_ARG];
+    const pi = ["pi", ...resume, ...trust, ...args];
     const command = withCompileCache(direnv === "" ? pi : ["direnv", "exec", direnv, ...pi])
       .map(quote)
       .join(" ");
