@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   check,
   CLOSE,
@@ -52,6 +53,7 @@ export class Link {
   private readonly untold: ClientMessage[] = [];
   private readonly options: LinkOptions;
   private announced = false;
+  private readonly runtime = randomUUID();
 
   constructor(options: LinkOptions) {
     this.options = options;
@@ -72,6 +74,7 @@ export class Link {
         maintenance: this.options.onMaintenance !== undefined,
         running: this.options.running?.() === true,
         ...(id === undefined ? {} : { process: id }),
+        runtime: this.runtime,
         ...(this.announced ? {} : { started: true }),
       };
       this.send(hello);

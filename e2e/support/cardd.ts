@@ -174,13 +174,35 @@ export class Cardd {
     db.close();
   }
 
-  private sessionState(session: string): unknown {
+  private scalar(sql: string, ...params: string[]): unknown {
     const db = new DatabaseSync(this.db, { timeout: 5000 });
     try {
-      return db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
+      return db.prepare(sql).get(...params)?.["v"];
     } finally {
       db.close();
     }
+  }
+
+  summaryCount(): number {
+    return Number(
+      this.scalar(
+        "SELECT count(*) AS v FROM entries WHERE author = 'maintenance' AND json_extract(fields, '$.maintenanceBatch') IS NOT NULL",
+      ),
+    );
+  }
+
+  maintenanceStateOf(session: string): string | undefined {
+    const state = this.scalar("SELECT state AS v FROM maintenance WHERE session = ?", session);
+    return typeof state === "string" ? state : undefined;
+  }
+
+  runtimeRecorded(session: string): string | undefined {
+    const runtime = this.scalar("SELECT runtime AS v FROM sessions WHERE id = ?", session);
+    return typeof runtime === "string" ? runtime : undefined;
+  }
+
+  private sessionState(session: string): unknown {
+    return this.scalar("SELECT state AS v FROM sessions WHERE id = ?", session);
   }
 
   async waitForSessionLost(session: string): Promise<void> {
@@ -260,19 +282,33 @@ export class Cardd {
     takesIn = true,
     running = false,
     maintenance = false,
+    started = false,
+    runtime: string = randomUUID(),
   ): Promise<Session> {
-    const session = new Session(new WebSocket(this.url), takesIn);
+    const session = new Session(new WebSocket(this.url), takesIn, runtime);
     await session.opened;
     session.send({
       t: "hello",
       token,
       inFile,
       process: this.processOf(token),
+      runtime,
       ...(running ? { running } : {}),
       ...(maintenance ? { maintenance } : {}),
+      ...(started ? { started } : {}),
     });
     await until(() => session.welcome ?? session.closeCode, "welcome or close");
     return session;
+  }
+
+  async replace(old: Session, token: string, request: number): Promise<Session> {
+    await old.call("maintenance.ack", {
+      id: request,
+      state: "reloading",
+      detail: "helper submitted replacement command",
+    });
+    await old.close();
+    return this.connect(token, [], true, false, true, true);
   }
 
   private processOf(token: string): string {
@@ -372,7 +408,9 @@ type Outgoing =
       token: string;
       inFile: readonly number[];
       process: string;
+      runtime: string;
       maintenance?: boolean;
+      started?: boolean;
       running?: boolean;
     }
   | { t: "read"; entry: number }
@@ -384,6 +422,7 @@ export class Session {
   readonly entries: Extract<ServerMessage, { t: "entry" }>[] = [];
   readonly maintenance: Extract<ServerMessage, { t: "maintenance" }>[] = [];
   readonly opened: Promise<void>;
+  readonly runtime: string;
   welcome: Extract<ServerMessage, { t: "welcome" }> | undefined;
   closeCode: number | undefined;
   private readonly socket: WebSocket;
@@ -391,8 +430,9 @@ export class Session {
   private nextId = 1;
   private readonly takesIn: boolean;
 
-  constructor(socket: WebSocket, takesIn: boolean) {
+  constructor(socket: WebSocket, takesIn: boolean, runtime: string) {
     this.socket = socket;
+    this.runtime = runtime;
     this.takesIn = takesIn;
     this.opened = new Promise((resolve) => {
       socket.addEventListener("open", () => {

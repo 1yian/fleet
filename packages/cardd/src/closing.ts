@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { check, OPS, type Card, type Next } from "@fleet/protocol";
 import { endLiveAttempts } from "./attempts.ts";
+import { settleClosedCard } from "./maintenance.ts";
 import { requireOrdinary } from "./change.ts";
 import { closeCardIncidents } from "./incident-lifecycle.ts";
 import { factsFrom, finishFrom } from "./status.ts";
@@ -168,6 +169,7 @@ export function closeFinish(
   const now = Date.now();
   closeCardIncidents(db, card.id, now);
   endLiveAttempts(db, card.id, now);
+  const settled = settleClosedCard(db, card.id);
   const main = mainLane(db);
   const other = session.lane === card.lane ? main : card.lane;
   const closed = {
@@ -188,5 +190,5 @@ export function closeFinish(
     },
     to,
   );
-  return { value: getCard(db, card.id), notify: to };
+  return { value: getCard(db, card.id), notify: [...to, ...settled] };
 }

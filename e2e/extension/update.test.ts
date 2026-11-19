@@ -177,27 +177,34 @@ test("/updatefleet pulls origin's new commit into every home on every host and c
   const range = `${old.slice(0, 7)}..${fresh.slice(0, 7)} (1 commit)`;
   const start = said.indexOf("[fleet] update:");
   const report = said.slice(start, said.indexOf("\n", said.indexOf("Main: restarts", start)));
-  assert.equal(
-    report,
-    [
-      "[fleet] update: Fleet updated.",
-      "Hosts:",
-      `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
-      `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
-      `- local cardd (${app.root}): updated ${range}; board built; its code did not change, so it was not restarted`,
-      "Reloads at each safe point (pending is not completed):",
-      "Reloaded and verified:",
-      "- far (mate): reload completed - reconnected on a new process",
-      "- ops (mate): reload completed - reconnected on a new process",
-      "Unable to reload:",
-      "- ghost (mate): reload failed - runs code from before safe reloads, so it was left running: restart it by hand",
-      "Sidebars:",
-      "- local: ordered",
-      "- p620: ordered",
-      "Board: unchanged.",
-      "Main: restarts on its own conversation when this turn ends.",
-    ].join("\n"),
+  const lines = report.split("\n");
+  const failure = lines.splice(
+    lines.findIndex((line) => line.startsWith("- ghost ")),
+    1,
+  )[0];
+  assert.match(
+    failure ?? "",
+    new RegExp(
+      `^- ghost \\(mate\\): reload failed - runs code from before safe reloads, so it was left running: restart it by hand \\[c-\\d+, host unknown, process ${ghost.runtime}\\]$`,
+    ),
   );
+  assert.deepEqual(lines, [
+    "[fleet] update: Fleet updated.",
+    "Hosts:",
+    `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
+    `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
+    `- local cardd (${app.root}): updated ${range}; board built; its code did not change, so it was not restarted`,
+    "Reloads at each safe point (pending is not completed):",
+    "Reloaded and verified:",
+    "- far (mate): reload completed - reconnected on a new process",
+    "- ops (mate): reload completed - reconnected on a new process",
+    "Unable to reload:",
+    "Sidebars:",
+    "- local: ordered",
+    "- p620: ordered",
+    "Board: unchanged.",
+    "Main: restarts on its own conversation when this turn ends.",
+  ]);
   assert.match(said, /Check the update\?/);
 });
 

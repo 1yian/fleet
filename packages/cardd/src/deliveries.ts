@@ -9,6 +9,7 @@ import {
 } from "./delivery-states.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { addEntry, ENTRY_JSON, json, mainLane } from "./store.ts";
+import { identified } from "./maintenance.ts";
 import { holdFor } from "./waits.ts";
 import type { Timings } from "./timing.ts";
 
@@ -240,7 +241,7 @@ export function toPush(
   const all = rows.map((row) => {
     const pushed = check(PushedEntrySchema, row);
     const { name, again = false } = pushed;
-    const entry = holdFor(db, lane, pushed.entry);
+    const entry = identified(db, lane, holdFor(db, lane, pushed.entry));
     const push = {
       entry,
       name,

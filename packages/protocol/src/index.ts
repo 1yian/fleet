@@ -417,6 +417,11 @@ const ClientMessage = Type.Union([
     maintenance: Type.Optional(Type.Boolean()),
     running: Type.Optional(Type.Boolean()),
     started: Type.Optional(Type.Boolean()),
+    runtime: Type.Optional(
+      Type.String({
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      }),
+    ),
   }),
   Type.Object({ t: Type.Literal("read"), entry: Type.Integer() }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
@@ -488,7 +493,6 @@ export function check<T extends TSchema>(schema: T, value: unknown): Static<T> {
   const [first] = Value.Errors(schema, value);
   throw new Error(`invalid ${first?.instancePath ?? ""}: ${first?.message ?? "bad value"}`);
 }
-
 export const parseClientMessage = (text: string): ClientMessage =>
   check(ClientMessage, JSON.parse(text));
 export const parseServerMessage = (text: string): ServerMessage =>

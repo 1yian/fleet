@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Move } from "../support/harness.ts";
+import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { git } from "../support/remote.ts";
 import {
   LiveFleet,
@@ -116,24 +117,46 @@ async function asksWithNewCode(worker: Worker): Promise<void> {
   assert.doesNotMatch(systemOf(first ?? []), RegExp(NEW_CODE));
 }
 
-async function mainHears(workers: readonly Worker[]): Promise<void> {
+async function mainHears(
+  workers: readonly Worker[],
+  expected = "5 reloaded and verified, 1 failed",
+  prompt = "WHO-RELOADED",
+): Promise<void> {
   await fleet.matePid("main");
-  await fleet.lab.submit(fleet.mainPane, "WHO-RELOADED");
+  await fleet.lab.submit(fleet.mainPane, prompt);
   const heard = await until(
-    () => fleet.h.callsOf("mate").find((each) => lastUser(each).includes("WHO-RELOADED")),
+    () => fleet.h.callsOf("mate").find((each) => lastUser(each).includes(prompt)),
     "main to answer",
   );
   const told = heard
     .filter((turn) => turn.text.startsWith("[fleet] maintenance:"))
     .map((turn) => turn.text);
-  for (const who of workers.map((each) => each.session))
-    assert.ok(
-      told.includes(
-        `[fleet] maintenance: ${who} (worker on ${workers.find((each) => each.session === who)?.host ?? ""}): reload completed - ${NOW_LINE}`,
-      ),
-      who,
+  const summaries = told.filter((line) => line.includes("Reload batch "));
+  assert.equal(summaries.length, 1, told.join("\n"));
+  assert.ok(summaries[0]?.includes(expected));
+  assert.equal(told.filter((line) => line.includes("reload completed -")).length, 0);
+  assert.equal(fleet.cardd.summaryCount(), 1);
+  await assert.rejects(
+    fleet.ghost.call("maintenance.status", { batch: "any" }),
+    /only the requester/,
+  );
+  for (const worker of workers) {
+    const history = await fleet.ghost.call("card", { card: worker.card });
+    const visible = check(OPS.card.result, history).entries;
+    assert.equal(
+      visible.filter((entry) => entry.fields["maintenanceBatch"] !== undefined).length,
+      0,
     );
-  assert.ok(told.includes(`[fleet] maintenance: ops (mate): reload completed - ${NOW_LINE}`));
+    const thread = JSON.stringify(await fleet.cardd.thread(worker.card));
+    assert.equal(thread.includes("Reload batch"), false);
+    assert.ok(
+      check(OPS.card.result, history).entries.some((entry) =>
+        entry.body.includes(
+          `${worker.session} (worker on ${worker.host}): reload completed - ${NOW_LINE}`,
+        ),
+      ),
+    );
+  }
 }
 
 test("update_fleet reloads every worker and second mate at its safe point, never during a turn or a job, and each returns on its own conversation, branch and worktree with the new code and its pause kept", async () => {
@@ -168,22 +191,26 @@ test("update_fleet reloads every worker and second mate at its safe point, never
   );
   const section = report
     .slice(report.indexOf("Reloads at each"), report.indexOf("Sidebars:"))
-    .trimEnd();
-  assert.equal(
-    section,
-    [
-      "Reloads at each safe point (pending is not completed):",
-      "Reloaded and verified:",
-      `- ${paused.session} (worker on p620): reload completed - ${NOW_LINE}`,
-      `- far (mate): reload completed - ${NOW_LINE}`,
-      "Waiting for a safe point, not yet reloaded (main hears when each finishes):",
-      `- ${busy.session} (worker on local): reload pending - ${SAFE_POINT}`,
-      `- ${job.session} (worker on local): reload pending - ${SAFE_POINT}`,
-      `- ops (mate): reload pending - ${SAFE_POINT}`,
-      "Unable to reload:",
-      "- ghost (mate): reload failed - runs code from before safe reloads, so it was left running: restart it by hand",
-    ].join("\n"),
+    .trimEnd()
+    .split("\n");
+  const failure = section.pop();
+  assert.match(
+    failure ?? "",
+    new RegExp(
+      `^- ghost \\(mate\\): reload failed - runs code from before safe reloads, so it was left running: restart it by hand \\[c-\\d+, host unknown, process ${fleet.cardd.runtimeRecorded("ghost") ?? "missing"}\\]$`,
+    ),
   );
+  assert.deepEqual(section, [
+    "Reloads at each safe point (pending is not completed):",
+    "Reloaded and verified:",
+    `- ${paused.session} (worker on p620): reload completed - ${NOW_LINE}`,
+    `- far (mate): reload completed - ${NOW_LINE}`,
+    "Waiting for a safe point, not yet reloaded:",
+    `- ${busy.session} (worker on local): reload pending - ${SAFE_POINT}`,
+    `- ${job.session} (worker on local): reload pending - ${SAFE_POINT}`,
+    `- ops (mate): reload pending - ${SAFE_POINT}`,
+    "Unable to reload:",
+  ]);
   assert.notEqual(git(fleet.here.root, "rev-parse", "HEAD"), old);
 
   assert.equal(await fleet.piIn(busy.pane), was.busy.pid);
@@ -222,4 +249,110 @@ test("update_fleet reloads every worker and second mate at its safe point, never
   assert.ok(afterOps.some((turn) => turn.role === "user" && turn.text.includes("LONG-TURN")));
 
   await mainHears([busy, job, paused]);
+});
+
+test("a successful multi-host update summarizes real replacements once, including a late safe point and duplicate receipts", async () => {
+  script();
+  const control = await fleet.cardd.connect(fleet.mainToken);
+  await control.call("lane.stopping", { lane: "ghost" });
+  await control.close();
+  await fleet.startMain();
+  const mates = { ops: await fleet.matePid("ops"), far: await fleet.matePid("far") };
+  const busy = await fleet.startWorker("busy", "local");
+  const paused = await fleet.startWorker("paused", "p620");
+  await until(() => (reached("busy", "started") ? true : undefined), "busy's turn");
+  await until(
+    async () => ((await fleet.cardOf(paused.card)).status === "paused" ? true : undefined),
+    "the far worker to pause",
+  );
+  const was = { busy: await before(busy), paused: await before(paused) };
+  fleet.landCode();
+  await fleet.lab.submit(fleet.mainPane, "/updatefleet");
+  const report = await until(
+    () => fleet.userTexts("mate").find((text) => text.startsWith("[fleet] update:")),
+    "the update report before the late safe point",
+  );
+  assert.ok(report.includes(`${busy.session} (worker on local): reload pending`));
+  assert.equal(await fleet.piIn(busy.pane), was.busy.pid);
+  await onNewCode(paused, was.paused);
+  for (const lane of ["ops", "far"] as const) {
+    const pane = await until(() => fleet.paneOf(`2ndmate-${lane}`), `${lane}'s pane`);
+    assert.notEqual(await fleet.newPid(pane, mates[lane]), mates[lane]);
+  }
+  fleet.open("busy-gate");
+  await onNewCode(busy, was.busy);
+  for (const worker of [busy, paused]) await asksWithNewCode(worker);
+  await mainHears([busy, paused], "4 reloaded and verified, 0 failed");
+  const history = check(OPS.card.result, await fleet.ghost.call("card", { card: busy.card }));
+  const receipt = history.entries.find((entry) => typeof entry.fields["maintenance"] === "number");
+  assert.ok(receipt);
+  const id = receipt.fields["maintenance"];
+  assert.equal(typeof id, "number");
+  assert.equal(fleet.cardd.summaryCount(), 1);
+  const duplicate = await fleet.cardd.post(busy.token, "maintenance.ack", {
+    id,
+    state: "failed",
+    detail: "late duplicate helper failure",
+  });
+  assert.equal(duplicate.status, 200);
+  const outcome = check(HttpOutcomeSchema, duplicate.body);
+  assert.ok(outcome.ok);
+  const settled = check(OPS["maintenance.ack"].result, outcome.value);
+  assert.equal(settled.state, "completed");
+  assert.equal(settled.detail, NOW_LINE);
+  assert.equal(fleet.cardd.summaryCount(), 1);
+  await mainHears([busy, paused], "4 reloaded and verified, 0 failed", "AFTER-DUPLICATE");
+  const after = check(OPS.card.result, await fleet.ghost.call("card", { card: busy.card }));
+  assert.equal(after.entries.filter((entry) => entry.fields["maintenance"] === id).length, 1);
+});
+
+test("an update whose target lane is removed mid-update reports an already-failed and a still-pending removed target honestly, and the summary counts them", async () => {
+  script();
+  const control = await fleet.cardd.connect(fleet.mainToken);
+  await control.call("lane.stopping", { lane: "ghost" });
+  await control.close();
+  fleet.cardd.addLane("unused", "main");
+  const waiting = fleet.cardd.addLane("waiting", "main");
+  await fleet.startMain();
+  const busy = await fleet.startWorker("busy", "local");
+  const paused = await fleet.startWorker("paused", "p620");
+  await until(() => (reached("busy", "started") ? true : undefined), "busy's turn");
+  await until(
+    async () => ((await fleet.cardOf(paused.card)).status === "paused" ? true : undefined),
+    "the far worker to pause",
+  );
+  const was = { busy: await before(busy), paused: await before(paused) };
+  fleet.landCode();
+  await (await fleet.cardd.connect(waiting, [], true, false, true)).close();
+  await fleet.lab.submit(fleet.mainPane, "/updatefleet");
+  await until(
+    () =>
+      fleet.cardd.maintenanceStateOf("unused") === "failed" &&
+      fleet.cardd.maintenanceStateOf("waiting") === "pending"
+        ? true
+        : undefined,
+    "the unused lane to fail and the waiting lane to be pending at enrollment",
+  );
+  for (const lane of ["unused", "waiting"]) {
+    const removed = fleet.cardd.admin("lane", "remove", lane);
+    assert.equal(removed.status, 0, removed.stderr);
+  }
+  const report = await until(
+    () => fleet.userTexts("mate").find((text) => text.startsWith("[fleet] update:")),
+    "the update report",
+  );
+  assert.match(
+    report,
+    /- unused \(mate\): reload failed - not connected \(stopped, held, or down\), so it was left as it is \[c-\d+, host unknown, process unknown\]/,
+  );
+  assert.match(
+    report,
+    /- waiting \(mate\): reload failed - no longer reported \(its lane was removed\), so it is not verified/,
+  );
+  assert.equal(report.includes("- waiting (mate): reload completed"), false);
+  fleet.open("busy-gate");
+  await onNewCode(busy, was.busy);
+  await onNewCode(paused, was.paused);
+  await mainHears([busy, paused], "4 reloaded and verified, 1 failed, 1 removed with their lane");
+  assert.equal(fleet.cardd.summaryCount(), 1);
 });

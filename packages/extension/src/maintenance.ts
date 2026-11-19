@@ -177,7 +177,12 @@ const sections = (kind: Maintenance["kind"]) => {
   const done = kind === "stow" ? "stowed" : "reloaded";
   return [
     [kind === "stow" ? "Stowed and verified" : "Reloaded and verified", "completed"],
-    [`Waiting for a safe point, not yet ${done} (main hears when each finishes)`, "open"],
+    [
+      kind === "reload"
+        ? `Waiting for a safe point, not yet ${done}`
+        : `Waiting for a safe point, not yet ${done} (main hears when each finishes)`,
+      "open",
+    ],
     [`Unable to ${kind}`, "failed"],
   ] as const;
 };
@@ -218,11 +223,23 @@ export async function requestAndAwait(
     }
   };
   let rows = await first();
+  const enrolled = rows;
   while (open(rows) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     rows = await link.call("maintenance.status", { batch }).catch(() => rows);
   }
   if (rows.some((row) => row.state === "reloading"))
     rows = await link.call("maintenance.status", { batch, failUnverified: true });
-  return rows;
+  const kept = enrolled
+    .filter((row) => !rows.some((each) => each.id === row.id))
+    .map((row): Maintenance =>
+      row.state === "pending" || row.state === "reloading"
+        ? {
+            ...row,
+            state: "failed",
+            detail: "no longer reported (its lane was removed), so it is not verified",
+          }
+        : row,
+    );
+  return [...rows, ...kept].sort((a, b) => a.id - b.id);
 }
