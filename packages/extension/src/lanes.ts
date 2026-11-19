@@ -57,37 +57,52 @@ async function everyLane(
   return out;
 }
 
-export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
-  const here = sidebarHostName(process.env["FLEET_HOST"]);
-  const runningHosts = new Map([[config.lane, [here]]]);
-  for (const host of hostsOf(config)) {
-    const out = (await fleet(config, host, ["status", "--placement", "--json"]))
-      .trim()
-      .split("\n")
-      .at(-1);
-    const parsed: unknown = JSON.parse(out ?? "");
-    const homes = records(parsed);
-    if (!Array.isArray(parsed) || homes.length !== parsed.length)
-      throw new Error(`invalid mate placement on ${host}`);
-    for (const row of homes) {
-      const lane = text(row, "lane");
-      const running = row["mate"];
-      if (lane === "" || typeof running !== "boolean")
-        throw new Error(`invalid mate placement on ${host}`);
-      if (!running || (host === "local" && lane === config.lane)) continue;
-      const named =
-        host === "local"
-          ? sidebarHostName(typeof row["host"] === "string" ? row["host"] : undefined)
-          : host;
-      runningHosts.set(lane, [...(runningHosts.get(lane) ?? []), named]);
-    }
-  }
+async function placementRows(config: LaneConfig, host: string): Promise<Record<string, unknown>[]> {
+  const out = (await fleet(config, host, ["status", "--placement", "--json"]))
+    .trim()
+    .split("\n")
+    .at(-1);
+  const parsed: unknown = JSON.parse(out ?? "");
+  const homes = records(parsed);
+  if (!Array.isArray(parsed) || homes.length !== parsed.length)
+    throw new Error(`invalid mate placement on ${host}`);
+  return homes;
+}
+
+function placedName(host: string, row: Record<string, unknown>): string {
+  if (host !== "local") return host;
+  return sidebarHostName(typeof row["host"] === "string" ? row["host"] : undefined);
+}
+
+function soleHosts(runningHosts: Map<string, string[]>): Map<string, string> {
   const found = new Map<string, string>();
   for (const [lane, hosts] of runningHosts) {
     const [host] = hosts;
     if (host !== undefined && hosts.length === 1) found.set(lane, host);
   }
   return found;
+}
+
+async function collectRunning(
+  config: LaneConfig,
+  host: string,
+  runningHosts: Map<string, string[]>,
+): Promise<void> {
+  for (const row of await placementRows(config, host)) {
+    const lane = text(row, "lane");
+    const running = row["mate"];
+    if (lane === "" || typeof running !== "boolean")
+      throw new Error(`invalid mate placement on ${host}`);
+    if (!running || (host === "local" && lane === config.lane)) continue;
+    runningHosts.set(lane, [...(runningHosts.get(lane) ?? []), placedName(host, row)]);
+  }
+}
+
+export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
+  const here = sidebarHostName(process.env["FLEET_HOST"]);
+  const runningHosts = new Map([[config.lane, [here]]]);
+  for (const host of hostsOf(config)) await collectRunning(config, host, runningHosts);
+  return soleHosts(runningHosts);
 }
 
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {

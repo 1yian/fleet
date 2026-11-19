@@ -270,7 +270,8 @@ switch (command ?? "") {
   }
   case "arrange": {
     const running = fileURLToPath(new URL("../../..", import.meta.url));
-    const configured = process.env["FLEET_HOST"] || undefined;
+    const envHost = process.env["FLEET_HOST"];
+    const configured = envHost === "" ? undefined : envHost;
     const home =
       values.host === undefined && configured === undefined ? readLaneConfig(running) : undefined;
     const named =

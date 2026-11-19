@@ -9,7 +9,12 @@ export const legacyMatePrefix = "fleet-";
 
 export function isWorkerWorkspace(row: Record<string, unknown>): boolean {
   const tokens = row["tokens"];
-  return isRecord(tokens) && (field(tokens, "lane") || field(tokens, "card")) !== undefined;
+  return (
+    isRecord(tokens) &&
+    [field(tokens, "lane"), field(tokens, "card")].some(
+      (token) => token !== undefined && token !== "",
+    )
+  );
 }
 
 export async function workspaceRootPane(

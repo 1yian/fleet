@@ -164,6 +164,17 @@ function paneIsHome(pane: Record<string, unknown> | undefined, home: string): bo
   return cwd !== undefined && canonical(cwd) === canonical(home);
 }
 
+async function candidateMatches(
+  workspace: string,
+  home: string,
+  placement: boolean,
+): Promise<boolean> {
+  const root = await workspaceRootPane(workspace);
+  if (!paneIsHome(root, home)) return false;
+  const pane = field(root, "pane_id");
+  return !placement || (pane !== undefined && (await piRunning("local", pane)));
+}
+
 async function workspaceOf(
   { lane, home }: LaneHome,
   placement = false,
@@ -176,10 +187,7 @@ async function workspaceOf(
     const legacy = row["label"] === `${legacyMatePrefix}${lane}` && !isWorkerWorkspace(row);
     if (current && !placement) return workspace;
     if (!current && !legacy) continue;
-    const root = await workspaceRootPane(workspace);
-    if (!paneIsHome(root, home)) continue;
-    const pane = field(root, "pane_id");
-    if (!placement || (pane !== undefined && (await piRunning("local", pane)))) return workspace;
+    if (await candidateMatches(workspace, home, placement)) return workspace;
   }
   return undefined;
 }
