@@ -12,6 +12,7 @@ import {
 } from "./scratch-use.ts";
 
 const ALARM_PERCENT = 75;
+const REARM_PERCENT = 70;
 
 const TIDY_EVERY_MS = 60 * 60_000;
 const DIRECTORY_CHECKS = 3;
@@ -78,10 +79,10 @@ function crossingsIn(
     const percent = percentUsed(use, metric);
     if (percent === undefined) continue;
     const key = [host, use.path, metric].join("|");
-    if (percent < ALARM_PERCENT) {
-      if (held.has(key)) released.push(key);
-      unlisted.delete(key);
-    } else if (!held.has(key)) fresh.push({ key, use, metric, percent });
+    if (percent < ALARM_PERCENT) unlisted.delete(key);
+    if (held.has(key)) {
+      if (percent < REARM_PERCENT) released.push(key);
+    } else if (percent >= ALARM_PERCENT) fresh.push({ key, use, metric, percent });
   }
   return { fresh, released };
 }
@@ -104,8 +105,10 @@ function described(host: string, crossing: Crossing, found?: Breakdown): string 
   const name = found === undefined ? use.path : `${use.path} (${found.filesystem})`;
   const what = metric === "inodes" ? "its inodes" : "its space";
   const alarm = `${String(ALARM_PERCENT)}%`;
-  const once = `This is said once. It is said again only after ${use.path} drops below ${alarm} and crosses it again.`;
-  const level = `${String(Math.round(percent))}% of ${what} (${sizesOf(crossing)}), over the ${alarm} alarm.`;
+  const rearm = `${String(REARM_PERCENT)}%`;
+  const [falls, rises] = metric === "inodes" ? ["drop", "reach"] : ["drops", "reaches"];
+  const once = `This is said once. It is said again only after ${what} ${falls} below ${rearm} and ${rises} ${alarm} again.`;
+  const level = `${String(Math.round(percent))}% of ${what} (${sizesOf(crossing)}), at or over the ${alarm} alarm.`;
   return `${host}: ${name} is at ${level} ${largestOf(crossing, found)} ${once}`;
 }
 

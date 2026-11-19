@@ -64,14 +64,14 @@ afterEach(async (t) => {
 });
 
 function report(
-  { inodes, bytes }: { inodes: number; bytes: number },
+  { inodes, bytes, inodesTotal = INODES }: { inodes: number; bytes: number; inodesTotal?: number },
   roots?: readonly string[],
 ): void {
   const row: JsonRecord = {
     path: "/tmp",
     ...(roots === undefined ? {} : { roots: [...roots] }),
     inodesUsed: inodes,
-    inodesTotal: INODES,
+    inodesTotal,
     bytesUsed: bytes,
     bytesTotal: 124 * GIB,
   };
@@ -132,6 +132,9 @@ const sessionText = (): string =>
 
 const heldKeys = (): string[] => sessionFiles().flatMap(replayed);
 
+const alarmCounts = (): number[] =>
+  sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
+
 const sessionAlarms = (): number => sessionText().split(ALARM).length - 1;
 
 const untilHeld = (keys: readonly unknown[]): Promise<void> =>
@@ -178,7 +181,7 @@ async function crossWhileBusy(): Promise<void> {
   assert.deepEqual(heldKeys(), []);
 }
 
-test("main hears once when a host's filesystem passes 75%, and again only after it drops below and crosses again", async () => {
+test("main hears once when a host's filesystem reaches 75%, and again only after it drops below 70% and reaches 75% again", async () => {
   for (let call = 0; call < 8; call += 1) h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, here, h);
   await untilProbes(3);
@@ -188,23 +191,28 @@ test("main hears once when a host's filesystem passes 75%, and again only after 
   const [first] = await untilAlarms(1);
   assert.equal(
     first,
-    "[fleet] disk: far: /tmp (tmpfs) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp by inodes: /tmp/fleet-c-1300 88,085 inodes; /tmp/fleet-c-1289 67,375 inodes; /tmp/node-compile-cache 21,377 inodes. This is said once. It is said again only after /tmp drops below 75% and crosses it again.",
+    "[fleet] disk: far: /tmp (tmpfs) is at 96% of its inodes (1,004,848 of 1,048,576), at or over the 75% alarm. Largest under /tmp by inodes: /tmp/fleet-c-1300 88,085 inodes; /tmp/fleet-c-1289 67,375 inodes; /tmp/node-compile-cache 21,377 inodes. This is said once. It is said again only after its inodes drop below 70% and reach 75% again.",
   );
 
-  await afterProbes(5);
-  report({ inodes: 1_040_000, bytes: 50 * GIB });
-  await afterProbes(5);
-  assert.equal(alarmsOf(lastCall()).length, 1, "still over 75%, so nothing more was said");
-  assert.deepEqual(heldKeys(), ["far|/tmp|inodes"]);
+  for (const inodes of [1_040_000, 780_000, 800_000, 780_000, 800_000, 780_000, 800_000]) {
+    report({ inodes, bytes: 40 * GIB });
+    await afterProbes(3);
+  }
+  assert.equal(alarmsOf(lastCall()).length, 1, "oscillating around 75% does not re-arm it");
 
-  report({ inodes: 600_000, bytes: 40 * GIB });
+  report({ inodes: 700_000, inodesTotal: 1_000_000, bytes: 40 * GIB });
   await afterProbes(3);
-  assert.deepEqual(heldKeys(), []);
-  assert.equal(alarmsOf(lastCall()).length, 1);
-
-  report({ inodes: 900_000, bytes: 40 * GIB });
+  assert.deepEqual(heldKeys(), CROSSED, "70% does not re-arm it");
+  report({ inodes: 733_000, bytes: 40 * GIB });
+  await untilHeld([]);
+  const listed = callsOf("largest");
+  report({ inodes: 780_000, bytes: 40 * GIB });
+  await afterProbes(3);
+  assert.equal(alarmsOf(lastCall()).length, 1, "below 75% an unheld alarm does not fire");
+  assert.equal(callsOf("largest"), listed, "below 75% nothing is listed");
+  report({ inodes: 786_432, bytes: 40 * GIB });
   const alarms = await untilAlarms(2);
-  assert.match(alarms[1] ?? "", /is at 86% of its inodes \(900,000 of 1,048,576\)/);
+  assert.match(alarms[1] ?? "", /is at 75% of its inodes \(786,432 of 1,048,576\)/);
   await afterProbes(4);
   assert.equal(alarmsOf(lastCall()).length, 2);
 });
@@ -226,7 +234,7 @@ test("main names the directories of every watched root on the filesystem that cr
   const [alarm] = await untilAlarms(1);
   assert.equal(
     alarm,
-    "[fleet] disk: far: /tmp (/dev/nvme0n1p2) is at 96% of its inodes (1,004,848 of 1,048,576), over the 75% alarm. Largest under /tmp, /home/far/.fleet by inodes: /home/far/.fleet/node-compile-cache 700,000 inodes; /home/far/.fleet/scratch 250,000 inodes; /tmp/fleet-c-1300 4,000 inodes. This is said once. It is said again only after /tmp drops below 75% and crosses it again.",
+    "[fleet] disk: far: /tmp (/dev/nvme0n1p2) is at 96% of its inodes (1,004,848 of 1,048,576), at or over the 75% alarm. Largest under /tmp, /home/far/.fleet by inodes: /home/far/.fleet/node-compile-cache 700,000 inodes; /home/far/.fleet/scratch 250,000 inodes; /tmp/fleet-c-1300 4,000 inodes. This is said once. It is said again only after its inodes drop below 70% and reach 75% again.",
   );
   const asked = readFileSync(log, "utf8")
     .split("\n")
@@ -243,7 +251,7 @@ test("main names space when space is what crossed, and counts inodes and space s
   const [space] = await untilAlarms(1);
   assert.match(
     space ?? "",
-    /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 81% of its space \(100\.0 GB of 124\.0 GB\), over the 75% alarm\. Largest under \/tmp by space: \/tmp\/fleet-c-1300 5\.0 GB;/,
+    /^\[fleet\] disk: far: \/tmp \(tmpfs\) is at 81% of its space \(100\.0 GB of 124\.0 GB\), at or over the 75% alarm\. Largest under \/tmp by space: \/tmp\/fleet-c-1300 5\.0 GB;/,
   );
   report({ inodes: 1_000_000, bytes: 100 * GIB });
   const alarms = await untilAlarms(2);
@@ -395,13 +403,9 @@ test("a new session announces a crossing that is still over the alarm, once", as
   await startMain(lab, here, h);
   await h.waitForNth((e) => e["type"] === "fleet_connected", 2, "the new session to connect");
   await until(() => sessionFiles().length === 2, "the second session file");
-  await until(
-    () => sessionFiles().every((file) => readFileSync(file, "utf8").split(ALARM).length === 2),
-    "one alarm in each session",
-  );
+  await until(() => alarmCounts().every((n) => n === 1), "one alarm in each session");
   await afterProbes(5);
-  const counts = sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
-  assert.deepEqual(counts, [1, 1]);
+  assert.deepEqual(alarmCounts(), [1, 1]);
 });
 
 test("a /new typed in the running main announces a crossing that is still over the alarm once in the new session, not again after", async () => {
@@ -413,13 +417,9 @@ test("a /new typed in the running main announces a crossing that is still over t
 
   await lab.submit(pane, "/new");
   await until(() => sessionFiles().length === 2, "the new session's file");
-  await until(
-    () => sessionFiles().every((file) => readFileSync(file, "utf8").split(ALARM).length === 2),
-    "one alarm in each session",
-  );
+  await until(() => alarmCounts().every((n) => n === 1), "one alarm in each session");
   await afterProbes(5);
-  const counts = sessionFiles().map((file) => readFileSync(file, "utf8").split(ALARM).length - 1);
-  assert.deepEqual(counts, [1, 1]);
+  assert.deepEqual(alarmCounts(), [1, 1]);
   assert.equal(alarmsOf(lastCall()).length, 1, "the new conversation holds its own single alarm");
   assert.deepEqual(sessionFiles().map(replayed), [CROSSED, CROSSED]);
 });
@@ -462,7 +462,7 @@ test("a directory listing that never works is retried for three checks, then mai
   const [alarm] = await untilAlarms(1);
   assert.match(
     alarm ?? "",
-    /is at 96% of its inodes \(1,004,848 of 1,048,576\), over the 75% alarm\. The largest directories could not be read\. /,
+    /is at 96% of its inodes \(1,004,848 of 1,048,576\), at or over the 75% alarm\. The largest directories could not be read\. /,
   );
   assert.equal(callsOf("largest"), 3);
   await afterProbes(4);
