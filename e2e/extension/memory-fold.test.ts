@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
+import { TestClock } from "../support/clock.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import {
@@ -27,6 +28,7 @@ let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
 let scratch: Scratch;
+let clock: TestClock;
 let cleo: Session;
 let memoryHome: string;
 beforeEach(async () => {
@@ -39,11 +41,14 @@ beforeEach(async () => {
   writeFileSync(join(scratch.root, "state", "cost-notice"), String(Date.now()));
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
   memoryHome = tempDir("fleet-memory-");
-  lab = await HerdrLab.start({
-    ...h.piEnv("mate"),
-    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
-    ...roomyDiskEnv(),
-  });
+  clock = new TestClock();
+  lab = await HerdrLab.start(
+    clock.env({
+      ...h.piEnv("mate"),
+      PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+      ...roomyDiskEnv(),
+    }),
+  );
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);
@@ -136,8 +141,6 @@ function cachedArgs(model?: string): string[] {
   ];
 }
 
-const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
-
 async function chatAfterGap(gapMs: number, model?: string): Promise<Turn[][]> {
   h.onModel((turns) => (isMains(turns) ? { tool: "yield" } : { text: "noted" }), "mate");
   mkdirSync(join(h.dir, "agent"), { recursive: true });
@@ -148,7 +151,7 @@ async function chatAfterGap(gapMs: number, model?: string): Promise<Turn[][]> {
   await startMain(lab, scratch, h, false, cachedArgs(model));
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
   for (let n = 1; n <= 3; n += 1) {
-    if (n === 3) await pause(gapMs);
+    if (n === 3) await clock.advance(gapMs);
     await cleo.call("comment", { lane: "cleo", text: `Message ${String(n)}. ${FILLER}` });
     if (n < 3)
       await h.waitForNth((event) => event["type"] === "settled", n, `main's turn ${String(n)}`);
