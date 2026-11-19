@@ -399,7 +399,11 @@ export class Harness {
   }
 }
 
-async function poll<T>(read: () => T | undefined, what: string, waitMs = WAIT_MS): Promise<T> {
+export async function poll<T>(
+  read: () => T | undefined,
+  what: string,
+  waitMs = WAIT_MS,
+): Promise<T> {
   const deadline = Date.now() + waitMs;
   for (;;) {
     const value = read();
