@@ -1,32 +1,23 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
+import {
+  bridgeSettings,
+  CAPTAIN,
+  EXTENSION,
+  noBridge,
+  ONLINE,
+  userTexts,
+} from "../support/bridge-env.ts";
 import { FakeDiscord } from "../support/fake-discord.ts";
-import { Harness, poll, type Pi, type Turn } from "../support/harness.ts";
+import { Harness, poll, type Pi } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
 
-const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
-const CAPTAIN = "1300000000000000001";
 const GUEST = "1300000000000000002";
 const OTHER_BOT = "1300000000000000003";
-const ONLINE = "fleet bridge online.";
-const VOICE_MESSAGE = 8192;
 const PICTURE = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
-const RECORDING = Buffer.from("4f676753000200000000000000000000", "hex");
-
-const BRIDGE_KEYS = [
-  "BRIDGE_BOT_TOKEN",
-  "BRIDGE_CHANNEL_ID",
-  "BRIDGE_ALLOWED_USER_IDS",
-  "BRIDGE_GUILD_ID",
-  "BRIDGE_DISCORD_API_URL",
-  "BRIDGE_GROQ_API_KEY",
-  "BRIDGE_GROQ_MODEL",
-  "BRIDGE_GROQ_API_URL",
-];
 
 let cardd: Cardd;
 let mainToken: string;
@@ -46,17 +37,8 @@ afterEach(async () => {
 
 const home = (): string => join(h.dir, "work");
 
-const noBridge = (): Record<string, string> =>
-  Object.fromEntries(BRIDGE_KEYS.map((key) => [key, ""]));
-
-const bridge = (more: Record<string, string> = {}): Record<string, string> => ({
-  ...noBridge(),
-  BRIDGE_BOT_TOKEN: discord.token,
-  BRIDGE_CHANNEL_ID: discord.channel,
-  BRIDGE_ALLOWED_USER_IDS: CAPTAIN,
-  BRIDGE_DISCORD_API_URL: discord.apiUrl,
-  ...more,
-});
+const bridge = (more: Record<string, string> = {}): Record<string, string> =>
+  bridgeSettings(discord, more);
 
 function startMate(lane: string, token: string, settings: Record<string, string>): Pi {
   return h.startPi(
@@ -76,9 +58,6 @@ const startMain = (settings: Record<string, string>): Pi => startMate("main", ma
 
 const online = (): Promise<unknown> =>
   discord.waitForPost((post) => post.content === ONLINE, "the online notice");
-
-const userTexts = (turns: readonly Turn[]): string[] =>
-  turns.filter((turn) => turn.role === "user").map((turn) => turn.text);
 
 const posted = (): string[] =>
   discord.posts.map((post) => post.content).filter((content) => content !== ONLINE);
@@ -238,17 +217,9 @@ test("a post that Discord rate limits is retried and arrives once", async () => 
   assert.deepEqual(posted(), ["Back after the limit."]);
 });
 
-test("attachments are saved for main, and a voice message is transcribed", async () => {
-  discord.transcript = "move the standup to noon";
+test("attachments are saved for main", async () => {
   h.onModel(() => ({ text: "Seen." }));
-  h.onModel(() => ({ text: "Moved." }));
-  startMain(
-    bridge({
-      BRIDGE_GROQ_API_KEY: discord.groqKey,
-      BRIDGE_GROQ_MODEL: "whisper-test",
-      BRIDGE_GROQ_API_URL: discord.groqUrl,
-    }),
-  );
+  startMain(bridge());
   await online();
 
   discord.say({
@@ -263,29 +234,6 @@ test("attachments are saved for main, and a voice message is transcribed", async
     )?.[1];
   assert.ok(saved !== undefined, picture);
   assert.deepEqual(readFileSync(saved), PICTURE);
-
-  discord.say({
-    author: CAPTAIN,
-    content: "",
-    flags: VOICE_MESSAGE,
-    attachments: [{ name: "voice-message.ogg", bytes: RECORDING }],
-  });
-  const spoken = userTexts(await h.waitForCall(1));
-  assert.equal(spoken.at(-1), "move the standup to noon");
-  assert.deepEqual(
-    discord.transcriptions.map((each) => ({
-      authorization: each.authorization,
-      model: each.model,
-      bytes: each.bytes.toString("hex"),
-    })),
-    [
-      {
-        authorization: `Bearer ${discord.groqKey}`,
-        model: "whisper-test",
-        bytes: RECORDING.toString("hex"),
-      },
-    ],
-  );
 });
 
 test("settings come from main's .env and config/bridge.env, with several allowed users", async () => {
@@ -343,6 +291,32 @@ test("an allowlist that is not Discord IDs keeps the bridge off, without echoing
   await askOnce(pi);
 
   assert.equal(discord.requests, 0);
+});
+
+async function assertRefused(settings: Record<string, string>, why: string): Promise<void> {
+  const pi = startMain(bridge(settings));
+  const notice = await pi.waitForUi(isDiscordNotice, "the bridge notice");
+  assert.equal(notice["message"], `discord bridge: ${why}, so the bridge stays off`);
+  await askOnce(pi);
+  assert.equal(discord.requests, 0, "the bridge called Discord with a setting that cannot work");
+}
+
+test("an unknown BRIDGE_STT keeps the bridge off", async () => {
+  await assertRefused({ BRIDGE_STT: "whisper" }, "BRIDGE_STT must be local or groq");
+});
+
+test("BRIDGE_STT=groq without a Groq key keeps the bridge off", async () => {
+  await assertRefused(
+    { BRIDGE_STT: "groq" },
+    "BRIDGE_GROQ_API_KEY must be set when BRIDGE_STT is groq",
+  );
+});
+
+test("a relative BRIDGE_WHISPER_MODEL keeps the bridge off", async () => {
+  await assertRefused(
+    { BRIDGE_WHISPER_MODEL: "models/ggml.bin" },
+    "BRIDGE_WHISPER_MODEL must be an absolute path",
+  );
 });
 
 test("a channel in another guild than BRIDGE_GUILD_ID keeps the bridge off", async () => {

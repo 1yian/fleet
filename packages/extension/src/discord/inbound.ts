@@ -1,12 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isRecord } from "../lane-config.ts";
-import type { GroqConfig } from "./config.ts";
 import type { Discord } from "./discord.ts";
+import type { Transcribe } from "./transcribe.ts";
 
 const VOICE_MESSAGE_FLAG = 8192;
-const TRANSCRIBE_MS = 120_000;
 const FILE_NAME_MAX = 100;
 const SNOWFLAKE = /^\d+$/;
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp)$/i;
@@ -29,7 +28,7 @@ export interface Inbound {
 export interface Media {
   readonly discord: Discord;
   readonly directory: string;
-  readonly groq: GroqConfig | undefined;
+  readonly transcribe: Transcribe;
 }
 
 function attachmentsOf(value: unknown, voiceMessage: boolean): Attachment[] {
@@ -92,26 +91,6 @@ async function save(attachment: Attachment, media: Media): Promise<string | unde
   }
 }
 
-async function transcribe(groq: GroqConfig, file: string): Promise<string | undefined> {
-  try {
-    const form = new FormData();
-    form.append("file", new Blob([readFileSync(file)]), basename(file));
-    form.append("model", groq.model);
-    form.append("response_format", "text");
-    const response = await fetch(`${groq.url}/audio/transcriptions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${groq.key}` },
-      body: form,
-      signal: AbortSignal.timeout(TRANSCRIBE_MS),
-    });
-    if (!response.ok) return undefined;
-    const text = (await response.text()).trim();
-    return text === "" ? undefined : text;
-  } catch {
-    return undefined;
-  }
-}
-
 function labelOf(attachment: Attachment): string {
   if (attachment.voice || AUDIO.test(attachment.name)) return "audio attachment";
   if (IMAGE.test(attachment.name)) return "image";
@@ -129,7 +108,7 @@ export async function render(message: Inbound, media: Media): Promise<string> {
       references.push(`[${label}: ${file}]`);
       continue;
     }
-    const transcript = media.groq === undefined ? undefined : await transcribe(media.groq, file);
+    const transcript = await media.transcribe(file);
     if (transcript === undefined) references.push(`[${label}: ${file} (transcription failed)]`);
     else spoken.push(transcript);
   }

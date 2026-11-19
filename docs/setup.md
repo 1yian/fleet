@@ -377,7 +377,7 @@ Main can talk to one Discord channel. The bridge is part of the fleet extension.
 - A message from an allowed user in the channel becomes a user turn in main. While main is busy, it waits and arrives after the current run. A message that starts with `/` is plain text for the model: it never runs one of Pi's commands.
 - Main's replies are posted to the channel. Only its own text goes out, never tool calls, tool results, or thinking. A reply over 1900 characters is split. A file that the reply names and that exists on main's host is uploaded with the text as its caption. Name a file with a `MEDIA:/absolute/path` line, a Markdown image `![chart](/absolute/path)`, or an absolute path in backticks. Nothing under the home's `config/`, `data/`, or `state/` is ever uploaded, so the lane token, the bridge settings, and downloaded attachments never go out. Neither is any dotenv file (a file named `.env` or ending in `.env`), nor a path that resolves into those places through a symlink. Such a path stays in the reply text.
 - Discord shows "typing" while main works.
-- Attachments are saved under `state/discord-bridge/media/` and main gets their paths. A voice message is transcribed when `BRIDGE_GROQ_API_KEY` is set.
+- Attachments are saved under `state/discord-bridge/media/` and main gets their paths. A voice message is transcribed on the host by whisper.cpp (see **Voice messages** below).
 - Messages that were in the channel before main started are not replayed.
 
 **Set up the bot.**
@@ -395,12 +395,42 @@ Main can talk to one Discord channel. The bridge is part of the fleet extension.
 | `BRIDGE_CHANNEL_ID`       | yes    | The one channel to bridge.                                                                      |
 | `BRIDGE_ALLOWED_USER_IDS` | yes    | The Discord user IDs that may speak to main, separated by commas or spaces.                     |
 | `BRIDGE_GUILD_ID`         | no     | The server that holds the channel. When the channel is in another server, the bridge stays off. |
-| `BRIDGE_GROQ_API_KEY`     | no     | A Groq key. With it, voice messages are transcribed.                                            |
-| `BRIDGE_GROQ_MODEL`       | no     | The transcription model. The default is `whisper-large-v3-turbo`.                               |
+| `BRIDGE_STT`              | no     | `local` (the default) transcribes voice messages on the host. `groq` sends them to Groq.        |
+| `BRIDGE_WHISPER_MODEL`    | no     | The whisper.cpp model file: an absolute path, or one that starts with `~/`. Default below.      |
+| `BRIDGE_WHISPER_LANGUAGE` | no     | The spoken language, such as `en`, or `auto` (the default) to detect it.                        |
+| `BRIDGE_WHISPER_CLI`      | no     | The `whisper-cli` program. The default is `whisper-cli` on the PATH.                            |
+| `BRIDGE_FFMPEG`           | no     | The `ffmpeg` program. The default is `ffmpeg` on the PATH.                                      |
+| `BRIDGE_GROQ_API_KEY`     | groq   | A Groq key. It is used only with `BRIDGE_STT=groq`, and without it that setting is an error.    |
+| `BRIDGE_GROQ_MODEL`       | no     | The Groq transcription model. The default is `whisper-large-v3-turbo`.                          |
 | `BRIDGE_DISCORD_API_URL`  | no     | Another base URL for Discord's HTTP API, such as a proxy. The default is Discord's own v10 API. |
 | `BRIDGE_GROQ_API_URL`     | no     | Another base URL for Groq's OpenAI-compatible API.                                              |
 
 With none of the three required settings, the bridge is off and says nothing. With some of them, or with a value that is not valid, main shows a notice that names the setting, and the bridge stays off. A restart of main reads the settings again.
+
+**Voice messages.** Discord sends a voice message as Ogg Opus. The bridge converts it to 16 kHz mono WAV with `ffmpeg`, then runs `whisper-cli` from whisper.cpp on it. The audio never leaves the host. The host needs both programs and one model file.
+
+1. Install the programs: `brew install whisper.cpp ffmpeg`. If Homebrew's folder is not on the PATH of main's Pi (it started from launchd or ssh, for example), set `BRIDGE_WHISPER_CLI` and `BRIDGE_FFMPEG` to full paths. On Apple silicon they are `/opt/homebrew/bin/whisper-cli` and `/opt/homebrew/bin/ffmpeg`.
+2. Get the model `ggml-large-v3-turbo.bin` (1.6 GB, sha256 `1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`). OpenSuperWhisper offers it as Turbo V3 large, and Groq's `whisper-large-v3-turbo` is the same model family. The bridge reads the file in place. By default it looks where OpenSuperWhisper keeps its models, `~/Library/Application Support/ru.starmel.OpenSuperWhisper/whisper-models/`, so a download made in OpenSuperWhisper (Settings, Model) needs no setting. To keep the model anywhere else, download it and name it in `config/bridge.env`:
+
+   ```sh
+   mkdir -p ~/Models
+   curl -L -o ~/Models/ggml-large-v3-turbo.bin \
+     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+   ```
+
+   ```sh
+   BRIDGE_WHISPER_MODEL=~/Models/ggml-large-v3-turbo.bin
+   ```
+
+   `ggml-large-v3-turbo-q5_0.bin` (574 MB, Turbo V3 small in OpenSuperWhisper) is the same model, quantized. Use it when disk is tight.
+
+3. Restart main, so it reads the settings again.
+
+The bridge does not drive the OpenSuperWhisper app. The app has no command line, URL scheme, AppleScript, or local server, so the bridge runs the same model with the same engine, whisper.cpp, in its own process.
+
+Each voice message starts a new `whisper-cli`, which loads the model again. That takes about 2 to 3 seconds on an M1 Pro for a message up to 30 seconds long. The first run on a new host took about 10 seconds in testing. With `auto`, whisper detects the language first, which costs about 0.7 seconds. Set `BRIDGE_WHISPER_LANGUAGE` if you speak one language. A message that cannot be transcribed still reaches main, as `[audio attachment: <path> (transcription failed)]`. `state/discord-bridge/bridge.log` says why: a missing program, a model file that does not open, or a timeout after two minutes.
+
+To use Groq instead, set `BRIDGE_STT=groq` and `BRIDGE_GROQ_API_KEY`. The audio then goes to Groq. A `BRIDGE_GROQ_API_KEY` without `BRIDGE_STT=groq` does nothing.
 
 **Who can speak.** Only a user on `BRIDGE_ALLOWED_USER_IDS` reaches main. Other users, other bots, webhooks, and the bot itself are ignored, and there is no default list: without one the bridge stays off. A user on the list instructs main with all of main's tools, so list only people you trust with that. Keep the channel private as well. Everyone who can read it sees main's replies and the files it uploads.
 

@@ -7,6 +7,7 @@ import { describeError, fileLog, type Log } from "./log.ts";
 import { Outbox } from "./outbox.ts";
 import { bridgeState, type BridgeState } from "./state.ts";
 import { assistantText } from "./text.ts";
+import { transcriber } from "./transcribe.ts";
 import { Typing } from "./typing.ts";
 
 const POLL_MS = 2_000;
@@ -72,7 +73,11 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
   const state = bridgeState();
   const outbox = new Outbox(discord, state, log, home);
   const typing = new Typing(discord);
-  const media = { discord, directory: join(directory, "media"), groq: config.groq };
+  const media = {
+    discord,
+    directory: join(directory, "media"),
+    transcribe: transcriber(config.speech, log),
+  };
   const inbox = new Inbox(config, discord, state, media, injector(pi, ctx, log), log);
   const timers: ReturnType<typeof setInterval>[] = [];
   let live = config.guild === undefined;
