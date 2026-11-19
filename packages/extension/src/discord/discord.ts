@@ -89,6 +89,11 @@ export class Discord {
     return isRecord(body) && typeof body["id"] === "string" ? body["id"] : undefined;
   }
 
+  async gatewayUrl(): Promise<string | undefined> {
+    const body = await this.get("/gateway/bot");
+    return isRecord(body) && typeof body["url"] === "string" ? body["url"] : undefined;
+  }
+
   async channelGuild(): Promise<string | undefined> {
     const body = await this.get(`/channels/${this.channel}`);
     return isRecord(body) && typeof body["guild_id"] === "string" ? body["guild_id"] : undefined;

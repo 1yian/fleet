@@ -376,6 +376,7 @@ Main can talk to one Discord channel. The bridge is part of the fleet extension.
 
 - A message from an allowed user in the channel becomes a user turn in main. While main is busy, it waits and arrives after the current run. A message that starts with `/` is plain text for the model: it never runs one of Pi's commands.
 - Main's replies are posted to the channel. Only its own text goes out, never tool calls, tool results, or thinking. A reply over 1900 characters is split. A file that the reply names and that exists on main's host is uploaded with the text as its caption. Name a file with a `MEDIA:/absolute/path` line, a Markdown image `![chart](/absolute/path)`, or an absolute path in backticks. Nothing under the home's `config/`, `data/`, or `state/` is ever uploaded, so the lane token, the bridge settings, and downloaded attachments never go out. Neither is any dotenv file (a file named `.env` or ending in `.env`), nor a path that resolves into those places through a symlink. Such a path stays in the reply text.
+- The bot shows as online in Discord while main runs the bridge, and as offline as soon as main stops, restarts, or reloads. After a reload or a restart it shows online again within a few seconds. If main's process is killed and cannot say goodbye, Discord keeps the bot online for a few minutes, until it times out the lost connection. If the connection drops, the bridge reconnects by itself, first after 5 seconds and then after longer waits up to 2 minutes, and shows online again.
 - Discord shows "typing" while main works.
 - Attachments are saved under `state/discord-bridge/media/` and main gets their paths. A voice message is transcribed when `BRIDGE_GROQ_API_KEY` is set.
 - Messages that were in the channel before main started are not replayed.
@@ -383,7 +384,7 @@ Main can talk to one Discord channel. The bridge is part of the fleet extension.
 **Set up the bot.**
 
 1. In the [Discord Developer Portal](https://discord.com/developers/applications), make an application, open its **Bot** page, and reset the token. Copy it now, because Discord shows it once. This is `BRIDGE_BOT_TOKEN`.
-2. On the same page, under **Privileged Gateway Intents**, turn on **Message Content Intent**. The bridge never opens a gateway connection: it reads the channel over HTTP. Discord still sends an empty `content` and no `attachments` to a bot without this intent. No other intent is needed.
+2. On the same page, under **Privileged Gateway Intents**, turn on **Message Content Intent**. The bridge reads the channel over HTTP and opens a gateway connection only so that the bot shows online. Discord still sends an empty `content` and no `attachments` to a bot without this intent. The gateway connection asks for no intents, so no other intent is needed.
 3. Invite the bot with `https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot&permissions=101376`. The permissions are View Channel, Send Messages, Attach Files, and Read Message History. For a private channel, add the bot to the channel with those four permissions.
 4. In Discord, turn on Developer Mode (User Settings, Advanced). Right-click the channel and copy its ID for `BRIDGE_CHANNEL_ID`. Right-click yourself and copy your user ID for `BRIDGE_ALLOWED_USER_IDS`.
 

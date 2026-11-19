@@ -5,6 +5,7 @@ import { Discord } from "./discord.ts";
 import { Inbox } from "./inbox.ts";
 import { describeError, fileLog, type Log } from "./log.ts";
 import { Outbox } from "./outbox.ts";
+import { Presence } from "./presence.ts";
 import { bridgeState, type BridgeState } from "./state.ts";
 import { assistantText } from "./text.ts";
 import { Typing } from "./typing.ts";
@@ -72,6 +73,7 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
   const state = bridgeState();
   const outbox = new Outbox(discord, state, log, home);
   const typing = new Typing(discord);
+  const presence = new Presence(discord, config.token, log);
   const media = { discord, directory: join(directory, "media"), groq: config.groq };
   const inbox = new Inbox(config, discord, state, media, injector(pi, ctx, log), log);
   const timers: ReturnType<typeof setInterval>[] = [];
@@ -88,10 +90,11 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
   pi.on("agent_settled", () => {
     typing.stop();
   });
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", async () => {
     stopped = true;
     typing.stop();
     for (const timer of timers.splice(0)) clearInterval(timer);
+    await presence.stop();
   });
 
   const begin = async (): Promise<void> => {
@@ -100,6 +103,7 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
       if (!stopped) notify(ctx, NOT_IN_GUILD);
       return;
     }
+    presence.start();
     await announce(discord, state, log);
     if (stopped) return;
     timers.push(
