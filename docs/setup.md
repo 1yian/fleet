@@ -370,6 +370,42 @@ The mate gets memory at its next start. `/firstmate-memory` shows whether it is 
 
 A `[fleet]` message is a normal turn that enters memory. `e2e/extension/memory.test.ts` checks it for main and for a second mate. An older home's `config/optchat.json` may still name a `package`: it is ignored, and the `config/optchat/package` folder can be deleted.
 
+### Discord bridge
+
+Main can talk to one Discord channel. The bridge is part of the fleet extension. It runs only in main, the lane named `main` in `config/lane.json`. A second mate or a worker never starts it, whatever settings it finds.
+
+- A message from an allowed user in the channel becomes a user turn in main. While main is busy, it waits and arrives after the current run. A message that starts with `/` is plain text for the model: it never runs one of Pi's commands.
+- Main's replies are posted to the channel. Only its own text goes out, never tool calls, tool results, or thinking. A reply over 1900 characters is split. A file that the reply names and that exists on main's host is uploaded with the text as its caption. Name a file with a `MEDIA:/absolute/path` line, a Markdown image `![chart](/absolute/path)`, or an absolute path in backticks. Nothing under the home's `config/`, `data/`, or `state/` is ever uploaded, so the lane token, the bridge settings, and downloaded attachments never go out. Neither is any dotenv file (a file named `.env` or ending in `.env`), nor a path that resolves into those places through a symlink. Such a path stays in the reply text.
+- Discord shows "typing" while main works.
+- Attachments are saved under `state/discord-bridge/media/` and main gets their paths. A voice message is transcribed when `BRIDGE_GROQ_API_KEY` is set.
+- Messages that were in the channel before main started are not replayed.
+
+**Set up the bot.**
+
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), make an application, open its **Bot** page, and reset the token. Copy it now, because Discord shows it once. This is `BRIDGE_BOT_TOKEN`.
+2. On the same page, under **Privileged Gateway Intents**, turn on **Message Content Intent**. The bridge never opens a gateway connection: it reads the channel over HTTP. Discord still sends an empty `content` and no `attachments` to a bot without this intent. No other intent is needed.
+3. Invite the bot with `https://discord.com/oauth2/authorize?client_id=<application id>&scope=bot&permissions=101376`. The permissions are View Channel, Send Messages, Attach Files, and Read Message History. For a private channel, add the bot to the channel with those four permissions.
+4. In Discord, turn on Developer Mode (User Settings, Advanced). Right-click the channel and copy its ID for `BRIDGE_CHANNEL_ID`. Right-click yourself and copy your user ID for `BRIDGE_ALLOWED_USER_IDS`.
+
+**Settings.** The bridge reads them from the environment first, then from `config/bridge.env`, then from `.env`, both in main's home. Git ignores both files. A file holds `NAME=value` lines. A line may start with `export`, a value may be in quotes, and a line that starts with `#` is ignored. The token can also come from Bitwarden: name `BRIDGE_BOT_TOKEN` in the `bws.env` block of `config/lane.json` ([Secrets from Bitwarden](#secrets-from-bitwarden-bws)), and the fleet sets it before the bridge starts.
+
+| Setting                   | Needed | Meaning                                                                                         |
+| ------------------------- | ------ | ----------------------------------------------------------------------------------------------- |
+| `BRIDGE_BOT_TOKEN`        | yes    | The bot's token.                                                                                |
+| `BRIDGE_CHANNEL_ID`       | yes    | The one channel to bridge.                                                                      |
+| `BRIDGE_ALLOWED_USER_IDS` | yes    | The Discord user IDs that may speak to main, separated by commas or spaces.                     |
+| `BRIDGE_GUILD_ID`         | no     | The server that holds the channel. When the channel is in another server, the bridge stays off. |
+| `BRIDGE_GROQ_API_KEY`     | no     | A Groq key. With it, voice messages are transcribed.                                            |
+| `BRIDGE_GROQ_MODEL`       | no     | The transcription model. The default is `whisper-large-v3-turbo`.                               |
+| `BRIDGE_DISCORD_API_URL`  | no     | Another base URL for Discord's HTTP API, such as a proxy. The default is Discord's own v10 API. |
+| `BRIDGE_GROQ_API_URL`     | no     | Another base URL for Groq's OpenAI-compatible API.                                              |
+
+With none of the three required settings, the bridge is off and says nothing. With some of them, or with a value that is not valid, main shows a notice that names the setting, and the bridge stays off. A restart of main reads the settings again.
+
+**Who can speak.** Only a user on `BRIDGE_ALLOWED_USER_IDS` reaches main. Other users, other bots, webhooks, and the bot itself are ignored, and there is no default list: without one the bridge stays off. A user on the list instructs main with all of main's tools, so list only people you trust with that. Keep the channel private as well. Everyone who can read it sees main's replies and the files it uploads.
+
+The bridge logs failures to `state/discord-bridge/bridge.log`. Run one main Pi at a time: two Pi processes in main's home would both poll the channel and both answer. If an older Discord bridge that you installed by hand is still in `~/.pi/agent/extensions`, remove it in the same step that turns this one on, or main answers twice.
+
 ## 5. Second mates
 
 Make a second mate in four steps. The first runs on the `cardd` host, the next two on the host where the mate runs, and the last in main. Run `bin/fleet` from that host's fleet root: `~/.fleet/app` on every host except main's, where it is the captain's checkout, `~/Projects/fleet`. That checkout is the root of the host's lane homes, they share its `node_modules`, and it is the one main runs `fleet` from on a remote host (`roots` in section 4). Never use a project clone of this repository, such as `~/fleet-projects/fleet`: the home would be made beside that clone, where no host looks for lane homes.

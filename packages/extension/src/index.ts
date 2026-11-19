@@ -13,6 +13,7 @@ import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
 import { applyCompactionBackoff } from "./compaction-backoff.ts";
 import { applyCompactionPolicy } from "./compaction-policy.ts";
+import { startDiscordBridge } from "./discord/bridge.ts";
 import { Complaints } from "./complaints.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
@@ -397,6 +398,7 @@ function start(
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
+    startDiscordBridge(pi, HOME(), ctx);
   }
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow, { url, token });
   applyPolicies(pi, ctx, role);
