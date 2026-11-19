@@ -54,7 +54,10 @@ function reason(error: unknown): string {
   const cause: unknown = Reflect.get(Object(error), "cause");
   const said = error instanceof Error ? error.message : String(error);
   const own = typeof stderr === "string" && stderr.trim() !== "" ? stderr : said;
-  const text = cause === undefined ? own : `${own}\n${String(cause)}`;
+  const text =
+    cause === undefined
+      ? own
+      : `${own}\n${cause instanceof Error ? cause.message : JSON.stringify(cause)}`;
   return text
     .split("\n")
     .map((line) => line.trim())
@@ -92,30 +95,46 @@ function buildNoMistakes(repo: string): { commit: string; target: string } {
 const remoteHead = (repo: string): string =>
   run("git", ["ls-remote", repo, "HEAD"], { timeout: CLONE_TIMEOUT_MS }).slice(0, 8);
 
+function goMissing(current: string | undefined, installed: { commit: string } | undefined): Error {
+  const state =
+    current === undefined
+      ? "missing"
+      : (noMistakesRefusal(current) ?? `fork-${installed?.commit ?? ""} is not the latest`);
+  return new Error(
+    `${state} and cannot be built, because go is missing. Fix: install Go 1.25 or later (brew install go, or apt install golang-go), then run fleet install again`,
+  );
+}
+
+function builtCommit(): { version: string | undefined; commit: string | undefined } {
+  const version = probe("no-mistakes", ["--version"]);
+  return { version, commit: version === undefined ? undefined : noMistakesBuild(version)?.commit };
+}
+
+function alreadyInstalled(
+  repo: string,
+  latest: boolean,
+  current: string | undefined,
+  commit: string,
+): string | undefined {
+  if (current === undefined || noMistakesRefusal(current) !== undefined) return undefined;
+  if (!latest) return `no-mistakes: fork-${commit} is installed`;
+  return commit === remoteHead(repo) ? `no-mistakes: fork-${commit} is the latest` : undefined;
+}
+
 function installNoMistakes(latest: boolean): string {
   const repo = process.env["FLEET_NO_MISTAKES_REPO"] ?? NO_MISTAKES_REPO;
   const current = probe("no-mistakes", ["--version"]);
   const installed = current === undefined ? undefined : noMistakesBuild(current);
-  const accepted = current !== undefined && noMistakesRefusal(current) === undefined;
-  if (accepted && !latest) return `no-mistakes: fork-${installed?.commit ?? ""} is installed`;
-  if (accepted && installed?.commit === remoteHead(repo))
-    return `no-mistakes: fork-${installed.commit} is the latest`;
-  if (probe("go", ["version"]) === undefined) {
-    const state =
-      current === undefined
-        ? "missing"
-        : (noMistakesRefusal(current) ?? `fork-${installed?.commit ?? ""} is not the latest`);
+  const done = alreadyInstalled(repo, latest, current, installed?.commit ?? "");
+  if (done !== undefined) return done;
+  if (probe("go", ["version"]) === undefined) throw goMissing(current, installed);
+  const built = buildNoMistakes(repo);
+  const after = builtCommit();
+  if (after.commit !== built.commit)
     throw new Error(
-      `${state} and cannot be built, because go is missing. Fix: install Go 1.25 or later (brew install go, or apt install golang-go), then run fleet install again`,
+      `built fork-${built.commit} into ${built.target}, but the no-mistakes on the PATH is ${after.version === undefined ? "missing" : `"${after.version}"`}. Fix: put ${dirname(built.target)} first on the PATH`,
     );
-  }
-  const { commit, target } = buildNoMistakes(repo);
-  const after = probe("no-mistakes", ["--version"]);
-  if ((after === undefined ? undefined : noMistakesBuild(after))?.commit !== commit)
-    throw new Error(
-      `built fork-${commit} into ${target}, but the no-mistakes on the PATH is ${after === undefined ? "missing" : `"${after}"`}. Fix: put ${dirname(target)} first on the PATH`,
-    );
-  return `no-mistakes: built fork-${commit} into ${target}`;
+  return `no-mistakes: built fork-${built.commit} into ${built.target}`;
 }
 
 function installPiTiers(): string {

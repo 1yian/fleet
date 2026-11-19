@@ -101,11 +101,11 @@ const reminders = async (): Promise<readonly { id: number; to: string; at: strin
   (await cardd.board()).schedules;
 const setReminder = (updateReminder: boolean | undefined): void => {
   const file = join(scratch.root, "config", "lane.json");
-  const lane: Record<string, unknown> = JSON.parse(readFileSync(file, "utf8"));
-  writeFileSync(file, JSON.stringify({ ...lane, updateReminder }));
+  const lane: unknown = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify(Object.assign({}, lane, { updateReminder })));
 };
 
-test("a fresh install without Go names the missing no-mistakes and the fix, and still sets up the rest", async () => {
+test("a fresh install without Go names the missing no-mistakes and the fix, and still sets up the rest", () => {
   const done = install(piDir);
   assert.equal(done.status, 1);
   assert.deepEqual(done.err, [
