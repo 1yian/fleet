@@ -46,11 +46,9 @@ export {
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
-
 export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only"] as const;
 const Delivery = Type.Enum(DELIVERIES);
 export type Delivery = Static<typeof Delivery>;
-
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
 export const CAPTAIN = "captain";
@@ -88,7 +86,6 @@ export const CardSchema = Type.Object({
   updatedAt: Type.Integer(),
 });
 export type Card = Static<typeof CardSchema>;
-
 export const EntrySchema = Type.Object({
   id: Type.Integer(),
   card: Type.Integer(),
@@ -99,7 +96,6 @@ export const EntrySchema = Type.Object({
   createdAt: Type.Integer(),
 });
 export type Entry = Static<typeof EntrySchema>;
-
 export const OwedReplySchema = Type.Object({
   id: ReplyId,
   from: Type.String(),
