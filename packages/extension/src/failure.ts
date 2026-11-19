@@ -9,6 +9,7 @@ const FALLBACK_COMPACTION = "the conversation compaction failed with no error me
 const PI_FAULT =
   /cannot find (module|package)|ERR_MODULE_NOT_FOUND|failed to load url|does not provide an export/i;
 const FALLBACK = "the model turn failed with no error message";
+const NOTHING_TO_COMPACT = /^Compaction failed: Nothing to compact \(session too small\)$/;
 const KEY = Symbol.for("fleet:untold-incidents");
 
 interface Untold {
@@ -104,6 +105,10 @@ export class Failures {
     pi.on("session_compact_failed", (event, ctx) => {
       if (event.aborted) return;
       const error = event.errorMessage ?? FALLBACK_COMPACTION;
+      if (NOTHING_TO_COMPACT.test(error)) {
+        this.compacted();
+        return;
+      }
       compactionFailed(error);
       const idle = ctx.isIdle();
       this.compactionPending = idle ? undefined : error;
@@ -111,9 +116,7 @@ export class Failures {
     });
     pi.on("session_compact", () => {
       compactionSucceeded();
-      this.compactionPending = undefined;
-      if (this.owed === undefined) blockage.release();
-      this.recovered(true);
+      this.compacted();
     });
     pi.on("agent_settled", (event) => {
       if (this.owed !== undefined) blockage.raise(this.owed, blockage.now);
@@ -125,6 +128,12 @@ export class Failures {
       if (this.failed !== undefined) this.report(this.failed, false, true);
       else this.recovered(false);
     });
+  }
+
+  private compacted(): void {
+    this.compactionPending = undefined;
+    if (this.owed === undefined) this.blockage?.release();
+    this.recovered(true);
   }
 
   private untold(compaction: boolean): Untold {
