@@ -23,40 +23,66 @@ let mate: Pi;
 export let report: string;
 export let tree: string;
 
+const stops: ((context: object) => unknown)[] = [];
+
+function owned<T>(resource: T, stop: (resource: T, context: object) => unknown): T {
+  stops.push((context) => stop(resource, context));
+  return resource;
+}
+
 beforeEach(async () => {
   rmSync(hostScratch(), { recursive: true, force: true });
-  scratch = new Scratch();
-  cardd = await Cardd.start();
-  h = await Harness.start();
+  scratch = owned(new Scratch(), (each) => {
+    each.dispose();
+  });
+  cardd = owned(await Cardd.start(), (each) => each.stop());
+  h = owned(await Harness.start(), (each) => each.stop());
   report = join(hostScratch(), "c-1", "operation.md");
   tree = `${scratch.root}.worktrees/c-1-a1`;
   const token = cardd.addLane("main", undefined, scratch.root);
   cardd.addProject("fleet", { local: scratch.root }, undefined, "no-mistakes");
   cardd.yolo("fleet");
-  lab = await HerdrLab.start({ ...h.piEnv("worker"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` });
-  mate = h.startPi(
-    "main",
-    {
-      FLEET_URL: cardd.url,
-      FLEET_TOKEN: token,
-      FLEET_ROLE: "mate",
-      FLEET_FAKE_AGENT: "mate",
-      HERDR_SESSION: lab.name,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", SHELL]),
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: "protocol.ext.allow",
-      GIT_CONFIG_VALUE_0: "always",
+  lab = owned(
+    await HerdrLab.start({ ...h.piEnv("worker"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` }),
+    async (each, context) => {
+      await each.printIfFailed(context);
+      await each.stop();
     },
-    [EXTENSION],
+  );
+  mate = owned(
+    h.startPi(
+      "main",
+      {
+        FLEET_URL: cardd.url,
+        FLEET_TOKEN: token,
+        FLEET_ROLE: "mate",
+        ...lab.owned,
+        FLEET_FAKE_AGENT: "mate",
+        HERDR_SESSION: lab.name,
+        FLEET_PI_ARGS: JSON.stringify([...h.piArgs(), "-e", SHELL]),
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "protocol.ext.allow",
+        GIT_CONFIG_VALUE_0: "always",
+      },
+      [EXTENSION],
+    ),
+    (each) => each.kill(),
   );
 });
 
 afterEach(async (t) => {
-  await lab.printIfFailed(t);
-  await lab.stop();
-  await h.stop();
-  await cardd.stop();
-  scratch.dispose();
+  const failures: Error[] = [];
+  for (const stop of stops.splice(0).reverse()) {
+    try {
+      await stop(t);
+    } catch (error) {
+      failures.push(
+        error instanceof Error ? error : new Error("cleanup step threw", { cause: error }),
+      );
+    }
+  }
+  const [first] = failures;
+  if (first !== undefined) throw new Error(`cleanup failed: ${first.message}`, { cause: first });
 });
 
 const originLog = (): string => join(h.dir, "origin-calls.log");
