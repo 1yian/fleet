@@ -15,7 +15,7 @@ import {
   shellIdle,
   worktreeOf,
 } from "./host.ts";
-import { openWorkerWorkspace } from "./place.ts";
+import { claimWorkspace, openWorkerWorkspace } from "./place.ts";
 import { OPEN_SCRATCH_SCRIPT, parseOpened, workerEnvironment } from "./scratch.ts";
 import type { Link } from "./link.ts";
 import { workerModelArgs } from "./lane-config.ts";
@@ -38,7 +38,7 @@ async function worktreePane(
   host: string,
   plan: Plan,
   card: number,
-): Promise<{ pane: string; path: string }> {
+): Promise<{ pane: string; path: string; workspace: string | undefined }> {
   const tree = worktreeOf(
     await herdr(host, ["worktree", "list", "--cwd", plan.clone]),
     plan.session,
@@ -49,20 +49,29 @@ async function worktreePane(
     const panes = records((await herdr(host, ["pane", "list", "--workspace", workspace]))["panes"]);
     const pane = field(panes[0], "pane_id");
     if (pane === undefined) throw new Error(`workspace ${workspace} on ${host} has no pane`);
-    return { pane, path };
+    return { pane, path, workspace };
   }
   if (tree === undefined) {
     const from = plan.delivery === "local-only" ? "local" : "origin";
     const args = [plan.clone, path, plan.branch, plan.base, from];
     await onHost(host, ["sh", "-c", ADD_WORKTREE, "add", ...args]);
   }
-  const root = await openWorkerWorkspace(
+  const opened = await openWorkerWorkspace(
     host,
     path,
-    { id: card, name: plan.name, lane: plan.lane },
+    { name: plan.name },
     await scratchEnvironment(host, card),
   );
-  return { pane: root, path };
+  return { pane: opened.pane, path, workspace: opened.workspace };
+}
+
+async function claimOwned(
+  host: string,
+  workspace: string | undefined,
+  plan: Plan,
+  card: number,
+): Promise<void> {
+  if (workspace !== undefined) await claimWorkspace(host, workspace, { id: card, lane: plan.lane });
 }
 
 const SHELL_WAIT_MS = 20_000;
@@ -186,7 +195,8 @@ export async function dispatch(
   const extension = await extensionOn(request.host, launch.extension);
   const plan = await link.call("attempt.begin", request);
   const where = `${plan.session} on ${request.host}`;
-  const { pane, path } = await worktreePane(request.host, plan, request.card);
+  const { pane, path, workspace } = await worktreePane(request.host, plan, request.card);
+  await claimOwned(request.host, workspace, plan, request.card);
   await contain(request.host, pane, path);
   if (await piRunning(request.host, pane)) {
     return `Found ${where} already starting.`;
@@ -258,7 +268,8 @@ export async function replaceWorker(
   if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
   await closeWorkspace(recovery.host, plan.clone, plan.session);
   await releaseAll(recovery.host, old.path);
-  const { pane, path } = await worktreePane(recovery.host, plan, recovery.card);
+  const { pane, path, workspace } = await worktreePane(recovery.host, plan, recovery.card);
+  await claimOwned(recovery.host, workspace, plan, recovery.card);
   await contain(recovery.host, pane, path);
   await startAgent(
     recovery.host,

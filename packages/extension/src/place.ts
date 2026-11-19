@@ -1,12 +1,12 @@
-import { arrangeOn, tagWorker } from "./arrange.ts";
+import { arrangeOn, sidebarHostName, tagWorker } from "./arrange.ts";
 import { field, herdr, records, rootOf, rootPane } from "./host.ts";
 
 export async function openWorkerWorkspace(
   host: string,
   cwd: string,
-  card: { id: number; name: string; lane: string },
+  card: { name: string },
   environment: readonly string[],
-): Promise<string> {
+): Promise<{ pane: string; workspace: string | undefined }> {
   const created = await herdr(host, [
     "workspace",
     "create",
@@ -17,10 +17,21 @@ export async function openWorkerWorkspace(
     "--no-focus",
     ...environment.flatMap((pair) => ["--env", pair]),
   ]);
-  const workspace = field(records([created["workspace"]])[0], "workspace_id");
-  if (workspace !== undefined) {
-    await tagWorker(host, workspace, { lane: card.lane, card: card.id }).catch(() => undefined);
-    await arrangeOn(host, rootOf(host)).catch(() => undefined);
-  }
-  return rootPane(created);
+  return {
+    pane: rootPane(created),
+    workspace: field(records([created["workspace"]])[0], "workspace_id"),
+  };
+}
+
+export async function claimWorkspace(
+  host: string,
+  workspace: string,
+  card: { id: number; lane: string },
+): Promise<void> {
+  await tagWorker(host, workspace, {
+    lane: card.lane,
+    card: card.id,
+    mate: sidebarHostName(process.env["FLEET_HOST"]),
+  }).catch(() => undefined);
+  await arrangeOn(host, rootOf(host)).catch(() => undefined);
 }

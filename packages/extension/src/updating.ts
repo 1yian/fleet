@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { check, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
-import { arrangeOn, tagUntaggedWorkers } from "./arrange.ts";
+import { arrangeOn, tagWorkers } from "./arrange.ts";
 import { HostUnreachable } from "./host.ts";
 import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
-import { fleet, hostsOf, withLanes } from "./lanes.ts";
+import { fleet, hostsOf, mateHosts, withLanes } from "./lanes.ts";
 import type { Link } from "./link.ts";
 import { maintenanceReport, ownPane, relaunchSelf, requestAndAwait } from "./maintenance.ts";
 
@@ -241,7 +241,6 @@ async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolea
       ok: false,
       text: `Fleet update stopped before any change: nothing was pulled, and no mate was restarted.\n${bullets(blocking.flatMap((reply) => reply.lines))}`,
     };
-  await tagWorkers(config, link).catch(() => undefined);
   const replies = await untilOneFails(config);
   if (replies.some((reply) => reply.state !== "updated"))
     return {
@@ -258,6 +257,9 @@ async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolea
       ok: false,
       text: `Fleet update stopped: cardd does not run the new code, so no mate was restarted, and main keeps running.\nHosts:\n${hostLines}`,
     };
+  const tags = await tagAllWorkers(config, link).catch((error: unknown) => [
+    `Worker metadata not refreshed: ${messageOf(error)}`,
+  ]);
   const lanes = await requestAndAwait(link, "reload", randomUUID(), MAINTENANCE_WAIT_MS).then(
     maintenanceReport,
     (error: unknown) => [`Unable to reload: ${messageOf(error)}`],
@@ -269,7 +271,7 @@ async function updateFleet(config: LaneConfig, link: Link): Promise<{ ok: boolea
       "Fleet updated.",
       `Hosts:\n${hostLines}`,
       `Reloads at each safe point (pending is not completed):\n${lanes.join("\n")}`,
-      `Sidebars:\n${bullets(sidebars)}`,
+      `Sidebars:\n${bullets([...tags, ...sidebars])}`,
       ...changeLines(replies, carddStep !== undefined),
     ].join("\n"),
   };
@@ -290,11 +292,17 @@ async function arrangeAll(config: LaneConfig): Promise<string[]> {
   return lines;
 }
 
-async function tagWorkers(config: LaneConfig, link: Link): Promise<void> {
+async function tagAllWorkers(config: LaneConfig, link: Link): Promise<string[]> {
   const cards = await link.call("board", {});
   const laneOfCard = new Map(cards.map((card) => [card.id, card.lane]));
+  const failures: string[] = [];
+  const mates = await mateHosts(config).catch((error: unknown) => {
+    failures.push(`Mate placement unchanged: ${messageOf(error)}`);
+    return new Map<string, string>();
+  });
   for (const host of hostsOf(config))
-    await tagUntaggedWorkers(host, laneOfCard).catch(() => undefined);
+    await tagWorkers(host, laneOfCard, mates).catch(() => undefined);
+  return failures;
 }
 
 function changeLines(replies: readonly HostReply[], carddUpdated: boolean): string[] {

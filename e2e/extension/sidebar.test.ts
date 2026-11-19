@@ -1,46 +1,44 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { optionalString, records } from "../support/json.ts";
-import { addRemote, git, landOnRemote } from "../support/remote.ts";
+import { addRemote, landOnRemote } from "../support/remote.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 120_000;
+const FLEET_HOST = "fixture-mac";
+const LONG_HOST = "devvm-".padEnd(60, "x");
+const OWN_HOSTNAME = hostname().toLowerCase().split(".")[0] ?? "";
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
-const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
 
 let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
 let here: Scratch;
-let p620: Scratch;
 let tokens: Record<string, string>;
 let sites: string;
 beforeEach(async () => {
   h = await Harness.start();
   here = new Scratch();
   const remote = addRemote(here.root);
-  p620 = new Scratch("fleet");
-  git(p620.root, "remote", "add", "origin", remote);
-  git(p620.root, "fetch", "-q", "origin");
-  git(p620.root, "reset", "-q", "--hard", "origin/main");
   cardd = await Cardd.start();
-  const marker = join(here.parent, "p620-down");
   const mainToken = cardd.addLane("main", undefined, here.root);
-  configureMain(here, cardd.url, mainToken, {
-    hosts: { p620: ["node", TRANSPORT, marker] },
-    roots: { p620: p620.root },
-  });
+  configureMain(here, cardd.url, mainToken, { host: FLEET_HOST });
   tokens = { main: mainToken };
   for (const lane of ["ops", "far"]) {
     tokens[lane] = cardd.addLane(lane, "main");
-    const settings = { url: cardd.url, token: tokens[lane] ?? "", args: mateArgs(h) };
-    (lane === "ops" ? here : p620).addLane(lane, settings);
+    here.addLane(lane, {
+      url: cardd.url,
+      token: tokens[lane] ?? "",
+      args: mateArgs(h),
+      host: FLEET_HOST,
+    });
   }
   sites = join(here.parent, "site.worktrees");
   lab = await HerdrLab.start({
@@ -54,7 +52,6 @@ afterEach(async (t) => {
   await lab.printIfFailed(t);
   const stopped = await Promise.allSettled([lab.stop(), h.stop(), cardd.stop()]);
   here.dispose();
-  p620.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -148,15 +145,76 @@ async function openWorker(name: string, card: number): Promise<string> {
   return String(records([made["workspace"]])[0]?.["workspace_id"]);
 }
 
+const EXPECTED_AFTER_UPDATE = [
+  ...GROUPED,
+  "└ stale-owner",
+  "[held] held-worker",
+  "[yang] yang-a",
+  "[yang] yang-b",
+];
+
 test("/updatefleet leaves each mate's workspace followed by its own workers, whatever order the restarts and the workers' creation left", async () => {
   await lab.run(["workspace", "create", "--cwd", here.root, "--label", "~", "--no-focus"]);
+  tokens["yang"] = cardd.addLane("yang", "main");
+  const heldToken = cardd.addLane("held", "main");
+  tokens["held"] = heldToken;
+  here.addLane("held", { url: cardd.url, token: heldToken, hold: true });
   const pane = await startMain(lab, here, h);
   await allRunPi();
   const cards = new Map<string, number>();
   for (const [lane, name] of WORKERS) cards.set(name, await newCard(lane, name));
   for (const [, name] of [...WORKERS].reverse()) await openWorker(name, cards.get(name) ?? 0);
+  const ops = records((await lab.run(["workspace", "list"]))["workspaces"]).find(
+    (row) => row["label"] === "2ndmate-ops",
+  );
+  const opsId = optionalString(ops ?? {}, "workspace_id");
+  assert.ok(opsId);
+  await lab.run([
+    "tab",
+    "create",
+    "--workspace",
+    opsId,
+    "--cwd",
+    join(sites, `c-${String(cards.get("ops-alpha"))}-a1`),
+    "--no-focus",
+  ]);
+  await tagged("held-worker", await newCard("held", "held-worker"), {
+    lane: "held",
+    mate: "previous-host",
+  });
+  const status: unknown = JSON.parse(here.fleet(["status", "--json"], { HERDR_SESSION: lab.name }));
+  assert.ok(records(status).some((row) => row["lane"] === "held" && row["state"] === "stopped"));
+  const stale = await openWorker("stale-owner", await newCard("ops", "stale-owner"));
+  await lab.run([
+    "workspace",
+    "report-metadata",
+    stale,
+    "--source",
+    "fleet",
+    "--token",
+    "lane=ops",
+    "--token",
+    "mate=gone-host",
+  ]);
+  const yangA = await newCard("yang", "yang-a");
+  const yangB = await newCard("yang", "yang-b");
+  for (const [name, card] of [
+    ["yang-b", yangB],
+    ["yang-a", yangA],
+  ] as const) {
+    const workspace = await openWorker(name, card);
+    await lab.run([
+      "workspace",
+      "report-metadata",
+      workspace,
+      "--source",
+      "fleet",
+      "--token",
+      "lane=yang",
+    ]);
+  }
   const before = await sidebar();
-  assert.notDeepEqual(before, GROUPED);
+  assert.notDeepEqual(before, EXPECTED_AFTER_UPDATE);
   process.stderr.write(`sidebar before the update: ${JSON.stringify(before)}\n`);
 
   await lab.submit(pane, "/updatefleet");
@@ -169,60 +227,127 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
     "main to record the update's report",
     async () => `the sidebar reads ${JSON.stringify(await sidebar())}`,
   );
-  await untilSidebar(GROUPED);
+  await untilSidebar(EXPECTED_AFTER_UPDATE);
   await allRunPi();
+  const labels = ["\u2514 main-one", "\u2514 far-one", "\u2514 ops-alpha", "\u2514 stale-owner"];
+  const mates = await Promise.all(labels.map(async (label) => (await tokensOf(label))["mate"]));
+  assert.deepEqual(mates, [FLEET_HOST, FLEET_HOST, FLEET_HOST, FLEET_HOST]);
+  assert.equal((await tokensOf("2ndmate-ops"))["lane"], undefined);
+  assert.equal((await tokensOf("[held] held-worker"))["mate"], "previous-host");
   process.stderr.write(`sidebar after the update: ${JSON.stringify(await sidebar())}\n`);
 });
 
-test("workers without a local mate show their lane without changing matched workers' grouping", async () => {
-  await lab.run([
-    "workspace",
-    "create",
-    "--cwd",
-    here.root,
-    "--label",
-    "2ndmate-ops",
-    "--no-focus",
-  ]);
-  for (const [lane, name, card] of [
-    ["yang-auto", "yang-jeep-offlot-reel", 1822],
-    ["ops", "ops-alpha", 1823],
-  ] as const) {
-    const workspace = await openWorker(name, card);
-    await lab.run([
-      "workspace",
-      "report-metadata",
-      workspace,
-      "--source",
-      "fleet",
-      "--token",
-      `lane=${lane}`,
-      "--token",
-      `card=${String(card)}`,
-    ]);
-  }
-  const expected = ["[yang-auto] yang-jeep-offlot-reel", "2ndmate-ops", "└ ops-alpha"];
-  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
-  await untilSidebar(expected);
-  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
-  await untilSidebar(expected);
+async function tokensOf(label: string): Promise<Record<string, unknown>> {
+  const row = records((await lab.run(["workspace", "list"]))["workspaces"]).find(
+    (each) => each["label"] === label,
+  );
+  assert.ok(row !== undefined, `no workspace ${label}`);
+  const found = row["tokens"];
+  return typeof found === "object" && found !== null ? { ...found } : {};
+}
 
-  await lab.run([
-    "workspace",
-    "create",
-    "--cwd",
-    here.root,
-    "--label",
-    "2ndmate-yang-auto",
-    "--no-focus",
+async function tagged(name: string, card: number, tokens: Record<string, string>): Promise<string> {
+  const workspace = await openWorker(name, card);
+  const marks = Object.entries({ card: String(card), ...tokens }).flatMap(([key, value]) => [
+    "--token",
+    `${key}=${value}`,
   ]);
-  here.fleet(["arrange"], { HERDR_SESSION: lab.name });
-  await untilSidebar([
+  await lab.run(["workspace", "report-metadata", workspace, "--source", "fleet", ...marks]);
+  return workspace;
+}
+
+const arrange = (): string => here.fleet(["arrange"], { HERDR_SESSION: lab.name });
+
+async function mateWorkspace(label: string): Promise<void> {
+  await lab.run(["workspace", "create", "--cwd", here.root, "--label", label, "--no-focus"]);
+}
+
+test("workers without a local mate follow the local groups, keep their lane, and say where their mate is", async () => {
+  await mateWorkspace("1stmate");
+  await mateWorkspace("2ndmate-ops");
+  await lab.run(["workspace", "create", "--cwd", here.root, "--label", "~", "--no-focus"]);
+  await tagged("ops-alpha", 1823, { lane: "ops", mate: "farhost" });
+  await tagged("main-one", 1830, { lane: "main", mate: "farhost" });
+  await tagged("yang-jeep", 1822, { lane: "yang-auto", mate: "farhost" });
+  await tagged("cleo-late", 1850, { lane: "cleo", mate: "farhost" });
+  await tagged("cleo-early", 1840, { lane: "cleo", mate: "farhost" });
+  await tagged("yang-bmw", 1821, { lane: "yang-auto" });
+  const expected = [
+    "~",
+    "1stmate",
+    "└ main-one",
     "2ndmate-ops",
     "└ ops-alpha",
-    "2ndmate-yang-auto",
-    "└ yang-jeep-offlot-reel",
+    "[cleo] cleo-early",
+    "[cleo] cleo-late",
+    "[yang-auto] yang-bmw",
+    "[yang-auto] yang-jeep",
+  ];
+  arrange();
+  await untilSidebar(expected);
+  assert.equal((await tokensOf("[cleo] cleo-early"))["away"], "↗ mate on farhost");
+  assert.equal((await tokensOf("[yang-auto] yang-jeep"))["away"], "↗ mate on farhost");
+  assert.equal((await tokensOf("[yang-auto] yang-bmw"))["away"], undefined);
+  assert.equal((await tokensOf("└ ops-alpha"))["away"], undefined);
+  const seen = await sidebar();
+  arrange();
+  assert.deepEqual(await sidebar(), seen);
+  assert.equal((await tokensOf("[cleo] cleo-early"))["away"], "↗ mate on farhost");
+
+  await mateWorkspace("2ndmate-cleo");
+  arrange();
+  await untilSidebar([
+    "~",
+    "1stmate",
+    "└ main-one",
+    "2ndmate-cleo",
+    "└ cleo-early",
+    "└ cleo-late",
+    "2ndmate-ops",
+    "└ ops-alpha",
+    "[yang-auto] yang-bmw",
+    "[yang-auto] yang-jeep",
   ]);
+  assert.equal((await tokensOf("└ cleo-early"))["away"], undefined);
+  assert.equal((await tokensOf("└ cleo-early"))["mate"], "farhost");
+  assert.equal((await tokensOf("[yang-auto] yang-jeep"))["away"], "↗ mate on farhost");
+});
+
+test("a mate on this host never shows an away hint, and a worker named like the old mate title stays a worker", async () => {
+  await mateWorkspace("2ndmate-ops");
+  await tagged("fleet-ops", 1860, { lane: "ops", mate: "stale-host" });
+  await tagged("fleet-zed", 1861, { lane: "zed" });
+  await tagged("home-worker", 1863, { lane: "homer", mate: FLEET_HOST });
+  await tagged("hostname-worker", 1864, { lane: "namer", mate: OWN_HOSTNAME });
+  await tagged("far-worker", 1865, { lane: "longlane", mate: LONG_HOST });
+  const hostOnly = await tagged("ops-beta", 1862, { lane: "ops" });
+  await lab.run([
+    "workspace",
+    "report-metadata",
+    hostOnly,
+    "--source",
+    "fleet",
+    "--token",
+    "away=↗ mate on gone",
+  ]);
+  arrange();
+  await untilSidebar([
+    "2ndmate-ops",
+    "└ fleet-ops",
+    "└ ops-beta",
+    "[homer] home-worker",
+    "[longlane] far-worker",
+    "[namer] hostname-worker",
+    "[zed] fleet-zed",
+  ]);
+  assert.equal((await tokensOf("[homer] home-worker"))["away"], undefined);
+  assert.equal((await tokensOf("[namer] hostname-worker"))["away"], `↗ mate on ${OWN_HOSTNAME}`);
+  assert.equal((await tokensOf("[longlane] far-worker"))["away"], `↗ mate on ${LONG_HOST}`);
+  const grouped = await tokensOf("└ fleet-ops");
+  assert.equal(grouped["mate"], "stale-host");
+  assert.equal(grouped["away"], undefined);
+  assert.equal((await tokensOf("└ ops-beta"))["away"], undefined);
+  assert.equal((await tokensOf("[zed] fleet-zed"))["away"], undefined);
 });
 
 test("restarting one lane on its own puts its workspace back above its workers", async () => {

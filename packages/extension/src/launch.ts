@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { arrangeHere } from "./arrange.ts";
 import { homeTransport } from "./home-transport.ts";
@@ -7,6 +8,7 @@ import {
   existingHome,
   homeOf,
   laneHomes,
+  placementStatus,
   provision,
   reconfigure,
   restart,
@@ -29,7 +31,7 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE = [
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo] | files [roots [--json | --first NAME] | open PATH | check PATH... | edit PATH | scratch [reset [PROJECT]] | push [PATH] | skills]",
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange [--host NAME] | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo] | files [roots [--json | --first NAME] | open PATH | check PATH... | edit PATH | scratch [reset [PROJECT]] | push [PATH] | skills]",
   "lane options of home add: --host NAME --hosts JSON --roots JSON --tier MODEL --direnv FOLDER --args JSON --worker-args JSON",
   "  --hosts and --roots take a JSON object, --args and --worker-args a JSON array of strings. home set takes only --args and --worker-args, and changes only those.",
   "  --token-file reads the lane token from a file, or from standard input with -, so it never sits in a command line. --hold makes the home held until it is started.",
@@ -68,14 +70,23 @@ if (process.argv.slice(2).some((arg) => arg === "--token" || arg.startsWith("--t
   process.exit(2);
 }
 
-if (process.argv[2] === "files") process.exit(await runFiles(process.argv.slice(3)));
+const cliArgs = process.argv.slice(2);
+if (cliArgs[0] === "files") process.exit(await runFiles(cliArgs.slice(1)));
 
-const argv = process.argv.slice(2).reduce<string[]>((out, arg, index, all) => {
-  if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
-  const value = all[index + 1];
-  out.push(VALUE_OPTIONS.has(arg) && value !== undefined ? `${arg}=${value}` : arg);
-  return out;
-}, []);
+const placement =
+  cliArgs.length === 3 &&
+  cliArgs[0] === "status" &&
+  cliArgs[1] === "--placement" &&
+  cliArgs[2] === "--json";
+const argv = (placement ? ["status", "--json"] : cliArgs).reduce<string[]>(
+  (out, arg, index, all) => {
+    if (VALUE_OPTIONS.has(all[index - 1] ?? "")) return out;
+    const value = all[index + 1];
+    out.push(VALUE_OPTIONS.has(arg) && value !== undefined ? `${arg}=${value}` : arg);
+    return out;
+  },
+  [],
+);
 
 if (argv.some((arg) => arg === "--help" || arg === "-h")) {
   console.log(USAGE);
@@ -218,6 +229,10 @@ function lane(): string {
 }
 
 if (command === "up" || command === "restart") {
+  if (values.host !== undefined) {
+    console.error(USAGE);
+    process.exit(2);
+  }
   const problems = hostProblems(root, values.maintenance !== true);
   if (problems.length > 0) {
     console.error(problems.join("\n"));
@@ -227,6 +242,10 @@ if (command === "up" || command === "restart") {
 
 switch (command ?? "") {
   case "status": {
+    if (placement) {
+      console.log(JSON.stringify(await placementStatus(root)));
+      break;
+    }
     const lanes = await status(root);
     if (values.json === true) console.log(JSON.stringify(lanes));
     else
@@ -249,12 +268,20 @@ switch (command ?? "") {
       console.log(`${name}: shared preferences ${result}`);
     break;
   }
-  case "arrange":
-    await arrangeHere().catch((error: unknown) => {
+  case "arrange": {
+    const running = fileURLToPath(new URL("../../..", import.meta.url));
+    const envHost = process.env["FLEET_HOST"];
+    const configured = envHost === "" ? undefined : envHost;
+    const home =
+      values.host === undefined && configured === undefined ? readLaneConfig(running) : undefined;
+    const named =
+      values.host ?? configured ?? (home === undefined ? undefined : (home.host ?? "local"));
+    await arrangeHere(named).catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exit(1);
     });
     break;
+  }
   case "stop":
     await stop(root, lane());
     console.log(`${lane()}: stopped`);
