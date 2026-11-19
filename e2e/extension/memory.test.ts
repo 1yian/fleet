@@ -105,10 +105,13 @@ function jsonl(folder: string): JsonRecord[] {
 const withText = (found: readonly JsonRecord[], word: string): JsonRecord | undefined =>
   found.find((item) => String(item["text"]).includes(word));
 
-async function until<T>(read: () => T | undefined, what: string): Promise<T> {
+async function until<T>(
+  read: () => T | undefined | Promise<T | undefined>,
+  what: string,
+): Promise<T> {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const value = read();
+    const value = await read();
     if (value !== undefined) return value;
     assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -137,9 +140,13 @@ test("mate memory refresh blocks the run when the home contract becomes a symlin
   const result = await h.waitForNth((event) => event["type"] === "settled", 2, "refresh to settle");
   assert.equal(result["aborted"], true);
   assert.equal(h.callsOf("mate").length, 1);
-  const history = (await lab.history(pane)).replace(/\s+/g, "");
-  assert.ok(history.includes("restoreareadableregularfileat"));
-  assert.ok(history.includes(join(realpathSync(scratch.root), "AGENTS.md")));
+  const restored = join(realpathSync(scratch.root), "AGENTS.md");
+  await until(async () => {
+    const history = (await lab.history(pane)).replace(/\s+/g, "");
+    return history.includes("restoreareadableregularfileat") && history.includes(restored)
+      ? true
+      : undefined;
+  }, "the pane to show the restore notice naming the home AGENTS.md");
 });
 
 test("with memory on, main yields silently and keeps idle and mid-turn fleet messages in conversation memory", async () => {
