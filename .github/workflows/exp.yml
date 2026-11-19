@@ -1,0 +1,83 @@
+name: exp
+on:
+  push:
+    branches: [exp/**]
+permissions:
+  contents: read
+jobs:
+  run:
+    name: ${{ matrix.suite }} ${{ matrix.shard }}/${{ matrix.of }} w${{ matrix.width }} r${{ matrix.rep }}
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { suite: extension, shard: 1, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 2, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 3, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 4, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 5, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 6, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 7, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 8, of: 8, width: 1, rep: 2 }
+          - { suite: extension, shard: 1, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 2, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 3, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 4, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 5, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 6, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 7, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 8, of: 8, width: 1, rep: 3 }
+          - { suite: extension, shard: 1, of: 8, width: 1, rep: 4 }
+          - { suite: extension, shard: 2, of: 8, width: 1, rep: 4 }
+          - { suite: extension, shard: 3, of: 8, width: 1, rep: 4 }
+          - { suite: extension, shard: 4, of: 8, width: 1, rep: 4 }
+          - { suite: extension, shard: 5, of: 8, width: 1, rep: 4 }
+          - { suite: extension, shard: 6, of: 8, width: 1, rep: 4 }
+          - { suite: extension, shard: 7, of: 8, width: 1, rep: 4 }
+          - { suite: extension, shard: 8, of: 8, width: 1, rep: 4 }
+          - { suite: cardd, shard: 1, of: 2, width: 1, rep: 2 }
+          - { suite: cardd, shard: 1, of: 2, width: 1, rep: 3 }
+          - { suite: cardd, shard: 2, of: 2, width: 1, rep: 1 }
+          - { suite: cardd, shard: 2, of: 2, width: 1, rep: 2 }
+          - { suite: cardd, shard: 2, of: 2, width: 1, rep: 3 }
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install herdr
+        env:
+          HERDR_VERSION: 0.9.5
+          HERDR_SHA256: 14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
+        run: |
+          curl -fsSL -o herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
+          echo "${HERDR_SHA256}  herdr" | sha256sum -c -
+          chmod +x herdr && sudo mv herdr /usr/local/bin/herdr
+      - name: Install direnv
+        uses: ./.github/actions/install-direnv
+      - run: npm install -g lavish-axi@${{ matrix.suite == 'board' && '0.1.97' || '0.1.90' }}
+      - run: npm run build
+      - name: Install Chromium
+        uses: ./.github/actions/install-chromium
+      - name: Run
+        env:
+          FLEET_E2E_CONCURRENCY: ${{ matrix.width }}
+        run: |
+          set +e
+          nproc; free -m | head -2
+          snap() { cat /proc/pressure/cpu /proc/pressure/memory /proc/pressure/io; head -1 /proc/stat; grep -E 'MemAvailable|SwapFree' /proc/meminfo; }
+          snap > before.txt
+          started=$(date +%s)
+          node e2e/run.ts --shard=${{ matrix.shard }}/${{ matrix.of }} "e2e/${{ matrix.suite }}/*.test.ts"
+          status=$?
+          echo "WALL_SECONDS $(( $(date +%s) - started ))"
+          snap > after.txt
+          echo "--- before"; cat before.txt; echo "--- after"; cat after.txt
+          awk 'NR==FNR && /^cpu /{for(i=2;i<=9;i++)b[i]=$i; next} /^cpu /{busy=0; tot=0; for(i=2;i<=9;i++){d=$i-b[i]; tot+=d; if(i!=5&&i!=6)busy+=d}; printf "CPU_BUSY_PERCENT %.1f\n", 100*busy/tot}' before.txt after.txt
+          exit $status
