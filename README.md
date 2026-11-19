@@ -30,11 +30,12 @@ fleet-browser login <item>             sign in from the lane's vault; the agent 
 fleet-browser otp <item> [--submit]    one-time code from the vault into the page
 fleet-browser mail link|code <item>    follow an emailed link or type an emailed code
 fleet-browser captcha                  solve hCaptcha / reCAPTCHA / Turnstile; hands off if it cannot
+fleet-browser dev [--headful] <verb>   throwaway browser for your own dev server (docs/dev-mode.md)
 fleet-browser handoff "<reason>"       lock the lane, notify the captain, wait for Done
 fleet-browser lanes [--watch]          every lane (the herdr plugin pane runs --watch --notify)
 ```
 
-Browser verbs are passed to agent-browser 0.43.0 (pinned in `package.json`); see `skills/fleet-browser/SKILL.md`. Credential commands are described in [docs/credentials.md](docs/credentials.md), captcha solving in [docs/captcha.md](docs/captcha.md).
+Browser verbs are passed to agent-browser 0.43.0 (pinned in `package.json`); see `skills/fleet-browser/SKILL.md`. Credential commands are described in [docs/credentials.md](docs/credentials.md), captcha solving in [docs/captcha.md](docs/captcha.md), dev mode in [docs/dev-mode.md](docs/dev-mode.md).
 
 ## Install on a host
 

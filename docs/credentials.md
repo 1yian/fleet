@@ -26,7 +26,7 @@ What the agent sees back: the steps taken (`username, password, otp`), the resul
 
 ## Rules the service enforces
 
-- **Origin binding.** The page must be on a website listed on the item, and is re-checked before every field is typed. A redirect to another host stops the login with `off-origin` before the password is typed.
+- **Origin binding.** The page must be on a website listed on the item, and is re-checked before every field is typed. A redirect to another host stops the login with `off-origin` before the password is typed. For single sign-on, list the identity provider as an extra website on the item (for example `accounts.google.com`) so the whole redirect chain is allowed.
 - **No retries.** One password attempt per `login`. A second one-time code is tried only when the code has rolled over. A wrong password returns `stuck` with what the page said, so a lockout is never provoked.
 - **No peeking.** While a credential step runs, the lane's CDP proxy refuses everything except attach and domain enable/disable, so the agent cannot evaluate scripts, snapshot or screenshot the page. Network events the agent listens to carry no request bodies, and cookie and authorization headers are redacted. `Network.getRequestPostData` and every cookie read are refused at all times.
 - **Cleanup.** After a login, any password or code field still holding a value is cleared. `otp` and `mail code` without `--submit` leave the single-use code in the field so the agent can press the page's own button.

@@ -248,12 +248,16 @@ function eventsStream(daemon: Daemon, req: IncomingMessage, res: ServerResponse)
     void res.write(`event: lane\ndata: ${JSON.stringify(snapshot)}\n\n`);
   const onHandoff = (payload: unknown): void =>
     void res.write(`event: handoff\ndata: ${JSON.stringify(payload)}\n\n`);
+  const onGone = (payload: unknown): void =>
+    void res.write(`event: gone\ndata: ${JSON.stringify(payload)}\n\n`);
   const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
   daemon.on("lane", onLane);
   daemon.on("handoff", onHandoff);
+  daemon.on("gone", onGone);
   req.on("close", () => {
     clearInterval(ping);
     daemon.off("lane", onLane);
     daemon.off("handoff", onHandoff);
+    daemon.off("gone", onGone);
   });
 }

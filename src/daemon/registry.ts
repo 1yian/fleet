@@ -23,6 +23,18 @@ export class SlotRegistry {
       : {};
   }
 
+  forget(lane: string): void {
+    delete this.slots[lane];
+    this.save();
+  }
+
+  private save(): void {
+    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+    const temp = `${this.path}.tmp`;
+    writeFileSync(temp, JSON.stringify(this.slots, null, 2), { mode: 0o600 });
+    renameSync(temp, this.path);
+  }
+
   names(): string[] {
     return Object.keys(this.slots);
   }
@@ -35,10 +47,7 @@ export class SlotRegistry {
       while (used.has(slot)) slot += 1;
       if (slot >= this.config.lanes.max) throw new Error(`lane limit of ${this.config.lanes.max} reached`);
       this.slots[lane] = slot;
-      mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-      const temp = `${this.path}.tmp`;
-      writeFileSync(temp, JSON.stringify(this.slots, null, 2), { mode: 0o600 });
-      renameSync(temp, this.path);
+      this.save();
     }
     const { cpusPerLane, totalCpus, firstDisplay, firstCdpPort } = this.config.lanes;
     const start = (slot * cpusPerLane) % totalCpus;

@@ -18,4 +18,4 @@ Your lane has one persistent Chrome. Cookies and logins survive between tasks. R
 Rules:
 - While the captain drives or a handoff is open, anything that changes the page is refused with a message saying so. `snapshot` and `screenshot` still work.
 - Cookies, passwords and one-time codes are never available to you. Do not try to read them, and never type a password you were given into a page yourself.
-- `localhost` and private addresses open in the lane's Chrome on the browser host, not on your machine.
+- `localhost` and private addresses open in the lane's Chrome on the browser host, not on your machine. For a dev server on your own machine use dev mode: `fleet-browser dev open http://localhost:3000`, then the same verbs after `dev`, `fleet-browser dev console` for console messages plus uncaught errors, and `fleet-browser dev close` when done. Dev mode has no sign-ins and nothing persists.

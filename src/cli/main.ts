@@ -1,15 +1,16 @@
 import { AxiError, runAxiCli } from "axi-sdk-js";
-import { cleanOutput, PASS_THROUGH, runAgentBrowser } from "./browser.js";
+import { cleanOutput, mergedConsole, PASS_THROUGH, runAgentBrowser } from "./browser.js";
 import { captchaCommand } from "./captcha.js";
 import { daemon } from "./client.js";
 import { brokerStatus, loginCommand, mailCommand, otpCommand } from "./credentials.js";
+import { devCommand } from "./dev.js";
 import { parseDuration } from "./duration.js";
 import { askCaptain, waitForHandoff } from "./handoff.js";
 import { listLanes, renderLanes, watchLanes } from "./lanes.js";
 import { renderStatus } from "./status.js";
 
 const HELP = `usage: fleet-browser <command> [args]
-commands[9]:
+commands[10]:
   (none)                          lane status: browser, control, tabs, pending handoff
   open <url>                      open a page in this lane's persistent Chrome
   snapshot [-i] | click @e | fill @e <text> | type | press | scroll | wait | screenshot <path> | eval | get | find | tab | back | reload
@@ -18,6 +19,8 @@ commands[9]:
                                   fill credentials from the lane vault; you never see the secrets
   captcha [detect] [--kind hcaptcha|recaptcha] [--no-handoff]
                                   solve the captcha on the page with the vision-model solver; hands the lane to the captain if it cannot
+  dev [--headful] [--name <n>] <verb> ...
+                                  throwaway browser for your own dev server: headless on this machine, or a fresh headful lane on the browser host with a board viewer (--headful); "dev close" deletes it
   broker status                   1Password read budget for the account
   handoff "<reason>" [--wait 30m] ask the captain to take over in the board; waits until Done
   handoff wait | cancel | status
@@ -44,6 +47,7 @@ function takeLane(args: string[]): { lane: string; rest: string[] } {
 async function passThrough(verb: string, args: string[]): Promise<string> {
   const { lane, rest } = takeLane(args);
   await daemon.start(lane);
+  if (verb === "console") return mergedConsole((a) => runAgentBrowser(lane, a), rest);
   const result = await runAgentBrowser(lane, [verb, ...rest]);
   const text = cleanOutput(result.stdout + result.stderr).trimEnd();
   if (result.code !== 0)
@@ -76,6 +80,7 @@ const commands = {
     const { lane, rest } = takeLane(args);
     return mailCommand(lane, rest);
   },
+  dev: async (args: string[]) => devCommand(args),
   captcha: async (args: string[]) => {
     const { lane, rest } = takeLane(args);
     return captchaCommand(lane, rest);

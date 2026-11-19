@@ -14,3 +14,7 @@ export function parseLaneName(value: unknown): LaneName {
   }
   return value;
 }
+
+export function isEphemeralLane(value: string): boolean {
+  return value.startsWith("dev-");
+}

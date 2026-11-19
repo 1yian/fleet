@@ -45,7 +45,7 @@ Lane snapshot:
 
 - `GET /v1/lanes`: array of snapshots for every lane the service has seen.
 - `GET /v1/lanes/{lane}`: one snapshot. Unknown valid lane names are created stopped.
-- `GET /v1/events` (SSE): on connect, one `event: lane` per known lane with its full snapshot, then `event: lane` on every change and `event: handoff` with `{ "lane": "main", "handoff": {...} }` when a handoff opens or resolves. `: ping` comment lines every 15 seconds.
+- `GET /v1/events` (SSE): on connect, one `event: lane` per known lane with its full snapshot, then `event: lane` on every change and `event: handoff` with `{ "lane": "main", "handoff": {...} }` when a handoff opens or resolves, and `event: gone` with `{ "lane": "dev-checkout" }` when an ephemeral dev lane (name starting with `dev-`) is stopped and removed. `: ping` comment lines every 15 seconds.
 
 ## Live view (SSE)
 

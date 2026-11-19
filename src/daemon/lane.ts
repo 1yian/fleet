@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LaneName } from "../shared/lane-name.js";
+import { isEphemeralLane, type LaneName } from "../shared/lane-name.js";
 import type {
   AgentStep,
   Control,
@@ -99,6 +99,10 @@ export class Lane extends EventEmitter {
     return this.starting;
   }
 
+  get ephemeral(): boolean {
+    return isEphemeralLane(this.name);
+  }
+
   async stop(): Promise<void> {
     this.wanted = false;
     if (this.restartTimer) clearTimeout(this.restartTimer);
@@ -106,6 +110,10 @@ export class Lane extends EventEmitter {
     await this.starting?.catch(() => undefined);
     await this.shutdownProcesses();
     this.setStatus("stopped");
+    if (this.ephemeral) {
+      rmSync(this.dir, { recursive: true, force: true });
+      this.emit("gone");
+    }
   }
 
   async restart(): Promise<void> {
@@ -272,6 +280,7 @@ export class Lane extends EventEmitter {
     this.setStatus("starting");
     try {
       this.chromeVersion = await assertPinnedChrome(this.config);
+      if (this.ephemeral) rmSync(this.dir, { recursive: true, force: true });
       for (const sub of ["profile", "home", "downloads"])
         mkdirSync(join(this.dir, sub), { recursive: true, mode: 0o700 });
       for (const file of SINGLETON_FILES) rmSync(join(this.profileDir, file), { force: true });

@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
-import { type LaneName, parseLaneName } from "../shared/lane-name.js";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { isEphemeralLane, type LaneName, parseLaneName } from "../shared/lane-name.js";
 import type { Handoff, LaneSnapshot } from "../shared/protocol.js";
 import { Captcha } from "./captcha.js";
 import type { Config } from "./config.js";
@@ -26,7 +28,14 @@ export class Daemon extends EventEmitter {
     this.captcha = new Captcha(config);
     this.notifier = new Notifier(config);
     this.registry = new SlotRegistry(config);
-    for (const name of this.registry.names()) this.lane(parseLaneName(name));
+    for (const name of this.registry.names()) {
+      if (isEphemeralLane(name)) {
+        rmSync(join(config.dataDir, "lanes", name), { recursive: true, force: true });
+        this.registry.forget(name);
+        continue;
+      }
+      this.lane(parseLaneName(name));
+    }
   }
 
   lane(name: LaneName): Lane {
@@ -41,6 +50,11 @@ export class Daemon extends EventEmitter {
           .snapshot()
           .then((snapshot) => this.notifier.handoffOpened(name, handoff, snapshot.viewLink))
           .catch((error: Error) => console.error(`phone notification failed: ${error.message}`));
+      });
+      created.on("gone", () => {
+        this.lanes.delete(name);
+        this.registry.forget(name);
+        this.emit("gone", { lane: name });
       });
       this.lanes.set(name, lane);
     }
@@ -57,6 +71,6 @@ export class Daemon extends EventEmitter {
 
   private async relayLane(lane: Lane): Promise<void> {
     const snapshot: LaneSnapshot = await lane.snapshot();
-    this.emit("lane", snapshot);
+    if (this.lanes.has(lane.name)) this.emit("lane", snapshot);
   }
 }

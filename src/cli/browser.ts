@@ -59,15 +59,41 @@ export function browserEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-export function runAgentBrowser(
-  lane: string,
-  args: string[],
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  const entry = require.resolve("agent-browser/bin/agent-browser.js");
+export interface Run {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export function runAgentBrowser(lane: string, args: string[]): Promise<Run> {
   const cdp = `${DAEMON_URL.replace(/^http/, "ws")}/cdp/${lane}`;
+  return runProcess(["--session", `fb-${lane}`, "--cdp", cdp, ...args], browserEnv());
+}
+
+export function runDevBrowser(name: string, args: string[]): Promise<Run> {
+  const env = browserEnv();
+  env.AGENT_BROWSER_IDLE_TIMEOUT_MS = String(15 * 60 * 1000);
+  const chrome = process.env.FLEET_BROWSER_DEV_CHROME;
+  if (chrome) env.AGENT_BROWSER_EXECUTABLE_PATH = chrome;
+  return runProcess(["--session", `fb-dev-${name}`, ...args], env);
+}
+
+export async function mergedConsole(run: (args: string[]) => Promise<Run>, args: string[]): Promise<string> {
+  const [messages, errors] = await Promise.all([run(["console", ...args]), run(["errors", ...args])]);
+  const failed = messages.code !== 0 ? messages : errors.code !== 0 ? errors : null;
+  if (failed) throw new AxiError(cleanOutput(failed.stdout + failed.stderr).trim(), "BROWSER_COMMAND_FAILED");
+  const lines = [
+    cleanOutput(messages.stdout).trim(),
+    cleanOutput(errors.stdout).trim().replace(/^✗ /gm, "[error] "),
+  ].filter(Boolean);
+  return lines.length ? lines.join("\n") : "no console output or page errors";
+}
+
+function runProcess(args: string[], env: NodeJS.ProcessEnv): Promise<Run> {
+  const entry = require.resolve("agent-browser/bin/agent-browser.js");
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [entry, "--session", `fb-${lane}`, "--cdp", cdp, ...args], {
-      env: browserEnv(),
+    const child = spawn(process.execPath, [entry, ...args], {
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
