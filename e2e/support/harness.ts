@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { stream, wireCall, type WireCall } from "./anthropic-wire.ts";
 import { spawnGuarded } from "./guarded.ts";
+import { groupIdentity, signalOwnedGroup } from "./marked.ts";
 import {
   isRecord,
   messageText,
@@ -95,11 +96,13 @@ function toTurns(body: JsonRecord): Turn[] {
 
 export class Pi {
   private readonly child: ChildProcess;
+  private readonly started: string | undefined;
   private readonly exited: Promise<void>;
   readonly responses: JsonRecord[] = [];
   readonly uiRequests: JsonRecord[] = [];
   constructor(child: ChildProcess) {
     this.child = child;
+    this.started = child.pid === undefined ? undefined : groupIdentity(child.pid);
     let buffered = "";
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
@@ -158,7 +161,7 @@ export class Pi {
   }
 
   async kill(): Promise<void> {
-    this.child.kill("SIGKILL");
+    if (!signalOwnedGroup(this.child.pid, this.started, "SIGKILL")) this.child.kill("SIGKILL");
     await this.exited;
   }
 
