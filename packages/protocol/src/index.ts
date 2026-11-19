@@ -46,9 +46,11 @@ export {
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
+
 export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only"] as const;
 const Delivery = Type.Enum(DELIVERIES);
 export type Delivery = Static<typeof Delivery>;
+
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
 export const CAPTAIN = "captain";
@@ -86,6 +88,7 @@ export const CardSchema = Type.Object({
   updatedAt: Type.Integer(),
 });
 export type Card = Static<typeof CardSchema>;
+
 export const EntrySchema = Type.Object({
   id: Type.Integer(),
   card: Type.Integer(),
@@ -96,6 +99,7 @@ export const EntrySchema = Type.Object({
   createdAt: Type.Integer(),
 });
 export type Entry = Static<typeof EntrySchema>;
+
 export const OwedReplySchema = Type.Object({
   id: ReplyId,
   from: Type.String(),
@@ -244,6 +248,11 @@ export const OPS = {
     roles: ["mate"],
     args: Type.Object({
       card: Type.Integer(),
+      review: Type.Optional(
+        Type.Union([Type.String(), Type.Literal(false)], {
+          description: "Exact Lavish URL to bind, or false for a board-only decision",
+        }),
+      ),
       question: Type.String({
         minLength: 1,
         description:
@@ -350,21 +359,9 @@ export const OPS = {
     args: Type.Object({ name: Type.String({ minLength: 1 }) }),
     result: Type.Object({ branch: Type.String(), previous: Type.String() }),
   },
-  "lane.plan": {
-    roles: ["mate"],
-    args: Type.Object({}),
-    result: PlanSchema,
-  },
-  "replies.owed": {
-    roles: ["worker"],
-    args: Type.Object({}),
-    result: Type.Array(ReplyId),
-  },
-  "hold.open": {
-    roles: ["worker"],
-    args: Type.Object({}),
-    result: Type.Boolean(),
-  },
+  "lane.plan": { roles: ["mate"], args: Type.Object({}), result: PlanSchema },
+  "replies.owed": { roles: ["worker"], args: Type.Object({}), result: Type.Array(ReplyId) },
+  "hold.open": { roles: ["worker"], args: Type.Object({}), result: Type.Boolean() },
   ...COMPLAINT_OPS,
   ...SCHEDULE_OPS,
   ...STANDING_OPS,
@@ -394,7 +391,6 @@ export const OPS = {
 export type OpName = keyof typeof OPS;
 export type OpArgs<O extends OpName> = Static<(typeof OPS)[O]["args"]>;
 export type OpResult<O extends OpName> = Static<(typeof OPS)[O]["result"]>;
-
 export const CLOSE = {
   badMessage: 4000,
   notLive: 4001,
@@ -413,6 +409,11 @@ const ClientMessage = Type.Union([
     maintenance: Type.Optional(Type.Boolean()),
     running: Type.Optional(Type.Boolean()),
     started: Type.Optional(Type.Boolean()),
+    runtime: Type.Optional(
+      Type.String({
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      }),
+    ),
   }),
   Type.Object({ t: Type.Literal("read"), entry: Type.Integer() }),
   Type.Object({ t: Type.Literal("ack"), entry: Type.Integer() }),
@@ -437,12 +438,12 @@ export const BoardSchema = Type.Object({
       merge: Type.Boolean(),
       originalMerge: Type.Boolean(),
       author: Type.Optional(Type.String()),
+      review: Type.Optional(Type.Boolean()),
     }),
   ),
   schedules: Type.Array(ScheduleSchema),
 });
 export type Board = Static<typeof BoardSchema>;
-
 export const ThreadSchema = Type.Object({ card: CardSchema, entries: Type.Array(EntrySchema) });
 export type Thread = Static<typeof ThreadSchema>;
 
@@ -484,7 +485,6 @@ export function check<T extends TSchema>(schema: T, value: unknown): Static<T> {
   const [first] = Value.Errors(schema, value);
   throw new Error(`invalid ${first?.instancePath ?? ""}: ${first?.message ?? "bad value"}`);
 }
-
 export const parseClientMessage = (text: string): ClientMessage =>
   check(ClientMessage, JSON.parse(text));
 export const parseServerMessage = (text: string): ServerMessage =>
