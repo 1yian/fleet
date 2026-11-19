@@ -1,15 +1,8 @@
 import type { ServerResponse } from "node:http";
 import type { FrameMeta, StreamCommand, StreamInput } from "../shared/protocol.js";
 import { CdpClient } from "./cdp.js";
+import { HttpError } from "./errors.js";
 import type { Lane } from "./lane.js";
-
-export class StreamError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
 
 function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -208,9 +201,9 @@ export class StreamSession {
 
   private requireControl(): void {
     if (!this.holdsControl()) {
-      throw new StreamError(409, "this viewer does not hold control; send {t:'control', on:true} first");
+      throw new HttpError(409, "this viewer does not hold control; send {t:'control', on:true} first");
     }
-    if (!this.cdp || !this.pageSessionId) throw new StreamError(409, "no active page in the stream yet");
+    if (!this.cdp || !this.pageSessionId) throw new HttpError(409, "no active page in the stream yet");
   }
 
   input(events: StreamInput[]): Promise<number> {
@@ -226,8 +219,14 @@ export class StreamSession {
   async command(command: StreamCommand): Promise<void> {
     if (command.t === "control") {
       if (command.on) {
+        if (this.lane.tainted) {
+          throw new HttpError(
+            409,
+            "the agent is typing credentials into this lane right now; try again in a few seconds",
+          );
+        }
         if (!this.lane.takeControl(this.viewerId, command.force)) {
-          throw new StreamError(
+          throw new HttpError(
             409,
             "another viewer holds control of this lane; send force:true to take it over",
           );

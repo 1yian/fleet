@@ -13,6 +13,7 @@ export interface Config {
     firstCdpPort: number;
     screen: { width: number; height: number };
   };
+  broker: { socket: string };
   handoff: { defaultWaitSeconds: number; linkTemplate: string | null };
 }
 
@@ -47,6 +48,7 @@ export function parseConfig(raw: unknown): Config {
   const lanes = record(root.lanes ?? {}, "lanes");
   const screen = record(lanes.screen ?? {}, "lanes.screen");
   const handoff = record(root.handoff ?? {}, "handoff");
+  const broker = record(root.broker ?? {}, "broker");
   const linkTemplate = handoff.linkTemplate ?? null;
   if (linkTemplate !== null && (typeof linkTemplate !== "string" || !linkTemplate.includes("{lane}"))) {
     throw new Error("config handoff.linkTemplate must be a string containing {lane}");
@@ -73,6 +75,9 @@ export function parseConfig(raw: unknown): Config {
         width: num(screen, "width", "lanes.screen", 1440),
         height: num(screen, "height", "lanes.screen", 900),
       },
+    },
+    broker: {
+      socket: typeof broker.socket === "string" ? broker.socket : "/run/fleet-browser-broker/broker.sock",
     },
     handoff: {
       defaultWaitSeconds: num(handoff, "defaultWaitSeconds", "handoff", 1800),

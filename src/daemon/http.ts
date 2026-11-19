@@ -2,9 +2,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { WebSocketServer } from "ws";
 import { isLaneName, type LaneName } from "../shared/lane-name.js";
 import type { Daemon } from "./daemon.js";
+import { HttpError } from "./errors.js";
 import type { Lane } from "./lane.js";
 import { proxyAgentConnection } from "./proxy.js";
-import { parseCommand, parseInput, StreamError, StreamSession } from "./stream-session.js";
+import { parseCommand, parseInput, StreamSession } from "./stream-session.js";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
@@ -21,14 +22,14 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 1024 * 1024) throw new StreamError(400, "request body too large");
+    if (size > 1024 * 1024) throw new HttpError(400, "request body too large");
     chunks.push(chunk as Buffer);
   }
   if (chunks.length === 0) return {};
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
-    throw new StreamError(400, "request body is not valid JSON");
+    throw new HttpError(400, "request body is not valid JSON");
   }
 }
 
@@ -37,7 +38,7 @@ function laneFromPath(segment: string | undefined): LaneName | null {
 }
 
 function fail(res: ServerResponse, error: unknown): void {
-  if (error instanceof StreamError) json(res, error.status, { error: error.message });
+  if (error instanceof HttpError) json(res, error.status, { error: error.message });
   else json(res, 500, { error: error instanceof Error ? error.message : String(error) });
 }
 
@@ -95,7 +96,40 @@ async function routeAgent(daemon: Daemon, req: IncomingMessage, res: ServerRespo
     return json(res, 200, await lane.snapshot());
   }
   if (action === "handoff") return agentHandoff(daemon, lane, parts, method, req, res, url);
+  if (method === "POST" && (action === "login" || action === "otp" || action === "mail")) {
+    return agentCredentials(daemon, lane, action, (await readJson(req)) as Record<string, unknown>, res);
+  }
+  if (action === "broker-status" && method === "GET")
+    return json(res, 200, await daemon.credentials.status(lane));
   return json(res, 404, { error: "not found" });
+}
+
+async function agentCredentials(
+  daemon: Daemon,
+  lane: Lane,
+  action: "login" | "otp" | "mail",
+  body: Record<string, unknown>,
+  res: ServerResponse,
+): Promise<void> {
+  const item = typeof body.item === "string" ? body.item.trim() : "";
+  if (!item || item.length > 120) throw new HttpError(400, "item is required");
+  if (action === "login") return json(res, 200, await daemon.credentials.login(lane, item));
+  if (action === "otp") return json(res, 200, await daemon.credentials.otp(lane, item, body.submit === true));
+  const kind = body.kind === "code" ? "code" : body.kind === "link" ? "link" : null;
+  if (!kind) throw new HttpError(400, "kind must be link or code");
+  const seconds = (value: unknown, fallback: number, max: number): number =>
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(value, max)) : fallback;
+  return json(
+    res,
+    200,
+    await daemon.credentials.mail(lane, item, kind, {
+      match: typeof body.match === "string" ? body.match : undefined,
+      pattern: typeof body.pattern === "string" ? body.pattern : undefined,
+      sinceSeconds: seconds(body.sinceSeconds, 600, 24 * 3600),
+      waitSeconds: seconds(body.waitSeconds, 0, 280),
+      submit: body.submit === true,
+    }),
+  );
 }
 
 async function agentHandoff(
@@ -176,18 +210,18 @@ async function routeStream(daemon: Daemon, req: IncomingMessage, res: ServerResp
   }
   const session = lane.streams.get(viewerId) as StreamSession | undefined;
   if (action === "input" && method === "POST") {
-    if (!session) throw new StreamError(409, "no open stream for this viewer");
+    if (!session) throw new HttpError(409, "no open stream for this viewer");
     const body = (await readJson(req)) as { events?: unknown };
-    if (!Array.isArray(body.events)) throw new StreamError(400, "events must be an array");
+    if (!Array.isArray(body.events)) throw new HttpError(400, "events must be an array");
     const events = body.events.map(parseInput);
-    if (events.some((event) => event === null)) throw new StreamError(400, "an input event is malformed");
+    if (events.some((event) => event === null)) throw new HttpError(400, "an input event is malformed");
     const applied = await session.input(events as NonNullable<(typeof events)[number]>[]);
     return json(res, 200, { applied });
   }
   if (action === "command" && method === "POST") {
-    if (!session) throw new StreamError(409, "no open stream for this viewer");
+    if (!session) throw new HttpError(409, "no open stream for this viewer");
     const command = parseCommand(await readJson(req));
-    if (!command) throw new StreamError(400, "the command is malformed");
+    if (!command) throw new HttpError(400, "the command is malformed");
     await session.command(command);
     return json(res, 200, { ok: true });
   }

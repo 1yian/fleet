@@ -32,6 +32,7 @@ export interface LaneSnapshot {
   tabs: TabInfo[];
   control: Control;
   handoff: Handoff | null;
+  credentialStep: boolean;
   viewLink: string | null;
 }
 

@@ -19,10 +19,13 @@
     "@toon-format/toon": "^2.1.0",
     "agent-browser": "0.43.0",
     "axi-sdk-js": "^0.1.13",
+    "imapflow": "^2.12.1",
+    "mailparser": "^3.14.5",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",
+    "@types/mailparser": "^3.9.0",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.0",
     "typescript": "^5.9.0"

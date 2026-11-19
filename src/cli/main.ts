@@ -1,16 +1,20 @@
 import { AxiError, runAxiCli } from "axi-sdk-js";
 import { cleanOutput, PASS_THROUGH, runAgentBrowser } from "./browser.js";
 import { daemon } from "./client.js";
+import { brokerStatus, loginCommand, mailCommand, otpCommand } from "./credentials.js";
 import { parseDuration } from "./duration.js";
 import { listLanes, renderLanes, ringHerdr, watchLanes } from "./lanes.js";
 import { renderStatus } from "./status.js";
 
 const HELP = `usage: fleet-browser <command> [args]
-commands[6]:
+commands[8]:
   (none)                          lane status: browser, control, tabs, pending handoff
   open <url>                      open a page in this lane's persistent Chrome
   snapshot [-i] | click @e | fill @e <text> | type | press | scroll | wait | screenshot <path> | eval | get | find | tab | back | reload
                                   browser verbs, passed to agent-browser (run \`fleet-browser snapshot -i\` first)
+  login <item> | otp <item> [--submit] | mail link|code <item> [--match <re>] [--since 10m] [--wait 60s] [--submit]
+                                  fill credentials from the lane vault; you never see the secrets
+  broker status                   1Password read budget for the account
   handoff "<reason>" [--wait 30m] ask the captain to take over in the board; waits until Done
   handoff wait | cancel | status
   status [--watch] | start | stop | restart | lanes [--watch --notify]
@@ -56,6 +60,22 @@ const commands = {
   stop: async (args: string[]) => renderStatus(await daemon.stop(takeLane(args).lane)),
   restart: async (args: string[]) => renderStatus(await daemon.restart(takeLane(args).lane)),
   handoff: async (args: string[]) => handoffCommand(args),
+  login: async (args: string[]) => {
+    const { lane, rest } = takeLane(args);
+    return loginCommand(lane, rest);
+  },
+  otp: async (args: string[]) => {
+    const { lane, rest } = takeLane(args);
+    return otpCommand(lane, rest);
+  },
+  mail: async (args: string[]) => {
+    const { lane, rest } = takeLane(args);
+    return mailCommand(lane, rest);
+  },
+  broker: async (args: string[]) => {
+    const { lane } = takeLane(args);
+    return brokerStatus(lane);
+  },
   lanes: async (args: string[]) => {
     if (args.includes("--watch")) {
       await watchLanes(args.includes("--notify"));

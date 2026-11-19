@@ -8,6 +8,7 @@ import type { Control, Handoff, LaneSnapshot, LaneStatusName, TabInfo } from "..
 import { CdpClient } from "./cdp.js";
 import { assertPinnedChrome, chromeArgs } from "./chrome.js";
 import type { Config } from "./config.js";
+import { HttpError } from "./errors.js";
 import type { LaneSlot } from "./registry.js";
 
 const CRASH_WINDOW_MS = 5 * 60 * 1000;
@@ -39,6 +40,7 @@ export class Lane extends EventEmitter {
   control: Control = { kind: "agent" };
   handoff: Handoff | null = null;
   activeTarget: string | undefined;
+  private secretFlowActive = false;
 
   private readonly config: Config;
   private chrome: ChildProcess | null = null;
@@ -134,7 +136,25 @@ export class Lane extends EventEmitter {
       tabs,
       control: this.control,
       handoff: this.handoff,
+      credentialStep: this.secretFlowActive,
       viewLink: this.config.handoff.linkTemplate?.replaceAll("{lane}", this.name) ?? null,
+    };
+  }
+
+  get tainted(): boolean {
+    return this.secretFlowActive;
+  }
+
+  beginSecretFlow(): () => void {
+    if (this.secretFlowActive)
+      throw new HttpError(409, "another credential step is already running on this lane");
+    const lock = this.agentLock();
+    if (lock) throw new HttpError(409, `lane ${this.name} is ${lock}`);
+    this.secretFlowActive = true;
+    this.emit("change");
+    return () => {
+      this.secretFlowActive = false;
+      this.emit("change");
     };
   }
 

@@ -26,6 +26,7 @@ Lane snapshot:
   "tabs": [{ "id": "<targetId>", "title": "Sign in", "url": "https://..." }],
   "control": { "kind": "agent" },
   "handoff": { "id": "a1b2c3", "lane": "main", "reason": "solve the captcha", "createdAt": 0, "expiresAt": 0, "status": "open" },
+  "credentialStep": false,
   "viewLink": "http://maverick.tail7d4c65.ts.net:7878/#/browser/main"
 }
 ```
@@ -34,6 +35,7 @@ Lane snapshot:
 - `error`: always present. `null` unless `status` is `failed`, then a one-line reason (for example the Chrome pin mismatch or a crash loop). The board's `snapshot.error` assumption holds.
 - `control`: `{ "kind": "agent" }` or `{ "kind": "human", "viewerId": "...", "since": 0 }`.
 - `handoff`: `null` or the latest handoff. `status` is `open | done | cancelled | expired`; `resolvedAt` appears once it is not open.
+- `credentialStep`: `true` while the service is typing a vault secret, one-time code or emailed code into the lane for the agent (usually under ten seconds). The board can show "agent is signing in"; taking control is refused with `409` until it clears.
 - `viewLink`: built from the service's `handoff.linkTemplate` by replacing `{lane}`, the same template the handoff notifications use. On p620 it is `http://maverick.tail7d4c65.ts.net:7878/#/browser/{lane}`. `null` when no template is configured. The lane list route (`#/browser`) is the board's own and the service does not know it.
 - `chromeVersion`, `chromePid` and `display` appear once the lane has started; `tabs` is empty unless `status` is `ready`.
 

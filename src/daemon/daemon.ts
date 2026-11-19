@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { type LaneName, parseLaneName } from "../shared/lane-name.js";
 import type { Handoff, LaneSnapshot } from "../shared/protocol.js";
 import type { Config } from "./config.js";
+import { Credentials } from "./credentials.js";
 import { Lane } from "./lane.js";
 import { SlotRegistry } from "./registry.js";
 import { TokenStore } from "./tokens.js";
@@ -9,6 +10,7 @@ import { TokenStore } from "./tokens.js";
 export class Daemon extends EventEmitter {
   readonly config: Config;
   readonly tokens: TokenStore;
+  readonly credentials: Credentials;
   private readonly registry: SlotRegistry;
   private readonly lanes = new Map<string, Lane>();
 
@@ -16,6 +18,7 @@ export class Daemon extends EventEmitter {
     super();
     this.config = config;
     this.tokens = new TokenStore(config.stream.tokenDir);
+    this.credentials = new Credentials(config);
     this.registry = new SlotRegistry(config);
     for (const name of this.registry.names()) this.lane(parseLaneName(name));
   }

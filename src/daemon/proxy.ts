@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import type { Lane } from "./lane.js";
 import { agentCommandError } from "./policy.js";
+import { scrubNetworkEvent } from "./scrub.js";
 
 interface CdpMessage {
   id?: number;
@@ -84,7 +85,7 @@ export function proxyAgentConnection(client: WebSocket, lane: Lane, upstreamUrl:
   upstream.on("message", (data) => {
     const text = data.toString();
     observe(text);
-    if (client.readyState === client.OPEN) client.send(text);
+    if (client.readyState === client.OPEN) client.send(scrubNetworkEvent(text));
   });
   const closeBoth = (): void => {
     if (client.readyState === client.OPEN || client.readyState === client.CONNECTING) client.close();

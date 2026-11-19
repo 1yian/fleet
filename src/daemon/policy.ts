@@ -8,7 +8,14 @@ const ALWAYS_DENIED = new Set([
   "Network.getCookies",
   "Storage.getCookies",
   "Storage.getStorageKeyForFrame",
+  "Network.getRequestPostData",
 ]);
+
+const TAINT_ALLOWED = [
+  /^[A-Za-z]+\.(enable|disable)$/,
+  /^Target\.(setAutoAttach|setDiscoverTargets|attachToTarget|detachFromTarget|getTargets|getTargetInfo)$/,
+  /^Browser\.getVersion$/,
+];
 
 const READ_ONLY = [
   /^[A-Za-z]+\.(enable|disable)$/,
@@ -23,6 +30,9 @@ const READ_ONLY = [
 
 export function agentCommandError(lane: Lane, method: string): string | null {
   if (ALWAYS_DENIED.has(method)) return `fleet-browser does not allow ${method}`;
+  if (lane.tainted && !TAINT_ALLOWED.some((pattern) => pattern.test(method))) {
+    return `lane ${lane.name} is filling credentials; page reads and scripts are paused until the step finishes`;
+  }
   const lock = lane.agentLock();
   if (lock && !READ_ONLY.some((pattern) => pattern.test(method))) {
     return `lane ${lane.name} is ${lock}; reads still work. Run \`fleet-browser handoff wait\` or retry after the captain presses Done`;

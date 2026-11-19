@@ -7,6 +7,7 @@ Browser for agents. One real, version-pinned Google Chrome per lane, headful on 
 ```
 agent --> fleet-browser CLI --> agent-browser --cdp --> service CDP proxy (loopback :7620) --> lane Chrome
 board page --> board server --> stream API (tailnet :7621, bearer token) --> service --> same lane Chrome
+service --> credential broker (Unix socket, own user) --> 1Password / IMAP
 ```
 
 - One service per host (systemd). Runs as its own Unix user, so lane profiles (cookies, sessions) are unreadable to agents.
@@ -24,15 +25,18 @@ fleet-browser                          lane status
 fleet-browser open <url>               navigate the lane's Chrome
 fleet-browser snapshot -i              interactive elements with refs
 fleet-browser click|fill|type|press|scroll|wait|screenshot|eval|get|find|tab ...
+fleet-browser login <item>             sign in from the lane's vault; the agent never sees the secrets
+fleet-browser otp <item> [--submit]    one-time code from the vault into the page
+fleet-browser mail link|code <item>    follow an emailed link or type an emailed code
 fleet-browser handoff "<reason>"       lock the lane, notify the captain, wait for Done
 fleet-browser lanes [--watch]          every lane (the herdr plugin pane runs --watch --notify)
 ```
 
-Browser verbs are passed to agent-browser 0.43.0 (pinned in `package.json`); see `skills/fleet-browser/SKILL.md`.
+Browser verbs are passed to agent-browser 0.43.0 (pinned in `package.json`); see `skills/fleet-browser/SKILL.md`. Credential commands are described in [docs/credentials.md](docs/credentials.md).
 
 ## Install on a host
 
-Requirements: Node 24, `google-chrome-stable`, `xvfb`, `xauth`, `nftables`, `taskset`, Tailscale.
+Requirements: Node 24, `google-chrome-stable`, `xvfb`, `xauth`, `nftables`, `taskset`, `unzip`, `curl`, Tailscale.
 
 ```sh
 git clone https://github.com/1yian/fleet-browser /opt/fleet-browser && cd /opt/fleet-browser

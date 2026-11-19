@@ -29,6 +29,13 @@ export const daemon = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ reason, waitSeconds }),
     }),
+  post: <T>(lane: string, action: string, body: Record<string, unknown>) =>
+    call<T>(`/v1/lanes/${lane}/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  get: <T>(lane: string, action: string) => call<T>(`/v1/lanes/${lane}/${action}`),
   currentHandoff: (lane: string) => call<Handoff | null>(`/v1/lanes/${lane}/handoff`),
   waitHandoff: (lane: string, id: string, timeoutSeconds: number) =>
     call<Handoff>(`/v1/lanes/${lane}/handoff/${id}/wait?timeout=${timeoutSeconds}`),
