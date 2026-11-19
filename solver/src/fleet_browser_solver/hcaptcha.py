@@ -1,10 +1,12 @@
 import asyncio
+from pathlib import Path
 
 from hcaptcha_challenger import AgentConfig, AgentV
-from hcaptcha_challenger.models import ChallengeSignal
+from hcaptcha_challenger.models import ChallengeSignal, ImageAreaSelectChallenge, PointCoordinate
 from loguru import logger as solver_log
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
+from pydantic import BaseModel
 
 from .frames import frame_visible, frame_with
 from .model import FATAL, OpenAIProvider
@@ -15,6 +17,60 @@ HSW_FROM_PAGE = (
     "() => { const hit = performance.getEntriesByType('resource').map(e => e.name).find(n => /\\/hsw\\.js(\\?|$)/.test(n));"
     " return typeof hsw === 'function' ? null : (hit || null); }"
 )
+
+
+POINT_PROMPT = (
+    "You solve a visual puzzle. The image shows a prompt bar on top and several cartoon objects on a patterned"
+    " background. Click the object or objects that satisfy the prompt, using the extra task text when it is given."
+    " Report the centre of each chosen object as permille of the whole image: x_permille 0 is the left edge and"
+    " 1000 the right edge, y_permille 0 is the top edge and 1000 the bottom edge. Name each chosen object first."
+)
+
+
+class RelativePoint(BaseModel):
+    object_description: str
+    x_permille: int
+    y_permille: int
+
+
+class RelativePoints(BaseModel):
+    challenge_prompt: str
+    points: list[RelativePoint]
+
+
+class RelativePointReasoner:
+    def __init__(self, provider: OpenAIProvider, arm: object) -> None:
+        self._provider = provider
+        self._arm = arm
+        self.view: dict[str, float] | None = None
+
+    async def __call__(
+        self,
+        *,
+        challenge_screenshot: Path,
+        auxiliary_information: str | None = None,
+        **_: object,
+    ) -> ImageAreaSelectChallenge:
+        view = self.view
+        if view is None:
+            raise RuntimeError("the challenge view was not measured before the model call")
+        reply = await self._provider.generate_with_images(
+            images=[challenge_screenshot],
+            description=POINT_PROMPT,
+            user_prompt=auxiliary_information,
+            response_schema=RelativePoints,
+        )
+        points = [
+            PointCoordinate(
+                x=round(view["x"] + view["width"] * min(max(p.x_permille, 0), 1000) / 1000),
+                y=round(view["y"] + view["height"] * min(max(p.y_permille, 0), 1000) / 1000),
+            )
+            for p in reply.points
+        ]
+        return ImageAreaSelectChallenge(challenge_prompt=reply.challenge_prompt, points=points)
+
+    def cache_response(self, path: Path) -> None:
+        return None
 
 
 def solver_agent(page: Page, timeout_s: float) -> AgentV:
@@ -28,13 +84,18 @@ def solver_agent(page: Page, timeout_s: float) -> AgentV:
     agent = AgentV(page=page, agent_config=config)
     provider = OpenAIProvider()
     arm = agent.robotic_arm
-    for reasoner in (
-        arm._challenge_router,
-        arm._image_classifier,
-        arm._spatial_path_reasoner,
-        arm._spatial_point_reasoner,
-    ):
+    for reasoner in (arm._challenge_router, arm._image_classifier, arm._spatial_path_reasoner):
         reasoner._provider = provider
+    points = RelativePointReasoner(provider, arm)
+    arm._spatial_point_reasoner = points
+    capture = arm._capture_spatial_mapping
+
+    async def capture_and_measure(frame_challenge, cache_key, crumb_id):
+        shots = await capture(frame_challenge, cache_key, crumb_id)
+        points.view = await frame_challenge.locator("//div[@class='challenge-view']").bounding_box()
+        return shots
+
+    arm._capture_spatial_mapping = capture_and_measure
     return agent
 
 

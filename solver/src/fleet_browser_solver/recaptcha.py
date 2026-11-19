@@ -5,7 +5,7 @@ import re
 import time
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageStat
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Frame, Page
 from pydantic import BaseModel, Field
@@ -16,6 +16,7 @@ from .workdir import work_dir
 
 MAX_CHALLENGES = 4
 MAX_DYNAMIC_ROUNDS = 6
+SETTLE_SECONDS = 12.0
 WORK_DIR = work_dir() / "recaptcha"
 
 SYSTEM = """You solve reCAPTCHA v2 image challenges.
@@ -76,9 +77,39 @@ async def grid_of(frame: Frame) -> tuple[int, int]:
     return (4, 4) if tiles == 16 else (3, 3)
 
 
+def has_blank_tile(raw: bytes, columns: int, rows: int) -> bool:
+    gray = Image.open(io.BytesIO(raw)).convert("L")
+    tile_w, tile_h = gray.width / columns, gray.height / rows
+    for row in range(rows):
+        for col in range(columns):
+            box = (
+                int(col * tile_w + tile_w * 0.1),
+                int(row * tile_h + tile_h * 0.1),
+                int((col + 1) * tile_w - tile_w * 0.1),
+                int((row + 1) * tile_h - tile_h * 0.1),
+            )
+            stat = ImageStat.Stat(gray.crop(box))
+            if stat.mean[0] > 240 and stat.stddev[0] < 8:
+                return True
+    return False
+
+
+async def settled_screenshot(area, columns: int, rows: int) -> bytes:
+    deadline = time.monotonic() + SETTLE_SECONDS
+    previous: bytes | None = None
+    while True:
+        raw = await area.screenshot(type="png")
+        if raw == previous and not has_blank_tile(raw, columns, rows):
+            return raw
+        if time.monotonic() >= deadline:
+            return raw
+        previous = raw
+        await asyncio.sleep(0.8)
+
+
 async def numbered_screenshot(frame: Frame, columns: int, rows: int) -> Path:
     area = frame.locator(".rc-imageselect-challenge")
-    raw = await area.screenshot(type="png")
+    raw = await settled_screenshot(area, columns, rows)
     image = Image.open(io.BytesIO(raw)).convert("RGB")
     image = image.resize((image.width * 2, image.height * 2), Image.Resampling.LANCZOS)
     draw = ImageDraw.Draw(image)
@@ -106,10 +137,10 @@ async def instruction_text(frame: Frame) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-async def solve_challenge(page: Page, frame: Frame, provider: OpenAIProvider) -> str:
+async def solve_challenge(page: Page, frame: Frame, provider: OpenAIProvider, deadline: float) -> str:
     verify = frame.locator("#recaptcha-verify-button")
     rounds = 0
-    while rounds < MAX_DYNAMIC_ROUNDS:
+    while rounds < MAX_DYNAMIC_ROUNDS and time.monotonic() < deadline:
         rounds += 1
         task = await instruction_text(frame)
         columns, rows = await grid_of(frame)
@@ -127,7 +158,7 @@ async def solve_challenge(page: Page, frame: Frame, provider: OpenAIProvider) ->
             await click_center(page, tiles.nth(number - 1))
             await human_pause()
         if dynamic and picks:
-            await asyncio.sleep(3.0)
+            await asyncio.sleep(1.5)
             continue
         await human_pause(0.6, 1.2)
         await click_center(page, verify)
@@ -182,7 +213,7 @@ async def solve(page: Page, budget_s: float) -> dict[str, object]:
                 "challenges": challenges,
             }
         challenges += 1
-        await solve_challenge(page, frame, provider)
+        await solve_challenge(page, frame, provider, deadline)
         for _ in range(14):
             await asyncio.sleep(0.5)
             if await anchor_checked(anchor):
