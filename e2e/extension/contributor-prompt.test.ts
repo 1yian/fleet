@@ -71,6 +71,102 @@ function commitFixture(root: string): void {
   ]);
 }
 
+function prepareProject(scratch: Scratch, repo: Scratch, variant: Variant): string {
+  const projectRoot = variant.mirror === true ? join(repo.parent, "mirror-clone") : repo.root;
+  if (variant.mirror === true) {
+    const mirror = join(repo.parent, "mirror.git");
+    execFileSync("git", ["clone", "--quiet", "--mirror", "--", scratch.root, mirror]);
+    execFileSync("git", ["clone", "--quiet", "--", mirror, projectRoot]);
+  } else if (variant.unrelated === true) {
+    execFileSync("git", [
+      "-C",
+      projectRoot,
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/1yian/fleet",
+    ]);
+  }
+  if (variant.stale === true) writeFileSync(join(projectRoot, "AGENTS.md"), STALE_OVERVIEW);
+  return projectRoot;
+}
+
+function prepareGuide(
+  scratch: Scratch,
+  repo: Scratch,
+  projectRoot: string,
+  variant: Variant,
+): void {
+  const guide = join(projectRoot, "CONTRIBUTING.md");
+  const target = join(repo.parent, "prompt-fixture.txt");
+  if (variant.invalidMateContract === true || variant.linkedGuide === true)
+    writeFileSync(target, LINK_TARGET_MARKER);
+  const mateContract = join(scratch.root, "AGENTS.md");
+  if (variant.invalidMateContract === true) {
+    rmSync(mateContract);
+    symlinkSync(target, mateContract);
+  }
+  if (variant.linkedGuide === true) {
+    rmSync(guide);
+    symlinkSync(target, guide);
+  } else if (variant.missingGuide === true) rmSync(guide);
+  else appendFileSync(guide, `\n${WORKER_GUIDE_MARKER}\n`);
+  commitFixture(projectRoot);
+  writeFileSync(join(scratch.parent, "AGENTS.md"), ANCESTOR_NOTES);
+  if (variant.ancestor === true) writeFileSync(join(repo.parent, "AGENTS.md"), ANCESTOR_NOTES);
+}
+
+function writeLaneData(scratch: Scratch): void {
+  mkdirSync(join(scratch.root, "data"), { recursive: true });
+  for (const [file, text] of Object.entries({
+    "charter.md": "## Lab charter\n\nKeep the fixture fleet running.\n",
+    "captain-shared.md": "Prefer plain reports.\n",
+    "captain.md": "Keep this lane focused.\n",
+    "learnings.md": "Use the isolated lab.\n",
+  }))
+    writeFileSync(join(scratch.root, "data", file), text);
+}
+
+function assertMateContext(mateSystem: string, scratch: Scratch, mateNoContext: boolean): void {
+  const projectContext =
+    /<project_context>([\s\S]*?)<\/project_context>/.exec(mateSystem)?.[1] ?? "";
+  const homeOpen = `<project_instructions path="${join(realpathSync(scratch.root), "AGENTS.md")}">`;
+  const homeBlocks = projectContext.split(homeOpen);
+  assert.equal(homeBlocks.length, 2);
+  const homeContract = homeBlocks[1]?.split("</project_instructions>")[0] ?? "";
+  assert.match(homeContract, /^# Firstmate$/m);
+  const jobDescription = /This is the job description of main and every second mate/g;
+  assert.match(homeContract, jobDescription);
+  assert.equal([...mateSystem.matchAll(jobDescription)].length, 1);
+  assert.ok(mateSystem.indexOf(homeOpen) < mateSystem.indexOf("Keep the fixture fleet running"));
+  if (mateNoContext) assert.ok(!mateSystem.includes(ANCESTOR_NOTES.trim()));
+  else assert.ok(projectContext.includes(ANCESTOR_NOTES.trim()));
+  assert.match(mateSystem, /Prefer plain reports/);
+  assert.match(mateSystem, /Keep this lane focused/);
+  assert.match(mateSystem, /Use the isolated lab/);
+  assert.doesNotMatch(mateSystem, /npm run check|fleet\/no-comments|Migrations.*append-only/);
+  assert.doesNotMatch(mateSystem, /^# Worker role contract$/m);
+}
+
+function assertGuideContent(guideBlocks: readonly string[], expectedGuides: number): void {
+  if (expectedGuides === 0) return;
+  const workerGuide = guideBlocks[1]?.split("</project_instructions>")[0] ?? "";
+  assert.ok(workerGuide.includes(WORKER_GUIDE_MARKER));
+  assert.match(workerGuide, /npm run check/);
+  assert.match(workerGuide, /fleet\/no-comments/);
+  assert.match(workerGuide, /Migrations.*append-only/);
+  assert.match(workerGuide, /Do not test by reading source files for strings/);
+}
+
+function assertAncestor(workerSystem: string, variant: Variant): void {
+  if (variant.ancestor === true && variant.noContextFiles !== true)
+    assert.match(workerSystem, /Ancestor notes that belong to unrelated work/);
+  else {
+    assert.doesNotMatch(workerSystem, /Ancestor notes that belong to unrelated work/);
+    assert.doesNotMatch(workerSystem, /^# Firstmate$/m);
+  }
+}
+
 async function run(t: TestContext, name: string, variant: Variant): Promise<void> {
   const scratch = new Scratch();
   const repo = new Scratch();
@@ -93,52 +189,14 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     repo.dispose();
     scratch.dispose();
   });
-  const projectRoot = variant.mirror === true ? join(repo.parent, "mirror-clone") : repo.root;
-  if (variant.mirror === true) {
-    const mirror = join(repo.parent, "mirror.git");
-    execFileSync("git", ["clone", "--quiet", "--mirror", "--", scratch.root, mirror]);
-    execFileSync("git", ["clone", "--quiet", "--", mirror, projectRoot]);
-  } else if (variant.unrelated === true) {
-    execFileSync("git", [
-      "-C",
-      projectRoot,
-      "remote",
-      "add",
-      "origin",
-      "https://github.com/1yian/fleet",
-    ]);
-  }
-  if (variant.stale === true) writeFileSync(join(projectRoot, "AGENTS.md"), STALE_OVERVIEW);
-  const guide = join(projectRoot, "CONTRIBUTING.md");
-  const target = join(repo.parent, "prompt-fixture.txt");
-  if (variant.invalidMateContract === true || variant.linkedGuide === true)
-    writeFileSync(target, LINK_TARGET_MARKER);
-  const mateContract = join(scratch.root, "AGENTS.md");
-  if (variant.invalidMateContract === true) {
-    rmSync(mateContract);
-    symlinkSync(target, mateContract);
-  }
-  if (variant.linkedGuide === true) {
-    rmSync(guide);
-    symlinkSync(target, guide);
-  } else if (variant.missingGuide === true) rmSync(guide);
-  else appendFileSync(guide, `\n${WORKER_GUIDE_MARKER}\n`);
-  commitFixture(projectRoot);
-  writeFileSync(join(scratch.parent, "AGENTS.md"), ANCESTOR_NOTES);
-  if (variant.ancestor === true) writeFileSync(join(repo.parent, "AGENTS.md"), ANCESTOR_NOTES);
+  const projectRoot = prepareProject(scratch, repo, variant);
+  prepareGuide(scratch, repo, projectRoot, variant);
   const token = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, token, { workerArgs });
   const project = variant.unrelated === true ? "fleet" : "fleet-tools";
   const identity = variant.unrelated === true ? "acme/site" : "1yian/fleet";
   cardd.addProject(project, { local: projectRoot }, identity, "local-only");
-  mkdirSync(join(scratch.root, "data"), { recursive: true });
-  for (const [file, text] of Object.entries({
-    "charter.md": "## Lab charter\n\nKeep the fixture fleet running.\n",
-    "captain-shared.md": "Prefer plain reports.\n",
-    "captain.md": "Keep this lane focused.\n",
-    "learnings.md": "Use the isolated lab.\n",
-  }))
-    writeFileSync(join(scratch.root, "data", file), text);
+  writeLaneData(scratch);
 
   const dispatch = {
     tool: "dispatch",
@@ -193,25 +251,7 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     );
     assertWorkerGuide(systemOf(replacement), tree, variant);
   }
-  const mateSystem = systemOf(mate);
-  const projectContext =
-    /<project_context>([\s\S]*?)<\/project_context>/.exec(mateSystem)?.[1] ?? "";
-  const homeOpen = `<project_instructions path="${join(realpathSync(scratch.root), "AGENTS.md")}">`;
-  const homeBlocks = projectContext.split(homeOpen);
-  assert.equal(homeBlocks.length, 2);
-  const homeContract = homeBlocks[1]?.split("</project_instructions>")[0] ?? "";
-  assert.match(homeContract, /^# Firstmate$/m);
-  const jobDescription = /This is the job description of main and every second mate/g;
-  assert.match(homeContract, jobDescription);
-  assert.equal([...mateSystem.matchAll(jobDescription)].length, 1);
-  assert.ok(mateSystem.indexOf(homeOpen) < mateSystem.indexOf("Keep the fixture fleet running"));
-  if (mateNoContext) assert.ok(!mateSystem.includes(ANCESTOR_NOTES.trim()));
-  else assert.ok(projectContext.includes(ANCESTOR_NOTES.trim()));
-  assert.match(mateSystem, /Prefer plain reports/);
-  assert.match(mateSystem, /Keep this lane focused/);
-  assert.match(mateSystem, /Use the isolated lab/);
-  assert.doesNotMatch(mateSystem, /npm run check|fleet\/no-comments|Migrations.*append-only/);
-  assert.doesNotMatch(mateSystem, /^# Worker role contract$/m);
+  assertMateContext(systemOf(mate), scratch, mateNoContext);
 }
 
 function assertWorkerGuide(workerSystem: string, tree: string, variant: Variant): void {
@@ -232,23 +272,11 @@ function assertWorkerGuide(workerSystem: string, tree: string, variant: Variant)
   assert.equal(guideBlocks.length - 1, expectedGuides);
   assert.equal(workerSystem.split(WORKER_GUIDE_MARKER).length - 1, expectedGuides);
   assert.ok(!workerSystem.includes(LINK_TARGET_MARKER));
-  if (expectedGuides === 0) {
+  if (expectedGuides === 0)
     assert.doesNotMatch(workerSystem, /# Contributing to fleet|npm run check/);
-  } else {
-    const workerGuide = guideBlocks[1]?.split("</project_instructions>")[0] ?? "";
-    assert.ok(workerGuide.includes(WORKER_GUIDE_MARKER));
-    assert.match(workerGuide, /npm run check/);
-    assert.match(workerGuide, /fleet\/no-comments/);
-    assert.match(workerGuide, /Migrations.*append-only/);
-    assert.match(workerGuide, /Do not test by reading source files for strings/);
-  }
+  assertGuideContent(guideBlocks, expectedGuides);
   assert.doesNotMatch(workerSystem, /Keep the fixture fleet running|Prefer plain reports/);
-  if (variant.ancestor === true && variant.noContextFiles !== true)
-    assert.match(workerSystem, /Ancestor notes that belong to unrelated work/);
-  else {
-    assert.doesNotMatch(workerSystem, /Ancestor notes that belong to unrelated work/);
-    assert.doesNotMatch(workerSystem, /^# Firstmate$/m);
-  }
+  assertAncestor(workerSystem, variant);
 }
 
 test("a dispatched fleet worker gets CONTRIBUTING.md in place of AGENTS.md while the mate keeps AGENTS.md", async (t) => {

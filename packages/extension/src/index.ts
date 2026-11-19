@@ -103,12 +103,21 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
     token,
     role,
     notes: [],
-    ...(role === "worker" && (fleetProject === "true" || fleetProject === "false")
-      ? { fleetProject: fleetProject === "true" }
-      : {}),
-    ...(role === "worker" || named === undefined || named === "" ? {} : { lane: named }),
+    ...roleFields(role, fleetProject, named),
     ...(secrets === undefined ? {} : { secrets }),
   };
+}
+
+function roleFields(
+  role: "worker" | "mate",
+  fleetProject: unknown,
+  named: string | undefined,
+): Partial<Config> {
+  if (role === "worker")
+    return fleetProject === "true" || fleetProject === "false"
+      ? { fleetProject: fleetProject === "true" }
+      : {};
+  return named === undefined || named === "" ? {} : { lane: named };
 }
 
 async function laneConfig(lane: LaneConfig): Promise<Config> {
