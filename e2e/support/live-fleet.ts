@@ -208,13 +208,23 @@ export class LiveFleet {
   }
 
   landCode(): string {
-    let tip = "";
-    for (const role of ["worker", "mate"]) {
-      const file = `packages/extension/prompts/${role}.md`;
-      const text = `${readFileSync(join(this.here.root, file), "utf8")}\n${NEW_CODE}\n`;
-      tip = landOnRemote(this.remote, `${NEW_CODE} ${role}`, file, text);
-    }
-    return tip;
+    const worker = "packages/extension/prompts/worker.md";
+    landOnRemote(
+      this.remote,
+      `${NEW_CODE} worker`,
+      worker,
+      `${readFileSync(join(this.here.root, worker), "utf8")}\n${NEW_CODE}\n`,
+    );
+    const mate = join("packages", "extension", "src", "index.ts");
+    const source = readFileSync(join(this.here.root, mate), "utf8");
+    const tail = "${event.systemPrompt}${MUTABLE_TAIL}";
+    if (source.split(tail).length !== 2) throw new Error(`${mate} has no mate prompt tail to mark`);
+    return landOnRemote(
+      this.remote,
+      `${NEW_CODE} mate`,
+      mate,
+      source.replace(tail, `${tail}\n${NEW_CODE}`),
+    );
   }
 
   async paneOf(label: string): Promise<string | undefined> {

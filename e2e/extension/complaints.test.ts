@@ -110,7 +110,7 @@ function scriptWork(workerAnswer: "yes" | "no", mateAnswer: "yes" | "no"): void 
   h.onModel(() => {
     assert.match(
       h.callsOf("worker")[0]?.find((turn) => turn.role === "system")?.text ?? "",
-      /wait for its result, then send the final report/,
+      /Before a final `done`, `blocked`, or `failed`, ask yourself once:[^\n]+`complain` once, then report/,
     );
     return {
       tool: "report",

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "../support/cardd.ts";
@@ -14,9 +14,11 @@ if (clone === "") throw new Error("usage: node e2e/trial/trial.ts <project clone
 
 const dir = tempDir("fleet-trial-");
 const home = join(dir, "homes", "main");
-mkdirSync(home, { recursive: true });
+const data = join(home, "data");
+mkdirSync(data, { recursive: true });
+copyFileSync(new URL("../../AGENTS.md", import.meta.url), join(home, "AGENTS.md"));
 writeFileSync(
-  join(home, "AGENTS.md"),
+  join(data, "charter.md"),
   "# Main lane\n\nThis lane owns every project in the registry.\n",
 );
 

@@ -60,7 +60,10 @@ for (const final of ["done", "blocked", "failed"]) {
           .map((turn) => turn.text)
           .join("\n") ?? "";
       assert.match(prompt, /Did anything about the system annoy you\?/);
-      assert.match(prompt, /wait for its result, then send the final report/);
+      assert.match(
+        prompt,
+        /Before a final `done`, `blocked`, or `failed`, ask yourself once:[^\n]+`complain` once, then report/,
+      );
       assert.equal((await recorded())[0]?.text, SENTENCE);
       return { tool: "report", args: { status: final, text: "handing off" } };
     });

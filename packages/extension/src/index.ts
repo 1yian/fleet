@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { abortWithoutMateContract, readPromptFile } from "./prompt-file.ts";
+import { spawnSync } from "node:child_process";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Entry } from "@fleet/protocol";
@@ -37,7 +39,7 @@ import { registerPlan } from "./plan.ts";
 import { processId } from "./process-id.ts";
 import { reportActivity, trackRun } from "./progress.ts";
 import { MUTABLE_TAIL } from "./cache-ttl.ts";
-import { ROLE_PROMPTS } from "./prompts.ts";
+import { WORKER_PROMPT } from "./prompts.ts";
 import { MaintenanceQueue, STALE_RELOAD_FLAG } from "./maintenance.ts";
 import { registerMate } from "./mate.ts";
 import { registerRestart } from "./restart.ts";
@@ -56,6 +58,7 @@ interface Config {
   readonly role: "worker" | "mate";
   readonly lane?: string;
   readonly notes: readonly string[];
+  readonly fleetProject?: boolean;
   readonly secrets?: { readonly bws: Bws; readonly env: Readonly<Record<string, string>> };
 }
 
@@ -91,6 +94,7 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
   const token = value("fleet-token", "FLEET_TOKEN");
   const role = value("fleet-role", "FLEET_ROLE");
   const named = process.env["FLEET_LANE"];
+  const fleetProject = pi.getFlag("fleet-project");
   if (url === undefined || token === undefined || (role !== "worker" && role !== "mate"))
     return undefined;
   const secrets = secretsOf(forwardedBws(value("fleet-bws", "FLEET_BWS")));
@@ -99,9 +103,21 @@ function suppliedConfig(pi: ExtensionAPI): Config | undefined {
     token,
     role,
     notes: [],
-    ...(role === "worker" || named === undefined || named === "" ? {} : { lane: named }),
+    ...roleFields(role, fleetProject, named),
     ...(secrets === undefined ? {} : { secrets }),
   };
+}
+
+function roleFields(
+  role: "worker" | "mate",
+  fleetProject: unknown,
+  named: string | undefined,
+): Partial<Config> {
+  if (role === "worker")
+    return fleetProject === "true" || fleetProject === "false"
+      ? { fleetProject: fleetProject === "true" }
+      : {};
+  return named === undefined || named === "" ? {} : { lane: named };
 }
 
 async function laneConfig(lane: LaneConfig): Promise<Config> {
@@ -146,9 +162,72 @@ function charter(): string {
 
 const mateContract = (): string => charter() + standingRules(HOME());
 
+function gitCommonDir(cwd: string): string | undefined {
+  const result = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 2_000,
+  });
+  if (result.status !== 0) return undefined;
+  try {
+    return realpathSync(result.stdout.replace(/\n$/, ""));
+  } catch {
+    return undefined;
+  }
+}
+
+function isFleetCheckout(root: string, fleetProject: boolean | undefined): boolean {
+  if (fleetProject !== undefined) return fleetProject;
+  const common = gitCommonDir(root);
+  return common !== undefined && common === gitCommonDir(dirname(EXTENSION));
+}
+
+function contributorGuideForWorkers(pi: ExtensionAPI, fleetProject: boolean | undefined): void {
+  const root = HOME();
+  if (!isFleetCheckout(root, fleetProject)) return;
+  const agents = join(root, "AGENTS.md");
+  const guide = join(root, "CONTRIBUTING.md");
+  pi.on("before_agent_start", (event) => {
+    const files = event.systemPromptOptions.contextFiles;
+    const own = files.findIndex((file) => resolve(file.path) === agents);
+    if (own !== -1) files.splice(own, 1);
+    const content = readPromptFile(guide);
+    if (content !== undefined)
+      files.splice(own === -1 ? files.length : own, 0, { path: guide, content });
+    return undefined;
+  });
+}
+
+function contractForMates(pi: ExtensionAPI): void {
+  const path = join(HOME(), "AGENTS.md");
+  const loaded = readPromptFile(path);
+  const present = (ctx: ExtensionContext): boolean => {
+    const content = readPromptFile(path);
+    if (content !== undefined && content.trim() !== "") {
+      if (ctx.hasUI) ctx.ui.setWidget("fleet-mate-contract", undefined);
+      return true;
+    }
+    abortWithoutMateContract(ctx, path);
+    return false;
+  };
+  pi.on("before_agent_start", (event, ctx) => {
+    if (!present(ctx)) return undefined;
+    const files = event.systemPromptOptions.contextFiles;
+    if (loaded !== undefined && !files.some((file) => resolve(file.path) === path))
+      files.push({ path, content: loaded });
+    return undefined;
+  });
+  pi.on("agent_start", (_event, ctx) => {
+    present(ctx);
+  });
+}
+
 function appendRolePrompt(pi: ExtensionAPI, role: "mate" | "worker"): void {
   pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${ROLE_PROMPTS[role]}${role === "mate" ? MUTABLE_TAIL : ""}`,
+    systemPrompt:
+      role === "mate"
+        ? `${event.systemPrompt}${MUTABLE_TAIL}`
+        : `${event.systemPrompt}\n\n${WORKER_PROMPT}`,
   }));
 }
 
@@ -244,7 +323,7 @@ function applyPolicies(pi: ExtensionAPI, ctx: ExtensionContext, role: Config["ro
 
 function start(
   pi: ExtensionAPI,
-  { url, token, role, lane }: Config,
+  { url, token, role, lane, fleetProject }: Config,
   sessionFile: string | undefined,
   compact: () => void,
   ctx: ExtensionContext,
@@ -313,6 +392,8 @@ function start(
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;
   let stow: (() => Promise<string | undefined>) | undefined;
+  if (role === "worker") contributorGuideForWorkers(pi, fleetProject);
+  else contractForMates(pi);
   appendRolePrompt(pi, role);
   if (role === "mate") {
     registerQuestions(pi, link, () => sessionFile);
@@ -356,6 +437,10 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });
+  pi.registerFlag("fleet-project", {
+    type: "string",
+    description: "Whether the registered worker project is Fleet (true or false)",
+  });
   pi.registerFlag(STALE_RELOAD_FLAG, {
     type: "string",
     description:

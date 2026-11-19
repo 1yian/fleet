@@ -7,7 +7,7 @@ import { Harness } from "../support/harness.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 
-test("a real merge arrival delivers the original chat, reminder and optional walkthrough contract", async () => {
+test("a real merge arrival delivers the original chat and holds the card for the merge question", async () => {
   const cardd = await Cardd.start();
   const token = cardd.addLane("main");
   cardd.addProject("web", { maverick: "/clones/web" }, "acme/web");
@@ -38,22 +38,6 @@ test("a real merge arrival delivers the original chat, reminder and optional wal
       turns.findLast((turn) => turn.role === "user")?.text ?? "",
       /https:\/\/github.com\/acme\/web\/pull\/7/,
     );
-    const contract = turns.find((turn) => turn.role === "system")?.text ?? "";
-    assert.match(contract, /Tell the captain in chat that the work is ready for review/);
-    assert.match(
-      contract,
-      /When the captain invokes `\/decisions` or asks to go through decisions one by one/,
-    );
-    assert.match(
-      contract,
-      /While active, its one-at-a-time presentation replaces the reminder and catch-up decision lists/,
-    );
-    assert.match(
-      contract,
-      /bring every one up again as one short list with your recommendation for each/,
-    );
-    assert.match(contract, /Still tell him each new outcome once, as it happens/);
-    assert.doesNotMatch(contract, /about 80 words|Exactly four interruptions|\/d\b/);
     assert.equal((await cardd.board()).holds.find((hold) => hold.card === card.id)?.merge, true);
   } finally {
     await Promise.allSettled([main.close(), worker.close(), h.stop(), cardd.stop()]);

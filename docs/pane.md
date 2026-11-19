@@ -2,7 +2,7 @@
 
 Decisions are back in chat and on the board, as before the Nov 10 conversation-shape changes. The footer shows the plain board URL. Fleet adds no decision counts, attention strip, clear-state indicator, or neglect overlay. Calm's boat and the existing transcript remain unchanged.
 
-Answer main in ordinary chat. Main records the captain's exact words against the existing hold before acting. For an optional one-at-a-time conversation, ask for a [decision walkthrough](decision-walkthrough.md) or use `/decisions`. This is a prompt template and skill, not a pane card. It never creates a separate decision queue.
+Answer main in ordinary chat. Main records the captain's exact words against the existing hold before acting.
 
 The board keeps its original inline questions, option buttons, written answers, and three Later presets: In 3 hours, Tomorrow 09:00, and Monday 09:00. There is no typed-date box. Request changes on a fleet-generated merge question opens the written-answer form instead of immediately submitting a choice, including on older single-option holds. This remains true after Later expires or the question is escalated, provided its options and approval meanings stay unchanged. A mate's own merge options still work, and only options named in `approves` authorize merging. Stale answers remain refused.
 
@@ -18,7 +18,7 @@ The restoration is selective. It does not reset the repository or data. Later sa
 
 ## Verification
 
-`e2e/extension/pane.test.ts` drives a real Pi in an isolated Scratch home and herdr lab. It covers the original footer, absence of the strip and counts, board answers, exact chat-word answers, no `/pulse` overlay, and reload. `decision-walkthrough.test.ts` checks prompt and skill discovery and partial-answer plumbing, not model judgment. `decision-message.test.ts` checks the contract actually delivered to Pi on a merge arrival. Board attention, Later, and kanban tests exercise the original visible interactions in Chromium.
+`e2e/extension/pane.test.ts` drives a real Pi in an isolated Scratch home and herdr lab. It covers the original footer, absence of the strip and counts, board answers, exact chat-word answers, no `/pulse` overlay, and reload. `decision-message.test.ts` checks the message that a merge arrival delivers to Pi and the merge hold it opens. Board attention, Later, and kanban tests exercise the original visible interactions in Chromium.
 
 ## Maintainer-owned spec follow-up
 

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readPromptFile } from '../../../src/prompt-file.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -119,8 +120,13 @@ const interruptedWith = (texts: string[]) => `${INTERRUPTED}${texts.join('\n\n')
 
 /** Pi reads AGENTS.md/CLAUDE.md only at session start and /reload. Re-reading the files Pi loaded picks up edits each run and keeps
  * the session's own choices (`-nc`, its agent dir); a file that can't be read is skipped, as Pi does. A new file still needs /reload. */
-export function refreshContextFiles(options: { contextFiles: Array<{ path: string; content: string }> }) {
-  options.contextFiles = options.contextFiles.flatMap(({ path }) => { try { return [{ path, content: readFileSync(path, 'utf8') }]; } catch { return []; } });
+export function refreshContextFiles(options: { contextFiles: Array<{ path: string; content: string }> }, guardedPath?: string) {
+  options.contextFiles = options.contextFiles.flatMap(({ path, content: loaded }) => {
+    try {
+      if (guardedPath !== undefined && resolve(path) === guardedPath) return readPromptFile(path) === undefined ? [] : [{ path, content: loaded }];
+      return [{ path, content: readFileSync(path, 'utf8') }];
+    } catch { return []; }
+  });
 }
 export class Children {
   private readonly running = new Map<string, LiveRun>();

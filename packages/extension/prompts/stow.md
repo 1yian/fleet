@@ -42,7 +42,7 @@ Sweep this conversation for knowledge that exists only here: a preference the ca
 - A preference that holds across lanes goes in main's `data/captain-shared.md`. As main, edit it, and keep a first line that says it is main-authoritative and read-only in second mates' homes. As a second mate, never edit your copy: `comment(lane=<your lane>, text)` main with the preference in the captain's words.
 - An operating fact of this home goes in `data/learnings.md`.
 - A note about one card belongs on that card: `comment` on it. An investigation finding belongs in a report file under `data/reports/`.
-- Knowledge that nearly every contributor to one project needs belongs in that project's committed `AGENTS.md`. Never write it yourself: only a human adds to it. Tell the captain in your receipt.
+- Knowledge that nearly every contributor to one project needs belongs in that project's committed `AGENTS.md`, or in `CONTRIBUTING.md` for this fleet repository, whose workers get that guide in place of `AGENTS.md`. Only a human adds to `AGENTS.md`; Fleet contributor-guide changes go through a ship card. Do not write either during stow. Tell the captain in your receipt.
 - Knowledge that every user of the fleet needs belongs in this repository's tracked files. Do not write it here: it ships through a ship card, and the captain merges it.
 
 Keep the fleet's delivery posture and the captain's private strategy out of project memory.
@@ -55,7 +55,6 @@ A reset loses what only this conversation holds, and that includes work that is 
 - Work nobody has started and that is yours to do gets a card: `dispatch` creates it with its worker, and `card_new` is only for a captain-only card. Work that belongs in a second mate's lane goes to that mate with `comment` (main only).
 - News for an existing card goes on that card: `comment`, or `hold` when the next step is a question for the captain or for main.
 - Do not write open work into a memory file.
-- If a decision walkthrough is active or paused, preserve its scope and focused question on the existing focused hold or card thread using the decision-walkthrough skill's safe checkpoint rules. Keep every unanswered question discoverable on its hold. Record approved-but-blocked execution separately from unanswered questions. Do not create a duplicate queue or treat a context reset as the end of the walkthrough.
 - This covers only the open work this conversation holds. It is not a check of the board against GitHub, and you never report it as one. Where the right correction is a judgment you cannot make, leave the record alone and say what it waits on.
 
 ## 4. Receipt

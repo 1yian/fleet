@@ -1,6 +1,7 @@
+import { abortWithoutMateContract } from '../../../src/prompt-file.ts';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
@@ -59,7 +60,7 @@ export const version = ((): string | undefined => {
 })();
 const brand = version ? `OptChat v${version}` : 'OptChat';
 
-export interface OptChatCapabilities { connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[]; foldTokens?: number; foldAfterIdle?: (model: ExtensionContext['model']) => number | undefined }
+export interface OptChatCapabilities { guardedContextPath?: string; connectedWindows?: boolean; viewBudget?: number; transientCustomTypes?: readonly string[]; foldTokens?: number; foldAfterIdle?: (model: ExtensionContext['model']) => number | undefined }
 
 export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilities = {}) {
   const transientMessages = new WeakSet<AgentMessage>();
@@ -406,7 +407,10 @@ export default function optchat(pi: ExtensionAPI, capabilities: OptChatCapabilit
     syncSearch(a.config);
     event.systemPromptOptions.customPrompt = allowSearch(`${MASTER}\n\n${modelsHint(a.config.subagent)}\n\n${VIEW_DOC}${a.config.previousExchange ? CONTINUITY : ''}${a.config.memorySearch ? SEARCH_DOC : ''}`, a.config.memorySearch);
     event.systemPromptOptions.sections.instructions = `${instructions(a.dir)}\n\n${IMPORT_GUIDANCE}`;
-    refreshContextFiles(event.systemPromptOptions);
+    const guarded = capabilities.guardedContextPath;
+    const own = guarded === undefined ? undefined : event.systemPromptOptions.contextFiles.find(file => resolve(file.path) === guarded);
+    refreshContextFiles(event.systemPromptOptions, guarded);
+    if (own !== undefined && guarded !== undefined && !event.systemPromptOptions.contextFiles.some(file => resolve(file.path) === guarded && file.content.trim() !== '')) abortWithoutMateContract(ctx, guarded);
     prompt = event.systemPrompt;
   });
   const DUPLICATE_REPORT = '(duplicate report, already delivered)';

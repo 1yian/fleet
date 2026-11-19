@@ -286,7 +286,7 @@ export function registerMate(
     name: "dispatch",
     label: "Dispatch",
     description:
-      "Creates a new work card and starts its worker in its own worktree on a host. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment.",
+      "Creates a new work card and starts its worker in its own worktree on a host. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.",
     parameters: DispatchParams,
     execute: async (_id, params) => {
       const { title, name, kind, project, intent, host, task, delivery, model } = params;

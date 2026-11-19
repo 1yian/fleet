@@ -110,8 +110,6 @@ test("dispatch starts a worker in its own worktree, and the worker's report reac
     workerFirst.find((turn) => turn.role === "system")?.text ?? "",
     /^# Worker role contract$/m,
   );
-  const mateFirst = await h.waitForCall(0, "mate");
-  assert.match(mateFirst.find((turn) => turn.role === "system")?.text ?? "", /^# Firstmate$/m);
   assert.equal(
     lastUser(woken),
     `[fleet] c-1 one-scrollbar done: PR green (PR ${PR}) (card now needs-you)`,

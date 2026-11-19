@@ -175,6 +175,7 @@ const AttemptPlan = Type.Object({
   name: Type.String(),
   lane: Type.String(),
   delivery: Nullable(Delivery),
+  fleetProject: Type.Optional(Type.Boolean()),
   model: Type.Optional(Type.String({ pattern: MODEL_PIN })),
 });
 

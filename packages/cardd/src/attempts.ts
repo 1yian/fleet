@@ -149,6 +149,7 @@ export interface Begun {
   readonly name: string;
   readonly lane: string;
   readonly delivery: Delivery | null;
+  readonly fleetProject?: boolean;
   readonly model?: string;
 }
 
@@ -157,20 +158,28 @@ function placeOf(
   card: Card,
   host: string,
   session: string,
-): Pick<Begun, "clone" | "base" | "branch" | "name" | "lane"> {
+): Pick<Begun, "clone" | "base" | "branch" | "name" | "lane" | "fleetProject"> {
   if (card.project === null)
     throw new Error(`c-${String(card.id)} has no project, so it cannot be dispatched`);
   const row = db
     .prepare(
       `SELECT json_extract(p.clones, '$."' || ? || '"') AS clone, coalesce(c.base_branch, p.default_base) AS base,
-         p.branch_prefix AS prefix
+         p.branch_prefix AS prefix, p.repo AS repo
        FROM cards c JOIN projects p ON p.name = c.project WHERE c.id = ?`,
     )
     .get(host, card.id);
   const clone = row?.["clone"];
   if (typeof clone !== "string") throw new Error(`project ${card.project} has no clone on ${host}`);
   const branch = `${String(row?.["prefix"])}${session}`;
-  return { clone, base: String(row?.["base"]), branch, name: card.name, lane: card.lane };
+  const repo = row?.["repo"];
+  return {
+    clone,
+    base: String(row?.["base"]),
+    branch,
+    name: card.name,
+    lane: card.lane,
+    ...(typeof repo === "string" ? { fleetProject: repo.toLowerCase() === "1yian/fleet" } : {}),
+  };
 }
 
 function deliveryOf(db: DatabaseSync, card: Card, asked: Delivery | undefined): Delivery | null {
