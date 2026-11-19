@@ -236,7 +236,7 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
     assert.equal(h.callsOf("mate").length, 0);
     const screen = await until(async () => {
       const text = await lab.screen(pane);
-      return /restore a readable regular file at/.test(text) ? text : undefined;
+      return text.includes("restore a readable regular file at") ? text : undefined;
     }, "the contract error on screen");
     assert.ok(screen.replace(/\s+/g, "").includes(join(realpathSync(scratch.root), "AGENTS.md")));
     return;
