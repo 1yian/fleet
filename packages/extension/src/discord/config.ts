@@ -1,19 +1,38 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 const DISCORD_URL = "https://discord.com/api/v10";
 const GROQ_URL = "https://api.groq.com/openai/v1";
 const GROQ_MODEL = "whisper-large-v3-turbo";
+const WHISPER_MODEL_FILE = "ggml-large-v3-turbo.bin";
+const OPEN_SUPER_WHISPER_MODELS = [
+  "Library",
+  "Application Support",
+  "ru.starmel.OpenSuperWhisper",
+  "whisper-models",
+];
 const SNOWFLAKE = /^\d{15,25}$/;
 const ASSIGNMENT = /^(?:export\s+)?(BRIDGE_[A-Z0-9_]+)\s*=\s*(.*)$/;
 const QUOTED = /^(["'])(.*)\1$/;
 const REQUIRED = ["BRIDGE_BOT_TOKEN", "BRIDGE_CHANNEL_ID", "BRIDGE_ALLOWED_USER_IDS"] as const;
 
-export interface GroqConfig {
+export interface GroqSpeech {
+  readonly engine: "groq";
   readonly key: string;
   readonly model: string;
   readonly url: string;
 }
+
+export interface LocalSpeech {
+  readonly engine: "local";
+  readonly whisper: string;
+  readonly ffmpeg: string;
+  readonly model: string;
+  readonly language: string;
+}
+
+export type SpeechConfig = GroqSpeech | LocalSpeech;
 
 export interface BridgeConfig {
   readonly token: string;
@@ -21,7 +40,7 @@ export interface BridgeConfig {
   readonly guild: string | undefined;
   readonly allowed: ReadonlySet<string>;
   readonly discordUrl: string;
-  readonly groq: GroqConfig | undefined;
+  readonly speech: SpeechConfig;
 }
 
 export type BridgeSettings =
@@ -96,14 +115,39 @@ function baseUrl(name: string, value: string | undefined, fallback: string): str
   return url.replace(/\/+$/, "");
 }
 
-function groqConfig(values: Values): GroqConfig | undefined {
-  const key = values["BRIDGE_GROQ_API_KEY"];
-  if (key === undefined) return undefined;
+function modelPath(value: string | undefined): string {
+  if (value === undefined) return join(homedir(), ...OPEN_SUPER_WHISPER_MODELS, WHISPER_MODEL_FILE);
+  const path = value.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
+  if (!isAbsolute(path)) throw new Error("BRIDGE_WHISPER_MODEL must be an absolute path");
+  return path;
+}
+
+function localSpeech(values: Values): LocalSpeech {
   return {
+    engine: "local",
+    whisper: values["BRIDGE_WHISPER_CLI"] ?? "whisper-cli",
+    ffmpeg: values["BRIDGE_FFMPEG"] ?? "ffmpeg",
+    model: modelPath(values["BRIDGE_WHISPER_MODEL"]),
+    language: values["BRIDGE_WHISPER_LANGUAGE"] ?? "auto",
+  };
+}
+
+function groqSpeech(values: Values): GroqSpeech {
+  const key = values["BRIDGE_GROQ_API_KEY"];
+  if (key === undefined) throw new Error("BRIDGE_GROQ_API_KEY must be set when BRIDGE_STT is groq");
+  return {
+    engine: "groq",
     key,
     model: values["BRIDGE_GROQ_MODEL"] ?? GROQ_MODEL,
     url: baseUrl("BRIDGE_GROQ_API_URL", values["BRIDGE_GROQ_API_URL"], GROQ_URL),
   };
+}
+
+function speechConfig(values: Values): SpeechConfig {
+  const engine = values["BRIDGE_STT"] ?? "local";
+  if (engine === "local") return localSpeech(values);
+  if (engine === "groq") return groqSpeech(values);
+  throw new Error("BRIDGE_STT must be local or groq");
 }
 
 function settingsOf(values: Values): BridgeSettings {
@@ -124,7 +168,7 @@ function settingsOf(values: Values): BridgeSettings {
       guild: guild === undefined ? undefined : snowflake("BRIDGE_GUILD_ID", guild),
       allowed: allowedUsers(users),
       discordUrl: baseUrl("BRIDGE_DISCORD_API_URL", values["BRIDGE_DISCORD_API_URL"], DISCORD_URL),
-      groq: groqConfig(values),
+      speech: speechConfig(values),
     },
   };
 }
