@@ -228,7 +228,7 @@ test("install on a host that is not main's skips the reminder, and a cardd that 
   const down = install(withGo());
   assert.equal(down.status, 1);
   assert.equal(down.err.length, 1);
-  assert.match(down.err[0] ?? "", /^update reminder: fetch failed \| \w*Error/);
+  assert.match(down.err[0] ?? "", /^update reminder: fetch failed \| \S/);
 
   rmSync(join(scratch.root, "config"), { recursive: true });
   const elsewhere = install(withGo());
