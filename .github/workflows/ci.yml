@@ -169,9 +169,16 @@ jobs:
 
   e2e-cardd:
     timeout-minutes: 30
+    name: e2e-cardd (${{ matrix.shard }}/2)
     needs: changes
     if: needs.changes.outputs.cardd-e2e == 'true'
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      FLEET_E2E_CONCURRENCY: 3
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -180,20 +187,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/cardd/**/*.test.ts"
+      - run: node e2e/run.ts --shard=${{ matrix.shard }}/2 "e2e/cardd/**/*.test.ts"
 
   e2e-extension:
     timeout-minutes: 30
-    name: e2e-extension (${{ matrix.shard }}/4)
+    name: e2e-extension (${{ matrix.shard }}/8)
     needs: changes
     if: needs.changes.outputs.extension-e2e == 'true'
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     env:
       GH_TOKEN: ${{ github.token }}
+      FLEET_E2E_CONCURRENCY: 3
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -220,13 +228,15 @@ jobs:
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
-      - run: node --test --test-timeout=300000 --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 "e2e/extension/**/*.test.ts"
+      - run: node e2e/run.ts --shard=${{ matrix.shard }}/8 "e2e/extension/**/*.test.ts"
 
   e2e-board:
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.board-e2e == 'true'
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
+    env:
+      FLEET_E2E_CONCURRENCY: 3
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -240,7 +250,7 @@ jobs:
         timeout-minutes: 15
       - name: Install stock Lavish for the authenticated browser review
         run: npm install -g lavish-axi@0.1.97
-      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
+      - run: node e2e/run.ts "e2e/board/**/*.test.ts"
 
   tests-required:
     timeout-minutes: 10

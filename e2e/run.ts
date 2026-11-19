@@ -33,6 +33,7 @@ const LEFTOVER_GRACE_MS = 5_000;
 const TERM_GRACE_MS = 5_000;
 const CORES_PER_FILE = 16;
 const MAX_DEFAULT_FILES = 8;
+const DURATIONS = join(ROOT, "e2e", "durations.json");
 const COUNT_FIELDS = ["tests", "pass", "fail", "cancelled", "skipped"];
 
 interface Outcome {
@@ -52,17 +53,17 @@ const failed = (outcome: Outcome): boolean =>
   outcome.code !== 0 || outcome.timedOut || outcome.unresolved.length > 0 || outcome.retained;
 
 function concurrency(): number {
-  const cap = Math.min(
-    MAX_DEFAULT_FILES,
-    Math.max(1, Math.floor(availableParallelism() / CORES_PER_FILE)),
-  );
   const override = process.env["FLEET_E2E_CONCURRENCY"];
-  if (override === undefined) return cap;
-  const width = Number(override);
-  if (!/^\d+$/.test(override) || width < 1 || width > cap) {
-    throw new Error(`FLEET_E2E_CONCURRENCY must be an integer from 1 to ${String(cap)}`);
+  if (override === undefined) {
+    return Math.min(
+      MAX_DEFAULT_FILES,
+      Math.max(1, Math.floor(availableParallelism() / CORES_PER_FILE)),
+    );
   }
-  return width;
+  if (!/^[1-9]\d*$/.test(override)) {
+    throw new Error("FLEET_E2E_CONCURRENCY must be a positive integer");
+  }
+  return Number(override);
 }
 
 function countsIn(log: string): Record<string, number> | undefined {
@@ -269,9 +270,41 @@ function summarize(suite: Suite, wallMs: number, width: number): void {
   console.log(`wall ${(wallMs / 60_000).toFixed(1)} min with ${String(width)} files at a time`);
 }
 
+function costOf(): (file: string) => number {
+  const parsed: unknown = JSON.parse(readFileSync(DURATIONS, "utf8"));
+  if (typeof parsed !== "object" || parsed === null)
+    throw new Error(`${DURATIONS} is not an object`);
+  const known = new Map<string, number>();
+  for (const [file, seconds] of Object.entries(parsed)) {
+    if (typeof seconds !== "number") throw new Error(`${DURATIONS} has no number for ${file}`);
+    known.set(file, seconds);
+  }
+  const typical = [...known.values()].sort((a, b) => a - b)[Math.floor(known.size / 2)] ?? 0;
+  return (file) => known.get(file) ?? typical;
+}
+
+function balanced(files: readonly string[], count: number): string[][] {
+  const cost = costOf();
+  const bins = Array.from({ length: count }, () => ({ load: 0, files: new Array<string>() }));
+  for (const file of [...files].sort((a, b) => cost(b) - cost(a) || a.localeCompare(b))) {
+    const bin = bins.reduce((least, each) => (each.load < least.load ? each : least));
+    bin.load += cost(file);
+    bin.files.push(file);
+  }
+  return bins.map((bin) => bin.files);
+}
+
 function filesToRun(): string[] {
-  const named = process.argv.slice(2);
-  return named.length > 0 ? named : globSync("e2e/**/*.test.ts", { cwd: ROOT }).sort();
+  const shard = process.argv.find((arg) => arg.startsWith("--shard="));
+  const found = /^--shard=([1-9]\d*)\/([1-9]\d*)$/.exec(shard ?? "--shard=1/1");
+  const index = Number(found?.[1]);
+  const count = Number(found?.[2]);
+  if (found === null || index > count) throw new Error("--shard must be N/M with N from 1 to M");
+  const named = process.argv.slice(2).filter((arg) => arg !== shard);
+  const files = (named.length > 0 ? named : ["e2e/**/*.test.ts"]).flatMap((pattern) =>
+    globSync(pattern, { cwd: ROOT }),
+  );
+  return balanced(files, count)[index - 1] ?? [];
 }
 
 function watchSignals(suite: Suite): void {
