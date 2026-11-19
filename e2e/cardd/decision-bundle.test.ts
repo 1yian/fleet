@@ -123,7 +123,7 @@ test("main's bundle holds its own cards, an escalated hold, and every captain de
   assert.doesNotMatch(mateGroup, new RegExp(name(decision)));
   assert.match(
     captainGroup,
-    /^Waiting on the captain\. If he wrote to you since your last list of these, bring them up again as one short list/,
+    /^Waiting on the captain\. If he wrote to you since you last brought one up, bring up one only, checked on the live board/,
   );
   assert.match(
     captainGroup,
