@@ -2,7 +2,7 @@ import type { Delivery, OpResult } from "@fleet/protocol";
 import { ADD_WORKTREE } from "./clones.ts";
 import { contain, releaseAll } from "./containment.ts";
 import { extensionOn } from "./extension-path.ts";
-import { fleetArgs } from "./fleet-args.ts";
+import { fleetArgs, TRUST_ARG } from "./fleet-args.ts";
 import {
   field,
   herdr,
@@ -224,6 +224,7 @@ export async function dispatch(
         fleetProject: plan.fleetProject,
       }),
       [
+        TRUST_ARG,
         "--session-id",
         plan.session,
         "-e",
@@ -300,6 +301,7 @@ export async function replaceWorker(
         avoid,
       }),
       [
+        TRUST_ARG,
         "--session-id",
         plan.session,
         "-e",

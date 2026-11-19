@@ -43,6 +43,7 @@ export interface LabOptions {
   readonly extension?: string;
   readonly hosts?: Record<string, readonly string[]>;
   readonly roots?: Record<string, string>;
+  readonly needsTrust?: boolean;
 }
 
 function gateRemote(
@@ -62,6 +63,14 @@ function gateRemote(
   return { DIRENV_CONFIG: config };
 }
 
+function commitProjectSettings(clone: string, wanted: boolean): void {
+  if (!wanted) return;
+  mkdirSync(join(clone, ".pi"));
+  writeFileSync(join(clone, ".pi", "settings.json"), "{}\n");
+  gitIn(clone, "add", ".pi/settings.json");
+  gitIn(clone, "commit", "-q", "-m", "project settings");
+}
+
 function addSite(
   cardd: Cardd,
   {
@@ -70,12 +79,14 @@ function addSite(
     repo = true,
     gate,
     hosts = {},
+    needsTrust,
   }: LabOptions,
 ): { clone: string; remote: string | undefined; env: Record<string, string> } {
   const clone = join(tempDir("fleet-clone-"), "site");
   const git = "git -c user.name=t -c user.email=t@t";
   const init = `${git} init -q -b main site && ${git} -C site commit -q --allow-empty -m init`;
   execFileSync("sh", ["-c", init], { cwd: dirname(clone) });
+  commitProjectSettings(clone, needsTrust === true);
   const remote = withRemote ? addRemote(clone) : undefined;
   const env = gate === undefined || remote === undefined ? {} : gateRemote(clone, remote, gate);
   cardd.addProject(
@@ -129,7 +140,12 @@ export async function startDispatchLab({
       HERDR_SESSION: lab.name,
       ...env,
       ...mateEnv,
-      FLEET_PI_ARGS: JSON.stringify([...h.piArgs(workerShell), ...workerArgs]),
+      FLEET_PI_ARGS: JSON.stringify([
+        ...h
+          .piArgs(workerShell)
+          .filter((arg) => !(site.needsTrust === true && arg === "--no-approve")),
+        ...workerArgs,
+      ]),
       FLEET_HOSTS: JSON.stringify({
         flaky: ["node", FLAKY, join(h.dir, "dropped")],
         far: ["node", SWITCH, join(h.dir, "far-down")],

@@ -1,3 +1,5 @@
+export const TRUST_ARG = "--approve";
+
 export function fleetArgs({
   url,
   token,
