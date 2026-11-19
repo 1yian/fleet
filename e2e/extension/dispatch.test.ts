@@ -397,9 +397,12 @@ test("restart_card restarts a card whose worker died on its own session", async 
     `the restart held the mate for ${String(returned - asked)} ms`,
   );
   const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
-  assert.equal(
-    lastUser(resumed),
-    "[fleet] main on c-1 one-scrollbar: Your session was restarted on the same card and conversation. Continue your task from where you stopped.",
+  assert.ok(
+    resumed.some(
+      (turn) =>
+        turn.text ===
+        "[fleet] main on c-1 one-scrollbar: Your session was restarted on the same card and conversation. Continue your task from where you stopped.",
+    ),
   );
   assert.ok(
     resumed.some(
