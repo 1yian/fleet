@@ -1,0 +1,97 @@
+{
+  "cooldowns": {
+    "rateLimitSeconds": 120,
+    "serverErrorSeconds": 15,
+    "usageLimitSeconds": 3600,
+    "authSeconds": 3600
+  },
+  "accounts": {
+    "claude": ["anthropic"]
+  },
+  "tiers": {
+    "default": {
+      "description": "Build or fix from a known plan, spec, issue, or reproduction; deploys, merges, rollouts, and other production changes; anything that does not clearly fit another tier. Work judged mainly on how it looks is visual, not default.",
+      "chain": [
+        "claude/claude-sonnet-5-5:xhigh",
+        "openai-codex/gpt-6.2-sol:medium",
+        "xai/grok-4.7:high"
+      ]
+    },
+    "nm-default": {
+      "description": "no-mistakes pipeline duties other than review and review fixes: test, document, lint, PR, rebase, and CI repair.",
+      "chain": ["claude/claude-sonnet-5-5:medium", "openai-codex/gpt-6.2-sol:medium"]
+    },
+    "nm-fixer": {
+      "description": "no-mistakes review fixer.",
+      "chain": ["claude/claude-sonnet-5-5:high", "openai-codex/gpt-6.2-sol:medium"]
+    },
+    "deep": {
+      "description": "Plan, research, investigate, root-cause, evaluate, or design when there is no verified plan yet; open-ended analysis, evals, and data investigation.",
+      "chain": [
+        "claude/claude-opus-5-5:high",
+        "openai-codex/gpt-6.2-sol:xhigh",
+        "xai/grok-4.7:xhigh"
+      ]
+    },
+    "research": {
+      "description": "Research, investigation, and analysis led by Sonnet at xhigh effort, with GPT 6.2 Sol as the alternate.",
+      "chain": ["claude/claude-sonnet-5-5:xhigh", "openai-codex/gpt-6.2-sol:high"]
+    },
+    "visual": {
+      "description": "Work whose acceptance depends on visual quality or visual judgment: UI and UX, layout, styling, copy and design passes, landing pages and websites (including building the real site or app screens from approved designs, checked by screenshots), design systems, motion graphics, ads, video, or other creative media.",
+      "chain": [
+        "claude/claude-fable-5-2:low",
+        "claude/claude-opus-5-5:medium",
+        "openai-codex/gpt-6.2-sol:medium",
+        "xai/grok-4.7:medium"
+      ]
+    },
+    "watch": {
+      "description": "Observe and report only, making no changes: monitoring after a merge or deploy, watching live calls or traffic for a period, read-only production checks. If the task itself merges, deploys, rolls out, or changes anything, it is not watch.",
+      "chain": [
+        "claude/claude-haiku-5-5:medium",
+        "openai-codex/gpt-6-luna:max",
+        "xai/grok-4.7:medium"
+      ]
+    },
+    "quick": {
+      "description": "Small bounded chores with an obvious path: docs, config, renames, small cosmetic edits, simple cleanups.",
+      "chain": [
+        "claude/claude-haiku-5-5:xhigh",
+        "openai-codex/gpt-6.2-sol:xhigh",
+        "xai/grok-4.7:xhigh"
+      ]
+    },
+    "orchestrator": {
+      "description": "Firstmate and second-mate supervisor sessions.",
+      "chain": [
+        "claude/claude-opus-5-5:medium",
+        "openai-codex/gpt-6.2-sol:high",
+        "xai/grok-4.7:medium"
+      ]
+    },
+    "weaker-orchestrator": {
+      "description": "Supervisor sessions that do not need Opus-level reasoning, such as a second mate on routine work.",
+      "chain": [
+        "claude/claude-sonnet-5-5:xhigh",
+        "openai-codex/gpt-6.2-sol:high",
+        "xai/grok-4.7:high"
+      ]
+    },
+    "compact": {
+      "description": "OptChat compactor.",
+      "chain": [
+        "claude/claude-haiku-5-5:medium",
+        "openai-codex/gpt-6.2-sol:medium",
+        "xai/grok-4.7:medium"
+      ]
+    },
+    "reviewer": {
+      "description": "no-mistakes reviewer: a different lab than the Claude-heavy implementers.",
+      "chain": ["openai-codex/gpt-6.2-sol:medium", "claude/claude-opus-5-5:low"]
+    }
+  },
+  "override": "^Model override:\\s*(\\S+)(?:\\s+(\\S+))?",
+  "warnProviders": [],
+  "payg": []
+}

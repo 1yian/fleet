@@ -15,16 +15,17 @@ The captain's routine is one step: open a terminal in the fleet repository and r
 
 Every host that runs a mate or a worker needs these tools on the `PATH` of the mates' and workers' shells and of a non-interactive SSH session. One check owns the list: `packages/extension/src/prerequisites.ts`.
 
-| Tool                | Minimum                  | Why                                                  | Install or fix                                                                                    |
-| ------------------- | ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `node`              | 24                       | Runs the extension, `fleet`, and `cardd`.            | `brew install node@24` (macOS) or see https://nodejs.org                                          |
-| `git`               | 2.31                     | Lane homes, worktrees, and dispatch.                 | `brew install git` (macOS) or `apt install git` (Debian)                                          |
-| `gh`                | any, and logged in       | Finds and merges pull requests.                      | `brew install gh` or `apt install gh`, then `gh auth login`. The check runs `gh auth status`.     |
-| `herdr`             | 0.9.5                    | Every mate, worker, and job runs in a herdr pane.    | https://github.com/herdrdev/herdr/releases                                                        |
-| `zstd`              | any                      | Archives a closed card's worktree.                   | `brew install zstd` or `apt install zstd`                                                         |
-| `no-mistakes`       | any                      | Validates the changes of projects that use it.       | `curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh \| sh` |
-| `direnv`            | any                      | Mates and clone commands run under `direnv exec`.    | `brew install direnv` or `apt install direnv`                                                     |
-| conversation memory | the lane has its profile | A mate with `config/optchat.json` loads it at start. | `<checkout>/bin/fleet home memory <lane>` (section 4)                                             |
+| Tool                | Minimum                  | Why                                                               | Install or fix                                                                                 |
+| ------------------- | ------------------------ | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `node`              | 24                       | Runs the extension, `fleet`, and `cardd`.                         | `brew install node@24` (macOS) or see https://nodejs.org                                       |
+| `git`               | 2.31                     | Lane homes, worktrees, and dispatch.                              | `brew install git` (macOS) or `apt install git` (Debian)                                       |
+| `gh`                | any, and logged in       | Finds and merges pull requests.                                   | `brew install gh` or `apt install gh`, then `gh auth login`. The check runs `gh auth status`.  |
+| `herdr`             | 0.9.5                    | Every mate, worker, and job runs in a herdr pane.                 | https://github.com/herdrdev/herdr/releases                                                     |
+| `zstd`              | any                      | Archives a closed card's worktree.                                | `brew install zstd` or `apt install zstd`                                                      |
+| `no-mistakes`       | `fork-980a45cf`          | The 1yian fork validates the changes of projects that use it.     | `<checkout>/bin/fleet install` builds it with Go (see Install). The upstream build is refused. |
+| tiers               | every template tier      | Every mate, worker, and no-mistakes step picks its model by tier. | `<checkout>/bin/fleet install` writes the template when there is no tiers file (see Tiers).    |
+| `direnv`            | any                      | Mates and clone commands run under `direnv exec`.                 | `brew install direnv` or `apt install direnv`                                                  |
+| conversation memory | the lane has its profile | A mate with `config/optchat.json` loads it at start.              | `<checkout>/bin/fleet home memory <lane>` (section 4)                                          |
 
 A command that the fleet runs on another host goes through that host's transport, so it gets the `PATH` of a non-interactive SSH session. On macOS that session has no `/opt/homebrew/bin`. The fleet appends `/opt/homebrew/bin`, `/opt/homebrew/sbin`, `/usr/local/bin`, and `/usr/local/sbin` to the `PATH` of such a command when they exist and are not in it already, so Homebrew's tools work there with no change to the host. Set `FLEET_TOOL_DIRS` to a colon-separated list in the environment of a mate or of `cardd` to name other directories. Anything else must already be on the `PATH` of a non-interactive SSH session.
 
@@ -32,7 +33,7 @@ The `gh` login check runs only when `fleet up` or `fleet restart` is run by hand
 
 Conversation memory is checked for every home on the host whose `config/optchat.json` does not say `"enabled": false`. The profile that the file names must have its `AGENTS.md` and `config.json`. Without them the memory cannot start, and the mate would crash-loop. OptChat itself ships in this repository, so there is nothing to install for it.
 
-The fleet checks all of this on each host before it starts a mate, and before `/updatefleet` changes anything:
+The fleet checks all of this on each host before it starts a mate, and before `/updatefleet` changes anything. A host that has no tiers file, or whose file leaves a tier out, is refused with every missing tier named:
 
 - `fleet up` and `fleet restart` print every problem of the host, one on each line, then exit without starting a mate. Each line names the tool, the host, and the fix. Main runs `fleet up` on every host when it starts and every minute after, so it tells the captain about such a host.
 - `fleet update --check` and `fleet update` report the same problems as a refusal. `update_fleet` and `/updatefleet` check every host in `config/lane.json` first, over its transport, and stop before they pull, build, or restart anything. The refusal lists the problems of every host at once.
@@ -54,12 +55,59 @@ The pane shows the plain board URL. Open it in your browser to answer decisions.
 ```sh
 git clone https://github.com/1yian/fleet ~/Projects/fleet     # on maverick, the captain's checkout
 git clone https://github.com/1yian/fleet ~/.fleet/app         # on a host that only runs second mates
-cd <checkout> && npm ci && npm run build
+cd <checkout> && npm ci && npm run build && bin/fleet install
 ```
 
-Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Every host needs the tools in [Prerequisites](#prerequisites).
+Keep the checkout on `main` and change the code only through worktrees, because every lane home on that host follows it. Every host needs the tools in [Prerequisites](#prerequisites). `bin/fleet install` installs the ones the fleet owns, and tells you what else is missing (see Install below).
 
 To update later, type `/updatefleet` in main, or ask main to update the fleet. Section 7 says what it does.
+
+### Install
+
+Run this on every host once its checkout is built, and once more on main's host after `cardd` serves and `config/lane.json` is written (section 4). It converges, so a rerun is safe:
+
+```sh
+<checkout>/bin/fleet install [--latest]
+```
+
+It prints one line for each step, then ends with `install: <host> is ready`. When a step fails, it prints the reason and the fix on stderr, finishes the other steps, and exits 1.
+
+- **no-mistakes.** Fleet needs the 1yian/no-mistakes fork, not the upstream build. A host passes when `no-mistakes --version` reports `fork-<commit>` with a build date at or after the minimum, `fork-980a45cf` (2026-11-18T03:52:20Z). Otherwise install clones https://github.com/1yian/no-mistakes, builds its latest `main` with Go 1.25 or later, and puts the binary at `~/.local/bin/no-mistakes`, which must come first on the `PATH`. It stamps the build `fork-<first 8 characters of the commit>` with the commit's own date, and it checks the result before it says built. The fork publishes no release binaries, so the upstream `install.sh` and `no-mistakes update` install the wrong program. Without Go, install fails and names the missing tool. `FLEET_NO_MISTAKES_REPO` names another repository URL to clone. Install never starts, stops, or restarts a no-mistakes daemon: a running daemon keeps the build it started with until main restarts it at a time when no pipeline runs.
+- **pi-tiers.** When `pi list` does not show it, install runs `pi install git:github.com/1yian/pi-tiers`. It needs Pi on the `PATH`.
+- **Tiers.** See Tiers below.
+- **no-mistakes config.** When `~/.no-mistakes/config.yaml` (or `$NM_HOME/config.yaml`) does not exist, install writes `packages/extension/templates/no-mistakes.yaml`: the `pi` agent, with `tier/nm-default` for the pipeline, `tier/reviewer` for review, and `tier/nm-fixer` for review fixes. An existing file is kept.
+- **Prerequisites.** Install ends by running the check of the Prerequisites section and reports what it finds.
+- **Update reminder.** See Daily update reminder below.
+
+`--latest` rebuilds the no-mistakes fork from its latest `main`, and does nothing when the installed build already is that commit. It is what the daily reminder asks main to run.
+
+#### Tiers
+
+A fresh install must declare every tier the fleet uses. The template is `packages/extension/templates/tiers.json`: the captain's own chains, with the account names reduced to one `claude` account (`anthropic`), no work rules, no personal providers, and no classifier. It holds no secret. Edit its chains to the logins the host has. Install copies it to `~/.pi/agent/tiers.json` (or the file `PI_TIERS_CONFIG` names) only when that file does not exist, and never changes an existing one.
+
+| Tier                                                      | Used for                                                                   |
+| --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `orchestrator`                                            | Main and each second mate. It is their model unless `tier` says otherwise. |
+| `weaker-orchestrator`                                     | A second mate with `"tier": "tier/weaker-orchestrator"`.                   |
+| `compact`                                                 | Conversation memory summaries and compaction.                              |
+| `default`, `deep`, `research`, `visual`, `watch`, `quick` | Workers, by the kind of work.                                              |
+| `nm-default`, `nm-fixer`, `reviewer`                      | no-mistakes: its pipeline steps, its review fixes, its review.             |
+
+`fleet up`, `fleet restart`, and `update_fleet` refuse a host until the template's every tier has a non-empty `chain` in its tiers file. The refusal is one line that names the file, why it fails (it does not exist, it is not valid JSON, or it does not declare every tier), and each missing tier. The tier list is the template's, so adding a tier to the template makes it required.
+
+#### Daily update reminder
+
+Install makes one daily schedule on `cardd` (see Scheduled messages), owned by main and delivered to main, at 05:00 in the host's time zone: `Daily fleet update: run update_fleet, then on every host bring the dependencies to their latest remote: ...`. The message tells main what to run, because `update_fleet` updates only the fleet checkout and `cardd` (section 7). Pi and pi-tiers move with `pi update --all`, and the no-mistakes fork with `fleet install --latest`. A host whose tools come from Nix, Home Manager, or another package manager takes its updates there, and main says so instead of running these.
+
+It runs only on a host that has main's `config/lane.json`, and it needs `cardd` to answer, so it fails with the reason until `cardd` serves. A rerun finds the reminder by its first words and its owner, and creates nothing when it is there. Change its time with `schedule_set` and its id: a rerun leaves that alone.
+
+To turn it off, set this in main's `config/lane.json` and run `fleet install`, which removes the schedule:
+
+```json
+"updateReminder": false
+```
+
+The setting defaults to `true`. Remove the key, or set `true`, and run `fleet install` to turn the reminder back on.
 
 ## 2. cardd
 
@@ -311,12 +359,14 @@ cat > config/lane.json <<'JSON'
 }
 JSON
 $EDITOR data/charter.md      # the lane table, main's own projects, and where its records are
+bin/fleet install            # makes the daily update reminder, now that cardd serves and lane.json is there
 pi
 ```
 
 - `host` is the name of the host this lane runs on, the same name that `--clone` and `dispatch` use for it. It defaults to this machine's hostname, first label, lower case. Set it when the hostname differs from the fleet's name for the host, such as `"host": "maverick"`.
 - `hosts` names the hosts that main reaches over SSH. A host that is neither listed nor this lane's own host has no transport: the fleet never runs its commands here, and says `no transport for <host>`. `roots` is each remote host's checkout, and defaults to `~/.fleet/app`. A worker that the lane starts on a remote host loads the extension from that checkout (`<root>/packages/extension/src/index.ts`), not from the lane's own home, which the other host does not have. Set `roots` for each remote host where the checkout is not at `~/.fleet/app`. Without it, the fleet looks only in `~/.fleet/app` of that host, and a dispatch there refuses when the extension is not in it.
 - `cardd` tells `/updatefleet` how to update `cardd` (section 7). `host` is the host that runs it, `local` by default or a name from `hosts`. `root` is the checkout it runs from, and `db` its database, both on that host, where `~` is that host's home. `restart` is the command that restarts its service on that host: for launchd, `launchctl kickstart -k gui/<uid>/<label>`, with the uid from `id -u`. Main runs the same command when it restarts `cardd` for a task. Without `cardd`, the update leaves `cardd` alone and says when its code changed.
+- `updateReminder` is optional, `true` by default. `false` turns off the daily update reminder, and `fleet install` then removes it (section 1, Install).
 - `workerArgs` are extra Pi arguments for main's workers. A `--model` in them picks the workers' model. Without one, workers start on Pi's global default model, `defaultProvider` and `defaultModel` in `~/.pi/agent/settings.json` of the host where the mate runs. A worker never takes its model from its folder, so a worker in a worktree of this repository does not run on the mates' tier. A dispatch that names a `model` overrides the model from `workerArgs` or the global default for that one worker ([code.md](code.md#lanes-and-homes)).
 - For main's own Pi, use Pi's settings: `.pi/settings.json` sets `tier/orchestrator`. `args` is only used when `fleet up` starts a second mate.
 - Codemode is on in every fleet Pi: main, each second mate, and each worker, on every host. The fleet extension adds the `codemode` tool to the active tools when the session starts, and keeps the others. It also sets `PI_CODEMODE_MAX_WORKERS` to 4 unless the environment already sets it. Pi applies that limit to each Pi process, not to the whole host, and its default is 2. Each Pi process runs one session, so 4 lets one worker run several codemode scripts in parallel. Every host must run Pi 1.4.0 or newer on PATH for this limit to apply.
@@ -719,6 +769,10 @@ These diagnostics require the new cardd and extension code. Update cardd and rel
 A mate or worker that gets a message from `cardd` that it cannot read, as when `cardd` runs newer code than it loaded, does not crash. It says so once in its conversation, and `cardd` logs why once. Inside a herdr pane it then relaunches itself on the same conversation at its next safe point, so it loads the code on disk, and it does so at most once every 10 minutes. A process that cannot relaunch keeps reconnecting until `lane(<lane>, "restart")` or `restart_card` replaces it. `restart_card` also replaces the disconnected worker of a paused, finished, or waiting card, and resumes nothing.
 
 A host updates with the code it already has. A host whose checkout predates `fleet update` cannot take part, so update it once by hand: `git -C <checkout> pull && (cd <checkout> && npm ci && npm run build)`, then `fleet restart` on that host.
+
+### Dependencies
+
+`update_fleet` updates the fleet checkout, `cardd`, and the lane homes. It does not touch Pi, pi-tiers, or no-mistakes, which are not in this repository. They move through the daily reminder (section 1, Install): after `update_fleet`, main runs `pi update --all` on each host for Pi and pi-tiers, and `<checkout>/bin/fleet install --latest` for the no-mistakes fork. `no-mistakes update` is never the way, because it installs the upstream build and resets the shared daemon. A new no-mistakes build runs only after its daemon restarts, and main restarts it only when no pipeline runs. Any other pinned tool (herdr, lavish-axi, bws) is updated the way its host installed it. A host whose Pi, pi-tiers, or no-mistakes comes from Nix or another package manager takes the update there, so main bumps that pin and leaves these commands alone.
 
 ### One-time cleanup after the file explorer was removed
 

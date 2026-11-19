@@ -17,6 +17,7 @@ import {
   type JsonRecord,
 } from "./json.ts";
 import { tempDir } from "./run-root.ts";
+import { seedTiers } from "./tiers-fixture.ts";
 
 export interface Turn {
   readonly role: string;
@@ -197,6 +198,7 @@ export class Harness {
   static async start(): Promise<Harness> {
     const server = createServer();
     const harness = new Harness(server, new WebSocketServer({ server, path: "/probe" }));
+    seedTiers(join(harness.dir, "agent"));
     server.on("request", (request, response) => {
       if (request.method === "POST" && request.url?.startsWith("/anthropic/v1/messages") === true) {
         void harness.answerWire(request, response);

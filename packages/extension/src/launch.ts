@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { arrangeHere } from "./arrange.ts";
 import { homeTransport } from "./home-transport.ts";
+import { install } from "./install.ts";
 import {
   codeRoot,
   existingHome,
@@ -30,7 +31,8 @@ import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 import { wakeMate } from "./wake.ts";
 
 const USAGE = [
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange [--host NAME] | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
+  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange [--host NAME] | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo] | install [--latest]",
+  "install checks the host's prerequisites and installs what they need: the no-mistakes fork, pi-tiers, the tiers template, and (on main's host) the daily update reminder. --latest rebuilds the no-mistakes fork from its latest main.",
   "lane options of home add: --host NAME --hosts JSON --roots JSON --tier MODEL --direnv FOLDER --args JSON --worker-args JSON",
   "  --hosts and --roots take a JSON object, --args and --worker-args a JSON array of strings. home set takes only --args and --worker-args, and changes only those.",
   "  --token-file reads the lane token from a file, or from standard input with -, so it never sits in a command line. --hold makes the home held until it is started.",
@@ -107,6 +109,7 @@ function parseCommandLine() {
       json: { type: "boolean" },
       undo: { type: "boolean" },
       check: { type: "boolean" },
+      latest: { type: "boolean" },
       maintenance: { type: "boolean" },
       from: { type: "string" },
       url: { type: "string" },
@@ -250,6 +253,12 @@ switch (command ?? "") {
         console.log(
           `${each.lane}: ${each.state}${each.reason === undefined ? "" : ` (${each.reason})`}`,
         );
+    break;
+  }
+  case "install": {
+    const lines = await install(root, values.latest === true);
+    for (const { text, failed } of lines) (failed ? console.error : console.log)(text);
+    if (lines.some(({ failed }) => failed)) process.exit(1);
     break;
   }
   case "up":
