@@ -275,12 +275,15 @@ const MAINTENANCE_ACTIONS = new Set(["running", "started", "held", "stopped", "u
 async function maintenanceResult(config: LaneConfig, host: string) {
   const out = await fleet(config, host, ["up", "--maintenance", "--json"], MAINTENANCE_COMMAND_MS);
   const answer: unknown = JSON.parse(out.trim().split("\n").at(-1) ?? "");
-  if (isRecord(answer) && Object.keys(answer).length === 1) {
-    const failed = answer["failed"];
-    if (typeof failed === "string" && failed.trim() !== "") return failed;
+  let list = answer;
+  let failed: string | undefined;
+  if (isRecord(answer)) {
+    failed = text(answer, "failed");
+    if (failed.trim() === "") throw new Error(`fleet on ${host} returned no failure detail`);
+    list = Object.keys(answer).length === 1 ? [] : answer["outcomes"];
   }
-  const results = records(answer);
-  if (!Array.isArray(answer) || results.length !== answer.length)
+  const results = records(list);
+  if (!Array.isArray(list) || results.length !== list.length)
     throw new Error(`fleet on ${host} returned an incomplete maintenance list`);
   for (const row of results) {
     const action = text(row, "action");
@@ -291,16 +294,7 @@ async function maintenanceResult(config: LaneConfig, host: string) {
     )
       throw new Error(`fleet on ${host} returned an incomplete maintenance result`);
   }
-  return results;
-}
-
-async function maintenanceRows(config: LaneConfig, host: string) {
-  const result = await maintenanceResult(config, host).catch((error: unknown) => {
-    if (error instanceof HostUnreachable) throw error;
-    throw new HostUnread(messageOf(error));
-  });
-  if (typeof result === "string") throw new Error(result);
-  return result;
+  return { results, failed };
 }
 
 function deliver(
@@ -406,8 +400,17 @@ function keepRunning(
   };
   const maintain = async (host: string): Promise<void> => {
     await share(host);
-    const out = await maintenanceRows(config, host);
-    if (out.every((row) => row["action"] !== "unread") && unreachable.delete(host))
+    const { results: out, failed } = await maintenanceResult(config, host).catch(
+      (error: unknown) => {
+        if (error instanceof HostUnreachable) throw error;
+        throw new HostUnread(messageOf(error));
+      },
+    );
+    if (
+      failed === undefined &&
+      out.every((row) => row["action"] !== "unread") &&
+      unreachable.delete(host)
+    )
       tell([`${host} can be reached again`], false);
     const of = (action: string) => out.filter((row) => text(row, "action") === action);
     tell(
@@ -417,6 +420,7 @@ function keepRunning(
     const held = (row: Record<string, unknown>) =>
       `${text(row, "lane")} on ${host} is held: ${text(row, "detail")}`;
     tell(of("held").map(held), true);
+    if (failed !== undefined) throw new Error(failed);
   };
   const checkHost = async (host: string): Promise<void> => {
     try {

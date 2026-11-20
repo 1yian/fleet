@@ -13,8 +13,6 @@ export class NoTransport extends HostUnreachable {}
 
 export class HostUnread extends Error {}
 
-class LanePaneNotFound extends Error {}
-
 class LaneServerMissing extends Error {}
 
 type LaneCommand = "observe" | "mutate";
@@ -160,7 +158,7 @@ export async function laneHerdr(
       await startServer(process.env["HERDR_SESSION"], deadline);
       return await laneHerdrOnce(args, mode, deadline);
     } catch (failure) {
-      if (mode === "observe" && !(failure instanceof LanePaneNotFound) && failure instanceof Error)
+      if (mode === "observe" && failure instanceof Error && !(failure instanceof HostUnread))
         throw new HostUnread(failure.message);
       throw failure;
     }
@@ -203,7 +201,7 @@ function laneRefusal(
   const message = scrub(error["message"]);
   switch (error["code"]) {
     case "pane_not_found":
-      return verb === "process-info" ? new LanePaneNotFound(message) : undefined;
+      return verb === "process-info" ? new HostUnread(message) : undefined;
     case "server_not_running":
       return new LaneServerMissing(message);
     default:
@@ -453,15 +451,7 @@ export async function lanePaneState(
   pane: string,
   deadline?: number,
 ): Promise<"pi" | "busy" | "down"> {
-  const reply = await laneHerdr(
-    ["pane", "process-info", "--pane", pane],
-    "observe",
-    deadline,
-  ).catch((error: unknown) => {
-    if (error instanceof LanePaneNotFound) return undefined;
-    throw error;
-  });
-  if (reply === undefined) return "down";
+  const reply = await laneHerdr(["pane", "process-info", "--pane", pane], "observe", deadline);
   const info = reply["process_info"];
   if (!isRecord(info)) throw new HostUnread(`herdr returned no process info for pane ${pane}`);
   const entries = info["foreground_processes"];

@@ -91,6 +91,8 @@ test("a host whose lanes cannot be kept up still has its disk use read, pruned, 
   const said = (await lab.history(pane)).replace(/\s+/g, " ");
   assert.equal(said.split("lanes: far failed:").length - 1, 1);
   assert.match(said, /could not create the workspace of ops/);
+  assert.match(said, /cleo started on far/);
+  assert.doesNotMatch(said, /far can be reached again/);
 });
 
 test("a directory listing that fails is retried on the next checks, and main hears one alarm that names the directories", async () => {
