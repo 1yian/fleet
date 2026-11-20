@@ -171,8 +171,9 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
   let text: string;
   try {
     text = readFileSync(file, "utf8");
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
   }
   const config: unknown = JSON.parse(text);
   return parseLaneConfig(file, config);

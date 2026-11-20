@@ -72,11 +72,13 @@ function gitWithin(cwd: string, args: readonly string[], deadline?: number): str
 
 const git = (cwd: string, ...args: string[]): string => gitWithin(cwd, args);
 
-export function codeRoot(): string {
+export function codeRoot(deadline?: number): string {
   const set = process.env["FLEET_ROOT"];
   if (set !== undefined && set !== "") return set;
   const here = dirname(fileURLToPath(import.meta.url));
-  return dirname(git(here, "rev-parse", "--path-format=absolute", "--git-common-dir"));
+  return dirname(
+    gitWithin(here, ["rev-parse", "--path-format=absolute", "--git-common-dir"], deadline),
+  );
 }
 
 export const homeOf = (root: string, lane: string): string =>
@@ -91,8 +93,14 @@ export function existingHome(root: string, lane: string): string {
 
 export function laneHomes(root: string): LaneHome[] {
   const dir = `${root}.worktrees`;
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  }
+  return entries
     .filter((name) => name.startsWith("lane-"))
     .sort()
     .flatMap((name) => {
@@ -234,8 +242,8 @@ async function findWorkspace(
     const panes = await panesOf(workspace, row["pane_count"], deadline);
     const [first] = panes;
     if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
-    if (purpose === "close" || purpose === "restart-held") {
-      if (legacy && !matchesHome(requiredCwd(first.cwd, workspace))) continue;
+    if (purpose === "close" || (legacy && purpose === "restart-held")) {
+      if (!matchesHome(requiredCwd(first.cwd, workspace))) continue;
       if (purpose === "close") return { workspace, state: "matched" };
       return (await lanePaneState(first.pane, deadline)) !== "down"
         ? { workspace, state: "running" }
@@ -255,6 +263,7 @@ async function findWorkspace(
     const state = await lanePaneState(first.pane, deadline);
     if (purpose === "placement" && state !== "pi") continue;
     if (state !== "down") return { workspace, state: "running" };
+    if (purpose === "restart-held") return undefined;
     return { workspace, state: "idle", pane: first.pane };
   }
   return undefined;

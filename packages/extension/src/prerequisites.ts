@@ -173,10 +173,9 @@ export function profileOf(home: string, settings: Record<string, unknown>): stri
 }
 
 function memoryProblems(root: string, host: string): string[] {
+  const main = readLaneConfig(root);
   const homes = [
-    ...(readLaneConfig(root) === undefined
-      ? []
-      : [{ lane: readLaneConfig(root)?.lane, home: root }]),
+    ...(main === undefined ? [] : [{ lane: main.lane, home: root }]),
     ...laneHomes(root),
   ];
   return homes.flatMap(({ lane, home }) => {
@@ -185,9 +184,9 @@ function memoryProblems(root: string, host: string): string[] {
     const profile = profileOf(home, settings);
     const missing = PROFILE_FILES.filter((file) => !existsSync(join(profile, file)));
     if (missing.length === 0) return [];
-    const fix = `Fix: ${join(root, "bin", "fleet")} home memory ${lane ?? ""}`;
+    const fix = `Fix: ${join(root, "bin", "fleet")} home memory ${lane}`;
     return [
-      `optchat of lane ${lane ?? ""} has no ${missing.join(" and ")} in profile ${profile} on ${host}. ${fix}`,
+      `optchat of lane ${lane} has no ${missing.join(" and ")} in profile ${profile} on ${host}. ${fix}`,
     ];
   });
 }

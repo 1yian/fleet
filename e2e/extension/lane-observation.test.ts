@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -191,6 +191,32 @@ async function workspace(lane: string): Promise<JsonRecord | undefined> {
 
 const action = (lane: string, value: string) => [{ lane, action: value }];
 
+test("root discovery fails in the typed reply but keeps the legacy nonzero exit", async () => {
+  const gitDir = join(here.parent, "missing.git");
+  const run = (args: readonly string[]) =>
+    spawnSync(process.execPath, [here.launch, ...args], {
+      encoding: "utf8",
+      timeout: 90_000,
+      env: { ...process.env, ...lab.env, FLEET_ROOT: "", GIT_DIR: gitDir },
+    });
+  const capability = run(["--maintenance-outcomes-v1"]);
+  assert.equal(capability.status, 0);
+  assert.equal(capability.stdout.trim(), "fleet: maintenance outcomes v1");
+  const typed = run(typedMaintenance);
+  assert.equal(typed.status, 0, typed.stderr);
+  const reply = maintenanceOutcomes(typed.stdout);
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], []);
+  assert.deepEqual(reply["outcomes"], []);
+  assert.match(String(reply["failed"]), /not a git repository/);
+  const legacy = run(legacyMaintenance);
+  assert.equal(legacy.status, 1);
+  assert.equal(legacy.stdout, "");
+  assert.match(legacy.stderr, /not a git repository/);
+  assert.equal(await workspace("ops"), undefined);
+  assert.deepEqual(maintain(), action("ops", "started"));
+});
+
 test("local maintenance never starts from a failed, blank, partial, or timed-out workspace read", async () => {
   for (const fault of ["failed", "blank", "partial", "timeout"]) {
     assert.deepEqual(maintain(fault), action("ops", "unread"), fault);
@@ -364,6 +390,41 @@ test("an idle split workspace is unread until only one pane remains", async () =
   assert.equal(existsSync(join(home, "state", "starts")), false);
   await lab.run(["pane", "close", split]);
   assert.deepEqual(maintain(), action("ops", "started"));
+});
+
+test("restart-all restarts a held current-title mate in a non-first pane", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const before = (await workspace("ops"))?.["workspace_id"];
+  assert.ok(typeof before === "string");
+  const added = await lab.run([
+    "pane",
+    "split",
+    root,
+    "--direction",
+    "right",
+    "--cwd",
+    home,
+    "--no-focus",
+  ]);
+  const split = records([added["pane"]])[0]?.["pane_id"];
+  assert.ok(typeof split === "string");
+  const stopped = join(home, "state", "stopped");
+  writeFileSync(stopped, "stopped by hand\n");
+  assert.throws(() => fleet(["restart", "--json"]), /no Pi observed in the lane home/);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"], "pi-in-split", split)), [
+    { lane: "ops", state: "running" },
+  ]);
+  assert.deepEqual(
+    JSON.parse(fleet(["restart", "--json"], "pi-in-split", split, "5000")),
+    action("ops", "started"),
+  );
+  const after = (await workspace("ops"))?.["workspace_id"];
+  assert.ok(typeof after === "string" && after !== before);
+  assert.equal(existsSync(stopped), false);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "running" }]);
 });
 
 test("legacy split workspaces close by the original pane's home, not by Pi in a split", async () => {

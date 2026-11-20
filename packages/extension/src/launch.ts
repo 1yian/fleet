@@ -158,7 +158,6 @@ function parseCommandLine() {
 
 const { values, positionals } = parse();
 const [command, ...rest] = positionals;
-const root = codeRoot();
 
 const json = (text: string | undefined): unknown =>
   text === undefined ? undefined : JSON.parse(text);
@@ -247,11 +246,7 @@ function lane(): string {
 const maintenance = command === "up" && values.maintenance === true;
 const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
-function maintenanceFailure(failed: string): void {
-  console.log(JSON.stringify({ failed, expected: [], outcomes: [] }));
-}
-
-function checkLaunchPrerequisites(): void {
+function checkLaunchPrerequisites(root: string): void {
   if (values.host !== undefined) {
     console.error(USAGE);
     process.exit(2);
@@ -264,29 +259,30 @@ function checkLaunchPrerequisites(): void {
   }
 }
 
-switch (command ?? "") {
-  case "status": {
-    if (placement) {
-      console.log(JSON.stringify(await placementStatus(root)));
+try {
+  const root = codeRoot(maintenanceDeadline);
+  switch (command ?? "") {
+    case "status": {
+      if (placement) {
+        console.log(JSON.stringify(await placementStatus(root)));
+        break;
+      }
+      const lanes = await status(root);
+      if (values.json === true) console.log(JSON.stringify(lanes));
+      else
+        for (const each of lanes)
+          console.log(
+            `${each.lane}: ${each.state}${each.reason === undefined ? "" : ` (${each.reason})`}`,
+          );
       break;
     }
-    const lanes = await status(root);
-    if (values.json === true) console.log(JSON.stringify(lanes));
-    else
-      for (const each of lanes)
-        console.log(
-          `${each.lane}: ${each.state}${each.reason === undefined ? "" : ` (${each.reason})`}`,
-        );
-    break;
-  }
-  case "up":
-    try {
-      checkLaunchPrerequisites();
+    case "up": {
+      checkLaunchPrerequisites(root);
       const result = await up(root, rest[0], maintenanceDeadline, typedMaintenance ? offset : 0);
       const { outcomes, failed } = result;
       if (typedMaintenance) console.log(JSON.stringify(result));
       else {
-        if (maintenance && values.json === true && !typedMaintenance) {
+        if (maintenance && values.json === true) {
           if (failed !== undefined) throw new Error(failed);
           if (outcomes.some(({ action }) => action === "unread"))
             throw new Error("maintenance could not read every lane");
@@ -294,176 +290,178 @@ switch (command ?? "") {
         show(outcomes);
         if (failed !== undefined) throw new Error(failed);
       }
-    } catch (error) {
-      if (!typedMaintenance) throw error;
-      maintenanceFailure(error instanceof Error ? error.message : String(error));
-    }
-    break;
-  case "shared": {
-    if (values.absent !== true && values.content === undefined) throw new Error(USAGE);
-    const bytes =
-      values.absent === true
-        ? undefined
-        : Buffer.from(values.content ?? "", "base64").toString("utf8");
-    for (const { lane: name, result } of convergeSharedPreferences(root, bytes))
-      console.log(`${name}: shared preferences ${result}`);
-    break;
-  }
-  case "arrange": {
-    const running = fileURLToPath(new URL("../../..", import.meta.url));
-    const envHost = process.env["FLEET_HOST"];
-    const configured = envHost === "" ? undefined : envHost;
-    const home =
-      values.host === undefined && configured === undefined ? readLaneConfig(running) : undefined;
-    const named =
-      values.host ?? configured ?? (home === undefined ? undefined : (home.host ?? "local"));
-    await arrangeHere(named).catch((error: unknown) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exit(1);
-    });
-    break;
-  }
-  case "stop":
-    await stop(root, lane());
-    console.log(`${lane()}: stopped`);
-    break;
-  case "restart":
-    checkLaunchPrerequisites();
-    show(await restart(root, rest[0]));
-    break;
-  case "home": {
-    if (rest[0] === "transport") {
-      for (const line of await homeTransport(root, rest.slice(1), values)) console.log(line);
       break;
     }
-    if (rest[0] === "memory" && rest[1] !== undefined) {
-      const { seed, thinking } = values;
-      const options = {
-        ...(seed === undefined ? {} : { seed }),
-        ...(thinking === undefined ? {} : { thinking }),
-      };
-      for (const line of setUpMemory(existingHome(root, rest[1]), rest[1], options))
-        console.log(`${rest[1]}: ${line}`);
+    case "shared": {
+      if (values.absent !== true && values.content === undefined) throw new Error(USAGE);
+      const bytes =
+        values.absent === true
+          ? undefined
+          : Buffer.from(values.content ?? "", "base64").toString("utf8");
+      for (const { lane: name, result } of convergeSharedPreferences(root, bytes))
+        console.log(`${name}: shared preferences ${result}`);
       break;
     }
-    if (rest[0] === "set" && rest[1] !== undefined) {
-      const addOnly = [
-        values.url,
-        values.host,
-        values.hosts,
-        values.roots,
-        values.tier,
-        values.direnv,
-        values["token-file"],
-        values.bws,
-      ];
-      if (addOnly.some((each) => each !== undefined))
-        throw new Error("home set changes only --args and --worker-args");
-      const changes = listSettings();
-      if (Object.keys(changes).length === 0) throw new Error(USAGE);
-      reconfigure(existingHome(root, rest[1]), changes);
-      console.log(
-        `${rest[1]}: set ${Object.keys(changes).join(", ")}. Restart the lane for its mate to use them`,
-      );
-      break;
-    }
-    if (rest[0] !== "add" || rest[1] === undefined) throw new Error(USAGE);
-    if (readLaneConfig(homeOf(root, rest[1])) !== undefined) {
-      console.log(homeOf(root, rest[1]));
-      console.error(
-        `${rest[1]}: the home is made already, and config/lane.json is kept. fleet home set changes it`,
-      );
-      break;
-    }
-    const token = laneToken();
-    if (values.url === undefined || (token === undefined && values.bws === undefined))
-      throw new Error(USAGE);
-    const config = parseLaneConfig("fleet home add", {
-      hosts: {},
-      roots: {},
-      args: [],
-      workerArgs: [],
-      ...laneSettings(),
-      lane: rest[1],
-      ...(token === undefined ? {} : { token }),
-      ...(values.bws === undefined ? {} : { bws: json(values.bws) }),
-    });
-    console.log(provision(root, config, values.hold === true));
-    break;
-  }
-  case "update": {
-    const result =
-      values.check === true ? (checkHost(root) ?? { state: "ready", root }) : updateHost(root);
-    console.log(JSON.stringify(result));
-    break;
-  }
-  case "cardd": {
-    const { root: carddRoot, db, running, restart: command } = values;
-    if (carddRoot === undefined || db === undefined) throw new Error(USAGE);
-    const result =
-      values.check === true
-        ? (checkCardd(carddRoot, db) ?? { state: "ready", root: carddRoot })
-        : updateCardd(carddRoot, db, running, strings(json(command)));
-    console.log(JSON.stringify(result));
-    break;
-  }
-  case "wake": {
-    const [name, note] = rest;
-    if (name === undefined || note === undefined) throw new Error(USAGE);
-    const args = values.script === undefined ? { note } : { note, script: values.script };
-    const { wakeMate } = await import("./wake.ts");
-    await wakeMate(existingHome(root, name), args).then(
-      () => {
-        console.log(`${name}: woken`);
-      },
-      (error: unknown) => {
+    case "arrange": {
+      const running = fileURLToPath(new URL("../../..", import.meta.url));
+      const envHost = process.env["FLEET_HOST"];
+      const configured = envHost === "" ? undefined : envHost;
+      const home =
+        values.host === undefined && configured === undefined ? readLaneConfig(running) : undefined;
+      const named =
+        values.host ?? configured ?? (home === undefined ? undefined : (home.host ?? "local"));
+      await arrangeHere(named).catch((error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));
         process.exit(1);
-      },
-    );
-    break;
-  }
-  case "secrets": {
-    const main = readLaneConfig(root);
-    const here = [
-      ...(main === undefined ? [] : [main]),
-      ...laneHomes(root).map((each) => each.config),
-    ];
-    const named = here.filter((each) => rest[0] === undefined || each.lane === rest[0]);
-    if (named.length === 0) throw new Error(`no lane ${rest[0] ?? ""} on this host`);
-    let failed = false;
-    for (const each of named) {
-      const checked = await checkLaneSecrets(each);
-      for (const line of checked.lines) console.log(line);
-      failed ||= checked.failed;
+      });
+      break;
     }
-    if (failed) process.exit(1);
-    break;
+    case "stop":
+      await stop(root, lane());
+      console.log(`${lane()}: stopped`);
+      break;
+    case "restart":
+      checkLaunchPrerequisites(root);
+      show(await restart(root, rest[0]));
+      break;
+    case "home": {
+      if (rest[0] === "transport") {
+        for (const line of await homeTransport(root, rest.slice(1), values)) console.log(line);
+        break;
+      }
+      if (rest[0] === "memory" && rest[1] !== undefined) {
+        const { seed, thinking } = values;
+        const options = {
+          ...(seed === undefined ? {} : { seed }),
+          ...(thinking === undefined ? {} : { thinking }),
+        };
+        for (const line of setUpMemory(existingHome(root, rest[1]), rest[1], options))
+          console.log(`${rest[1]}: ${line}`);
+        break;
+      }
+      if (rest[0] === "set" && rest[1] !== undefined) {
+        const addOnly = [
+          values.url,
+          values.host,
+          values.hosts,
+          values.roots,
+          values.tier,
+          values.direnv,
+          values["token-file"],
+          values.bws,
+        ];
+        if (addOnly.some((each) => each !== undefined))
+          throw new Error("home set changes only --args and --worker-args");
+        const changes = listSettings();
+        if (Object.keys(changes).length === 0) throw new Error(USAGE);
+        reconfigure(existingHome(root, rest[1]), changes);
+        console.log(
+          `${rest[1]}: set ${Object.keys(changes).join(", ")}. Restart the lane for its mate to use them`,
+        );
+        break;
+      }
+      if (rest[0] !== "add" || rest[1] === undefined) throw new Error(USAGE);
+      if (readLaneConfig(homeOf(root, rest[1])) !== undefined) {
+        console.log(homeOf(root, rest[1]));
+        console.error(
+          `${rest[1]}: the home is made already, and config/lane.json is kept. fleet home set changes it`,
+        );
+        break;
+      }
+      const token = laneToken();
+      if (values.url === undefined || (token === undefined && values.bws === undefined))
+        throw new Error(USAGE);
+      const config = parseLaneConfig("fleet home add", {
+        hosts: {},
+        roots: {},
+        args: [],
+        workerArgs: [],
+        ...laneSettings(),
+        lane: rest[1],
+        ...(token === undefined ? {} : { token }),
+        ...(values.bws === undefined ? {} : { bws: json(values.bws) }),
+      });
+      console.log(provision(root, config, values.hold === true));
+      break;
+    }
+    case "update": {
+      const result =
+        values.check === true ? (checkHost(root) ?? { state: "ready", root }) : updateHost(root);
+      console.log(JSON.stringify(result));
+      break;
+    }
+    case "cardd": {
+      const { root: carddRoot, db, running, restart: command } = values;
+      if (carddRoot === undefined || db === undefined) throw new Error(USAGE);
+      const result =
+        values.check === true
+          ? (checkCardd(carddRoot, db) ?? { state: "ready", root: carddRoot })
+          : updateCardd(carddRoot, db, running, strings(json(command)));
+      console.log(JSON.stringify(result));
+      break;
+    }
+    case "wake": {
+      const [name, note] = rest;
+      if (name === undefined || note === undefined) throw new Error(USAGE);
+      const args = values.script === undefined ? { note } : { note, script: values.script };
+      const { wakeMate } = await import("./wake.ts");
+      await wakeMate(existingHome(root, name), args).then(
+        () => {
+          console.log(`${name}: woken`);
+        },
+        (error: unknown) => {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
+        },
+      );
+      break;
+    }
+    case "secrets": {
+      const main = readLaneConfig(root);
+      const here = [
+        ...(main === undefined ? [] : [main]),
+        ...laneHomes(root).map((each) => each.config),
+      ];
+      const named = here.filter((each) => rest[0] === undefined || each.lane === rest[0]);
+      if (named.length === 0) throw new Error(`no lane ${rest[0] ?? ""} on this host`);
+      let failed = false;
+      for (const each of named) {
+        const checked = await checkLaneSecrets(each);
+        for (const line of checked.lines) console.log(line);
+        failed ||= checked.failed;
+      }
+      if (failed) process.exit(1);
+      break;
+    }
+    case "cost": {
+      console.log(JSON.stringify(costRows(root, Date.now())));
+      break;
+    }
+    case "scratch":
+      for (const line of scratchLines(
+        {
+          tidy: values.tidy === true,
+          open: values.open,
+          move: values.move,
+          largest: values.largest ?? [],
+          by: values.by,
+          json: values.json === true,
+        },
+        Date.now(),
+      ))
+        console.log(line);
+      break;
+    case "migrate":
+      for (const line of values.undo === true
+        ? undoMigration(root, values.from)
+        : migrate(root, values.from))
+        console.log(line);
+      break;
+    default:
+      throw new Error(USAGE);
   }
-  case "cost": {
-    console.log(JSON.stringify(costRows(root, Date.now())));
-    break;
-  }
-  case "scratch":
-    for (const line of scratchLines(
-      {
-        tidy: values.tidy === true,
-        open: values.open,
-        move: values.move,
-        largest: values.largest ?? [],
-        by: values.by,
-        json: values.json === true,
-      },
-      Date.now(),
-    ))
-      console.log(line);
-    break;
-  case "migrate":
-    for (const line of values.undo === true
-      ? undoMigration(root, values.from)
-      : migrate(root, values.from))
-      console.log(line);
-    break;
-  default:
-    throw new Error(USAGE);
+} catch (error) {
+  if (!typedMaintenance) throw error;
+  const failed = error instanceof Error ? error.message : String(error);
+  console.log(JSON.stringify({ failed, expected: [], outcomes: [] }));
 }
