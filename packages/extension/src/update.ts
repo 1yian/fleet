@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { laneHomes } from "./homes.ts";
-import { hostProblems } from "./prerequisites.ts";
+import { bunProblems, hostProblems } from "./prerequisites.ts";
 
 const BRANCH = "main";
 const UPSTREAM = `origin/${BRANCH}`;
@@ -210,6 +210,7 @@ export function checkCardd(rootPath: string, dbPath: string): HostUpdate | undef
   const root = expand(rootPath);
   const db = expand(dbPath);
   const problems = [
+    ...bunProblems(),
     ...checkoutProblems(root),
     ...(existsSync(db) ? [] : [`cardd's database ${db} does not exist`]),
   ];

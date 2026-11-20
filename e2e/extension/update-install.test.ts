@@ -93,3 +93,25 @@ test("fleet update and its check refuse a host without bun, name the fix, and le
   assert.equal(tip(here.root), before);
   assert.deepEqual(bunCalls(), []);
 });
+
+test("fleet cardd and its check refuse a cardd host without bun, name the fix, and leave the checkout where it was", () => {
+  const before = tip(here.root);
+  landOnRemote(remote, "code", "packages/cardd/src/extra.ts", "export {};\n");
+  const db = join(here.parent, "cardd.db");
+  writeFileSync(db, "");
+  const noBun = pathWithout("bun");
+  const problem = `bun is missing on ${hostname()}. Fix: install bun 1.3.13 or later: brew install oven-sh/bun/bun (macOS), or see https://bun.sh/docs/installation`;
+  for (const extra of [["--check"], []]) {
+    const report = parseRecord(
+      here.fleet(["cardd", "--root", here.root, "--db", db, ...extra], {
+        PATH: noBun,
+        BUN_LOG: log,
+      }),
+    );
+    assert.equal(report["state"], "refused");
+    assert.ok(Array.isArray(report["problems"]));
+    assert.deepEqual(report["problems"], [problem]);
+  }
+  assert.equal(tip(here.root), before);
+  assert.deepEqual(bunCalls(), []);
+});

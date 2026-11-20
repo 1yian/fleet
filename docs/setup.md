@@ -758,7 +758,7 @@ The first `/updatefleet` onto the commit that replaced npm with bun cannot work 
 
 Before that first update, on every host that runs a mate, a worker, or `cardd`, install bun 1.3.13 or later (`brew install oven-sh/bun/bun` on macOS, or https://bun.sh/docs/installation). Then, in the checkout (and in `cardd`'s checkout on `cardd`'s host), run `git pull && bun install --frozen-lockfile && bun run build`, then `fleet restart` on that host.
 
-A host that skipped it recovers by installing bun and running `/updatefleet` again. The checkout is already on the new commit, so the rerun finds nothing to install, builds the board with bun, and moves the lane homes.
+A host that skipped it recovers by installing bun, running `bun install --frozen-lockfile` in the checkout (and in `cardd`'s checkout on `cardd`'s host), and then running `/updatefleet` again. The rerun does not reinstall by itself, because the checkout is already on the new commit and `node_modules` exists, so the explicit install is what replaces the npm-installed packages with the ones `bun.lock` describes.
 
 After that one time, `fleet update` and `fleet cardd` refuse a host without bun (below 1.3.13) before they change anything, and name the fix.
 
