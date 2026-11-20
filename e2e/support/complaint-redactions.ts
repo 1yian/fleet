@@ -22,6 +22,10 @@ export const REDACTED_COMPLAINTS = [
   ["Authorization: Basic a\\\nnext: yes", "Authorization: [hidden] next: yes"],
   ["  - token: a b # note\r\n    ok: yes", "- token: [hidden] # note ok: yes"],
   ["Revision 0123456789abcdef0123456789abcdef01234567", "Revision [hidden]"],
+  [
+    "The ${HOST} help text never explains how curl is configured.",
+    "The ${HOST} help text never explains how curl is configured.",
+  ],
   ...[
     "Basic demo",
     'Basic "demo"',
