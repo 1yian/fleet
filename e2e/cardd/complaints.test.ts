@@ -221,6 +221,13 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     'Tool returned {"password":"paper canoe',
     'password="paper canoe',
     String.raw`{"pass\u0077ord":["paper","canoe"]}`,
+    String.raw`{"pass\u0077ord":"paper canoe"}`,
+    String.raw`{"to\u006Ben": "paper canoe"}`,
+    String.raw`{"api\u0020key":"paper canoe"}`,
+    'password=prefix"paper canoe',
+    'token=prefix\\\n"paper canoe',
+    '--fleet-token "paper canoe',
+    'Tool printed password=\\\n"paper canoe',
   ];
   const expected = "[YAML withheld: credential boundaries unclear]";
   for (const [index, text] of examples.entries()) {

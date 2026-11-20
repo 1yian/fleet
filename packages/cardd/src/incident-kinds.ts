@@ -94,10 +94,11 @@ const STRUCTURED_SECRET = new RegExp(
   String.raw`${SECRET_KEY}((?:\\?["']\s*[:=]|\s*:)\s*)(?:${STRUCTURED_VALUE})|\bBearer\s+[A-Za-z0-9._~+/=-]+`,
   "gi",
 );
-const ESCAPED_KEY = /(?:[\w-]|\\+u[\da-f]{4})+(?=\\?["']\s*:)/gi;
+const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+u[\da-f]{4})+)\\?["']\s*:/gi;
 const KEY_ESCAPE = /\\+u([\da-f]{4})/gi;
+const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
 const UNBOUNDED_QUOTED_SECRET = new RegExp(
-  String.raw`${SECRET_KEY}(?:\\?["']\s*[:=]|\s*[:=])\s*\\?["'\u0060]`,
+  String.raw`${SECRET_KEY}(?:\\?["']\s*[:=]|\s*[:=])\s*\\?["'\u0060]|--fleet-token(?:\s*[:=]\s*|\s+)["'\u0060]`,
   "i",
 );
 const URL_WITHHELD = "[URL withheld: credential boundaries unclear]";
@@ -217,18 +218,32 @@ function redactUrlUserinfo(text: string): string {
   return found.ambiguous || scanUrlUserinfo(joined).count > found.count ? URL_WITHHELD : found.text;
 }
 
-function decodeKeyEscapes(key: string): string {
-  return key.replace(KEY_ESCAPE, (escape, hex: string) => {
-    const char = String.fromCharCode(Number.parseInt(hex, 16));
-    return /[\w-]/.test(char) ? char : escape;
-  });
+function normalizeInput(text: string): string {
+  return text.replace(/\r\n?/g, "\n").replace(/^\uFEFF/gm, "");
 }
 
-function normalizeInput(text: string): string {
-  return text
-    .replace(/\r\n?/g, "\n")
-    .replace(/^\uFEFF/gm, "")
-    .replace(ESCAPED_KEY, decodeKeyEscapes);
+function logicalView(text: string): string {
+  return text.replace(/\\(?:\\|(\r?\n))/g, (pair, newline: unknown) =>
+    typeof newline === "string" ? "" : pair,
+  );
+}
+
+function hasEscapedCredentialKey(text: string): boolean {
+  for (const [, key = ""] of text.matchAll(ESCAPED_KEY)) {
+    const decoded = key.replace(KEY_ESCAPE, (_escape, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+    if (decoded !== key && CREDENTIAL_KEY.test(decoded)) return true;
+  }
+  return false;
+}
+
+function hasPartialShellValue(text: string): boolean {
+  const logical = logicalView(text);
+  for (const match of logical.matchAll(SHELL_SECRET)) {
+    if (/["']/.test(logical[match.index + match[0].length] ?? "")) return true;
+  }
+  return false;
 }
 
 export function redact(text: string, scope: "public" | "diagnostic"): string {
@@ -250,7 +265,7 @@ function hasUnboundedSecret(yaml: string): boolean {
 }
 
 function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
-  if (hasCredentialCollection(source)) return YAML_WITHHELD;
+  if (hasCredentialCollection(source) || hasEscapedCredentialKey(source)) return YAML_WITHHELD;
   const yaml = redactYamlBlocks(source)
     .replace(YAML_FLOW_SECRET, '$1: "[hidden]"')
     .replace(
@@ -261,9 +276,10 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
   if (curlCredentialOption(urls)) return CURL_WITHHELD;
+  if (hasPartialShellValue(urls)) return YAML_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
   if (curlUnprovenAuthorization(structured)) return CURL_WITHHELD;
-  if (UNBOUNDED_QUOTED_SECRET.test(structured)) return YAML_WITHHELD;
+  if (UNBOUNDED_QUOTED_SECRET.test(logicalView(structured))) return YAML_WITHHELD;
   const hidden = SECRET_PATTERNS.reduce(
     (out, pattern) => out.replace(pattern, hiddenValue),
     structured,

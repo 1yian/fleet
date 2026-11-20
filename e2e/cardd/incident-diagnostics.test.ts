@@ -38,7 +38,7 @@ for (const [diagnostic, visible] of [
   ],
   ["\uFEFFpassword: paper canoe\nnext: visible", "password: [hidden] next: visible"],
   ["password: |-\r paper canoe\rnext: yes", "password: [hidden] next: yes"],
-  [String.raw`Tool returned {"pass\u0077ord":"paper canoe"}`, 'Tool returned {"password":[hidden]}'],
+  [String.raw`Tool returned {"na\u006de":"visible"}`, String.raw`Tool returned {"na\u006de":"visible"}`],
 ] as const) {
   test(`a runtime failure shows ${visible} without the original credential`, async () => {
     const card = await newCard(cleo, "Report a failing diagnostic");
@@ -64,6 +64,11 @@ for (const [name, diagnostic] of [
   ["merge key", "defaults: &shared\n  note: paper canoe\nsettings:\n  <<: *shared"],
   ["truncated quoted value", 'Tool returned {"password":"paper canoe'],
   ["truncated shell value", 'password="paper canoe'],
+  ["escaped credential key", String.raw`{"pass\u0077ord":"paper canoe"}`],
+  ["escaped credential key with a space", String.raw`{"api\u0020key":"paper canoe"}`],
+  ["partially quoted shell value", 'password=prefix"paper canoe'],
+  ["unterminated fleet token option", '--fleet-token "paper canoe'],
+  ["spliced unterminated value", 'Tool printed password=\\\n"paper canoe'],
   ["escaped credential key collection", String.raw`{"pass\u0077ord":["paper","canoe"]}`],
   ["curl credential option", "curl -u 'demo:paper canoe' https://localhost"],
   ["curl flag-shaped output file", "curl -o -u 'demo:paper canoe' https://localhost"],
