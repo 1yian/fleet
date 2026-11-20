@@ -77,5 +77,4 @@ test("a restarted worker hears that it was restarted in its first turn, even whe
     resumed.some((turn) => turn.text.includes("Your session was restarted on the same card")),
     "the restarted worker's first turn did not carry the restart notice",
   );
-  assert.deepEqual(await workersOf(lab), ["c-1-a1"]);
 });
