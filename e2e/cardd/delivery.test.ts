@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Card } from "@fleet/protocol";
+import { check, OPS, type Card } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
@@ -76,6 +76,38 @@ test("an acknowledged entry is resent when the session file lacks it", async () 
   assert.deepEqual(
     (await again.waitForEntries(1)).map((entry) => [entry.id, entry.body]),
     [[task.id, "the task\n\nDelivery: no-mistakes"]],
+  );
+});
+
+test("refunding a successor does not replay a notice on an uninterrupted connection", async () => {
+  const worker = await fleet.cardd.connect(token, [], false, true);
+  const restart = async (key: string): Promise<number> => {
+    const { request } = check(
+      OPS["card.restart"].result,
+      await fleet.main.call("card.restart", { card: card.id, mode: "replace", key }),
+    );
+    assert.ok(request !== undefined);
+    return request;
+  };
+  const older = await restart("older");
+  assert.deepEqual(
+    await fleet.main.call("card.restart.notice", { card: card.id, request: older }),
+    { posted: true },
+  );
+  const original = await worker.waitForEntry(
+    (entry) => entry.fields["restartNotice"] === older,
+    "the original notice without a receipt",
+  );
+
+  const request = await restart("successor");
+  assert.deepEqual(
+    await fleet.main.call("card.restart.failed", { card: card.id, key: "successor", request }),
+    { recorded: true },
+  );
+  await worker.call("hold.open", {});
+  assert.deepEqual(
+    worker.entries.filter(({ entry }) => entry.id === original.id).map(({ again }) => again),
+    [false],
   );
 });
 

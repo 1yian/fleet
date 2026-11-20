@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Card } from "@fleet/protocol";
-import { SENT_DELIVERY, UNREAD_DELIVERY } from "./delivery-states.ts";
+import { QUEUED_DELIVERY } from "./delivery-states.ts";
 import { intentOf } from "./incident-lifecycle.ts";
 
 export const LIVE_REQUEST = `json_extract(e.fields, '$.restartKey') IS NOT NULL AND NOT EXISTS (
@@ -60,22 +60,16 @@ export function noticeState(
 export function releaseRestartNotices(db: DatabaseSync, card: Card, refunded: number): string[] {
   const rows = db
     .prepare(
-      `SELECT d.session, d.entry, json_extract(e.fields, '$.restartNotice') AS request
+      `SELECT d.session, json_extract(e.fields, '$.restartNotice') AS request
      FROM deliveries d JOIN entries e ON e.id = d.entry
-     WHERE e.card = ? AND e.kind = 'comment' AND d.state IN (${UNREAD_DELIVERY})
+     WHERE e.card = ? AND e.kind = 'comment' AND d.state IN (${QUEUED_DELIVERY})
        AND json_extract(e.fields, '$.restartNotice') < ?`,
     )
     .all(card.id, refunded);
-  const resend = db.prepare(
-    `UPDATE deliveries SET state = 'resent' WHERE session = ? AND entry = ? AND state IN (${SENT_DELIVERY})`,
-  );
   const notify = new Set<string>();
   for (const row of rows) {
-    const request = Number(row["request"]);
-    if (noticeState(db, card, request) !== "eligible") continue;
-    const session = String(row["session"]);
-    resend.run(session, Number(row["entry"]));
-    notify.add(session);
+    if (noticeState(db, card, Number(row["request"])) === "eligible")
+      notify.add(String(row["session"]));
   }
   return [...notify];
 }

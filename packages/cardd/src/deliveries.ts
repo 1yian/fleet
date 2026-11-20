@@ -37,7 +37,8 @@ type DeliveryEvent = "push" | "read" | "ack" | "confirm" | "resend";
 const AT_CONNECT = `${IN_FLIGHT_DELIVERY}, 'acknowledged'`;
 const WHEN_UP = QUEUED_DELIVERY;
 const AGAIN = "'resent', 'pushed-again'";
-const CHASEABLE = `${SENT_DELIVERY}, 'read', 'filed'`;
+const SENT_OR_READ = `${SENT_DELIVERY}, 'read'`;
+const CHASEABLE = `${SENT_OR_READ}, 'filed'`;
 
 function deliveryState(value: unknown): DeliveryState {
   const found = DELIVERY_STATES.find((state) => state === value);
@@ -255,9 +256,10 @@ export function toPush(
       .map((row) => Number(row["entry"])),
   );
   const lane = String(db.prepare("SELECT lane FROM sessions WHERE id = ?").get(session)?.["lane"]);
-  const deferRead = atConnect
+  const deferReplay = atConnect
     ? db.prepare(
-        "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ? AND state = 'read'",
+        `UPDATE deliveries SET state = 'resent', updated_at = ?
+         WHERE session = ? AND entry = ? AND state IN (${SENT_OR_READ})`,
       )
     : undefined;
   const now = Date.now();
@@ -271,7 +273,7 @@ export function toPush(
       raw.fields["restartNotice"],
     );
     if (eligibility !== "eligible") {
-      if (eligibility === "suppressed") deferRead?.run(afterResend("read"), now, session, raw.id);
+      if (eligibility === "suppressed") deferReplay?.run(now, session, raw.id);
       return [];
     }
     const entry = identified(db, lane, holdFor(db, lane, raw));
