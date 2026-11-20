@@ -40,10 +40,10 @@ function lifeOf(state: unknown, droppedAt: unknown): JobLife {
   return { state: parseJobState(state), droppedAt };
 }
 
-function readJob(db: DatabaseSync, id: number): (StoredJob & { launched: boolean }) | undefined {
+function readJob(db: DatabaseSync, id: number) {
   const row = db
     .prepare(
-      `SELECT id, label, attempt, state, dropped_at, ${launchedJobSql("j")} AS launched
+      `SELECT id, label, attempt, state, dropped_at, launch_id, ${launchedJobSql("j")} AS launched
        FROM jobs j WHERE id = ?`,
     )
     .get(id);
@@ -54,6 +54,7 @@ function readJob(db: DatabaseSync, id: number): (StoredJob & { launched: boolean
     attempt: numberOf(row["attempt"], "attempt"),
     life: lifeOf(row["state"], row["dropped_at"]),
     launched: row["launched"] === 1,
+    launch: row["launch_id"],
   };
 }
 
@@ -171,14 +172,30 @@ export function touchJob(
   return { running: true };
 }
 
-export function ownJob(
+export function stopJob(
   db: DatabaseSync,
   session: string,
-  job: number,
-): { label: string; running: boolean } | undefined {
-  const owned = ownedJob(db, session, job);
-  if (owned === undefined) return undefined;
-  return { label: owned.label, running: owned.launched && jobIsRunning(owned.life.state) };
+  args: { job: number; beforeRegistration?: string },
+) {
+  const owned = ownedJob(db, session, args.job);
+  if (
+    owned === undefined ||
+    (args.beforeRegistration !== undefined && args.beforeRegistration !== owned.launch)
+  )
+    throw new Error(`job ${String(args.job)} is not one of this worker's jobs: nothing was stopped`);
+  const { label, life, launched } = owned;
+  const running = jobIsRunning(life.state);
+  if (!running || launched) return { label, running };
+
+  const result =
+    args.beforeRegistration === undefined
+      ? { exitCode: 130, outputTail: "stopped before wrapper registration" }
+      : {
+          exitCode: 127,
+          outputTail: "could not start: wrapper did not register before the startup deadline",
+        };
+  transitionJob(db, owned, { name: "finish", ...result }, Date.now());
+  return { label, running: false, result };
 }
 
 export function dropLostJob(

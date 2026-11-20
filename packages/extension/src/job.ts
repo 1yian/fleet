@@ -253,16 +253,24 @@ async function register(job: Job, launch: string): Promise<boolean> {
 }
 
 const job = readJob(process.argv[2] ?? "");
+let stopped = false;
+const stopBeforeRun = (): void => {
+  stopped = true;
+};
+for (const signal of STOP_SIGNALS) process.on(signal, stopBeforeRun);
 const confirmed = job.launch === undefined || (await register(job, job.launch));
+for (const signal of STOP_SIGNALS) process.off(signal, stopBeforeRun);
 const heartbeat = setInterval(() => {
   void call(job, "job.alive", { job: job.job });
 }, job.heartbeatMs);
-const result = confirmed
-  ? await run(job)
-  : {
-      exitCode: 127,
-      outputTail: "could not start: cardd did not confirm wrapper registration",
-    };
+const result = stopped
+  ? { exitCode: INTERRUPTED_EXIT, outputTail: "interrupted" }
+  : confirmed
+    ? await run(job)
+    : {
+        exitCode: 127,
+        outputTail: "could not start: cardd did not confirm wrapper registration",
+      };
 console.log(`\n[run_long] job ${String(job.job)} exited ${String(result.exitCode)}`);
 await post(job, result);
 clearInterval(heartbeat);

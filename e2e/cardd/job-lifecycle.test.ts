@@ -117,7 +117,6 @@ test("a reservation does not enter the job watch until the owning wrapper regist
   const { job } = prepared;
   assert.deepEqual(await worker.call("job.alive", { job }), { running: false });
   assert.deepEqual(await worker.call("jobs", {}), []);
-  assert.deepEqual(await worker.call("job.stop", { job }), { label: args.label, running: false });
   await assert.rejects(
     worker.call("job.prepare", { ...args, command: "true" }),
     /already in use/,
@@ -158,6 +157,25 @@ test("a reservation does not enter the job watch until the owning wrapper regist
     OPS["job.prepare"].result,
     await worker.call("job.prepare", { ...args, launch: randomUUID() }),
   );
+  const launch = randomUUID();
+  const cancelled = check(
+    OPS["job.prepare"].result,
+    await worker.call("job.prepare", { ...args, launch }),
+  );
+  await assert.rejects(stranger.call("job.stop", { job: cancelled.job }), /not one of/);
+  assert.deepEqual(await worker.call("job.stop", { job: cancelled.job }), {
+    label: args.label,
+    running: false,
+    cancelled: true,
+  });
+  assert.deepEqual(await worker.call("job.register", { job: cancelled.job, launch, pid: 1234 }), {
+    registered: false,
+  });
+  assert.deepEqual(await worker.call("job.stop", { job: cancelled.job }), {
+    label: args.label,
+    running: false,
+  });
+  assert.equal(jobRow(cancelled.job)["exit_code"], 130);
   await dropCard(card);
   assert.equal(jobRow(pending.job)["state"], "abandoned");
 });

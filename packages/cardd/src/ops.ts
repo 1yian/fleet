@@ -13,10 +13,10 @@ import { jobCutover } from "./job-cutover.ts";
 import {
   dropLostJob,
   finishJob,
-  ownJob,
   registerJob,
   runningJobs,
   startJob,
+  stopJob,
   touchJob,
 } from "./jobs.ts";
 import { boardFor, cardView } from "./board.ts";
@@ -85,6 +85,28 @@ type Handler = (
   closeCheck?: CloseCheck,
   emptyBranch?: true,
 ) => Done;
+
+function recordJobResult(
+  db: DatabaseSync,
+  session: Session,
+  job: number,
+  label: string,
+  result: { exitCode: number; outputTail: string },
+): readonly string[] {
+  if (session.card === null) return [];
+  addEntry(
+    db,
+    {
+      card: session.card,
+      author: `job:${String(job)}`,
+      kind: "job-result",
+      body: result.outputTail,
+      fields: { job, label, exitCode: result.exitCode },
+    },
+    [session.id],
+  );
+  return [session.id];
+}
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
   "in-review",
@@ -318,25 +340,19 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     });
     if (finished === undefined || session.card === null)
       return { value: { recorded: false }, notify: [] };
-    const fields = { job: args.job, label: finished.label, exitCode: args.exitCode };
-    const entry = {
-      card: session.card,
-      author: `job:${String(args.job)}`,
-      kind: "job-result",
-      body: args.outputTail,
-      fields,
+    return {
+      value: { recorded: true },
+      notify: recordJobResult(db, session, args.job, finished.label, args),
     };
-    addEntry(db, entry, [session.id]);
-    return { value: { recorded: true }, notify: [session.id] };
   },
   "job.stop": (db, session, raw) => {
     const args = check(OPS["job.stop"].args, raw);
-    const own = ownJob(db, session.id, args.job);
-    if (own === undefined)
-      throw new Error(
-        `job ${String(args.job)} is not one of this worker's jobs: nothing was stopped`,
-      );
-    return { value: { label: own.label, running: own.running }, notify: [] };
+    const { label, running, result } = stopJob(db, session.id, args);
+    if (result === undefined) return { value: { label, running }, notify: [] };
+    return {
+      value: { label, running, cancelled: true },
+      notify: recordJobResult(db, session, args.job, label, result),
+    };
   },
   "job.drop": (db, session, raw) => {
     const args = check(OPS["job.drop"].args, raw);
