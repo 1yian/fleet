@@ -47,6 +47,16 @@ const describe = (host: string, row: Record<string, unknown>): string => {
   return `${text(row, "lane")} (${host}): ${state}${more === "" ? "" : ` - ${more}`}`;
 };
 
+async function everyLane(
+  config: LaneConfig,
+): Promise<{ host: string; row: Record<string, unknown> }[]> {
+  const out: { host: string; row: Record<string, unknown> }[] = [];
+  for (const host of hostsOf(config)) {
+    for (const row of await rows(config, host, ["status"])) out.push({ host, row });
+  }
+  return out;
+}
+
 async function placementRows(config: LaneConfig, host: string): Promise<Record<string, unknown>[]> {
   const out = (await fleet(config, host, ["status", "--placement", "--json"]))
     .trim()
@@ -95,26 +105,10 @@ export async function mateHosts(config: LaneConfig): Promise<Map<string, string>
   return soleHosts(runningHosts);
 }
 
-class NotOnHost extends Error {}
-
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
-  const lookups = hostsOf(config).map(async (host) => {
-    const listed = await rows(config, host, ["status"]);
-    if (listed.some((row) => text(row, "lane") === lane)) return host;
-    throw new NotOnHost(host);
-  });
-  try {
-    return await Promise.any(lookups);
-  } catch (error) {
-    const reasons: readonly unknown[] = error instanceof AggregateError ? error.errors : [error];
-    const failures = reasons.filter((reason) => !(reason instanceof NotOnHost)).map(messageOf);
-    throw new Error(
-      failures.length === 0
-        ? `no lane ${lane} is configured on any host`
-        : `no lane ${lane} was found on a host that answered, and ${failures.join("; ")}`,
-      { cause: error },
-    );
-  }
+  const found = (await everyLane(config)).find((each) => text(each.row, "lane") === lane);
+  if (found === undefined) throw new Error(`no lane ${lane} is configured on any host`);
+  return found.host;
 }
 
 function sharedArgs(home: string): string[] {
@@ -185,22 +179,20 @@ export function withLanes<T>(hosts: readonly string[], work: () => Promise<T>): 
 export async function restartLane(home: string, lane: string): Promise<string> {
   const config = readLaneConfig(home);
   if (config === undefined) throw new Error("only a mate with lanes can restart one");
-  return act(config, lane, "restart");
+  return withLanes(hostsOf(config), () => act(config, lane, "restart"));
 }
 
-const restartHost = (config: LaneConfig, host: string): Promise<string[]> =>
-  withLanes([host], async () => {
-    try {
-      return (await rows(config, host, ["restart"])).map((row) => describe(host, row));
-    } catch (error) {
-      return [`${host}: cannot be reached - ${messageOf(error)}`];
-    }
-  });
-
 async function restartAll(config: LaneConfig): Promise<string[]> {
-  const lines = (
-    await Promise.all(hostsOf(config).map((host) => restartHost(config, host)))
-  ).flat();
+  const lines: string[] = [];
+  for (const host of hostsOf(config)) {
+    try {
+      for (const row of await rows(config, host, ["restart"])) lines.push(describe(host, row));
+    } catch (error) {
+      lines.push(
+        `${host}: cannot be reached - ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
   return lines.length === 0 ? ["No lanes are configured."] : lines;
 }
 
@@ -210,14 +202,12 @@ async function act(
   action: "start" | "stop" | "restart",
 ): Promise<string> {
   const host = await hostOfLane(config, lane);
-  return withLanes([host], async () => {
-    if (action === "stop") {
-      await fleet(config, host, ["stop", lane]);
-      return `${lane} (${host}): stopped`;
-    }
-    const out = await rows(config, host, [action === "start" ? "up" : "restart", lane]);
-    return out.map((row) => describe(host, row)).join("\n");
-  });
+  if (action === "stop") {
+    await fleet(config, host, ["stop", lane]);
+    return `${lane} (${host}): stopped`;
+  }
+  const out = await rows(config, host, [action === "start" ? "up" : "restart", lane]);
+  return out.map((row) => describe(host, row)).join("\n");
 }
 
 export function registerLanes(
@@ -238,11 +228,11 @@ export function registerLanes(
       if (name !== "all") {
         if (action === "stop")
           await link.call("lane.stopping", { lane: name }).catch(() => undefined);
-        return reply(await act(config, name, action));
+        return reply(await withLanes(hostsOf(config), () => act(config, name, action)));
       }
       if (action !== "restart")
         throw new Error('lane "all" only restarts: name each lane to start or stop it');
-      return reply((await restartAll(config)).join("\n"));
+      return reply((await withLanes(hostsOf(config), () => restartAll(config))).join("\n"));
     },
   });
   keepRunning(pi, config, home, ctx);
