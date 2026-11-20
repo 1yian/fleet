@@ -2,22 +2,24 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { connect } from "node:net";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, test } from "node:test";
+import { afterEach, beforeEach, test, type TestContext } from "node:test";
 import {
   CardViewSchema,
   check,
   HttpCallSchema,
   HttpOutcomeSchema,
   OPS,
+  parseClientMessage,
+  parseServerMessage,
   type Card,
 } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
+import { WebSocket, WebSocketServer } from "ws";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
-import { Harness, type Pi, type Turn } from "../support/harness.ts";
+import { Harness, rawText, type Pi, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 
@@ -88,10 +90,11 @@ test("a failed pipeline wakes the worker with failure, and the wait is not a sta
   assert.deepEqual(await labels(), ["1"]);
 });
 
-test("run_long recovers a committed reservation after torn prepare replies and runs once", async (t) => {
-  const upstream = new URL(fleet.cardd.url);
-  const token = env["FLEET_TOKEN"] ?? "";
-  const receipts: number[] = [];
+async function jobProxy(
+  t: TestContext,
+  call: (op: string, args: unknown) => Promise<{ status: number; body: unknown }>,
+  dropFence = false,
+) {
   const proxy = createServer((req, res) => {
     let body = "";
     req.setEncoding("utf8").on("data", (chunk: string) => {
@@ -100,48 +103,73 @@ test("run_long recovers a committed reservation after torn prepare replies and r
     req.on("end", () => {
       void (async () => {
         const { op, args } = check(HttpCallSchema, JSON.parse(body));
-        const result = await fleet.cardd.post(token, op, args);
+        const result = await call(op, args);
         res.writeHead(result.status, { "content-type": "application/json" });
-        const outcome = check(HttpOutcomeSchema, result.body);
-        if (op === "job.prepare" && outcome.ok) {
-          receipts.push(check(OPS["job.prepare"].result, outcome.value).job);
-          if (receipts.length === 1) {
-            res.end('{"ok":true,"value":');
-            return;
-          }
-          if (receipts.length === 2) {
-            res.end(JSON.stringify({ ok: true, value: { job: receipts[1] } }));
-            return;
-          }
-        }
-        res.end(JSON.stringify(result.body));
+        res.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
       })().catch((error: unknown) => res.destroy(error instanceof Error ? error : undefined));
     });
   });
-  proxy.on("upgrade", (req, client, head) => {
-    const server = connect(Number(upstream.port), upstream.hostname, () => {
-      const headers = Object.entries(req.headers).map(
-        ([name, value]) => `${name}: ${String(value)}`,
-      );
-      server.write(`GET ${upstream.pathname} HTTP/1.1\r\n${headers.join("\r\n")}\r\n\r\n`);
-      server.write(head);
-      client.pipe(server).pipe(client);
+  const sockets = new WebSocketServer({ server: proxy });
+  sockets.on("connection", (client) => {
+    const upstream = new WebSocket(fleet.cardd.url);
+    let fence: number | undefined;
+    client.pause();
+    upstream.on("open", () => {
+      client.resume();
     });
-    const close = (): void => {
-      client.destroy();
-      server.destroy();
-    };
-    t.after(close);
-    for (const socket of [client, server]) socket.on("error", close).on("close", close);
+    client.on("message", (raw) => {
+      const text = rawText(raw);
+      const message = parseClientMessage(text);
+      if (dropFence && message.t === "call" && message.op === "job.stop") fence = message.id;
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
+    });
+    upstream.on("message", (raw) => {
+      const text = rawText(raw);
+      const message = parseServerMessage(text);
+      if (fence !== undefined) {
+        if (message.t === "result" && message.id === fence) {
+          dropFence = false;
+          client.terminate();
+        }
+      } else if (client.readyState === WebSocket.OPEN) client.send(text);
+    });
+    upstream.on("error", () => client.terminate());
+    upstream.on("close", () => client.terminate());
+    client.on("error", () => upstream.terminate());
+    client.on("close", () => upstream.terminate());
   });
   await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
   t.after(() => {
+    for (const client of sockets.clients) client.terminate();
+    sockets.close();
     proxy.closeAllConnections();
     proxy.close();
   });
   const address = proxy.address();
   assert.ok(address && typeof address !== "string");
-  env["FLEET_URL"] = `ws://127.0.0.1:${String(address.port)}${upstream.pathname}`;
+  env["FLEET_URL"] = `ws://127.0.0.1:${String(address.port)}/session`;
+}
+
+const callCardd = (op: string, args: unknown) =>
+  fleet.cardd.post(env["FLEET_TOKEN"] ?? "", op, args);
+
+const jobResults = async () =>
+  check(CardViewSchema, await fleet.main.call("card", { card: card.id })).entries
+    .filter((entry) => entry.kind === "job-result")
+    .map((entry) => [entry.fields["job"], entry.fields["exitCode"], entry.body]);
+
+test("run_long recovers a committed reservation after torn prepare replies and runs once", async (t) => {
+  const receipts: number[] = [];
+  await jobProxy(t, async (op, args) => {
+    const result = await callCardd(op, args);
+    const outcome = check(HttpOutcomeSchema, result.body);
+    if (op === "job.prepare" && outcome.ok) {
+      receipts.push(check(OPS["job.prepare"].result, outcome.value).job);
+      if (receipts.length === 1) return { ...result, body: '{"ok":true,"value":' };
+      if (receipts.length === 2) return { ...result, body: { ok: true, value: { job: receipts[1] } } };
+    }
+    return result;
+  });
 
   const marker = join(jobDir, "executions");
   h.onModel(() => ({
@@ -156,17 +184,110 @@ test("run_long recovers a committed reservation after torn prepare replies and r
   await fleet.main.waitForEntry((entry) => entry.body === "result received", "the worker handoff");
   assert.deepEqual(receipts, [1, 1, 1]);
   assert.equal(readFileSync(marker, "utf8"), "executed\n");
-  const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
-  assert.deepEqual(
-    view.entries
-      .filter((entry) => entry.kind === "job-result")
-      .map((entry) => [entry.fields["job"], entry.fields["exitCode"], entry.body]),
-    [[1, 0, "recovered"]],
-  );
+  assert.deepEqual(await jobResults(), [[1, 0, "recovered"]]);
   const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
   t.after(() => db.close());
   const reservations = db.prepare("SELECT id FROM jobs WHERE label = ?").all("recover");
   assert.deepEqual(reservations.map((row) => row["id"]), [1]);
+});
+
+for (const registrationFirst of [false, true]) {
+  test(`stop_job ${registrationFirst ? "signals the pinned wrapper" : "fences the reservation"} while registration is in flight`, async (t) => {
+    const waiting = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    t.after(() => release.resolve());
+    const registered = Promise.withResolvers<boolean>();
+    await jobProxy(t, async (op, args) => {
+      if (op !== "job.register") return callCardd(op, args);
+      if (!registrationFirst) {
+        waiting.resolve();
+        await release.promise;
+      }
+      const result = await callCardd(op, args);
+      const outcome = check(HttpOutcomeSchema, result.body);
+      assert.ok(outcome.ok);
+      registered.resolve(check(OPS["job.register"].result, outcome.value).registered);
+      if (registrationFirst) {
+        waiting.resolve();
+        await release.promise;
+      }
+      return result;
+    });
+    const marker = join(jobDir, "unexpected-execution");
+    h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "stopping", command: `touch ${quote(marker)}` },
+    }));
+    h.onModel(async () => {
+      await waiting.promise;
+      return { tool: "stop_job", args: { job: 1 } };
+    });
+    h.onModel(() => ({ text: "Stop requested" }));
+    h.onModel(() => ({ tool: "report", args: { status: "done", text: "Stop verified" } }));
+    worker();
+    await h.waitForCall(2);
+    assert.ok(said(registrationFirst ? "Sent a stop to job 1" : "Its command will not run"));
+    release.resolve();
+    assert.equal(await registered.promise, registrationFirst);
+    const output = registrationFirst ? "interrupted" : "stopped before wrapper registration";
+    await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the job result");
+    assert.deepEqual(await jobResults(), [[1, 130, output]]);
+    assert.equal(existsSync(marker), false);
+  });
+}
+
+test("an ambiguous pane dispatch is fenced once even when its receipt is lost across reconnect", async (t) => {
+  await jobProxy(t, callCardd, true);
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const dispatches = join(jobDir, "dispatches");
+  const marker = join(jobDir, "unexpected-execution");
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  echo dispatch >> ${quote(dispatches)}
+  echo 'pane reply unavailable' >&2
+  exit 1
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "ambiguous", command: `touch ${quote(marker)}` },
+  }));
+  h.onModel(() => ({ text: "Waiting for launch to resolve" }));
+  const received = Promise.withResolvers<string>();
+  const respond = (turns: Turn[]) => {
+    const text = lastUser(turns) ?? "";
+    if (/job 1 \(ambiguous\) exited/.test(text)) {
+      received.resolve(text);
+      return { tool: "report", args: { status: "done", text: "Launch resolved" } };
+    }
+    h.onModel(respond);
+    return { text: "Still waiting for the launch result" };
+  };
+  h.onModel(respond);
+  worker();
+  await settled(1);
+  assert.ok(said("pane reply unavailable"));
+  assert.equal(said("Your run is ending without a handoff"), false);
+  assert.deepEqual(await jobResults(), []);
+  const abort = AbortSignal.timeout(60_000);
+  const deadline = new Promise<never>((_resolve, reject) => {
+    abort.addEventListener("abort", () => reject(abort.reason), { once: true });
+  });
+  assert.match(await Promise.race([received.promise, deadline]), /exited 127: .*startup deadline/);
+  assert.equal(h.events.filter((event) => event["type"] === "fleet_connected").length, 2);
+  assert.deepEqual(await jobResults(), [
+    [1, 127, "could not start: wrapper did not register before the startup deadline"],
+  ]);
+  assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
+  assert.equal(existsSync(marker), false);
 });
 
 test("a job-file failure does not keep Pi waiting when cardd cannot record the startup error", async () => {
@@ -395,18 +516,22 @@ test("closing the job tab still reaches the worker: the result, or a lost job", 
 });
 
 test("a cardd stall longer than the keep-alive timeouts does not lose a live job", async () => {
-  const command = "sleep 8; echo done";
+  const { command, ready, go } = commandAwaitingGo(99);
   h.onModel(() => ({ tool: "run_long", args: { label: "stalled", command } }));
   h.onModel(() => ({ text: "waiting" }));
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "finished" } }));
   worker();
-  await until(() => (said("Started job 1 (stalled)") ? true : undefined), "the job to start");
+  await until(
+    () => (existsSync(ready) ? true : undefined),
+    "the command to start after registration",
+  );
   fleet.cardd.signal("SIGSTOP");
   await new Promise((resolve) => setTimeout(resolve, 6000));
   fleet.cardd.signal("SIGCONT");
+  writeFileSync(go, "");
 
   const woken = lastUser(await h.waitForCall(2, "default", 30_000)) ?? "";
-  assert.equal(woken, "[fleet] c-1 users-see-one-scrollbar job 1 (stalled) exited 0: done");
+  assert.equal(woken, "[fleet] c-1 users-see-one-scrollbar job 1 (stalled) exited 0: late");
   assert.equal(said("no heartbeat"), false);
   assert.equal(
     findings().some((body) => body.includes("job lost")),

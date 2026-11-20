@@ -281,15 +281,16 @@ function sendEntry(
 function deliverAfterSync(
   jobs: Jobs,
   seen: Set<number>,
-  id: number,
+  entry: Entry,
   deliver: (extra: string) => void,
 ): void {
-  jobs.sync().then(
+  const job = entry.fields["job"];
+  jobs.sync(typeof job === "number" ? job : undefined).then(
     () => {
       deliver("");
     },
     () => {
-      seen.delete(id);
+      seen.delete(entry.id);
     },
   );
 }
@@ -368,7 +369,7 @@ function start(
     const mateWork = role === "mate" ? afterEntry(link, entry) : undefined;
     if (mateWork !== undefined) void mateWork.then(deliver);
     else if (entry.kind === "job-result" && jobs !== undefined)
-      deliverAfterSync(jobs, seen, entry.id, deliver);
+      deliverAfterSync(jobs, seen, entry, deliver);
     else deliver("");
   };
   const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;

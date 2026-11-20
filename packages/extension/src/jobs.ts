@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,9 @@ import { forwardedEnvironment } from "./scratch.ts";
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
 const PREPARE_ATTEMPTS = 3;
+const STARTUP_MS = 30_000;
+const FENCE_ATTEMPTS = 3;
+const FENCE_TIMEOUT_MS = 5000;
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
@@ -61,8 +65,17 @@ interface JobOptions {
   readonly lineChars?: number;
 }
 
+interface PendingDispatch {
+  readonly launch: string;
+  readonly file: string;
+  readonly deadline: number;
+  readonly timer: NodeJS.Timeout;
+  checking: boolean;
+}
+
 export class Jobs {
-  private readonly running = new Map<number, string>();
+  private readonly running = new Set<number>();
+  private readonly pending = new Map<number, PendingDispatch>();
   private readonly link: Link;
   private readonly cardd: { url: string; token: string };
 
@@ -72,13 +85,55 @@ export class Jobs {
   }
 
   get waiting(): boolean {
-    return this.running.size > 0;
+    return this.running.size > 0 || this.pending.size > 0;
   }
 
-  async sync(): Promise<void> {
+  async sync(observed?: number): Promise<void> {
+    for (const [id, pending] of this.pending) {
+      if (id !== observed && Date.now() >= pending.deadline) void this.reconcile(id, pending);
+    }
     const jobs = await this.link.call("jobs", {});
     this.running.clear();
-    for (const { id, label } of jobs) this.running.set(id, label);
+    for (const { id } of jobs) {
+      this.running.add(id);
+      this.clearPending(id);
+    }
+    if (observed !== undefined) this.clearPending(observed);
+  }
+
+  private clearPending(job: number): void {
+    const pending = this.pending.get(job);
+    if (pending === undefined) return;
+    this.pending.delete(job);
+    clearTimeout(pending.timer);
+    void rm(pending.file, { force: true }).catch(() => undefined);
+  }
+
+  private trackDispatch(job: number, launch: string, file: string): void {
+    const timer = setTimeout(() => {
+      void this.reconcile(job, pending);
+    }, STARTUP_MS).unref();
+    const pending = { launch, file, deadline: Date.now() + STARTUP_MS, timer, checking: false };
+    this.pending.set(job, pending);
+  }
+
+  private async reconcile(job: number, pending: PendingDispatch): Promise<void> {
+    if (pending.checking || this.pending.get(job) !== pending) return;
+    pending.checking = true;
+    try {
+      for (let attempt = 0; attempt < FENCE_ATTEMPTS && this.pending.get(job) === pending; attempt += 1) {
+        const receipt = await this.link
+          .call("job.stop", { job, beforeRegistration: pending.launch }, FENCE_TIMEOUT_MS)
+          .catch(() => undefined);
+        if (receipt === undefined) continue;
+        if (this.pending.get(job) !== pending) return;
+        if (receipt.running) this.running.add(job);
+        this.clearPending(job);
+        return;
+      }
+    } finally {
+      pending.checking = false;
+    }
   }
 
   private async prepare(
@@ -123,6 +178,7 @@ export class Jobs {
     const { job, heartbeatMs, registeredLaunch } = await this.prepare(url, id, label, command);
     const file = join(tmpdir(), `fleet-job-${String(job)}-${id}.json`);
     const tab = tabName(job, label);
+    let dispatchAttempted = false;
     try {
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
@@ -150,12 +206,21 @@ export class Jobs {
       ]);
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
-      this.running.set(job, label);
+      if (registeredLaunch) this.trackDispatch(job, id, file);
+      else this.running.add(job);
+      dispatchAttempted = true;
       await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
     } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      if (registeredLaunch && dispatchAttempted)
+        throw new Error(
+          `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,
+          { cause: error },
+        );
       rmSync(file, { force: true });
-      const outputTail = `could not start: ${error instanceof Error ? error.message : String(error)}`;
-      const finished = await this.link
+      const outputTail = `could not start: ${why}`;
+      this.running.delete(job);
+      await this.link
         .call("job.finish", {
           job,
           exitCode: 127,
@@ -163,7 +228,6 @@ export class Jobs {
           ...(registeredLaunch ? { beforeRegistration: id } : {}),
         })
         .catch(() => undefined);
-      if (!registeredLaunch || finished?.recorded === true) this.running.delete(job);
       throw error;
     }
     return { job, tab };
@@ -172,9 +236,15 @@ export class Jobs {
   async stop(job: number): Promise<string> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
-    const { label, running } = await this.link.call("job.stop", { job });
+    const { label, running, cancelled } = await this.link.call("job.stop", { job });
     const named = `job ${String(job)} (${label})`;
-    if (!running) return `${named} is not running: nothing to stop.`;
+    if (!running) {
+      this.running.delete(job);
+      this.clearPending(job);
+      return cancelled === true
+        ? `${named} was stopped before wrapper registration. Its command will not run.`
+        : `${named} is not running: nothing to stop.`;
+    }
     const tabs = records((await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"]);
     const tab = field(
       tabs.find((each) => each["label"] === tabName(job, label)),
