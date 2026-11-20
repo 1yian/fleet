@@ -15,5 +15,6 @@ export const hasCookieHeader = (text: string): boolean =>
       .replace(UNICODE_ESCAPE, (_escape, hex: string) =>
         String.fromCharCode(Number.parseInt(hex, 16)),
       )
-      .replace(CONTROL_ESCAPE, " "),
+      .replace(CONTROL_ESCAPE, " ")
+      .replace(/\\+/g, ""),
   );

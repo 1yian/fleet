@@ -121,6 +121,11 @@ for (const [name, diagnostic] of [
   ["cookie2 header", "Cookie2: session=paper"],
   ["serialized transcript cookie", String.raw`{"trace":"GET / HTTP/1.1\r\nCookie: session=paper"}`],
   ["serialized header pair", String.raw`headers [["Cookie","session=paper"]]`],
+  ["nested serialized header pair", String.raw`{"headers":"[[\"Cookie\",\"session=paper\"]]"}`],
+  [
+    "doubly nested header pair",
+    String.raw`{"headers":"[[\\\"Set-Cookie2\\\",\\\"session=paper\\\"]]"}`,
+  ],
   ["curl backtick header name", "curl -H `echo Cookie`: session=paper https://localhost"],
   ["curl ANSI-C user option", "curl $'--user' 'demo:paper canoe' https://localhost"],
   ["curl http 1.0 proxy login", "curl --proxy1.0 build:paper@proxy:8080 https://localhost"],
