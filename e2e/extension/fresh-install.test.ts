@@ -264,13 +264,21 @@ test("bootstrap leaves an occupied checkout untouched and only provisions the wi
 
 const CARDD_CLI = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 
-for (const cloneHost of ["race-host", "RACE-HOST"]) {
-  test(`bootstrap honors the winning administrator registration with clone key ${cloneHost}`, async (t) => {
+for (const [cloneHost, losesReply] of [
+  ["race-host", false],
+  ["RACE-HOST", false],
+  ["race-host", true],
+  ["RACE-HOST", true],
+] as const) {
+  const response = losesReply ? "after a lost provisioning reply" : "after an insert conflict";
+  test(`bootstrap honors the administrator clone key ${cloneHost} ${response}`, async (t) => {
     const home = tempDir("fleet-personal-race-");
     const registered = join(home, "admin-clone");
     execFileSync("git", ["init", "-q", "-b", "main", registered]);
     const register = join(home, "register-project");
-    const route = 'set -e; sh -c "$2"; . "$1"';
+    const route = losesReply
+      ? 'set -e; sh -c "$2" >/dev/null; . "$1"; exit 255'
+      : 'set -e; sh -c "$2"; . "$1"';
     const cardd = await Cardd.start({ FLEET_HOST_DIR: home }, [
       "--hosts",
       JSON.stringify({ "race-host": ["sh", "-c", route, "transport", register] }),

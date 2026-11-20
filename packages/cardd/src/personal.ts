@@ -112,7 +112,13 @@ export async function ensurePersonalProject(
   const route = routeFor(hosts, host);
   const done = writer.then(async () => {
     if (registeredOn(db, host)) return;
-    const clone = await makeClone(route, host);
+    let clone: string;
+    try {
+      clone = await makeClone(route, host);
+    } catch (error) {
+      if (registeredOn(db, host)) return;
+      throw error;
+    }
     const inserted = insertProjectIfMissing(db, {
       name: PERSONAL_PROJECT,
       delivery: "local-only",
