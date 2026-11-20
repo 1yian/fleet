@@ -44,4 +44,4 @@ Tests are end-to-end. They start real processes (`cardd`, Pi with a scripted fak
 
 ## Runners
 
-GitHub-hosted runners run the gates and the tests that need no second host. Each job installs the tools its tests drive, pinned by SHA-256 where it downloads a binary, and `ci.yml` owns that list. Tests that need two hosts run on a self-hosted runner on P620. The repository is public, so that runner takes jobs only from pushes to `main` and from pull requests whose branch is in this repository. Pull requests from forks never reach it.
+Every job runs on the self-hosted `p620-ci` runner on P620 for pushes, manual and scheduled runs, and pull requests whose branch is in this repository. Pull requests from forks run on GitHub-hosted `ubuntu-latest` and never reach P620, because the repository is public. Each job installs the tools its tests drive, pinned by SHA-256 where it downloads a binary, into a per-job directory on `PATH`, and `ci.yml` owns that list.
