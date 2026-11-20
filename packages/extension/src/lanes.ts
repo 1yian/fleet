@@ -57,18 +57,6 @@ async function everyLane(
   return out;
 }
 
-async function placementRows(config: LaneConfig, host: string): Promise<Record<string, unknown>[]> {
-  const out = (await fleet(config, host, ["status", "--placement", "--json"]))
-    .trim()
-    .split("\n")
-    .at(-1);
-  const parsed: unknown = JSON.parse(out ?? "");
-  const homes = records(parsed);
-  if (!Array.isArray(parsed) || homes.length !== parsed.length)
-    throw new Error(`invalid mate placement on ${host}`);
-  return homes;
-}
-
 function placedName(host: string, row: Record<string, unknown>): string {
   if (host !== "local") return host;
   return sidebarHostName(typeof row["host"] === "string" ? row["host"] : undefined);
@@ -88,7 +76,7 @@ async function collectRunning(
   host: string,
   runningHosts: Map<string, string[]>,
 ): Promise<void> {
-  for (const row of await placementRows(config, host)) {
+  for (const row of await rows(config, host, ["status", "--placement"])) {
     const lane = text(row, "lane");
     const running = row["mate"];
     if (lane === "" || typeof running !== "boolean")
