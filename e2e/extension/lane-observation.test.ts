@@ -667,8 +667,9 @@ test("an accepted start keeps the lifecycle lock until Pi shows, even when recor
   sweep.stdout.on("data", (chunk: Buffer) => {
     stdout += chunk.toString();
   });
-  const finished = new Promise<number | null>((resolve) => {
-    sweep.once("exit", resolve);
+  const finished = new Promise<number | null>((resolve, reject) => {
+    sweep.once("error", reject);
+    sweep.once("close", resolve);
   });
   const deadline = Date.now() + 30_000;
   while (!existsSync(`${faultLog()}.polled`)) {
@@ -707,6 +708,30 @@ test("two current-title workspaces are ambiguous and never pick a pane to start,
   );
   assert.deepEqual(await listed(), before);
   assert.equal(existsSync(join(home, "state", "stopped")), false);
+});
+
+test("two legacy workspaces rooted in the home are ambiguous, while unrelated same-title ones are ignored", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const idle = await idlePane("ops", home, "fleet-ops");
+  const live = await idlePane("ops", home, "fleet-ops");
+  await idlePane("ops", here.root, "fleet-ops");
+  const listed = async () =>
+    records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["workspace_id"]);
+  const before = await listed();
+  assert.equal(before.length, 3);
+  const ambiguous = /2 legacy workspaces rooted in/;
+  assert.deepEqual(maintain("pi-in-split", live), action("ops", "unread"));
+  assert.equal(existsSync(join(home, "state", "starts")), false);
+  const status = records(JSON.parse(fleet(["status", "--json"], "pi-in-split", live)));
+  assert.equal(status[0]?.["state"], "unknown");
+  assert.match(String(status[0]?.["reason"]), ambiguous);
+  assert.throws(() => fleet(["stop", "ops"]), ambiguous);
+  assert.throws(() => fleet(["restart", "ops"]), ambiguous);
+  assert.throws(() => fleet(["status", "--placement", "--json"], "pi-in-split", live), ambiguous);
+  assert.deepEqual(await listed(), before);
+  assert.equal(existsSync(join(home, "state", "stopped")), false);
+  await lab.run(["workspace", "close", String(idle.split(":")[0])]);
+  assert.deepEqual(maintain("pi-in-split", live), action("ops", "running"));
 });
 
 test("restart never counts a surviving legacy mate as its replacement", async () => {
