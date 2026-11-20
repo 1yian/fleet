@@ -65,7 +65,9 @@ function readBridge(): Bridge {
   };
 }
 
-const writeBridge = (bridge: Bridge): void => writeFileSync(bridgeFile, JSON.stringify(bridge));
+function writeBridge(bridge: Bridge): void {
+  writeFileSync(bridgeFile, JSON.stringify(bridge));
+}
 
 function selected(): number | undefined {
   try {
@@ -75,7 +77,9 @@ function selected(): number | undefined {
   }
 }
 
-const select = (id: number): void => writeFileSync(selectedFile, String(id));
+function select(id: number): void {
+  writeFileSync(selectedFile, String(id));
+}
 
 function deselect(): void {
   try {
@@ -103,42 +107,51 @@ function selectedPage(): Page {
 const [command, ...args] = process.argv.slice(2);
 const operands = args.filter((arg) => !arg.startsWith("--"));
 
+function openUrl(url: string): string {
+  if (selected() === undefined) return `page: {id: ${String(openPage(url).id)}, url: ${url}}`;
+  const current = selectedPage();
+  const bridge = readBridge();
+  writeBridge({
+    next: bridge.next,
+    pages: bridge.pages.map((page) => (page.id === current.id ? { id: page.id, url } : page)),
+  });
+  return `page: {id: ${String(current.id)}, url: ${url}}`;
+}
+
+function listPages(): string {
+  const current = selected();
+  return readBridge()
+    .pages.map(
+      (page) => `${String(page.id)}\t${page.url}\t${page.id === current ? "selected" : "-"}`,
+    )
+    .join("\n");
+}
+
+function closePage(operand: string | undefined): string {
+  const id = Number(operand);
+  const bridge = readBridge();
+  if (!bridge.pages.some((page) => page.id === id)) fail(`no page ${String(operand)}`);
+  writeBridge({ next: bridge.next, pages: bridge.pages.filter((page) => page.id !== id) });
+  if (selected() === id) deselect();
+  return `closed: ${String(id)}`;
+}
+
 function run(): string {
   switch (command) {
     case "newpage": {
       const page = openPage(operands[0] ?? fail("newpage needs a url"));
       return `page: {id: ${String(page.id)}, url: ${page.url}}`;
     }
-    case "open": {
-      const url = operands[0] ?? fail("open needs a url");
-      if (selected() === undefined) return `page: {id: ${String(openPage(url).id)}, url: ${url}}`;
-      const current = selectedPage();
-      const bridge = readBridge();
-      writeBridge({
-        next: bridge.next,
-        pages: bridge.pages.map((page) => (page.id === current.id ? { id: page.id, url } : page)),
-      });
-      return `page: {id: ${String(current.id)}, url: ${url}}`;
-    }
+    case "open":
+      return openUrl(operands[0] ?? fail("open needs a url"));
     case "eval":
       if (operands[0] !== "location.href") fail(`eval only answers location.href`);
       return selectedPage().url;
-    case "pages": {
-      const current = selected();
-      return readBridge()
-        .pages.map(
-          (page) => `${String(page.id)}\t${page.url}\t${page.id === current ? "selected" : "-"}`,
-        )
-        .join("\n");
-    }
-    case "closepage": {
-      const id = Number(operands[0]);
-      const bridge = readBridge();
-      if (!bridge.pages.some((page) => page.id === id)) fail(`no page ${String(operands[0])}`);
-      writeBridge({ next: bridge.next, pages: bridge.pages.filter((page) => page.id !== id) });
-      if (selected() === id) deselect();
-      return `closed: ${String(id)}`;
-    }
+    case "pages":
+      return listPages();
+    case "closepage":
+      return closePage(operands[0]);
+    case undefined:
     default:
       return fail(`unknown command ${String(command)}`);
   }
