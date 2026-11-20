@@ -192,13 +192,10 @@ async function replacementError(
   worker: { session: string; token: string },
   error: unknown,
   replacementStarted: ReplacementStarted,
-): Promise<Error> {
+): Promise<Error | string> {
   const running = await piRunning(host, pane).catch(() => undefined);
   const cause = scrub(toError(error).message, [worker.token]);
-  if ((await replacementStarted()) === true)
-    return new Error(`${cause}\nThe replacement connected before readiness failed.`, {
-      cause: error,
-    });
+  if ((await replacementStarted()) === true) return cause;
   if (running === true) return toError(error);
   if (running === false && error instanceof StartUnconfirmed)
     return new Error(
@@ -219,20 +216,26 @@ async function startAgent(
   worker: { session: string; token: string },
   lost: (text: string) => void,
   replacementStarted?: ReplacementStarted,
-): Promise<void> {
+): Promise<string | undefined> {
+  let readiness: string | undefined;
   try {
     if (replacementStarted === undefined) await launchAgent(host, pane, args);
     else await launchReplacement(host, pane, args);
   } catch (error) {
-    if (replacementStarted !== undefined)
-      throw await replacementError(host, pane, worker, error, replacementStarted);
-    const running = await piRunning(host, pane).catch(() => undefined);
-    if (running !== false) throw error;
-    throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+    if (replacementStarted !== undefined) {
+      const outcome = await replacementError(host, pane, worker, error, replacementStarted);
+      if (outcome instanceof Error) throw outcome;
+      readiness = outcome;
+    } else {
+      const running = await piRunning(host, pane).catch(() => undefined);
+      if (running !== false) throw error;
+      throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+    }
   }
   confirmStays(host, pane, worker).catch((error: unknown) => {
     lost(error instanceof Error ? error.message : String(error));
   });
+  return readiness;
 }
 
 async function launchAgent(host: string, pane: string, args: string[]): Promise<void> {
@@ -379,7 +382,7 @@ export async function replaceWorker(
       throw new DidNotStart(error);
     },
   );
-  await startAgent(
+  const readiness = await startAgent(
     recovery.host,
     pane,
     [
@@ -423,5 +426,8 @@ export async function replaceWorker(
     },
   );
   await contain(recovery.host, pane, path);
-  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
+  const started = `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
+  return readiness === undefined
+    ? started
+    : `${started} The replacement connected to Fleet, but Herdr did not confirm interactive readiness; the restart still counts and was not relaunched. Herdr reported:\n${readiness}`;
 }

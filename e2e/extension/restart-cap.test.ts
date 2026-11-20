@@ -250,37 +250,43 @@ async function waitForRestartNotice({ h }: DispatchLab): Promise<void> {
   );
 }
 
-function mateResultAfter({ h }: DispatchLab, prompt: string): string | undefined {
+function mateResultsAfter({ h }: DispatchLab, prompt: string): string[] | undefined {
   return h.callsOf("mate").flatMap((turns) => {
     const at = turns.findLastIndex((turn) => turn.role === "user");
-    return turns[at]?.text === prompt ? toolResults(turns.slice(at + 1)) : [];
+    const results = toolResults(turns.slice(at + 1));
+    return turns[at]?.text === prompt && results.length === 2 ? [results] : [];
   })[0];
 }
+
+const REPEATED = "This restart key was already recorded. No new launch was attempted.";
+
+const CONFIRMED =
+  /^Started c-1-a1 again on far[^\n]*\. The replacement connected to Fleet, but Herdr did not confirm interactive readiness; the restart still counts and was not relaunched\. Herdr reported:\n/;
 
 const readinessCases = [
   {
     mode: "before",
     situation: "exits before hello",
     generation: 1,
-    error:
+    result:
       /The replacement could not be confirmed after the start command; the request was not refunded/,
   },
   {
     mode: "after",
     situation: "exits after hello",
     generation: 2,
-    error: /The replacement connected before readiness failed/,
+    result: CONFIRMED,
   },
   {
     mode: "visible",
     situation: "is visible before the command returns",
     generation: 2,
-    error: /The replacement connected before readiness failed/,
+    result: CONFIRMED,
   },
 ] as const;
 
-for (const { mode, situation, generation, error } of readinessCases) {
-  test(`a replacement that ${situation} surfaces the readiness error and stays counted`, async (t) => {
+for (const { mode, situation, generation, result: expected } of readinessCases) {
+  test(`a replacement that ${situation} reports Fleet's launch and Herdr's readiness failure separately and stays counted`, async (t) => {
     const armed = join(tempDir("readiness-failure-"), "armed");
     const released = `${armed}.released`;
     t.after(() => {
@@ -296,15 +302,14 @@ for (const { mode, situation, generation, error } of readinessCases) {
     const { h, lab, mate } = parts;
     const restart = { card: 1, key: "readiness", mode: "replace" } as const;
     const restartMove = { tool: "restart_card", args: restart };
-    const repeatPrompt = "repeat the counted restart request";
+    const restartPrompt = "restart after dispatch";
     const results = () => h.callsOf("mate").flatMap(toolResults);
     for (let call = 0; call < 12; call += 1) {
       h.onModel(
         (turns) =>
           plan(turns, {
             "ship the scrollbar fix": [DISPATCH],
-            "restart after dispatch": [restartMove],
-            [repeatPrompt]: [restartMove],
+            [restartPrompt]: [{ ...restartMove, alongside: [restartMove] }],
           }),
         "mate",
       );
@@ -325,33 +330,26 @@ for (const { mode, situation, generation, error } of readinessCases) {
     assert.ok(original !== undefined && original > 0);
     if (mode === "before") execFileSync("sh", ["-c", 'mkfifo "$0"', gateOf(launchArgsOf(h))]);
     writeFileSync(armed, mode);
-    mate.prompt("restart after dispatch", "followUp");
+    mate.prompt(restartPrompt, "followUp");
     const group = await replacementGroup(parts, original, generation);
     if (mode === "visible") {
       await waitForRestartNotice(parts);
       assert.equal(await workerGroupOf(lab, "c-1-a1"), group);
     } else await stopReplacement(parts, group, generation);
+    assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
     writeFileSync(released, "release\n");
 
-    const result = await poll(
-      () =>
-        results().find((text) =>
-          /worker readiness confirmation failed|^Started c-1-a1 again/.test(text),
-        ),
-      "the replacement's readiness result",
+    const both = await poll(
+      () => mateResultsAfter(parts, restartPrompt),
+      "the mate's results for the restart and its same-key call",
       WORKER_WAIT_MS,
     );
+    assert.equal(both.filter((text) => text === REPEATED).length, 1);
+    const [result] = both.filter((text) => text !== REPEATED);
+    assert.ok(result !== undefined);
     assert.match(result, /worker readiness confirmation failed --fleet-token \[hidden\]/);
     assert.doesNotMatch(result, /fixture-secret/);
-    assert.match(result, error);
-
-    mate.prompt(repeatPrompt, "followUp");
-    const repeated = await poll(
-      () => mateResultAfter(parts, repeatPrompt),
-      "the mate's tool result for the same restart key",
-      WORKER_WAIT_MS,
-    );
-    assert.equal(repeated, "This restart key was already recorded. No new launch was attempted.");
+    assert.match(result, expected);
     assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
 
     await verifyCountedRestart(parts, restart.key, generation);

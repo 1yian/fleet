@@ -54,6 +54,7 @@ const isWorker = (turns: Turn[]): boolean => systemOf(turns).includes("# Worker 
 
 async function dispatchWorker(
   model?: string,
+  holding = false,
 ): Promise<{ main: string; worker: string; pane: string }> {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(() => {
@@ -74,6 +75,7 @@ async function dispatchWorker(
   for (let call = 0; call < 2; call += 1)
     h.onModel((turns) => {
       if (!isWorker(turns)) return { text: "dispatched" };
+      if (!holding) return { text: "continuing" };
       return turns.at(-1)?.role === "toolResult"
         ? { text: "continuing" }
         : { tool: "run_long", args: { label: "wait", command: "sleep 300" } };
@@ -114,7 +116,7 @@ test("an explicit GPT worker keeps its model after an ordinary restart", async (
   configureMain(scratch, cardd.url, mainToken, {
     workerArgs: [...workerBase(), "--model", "tier/quick"],
   });
-  const first = await dispatchWorker("openai-codex/gpt-fixture");
+  const first = await dispatchWorker("openai-codex/gpt-fixture", true);
   const card = (await cardd.board()).cards.find((each) => each.name === "one-scrollbar");
   assert.ok(card);
   let requested = false;
