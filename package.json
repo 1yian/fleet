@@ -12,6 +12,7 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "format:files": "prettier --check --ignore-unknown",
     "lint": "node lint.js",
     "typecheck": "node typecheck.js",
     "knip": "knip --treat-config-hints-as-errors",
@@ -19,7 +20,8 @@
     "migrations:check": "node packages/cardd/scripts/check-migrations.ts",
     "test:e2e": "npm run build && node e2e/run.ts",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run knip && npm run deps && npm run migrations:check",
-    "build": "npm run -w @fleet/board build"
+    "build": "npm run -w @fleet/board build",
+    "prepare": "node githooks.js install"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

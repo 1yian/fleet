@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import console from "node:console";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { basename, extname, resolve } from "node:path";
+import { basename, extname, relative, resolve } from "node:path";
 import process from "node:process";
 import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -178,14 +178,35 @@ function discover() {
   const existing = gitPaths().filter(existsInWorkingTree);
   const sources = existing.filter((path) => sourceExtensions.includes(extname(path)));
   return {
+    existing,
     tracked: existing.filter((path) => !ignoredBy(matchers, path)),
     candidates: sources.filter((path) => !minifiedName(path)),
   };
 }
 
-function selectedPaths(tracked) {
-  const paths = tracked.filter((path) => sourceExtensions.includes(extname(path)));
-  if (!paths.length) throw new Error("No tracked source files selected.");
+function requestedPaths(args) {
+  return args.map((arg) => relative(process.cwd(), resolve(arg)));
+}
+
+function unknownPathFailures(existing, requested) {
+  const known = new Set(existing);
+  return requested
+    .filter((path) => !known.has(path))
+    .map((path) => `${path}: error fleet/unknown-path: Requested path is not a tracked file.`);
+}
+
+function narrowedTo(requested, paths) {
+  if (!requested.length) return paths;
+  const wanted = new Set(requested);
+  return paths.filter((path) => wanted.has(path));
+}
+
+function selectedPaths(tracked, requested) {
+  const paths = narrowedTo(
+    requested,
+    tracked.filter((path) => sourceExtensions.includes(extname(path))),
+  );
+  if (!paths.length && !requested.length) throw new Error("No tracked source files selected.");
   return paths;
 }
 
@@ -223,16 +244,17 @@ function baselineFailures(tracked) {
 }
 
 function lint() {
-  if (process.argv.length !== 2)
-    throw new Error("npm run lint always checks the complete project.");
-  const { tracked, candidates } = discover();
-  const paths = selectedPaths(tracked);
-  const refusals = [...baselineFailures(tracked), ...minifiedNameFailures(paths)];
+  const requested = requestedPaths(process.argv.slice(2));
+  const { existing, tracked, candidates } = discover();
+  const unknown = unknownPathFailures(existing, requested);
+  const paths = selectedPaths(tracked, requested);
+  const refusals = [...unknown, ...baselineFailures(tracked), ...minifiedNameFailures(paths)];
   if (refusals.length) {
     for (const failure of refusals) console.error(failure);
     return 1;
   }
-  verifyAgainstOxlint(candidates, paths);
+  if (!paths.length) return 0;
+  verifyAgainstOxlint(narrowedTo(requested, candidates), paths);
   const forbiddenDirectives = forbiddenDirectivePattern();
   const failures = [
     ...membershipFailures(paths),

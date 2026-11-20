@@ -50,6 +50,7 @@ jobs:
               - ".dependency-cruiser.cjs"
               - ".prettierrc.json"
               - ".prettierignore"
+              - ".githooks/**"
               - ".github/workflows/**"
               - ".github/actions/**"
             cardd:
@@ -83,6 +84,9 @@ jobs:
               - "packages/**"
               - "e2e/support/**"
               - "e2e/extension/**"
+              - ".githooks/**"
+              - "githooks.js"
+              - "lint.js"
               - "package-lock.json"
               - ".github/workflows/ci.yml"
               - ".github/actions/**"
