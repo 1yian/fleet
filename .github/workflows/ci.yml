@@ -50,6 +50,7 @@ jobs:
               - "knip.json"
               - ".dependency-cruiser.cjs"
               - ".oxfmtrc.json"
+              - ".gitleaks.toml"
               - ".githooks/**"
               - ".github/workflows/**"
               - ".github/actions/**"
