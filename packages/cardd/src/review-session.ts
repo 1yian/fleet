@@ -6,6 +6,9 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+
+const LAVISH_CLI = fileURLToPath(import.meta.resolve("lavish-axi/dist/cli.mjs"));
 
 export function lavishRequest(url: URL, body?: object): Promise<Response> {
   return fetch(url, {
@@ -129,7 +132,7 @@ async function whenReady(origin: URL, dir: string, gone: () => boolean): Promise
 }
 
 function spawnLavish(origin: URL, dir: string): { child: ChildProcess; stopped: () => boolean } {
-  const child = spawn("lavish-axi", ["server", "--port", origin.port], {
+  const child = spawn(process.execPath, [LAVISH_CLI, "server", "--port", origin.port], {
     cwd: dir,
     env: { PATH: process.env["PATH"], LAVISH_AXI_HOST: "127.0.0.1", LAVISH_AXI_STATE_DIR: dir },
     stdio: "ignore",
