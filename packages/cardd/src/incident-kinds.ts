@@ -9,8 +9,11 @@ export type Kind =
   "stale-module" | "router-cooldown" | "vendor-quota" | "auth" | "transient" | "unknown";
 
 const SECRET_PATTERNS: readonly RegExp[] = [
+  /(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+(?=@)/gi,
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
-  /\b(sk|pk|xai|gsk|ghp|gho|github_pat)[-_][A-Za-z0-9_-]{8,}/g,
+  /\b(sk|pk|xai|gsk|ghp|gho|ghs|ghu|ghr|github_pat|xox[abprs])[-_][A-Za-z0-9_-]{8,}/g,
+  /\b(AKIA|ASIA)[0-9A-Z]{16}\b/g,
   /\b(api[-_ ]?key|token|secret|password|authorization)(["']?\s*[:=]\s*)["']?[^\s"',;]+/gi,
   /--fleet-token\W+[^\s'"]+/g,
   /\b[A-Za-z0-9_-]{32,}\b/g,

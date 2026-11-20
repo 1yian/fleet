@@ -377,7 +377,7 @@ function start(
   const failures = new Failures(link);
   failures.register(pi);
   const complaints = new Complaints(pi, link);
-  complaints.register(role);
+  complaints.register();
   const worker = jobs === undefined ? undefined : new WorkerRun(link, jobs, failures);
   worker?.register(pi);
   const lanes = lane === "main" ? registerLanes(pi, HOME(), link, ctx) : undefined;

@@ -19,7 +19,6 @@ export * from "./address.ts";
 export * from "./approval.ts";
 export { laidOut } from "./question.ts";
 export * from "./branch.ts";
-export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
 export * from "./http.ts";
 export * from "./next.ts";

@@ -7,6 +7,21 @@ import { tempDir } from "./run-root.ts";
 const FAKE = fileURLToPath(new URL("./fake-gh.ts", import.meta.url));
 const FAKE_DIRENV = fileURLToPath(new URL("./fake-direnv.ts", import.meta.url));
 
+export interface FakeIssue {
+  readonly repo: string;
+  readonly title: string;
+  readonly body: string;
+  readonly labels: readonly string[];
+}
+
+function linesOf(path: string): string[] {
+  return existsSync(path)
+    ? readFileSync(path, "utf8")
+        .split("\n")
+        .filter((line) => line !== "")
+    : [];
+}
+
 export class FakeGitHub {
   private readonly dir = tempDir("fleet-gh-");
   private readonly file = join(this.dir, "prs.json");
@@ -37,12 +52,32 @@ export class FakeGitHub {
   }
 
   calls(): string[] {
-    const log = `${this.file}.log`;
-    return existsSync(log)
-      ? readFileSync(log, "utf8")
-          .split("\n")
-          .filter((line) => line !== "")
-      : [];
+    return linesOf(`${this.file}.log`);
+  }
+
+  issues(): FakeIssue[] {
+    return linesOf(`${this.file}.issues`).map((line) => {
+      const issue = parseRecord(line);
+      const labels = issue["labels"];
+      return {
+        repo: String(issue["repo"]),
+        title: String(issue["title"]),
+        body: String(issue["body"]),
+        labels: Array.isArray(labels) ? labels.map(String) : [],
+      };
+    });
+  }
+
+  labels(): string[] {
+    return linesOf(`${this.file}.labels`);
+  }
+
+  failIssues(message: string): void {
+    writeFileSync(`${this.file}.broken-issues`, message);
+  }
+
+  failLabels(message: string): void {
+    writeFileSync(`${this.file}.broken-labels`, message);
   }
 
   state(url: string): unknown {
