@@ -44,6 +44,7 @@ export interface LabOptions {
   readonly hosts?: Record<string, readonly string[]>;
   readonly roots?: Record<string, string>;
   readonly needsTrust?: boolean;
+  readonly freshInstall?: boolean;
 }
 
 function gateRemote(
@@ -105,6 +106,18 @@ function addSite(
   return { clone, remote, env };
 }
 
+const siteOf = (cardd: Cardd, options: LabOptions) =>
+  options.freshInstall === true ? freshSite() : addSite(cardd, options);
+
+function freshSite(): { clone: string; remote: undefined; env: Record<string, string> } {
+  const fresh = tempDir("fleet-fresh-home-");
+  return {
+    clone: join(fresh, ".fleet", "projects", "personal"),
+    remote: undefined,
+    env: { HOME: fresh, FLEET_HOST_DIR: "" },
+  };
+}
+
 export async function startDispatchLab({
   cardd: carddEnv,
   carddArgs = [],
@@ -121,7 +134,7 @@ export async function startDispatchLab({
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = tempDir("fleet-home-");
   const mainToken = cardd.addLane("main", undefined, home);
-  const { clone, remote, env } = addSite(cardd, site);
+  const { clone, remote, env } = siteOf(cardd, site);
   const h = await Harness.start();
   const lab = await HerdrLab.start({
     ...h.piEnv("worker"),

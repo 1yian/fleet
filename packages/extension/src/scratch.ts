@@ -67,7 +67,7 @@ export const tmpScratchDir = (): string =>
 
 const compileCacheDir = (): string => join(hostDir(), "node-compile-cache");
 
-const SHELL_HOST_DIR = "${FLEET_HOST_DIR:-$HOME/.fleet}";
+export const SHELL_HOST_DIR = "${FLEET_HOST_DIR:-$HOME/.fleet}";
 
 const CARD_NUMBER_ONLY =
   'case $1 in "" | *[!0-9]*) echo "not a card number: $1" >&2; exit 1 ;; esac';

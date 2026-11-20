@@ -33,6 +33,7 @@ import {
   withdrawMerge,
   writeMergeQuestion,
 } from "./holds.ts";
+import { ensurePersonalProject } from "./personal.ts";
 import { loadPlan } from "./plans.ts";
 import { requireReviewDecision } from "./reviews.ts";
 import { doneStands } from "./status.ts";
@@ -212,6 +213,10 @@ const HANDLERS: Record<OpName, Handler> = {
     const args = check(OPS["project.yolo"].args, raw);
     setYolo(db, args.project, args.on);
     return { value: args, notify: [] };
+  },
+  "project.personal": (db, _session, raw) => {
+    const args = check(OPS["project.personal"].args, raw);
+    return { value: ensurePersonalProject(db, args.host, args.path), notify: [] };
   },
   projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment,

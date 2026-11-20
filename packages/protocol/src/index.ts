@@ -8,6 +8,7 @@ import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { NextSchema } from "./next.ts";
 import { ActivityMessage, CompletionEvidence, LandingFields } from "./progress.ts";
+import { PERSONAL_OPS } from "./personal.ts";
 import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
@@ -28,6 +29,7 @@ export { ActedSchema, LATER_EXAMPLES, laterLine, type LaterResult } from "./late
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./waits.ts";
+export { PERSONAL_PROJECT } from "./personal.ts";
 export * from "./pulse.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";
@@ -364,6 +366,7 @@ export const OPS = {
   "replies.owed": { roles: ["worker"], args: Type.Object({}), result: Type.Array(ReplyId) },
   "hold.open": { roles: ["worker"], args: Type.Object({}), result: Type.Boolean() },
   ...COMPLAINT_OPS,
+  ...PERSONAL_OPS,
   ...SCHEDULE_OPS,
   ...STANDING_OPS,
   ...INCIDENT_OPS,
