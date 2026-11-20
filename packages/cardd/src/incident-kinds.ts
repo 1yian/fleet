@@ -38,8 +38,15 @@ const CURL_PROVEN_HEADER = new RegExp(
   String.raw`(?<=\s)(?:-H|--header)[ =]\s*(["'])authorization\s*:\s*(?:${AUTH_WORD})${LINE_SPLICE}\s+[A-Za-z0-9._~+/=-]+\1(?=\s|$)`,
   "gi",
 );
+const CURL_SHELL_EXPANSION = /\$['"({]/;
 const CURL_PROXY_LOGIN = /(?<=\s)(?:--(?:pre)?proxy|--socks|-[^-\s]*x\s*\S*@)/;
 const CURL_UNPROVEN_USERINFO = /(?<=\s)[^\s@/]+:[^\s@/]*@/;
+const CURL_CHECKS = [
+  CURL_CREDENTIAL_OPTION,
+  CURL_CREDENTIAL_HEADER,
+  CURL_PROXY_LOGIN,
+  CURL_UNPROVEN_USERINFO,
+];
 const YAML_KEY = String.raw`((?<yamlQuote>["']?)${SECRET_NAME}\k<yamlQuote>)[ \t]*:`;
 const YAML_SCALAR_LINE = String.raw`[^\r\n]+?(?=(?<![ \t])[ \t]+#|$)`;
 const YAML_SCALAR_INDENT = String.raw`\2 +(?![\s#]|-(?:[ \t]|$)|(?:(?![ \t]#)[^\r\n])*:(?:[ \t]|$))`;
@@ -185,18 +192,13 @@ function redactYamlBlocks(text: string): string {
 }
 
 function curlCredentialOption(text: string): boolean {
-  const joined = text
-    .replace(CURL_PROVEN_HEADER, "")
-    .replace(/\\\n/g, "")
-    .replace(/['"\\`]/g, "");
+  const spliced = text.replace(CURL_PROVEN_HEADER, "").replace(/\\\n/g, "");
+  const joined = spliced.replace(/['"\\`]/g, "");
   const start = joined.search(CURL_COMMAND);
   const command = joined.slice(start);
   return (
     start !== -1 &&
-    (CURL_CREDENTIAL_OPTION.test(command) ||
-      CURL_CREDENTIAL_HEADER.test(command) ||
-      CURL_PROXY_LOGIN.test(command) ||
-      CURL_UNPROVEN_USERINFO.test(command))
+    (CURL_SHELL_EXPANSION.test(spliced) || CURL_CHECKS.some((check) => check.test(command)))
   );
 }
 
@@ -257,12 +259,9 @@ function endsAtOpeningQuote(logical: string, end: number): boolean {
 
 function hasStrayBacktick(logical: string, start: number, end: number): boolean {
   const rest = logical.slice(start, end).replace(QUOTED_SPANS, "");
-  if (!rest.includes("\u0060")) return false;
-  const closesEarlierSpan =
-    rest.endsWith("\u0060") &&
-    rest.indexOf("\u0060") === rest.length - 1 &&
-    (logical.slice(0, start).split("\u0060").length - 1) % 2 === 1;
-  return !closesEarlierSpan;
+  const at = rest.indexOf("\u0060");
+  const opened = (logical.slice(0, start).split("\u0060").length - 1) % 2 === 1;
+  return at !== -1 && !(at === rest.length - 1 && opened);
 }
 
 function hasUnprovenValue(text: string): boolean {
