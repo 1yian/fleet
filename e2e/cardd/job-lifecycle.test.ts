@@ -117,10 +117,7 @@ test("a reservation does not enter the job watch until the owning wrapper regist
   const { job } = prepared;
   assert.deepEqual(await worker.call("job.alive", { job }), { running: false });
   assert.deepEqual(await worker.call("jobs", {}), []);
-  await assert.rejects(
-    worker.call("job.prepare", { ...args, command: "true" }),
-    /already in use/,
-  );
+  await assert.rejects(worker.call("job.prepare", { ...args, command: "true" }), /already in use/);
 
   const other = await newCard(fleet.main, "A separate attempt cannot replay the reservation");
   const stranger = await fleet.cardd.connect(await begin(fleet.main, other));
@@ -145,6 +142,10 @@ test("a reservation does not enter the job watch until the owning wrapper regist
   });
   assert.deepEqual(await worker.call("jobs", {}), [{ id: job, label: args.label }]);
   assert.deepEqual(await worker.call("job.alive", { job }), { running: true });
+  assert.deepEqual(await worker.call("job.prepare", args), {
+    job,
+    unavailable: "already registered",
+  });
   await fleet.main.waitForEntry(
     (entry) =>
       entry.card === card.id &&
@@ -176,6 +177,10 @@ test("a reservation does not enter the job watch until the owning wrapper regist
     running: false,
   });
   assert.equal(jobRow(cancelled.job)["exit_code"], 130);
+  assert.deepEqual(await worker.call("job.prepare", { ...args, launch }), {
+    job: cancelled.job,
+    unavailable: "already finished: stopped before wrapper registration",
+  });
   await dropCard(card);
   assert.equal(jobRow(pending.job)["state"], "abandoned");
 });

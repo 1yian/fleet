@@ -113,7 +113,10 @@ export const JOB_OPS = {
   "job.prepare": {
     roles: ["worker"],
     args: Type.Object({ ...StartJob.properties, launch: JobLaunchId }),
-    result: StartedJob,
+    result: Type.Union([
+      StartedJob,
+      Type.Object({ job: Type.Integer(), unavailable: Type.String({ minLength: 1 }) }),
+    ]),
   },
   "job.register": {
     roles: ["worker"],

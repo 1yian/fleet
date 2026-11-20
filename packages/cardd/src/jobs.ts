@@ -63,7 +63,7 @@ function readJob(db: DatabaseSync, id: number) {
     attempt: numberOf(row["attempt"], "attempt"),
     life: lifeOf(row["state"], row["dropped_at"]),
     launched: row["launched"] === 1,
-    launch: row["launch_id"],
+    launch: row["launch_id"] === null ? null : textOf(row["launch_id"], "launch_id"),
   };
 }
 
@@ -100,33 +100,59 @@ function transitionJob(
   return { label: job.label, before: job.life.state, life: step.life, revived: step.revived };
 }
 
-export function startJob(
+function insertJob(
   db: DatabaseSync,
-  session: string,
+  attempt: number,
   job: { label: string; command: string; launch?: string },
+  now: number,
 ): number {
-  const attempt = attemptOf(db, session);
-  if (job.launch !== undefined) {
-    const reservation = db
-      .prepare("SELECT id, attempt, label, command FROM jobs WHERE launch_id = ?")
-      .get(job.launch);
-    if (reservation !== undefined) {
-      if (
-        reservation["attempt"] !== attempt ||
-        reservation["label"] !== job.label ||
-        reservation["command"] !== job.command
-      )
-        throw new Error("The launch ID is already in use");
-      return numberOf(reservation["id"], "id");
-    }
-  }
-  const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
       "INSERT INTO jobs (attempt, label, command, state, created_at, updated_at, launch_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .run(attempt, job.label, job.command, startedJob().state, now, now, job.launch ?? null);
   return Number(lastInsertRowid);
+}
+
+export function startJob(
+  db: DatabaseSync,
+  session: string,
+  job: { label: string; command: string },
+): number {
+  return insertJob(db, attemptOf(db, session), job, Date.now());
+}
+
+export function prepareJob(
+  db: DatabaseSync,
+  session: string,
+  request: { label: string; command: string; launch: string },
+  heartbeatMs: number,
+): { job: number; heartbeatMs: number } | { job: number; unavailable: string } {
+  const attempt = attemptOf(db, session);
+  const now = Date.now();
+  const reservation = db
+    .prepare(
+      "SELECT id, attempt, label, command, state, wrapper_pid, created_at, output_tail FROM jobs WHERE launch_id = ?",
+    )
+    .get(request.launch);
+  if (reservation === undefined) return { job: insertJob(db, attempt, request, now), heartbeatMs };
+  if (
+    reservation["attempt"] !== attempt ||
+    reservation["label"] !== request.label ||
+    reservation["command"] !== request.command
+  )
+    throw new Error("The launch ID is already in use");
+  const job = numberOf(reservation["id"], "id");
+  const state = parseJobState(reservation["state"]);
+  if (!jobIsRunning(state))
+    return {
+      job,
+      unavailable: `already ${state}${typeof reservation["output_tail"] === "string" ? `: ${reservation["output_tail"]}` : ""}`,
+    };
+  if (reservation["wrapper_pid"] !== null) return { job, unavailable: "already registered" };
+  if (numberOf(reservation["created_at"], "created_at") <= now - STARTUP_MS)
+    return { job, unavailable: "startup deadline has passed" };
+  return { job, heartbeatMs };
 }
 
 export function registerJob(
@@ -149,7 +175,7 @@ export function finishJob(
   db: DatabaseSync,
   session: string,
   job: { id: number; exitCode: number; outputTail: string; beforeRegistration?: string },
-): { label: string; startupFenced: boolean } | undefined {
+): { label: string; fencedLaunch: string | null } | undefined {
   const owned = ownedJob(db, session, job.id);
   if (owned === undefined) return undefined;
   if (
@@ -164,7 +190,7 @@ export function finishJob(
     Date.now(),
   );
   if (moved === undefined) return undefined;
-  return { label: moved.label, startupFenced: !owned.launched };
+  return { label: moved.label, fencedLaunch: owned.launched ? null : owned.launch };
 }
 
 export function recordJobResult(
@@ -173,7 +199,7 @@ export function recordJobResult(
   job: number,
   label: string,
   result: JobResult,
-  startupFenced: boolean,
+  fencedLaunch: string | null,
 ): readonly string[] {
   if (target.card === null) return [];
   addEntry(
@@ -187,7 +213,7 @@ export function recordJobResult(
         job,
         label,
         exitCode: result.exitCode,
-        ...(startupFenced ? { startupFenced } : {}),
+        ...(fencedLaunch === null ? {} : { startupFenced: true, startupLaunch: fencedLaunch }),
       },
     },
     [target.id],
@@ -211,7 +237,7 @@ export function expireJobStarts(db: DatabaseSync, now: number): string[] {
     const moved = transitionJob(db, owned, { name: "finish", ...STARTUP_EXPIRED }, now);
     if (moved === undefined) return [];
     const target = { id: textOf(row["session"], "session"), card: numberOf(row["card"], "card") };
-    return recordJobResult(db, target, job, moved.label, STARTUP_EXPIRED, true);
+    return recordJobResult(db, target, job, moved.label, STARTUP_EXPIRED, owned.launch);
   });
 }
 
@@ -238,7 +264,7 @@ export function stopJob(db: DatabaseSync, session: string, job: number) {
 
   const result = { exitCode: 130, outputTail: "stopped before wrapper registration" };
   transitionJob(db, owned, { name: "finish", ...result }, Date.now());
-  return { label, running: false, result };
+  return { label, running: false, result, launch: owned.launch };
 }
 
 export function dropLostJob(

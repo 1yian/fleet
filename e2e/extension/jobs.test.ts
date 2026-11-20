@@ -193,6 +193,57 @@ test("run_long recovers a committed reservation after torn prepare replies and r
   );
 });
 
+for (const torn of [true, false]) {
+  test(`an expired reservation cannot dispatch after ${torn ? "a torn prepare reply and replay" : "a stale prepare receipt"}`, async (t) => {
+    const release = Promise.withResolvers<void>();
+    t.after(() => release.resolve());
+    const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+    t.after(() => db.close());
+    const receipts: unknown[] = [];
+    const marker = join(jobDir, "ran-after-fence");
+    await jobProxy(t, async (op, args) => {
+      const result = await callCardd(op, args);
+      if (op !== "job.prepare") return result;
+      const outcome = check(HttpOutcomeSchema, result.body);
+      assert.ok(outcome.ok);
+      const receipt = check(OPS["job.prepare"].result, outcome.value);
+      receipts.push(receipt);
+      if (receipts.length !== 1) return result;
+      db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = ?").run(receipt.job);
+      await release.promise;
+      return torn ? { ...result, body: '{"ok":true,"value":' } : result;
+    });
+    h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "expired", command: `touch ${quote(marker)}` },
+    }));
+    h.onModel(() => ({ tool: "report", args: { status: "done", text: "Expiry observed" } }));
+    const initialTabs = await tabsInWorkspace();
+    worker();
+    await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the early fence");
+    assert.deepEqual(await tabsInWorkspace(), initialTabs);
+    release.resolve();
+    await h.waitForCall(2);
+    assert.ok(said("Job 1 cannot start:"));
+    assert.equal(said("Started job 1"), false);
+    assert.equal(receipts.length, torn ? 2 : 1);
+    if (torn)
+      assert.deepEqual(receipts[1], {
+        job: 1,
+        unavailable:
+          "already finished: could not start: wrapper did not register before the startup deadline",
+      });
+    assert.deepEqual(
+      (await tabsInWorkspace()).map((tab) => tab["tab_id"]),
+      initialTabs.map((tab) => tab["tab_id"]),
+    );
+    assert.equal(existsSync(marker), false);
+    assert.deepEqual(await jobResults(), [
+      [1, 127, "could not start: wrapper did not register before the startup deadline"],
+    ]);
+  });
+}
+
 for (const registrationFirst of [false, true]) {
   test(`stop_job ${registrationFirst ? "signals the pinned wrapper" : "fences the reservation"} while registration is in flight`, async (t) => {
     const waiting = Promise.withResolvers<void>();
@@ -253,6 +304,7 @@ for (const dropFence of [false, true])
     const bin = join(jobDir, "bin");
     mkdirSync(bin);
     const dispatches = join(jobDir, "dispatches");
+    const closes = join(jobDir, "closes");
     const marker = join(jobDir, "unexpected-execution");
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
     writeFileSync(
@@ -262,6 +314,14 @@ if [ "$1 $2" = 'pane run' ]; then
   echo dispatch >> ${quote(dispatches)}
   echo 'pane reply unavailable' >&2
   exit 1
+fi
+if [ "$1 $2" = 'tab close' ]; then
+  if [ ! -e ${quote(closes)} ]; then
+    printf '%s\u005cn' "$3" >> ${quote(closes)}
+    echo 'injected transient tab close failure' >&2
+    exit 1
+  fi
+  printf '%s\u005cn' "$3" >> ${quote(closes)}
 fi
 exec ${quote(herdr)} "$@"
 `,
@@ -331,6 +391,7 @@ exec ${quote(herdr)} "$@"
     assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
     assert.equal(existsSync(marker), false);
     await waitTabGone(String(original), "tab_id");
+    assert.deepEqual(readFileSync(closes, "utf8").trim().split("\n"), [original, original]);
     assert.ok((await tabsInWorkspace()).some((tab) => tab["tab_id"] === decoy));
   });
 
