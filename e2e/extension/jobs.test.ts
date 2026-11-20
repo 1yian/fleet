@@ -99,7 +99,7 @@ async function jobProxy(
   call: (op: string, args: unknown) => Promise<{ status: number; body: unknown }>,
   dropFence = false,
   jobsReply?: (reply: CallResult) => CallResult | undefined,
-  onReportReply?: () => void,
+  reportReply?: (reply: CallResult) => CallResult | undefined,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -129,10 +129,12 @@ async function jobProxy(
     });
     client.on("message", (raw) => {
       const text = rawText(raw);
-      if (jobsReply !== undefined || onReportReply !== undefined) {
+      if (jobsReply !== undefined || reportReply !== undefined) {
         const message = parseClientMessage(text);
-        if (message.t === "call" && message.op === "jobs") jobReads.add(message.id);
-        if (message.t === "call" && message.op === "report") reports.add(message.id);
+        if (message.t === "call" && message.op === "jobs" && jobsReply !== undefined)
+          jobReads.add(message.id);
+        if (message.t === "call" && message.op === "report" && reportReply !== undefined)
+          reports.add(message.id);
       }
       if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
     });
@@ -146,8 +148,14 @@ async function jobProxy(
         if (message.t === "result" && jobReads.delete(message.id) && jobsReply !== undefined) {
           const reply = jobsReply(message);
           if (reply !== undefined) client.send(JSON.stringify(reply));
+        } else if (
+          message.t === "result" &&
+          reports.delete(message.id) &&
+          reportReply !== undefined
+        ) {
+          const reply = reportReply(message);
+          if (reply !== undefined) client.send(JSON.stringify(reply));
         } else client.send(text);
-        if (message.t === "result" && reports.delete(message.id)) onReportReply?.();
       }
     });
     upstream.on("error", () => client.terminate());
@@ -175,10 +183,16 @@ const workspace = (): string => env["HERDR_WORKSPACE_ID"] ?? "";
 const tabsInWorkspace = async () =>
   records((await lab.run(["tab", "list", "--workspace", workspace()]))["tabs"]);
 
+const cardView = async () =>
+  check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
 const jobResults = async () =>
-  check(CardViewSchema, await fleet.main.call("card", { card: card.id }))
-    .entries.filter((entry) => entry.kind === "job-result")
+  (await cardView()).entries
+    .filter((entry) => entry.kind === "job-result")
     .map((entry) => [entry.fields["job"], entry.fields["exitCode"], entry.body]);
+const cardReports = async () =>
+  (await cardView()).entries
+    .filter((entry) => entry.kind === "report")
+    .map((entry) => [entry.fields["status"], entry.body]);
 
 test("run_long recovers a committed reservation after torn prepare replies and runs once", async (t) => {
   const receipts: number[] = [];
@@ -562,7 +576,10 @@ for (const fault of ["failed", "partial"] as const) {
           ? { t: "result", id: reply.id, ok: false, error: "jobs read unavailable" }
           : { ...reply, value: [] };
       },
-      reportAnswered.resolve,
+      (reply) => {
+        reportAnswered.resolve();
+        return reply;
+      },
     );
     const slow = commandAwaitingGo(82);
     t.after(() => {
@@ -588,11 +605,7 @@ for (const fault of ["failed", "partial"] as const) {
     second.prompt("Check on the command after reload");
     await settled(2);
     await reportAnswered.promise;
-    const reports = async () =>
-      check(CardViewSchema, await fleet.main.call("card", { card: card.id }))
-        .entries.filter((entry) => entry.kind === "report")
-        .map((entry) => [entry.fields["status"], entry.body]);
-    assert.deepEqual(await reports(), []);
+    assert.deepEqual(await cardReports(), []);
     assert.equal(await status(fleet.main, card), "working");
 
     h.onModel(() => ({ text: "The command has finished" }));
@@ -603,7 +616,7 @@ for (const fault of ["failed", "partial"] as const) {
       "the stopped handoff after the command exits",
     );
     assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
-    assert.deepEqual(await reports(), [
+    assert.deepEqual(await cardReports(), [
       ["stopped", "ended the run without a handoff: Nothing else to report"],
     ]);
     assert.equal(await status(fleet.main, card), "with-mate");
@@ -674,37 +687,102 @@ exec ${quote(herdr)} "$@"
   ]);
 });
 
-test("a job-file failure does not keep Pi waiting when cardd cannot record the startup error", async () => {
+test("a failed job-file write cannot hand off as stopped until cardd fences the reservation", async (t) => {
   const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
-  try {
-    db.exec(`CREATE TRIGGER refuse_startup_result BEFORE UPDATE ON jobs
-      WHEN OLD.label = 'pre-dispatch' AND NEW.state = 'finished'
-      BEGIN SELECT RAISE(ABORT, 'startup result unavailable'); END;`);
-  } finally {
-    db.close();
-  }
+  t.after(() => db.close());
+  db.exec(`CREATE TRIGGER refuse_startup_result BEFORE UPDATE ON jobs
+    WHEN OLD.label = 'pre-dispatch' AND NEW.state = 'finished'
+    BEGIN SELECT RAISE(ABORT, 'startup result unavailable'); END;`);
+  const reportAnswered = Promise.withResolvers<CallResult>();
+  await jobProxy(t, callCardd, false, undefined, (reply) => {
+    reportAnswered.resolve(reply);
+    return reply;
+  });
   const marker = join(h.dir, "unexpected-execution");
   h.onModel(() => {
     rmSync(jobDir, { recursive: true });
     return { tool: "run_long", args: { label: "pre-dispatch", command: `touch ${quote(marker)}` } };
   });
   h.onModel(() => ({ text: "The job failed to start." }));
-  h.onModel(() => ({ text: "There is no job to wait for." }));
+  h.onModel(() => ({ text: "No command reached Bash." }));
   worker();
   await settled(1);
+  const reply = await reportAnswered.promise;
+  assert.ok(reply.ok);
+  assert.equal(check(OPS.report.result, reply.value).deferred, true);
   assert.ok(said("ENOENT"));
   assert.ok(said("Your run is ending without a handoff"));
-  const stopped = await fleet.main.waitForEntry(
+  db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
+  await until(
+    () =>
+      fleet.cardd.errors.includes("Could not expire job startups: startup result unavailable")
+        ? true
+        : undefined,
+    "cardd to attempt expiry while writes fail",
+  );
+  const job = db.prepare("SELECT state, wrapper_pid FROM jobs WHERE id = 1");
+  assert.deepEqual({ ...job.get() }, { state: "running", wrapper_pid: null });
+  assert.deepEqual(await jobResults(), []);
+  assert.deepEqual(await cardReports(), []);
+  assert.equal(await status(fleet.main, card), "working");
+
+  h.onModel(() => ({ text: "Cardd fenced the failed launch." }));
+  h.onModel(() => ({ text: "Nothing else to report." }));
+  db.exec("DROP TRIGGER refuse_startup_result");
+  await fleet.main.waitForEntry(
     (entry) => entry.fields["status"] === "stopped",
-    "the worker's stopped handoff after the failed launch",
+    "the stopped handoff after the reservation is fenced",
   );
-  assert.match(stopped.body, /There is no job to wait for/);
-  assert.equal(existsSync(marker), false);
-  const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
+  const view = await cardView();
   assert.deepEqual(
-    view.entries.filter((entry) => entry.kind === "job-result"),
-    [],
+    view.entries
+      .filter((entry) => entry.kind === "job-result")
+      .map((entry) => [entry.fields["startupFenced"], entry.fields["exitCode"], entry.body]),
+    [[true, 127, "could not start: wrapper did not register before the startup deadline"]],
   );
+  assert.ok(said("could not start: wrapper did not register before the startup deadline"));
+  assert.deepEqual(await cardReports(), [
+    ["stopped", "ended the run without a handoff: Nothing else to report."],
+  ]);
+  assert.equal(existsSync(marker), false);
+});
+
+test("an automatic stop committed before its reply was lost is not replayed on reconnect", async (t) => {
+  let lists = 0;
+  const disconnect = await jobProxy(
+    t,
+    callCardd,
+    false,
+    (reply) => {
+      lists += 1;
+      return reply;
+    },
+    (reply) => {
+      assert.ok(reply.ok);
+      assert.equal(check(OPS.report.result, reply.value).status, "with-mate");
+      return undefined;
+    },
+  );
+  h.onModel(() => ({ text: "The investigation is incomplete." }));
+  h.onModel(() => ({ text: "No further work this turn." }));
+  worker();
+  const body = "ended the run without a handoff: No further work this turn.";
+  await fleet.main.waitForEntry(
+    (entry) => entry.kind === "report" && entry.body === body,
+    "the first automatic stop to reach the mate",
+  );
+  await untilAsync(
+    async () => ((await cardView()).card.activity?.state === "idle" ? true : undefined),
+    "the worker to settle after the missing reply times out",
+  );
+  const beforeReconnect = lists;
+  disconnect();
+  await until(
+    () => (lists > beforeReconnect ? true : undefined),
+    "the worker to refresh jobs after reconnecting",
+  );
+  assert.deepEqual(await cardReports(), [["stopped", body]]);
+  assert.equal(await status(fleet.main, card), "with-mate");
 });
 
 test("a run_long job runs with the worker's scratch folder, temp folder, and compile cache, not the host's defaults", async () => {
