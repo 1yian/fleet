@@ -2,15 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import {
-  begin,
-  confirmGone,
-  newCard,
-  park,
-  startFleet,
-  status,
-  type Fleet,
-} from "../support/fleet.ts";
+import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { startLostJob } from "../support/lost-job.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -322,14 +315,7 @@ test("a ship card that only did an operation is reminded how to close it", async
 test("a lost job is reminded to its mate each tier until the worker runs it again or drops it", async () => {
   const card = await newCard(fleet.main, "long jobs");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  const start = async (label: string): Promise<number> => {
-    const { job } = check(
-      OPS["job.start"].result,
-      await worker.call("job.start", { label, command: "sleep 9" }),
-    );
-    await confirmGone(worker, job);
-    return job;
-  };
+  const start = (label: string): Promise<number> => startLostJob(worker, label);
   const dropped = await start("tests");
   const rerun = await start("build");
   for (const [job, label] of [
@@ -366,11 +352,7 @@ test("a job that was marked lost while its process lives is running again on its
   const card = await newCard(fleet.main, "silent but alive");
   const token = await begin(fleet.main, card);
   const worker = await fleet.cardd.connect(token);
-  const { job } = check(
-    OPS["job.start"].result,
-    await worker.call("job.start", { label: "poll", command: "sleep 9" }),
-  );
-  await confirmGone(worker, job);
+  const job = await startLostJob(worker, "poll");
   await reach(fleet.main, card, "job-lost-open", 1);
   const listed = async (): Promise<number[]> =>
     check(OPS.jobs.result, await worker.call("jobs", {})).map((each) => each.id);
@@ -401,11 +383,7 @@ test("a job that was marked lost while its process lives is running again on its
 test("a dropped lost job stays lost when its wrapper heartbeats again", async () => {
   const card = await newCard(fleet.main, "dropped then alive");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  const { job } = check(
-    OPS["job.start"].result,
-    await worker.call("job.start", { label: "poll", command: "sleep 9" }),
-  );
-  await confirmGone(worker, job);
+  const job = await startLostJob(worker, "poll");
   await reach(fleet.main, card, "job-lost-open", 1);
   await worker.call("job.drop", { job });
   const alive = check(OPS["job.alive"].result, await worker.call("job.alive", { job }));
