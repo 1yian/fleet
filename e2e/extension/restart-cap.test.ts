@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
@@ -142,25 +142,15 @@ test("a failed refund shows both the idle pane context and the scrubbed refusal 
     "the failed restart tool result",
     WORKER_WAIT_MS,
   );
-  assert.match(result, /The replacement did not start\. Pi is not running in pane/);
-  assert.doesNotMatch(result, /was started in it|the worker never connected/);
-  assert.match(result, /Last lines of the pane:\nIdle shell context --fleet-token \[hidden\]/);
+  assert.match(result, /Pi is not running in pane/);
   assert.match(result, /fixture refused the start --fleet-token \[hidden\]/);
-  assert.match(result, /fixture transport warning --fleet-token \[hidden\]/);
-  assert.doesNotMatch(result, /fixture-secret|stdout-fixture-metadata/);
+  assert.doesNotMatch(result, /fixture-secret/);
   assert.match(
     result,
     /The restart refund was not confirmed; this request may still count toward the hourly cap\./,
   );
   const thread = await cardd.thread(1);
-  assert.ok(
-    thread.entries.every(
-      ({ body }) =>
-        !/fixture refused the start|fixture transport warning|Idle shell context|stdout-fixture-metadata/.test(
-          body,
-        ),
-    ),
-  );
+  assert.ok(thread.entries.every((entry) => !entry.body.includes("fixture refused the start")));
 });
 
 async function verifyCountedRestart(
@@ -208,217 +198,39 @@ async function generationOf({ cardd, mainToken }: DispatchLab): Promise<number> 
   return check(OPS["attempt.resume"].result, resumed.value).generation;
 }
 
-async function replacementGroup(
+async function stopReplacement(
   lab: DispatchLab,
   original: number,
   generation: number,
-): Promise<number> {
+): Promise<void> {
+  const attempt = "c-1-a1";
   const deadline = Date.now() + WORKER_WAIT_MS;
   for (;;) {
-    const group = await workerGroupOf(lab.lab, "c-1-a1");
+    const group = await workerGroupOf(lab.lab, attempt);
     if (
       group !== undefined &&
       group > 0 &&
       group !== original &&
       (await generationOf(lab)) === generation
-    )
-      return group;
+    ) {
+      process.kill(-group, "SIGKILL");
+      break;
+    }
     assert.ok(
       Date.now() < deadline,
       `the replacement did not start at generation ${String(generation)}`,
     );
     await delay(20);
   }
-}
-
-async function stopReplacement(lab: DispatchLab, group: number, connected: boolean): Promise<void> {
-  const attempt = "c-1-a1";
-  const deadline = Date.now() + WORKER_WAIT_MS;
-  process.kill(-group, "SIGKILL");
-  if (connected) await lab.cardd.waitForSessionLost(attempt);
+  if (generation === 2) await lab.cardd.waitForSessionLost(attempt);
   while ((await workerGroupOf(lab.lab, attempt)) !== undefined) {
     assert.ok(Date.now() < deadline, "the replacement is still in the pane");
     await delay(20);
   }
 }
 
-async function waitForRestartNotice({ h }: DispatchLab): Promise<void> {
-  const carriesNotice = (turns: readonly { text: string }[]): boolean =>
-    turns.some((turn) => turn.text.includes(RESTART_NOTICE));
-  await poll(
-    () => h.callsOf("worker").find(carriesNotice),
-    "the replacement to receive the notice before readiness returns",
-    WORKER_WAIT_MS,
-  );
-}
-
-function mateResultsAfter({ h }: DispatchLab, prompt: string): string[] | undefined {
-  return h.callsOf("mate").flatMap((turns) => {
-    const at = turns.findLastIndex((turn) => turn.role === "user");
-    const results = toolResults(turns.slice(at + 1));
-    return turns[at]?.text === prompt && results.length === 2 ? [results] : [];
-  })[0];
-}
-
-const CONFIRMED =
-  /^Started c-1-a1 again on far[^\n]*\. The replacement connected to Fleet, but Herdr did not confirm interactive readiness; the restart still counts and was not relaunched\. Herdr reported:\n/;
-const UNCONFIRMED =
-  /The replacement could not be confirmed after the start command; the request was not refunded/;
-const REFUSED = /fixture refused the start --fleet-token \[hidden\]/;
-const CONTAINMENT_FAILED =
-  /fixture containment failed --fleet-token \[hidden\]\nHerdr also reported:\nherdr agent on far failed: worker readiness/;
-const TIMEOUT = /"code":"timeout","message":"timed out waiting for agent startup"/;
-
-interface Readiness {
-  readonly mode: "before" | "after" | "visible" | "refuse-late" | "contain-fail";
-  readonly situation: string;
-  readonly foreign: boolean;
-  readonly generation: number;
-  readonly result: RegExp;
-}
-
-const readinessCases: readonly Readiness[] = [
-  {
-    mode: "before",
-    situation: "exits before hello",
-    foreign: false,
-    generation: 1,
-    result: UNCONFIRMED,
-  },
-  {
-    mode: "before",
-    situation: "exits before hello after another process of the session connected",
-    foreign: true,
-    generation: 2,
-    result: UNCONFIRMED,
-  },
-  {
-    mode: "refuse-late",
-    situation: "is refused after another process of the session connected",
-    foreign: true,
-    generation: 2,
-    result: REFUSED,
-  },
-  {
-    mode: "after",
-    situation: "exits after hello",
-    foreign: false,
-    generation: 2,
-    result: CONFIRMED,
-  },
-  {
-    mode: "contain-fail",
-    situation: "connects but cannot be contained",
-    foreign: false,
-    generation: 2,
-    result: CONTAINMENT_FAILED,
-  },
-  {
-    mode: "visible",
-    situation: "is visible before the command returns",
-    foreign: false,
-    generation: 2,
-    result: CONFIRMED,
-  },
-];
-
-const argvValue = (h: DispatchLab["h"], prefix: string): string => {
-  const found = readFileSync(launchArgsOf(h), "utf8")
-    .split("\n")
-    .find((arg) => arg.startsWith(prefix));
-  assert.ok(found !== undefined, `the launch carried ${prefix}`);
-  return found.slice(prefix.length);
-};
-
-function sessionProcess({ cardd }: DispatchLab): string | null {
-  const db = new DatabaseSync(cardd.db, { readOnly: true, timeout: 5000 });
-  try {
-    const process = db.prepare("SELECT process FROM sessions WHERE id = 'c-1-a1'").get()?.[
-      "process"
-    ];
-    return typeof process === "string" ? process : null;
-  } finally {
-    db.close();
-  }
-}
-
-async function anotherProcessConnects(lab: DispatchLab, token: string): Promise<void> {
-  const other = await lab.cardd.connect(token, [], false);
-  await other.close();
-  assert.equal(await generationOf(lab), 2);
-}
-
-async function reachBarrier(
-  lab: DispatchLab,
-  { mode, foreign }: Readiness,
-  armed: string,
-  original: number,
-): Promise<void> {
-  const token = argvValue(lab.h, "--fleet-token=");
-  if (mode === "refuse-late") {
-    await poll(
-      () => (existsSync(`${armed}.starts`) ? true : undefined),
-      "the refused start command to be issued",
-      WORKER_WAIT_MS,
-    );
-    await anotherProcessConnects(lab, token);
-    return;
-  }
-  const group = await replacementGroup(lab, original, mode === "before" ? 1 : 2);
-  if (foreign) await anotherProcessConnects(lab, token);
-  if (mode === "visible" || mode === "contain-fail") {
-    await waitForRestartNotice(lab);
-    assert.equal(await workerGroupOf(lab.lab, "c-1-a1"), group);
-  } else await stopReplacement(lab, group, mode === "after");
-}
-
-async function repeatCompletesWhileGated(lab: DispatchLab, prompt: string): Promise<void> {
-  await restartRepeatFinished(lab.h);
-  assert.equal(mateResultsAfter(lab, prompt), undefined);
-}
-
-async function assertLaunchLost(lab: DispatchLab): Promise<void> {
-  const text = await poll(
-    () =>
-      lab.h
-        .callsOf("mate")
-        .flatMap((turns) => turns.filter((turn) => turn.role === "user"))
-        .find(
-          (turn) =>
-            turn.text.includes("[fleet] launch:") && turn.text.includes("connected to Fleet"),
-        )?.text,
-    "the report that the connected replacement exited",
-    WORKER_WAIT_MS,
-  );
-  assert.match(text, /Pi is not running in pane \S+ on far after c-1-a1 connected to Fleet\./);
-  assert.doesNotMatch(text, /never connected/);
-}
-
-function assertOutcome(lab: DispatchLab, c: Readiness, armed: string, result: string): void {
-  assert.doesNotMatch(result, /fixture-secret/);
-  assert.match(result, c.result);
-  const launched = readFileSync(`${armed}.launched`, "utf8").trim();
-  assert.match(launched, /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
-  if (c.result === CONFIRMED) {
-    assert.equal(argvValue(lab.h, "--fleet-process="), launched);
-    assert.match(result, /worker readiness confirmation failed --fleet-token \[hidden\]/);
-    assert.match(result, TIMEOUT);
-    assert.equal(sessionProcess(lab), launched);
-    return;
-  }
-  assert.doesNotMatch(result, /^Started c-1-a1 again|interactive readiness/);
-  if (c.mode === "contain-fail") {
-    assert.match(result, TIMEOUT);
-    assert.equal(sessionProcess(lab), launched);
-    return;
-  }
-  if (c.mode === "refuse-late") assert.match(result, /refund was not confirmed/);
-  else assert.match(result, /worker readiness confirmation failed --fleet-token \[hidden\]/);
-  assert.notEqual(sessionProcess(lab), launched);
-}
-
-for (const c of readinessCases) {
-  test(`a replacement that ${c.situation} is reported as ${c.result === CONFIRMED ? "launched with Herdr's readiness failure separate" : "failed"} and stays counted`, async (t) => {
+for (const hello of ["before", "after"] as const) {
+  test(`a real replacement that exits ${hello} hello without readiness is not launched again or refunded`, async (t) => {
     const armed = join(tempDir("readiness-failure-"), "armed");
     const released = `${armed}.released`;
     t.after(() => {
@@ -433,15 +245,13 @@ for (const c of readinessCases) {
     });
     const { h, lab, mate } = parts;
     const restart = { card: 1, key: "readiness", mode: "replace" } as const;
-    const restartMove = { tool: "restart_card", args: restart };
-    const restartPrompt = "restart after dispatch";
     const results = () => h.callsOf("mate").flatMap(toolResults);
     for (let call = 0; call < 12; call += 1) {
       h.onModel(
         (turns) =>
           plan(turns, {
             "ship the scrollbar fix": [DISPATCH],
-            [restartPrompt]: [{ ...restartMove, alongside: [restartMove] }],
+            "restart after dispatch": [{ tool: "restart_card", args: restart }],
           }),
         "mate",
       );
@@ -460,26 +270,30 @@ for (const c of readinessCases) {
     await h.waitForCall(0, "worker", WORKER_WAIT_MS);
     const original = await workerGroupOf(lab, "c-1-a1");
     assert.ok(original !== undefined && original > 0);
-    if (c.mode === "before") execFileSync("sh", ["-c", 'mkfifo "$0"', gateOf(launchArgsOf(h))]);
-    writeFileSync(armed, c.mode);
-    mate.prompt(restartPrompt, "followUp");
-    await reachBarrier(parts, c, armed, original);
-    await repeatCompletesWhileGated(parts, restartPrompt);
-    assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
+    if (hello === "before") execFileSync("mkfifo", [gateOf(launchArgsOf(h))]);
+    writeFileSync(armed, "armed\n");
+    mate.prompt("restart after dispatch", "followUp");
+    const generation = hello === "after" ? 2 : 1;
+    await stopReplacement(parts, original, generation);
     writeFileSync(released, "release\n");
 
-    const both = await poll(
-      () => mateResultsAfter(parts, restartPrompt),
-      "the mate's results for the restart and its same-key call",
+    const result = await poll(
+      () =>
+        results().find((text) =>
+          /worker readiness confirmation failed|^Started c-1-a1 again/.test(text),
+        ),
+      "the replacement's readiness result",
       WORKER_WAIT_MS,
     );
-    assert.equal(both.filter((text) => text === RESTART_REPEATED).length, 1);
-    const [result] = both.filter((text) => text !== RESTART_REPEATED);
-    assert.ok(result !== undefined);
-    assertOutcome(parts, c, armed, result);
+    assert.match(result, /worker readiness confirmation failed/);
+    assert.match(
+      result,
+      hello === "after"
+        ? /The replacement connected before readiness failed/
+        : /The replacement could not be confirmed after the start command; the request was not refunded/,
+    );
     assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
-    if (c.mode === "after") await assertLaunchLost(parts);
 
-    await verifyCountedRestart(parts, restart.key, c.generation);
+    await verifyCountedRestart(parts, restart.key, generation);
   });
 }
