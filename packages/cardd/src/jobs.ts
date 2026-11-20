@@ -9,6 +9,15 @@ import {
   type JobLife,
   type JobState,
 } from "@fleet/protocol";
+import { addEntry } from "./store.ts";
+
+const STARTUP_MS = 30_000;
+const STARTUP_EXPIRED = {
+  exitCode: 127,
+  outputTail: "could not start: wrapper did not register before the startup deadline",
+};
+
+type JobResult = { exitCode: number; outputTail: string };
 
 export const jobStateSql = (column: string, state: JobState): string => `${column} = '${state}'`;
 
@@ -125,13 +134,14 @@ export function registerJob(
   session: string,
   args: { job: number; launch: string; pid: number },
 ): boolean {
+  const now = Date.now();
   const { changes } = db
     .prepare(
       `UPDATE jobs SET wrapper_pid = ?, updated_at = ?
      WHERE id = ? AND attempt = ? AND launch_id = ? AND ${jobStateSql("state", JOB_RUNNING)}
-       AND (wrapper_pid IS NULL OR wrapper_pid = ?)`,
+       AND (wrapper_pid = ? OR (wrapper_pid IS NULL AND created_at > ?))`,
     )
-    .run(args.pid, Date.now(), args.job, attemptOf(db, session), args.launch, args.pid);
+    .run(args.pid, now, args.job, attemptOf(db, session), args.launch, args.pid, now - STARTUP_MS);
   return changes === 1;
 }
 
@@ -139,14 +149,12 @@ export function finishJob(
   db: DatabaseSync,
   session: string,
   job: { id: number; exitCode: number; outputTail: string; beforeRegistration?: string },
-): { label: string } | undefined {
+): { label: string; startupFenced: boolean } | undefined {
   const owned = ownedJob(db, session, job.id);
   if (owned === undefined) return undefined;
   if (
     job.beforeRegistration !== undefined &&
-    db
-      .prepare("SELECT id FROM jobs WHERE id = ? AND launch_id = ? AND wrapper_pid IS NULL")
-      .get(job.id, job.beforeRegistration) === undefined
+    (owned.launched || owned.launch !== job.beforeRegistration)
   )
     return undefined;
   const moved = transitionJob(
@@ -156,7 +164,55 @@ export function finishJob(
     Date.now(),
   );
   if (moved === undefined) return undefined;
-  return { label: moved.label };
+  return { label: moved.label, startupFenced: !owned.launched };
+}
+
+export function recordJobResult(
+  db: DatabaseSync,
+  target: { id: string; card: number | null },
+  job: number,
+  label: string,
+  result: JobResult,
+  startupFenced: boolean,
+): readonly string[] {
+  if (target.card === null) return [];
+  addEntry(
+    db,
+    {
+      card: target.card,
+      author: `job:${String(job)}`,
+      kind: "job-result",
+      body: result.outputTail,
+      fields: {
+        job,
+        label,
+        exitCode: result.exitCode,
+        ...(startupFenced ? { startupFenced } : {}),
+      },
+    },
+    [target.id],
+  );
+  return [target.id];
+}
+
+export function expireJobStarts(db: DatabaseSync, now: number): string[] {
+  const expired = db
+    .prepare(
+      `SELECT j.id AS job, s.id AS session, a.card FROM jobs j
+       JOIN attempts a ON a.id = j.attempt JOIN sessions s ON s.attempt = a.id
+       WHERE ${jobStateSql("j.state", JOB_RUNNING)} AND NOT ${launchedJobSql("j")}
+         AND j.created_at <= ? AND a.state IN ('starting', 'active') ORDER BY j.id`,
+    )
+    .all(now - STARTUP_MS);
+  return expired.flatMap((row) => {
+    const job = numberOf(row["job"], "job");
+    const owned = readJob(db, job);
+    if (owned === undefined) return [];
+    const moved = transitionJob(db, owned, { name: "finish", ...STARTUP_EXPIRED }, now);
+    if (moved === undefined) return [];
+    const target = { id: textOf(row["session"], "session"), card: numberOf(row["card"], "card") };
+    return recordJobResult(db, target, job, moved.label, STARTUP_EXPIRED, true);
+  });
 }
 
 export function touchJob(
@@ -172,28 +228,15 @@ export function touchJob(
   return { running: true };
 }
 
-export function stopJob(
-  db: DatabaseSync,
-  session: string,
-  args: { job: number; beforeRegistration?: string },
-) {
-  const owned = ownedJob(db, session, args.job);
-  if (
-    owned === undefined ||
-    (args.beforeRegistration !== undefined && args.beforeRegistration !== owned.launch)
-  )
-    throw new Error(`job ${String(args.job)} is not one of this worker's jobs: nothing was stopped`);
+export function stopJob(db: DatabaseSync, session: string, job: number) {
+  const owned = ownedJob(db, session, job);
+  if (owned === undefined)
+    throw new Error(`job ${String(job)} is not one of this worker's jobs: nothing was stopped`);
   const { label, life, launched } = owned;
   const running = jobIsRunning(life.state);
   if (!running || launched) return { label, running };
 
-  const result =
-    args.beforeRegistration === undefined
-      ? { exitCode: 130, outputTail: "stopped before wrapper registration" }
-      : {
-          exitCode: 127,
-          outputTail: "could not start: wrapper did not register before the startup deadline",
-        };
+  const result = { exitCode: 130, outputTail: "stopped before wrapper registration" };
   transitionJob(db, owned, { name: "finish", ...result }, Date.now());
   return { label, running: false, result };
 }

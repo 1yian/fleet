@@ -17,9 +17,6 @@ import { forwardedEnvironment } from "./scratch.ts";
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
 const PREPARE_ATTEMPTS = 3;
-const STARTUP_MS = 30_000;
-const FENCE_ATTEMPTS = 3;
-const FENCE_TIMEOUT_MS = 5000;
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
@@ -66,11 +63,10 @@ interface JobOptions {
 }
 
 interface PendingDispatch {
-  readonly launch: string;
   readonly file: string;
-  readonly deadline: number;
-  readonly timer: NodeJS.Timeout;
-  checking: boolean;
+  tab?: string;
+  dispatched: boolean;
+  fenced: boolean;
 }
 
 export class Jobs {
@@ -85,13 +81,10 @@ export class Jobs {
   }
 
   get waiting(): boolean {
-    return this.running.size > 0 || this.pending.size > 0;
+    return this.running.size > 0 || [...this.pending.values()].some(({ dispatched }) => dispatched);
   }
 
   async sync(observed?: number): Promise<void> {
-    for (const [id, pending] of this.pending) {
-      if (id !== observed && Date.now() >= pending.deadline) void this.reconcile(id, pending);
-    }
     const jobs = await this.link.call("jobs", {});
     this.running.clear();
     for (const { id } of jobs) {
@@ -101,39 +94,24 @@ export class Jobs {
     if (observed !== undefined) this.clearPending(observed);
   }
 
+  confirmStartupFence(job: number): void {
+    this.running.delete(job);
+    const pending = this.pending.get(job);
+    if (pending === undefined) return;
+    pending.fenced = true;
+    this.clearPending(job);
+    if (pending.tab !== undefined) this.closeStartupTab(pending.tab);
+  }
+
   private clearPending(job: number): void {
     const pending = this.pending.get(job);
     if (pending === undefined) return;
     this.pending.delete(job);
-    clearTimeout(pending.timer);
     void rm(pending.file, { force: true }).catch(() => undefined);
   }
 
-  private trackDispatch(job: number, launch: string, file: string): void {
-    const timer = setTimeout(() => {
-      void this.reconcile(job, pending);
-    }, STARTUP_MS).unref();
-    const pending = { launch, file, deadline: Date.now() + STARTUP_MS, timer, checking: false };
-    this.pending.set(job, pending);
-  }
-
-  private async reconcile(job: number, pending: PendingDispatch): Promise<void> {
-    if (pending.checking || this.pending.get(job) !== pending) return;
-    pending.checking = true;
-    try {
-      for (let attempt = 0; attempt < FENCE_ATTEMPTS && this.pending.get(job) === pending; attempt += 1) {
-        const receipt = await this.link
-          .call("job.stop", { job, beforeRegistration: pending.launch }, FENCE_TIMEOUT_MS)
-          .catch(() => undefined);
-        if (receipt === undefined) continue;
-        if (this.pending.get(job) !== pending) return;
-        if (receipt.running) this.running.add(job);
-        this.clearPending(job);
-        return;
-      }
-    } finally {
-      pending.checking = false;
-    }
+  private closeStartupTab(tab: string): void {
+    void herdr("local", ["tab", "close", tab]).catch(() => undefined);
   }
 
   private async prepare(
@@ -178,7 +156,9 @@ export class Jobs {
     const { job, heartbeatMs, registeredLaunch } = await this.prepare(url, id, label, command);
     const file = join(tmpdir(), `fleet-job-${String(job)}-${id}.json`);
     const tab = tabName(job, label);
-    let dispatchAttempted = false;
+    const pending: PendingDispatch | undefined = registeredLaunch
+      ? { file, dispatched: false, fenced: false }
+      : undefined;
     try {
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
@@ -192,6 +172,7 @@ export class Jobs {
         lineChars,
       };
       writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
+      if (pending !== undefined) this.pending.set(job, pending);
       const created = await herdr("local", [
         "tab",
         "create",
@@ -204,15 +185,26 @@ export class Jobs {
         "--no-focus",
         ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
+      if (pending !== undefined) {
+        const tabId = field(records([created["tab"]])[0], "tab_id");
+        if (tabId === undefined) throw new Error("herdr did not return the job tab ID");
+        if (pending.fenced) {
+          this.closeStartupTab(tabId);
+          throw new Error(`Job ${String(job)} was fenced before dispatch`);
+        }
+        pending.tab = tabId;
+      }
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
-      if (registeredLaunch) this.trackDispatch(job, id, file);
+      if (pending?.fenced === true)
+        throw new Error(`Job ${String(job)} was fenced before dispatch`);
+      if (pending !== undefined) pending.dispatched = true;
       else this.running.add(job);
-      dispatchAttempted = true;
       await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      if (registeredLaunch && dispatchAttempted)
+      if (pending?.fenced === true) throw error;
+      if (pending?.dispatched === true)
         throw new Error(
           `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,
           { cause: error },
@@ -220,7 +212,7 @@ export class Jobs {
       rmSync(file, { force: true });
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
-      await this.link
+      const finished = await this.link
         .call("job.finish", {
           job,
           exitCode: 127,
@@ -228,6 +220,7 @@ export class Jobs {
           ...(registeredLaunch ? { beforeRegistration: id } : {}),
         })
         .catch(() => undefined);
+      if (pending !== undefined && finished?.recorded === true) this.confirmStartupFence(job);
       throw error;
     }
     return { job, tab };
@@ -240,7 +233,7 @@ export class Jobs {
     const named = `job ${String(job)} (${label})`;
     if (!running) {
       this.running.delete(job);
-      this.clearPending(job);
+      if (cancelled === true) this.confirmStartupFence(job);
       return cancelled === true
         ? `${named} was stopped before wrapper registration. Its command will not run.`
         : `${named} is not running: nothing to stop.`;
