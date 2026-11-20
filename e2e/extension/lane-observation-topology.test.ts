@@ -212,14 +212,21 @@ test("a final pane read that drops the Pi pane's home evidence never lifts a hol
   assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
 });
 
-test("a legacy workspace outside the lane home that loses its cwd on the final read never authorizes a start", async () => {
+test("a legacy workspace outside the lane home whose cwd becomes unusable on the final read never authorizes a start or crash hold", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
   const foreign = await idlePane("ops", here.root, "fleet-ops");
   const starts = join(home, "state", "starts");
-  assert.deepEqual(maintain("cwd-drop-final", foreign), action("ops", "unread"));
-  assert.equal(readFileSync(`${faultLog()}.lists`, "utf8"), "x\nx\nx\n");
-  assert.equal(existsSync(starts), false);
-  assert.equal(await workspace("ops"), undefined);
-  rmSync(`${faultLog()}.lists`);
+  const stopped = join(home, "state", "stopped");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, history);
+  for (const fault of ["cwd-drop-final", "cwd-relative-final", "cwd-nul-final"]) {
+    rmSync(`${faultLog()}.lists`, { force: true });
+    assert.deepEqual(maintain(fault, foreign), action("ops", "unread"), fault);
+    assert.equal(readFileSync(`${faultLog()}.lists`, "utf8"), "x\nx\nx\n", fault);
+    assert.equal(readFileSync(starts, "utf8"), history, fault);
+    assert.equal(existsSync(stopped), false, fault);
+    assert.equal(await workspace("ops"), undefined, fault);
+  }
+  rmSync(starts);
   assert.deepEqual(maintain(), action("ops", "started"));
 });

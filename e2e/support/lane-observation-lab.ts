@@ -101,12 +101,12 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
-  'pane process-info:cwd-drop-final')
+  'pane process-info:cwd-drop-final'|'pane process-info:cwd-relative-final'|'pane process-info:cwd-nul-final')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
-  'pane list:cwd-drop-final')
+  'pane list:cwd-drop-final'|'pane list:cwd-relative-final'|'pane list:cwd-nul-final')
     reply=$("$REAL_HERDR" "$@") || exit $?
     printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
     if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -lt 3 ]; then
@@ -115,7 +115,13 @@ case "$1 $2:$HERDR_FAULT" in
     fi
     printf '%s' "$reply" | node -e '
       const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-      for (const row of reply.result.panes) if (row.pane_id === process.env.FAULT_PANE) delete row.cwd;
+      const fault = process.env.HERDR_FAULT;
+      for (const row of reply.result.panes) {
+        if (row.pane_id !== process.env.FAULT_PANE) continue;
+        if (fault === "cwd-relative-final") row.cwd = "tmp";
+        else if (fault === "cwd-nul-final") row.cwd = "/tmp\\u0000x";
+        else delete row.cwd;
+      }
       console.log(JSON.stringify(reply));
     '
     exit $? ;;

@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { field, HostUnread, isPi, laneHerdr, records } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import { isWorkerWorkspace, legacyMatePrefix, mateTitle } from "./titles.ts";
@@ -131,15 +132,14 @@ async function findLegacy(
   return { workspace: only.workspace, state: "idle", pane: only.pane };
 }
 
+const decisive = (cwd: string | undefined): cwd is string =>
+  cwd !== undefined && cwd !== "" && !cwd.includes("\0") && isAbsolute(cwd);
+
 const homeEvidence = (cwd: string | undefined, home: string): string =>
-  cwd === undefined || cwd === ""
-    ? "missing"
-    : canonical(cwd) === canonical(home)
-      ? "home"
-      : "foreign";
+  !decisive(cwd) ? "missing" : canonical(cwd) === canonical(home) ? "home" : "foreign";
 
 const matchesHome = (cwd: string | undefined, home: string): boolean =>
-  cwd !== undefined && cwd !== "" && canonical(cwd) === canonical(home);
+  homeEvidence(cwd, home) === "home";
 
 async function inspectSplit(
   workspace: string,
@@ -201,8 +201,7 @@ async function findCurrent(
 }
 
 function requiredCwd(cwd: string | undefined, workspace: string): string {
-  if (cwd === undefined || cwd === "")
-    throw new HostUnread(`herdr returned no root pane cwd for ${workspace}`);
+  if (!decisive(cwd)) throw new HostUnread(`herdr returned no root pane cwd for ${workspace}`);
   return cwd;
 }
 
