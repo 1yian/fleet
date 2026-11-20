@@ -309,7 +309,11 @@ function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
      WHERE ${jobStateSql("j.state", "lost")} AND j.dropped_at IS NULL AND a.state IN ('starting', 'active')
        AND NOT EXISTS (SELECT 1 FROM jobs later
          WHERE later.attempt = j.attempt AND later.label = j.label AND later.id > j.id
-           AND ${launchedJobSql("later")})
+           AND ${launchedJobSql("later")}
+           AND NOT EXISTS (SELECT 1 FROM entries result
+             WHERE result.card = a.card AND result.author = 'job:' || later.id
+               AND result.kind = 'job-result'
+               AND json_type(result.fields, '$.commandNotStarted') = 'true'))
      ORDER BY j.id`,
   ).flatMap((row) => {
     const tier = repeatTier(now - Number(row["since"]), t.repeat, t.repeat);

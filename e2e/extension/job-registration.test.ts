@@ -4,11 +4,12 @@ import { once } from "node:events";
 import { existsSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { check, HttpCallSchema, HttpOutcomeSchema, OPS } from "@fleet/protocol";
+import { CardViewSchema, check, HttpCallSchema, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
-import { begin, newCard, startFleet } from "../support/fleet.ts";
+import { begin, MINUTE, newCard, startFleet } from "../support/fleet.ts";
 import { spawnGuarded } from "../support/guarded.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { until } from "../support/live-fleet.ts";
@@ -17,7 +18,7 @@ import { tempDir } from "../support/run-root.ts";
 const WRAPPER = fileURLToPath(new URL("../../packages/extension/src/job.ts", import.meta.url));
 
 test("a prepared wrapper does not run Bash until a complete registration receipt arrives", async (t) => {
-  const { main, cardd } = await startFleet();
+  const { main, cardd } = await startFleet({ CARDD_TIMING_SCALE: "0.04" });
   t.after(() => cardd.stop());
   const card = await newCard(main, "Prove the startup receipt");
   const token = await begin(main, card);
@@ -89,6 +90,21 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
     return { job, marker, exited: once(child, "exit") };
   };
 
+  const worker = await cardd.connect(token);
+  const silent = async (label: string): Promise<number> =>
+    check(OPS["job.start"].result, await worker.call("job.start", { label, command: "true" })).job;
+  const lost = await silent("unconfirmed");
+  const control = await silent("control");
+  for (const job of [lost, control])
+    await main.waitForEntry(
+      (entry) =>
+        entry.card === card.id &&
+        entry.fields["condition"] === "job-lost" &&
+        entry.fields["job"] === job,
+      `job ${String(job)} to be lost before the retries`,
+    );
+
+  await worker.call("report", { status: "working", text: "Checking wrapper startup receipts." });
   const first = await start("received");
   await until(() => (seen.length === 2 ? true : undefined), "the second registration request");
   assert.equal(seen[0]?.job, first.job);
@@ -112,7 +128,6 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
   assert.deepEqual(await first.exited, [0, null]);
   assert.equal(existsSync(first.marker), true);
 
-  const worker = await cardd.connect(token);
   const movedAt = async () => {
     const pulse = check(OPS.board.result, await main.call("board", {})).find(
       (each) => each.id === card.id,
@@ -136,6 +151,30 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
   assert.match(result.body, /did not confirm wrapper registration/);
   assert.equal(await movedAt(), before);
 
+  const ageLosses = (minutes: number): void => {
+    const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+    try {
+      db.prepare("UPDATE jobs SET updated_at = ? WHERE state = 'lost' AND id IN (?, ?)").run(
+        Date.now() - minutes * MINUTE,
+        lost,
+        control,
+      );
+    } finally {
+      db.close();
+    }
+  };
+  const reminded = (job: number, tier: number) =>
+    main.waitForEntry(
+      (entry) =>
+        entry.card === card.id &&
+        entry.fields["condition"] === "job-lost-open" &&
+        Number(entry.fields["tier"]) >= tier &&
+        entry.body.includes(`job ${String(job)} (`),
+      `job ${String(job)} to receive reminder tier ${String(tier)}`,
+    );
+  ageLosses(1);
+  await reminded(lost, 5);
+
   mode = "retry";
   const third = await start("unconfirmed");
   assert.deepEqual(await third.exited, [0, null]);
@@ -146,4 +185,16 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
   assert.equal(completed.fields["exitCode"], 0);
   assert.ok(completed.createdAt > before);
   assert.equal(await movedAt(), completed.createdAt);
+  ageLosses(2);
+  await reminded(control, 10);
+  const view = check(CardViewSchema, await main.call("card", { card: card.id }));
+  assert.equal(
+    view.entries.some(
+      (entry) =>
+        entry.fields["condition"] === "job-lost-open" &&
+        Number(entry.fields["tier"]) >= 10 &&
+        entry.body.includes(`job ${String(lost)} (`),
+    ),
+    false,
+  );
 });
