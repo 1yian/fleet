@@ -6,7 +6,7 @@ import {
   ageBatch,
   ageCard,
   ageEntry,
-  agePauses,
+  ageDated,
   ageSession,
   begin,
   CheckPasses,
@@ -160,7 +160,7 @@ test("a pause with nothing running reaches its mate, and its end is listed for a
   );
 
   await watcher.call("job.alive", { job });
-  agePauses(fleet.cardd, [watched, card], PAUSE_ENDED);
+  ageDated(fleet.cardd, [watched, card], PAUSE_ENDED);
   const list = await listing(cleo, "pause ended", "the list that names the ended pause");
   assert.ok(list.createdAt >= until - PAUSE_ENDED, "the list came after the date");
   assert.match(list.body, /^reminder: 1 card needs a decision or action from you\./);
@@ -180,7 +180,7 @@ test("a listed pause ends when its worker reports or its mate steers, and the ot
   const until = Date.now() + PAUSE_MS;
   await pauseOf(reported.worker, "waiting on the provider", until);
   await pauseOf(steered.worker, "waiting on the render", until);
-  agePauses(fleet.cardd, [reported.card, steered.card], PAUSE_ENDED);
+  ageDated(fleet.cardd, [reported.card, steered.card], PAUSE_ENDED);
 
   const both = await cleo.waitForEntry(
     (entry) =>
@@ -196,8 +196,8 @@ test("a listed pause ends when its worker reports or its mate steers, and the ot
   const stuck = await newCard(cleo, "Needs a decision");
   const stuckWorker = await fleet.cardd.connect(await begin(cleo, stuck));
   await stuckWorker.call("report", { status: "blocked", text: "the API is down" });
-  ageEntry(fleet.cardd, both.id, 10 * MINUTE);
   ageCard(fleet.cardd, stuck, 10 * MINUTE);
+  ageEntry(fleet.cardd, both.id, 10 * MINUTE);
 
   const after = await listing(cleo, stuck.title, "the next list, with the blocked card");
   assert.ok(!after.body.includes(reported.card.title), "a later worker report ended its pause");
@@ -220,7 +220,7 @@ test("a watcher that only repeats its earlier run does not hide an ended pause f
     if (round === 1) await worker.call("job.finish", { job, exitCode: 124, outputTail: "" });
   }
   worker.send({ t: "activity", state: "waiting" });
-  agePauses(fleet.cardd, [card], PAUSE_ENDED);
+  ageDated(fleet.cardd, [card], PAUSE_ENDED);
 
   const list = await listing(cleo, "pause ended", "the list that names the ended pause");
   assert.ok(list.body.includes(`c-${String(card.id)} Watch the provider`), list.body);

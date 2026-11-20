@@ -176,7 +176,7 @@ export function ageBatch(cardd: Cardd, lane: string, ms: number): void {
   }
 }
 
-export function agePauses(cardd: Cardd, cards: readonly Card[], ms: number): void {
+export function ageDated(cardd: Cardd, cards: readonly Card[], ms: number): void {
   const ids = cards.map(({ id }) => id);
   const marks = ids.map(() => "?").join(", ");
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });
@@ -193,7 +193,7 @@ export function agePauses(cardd: Cardd, cards: readonly Card[], ms: number): voi
     );
     db.prepare(
       `UPDATE entries SET fields = json_set(fields, '$.until', json_extract(fields, '$.until') - ?)
-       WHERE card IN (${marks}) AND kind = 'report' AND json_extract(fields, '$.status') = 'paused'`,
+       WHERE card IN (${marks}) AND json_type(fields, '$.until') IN ('integer', 'real')`,
     ).run(ms, ...ids);
     db.exec("COMMIT");
   } finally {
