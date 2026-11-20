@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1088,6 +1088,67 @@ exec ${quote(herdr)} "$@"
   writeFileSync(slow.go, "");
   await fleet.main.waitForEntry((entry) => entry.body === "The legacy job finished", "the handoff");
   assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
+  assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
+});
+
+test("a legacy dispatch that Herdr never accepted keeps its wait and tab, and its token-bearing file is removed once cardd reports the job lost", async (t) => {
+  await jobProxy(t, async (op, args) =>
+    op === "job.prepare"
+      ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
+      : callCardd(op, args),
+  );
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const dispatches = join(jobDir, "dispatches");
+  const marker = join(jobDir, "unexpected-execution");
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  echo dispatch >> ${quote(dispatches)}
+  echo 'pane reply unavailable' >&2
+  exit 1
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  const launchFiles = (): string[] =>
+    readdirSync(jobDir).filter((name) => /^fleet-job-1-.*\.json$/.test(name));
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "refused", command: `touch ${quote(marker)}` },
+  }));
+  h.onModel(() => ({ text: "Waiting for the command" }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job is lost" } }));
+  worker();
+  await settled(1);
+  assert.ok(said("Could not confirm dispatch for job 1"));
+  assert.equal(launchFiles().length, 1);
+  assert.deepEqual(await jobResults(), []);
+  const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-refused");
+  assert.equal(typeof tab?.["tab_id"], "string");
+  await until(
+    () =>
+      said("[fleet] c-1 users-see-one-scrollbar job 1 (refused) lost: no heartbeat arrived")
+        ? true
+        : undefined,
+    "cardd to report the job lost",
+  );
+  await until(
+    () => (launchFiles().length === 0 ? true : undefined),
+    "the launch file to be removed",
+  );
+  assert.deepEqual(
+    (await cardView()).entries
+      .filter((entry) => entry.kind === "job-result")
+      .map((entry) => [entry.fields["lost"], entry.fields["exitCode"]]),
+    [[true, undefined]],
+  );
+  assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab?.["tab_id"]));
+  assert.equal(existsSync(marker), false);
   assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
 });
 

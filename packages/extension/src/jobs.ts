@@ -86,6 +86,7 @@ export class Jobs {
     number,
     { unstarted: boolean; ran: boolean; legacy: boolean }
   >();
+  private readonly legacyFiles = new Map<number, string>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -127,6 +128,7 @@ export class Jobs {
       );
       return;
     }
+    if (lost === true || typeof exitCode === "number") this.dropLegacyFile(job);
     const launching = this.launching.get(job);
     if (launching !== undefined && entry.fields["commandNotStarted"] === true)
       launching.unstarted = true;
@@ -140,6 +142,13 @@ export class Jobs {
     if (revived === true) this.running.add(job);
     else this.running.delete(job);
     if (typeof exitCode === "number") this.forgetTab(job);
+  }
+
+  private dropLegacyFile(job: number): void {
+    const file = this.legacyFiles.get(job);
+    if (file === undefined) return;
+    this.legacyFiles.delete(job);
+    void rm(file, { force: true }).catch(() => undefined);
   }
 
   private forgetTab(job: number): void {
@@ -260,6 +269,7 @@ export class Jobs {
         lineChars,
       };
       writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
+      if (!registeredLaunch) this.legacyFiles.set(job, file);
       if (pending !== undefined) this.pending.set(job, pending);
       const created = await herdr("local", [
         "tab",
@@ -313,6 +323,7 @@ export class Jobs {
           { cause: error },
         );
       rmSync(file, { force: true });
+      this.legacyFiles.delete(job);
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link
