@@ -710,11 +710,7 @@ To show the hint, add a row to your own herdr client config. Keep herdr's defaul
 
 ```toml
 [ui.sidebar.spaces]
-rows = [
-  ["state_icon", "workspace"],
-  ["branch", "git_status"],
-  [{ token = "$away", dim = true }],
-]
+rows = [["state_icon", "workspace"], ["branch", "git_status"], [{ token = "$away", dim = true }]]
 ```
 
 ### Agent complaints
