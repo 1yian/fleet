@@ -185,3 +185,31 @@ test("a legacy workspace whose home evidence vanishes on the confirming read is 
   assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");
   assert.deepEqual(await labels(), []);
 });
+
+test("a final pane read that drops the Pi pane's home evidence never lifts a hold or erases start history", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const added = await lab.run([
+    "pane",
+    "split",
+    root,
+    "--direction",
+    "right",
+    "--cwd",
+    home,
+    "--no-focus",
+  ]);
+  const split = records([added["pane"]])[0]?.["pane_id"];
+  assert.ok(typeof split === "string");
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, history);
+  writeFileSync(stopped, "stopped by hand\n");
+  assert.deepEqual(maintain("cwd-drop-final", split), action("ops", "unread"));
+  assert.equal(readFileSync(`${faultLog()}.lists`, "utf8"), "x\nx\nx\n");
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  rmSync(`${faultLog()}.lists`);
+  assert.deepEqual(maintain("cwd-drop-final", split), action("ops", "unread"));
+});

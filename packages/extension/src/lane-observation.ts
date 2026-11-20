@@ -35,12 +35,23 @@ const membership = (panes: readonly { pane: string }[]): string =>
     .sort()
     .join(",");
 
-interface Observation {
-  log: string[];
-  members: Map<string, string>;
+interface Pane {
+  pane: string;
+  cwd: string | undefined;
 }
 
-async function panesOf(workspace: string, count: unknown, deadline?: number, seen?: Observation) {
+type Evidence = (panes: readonly Pane[]) => string;
+
+interface Observation {
+  log: string[];
+  checks: Map<string, { key: string; of: Evidence }>;
+}
+
+function expect(obs: Observation, workspace: string, panes: readonly Pane[], of: Evidence): void {
+  obs.checks.set(workspace, { key: of(panes), of });
+}
+
+async function panesOf(workspace: string, count: unknown, deadline?: number) {
   const rows = await observeList("pane", ["--workspace", workspace], ["pane_id"], deadline);
   const panes = rows.map((row) => ({ pane: String(row["pane_id"]), cwd: field(row, "cwd") }));
   if (
@@ -50,7 +61,6 @@ async function panesOf(workspace: string, count: unknown, deadline?: number, see
     rows.some((row) => row["workspace_id"] !== workspace)
   )
     throw new HostUnread(`herdr returned an incomplete pane list for ${workspace}`);
-  seen?.members.set(workspace, membership(panes));
   return panes;
 }
 
@@ -73,16 +83,22 @@ async function legacyMatches(
   const verified: { workspace: string; pane: string }[] = [];
   for (const row of rows) {
     const workspace = String(row["workspace_id"]);
-    const panes = await panesOf(workspace, row["pane_count"], deadline, obs);
+    const panes = await panesOf(workspace, row["pane_count"], deadline);
     const [first] = panes;
     if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
     if (!closing && panes.length !== 1)
       throw new HostUnread(`cannot verify the root pane for split workspace ${workspace}`);
     const cwd = requiredCwd(first.cwd, workspace);
-    if (canonical(cwd) === canonical(home)) {
-      verified.push({ workspace, pane: first.pane });
-      obs.log.push(`legacy ${workspace} ${first.pane} ${membership(panes)}`);
-    }
+    const rooted = canonical(cwd) === canonical(home);
+    expect(
+      obs,
+      workspace,
+      panes,
+      (now) =>
+        `${membership(now)} ${String(now[0]?.pane)} ${String(matchesHome(now[0]?.cwd, home))}`,
+    );
+    obs.log.push(`legacy ${workspace} ${first.pane} ${String(rooted)} ${membership(panes)}`);
+    if (rooted) verified.push({ workspace, pane: first.pane });
   }
   if (verified.length > 1)
     throw new HostUnread(
@@ -121,7 +137,7 @@ const matchesHome = (cwd: string | undefined, home: string): boolean =>
 
 async function inspectSplit(
   workspace: string,
-  panes: Awaited<ReturnType<typeof panesOf>>,
+  panes: readonly Pane[],
   home: string,
   purpose: Purpose,
   deadline: number | undefined,
@@ -131,6 +147,13 @@ async function inspectSplit(
     throw new HostUnread(`cannot verify the root pane for split workspace ${workspace}`);
   for (const { pane, cwd } of panes) {
     if (matchesHome(cwd, home) && (await lanePaneState(pane, deadline)) === "pi") {
+      expect(
+        obs,
+        workspace,
+        panes,
+        (now) =>
+          `${membership(now)} ${pane} ${String(matchesHome(now.find((p) => p.pane === pane)?.cwd, home))}`,
+      );
       obs.log.push(`split-pi ${workspace} ${pane} ${membership(panes)}`);
       return { workspace, state: "running" };
     }
@@ -148,10 +171,17 @@ async function findCurrent(
   if (row === undefined) return undefined;
   const workspace = String(row["workspace_id"]);
   if (purpose === "close") return { workspace, state: "matched" };
-  const panes = await panesOf(workspace, row["pane_count"], deadline, obs);
+  const panes = await panesOf(workspace, row["pane_count"], deadline);
   const [first] = panes;
   if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
   if (panes.length !== 1) return inspectSplit(workspace, panes, home, purpose, deadline, obs);
+  expect(
+    obs,
+    workspace,
+    panes,
+    (now) =>
+      `${membership(now)} ${String(now[0]?.pane)} ${purpose === "placement" ? String(matchesHome(now[0]?.cwd, home)) : "-"}`,
+  );
   if (purpose === "placement" && !matchesHome(requiredCwd(first.cwd, workspace), home)) {
     obs.log.push(`foreign ${workspace} ${first.pane}`);
     return undefined;
@@ -186,15 +216,15 @@ interface Listed {
   legacy: Rows;
 }
 
-async function sameMembers(
-  members: ReadonlyMap<string, string>,
+async function sameEvidence(
+  checks: Observation["checks"],
   rows: Rows,
   deadline: number | undefined,
 ): Promise<boolean> {
-  for (const [workspace, key] of members) {
+  for (const [workspace, { key, of }] of checks) {
     const row = rows.find((r) => r["workspace_id"] === workspace);
     if (row === undefined) return false;
-    if (membership(await panesOf(workspace, row["pane_count"], deadline)) !== key) return false;
+    if (of(await panesOf(workspace, row["pane_count"], deadline)) !== key) return false;
   }
   return true;
 }
@@ -218,7 +248,7 @@ export async function workspaceOf(
   };
   const changed = () => new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
   const decide = async (rows: Listed, before?: Listed) => {
-    const obs: Observation = { log: [], members: new Map() };
+    const obs: Observation = { log: [], checks: new Map() };
     const current = await findCurrent(rows.current[0], info.home, purpose, deadline, obs);
     if (current !== undefined) {
       obs.log.push(`current ${current.workspace} ${String(rows.current[0]?.["pane_count"])}`);
@@ -247,7 +277,7 @@ export async function workspaceOf(
   if (
     !sameRows(last.current, final.current) ||
     (!again.viaCurrent && !sameRows(last.legacy, final.legacy)) ||
-    !(await sameMembers(again.obs.members, [...final.current, ...final.legacy], deadline))
+    !(await sameEvidence(again.obs.checks, [...final.current, ...final.legacy], deadline))
   )
     throw changed();
   return decided.found;

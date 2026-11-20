@@ -101,6 +101,24 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
+  'pane process-info:cwd-drop-final')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane list:cwd-drop-final')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -lt 3 ]; then
+      printf '%s' "$reply"
+      exit 0
+    fi
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.panes) if (row.pane_id === process.env.FAULT_PANE) delete row.cwd;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
   'pane list:split-utility-flip')
     reply=$("$REAL_HERDR" "$@") || exit $?
     if [ ! -e "$HERDR_FAULT_LOG.utility" ]; then
