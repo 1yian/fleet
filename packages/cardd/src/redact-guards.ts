@@ -5,7 +5,7 @@ const COOKIE_HEADER = new RegExp(
     String.raw`(?<![\w-])(?:set-)?cookies?2?(?:\\?["'])?\s*:`,
     String.raw`["']name["']\s*:\s*["']${RECORD_NAME}["']`,
     String.raw`\[\s*["']${RECORD_NAME}["']\s*,\s*["']`,
-    String.raw`\u0001\s*${RECORD_NAME}\s*:`,
+    String.raw`[\u0001<>]\s*${RECORD_NAME}\s*:`,
   ].join("|"),
   "i",
 );
@@ -21,9 +21,10 @@ export function logicalView(text: string): string {
 export const hasCookieHeader = (text: string): boolean =>
   COOKIE_HEADER.test(
     text
-      .replace(UNICODE_ESCAPE, (_escape, hex: string) =>
-        String.fromCharCode(Number.parseInt(hex, 16)),
-      )
+      .replace(UNICODE_ESCAPE, (_escape, hex: string) => {
+        const code = Number.parseInt(hex, 16);
+        return code < 0x20 ? "\u0001" : String.fromCharCode(code);
+      })
       .replace(CONTROL_ESCAPE, "\u0001")
       .replace(/\\+/g, ""),
   );

@@ -194,6 +194,12 @@ for (const [name, diagnostic] of [
   ],
   ["a serialized api key header", String.raw`{"trace":"GET / HTTP/1.1\r\nX-Api-Key: paper"}`],
   [
+    "a unicode-escaped line break before authorization",
+    String.raw`{"trace":"GET / HTTP/1.1\u000d\u000aAuthorization: Basic cGFwZXI6Y2Fub2U="}`,
+  ],
+  ["a verbose digest authorization", '> Authorization: Digest username="demo", response="paper"'],
+  ["a verbose api key header", "> X-Api-Key: paper"],
+  [
     "a cookie header beside a curl credential",
     "Cookie: session=paper\ncurl -u 'demo:paper canoe' https://localhost",
   ],
