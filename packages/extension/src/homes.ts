@@ -46,6 +46,7 @@ export interface Outcome {
 }
 
 interface SweepResult {
+  readonly expected: string[];
   readonly outcomes: Outcome[];
   readonly failed?: string;
 }
@@ -428,8 +429,10 @@ export async function up(
   only: string | undefined,
   deadline?: number,
 ): Promise<SweepResult> {
+  const lanes = named(root, only);
+  const expected = lanes.map(({ lane }) => lane);
   const outcomes: Outcome[] = [];
-  for (const info of named(root, only)) {
+  for (const info of lanes) {
     try {
       outcomes.push(
         await withLifecycleLock(
@@ -442,11 +445,15 @@ export async function up(
     } catch (error) {
       if (deadline === undefined) throw error;
       if (!(error instanceof HostUnread))
-        return { outcomes, failed: error instanceof Error ? error.message : String(error) };
+        return {
+          expected,
+          outcomes,
+          failed: error instanceof Error ? error.message : String(error),
+        };
       outcomes.push({ lane: info.lane, action: "unread" });
     }
   }
-  return { outcomes };
+  return { expected, outcomes };
 }
 
 async function close(info: LaneHome, workspace: string): Promise<void> {

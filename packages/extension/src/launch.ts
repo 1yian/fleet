@@ -244,8 +244,8 @@ function lane(): string {
 const maintenance = command === "up" && values.maintenance === true;
 const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
-function maintenanceFailure(failed: string, outcomes: readonly Outcome[] = []): void {
-  console.log(JSON.stringify({ failed, outcomes }));
+function maintenanceFailure(failed: string): void {
+  console.log(JSON.stringify({ failed, expected: [], outcomes: [] }));
 }
 
 if (command === "up" || command === "restart") {
@@ -281,8 +281,9 @@ switch (command ?? "") {
   }
   case "up":
     try {
-      const { outcomes, failed } = await up(root, rest[0], maintenanceDeadline);
-      if (typedMaintenance && failed !== undefined) maintenanceFailure(failed, outcomes);
+      const result = await up(root, rest[0], maintenanceDeadline);
+      const { outcomes, failed } = result;
+      if (typedMaintenance) console.log(JSON.stringify(result));
       else {
         if (maintenance && values.json === true && !typedMaintenance) {
           if (failed !== undefined) throw new Error(failed);

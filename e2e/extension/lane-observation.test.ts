@@ -7,7 +7,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import { records, type JsonRecord } from "../support/json.ts";
+import { isRecord, records, type JsonRecord } from "../support/json.ts";
 import { mateArgs, Scratch } from "../support/scratch.ts";
 
 let cardd: Cardd;
@@ -131,8 +131,21 @@ function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1
 
 const legacyMaintenance = ["up", "--maintenance", "--json"];
 const typedMaintenance = [...legacyMaintenance, "--maintenance-outcomes-v1"];
+function maintenanceOutcomes(out: string): unknown {
+  const reply: unknown = JSON.parse(out);
+  assert.ok(isRecord(reply));
+  assert.ok(Array.isArray(reply["expected"]));
+  assert.ok(Array.isArray(reply["outcomes"]));
+  if (reply["failed"] !== undefined) return reply;
+  assert.deepEqual(
+    reply["expected"],
+    records(reply["outcomes"]).map((row) => row["lane"]),
+  );
+  return reply["outcomes"];
+}
+
 const maintain = (fault?: string, pane?: string): unknown =>
-  JSON.parse(fleet(typedMaintenance, fault, pane));
+  maintenanceOutcomes(fleet(typedMaintenance, fault, pane));
 
 async function workspace(lane: string): Promise<JsonRecord | undefined> {
   return records((await lab.run(["workspace", "list"]))["workspaces"]).find(
@@ -441,6 +454,7 @@ test("maintenance returns a completed start alongside a later lifecycle failure"
     const reply = maintain();
     assert.equal(typeof reply, "object");
     assert.notEqual(reply, null);
+    assert.deepEqual(Reflect.get(Object(reply), "expected"), ["ops", "zz"]);
     assert.deepEqual(Reflect.get(Object(reply), "outcomes"), action("ops", "started"));
     assert.match(String(Reflect.get(Object(reply), "failed")), /another fleet command.*lane zz/);
     assert.equal(await workspace("zz"), undefined);
@@ -468,7 +482,7 @@ test("maintenance returns an accepted start before the caller times out on two h
     panes.push(pane);
   }
   const out = fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000");
-  assert.deepEqual(JSON.parse(out), [
+  assert.deepEqual(maintenanceOutcomes(out), [
     ...action("ops", "started"),
     ...action("za", "unread"),
     ...action("zb", "unread"),
@@ -495,7 +509,7 @@ test("maintenance leaves an idle pane untouched when it cannot reserve launch an
   const pane = records([created["root_pane"]])[0]?.["pane_id"];
   assert.ok(typeof pane === "string");
   const out = fleet(typedMaintenance, "slow-idle", pane, "60000");
-  assert.deepEqual(JSON.parse(out), action("ops", "unread"));
+  assert.deepEqual(maintenanceOutcomes(out), action("ops", "unread"));
   assert.equal(existsSync(join(home, "state", "starts")), false);
   assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
   assert.deepEqual(maintain(), action("ops", "started"));
