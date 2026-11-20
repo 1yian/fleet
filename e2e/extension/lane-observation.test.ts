@@ -42,13 +42,14 @@ case "$1 $2:$HERDR_FAULT" in
       exit 0
     fi ;;
   'pane list:panes') printf '%s' '{"result":{}}'; exit 0 ;;
-  'pane list:cwd'|'pane list:split-only'|'pane list:duplicate'|'pane list:foreign')
+  'pane list:cwd'|'pane list:empty-cwd'|'pane list:split-only'|'pane list:duplicate'|'pane list:foreign')
     reply=$("$REAL_HERDR" "$@") || exit $?
     printf '%s' "$reply" | node -e '
       const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
       const pane = reply.result.panes.find((row) => row.pane_id === process.env.FAULT_PANE);
       switch (process.env.HERDR_FAULT) {
         case "cwd": delete pane.cwd; break;
+        case "empty-cwd": pane.cwd = ""; break;
         case "split-only": reply.result.panes = [pane]; break;
         case "duplicate": reply.result.panes = [pane, pane]; break;
         case "foreign": pane.workspace_id = "foreign"; break;
@@ -128,8 +129,10 @@ function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1
   });
 }
 
+const legacyMaintenance = ["up", "--maintenance", "--json"];
+const typedMaintenance = [...legacyMaintenance, "--maintenance-outcomes-v1"];
 const maintain = (fault?: string, pane?: string): unknown =>
-  JSON.parse(fleet(["up", "--maintenance", "--json"], fault, pane));
+  JSON.parse(fleet(typedMaintenance, fault, pane));
 
 async function workspace(lane: string): Promise<JsonRecord | undefined> {
   return records((await lab.run(["workspace", "list"]))["workspaces"]).find(
@@ -182,6 +185,64 @@ test("a workspace omitted once neither restarts nor crash-holds a running mate",
     assert.equal(readFileSync(startsFile, "utf8"), history);
     assert.equal(existsSync(join(home, "state", "stopped")), false);
   }
+});
+
+test("status, placement, restart and stop confirm a one-off workspace omission", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  const original = (await workspace("ops"))?.["workspace_id"];
+  assert.ok(typeof original === "string");
+  const afterOmission = (args: string[]) => {
+    rmSync(faultLog(), { force: true });
+    return fleet(args, "omit-once");
+  };
+  assert.deepEqual(JSON.parse(afterOmission(["status", "--json"])), [
+    { lane: "ops", state: "running" },
+  ]);
+  assert.deepEqual(JSON.parse(afterOmission(["status", "--placement", "--json"])), [
+    { lane: "ops", mate: true },
+  ]);
+  assert.deepEqual(
+    JSON.parse(afterOmission(["restart", "ops", "--json"])),
+    action("ops", "started"),
+  );
+  const replaced = (await workspace("ops"))?.["workspace_id"];
+  assert.ok(typeof replaced === "string" && replaced !== original);
+  assert.equal(afterOmission(["stop", "ops"]).trim(), "ops: stopped");
+  assert.equal(await workspace("ops"), undefined);
+});
+
+test("explicit legacy operations cannot mistake absent cwd for a different home", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const created = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    home,
+    "--label",
+    "fleet-ops",
+    "--no-focus",
+  ]);
+  const pane = records([created["root_pane"]])[0]?.["pane_id"];
+  const id = records([created["workspace"]])[0]?.["workspace_id"];
+  assert.ok(typeof pane === "string" && typeof id === "string");
+  const stopped = join(home, "state", "stopped");
+  for (const fault of ["cwd", "empty-cwd"])
+    assert.throws(() => fleet(["stop", "ops"], fault, pane), /no root pane cwd/);
+  assert.equal(existsSync(stopped), false);
+  writeFileSync(stopped, "stopped by hand\n");
+  for (const fault of ["cwd", "empty-cwd"])
+    assert.throws(() => fleet(["restart"], fault, pane), /no root pane cwd/);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
+    { lane: "ops", state: "stopped", reason: "stopped by hand" },
+  ]);
+  assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");
+  assert.equal(
+    records((await lab.run(["workspace", "list"]))["workspaces"]).some(
+      (row) => row["workspace_id"] === id,
+    ),
+    false,
+  );
 });
 
 test("home matching needs the mate's cwd, not the cwd of an unrelated split", async () => {
@@ -345,6 +406,33 @@ test("maintenance returns a completed start even when the next lane cannot be re
   assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "running")]);
 });
 
+test("an old supervisor's command still gets array success and nonzero operation failure", async () => {
+  assert.equal(fleet(["--maintenance-outcomes-v1"]).trim(), "fleet: maintenance outcomes v1");
+  assert.equal(await workspace("ops"), undefined);
+  assert.deepEqual(JSON.parse(fleet(legacyMaintenance)), action("ops", "started"));
+  const home = addLane("zz");
+  const lock = new DatabaseSync(join(home, "state", "lifecycle.db"));
+  try {
+    lock.exec("BEGIN IMMEDIATE");
+    let caught: unknown;
+    try {
+      fleet(legacyMaintenance);
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error);
+    assert.equal(Reflect.get(caught, "status"), 1);
+    assert.equal(String(Reflect.get(caught, "stdout")).trim(), "");
+    assert.match(String(Reflect.get(caught, "stderr")), /another fleet command.*lane zz/);
+  } finally {
+    lock.close();
+  }
+  assert.deepEqual(JSON.parse(fleet(legacyMaintenance)), [
+    ...action("ops", "running"),
+    ...action("zz", "started"),
+  ]);
+});
+
 test("maintenance returns a completed start alongside a later lifecycle failure", async () => {
   const home = addLane("zz");
   const lock = new DatabaseSync(join(home, "state", "lifecycle.db"));
@@ -379,7 +467,7 @@ test("maintenance returns an accepted start before the caller times out on two h
     assert.ok(typeof pane === "string");
     panes.push(pane);
   }
-  const out = fleet(["up", "--maintenance", "--json"], "hanging-panes", panes.join(","), "60000");
+  const out = fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000");
   assert.deepEqual(JSON.parse(out), [
     ...action("ops", "started"),
     ...action("za", "unread"),
@@ -406,7 +494,7 @@ test("maintenance leaves an idle pane untouched when it cannot reserve launch an
   ]);
   const pane = records([created["root_pane"]])[0]?.["pane_id"];
   assert.ok(typeof pane === "string");
-  const out = fleet(["up", "--maintenance", "--json"], "slow-idle", pane, "60000");
+  const out = fleet(typedMaintenance, "slow-idle", pane, "60000");
   assert.deepEqual(JSON.parse(out), action("ops", "unread"));
   assert.equal(existsSync(join(home, "state", "starts")), false);
   assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);

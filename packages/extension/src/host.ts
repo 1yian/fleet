@@ -11,6 +11,17 @@ export class HostUnreachable extends Error {}
 
 export class NoTransport extends HostUnreachable {}
 
+export class HostCommandFailed extends Error {
+  readonly exitCode: number;
+  readonly hasOutput: boolean;
+
+  constructor(message: string, exitCode: number, hasOutput: boolean) {
+    super(message);
+    this.exitCode = exitCode;
+    this.hasOutput = hasOutput;
+  }
+}
+
 export class HostUnread extends Error {}
 
 class LaneServerMissing extends Error {}
@@ -313,7 +324,12 @@ async function run(
           );
         else {
           const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
-          reject(failure(via, error, scrub(message), false));
+          const failed = failure(via, error, scrub(message), false);
+          reject(
+            failed instanceof HostUnreachable || typeof error.code !== "number"
+              ? failed
+              : new HostCommandFailed(failed.message, error.code, out.trim() !== ""),
+          );
         }
       },
     );

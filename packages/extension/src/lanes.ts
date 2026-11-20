@@ -5,11 +5,22 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
-import { HostUnread, HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
+import {
+  HostCommandFailed,
+  HostUnread,
+  HostUnreachable,
+  onFleetRoot,
+  onHost,
+  records,
+} from "./host.ts";
 import { sidebarHostName } from "./arrange.ts";
 import type { Link } from "./link.ts";
 import { isRecord, readLaneConfig, type LaneConfig } from "./lane-config.ts";
-import { MAINTENANCE_COMMAND_MS } from "./maintenance-budget.ts";
+import {
+  MAINTENANCE_COMMAND_MS,
+  MAINTENANCE_OUTCOMES_CAPABILITY,
+  MAINTENANCE_OUTCOMES_OPTION,
+} from "./maintenance-budget.ts";
 import { readShared } from "./standing.ts";
 import type { LaneRow } from "./views.ts";
 
@@ -272,12 +283,47 @@ const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
 const MAINTENANCE_ACTIONS = new Set(["running", "started", "held", "stopped", "unread"]);
 
+async function supportsMaintenanceOutcomes(config: LaneConfig, host: string): Promise<boolean> {
+  if (host === "local") return true;
+  try {
+    const out = await fleet(config, host, [MAINTENANCE_OUTCOMES_OPTION]);
+    if (out.trim() === MAINTENANCE_OUTCOMES_CAPABILITY) return true;
+  } catch (error) {
+    if (error instanceof HostUnreachable) throw error;
+    const refusal = `sh on ${host} failed: fleet: Unknown option '${MAINTENANCE_OUTCOMES_OPTION}'`;
+    if (error instanceof HostCommandFailed && error.exitCode === 2 && !error.hasOutput) {
+      const firstLine = error.message.split("\n")[0];
+      if (
+        firstLine === refusal ||
+        firstLine?.startsWith(`${refusal}. To specify a positional argument `)
+      )
+        return false;
+    }
+    throw new Error(`could not verify maintenance support on ${host}: ${messageOf(error)}`);
+  }
+  throw new Error(`could not verify maintenance support on ${host}: unexpected capability reply`);
+}
+
 async function maintenanceResult(config: LaneConfig, host: string) {
-  const out = await fleet(config, host, ["up", "--maintenance", "--json"], MAINTENANCE_COMMAND_MS);
+  const typed = await supportsMaintenanceOutcomes(config, host);
+  const args = ["up", "--maintenance", "--json"];
+  if (typed) args.push(MAINTENANCE_OUTCOMES_OPTION);
+  const out = await fleet(config, host, args, MAINTENANCE_COMMAND_MS).catch((error: unknown) => {
+    if (!typed || error instanceof HostUnreachable) throw error;
+    throw new HostUnread(messageOf(error));
+  });
+  try {
+    return readMaintenanceResult(out, host, typed);
+  } catch (error) {
+    throw new HostUnread(messageOf(error));
+  }
+}
+
+function readMaintenanceResult(out: string, host: string, typed: boolean) {
   const answer: unknown = JSON.parse(out.trim().split("\n").at(-1) ?? "");
   let list = answer;
   let failed: string | undefined;
-  if (isRecord(answer)) {
+  if (typed && isRecord(answer)) {
     failed = text(answer, "failed");
     if (failed.trim() === "") throw new Error(`fleet on ${host} returned no failure detail`);
     list = answer["outcomes"];
@@ -290,6 +336,7 @@ async function maintenanceResult(config: LaneConfig, host: string) {
     if (
       text(row, "lane") === "" ||
       !MAINTENANCE_ACTIONS.has(action) ||
+      (!typed && action === "unread") ||
       (action === "held" && text(row, "detail") === "")
     )
       throw new Error(`fleet on ${host} returned an incomplete maintenance result`);
@@ -408,12 +455,7 @@ function keepRunning(
   };
   const maintain = async (host: string): Promise<void> => {
     await share(host);
-    const { results: out, failed } = await maintenanceResult(config, host).catch(
-      (error: unknown) => {
-        if (error instanceof HostUnreachable) throw error;
-        throw new HostUnread(messageOf(error));
-      },
-    );
+    const { results: out, failed } = await maintenanceResult(config, host);
     if (failed === undefined && out.every((row) => row["action"] !== "unread")) {
       maintenanceFailures.delete(host);
       if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
