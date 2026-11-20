@@ -100,7 +100,13 @@ test("a mate's unverified recovery check replays after read or acknowledgement",
   await mate.call("incident.report", { error: TURN_FAILED });
   const heard = await fleet.main.waitForEntry(isFailure, "the second mate's failure");
   const { card, incident, generation } = recoveryOf(heard);
-  await fleet.main.call("card.restart", { card, incident, generation, mode: "retry", key: "retry" });
+  await fleet.main.call("card.restart", {
+    card,
+    incident,
+    generation,
+    mode: "retry",
+    key: "retry",
+  });
   const probe = await mate.waitForEntry(isCheck, "the second mate's recovery check");
   mate.read(probe.id);
   await mate.call("card", { card });

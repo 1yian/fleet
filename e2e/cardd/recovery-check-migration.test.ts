@@ -147,7 +147,10 @@ test("a recovery check whose incident already ended is not delivered or reported
       /already has a recovery in progress/,
     );
     await reported.call("report", { status: "done", text: "finished the task" });
-    assert.deepEqual(missedAbout(fleet, 3).map((entry) => entry.fields["entry"]), [30]);
+    assert.deepEqual(
+      missedAbout(fleet, 3).map((entry) => entry.fields["entry"]),
+      [30],
+    );
     const thread = check(CardViewSchema, await fleet.main.call("card", { card: 1 }));
     assert.equal(thread.entries.find((entry) => entry.id === 15)?.fields["entry"], 11);
     await Promise.all(
