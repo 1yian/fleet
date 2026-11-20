@@ -35,6 +35,15 @@ case "$1 $2:$HERDR_FAULT" in
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
   'pane list:panes') printf '%s' '{"result":{}}'; exit 0 ;;
+  'pane list:cwd')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      const pane = reply.result.panes.find((row) => row.pane_id === process.env.FAULT_PANE);
+      delete pane.cwd;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
   'pane run:malformed') printf '%s' '{}'; exit 0 ;;
@@ -110,6 +119,43 @@ test("missing nested pane or process fields neither start nor hold a lane", asyn
   assert.equal(readFileSync(stoppedFile, "utf8"), "stopped by hand\n");
   assert.deepEqual(maintain(), action("ops", "running"));
   assert.equal(existsSync(stoppedFile), false);
+});
+
+test("only home matching needs the root pane's cwd, and no check needs a split's cwd", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const created = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    home,
+    "--label",
+    "2ndmate-ops",
+    "--no-focus",
+  ]);
+  const root = records([created["root_pane"]])[0]?.["pane_id"];
+  assert.ok(typeof root === "string");
+  await lab.run(["pane", "split", root, "--direction", "right", "--no-focus"]);
+  const id = (await workspace("ops"))?.["workspace_id"];
+  assert.ok(typeof id === "string");
+  const panes = await lab.run(["pane", "list", "--workspace", id]);
+  const split = records(panes["panes"]).find((pane) => pane["pane_id"] !== root)?.["pane_id"];
+  assert.ok(typeof split === "string");
+
+  await lab.run(["workspace", "rename", id, "fleet-ops"]);
+  assert.deepEqual(maintain("cwd", root), action("ops", "unread"));
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"], "cwd", split)), [
+    { lane: "ops", state: "down" },
+  ]);
+  await lab.run(["workspace", "rename", id, "2ndmate-ops"]);
+
+  assert.deepEqual(maintain("cwd", root), action("ops", "started"));
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"], "cwd", root)), [
+    { lane: "ops", state: "running" },
+  ]);
+  assert.deepEqual(maintain("cwd", split), action("ops", "running"));
+  const placement = ["status", "--placement", "--json"];
+  assert.deepEqual(JSON.parse(fleet(placement, "cwd", split)), [{ lane: "ops", mate: true }]);
+  assert.throws(() => fleet(placement, "cwd", root), /no root pane cwd/);
 });
 
 test("maintenance returns a completed start even when the next lane cannot be read", async () => {

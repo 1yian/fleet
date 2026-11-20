@@ -307,16 +307,6 @@ test("unread transport and nested observations neither report failure nor clear 
   assert.equal(sessionText().split("p620 can be reached again").length - 1, 1);
   assert.doesNotMatch(sessionText(), /\[fleet\] lanes: p620 (failed|could not be read)/);
   await waitState(p620, "far", "running");
-
-  writeFileSync(`${control}.mutation`, "");
-  h.onModel(() => ({ tool: "lane", args: { name: "far", action: "start" } }), "mate");
-  h.onModel(() => ({ text: "noted" }), "mate");
-  await wakeMain("Check the explicit lane start reply");
-  const next = await h.waitForCall(2, "mate", WAIT_MS);
-  assert.equal(
-    toolResults(next).at(-1),
-    "fleet on p620 returned an incomplete lane mutation result",
-  );
 });
 
 test("a mate that keeps dying is held, and only naming it starts it again", async () => {

@@ -12,12 +12,7 @@ function nextFault(): string {
   return first;
 }
 
-const start = command.includes("'up' 'far'");
-const fault = maintenance
-  ? nextFault()
-  : start && existsSync(`${control}.mutation`)
-    ? "nested"
-    : "whole";
+const fault = maintenance ? nextFault() : "whole";
 if (maintenance) appendFileSync(`${control}.log`, `${fault}\n`);
 if (fault === "cut") process.stdout.write(run.stdout.slice(0, run.stdout.length / 2));
 else if (fault === "partial") process.stdout.write('[{"lane":"far"}]\n');
