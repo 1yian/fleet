@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { gate, poll } from "../support/harness.ts";
 import {
+  launchArgsOf,
   mateConnected,
   plan,
   startDispatchLab,
@@ -17,10 +19,12 @@ import {
   workerGroupOf,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
+import { gateOf } from "../support/hold-start.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const READINESS = fileURLToPath(new URL("../support/readiness-transport.ts", import.meta.url));
 const CHECKOUT = fileURLToPath(new URL("../..", import.meta.url));
+const HOLD = fileURLToPath(new URL("../support/hold-start.ts", import.meta.url));
 const RESTART_NOTICE = "Your session was restarted on the same card and conversation.";
 const DISPATCH = {
   tool: "dispatch",
@@ -89,8 +93,12 @@ test("a restart whose process could not be started never counts toward the hourl
   );
 });
 
-test("the mate sees the launch error and cap warning when cardd cannot record the refund", async () => {
-  parts = await startDispatchLab();
+test("a failed refund shows both the idle pane context and the scrubbed refusal to the mate only", async () => {
+  const armed = join(tempDir("start-refused-"), "armed");
+  parts = await startDispatchLab({
+    hosts: { far: ["node", READINESS, armed] },
+    roots: { far: CHECKOUT },
+  });
   const { cardd, h, mate } = parts;
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });
   try {
@@ -105,7 +113,7 @@ test("the mate sees the launch error and cap warning when cardd cannot record th
       (turns) =>
         plan(turns, {
           "ship the scrollbar fix": [DISPATCH],
-          "restart with the host offline": [{ tool: "restart_card", args: { card: 1 } }],
+          "restart after dispatch": [{ tool: "restart_card", args: { card: 1 } }],
         }),
       "mate",
     );
@@ -121,34 +129,46 @@ test("the mate sees the launch error and cap warning when cardd cannot record th
     "the completed dispatch",
     WORKER_WAIT_MS,
   );
-  writeFileSync(join(h.dir, "far-down"), "down\n");
-  mate.prompt("restart with the host offline", "followUp");
+  writeFileSync(armed, "refuse\n");
+  mate.prompt("restart after dispatch", "followUp");
   const result = await poll(
     () =>
       h
         .callsOf("mate")
         .flatMap(toolResults)
-        .find((text) => text.includes("Operation timed out")),
+        .find((text) => text.includes("The restart refund was not confirmed")),
     "the failed restart tool result",
     WORKER_WAIT_MS,
   );
+  assert.match(result, /Pi is not running in pane/);
+  assert.match(result, /fixture refused the start --fleet-token \[hidden\]/);
+  assert.doesNotMatch(result, /fixture-secret/);
   assert.match(
     result,
     /The restart refund was not confirmed; this request may still count toward the hourly cap\./,
   );
+  const thread = await cardd.thread(1);
+  assert.ok(thread.entries.every((entry) => !entry.body.includes("fixture refused the start")));
 });
 
-async function verifyCountedRestart({ cardd, mainToken }: DispatchLab, key: string): Promise<void> {
+async function verifyCountedRestart(
+  { cardd, mainToken }: DispatchLab,
+  key: string,
+  generation: number,
+): Promise<void> {
   const restart = { card: 1, key, mode: "replace" } as const;
   const thread = await cardd.thread(1);
   const request = thread.entries.find((entry) => entry.fields["restartKey"] === key);
   assert.ok(request);
-  const refund = await cardd.post(mainToken, "card.restart.failed", {
-    card: 1,
-    key,
-    request: request.id,
-  });
-  assert.deepEqual(refund.body, { ok: true, value: { recorded: false } });
+  assert.ok(thread.entries.every((entry) => entry.fields["restartFailed"] !== request.id));
+  if (generation === 2) {
+    const refund = await cardd.post(mainToken, "card.restart.failed", {
+      card: 1,
+      key,
+      request: request.id,
+    });
+    assert.deepEqual(refund.body, { ok: true, value: { recorded: false } });
+  }
   const post = async (key: string) =>
     check(
       HttpOutcomeSchema,
@@ -157,7 +177,7 @@ async function verifyCountedRestart({ cardd, mainToken }: DispatchLab, key: stri
   const repeated = await post(key);
   assert.ok(repeated.ok, repeated.ok ? undefined : repeated.error);
   const replay = check(OPS["card.restart"].result, repeated.value);
-  assert.deepEqual([replay.repeat, replay.generation], [true, 2]);
+  assert.deepEqual([replay.repeat, replay.generation], [true, generation]);
   for (const nextKey of ["second-slot", "third-slot"]) {
     const next = await post(nextKey);
     assert.ok(next.ok, next.ok ? undefined : next.error);
@@ -169,75 +189,109 @@ async function verifyCountedRestart({ cardd, mainToken }: DispatchLab, key: stri
   });
 }
 
-test("a real replacement that connects and exits before readiness is not launched again or refunded", async (t) => {
-  const armed = join(tempDir("readiness-failure-"), "armed");
-  const released = `${armed}.released`;
-  t.after(() => {
-    writeFileSync(released, "release\n");
-  });
-  const inFlight = gate();
-  t.after(inFlight.open);
-  parts = await startDispatchLab({
-    hosts: { far: ["node", READINESS, armed] },
-    roots: { far: CHECKOUT },
-  });
-  const { cardd, mainToken, h, lab, mate } = parts;
-  const restart = { card: 1, key: "readiness", mode: "replace" } as const;
-  const results = () => h.callsOf("mate").flatMap(toolResults);
-  for (let call = 0; call < 12; call += 1) {
-    h.onModel(
-      (turns) =>
-        plan(turns, {
-          "ship the scrollbar fix": [DISPATCH],
-          "restart after dispatch": [{ tool: "restart_card", args: restart }],
-        }),
-      "mate",
-    );
-  }
-  h.onModel(async () => {
-    await inFlight.wait;
-    return { text: "working" };
-  }, "worker");
-  await mateConnected(h);
-  mate.prompt("ship the scrollbar fix", "followUp");
-  await poll(
-    () => results().find((text) => text.startsWith("Dispatched c-1-a1")),
-    "dispatch",
-    WORKER_WAIT_MS,
-  );
-  await h.waitForCall(0, "worker", WORKER_WAIT_MS);
-  writeFileSync(armed, "armed\n");
-  mate.prompt("restart after dispatch", "followUp");
+async function generationOf({ cardd, mainToken }: DispatchLab): Promise<number> {
+  const { body } = await cardd.post(mainToken, "attempt.resume", { card: 1 });
+  const resumed = check(HttpOutcomeSchema, body);
+  assert.ok(resumed.ok, resumed.ok ? undefined : resumed.error);
+  return check(OPS["attempt.resume"].result, resumed.value).generation;
+}
+
+async function stopReplacement(
+  lab: DispatchLab,
+  original: number,
+  generation: number,
+): Promise<void> {
+  const attempt = "c-1-a1";
   const deadline = Date.now() + WORKER_WAIT_MS;
   for (;;) {
-    const response = await cardd.post(mainToken, "attempt.resume", { card: 1 });
-    const resumed = check(HttpOutcomeSchema, response.body);
-    assert.ok(resumed.ok, resumed.ok ? undefined : resumed.error);
-    if (check(OPS["attempt.resume"].result, resumed.value).generation === 2) break;
-    assert.ok(Date.now() < deadline, "cardd did not record the replacement's hello");
+    const group = await workerGroupOf(lab.lab, attempt);
+    if (
+      group !== undefined &&
+      group > 0 &&
+      group !== original &&
+      (await generationOf(lab)) === generation
+    ) {
+      process.kill(-group, "SIGKILL");
+      break;
+    }
+    assert.ok(
+      Date.now() < deadline,
+      `the replacement did not start at generation ${String(generation)}`,
+    );
     await delay(20);
   }
-  const group = await workerGroupOf(lab, "c-1-a1");
-  assert.ok(group !== undefined && group > 0);
-  process.kill(-group, "SIGKILL");
-  await cardd.waitForSessionLost("c-1-a1");
-  while ((await workerGroupOf(lab, "c-1-a1")) !== undefined) {
+  if (generation === 2) await lab.cardd.waitForSessionLost(attempt);
+  while ((await workerGroupOf(lab.lab, attempt)) !== undefined) {
     assert.ok(Date.now() < deadline, "the replacement is still in the pane");
     await delay(20);
   }
-  writeFileSync(released, "release\n");
+}
 
-  const result = await poll(
-    () =>
-      results().find((text) =>
-        /worker readiness confirmation failed|^Started c-1-a1 again/.test(text),
-      ),
-    "the replacement's readiness result",
-    WORKER_WAIT_MS,
-  );
-  assert.match(result, /worker readiness confirmation failed/);
-  assert.match(result, /The replacement connected before readiness failed/);
-  assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
+for (const hello of ["before", "after"] as const) {
+  test(`a real replacement that exits ${hello} hello without readiness is not launched again or refunded`, async (t) => {
+    const armed = join(tempDir("readiness-failure-"), "armed");
+    const released = `${armed}.released`;
+    t.after(() => {
+      writeFileSync(released, "release\n");
+    });
+    const inFlight = gate();
+    t.after(inFlight.open);
+    parts = await startDispatchLab({
+      hosts: { far: ["node", READINESS, armed] },
+      roots: { far: CHECKOUT },
+      workerArgs: ["-e", HOLD],
+    });
+    const { h, lab, mate } = parts;
+    const restart = { card: 1, key: "readiness", mode: "replace" } as const;
+    const results = () => h.callsOf("mate").flatMap(toolResults);
+    for (let call = 0; call < 12; call += 1) {
+      h.onModel(
+        (turns) =>
+          plan(turns, {
+            "ship the scrollbar fix": [DISPATCH],
+            "restart after dispatch": [{ tool: "restart_card", args: restart }],
+          }),
+        "mate",
+      );
+    }
+    h.onModel(async () => {
+      await inFlight.wait;
+      return { text: "working" };
+    }, "worker");
+    await mateConnected(h);
+    mate.prompt("ship the scrollbar fix", "followUp");
+    await poll(
+      () => results().find((text) => text.startsWith("Dispatched c-1-a1")),
+      "dispatch",
+      WORKER_WAIT_MS,
+    );
+    await h.waitForCall(0, "worker", WORKER_WAIT_MS);
+    const original = await workerGroupOf(lab, "c-1-a1");
+    assert.ok(original !== undefined && original > 0);
+    if (hello === "before") execFileSync("mkfifo", [gateOf(launchArgsOf(h))]);
+    writeFileSync(armed, "armed\n");
+    mate.prompt("restart after dispatch", "followUp");
+    const generation = hello === "after" ? 2 : 1;
+    await stopReplacement(parts, original, generation);
+    writeFileSync(released, "release\n");
 
-  await verifyCountedRestart(parts, restart.key);
-});
+    const result = await poll(
+      () =>
+        results().find((text) =>
+          /worker readiness confirmation failed|^Started c-1-a1 again/.test(text),
+        ),
+      "the replacement's readiness result",
+      WORKER_WAIT_MS,
+    );
+    assert.match(result, /worker readiness confirmation failed/);
+    assert.match(
+      result,
+      hello === "after"
+        ? /The replacement connected before readiness failed/
+        : /The replacement could not be confirmed after the start command; the request was not refunded/,
+    );
+    assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
+
+    await verifyCountedRestart(parts, restart.key, generation);
+  });
+}

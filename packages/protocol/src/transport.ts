@@ -30,7 +30,7 @@ export interface Limits {
 
 export type Finished = (error: ExecFileException | null, stdout: string, stderr: string) => void;
 
-const diedBeforeTheCommandStarted = (
+export const diedBeforeTheCommandStarted = (
   file: string,
   error: ExecFileException,
   stderr: string,
@@ -127,10 +127,11 @@ export function runOnTransport(
   args: readonly string[],
   { sharedRetryBudget, ...limits }: Limits,
   done: Finished,
+  replay = true,
 ): void {
   const deadline = sharedRetryBudget === true ? performance.now() + limits.timeout : undefined;
   launch(file, args, limits, (error, stdout, stderr) => {
-    if (error === null || !diedBeforeTheCommandStarted(file, error, stderr)) {
+    if (!replay || error === null || !diedBeforeTheCommandStarted(file, error, stderr)) {
       done(error, stdout, stderr);
       return;
     }
