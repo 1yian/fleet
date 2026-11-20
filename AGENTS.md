@@ -130,6 +130,8 @@ Then:
 
 For a worker writing or reviewing non-English text, including Chinese and Spanish, prefer the newest suitable GPT through `openai-codex`. Query the current catalog with codemode: `models.getAvailableOfType("chat", "openai-codex")`. Pass its exact `provider/id` as dispatch's `model`; never guess a version. This overrides the lane's worker model for this attempt, including restarts and recovery. Leave other workers on their normal selection. If GPT is unavailable or the project's provider policy forbids it, report the constraint instead of silently substituting Claude.
 
+When your prompt has a `Worker tiers` section, no tier router works on this install, so a worker dispatched with no `model` runs on the default model whatever the work is. Then you pick the tier for every other dispatch: read the work against the descriptions in that section and pass `model=tier/<name>` (for video, images, and UI visuals, the visual tier when it is listed). Choose only a tier that section lists, and omit `model` when none fits. Without that section the router picks, so omit `model`.
+
 Dispatch independent cards at once. Serialize only when one change truly depends on another. Never sit idle waiting on one decision: hold the question and keep everything else moving.
 
 Write every task message to these standing limits:

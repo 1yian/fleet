@@ -9,6 +9,7 @@ import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
 import { boardText, cardText, errorText, EXTRA_COLUMNS, SELECTIONS } from "./views.ts";
+import { requireDefinedTier } from "./worker-tiers.ts";
 
 const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${card.title}`;
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
@@ -32,7 +33,7 @@ const DispatchParams = Type.Object({
     Type.String({
       ...OPS["attempt.begin"].args.properties.model,
       description:
-        "Explicit provider/model for this worker, kept through restarts. On one account of a tiers.json account group it pins the model, not the account: the worker moves to another account of the group that serves the same model when its own is throttled or out of quota. For writing or reviewing non-English text, choose the newest suitable GPT from the model catalog via openai-codex. Omit for the lane's normal worker selection",
+        "Explicit provider/model for this worker, kept through restarts. On one account of a tiers.json account group it pins the model, not the account: the worker moves to another account of the group that serves the same model when its own is throttled or out of quota. For writing or reviewing non-English text, choose the newest suitable GPT from the model catalog via openai-codex. When your prompt has a Worker tiers section, no tier router works on this install: set this to tier/<name> for the kind of work, only from that section, and a tier the install does not define is refused. Otherwise omit for the lane's normal worker selection",
     }),
   ),
   delivery: Type.Optional(
@@ -291,6 +292,7 @@ export function registerMate(
     execute: async (_id, params) => {
       const { title, name, kind, project, intent, host, task, delivery, model } = params;
       isLocal(host);
+      requireDefinedTier(model);
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>

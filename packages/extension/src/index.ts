@@ -50,6 +50,7 @@ import { registerStow } from "./stow.ts";
 import { titleMate } from "./titles.ts";
 import { registerUpdate } from "./updating.ts";
 import { WorkerRun } from "./worker.ts";
+import { workerTiersSection } from "./worker-tiers.ts";
 
 interface Config {
   readonly url: string;
@@ -222,8 +223,8 @@ function appendRolePrompt(pi: ExtensionAPI, role: "mate" | "worker"): void {
 }
 
 function appendMateContract(pi: ExtensionAPI): void {
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}${mateContract()}`,
+  pi.on("before_agent_start", (event, ctx) => ({
+    systemPrompt: `${event.systemPrompt}${mateContract()}${workerTiersSection(ctx.modelRegistry)}`,
   }));
 }
 

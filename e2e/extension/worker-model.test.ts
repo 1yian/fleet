@@ -47,25 +47,27 @@ const systemOf = (turns: Turn[]): string =>
   turns.find((turn) => turn.role === "system")?.text ?? "";
 const isWorker = (turns: Turn[]): boolean => systemOf(turns).includes("# Worker role contract");
 
-async function dispatchWorker(
-  model?: string,
-): Promise<{ main: string; worker: string; pane: string }> {
+const DEFAULT_TASK = "fix the scrollbar";
+const GPT_TASK = "Review the Spanish product copy";
+
+async function startMate(attempts: readonly (string | undefined)[], task: string): Promise<string> {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
-  h.onModel(() => {
-    return {
-      tool: "dispatch",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "fleet",
-        intent: "Fix the scrollbar",
-        host: "local",
-        task: model === undefined ? "fix the scrollbar" : "Review the Spanish product copy",
-        ...(model === undefined ? {} : { model }),
-      },
-    };
-  }, "mate");
+  for (const each of attempts)
+    h.onModel(() => {
+      return {
+        tool: "dispatch",
+        args: {
+          title: "Users see one scrollbar",
+          name: "one-scrollbar",
+          kind: "ship",
+          project: "fleet",
+          intent: "Fix the scrollbar",
+          host: "local",
+          task,
+          ...(each === undefined ? {} : { model: each }),
+        },
+      };
+    }, "mate");
   const pane = await startMain(lab, scratch, h, false, settingsArgs(h));
   const asked: unknown = await cleo.call("card.new", { title: "Ship the fix", kind: "scout" });
   await cleo.call("hold", {
@@ -73,7 +75,16 @@ async function dispatchWorker(
     question: "Ship the fix?",
     options: ["Yes"],
   });
-  for (let index = 2; ; index += 1) {
+  return pane;
+}
+
+async function dispatchWorker(
+  model?: string | readonly string[],
+  task = model === undefined ? DEFAULT_TASK : GPT_TASK,
+): Promise<{ main: string; worker: string; pane: string }> {
+  const attempts = model === undefined ? [undefined] : [model].flat();
+  const pane = await startMate(attempts, task);
+  for (let index = 1 + attempts.length; ; index += 1) {
     const turns = await h.waitForCall(index, "mate", WAIT_MS);
     if (isWorker(turns))
       return { main: h.modelsOf("mate")[0] ?? "", worker: h.modelsOf("mate")[index] ?? "", pane };
@@ -142,3 +153,59 @@ for (const flags of [
     assert.equal(models.worker, "openai-codex/gpt-fixture");
   });
 }
+
+const VIDEO_TASK =
+  "Revise the launch video: re-cut the intro and fix the flicker in the title card";
+
+function installTiers(): void {
+  const chain = ["openai-codex/gpt-fixture:medium"];
+  writeFileSync(
+    join(h.dir, "agent", "tiers.json"),
+    JSON.stringify({
+      tiers: {
+        default: { description: "Build or fix from a known plan, spec, or reproduction.", chain },
+        deep: { description: "Open-ended investigation and hard design problems.", chain },
+        visual: {
+          description: "Work judged mainly on how it looks: video, images, and UI visuals.",
+          chain,
+        },
+      },
+    }),
+  );
+}
+
+const offeredTiers = (system: string): string[] =>
+  [...system.matchAll(/^- (tier\/\S+?):?(?: |$)/gm)].map((found) => found[1] ?? "");
+
+test("on an install with no router, the mate sees the tiers its tiers.json defines and a visual job it dispatches on tier/visual starts there", async () => {
+  installTiers();
+  configureMain(scratch, cardd.url, mainToken, { workerArgs: workerBase() });
+  const models = await dispatchWorker("tier/visual", VIDEO_TASK);
+  assert.equal(models.main, "tier/orchestrator");
+  assert.equal(models.worker, "tier/visual");
+  const seen = systemOf(h.callsOf("mate")[0] ?? []);
+  assert.match(seen, /## Worker tiers\nNo tier router works on this install/);
+  assert.deepEqual(offeredTiers(seen), ["tier/default", "tier/deep", "tier/visual"]);
+});
+
+test("a dispatch that names a tier the install does not define is refused with the defined tiers, before any card or worker exists", async () => {
+  installTiers();
+  configureMain(scratch, cardd.url, mainToken, { workerArgs: workerBase() });
+  await startMate(["tier/cinematic"], VIDEO_TASK);
+  const turns = await h.waitForCall(2, "mate", WAIT_MS);
+  const refusal = turns.findLast((turn) => turn.role === "toolResult")?.text ?? "";
+  assert.match(refusal, /tier\/cinematic is not a tier this install defines/);
+  assert.match(refusal, /one of: tier\/default, tier\/deep, tier\/visual/);
+  assert.equal(
+    (await cardd.board()).cards.some((each) => each.name === "one-scrollbar"),
+    false,
+  );
+  assert.equal(h.callsOf("mate").some(isWorker), false);
+});
+
+test("a mate that is refused an undefined tier dispatches again on a defined one", async () => {
+  installTiers();
+  configureMain(scratch, cardd.url, mainToken, { workerArgs: workerBase() });
+  const models = await dispatchWorker(["tier/cinematic", "tier/visual"], VIDEO_TASK);
+  assert.equal(models.worker, "tier/visual");
+});
