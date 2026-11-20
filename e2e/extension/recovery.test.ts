@@ -416,7 +416,7 @@ test("a replacement requested again with the same key while it is still starting
   mate.prompt("ship it");
   const starting = await waitFor(
     () => workerGroupOf(lab, "c-1-a1"),
-    (group) => group !== undefined && group !== original,
+    (group) => group !== undefined && original !== undefined && group !== original,
     WORKER_WAIT_MS,
   );
   const release = await open(gate, "w");
