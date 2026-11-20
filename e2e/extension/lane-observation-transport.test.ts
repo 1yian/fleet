@@ -218,6 +218,43 @@ test("Pi leaving a pane between reads never lifts a hold or erases start history
   assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
 });
 
+test("a split opened while Pi stays visible never lifts a hold or erases start history", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, history);
+  writeFileSync(stopped, "stopped by hand\n");
+  assert.deepEqual(maintain("pi-stays-split-at-info", root), action("ops", "unread"));
+  assert.equal(existsSync(`${faultLog()}.split`), true);
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("Pi giving way to another foreground process never lifts a hold or erases start history", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, history);
+  writeFileSync(stopped, "stopped by hand\n");
+  assert.deepEqual(maintain("pi-then-busy", root), action("ops", "unread"));
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("a pane that stops being idle while the start is prepared is never run into", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  assert.deepEqual(maintain("idle-then-busy", root), action("ops", "unread"));
+  assert.equal(existsSync(join(home, "state", "starts")), false);
+  assert.equal(existsSync(`${faultLog()}.calls`), true);
+  rmSync(`${faultLog()}.calls`);
+  assert.deepEqual(maintain(), action("ops", "started"));
+});
+
 test("a utility pane changing directory does not discard valid Pi evidence in a split", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
   const root = await idlePane("ops", home);

@@ -53,6 +53,33 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
+  'pane process-info:pi-then-busy')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.pi" ]; then
+      : > "$HERDR_FAULT_LOG.pi"
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":2,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:idle-then-busy')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf 'x\n' >> "$HERDR_FAULT_LOG.calls"
+      if [ "$(wc -l < "$HERDR_FAULT_LOG.calls")" -gt 2 ]; then
+        printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":2,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
+        exit 0
+      fi
+    fi ;;
+  'pane process-info:pi-stays-split-at-info')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      if [ ! -e "$HERDR_FAULT_LOG.split" ]; then
+        : > "$HERDR_FAULT_LOG.split"
+        "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+      fi
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
   'pane process-info:split-at-info'|'pane process-info:pi-split-at-info')
     if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.split" ]; then
       : > "$HERDR_FAULT_LOG.split"

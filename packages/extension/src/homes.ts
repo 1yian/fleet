@@ -260,6 +260,16 @@ function startDeadline(deadline: number | undefined): number | undefined {
   return limit;
 }
 
+async function confirmTarget(
+  info: LaneHome,
+  expected: string | undefined,
+  deadline: number | undefined,
+): Promise<void> {
+  const now = await workspaceOf(info, "liveness", deadline);
+  if (idlePaneOf(now) !== expected || (now === undefined) !== (expected === undefined))
+    throw new HostUnread(`${info.lane} changed while its start was being prepared`);
+}
+
 async function start(
   root: string,
   info: LaneHome,
@@ -270,6 +280,7 @@ async function start(
   const launchDeadline = startDeadline(deadline);
   const history = recentStarts(info.home, Date.now());
   syncHome(root, info.home, launchDeadline);
+  await confirmTarget(info, existingPane, launchDeadline);
   const pane = existingPane ?? (await createMatePane(info, launchDeadline));
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
