@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { parseRecord } from "../support/json.ts";
 import { addRemote, landOnRemote, tip } from "../support/remote.ts";
 import { Scratch } from "../support/scratch.ts";
+import { pathWithout } from "../support/tool-stubs.ts";
 
 const STUB = `#!/bin/sh
 echo "$*" >> "$BUN_LOG"
@@ -75,4 +77,19 @@ test("fleet update reports a failed bun install by step and cause, and builds no
   assert.equal(report["to"], landed);
   assert.match(String(report["error"]), /lockfile had changes, but lockfile is frozen/);
   assert.deepEqual(bunCalls(), ["install --frozen-lockfile"]);
+});
+
+test("fleet update and its check refuse a host without bun, name the fix, and leave the checkout where it was", () => {
+  const before = tip(here.root);
+  landOnRemote(remote, "lock", "bun.lock", "changed\n");
+  const noBun = pathWithout("bun");
+  const problem = `bun is missing on ${hostname()}. Fix: install bun 1.3.13 or later: brew install oven-sh/bun/bun (macOS), or see https://bun.sh/docs/installation`;
+  for (const args of [["update", "--check"], ["update"]]) {
+    const report = parseRecord(here.fleet(args, { PATH: noBun, BUN_LOG: log }));
+    assert.equal(report["state"], "refused");
+    assert.ok(Array.isArray(report["problems"]));
+    assert.ok(report["problems"].includes(problem));
+  }
+  assert.equal(tip(here.root), before);
+  assert.deepEqual(bunCalls(), []);
 });

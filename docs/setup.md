@@ -752,6 +752,16 @@ A mate or worker that gets a message from `cardd` that it cannot read, as when `
 
 A host updates with the code it already has. A host whose checkout predates `fleet update` cannot take part, so update it once by hand: `git -C <checkout> pull && (cd <checkout> && bun install --frozen-lockfile && bun run build)`, then `fleet restart` on that host.
 
+### Moving a host from npm to bun, once
+
+The first `/updatefleet` onto the commit that replaced npm with bun cannot work by itself. Each host runs the `fleet update` it already has. That code runs `npm ci` because `package-lock.json` is deleted, and `npm ci` fails without a lockfile. The update stops at the step "npm ci" after the checkout already fast-forwarded and before any lane home moved, and no mate restarts.
+
+Before that first update, on every host that runs a mate, a worker, or `cardd`, install bun 1.3.13 or later (`brew install oven-sh/bun/bun` on macOS, or https://bun.sh/docs/installation). Then, in the checkout (and in `cardd`'s checkout on `cardd`'s host), run `git pull && bun install --frozen-lockfile && bun run build`, then `fleet restart` on that host.
+
+A host that skipped it recovers by installing bun and running `/updatefleet` again. The checkout is already on the new commit, so the rerun finds nothing to install, builds the board with bun, and moves the lane homes.
+
+After that one time, `fleet update` and `fleet cardd` refuse a host without bun (below 1.3.13) before they change anything, and name the fix.
+
 ### One-time cleanup after the file explorer was removed
 
 Fleet no longer opens a Files tab and never targets one. A Files tab left by an earlier version stays open until someone closes it by hand, or until its workspace closes. Job tabs still close as before.
