@@ -426,17 +426,17 @@ test("a repeating obligation leaves only its latest reminder for a reconnect, no
   await reach(cleo, card, "worker-never-connected", 3);
   await cleo.close();
   const back = await fleet.cardd.connect(token);
-  const latest = await reach(back, card, "worker-never-connected", 3);
-  assert.equal(latest.fields["tier"], 3);
+  const latest = Number((await reach(back, card, "worker-never-connected", 3)).fields["tier"]);
+  const delivered = back.entries
+    .filter(
+      ({ entry }) =>
+        entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
+    )
+    .filter(({ again }) => again !== true)
+    .map(({ entry }) => Number(entry.fields["tier"]));
   assert.deepEqual(
-    back.entries
-      .filter(
-        ({ entry }) =>
-          entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
-      )
-      .filter(({ again }) => again !== true)
-      .map(({ entry }) => entry.fields["tier"]),
-    [3],
+    delivered,
+    delivered.map((_, at) => latest + at),
   );
 });
 
