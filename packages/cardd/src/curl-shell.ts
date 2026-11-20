@@ -11,7 +11,16 @@ export const CURL_SHELL_EXPANSION = new RegExp(
   "im",
 );
 
-export const CURL_DATA_SECRET = new RegExp(
-  String.raw`(?<=\s)(?:-[^-\s]*[dF]|--(?:data|form|json)[\w-]*)[\s\S]*?${SECRET_NAME}\s*[=:]`,
+const DATA_SECRET = new RegExp(
+  String.raw`(?<=\s)(?:-[^-\s]*[dF]|--(?:data|form|json|url-query)[\w-]*)[\s\S]*?${SECRET_NAME}\s*[=:]`,
   "i",
 );
+
+export const CURL_DATA_SECRET = {
+  test: (command: string): boolean =>
+    DATA_SECRET.test(
+      command.replace(/%([\da-f]{2})/gi, (_all, hex: string) =>
+        String.fromCharCode(Number.parseInt(hex, 16)),
+      ),
+    ),
+};

@@ -188,6 +188,10 @@ export const COOKIE_COMPLAINTS = [
   String.raw`Headers {"Co\u006fkie":"session=paper"}`,
   String.raw`Headers {\"Set-Co\u006fkie\":\"session=paper\"}`,
   "Cookie2: session=paper",
+  String.raw`{"trace":"GET / HTTP/1.1\r\nAuthorization: Basic cGFwZXI6Y2Fub2U="}`,
+  String.raw`{"trace":"GET / HTTP/1.1\r\nProxy-Authorization: Basic cGFwZXI6Y2Fub2U="}`,
+  String.raw`{"trace":"GET / HTTP/1.1\r\nX-Api-Key: paper"}`,
+  String.raw`{"trace":"GET / HTTP/1.1\\r\\nAuthorization: Basic cGFwZXI6Y2Fub2U="}`,
   String.raw`{"trace":"GET / HTTP/1.1\r\nCookie: session=paper"}`,
   String.raw`{"trace":"HTTP/1.1 200 OK\r\nSet-Cookie2: session=paper"}`,
   String.raw`{"trace":"GET / HTTP/1.1\\r\\nCookie: session=paper"}`,
@@ -212,6 +216,10 @@ export const COOKIE_COMPLAINTS = [
 
 export const CURL_DATA_COMPLAINTS = [
   "curl --data-urlencode 'password=paper canoe' https://localhost",
+  "curl -d 'pass%77ord=paper%20canoe' https://localhost",
+  "curl -d'api%5Fkey=paper' https://localhost",
+  "curl --url-query 'pass%77ord=paper%20canoe' https://localhost",
+  "curl --data-raw 'user=a&to%6Ben=paper' https://localhost",
   "curl -d'password=paper canoe' https://localhost",
   "curl -F'client_secret=paper canoe' https://localhost",
   "curl -sd 'user=demo name&password=paper canoe' https://localhost",

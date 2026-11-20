@@ -110,6 +110,11 @@ for (const [name, diagnostic] of [
   ["curl json body password", `curl -d '{"password":"paper canoe"}' https://localhost`],
   ["curl multipart secret", "curl -F 'client_secret=paper canoe' https://localhost"],
   ["curl attached data argument", "curl -d'password=paper canoe' https://localhost"],
+  ["curl percent-encoded field name", "curl -d 'pass%77ord=paper%20canoe' https://localhost"],
+  [
+    "curl percent-encoded url query",
+    "curl --url-query 'pass%77ord=paper%20canoe' https://localhost",
+  ],
   [
     "curl grouped data argument",
     "curl -sd 'user=demo name&password=paper canoe' https://localhost",
@@ -183,6 +188,11 @@ for (const [name, diagnostic] of [
   ["a HAR cookie record", String.raw`[{"value":"sid=paper","name":"Cookie"}]`],
   ["a raw cookie header", "Cookie: session=paper"],
   ["a native cookies array", String.raw`{"cookies":[{"name":"sid","value":"paper"}]}`],
+  [
+    "a serialized authorization header",
+    String.raw`{"trace":"GET / HTTP/1.1\r\nAuthorization: Basic cGFwZXI6Y2Fub2U="}`,
+  ],
+  ["a serialized api key header", String.raw`{"trace":"GET / HTTP/1.1\r\nX-Api-Key: paper"}`],
   [
     "a cookie header beside a curl credential",
     "Cookie: session=paper\ncurl -u 'demo:paper canoe' https://localhost",

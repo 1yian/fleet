@@ -5,6 +5,7 @@ const COOKIE_HEADER = new RegExp(
     String.raw`(?<![\w-])(?:set-)?cookies?2?(?:\\?["'])?\s*:`,
     String.raw`["']name["']\s*:\s*["']${RECORD_NAME}["']`,
     String.raw`\[\s*["']${RECORD_NAME}["']\s*,\s*["']`,
+    String.raw`\u0001\s*${RECORD_NAME}\s*:`,
   ].join("|"),
   "i",
 );
@@ -23,7 +24,7 @@ export const hasCookieHeader = (text: string): boolean =>
       .replace(UNICODE_ESCAPE, (_escape, hex: string) =>
         String.fromCharCode(Number.parseInt(hex, 16)),
       )
-      .replace(CONTROL_ESCAPE, " ")
+      .replace(CONTROL_ESCAPE, "\u0001")
       .replace(/\\+/g, ""),
   );
 
