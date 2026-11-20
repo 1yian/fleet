@@ -29,7 +29,18 @@ async function observeList(
   return rows;
 }
 
-async function panesOf(workspace: string, count: unknown, deadline?: number) {
+const membership = (panes: readonly { pane: string }[]): string =>
+  panes
+    .map(({ pane }) => pane)
+    .sort()
+    .join(",");
+
+interface Observation {
+  log: string[];
+  members: Map<string, string>;
+}
+
+async function panesOf(workspace: string, count: unknown, deadline?: number, seen?: Observation) {
   const rows = await observeList("pane", ["--workspace", workspace], ["pane_id"], deadline);
   const panes = rows.map((row) => ({ pane: String(row["pane_id"]), cwd: field(row, "cwd") }));
   if (
@@ -39,6 +50,7 @@ async function panesOf(workspace: string, count: unknown, deadline?: number) {
     rows.some((row) => row["workspace_id"] !== workspace)
   )
     throw new HostUnread(`herdr returned an incomplete pane list for ${workspace}`);
+  seen?.members.set(workspace, membership(panes));
   return panes;
 }
 
@@ -56,12 +68,12 @@ async function legacyMatches(
   home: string,
   closing: boolean,
   deadline: number | undefined,
-  log: string[],
+  obs: Observation,
 ) {
   const verified: { workspace: string; pane: string }[] = [];
   for (const row of rows) {
     const workspace = String(row["workspace_id"]);
-    const panes = await panesOf(workspace, row["pane_count"], deadline);
+    const panes = await panesOf(workspace, row["pane_count"], deadline, obs);
     const [first] = panes;
     if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
     if (!closing && panes.length !== 1)
@@ -69,7 +81,7 @@ async function legacyMatches(
     const cwd = requiredCwd(first.cwd, workspace);
     if (canonical(cwd) === canonical(home)) {
       verified.push({ workspace, pane: first.pane });
-      log.push(`legacy ${workspace} ${first.pane} ${membership(panes)}`);
+      obs.log.push(`legacy ${workspace} ${first.pane} ${membership(panes)}`);
     }
   }
   if (verified.length > 1)
@@ -84,31 +96,25 @@ async function findLegacy(
   home: string,
   purpose: Purpose,
   deadline: number | undefined,
-  log: string[],
+  obs: Observation,
 ): Promise<LaneMatch | undefined> {
   const only = await legacyMatches(
     rows,
     home,
     purpose === "close" || purpose === "restart-held",
     deadline,
-    log,
+    obs,
   );
   if (only === undefined) return undefined;
   if (purpose === "close") return { workspace: only.workspace, state: "matched" };
   const state = await lanePaneState(only.pane, deadline);
-  log.push(`legacy-state ${only.pane} ${state}`);
+  obs.log.push(`legacy-state ${only.pane} ${state}`);
   if (purpose === "restart-held")
     return state !== "down" ? { workspace: only.workspace, state: "running" } : undefined;
   if (purpose === "placement" && state !== "pi") return undefined;
   if (state !== "down") return { workspace: only.workspace, state: "running" };
   return { workspace: only.workspace, state: "idle", pane: only.pane };
 }
-
-const membership = (panes: readonly { pane: string }[]): string =>
-  panes
-    .map(({ pane }) => pane)
-    .sort()
-    .join(",");
 
 const matchesHome = (cwd: string | undefined, home: string): boolean =>
   cwd !== undefined && cwd !== "" && canonical(cwd) === canonical(home);
@@ -119,13 +125,13 @@ async function inspectSplit(
   home: string,
   purpose: Purpose,
   deadline: number | undefined,
-  log: string[],
+  obs: Observation,
 ): Promise<LaneMatch> {
   if (purpose === "placement")
     throw new HostUnread(`cannot verify the root pane for split workspace ${workspace}`);
   for (const { pane, cwd } of panes) {
     if (matchesHome(cwd, home) && (await lanePaneState(pane, deadline)) === "pi") {
-      log.push(`split-pi ${workspace} ${pane} ${membership(panes)}`);
+      obs.log.push(`split-pi ${workspace} ${pane} ${membership(panes)}`);
       return { workspace, state: "running" };
     }
   }
@@ -137,21 +143,21 @@ async function findCurrent(
   home: string,
   purpose: Purpose,
   deadline: number | undefined,
-  log: string[],
+  obs: Observation,
 ): Promise<LaneMatch | undefined> {
   if (row === undefined) return undefined;
   const workspace = String(row["workspace_id"]);
   if (purpose === "close") return { workspace, state: "matched" };
-  const panes = await panesOf(workspace, row["pane_count"], deadline);
+  const panes = await panesOf(workspace, row["pane_count"], deadline, obs);
   const [first] = panes;
   if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
-  if (panes.length !== 1) return inspectSplit(workspace, panes, home, purpose, deadline, log);
+  if (panes.length !== 1) return inspectSplit(workspace, panes, home, purpose, deadline, obs);
   if (purpose === "placement" && !matchesHome(requiredCwd(first.cwd, workspace), home)) {
-    log.push(`foreign ${workspace} ${first.pane}`);
+    obs.log.push(`foreign ${workspace} ${first.pane}`);
     return undefined;
   }
   const state = await lanePaneState(first.pane, deadline);
-  log.push(`single ${workspace} ${first.pane} ${state}`);
+  obs.log.push(`single ${workspace} ${first.pane} ${state}`);
   if (purpose === "placement" && state !== "pi") return undefined;
   return state !== "down"
     ? { workspace, state: "running" }
@@ -175,6 +181,24 @@ const sameRows = (before: Rows, after: Rows): boolean =>
     );
   });
 
+interface Listed {
+  current: Rows;
+  legacy: Rows;
+}
+
+async function sameMembers(
+  members: ReadonlyMap<string, string>,
+  rows: Rows,
+  deadline: number | undefined,
+): Promise<boolean> {
+  for (const [workspace, key] of members) {
+    const row = rows.find((r) => r["workspace_id"] === workspace);
+    if (row === undefined) return false;
+    if (membership(await panesOf(workspace, row["pane_count"], deadline)) !== key) return false;
+  }
+  return true;
+}
+
 export async function workspaceOf(
   info: { lane: string; home: string },
   purpose: Purpose,
@@ -193,27 +217,39 @@ export async function workspaceOf(
     };
   };
   const changed = () => new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
-  type Listed = Awaited<ReturnType<typeof read>>;
   const decide = async (rows: Listed, before?: Listed) => {
-    const log: string[] = [];
-    const current = await findCurrent(rows.current[0], info.home, purpose, deadline, log);
+    const obs: Observation = { log: [], members: new Map() };
+    const current = await findCurrent(rows.current[0], info.home, purpose, deadline, obs);
     if (current !== undefined) {
-      log.push(`current ${current.workspace} ${String(rows.current[0]?.["pane_count"])}`);
-      return { found: current, log };
+      obs.log.push(`current ${current.workspace} ${String(rows.current[0]?.["pane_count"])}`);
+      return { found: current, obs, viaCurrent: true };
     }
     if (
       before !== undefined &&
       (!sameRows(before.current, rows.current) || !sameRows(before.legacy, rows.legacy))
     )
       throw changed();
-    return { found: await findLegacy(rows.legacy, info.home, purpose, deadline, log), log };
+    const found = await findLegacy(rows.legacy, info.home, purpose, deadline, obs);
+    return { found, obs, viaCurrent: false };
   };
   const first = await read();
   const fresh = await read();
   if (first.current.length > 0 && !sameRows(first.current, fresh.current)) throw changed();
   const decided = await decide(fresh, first);
-  const again = await decide(await read(), fresh);
-  if (JSON.stringify(decided) !== JSON.stringify(again)) throw changed();
+  const last = await read();
+  const again = await decide(last, fresh);
+  if (
+    JSON.stringify([decided.found, decided.obs.log]) !==
+    JSON.stringify([again.found, again.obs.log])
+  )
+    throw changed();
+  const final = await read();
+  if (
+    !sameRows(last.current, final.current) ||
+    (!again.viaCurrent && !sameRows(last.legacy, final.legacy)) ||
+    !(await sameMembers(again.obs.members, [...final.current, ...final.legacy], deadline))
+  )
+    throw changed();
   return decided.found;
 }
 

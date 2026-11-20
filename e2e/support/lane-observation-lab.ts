@@ -63,13 +63,14 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":2,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
       exit 0
     fi ;;
-  'pane process-info:idle-then-busy')
+  'pane process-info:pi-stays-split-at-second-info')
     if [ "$4" = "$FAULT_PANE" ]; then
-      printf 'x\n' >> "$HERDR_FAULT_LOG.calls"
-      if [ "$(wc -l < "$HERDR_FAULT_LOG.calls")" -gt 2 ]; then
-        printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":2,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
-        exit 0
+      printf 'x\\n' >> "$HERDR_FAULT_LOG.calls"
+      if [ "$(wc -l < "$HERDR_FAULT_LOG.calls")" -eq 2 ]; then
+        "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
       fi
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
     fi ;;
   'pane process-info:pi-stays-split-at-info')
     if [ "$4" = "$FAULT_PANE" ]; then
