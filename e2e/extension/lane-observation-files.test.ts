@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { isRecord, records } from "../support/json.ts";
@@ -9,6 +9,7 @@ import {
   here,
   fleet,
   fleetEnv,
+  legacyMaintenance,
   maintain,
   typedMaintenance,
   workspace,
@@ -61,38 +62,90 @@ test("a typed maintenance reply far larger than the pipe survives exit with its 
   assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
 });
 
-test("two homes claiming one lane are both unread and never start, while a healthy sibling still does", async () => {
-  const sibling = addLane("zz");
-  assert.ok(existsSync(join(sibling, "config", "lane.json")));
+function copyHome(name: string, edit: (config: Record<string, unknown>) => void): string {
+  const home = `${here.root}.worktrees/lane-${name}`;
+  const raw: unknown = JSON.parse(readFileSync(join(lane(), "config", "lane.json"), "utf8"));
+  assert.ok(isRecord(raw));
+  edit(raw);
+  mkdirSync(join(home, "config"), { recursive: true });
+  writeFileSync(join(home, "config", "lane.json"), JSON.stringify(raw));
+  return home;
+}
+
+test("homes claiming one lane are a single unread record under that lane, and a sibling still starts", async () => {
+  addLane("zz");
   const home = lane();
-  const copy = `${here.root}.worktrees/lane-ops-backup`;
-  mkdirSync(join(copy, "config"), { recursive: true });
-  cpSync(join(home, "config", "lane.json"), join(copy, "config", "lane.json"));
+  const backup = copyHome("ops-backup", () => undefined);
+  const old = copyHome("ops-old", () => undefined);
   const reply: unknown = JSON.parse(fleet(typedMaintenance));
   assert.ok(isRecord(reply));
-  assert.deepEqual(reply["expected"], ["zz", "ops", "ops-backup"]);
+  assert.deepEqual(reply["expected"], ["zz", "ops"]);
   assert.match(
     String(reply["failed"]),
-    /lane ops is claimed by more than one home \(lane-ops, lane-ops-backup\)/,
+    /lane ops is claimed by more than one home \(lane-ops, lane-ops-backup, lane-ops-old\)/,
   );
-  assert.deepEqual(records(reply["outcomes"]), [{ lane: "zz", action: "started" }]);
+  assert.deepEqual(
+    records(reply["outcomes"]).map((row) => [row["lane"], row["action"]]),
+    [["zz", "started"]],
+  );
   assert.equal(await workspace("ops"), undefined);
-  assert.equal(existsSync(join(home, "state", "starts")), false);
-  assert.equal(existsSync(join(copy, "state", "starts")), false);
+  for (const each of [home, backup, old])
+    assert.equal(existsSync(join(each, "state", "starts")), false);
+  const readable = copyHome("ops-readable", (config) => {
+    config["lane"] = "ops-old";
+  });
   const rows: unknown = JSON.parse(fleet(["status", "--json"]));
   assert.deepEqual(
     records(rows).map((row) => [row["lane"], row["state"]]),
     [
+      ["ops-old", "down"],
       ["zz", "running"],
       ["ops", "unknown"],
-      ["ops-backup", "unknown"],
     ],
   );
-  rmSync(copy, { recursive: true });
+  rmSync(readable, { recursive: true });
+  assert.throws(() => fleet(["up", "ops"]), /lane ops is claimed by more than one home/);
+  rmSync(backup, { recursive: true });
+  rmSync(old, { recursive: true });
   assert.deepEqual(maintain(), [
     { lane: "ops", action: "started" },
     { lane: "zz", action: "running" },
   ]);
+});
+
+test("a blank lane name is unread under its directory, never started, and keeps sibling outcomes", () => {
+  addLane("zz");
+  copyHome("blank", (config) => {
+    config["lane"] = " ";
+  });
+  const reply: unknown = JSON.parse(fleet(typedMaintenance));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops", "zz", "blank"]);
+  assert.match(String(reply["failed"]), /lane blank could not be read: .* needs "lane"/);
+  assert.deepEqual(
+    records(reply["outcomes"]).map((row) => [row["lane"], row["action"]]),
+    [
+      ["ops", "started"],
+      ["zz", "started"],
+    ],
+  );
+  assert.equal(existsSync(join(here.root, ".worktrees", "lane-blank", "state", "starts")), false);
+});
+
+test("an unreadable root config is reported by typed maintenance without stopping verified second mates", async () => {
+  const config = join(here.root, "config", "lane.json");
+  const good = readFileSync(config, "utf8");
+  writeFileSync(config, "{");
+  assert.throws(() => fleet(legacyMaintenance), /not valid JSON/);
+  assert.equal(await workspace("ops"), undefined);
+  const reply: unknown = JSON.parse(fleet(typedMaintenance));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops"]);
+  assert.match(String(reply["failed"]), /root lane config could not be read: .*not valid JSON/);
+  assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
+  assert.throws(() => fleet(["up"]), /not valid JSON/);
+  writeFileSync(config, good);
+  assert.deepEqual(maintain(), action("ops", "running"));
 });
 
 test("a dangling lane config, stop marker or start history is unread, never absent", async () => {

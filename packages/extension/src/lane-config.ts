@@ -141,7 +141,8 @@ export function parseLaneConfig(file: string, config: unknown): LaneConfig {
   if (!isRecord(config)) throw new Error(`${file} is not a JSON object`);
   const { lane, url } = config;
   const secrets = credentials(file, config);
-  if (typeof lane !== "string" || typeof url !== "string") throw new Error(`${file} ${NEEDS}`);
+  if (typeof lane !== "string" || lane.trim() === "" || typeof url !== "string")
+    throw new Error(`${file} ${NEEDS}`);
   const folder = direnvFolder(file, config["direnv"]);
   const cardd = carddConfig(file, config["cardd"]);
   const own = ownHost(file, config["host"]);

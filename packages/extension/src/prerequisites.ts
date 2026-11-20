@@ -172,8 +172,16 @@ export function profileOf(home: string, settings: Record<string, unknown>): stri
   );
 }
 
-function memoryProblems(root: string, host: string): string[] {
-  const main = readLaneConfig(root);
+function memoryProblems(root: string, host: string, retained?: string[]): string[] {
+  let main: ReturnType<typeof readLaneConfig>;
+  try {
+    main = readLaneConfig(root);
+  } catch (error) {
+    if (retained === undefined) throw error;
+    retained.push(
+      `root lane config could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const homes = [
     ...(main === undefined ? [] : [{ lane: main.lane, home: root }]),
     ...discoverLanes(root).homes,
@@ -193,10 +201,15 @@ function memoryProblems(root: string, host: string): string[] {
 
 export const bunProblems = (): string[] => [toolProblem(BUN, hostname(), false) ?? []].flat();
 
-export function hostProblems(root: string, checkLogin = true, deadline?: number): string[] {
+export function hostProblems(
+  root: string,
+  checkLogin = true,
+  deadline?: number,
+  retained?: string[],
+): string[] {
   const host = hostname();
   return [
     ...TOOLS.flatMap((tool) => toolProblem(tool, host, checkLogin, deadline) ?? []),
-    ...memoryProblems(root, host),
+    ...memoryProblems(root, host, retained),
   ];
 }

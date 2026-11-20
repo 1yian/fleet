@@ -52,8 +52,13 @@ export interface UnreadLane {
 }
 
 type Scanned =
-  | { readonly name: string; readonly home: string; readonly config: LaneConfig }
-  | { readonly name: string; readonly home: string; readonly error: unknown };
+  | {
+      readonly name: string;
+      readonly lane: string;
+      readonly home: string;
+      readonly config: LaneConfig;
+    }
+  | { readonly name: string; readonly lane: string; readonly error: unknown };
 
 function scanHomes(root: string): Scanned[] {
   const dir = `${root}.worktrees`;
@@ -71,39 +76,30 @@ function scanHomes(root: string): Scanned[] {
       const home = join(dir, name);
       try {
         const config = readLaneConfig(home);
-        return config === undefined ? [] : [{ name, home, config }];
+        return config === undefined ? [] : [{ name, lane: config.lane, home, config }];
       } catch (error) {
-        return [{ name, home, error }];
+        return [{ name, lane: name.slice("lane-".length), error }];
       }
     });
-  return rejectSharedIdentities(scanned);
+  return mergeSharedClaims(scanned);
 }
 
-const identityOf = (found: Scanned): string =>
-  "error" in found ? found.name.slice("lane-".length) : found.config.lane;
-
-function rejectSharedIdentities(scanned: Scanned[]): Scanned[] {
-  let current = scanned;
-  for (;;) {
-    const claims = new Map<string, Scanned[]>();
-    for (const found of current)
-      claims.set(identityOf(found), [...(claims.get(identityOf(found)) ?? []), found]);
-    const shared = [...claims.entries()].filter(([, owners]) => owners.length > 1);
-    if (shared.length === 0) return current;
-    const rejected = new Set(
-      shared.flatMap(([, owners]) => owners.filter((owner) => !("error" in owner))),
-    );
-    current = current.map((found) => {
-      if (!rejected.has(found)) return found;
-      const lane = identityOf(found);
-      const homes = (claims.get(lane) ?? []).map((owner) => owner.name).join(", ");
-      return {
+function mergeSharedClaims(scanned: Scanned[]): Scanned[] {
+  const owners = new Map<string, Scanned[]>();
+  for (const found of scanned) owners.set(found.lane, [...(owners.get(found.lane) ?? []), found]);
+  return scanned.flatMap((found): Scanned[] => {
+    const same = owners.get(found.lane) ?? [];
+    if (same.length === 1) return [found];
+    if (same[0] !== found) return [];
+    const homes = same.map((owner) => owner.name).join(", ");
+    return [
+      {
         name: found.name,
-        home: found.home,
-        error: new Error(`lane ${lane} is claimed by more than one home (${homes})`),
-      };
-    });
-  }
+        lane: found.lane,
+        error: new Error(`lane ${found.lane} is claimed by more than one home (${homes})`),
+      },
+    ];
+  });
 }
 
 export function discoverLanes(root: string): { homes: LaneHome[]; unread: UnreadLane[] } {
@@ -113,10 +109,10 @@ export function discoverLanes(root: string): { homes: LaneHome[]; unread: Unread
     if ("error" in found) {
       const { error } = found;
       unread.push({
-        lane: found.name.slice("lane-".length),
+        lane: found.lane,
         message: error instanceof Error ? error.message : String(error),
       });
-    } else homes.push({ lane: found.config.lane, home: found.home, config: found.config });
+    } else homes.push({ lane: found.lane, home: found.home, config: found.config });
   }
   return { homes, unread };
 }
@@ -127,6 +123,6 @@ export const unreadFailure = (unread: readonly UnreadLane[]): string =>
 export function laneHomes(root: string): LaneHome[] {
   return scanHomes(root).map((found) => {
     if ("error" in found) throw found.error;
-    return { lane: found.config.lane, home: found.home, config: found.config };
+    return { lane: found.lane, home: found.home, config: found.config };
   });
 }

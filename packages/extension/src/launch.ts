@@ -246,12 +246,12 @@ function lane(): string {
 const maintenance = command === "up" && values.maintenance === true;
 const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
-function checkLaunchPrerequisites(root: string): void {
+function checkLaunchPrerequisites(root: string, retained?: string[]): void {
   if (values.host !== undefined) {
     console.error(USAGE);
     process.exit(2);
   }
-  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline);
+  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline, retained);
   if (problems.length > 0) {
     if (typedMaintenance) throw new Error(problems.join("\n"));
     console.error(problems.join("\n"));
@@ -267,13 +267,19 @@ const writeReply = (text: string): Promise<void> =>
   });
 
 async function showTypedMaintenance(): Promise<void> {
+  const retained: string[] = [];
+  const withRetained = (failed: string | undefined): { failed?: string } => {
+    const all = [...(failed === undefined ? [] : [failed]), ...retained].join("\n");
+    return all === "" ? {} : { failed: all };
+  };
   try {
     const root = codeRoot(maintenanceDeadline);
-    checkLaunchPrerequisites(root);
-    await writeReply(JSON.stringify(await up(root, rest[0], maintenanceDeadline, offset)));
+    checkLaunchPrerequisites(root, retained);
+    const result = await up(root, rest[0], maintenanceDeadline, offset);
+    await writeReply(JSON.stringify({ ...result, ...withRetained(result.failed) }));
   } catch (error) {
     const failed = error instanceof Error ? error.message : String(error);
-    await writeReply(JSON.stringify({ failed, expected: [], outcomes: [] }));
+    await writeReply(JSON.stringify({ ...withRetained(failed), expected: [], outcomes: [] }));
   }
 }
 
