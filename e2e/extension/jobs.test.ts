@@ -772,14 +772,13 @@ test("a failed job-file write cannot hand off as stopped until cardd fences the 
     return { tool: "run_long", args: { label: "pre-dispatch", command: `touch ${quote(marker)}` } };
   });
   h.onModel(() => ({ text: "The job failed to start." }));
-  h.onModel(() => ({ text: "No command reached Bash." }));
   worker();
   await settled(1);
   const reply = await reportAnswered.promise;
   assert.ok(reply.ok);
   assert.equal(check(OPS.report.result, reply.value).deferred, true);
   assert.ok(said("ENOENT"));
-  assert.ok(said("Your run is ending without a handoff"));
+  assert.equal(said("Your run is ending without a handoff"), false);
   db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
   await until(
     () =>
@@ -801,6 +800,7 @@ test("a failed job-file write cannot hand off as stopped until cardd fences the 
     (entry) => entry.fields["status"] === "stopped",
     "the stopped handoff after the reservation is fenced",
   );
+  assert.ok(said("Your run is ending without a handoff"));
   const view = await cardView();
   assert.deepEqual(
     view.entries
