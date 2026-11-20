@@ -4,7 +4,6 @@ import type { Draft } from "./change.ts";
 import {
   IN_FLIGHT_DELIVERY,
   QUEUED_DELIVERY,
-  RETIRABLE_DELIVERY,
   SENT_DELIVERY,
   UNREAD_DELIVERY,
 } from "./delivery-states.ts";
@@ -228,7 +227,7 @@ function keepDelivery(
   if (typeof restartNotice !== "number" || noticeEligible(db, getCard(db, card), restartNotice))
     return true;
   db.prepare(
-    `DELETE FROM deliveries WHERE session = ? AND entry = ? AND ${RETIRABLE_DELIVERY}`,
+    `DELETE FROM deliveries WHERE session = ? AND entry = ? AND state IN (${UNREAD_DELIVERY})`,
   ).run(session, entry);
   return false;
 }

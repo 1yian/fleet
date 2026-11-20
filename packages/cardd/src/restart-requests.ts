@@ -31,8 +31,16 @@ export function requestOf(db: DatabaseSync, card: number, request: number): Requ
 
 export function noticeEligible(db: DatabaseSync, card: Card, request: number): boolean {
   return (
-    requestOf(db, card.id, request) !== undefined &&
     card.status === "working" &&
+    requestOf(db, card.id, request) !== undefined &&
+    db
+      .prepare(
+        `SELECT 1 FROM entries WHERE card = ? AND id > ? AND (
+        (kind = 'note' AND json_extract(fields, '$.restartKey') IS NOT NULL) OR
+        (kind = 'comment' AND json_extract(fields, '$.recoveryMode') = 'replace')
+      ) LIMIT 1`,
+      )
+      .get(card.id, request) === undefined &&
     intentOf(db, card.id, "worker") === "working"
   );
 }

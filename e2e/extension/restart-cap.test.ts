@@ -196,30 +196,33 @@ async function generationOf({ cardd, mainToken }: DispatchLab): Promise<number> 
   return check(OPS["attempt.resume"].result, resumed.value).generation;
 }
 
-async function stopReplacement(
+async function replacementGroup(
   lab: DispatchLab,
   original: number,
   generation: number,
-): Promise<void> {
-  const attempt = "c-1-a1";
+): Promise<number> {
   const deadline = Date.now() + WORKER_WAIT_MS;
   for (;;) {
-    const group = await workerGroupOf(lab.lab, attempt);
+    const group = await workerGroupOf(lab.lab, "c-1-a1");
     if (
       group !== undefined &&
       group > 0 &&
       group !== original &&
       (await generationOf(lab)) === generation
-    ) {
-      process.kill(-group, "SIGKILL");
-      break;
-    }
+    )
+      return group;
     assert.ok(
       Date.now() < deadline,
       `the replacement did not start at generation ${String(generation)}`,
     );
     await delay(20);
   }
+}
+
+async function stopReplacement(lab: DispatchLab, group: number, generation: number): Promise<void> {
+  const attempt = "c-1-a1";
+  const deadline = Date.now() + WORKER_WAIT_MS;
+  process.kill(-group, "SIGKILL");
   if (generation === 2) await lab.cardd.waitForSessionLost(attempt);
   while ((await workerGroupOf(lab.lab, attempt)) !== undefined) {
     assert.ok(Date.now() < deadline, "the replacement is still in the pane");
@@ -227,8 +230,30 @@ async function stopReplacement(
   }
 }
 
-for (const hello of ["before", "after"] as const) {
-  test(`a real replacement that exits ${hello} hello without readiness is not launched again or refunded`, async (t) => {
+const readinessCases = [
+  {
+    mode: "before",
+    situation: "exits before hello",
+    generation: 1,
+    error:
+      /The replacement could not be confirmed after the start command; the request was not refunded/,
+  },
+  {
+    mode: "after",
+    situation: "exits after hello",
+    generation: 2,
+    error: /The replacement connected before readiness failed/,
+  },
+  {
+    mode: "visible",
+    situation: "is visible before the command returns",
+    generation: 2,
+    error: /The replacement connected before readiness failed/,
+  },
+] as const;
+
+for (const { mode, situation, generation, error } of readinessCases) {
+  test(`a replacement that ${situation} surfaces the readiness error and stays counted`, async (t) => {
     const armed = join(tempDir("readiness-failure-"), "armed");
     const released = `${armed}.released`;
     t.after(() => {
@@ -268,11 +293,21 @@ for (const hello of ["before", "after"] as const) {
     await h.waitForCall(0, "worker", WORKER_WAIT_MS);
     const original = await workerGroupOf(lab, "c-1-a1");
     assert.ok(original !== undefined && original > 0);
-    if (hello === "before") execFileSync("mkfifo", [gateOf(launchArgsOf(h))]);
-    writeFileSync(armed, "armed\n");
+    if (mode === "before") execFileSync("mkfifo", [gateOf(launchArgsOf(h))]);
+    writeFileSync(armed, mode);
     mate.prompt("restart after dispatch", "followUp");
-    const generation = hello === "after" ? 2 : 1;
-    await stopReplacement(parts, original, generation);
+    const group = await replacementGroup(parts, original, generation);
+    if (mode === "visible") {
+      await poll(
+        () =>
+          h
+            .callsOf("worker")
+            .find((turns) => turns.some((turn) => turn.text.includes(RESTART_NOTICE))),
+        "the visible replacement to receive the restart notice before the command returns",
+        WORKER_WAIT_MS,
+      );
+      assert.equal(await workerGroupOf(lab, "c-1-a1"), group);
+    } else await stopReplacement(parts, group, generation);
     writeFileSync(released, "release\n");
 
     const result = await poll(
@@ -284,12 +319,7 @@ for (const hello of ["before", "after"] as const) {
       WORKER_WAIT_MS,
     );
     assert.match(result, /worker readiness confirmation failed/);
-    assert.match(
-      result,
-      hello === "after"
-        ? /The replacement connected before readiness failed/
-        : /The replacement could not be confirmed after the start command; the request was not refunded/,
-    );
+    assert.match(result, error);
     assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
 
     await verifyCountedRestart(parts, restart.key, generation);
