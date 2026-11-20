@@ -20,6 +20,8 @@ import {
   MAINTENANCE_COMMAND_MS,
   MAINTENANCE_OUTCOMES_CAPABILITY,
   MAINTENANCE_OUTCOMES_OPTION,
+  MAINTENANCE_PROBE_MS,
+  remainingMs,
 } from "./maintenance-budget.ts";
 import { readShared } from "./standing.ts";
 import type { LaneRow } from "./views.ts";
@@ -35,9 +37,10 @@ export async function fleet(
   host: string,
   args: readonly string[],
   wait = REMOTE_WAIT_MS,
+  hard = false,
 ): Promise<string> {
-  if (host === "local") return onHost(host, [process.execPath, LAUNCH, ...args], wait);
-  return onFleetRoot(host, config.roots[host], args, wait);
+  if (host === "local") return onHost(host, [process.execPath, LAUNCH, ...args], wait, hard);
+  return onFleetRoot(host, config.roots[host], args, wait, hard);
 }
 
 async function rows(
@@ -290,10 +293,14 @@ const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
 const MAINTENANCE_ACTIONS = new Set(["running", "started", "held", "stopped", "unread"]);
 
-async function supportsMaintenanceOutcomes(config: LaneConfig, host: string): Promise<boolean> {
+async function supportsMaintenanceOutcomes(
+  config: LaneConfig,
+  host: string,
+  timeout: number,
+): Promise<boolean> {
   if (host === "local") return true;
   try {
-    const out = await fleet(config, host, [MAINTENANCE_OUTCOMES_OPTION]);
+    const out = await fleet(config, host, [MAINTENANCE_OUTCOMES_OPTION], timeout, true);
     if (out.trim() === MAINTENANCE_OUTCOMES_CAPABILITY) return true;
   } catch (error) {
     if (error instanceof HostUnreachable) throw error;
@@ -311,11 +318,22 @@ async function supportsMaintenanceOutcomes(config: LaneConfig, host: string): Pr
   throw new Error(`could not verify maintenance support on ${host}: unexpected capability reply`);
 }
 
-async function maintenanceResult(config: LaneConfig, host: string) {
-  const typed = await supportsMaintenanceOutcomes(config, host);
+async function maintenanceResult(config: LaneConfig, host: string, offsets: Map<string, number>) {
+  const deadline = performance.now() + MAINTENANCE_COMMAND_MS;
+  const typed = await supportsMaintenanceOutcomes(
+    config,
+    host,
+    Math.min(MAINTENANCE_PROBE_MS, remainingMs(deadline)),
+  );
+  const timeout = remainingMs(deadline);
+  if (timeout === 0) throw new HostUnread("maintenance deadline reached before sweep");
   const args = ["up", "--maintenance", "--json"];
-  if (typed) args.push(MAINTENANCE_OUTCOMES_OPTION);
-  const out = await fleet(config, host, args, MAINTENANCE_COMMAND_MS).catch((error: unknown) => {
+  if (typed) {
+    const offset = offsets.get(host) ?? 0;
+    args.push(MAINTENANCE_OUTCOMES_OPTION, String(offset));
+    offsets.set(host, offset + 1);
+  }
+  const out = await fleet(config, host, args, timeout, true).catch((error: unknown) => {
     if (!typed || error instanceof HostUnreachable) throw error;
     throw new HostUnread(messageOf(error));
   });
@@ -443,6 +461,7 @@ function keepRunning(
 ): void {
   const unreachable = new Set<string>();
   const maintenanceFailures = new Map<string, string>();
+  const sweepOffsets = new Map<string, number>();
   const diskFailures = new Map<string, string>();
   const unshared = new Set<string>();
   const supervising = new Set<string>();
@@ -478,7 +497,7 @@ function keepRunning(
   };
   const maintain = async (host: string): Promise<void> => {
     await share(host);
-    const { results: out, failed } = await maintenanceResult(config, host);
+    const { results: out, failed } = await maintenanceResult(config, host, sweepOffsets);
     if (failed === undefined && out.every((row) => row["action"] !== "unread")) {
       maintenanceFailures.delete(host);
       if (unreachable.delete(host)) tell([`${host} can be reached again`], false);

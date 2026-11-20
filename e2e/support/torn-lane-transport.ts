@@ -7,7 +7,22 @@ const maintenance = command.includes("'up' '--maintenance'");
 const option = "--maintenance-outcomes-v1";
 const capabilityFile = `${control}.capability`;
 const mode = existsSync(capabilityFile) ? readFileSync(capabilityFile, "utf8") : "";
-if (!maintenance && command.endsWith(`'${option}'`) && mode !== "") {
+if (
+  !maintenance &&
+  command.endsWith(`'${option}'`) &&
+  mode === "hang-once" &&
+  !existsSync(`${control}.pid`)
+) {
+  writeFileSync(`${control}.pid`, String(process.pid));
+  process.on("SIGTERM", () => undefined);
+  setInterval(() => undefined, 60_000);
+  await new Promise<never>(() => undefined);
+}
+if (
+  !maintenance &&
+  command.endsWith(`'${option}'`) &&
+  (mode === "legacy" || mode === "ambiguous")
+) {
   appendFileSync(`${control}.probes`, `${mode}\n`);
   if (mode === "ambiguous") {
     console.log("fleet: maintenance outcomes");
@@ -24,7 +39,7 @@ if (!maintenance && command.endsWith(`'${option}'`) && mode !== "") {
     process.exit(2);
   }
 }
-if (maintenance && mode === "legacy" && command.endsWith(`'${option}'`))
+if (maintenance && mode === "legacy" && command.includes(`'${option}'`))
   throw new Error("typed maintenance was sent to an old host");
 const run = spawnSync("sh", ["-c", command], { encoding: "utf8" });
 

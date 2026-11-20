@@ -265,14 +265,19 @@ async function herdrText(
   const via = transport(host);
   const [file = "herdr", ...rest] = routed(via, command);
   return new Promise<string>((resolve, reject) => {
-    runOnTransport(file, rest, { timeout }, (error, out, err) => {
-      if (error !== null && lane !== undefined) {
-        reject(laneTransportFailure(lane, args, error, out, err));
-      } else if (error !== null && out.trim() === "") {
-        const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
-        reject(failure(via, error, scrub(message), probe));
-      } else resolve(out);
-    });
+    runOnTransport(
+      file,
+      rest,
+      { timeout, ...(deadline === undefined ? {} : { detach: ownGroup }) },
+      (error, out, err) => {
+        if (error !== null && lane !== undefined) {
+          reject(laneTransportFailure(lane, args, error, out, err));
+        } else if (error !== null && out.trim() === "") {
+          const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
+          reject(failure(via, error, scrub(message), probe));
+        } else resolve(out);
+      },
+    );
   });
 }
 
@@ -337,8 +342,12 @@ async function run(
   });
 }
 
-export const onHost = (host: string, argv: readonly string[], timeout = 600_000): Promise<string> =>
-  run(host, argv, timeout, argv);
+export const onHost = (
+  host: string,
+  argv: readonly string[],
+  timeout = 600_000,
+  hard = false,
+): Promise<string> => run(host, argv, timeout, argv, hard ? ownGroup : undefined);
 
 export const onHelper = (
   host: string,
@@ -355,8 +364,9 @@ export function onFleetRoot(
   root: string | undefined,
   args: readonly string[],
   timeout?: number,
+  hard = false,
 ): Promise<string> {
-  return onHost(host, ["sh", "-c", FLEET_ON_ROOT, "fleet", root ?? "", ...args], timeout);
+  return onHost(host, ["sh", "-c", FLEET_ON_ROOT, "fleet", root ?? "", ...args], timeout, hard);
 }
 
 export const records = (value: unknown): Record<string, unknown>[] =>

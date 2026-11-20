@@ -127,11 +127,14 @@ export function runOnTransport(
   limits: Limits,
   done: Finished,
 ): void {
+  const deadline = performance.now() + limits.timeout;
   launch(file, args, limits, (error, stdout, stderr) => {
     if (error === null || !diedBeforeTheCommandStarted(file, error, stderr)) {
       done(error, stdout, stderr);
       return;
     }
-    launch(file, [...WITHOUT_THE_MASTER, ...args], limits, done);
+    const timeout = Math.floor(deadline - performance.now());
+    if (timeout <= 0) done(error, stdout, stderr);
+    else launch(file, [...WITHOUT_THE_MASTER, ...args], { ...limits, timeout }, done);
   });
 }
