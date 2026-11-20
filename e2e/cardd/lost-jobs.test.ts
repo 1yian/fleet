@@ -3,7 +3,14 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import {
+  begin,
+  newCard,
+  pastClock,
+  registeredAt,
+  startFleet,
+  type Fleet,
+} from "../support/fleet.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -101,8 +108,10 @@ test("a lost job is superseded by the same-label job that registered later, what
   const register = (run: { job: number; launch: string }, pid: number) =>
     worker.call("job.register", { job: run.job, launch: run.launch, pid });
   assert.deepEqual(await register(reservedSecond, 4400), { registered: true });
-  await worker.call("jobs", {});
+  const secondRegistered = registeredAt(fleet.cardd, reservedSecond.job);
+  pastClock(secondRegistered);
   assert.deepEqual(await register(reservedFirst, 4401), { registered: true });
+  assert.ok(registeredAt(fleet.cardd, reservedFirst.job) > secondRegistered);
 
   const reminders = async (job: number): Promise<Entry[]> =>
     (await findings(card)).filter(
