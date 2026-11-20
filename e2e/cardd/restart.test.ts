@@ -197,6 +197,68 @@ test("refunding a request retires its queued notice without dropping a later req
   );
 });
 
+test("the next replacement receives only its notice while both restart requests still count", async () => {
+  const token = await begin(fleet.main, card);
+  await (await fleet.cardd.connect(token)).close();
+  const older = requestOf(await restart("older"));
+  assert.deepEqual(await notice(older), { posted: true });
+  const newer = requestOf(await restart("newer"));
+  assert.deepEqual(await notice(newer), { posted: true });
+  assert.deepEqual(await notice(older), { posted: false });
+
+  fleet.cardd.startNewProcess(token);
+  const worker = await fleet.cardd.connect(token);
+  await worker.waitForEntry(
+    (entry) => entry.fields["restartNotice"] === newer,
+    "the new restart notice",
+  );
+  assert.deepEqual(
+    worker.entries
+      .filter(({ entry }) => entry.body.includes(NOTICE))
+      .map(({ entry }) => entry.fields["restartNotice"]),
+    [newer],
+  );
+  const thread = await fleet.cardd.thread(card.id);
+  assert.deepEqual(
+    thread.entries
+      .filter((entry) => entry.body.includes(NOTICE))
+      .map((entry) => entry.fields["restartNotice"]),
+    [older, newer],
+  );
+  assert.equal((await restart("older")).repeat, true);
+  assert.equal((await restart("newer")).repeat, true);
+  assert.equal((await restart("last-slot")).repeat, false);
+  await assert.rejects(restart("over-cap"), /was restarted 3 times in the last hour/);
+});
+
+test("incident replacement sends its recovery check, not the earlier queued restart notice", async () => {
+  const token = await begin(fleet.main, card);
+  const first = await fleet.cardd.connect(token);
+  const { incident } = check(
+    OPS["incident.report"].result,
+    await first.call("incident.report", { error: "unknown model failure" }),
+  );
+  await first.close();
+  const older = requestOf(await restart("older"));
+  assert.deepEqual(await notice(older), { posted: true });
+  await fleet.main.call("card.restart", {
+    card: card.id,
+    incident,
+    generation: 1,
+    mode: "replace",
+    key: "recovery",
+  });
+
+  fleet.cardd.startNewProcess(token);
+  const worker = await fleet.cardd.connect(token);
+  await worker.waitForEntry((entry) => entry.fields["recovery"] === incident, "the recovery check");
+  assert.equal(
+    worker.entries.some(({ entry }) => entry.fields["restartNotice"] === older),
+    false,
+  );
+  assert.equal((await restart("older")).repeat, true);
+});
+
 test("a pause during merging stays merging on the board and still refuses a restart", async () => {
   fleet.cardd.yolo("web");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));

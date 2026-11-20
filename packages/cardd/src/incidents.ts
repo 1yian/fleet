@@ -344,7 +344,12 @@ export function recover(
   const live = args.mode === "retry";
   const compaction = inc.phase === "compaction";
   const body = probeText(session.lane, plan.role, inc.id, compaction);
-  const fields = { for: plan.role, recovery: inc.id, ...(compaction ? { compaction } : {}) };
+  const fields = {
+    for: plan.role,
+    recovery: inc.id,
+    recoveryMode: args.mode,
+    ...(compaction ? { compaction } : {}),
+  };
   const draft = { card: inc.card, author: `mate:${session.lane}`, kind: "comment", body, fields };
   const entry = addEntry(db, draft, live ? [inc.actor] : []);
   applyIncident(

@@ -5,9 +5,10 @@ import { setTimeout as delay } from "node:timers/promises";
 const [marker = "", command = ""] = process.argv.slice(2);
 const starts = `${marker}.starts`;
 const released = `${marker}.released`;
-const replacement = existsSync(marker) && command.includes("'herdr' 'agent' 'start'");
+const mode = existsSync(marker) ? readFileSync(marker, "utf8").trim() : undefined;
+const replacement = mode !== undefined && command.includes("'herdr' 'agent' 'start'");
 if (replacement) {
-  if (readFileSync(marker, "utf8").trim() === "refuse") {
+  if (mode === "refuse") {
     process.stderr.write(
       JSON.stringify({
         code: "agent_pane_busy",
@@ -18,7 +19,7 @@ if (replacement) {
   }
   appendFileSync(starts, "start\n");
 }
-if (existsSync(starts) && command.includes("'herdr' 'pane' 'process-info'")) {
+if (mode !== "visible" && existsSync(starts) && command.includes("'herdr' 'pane' 'process-info'")) {
   while (!existsSync(released)) await delay(20);
 }
 const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });

@@ -64,7 +64,7 @@ export const INCIDENT_OPS = {
     result: Type.Object({
       posted: Type.Boolean({
         description:
-          "False when nothing was queued because the request is no longer live or the card is not working; queued notices are checked again at delivery",
+          "False when the request was refunded or superseded, or the card is not working; queued notices are checked again at delivery",
       }),
     }),
   },
