@@ -110,7 +110,7 @@ const NOTHING_RUNS =
   "Nothing runs for this pause. Your mate was told, and is told again if the pause ends and nothing ran since. If you wait on a task that finishes on its own, start a run_long watcher for it.";
 
 function unwatchedPause(db: DatabaseSync, session: Session, status: ReportStatus): boolean {
-  return status === "paused" && runningJobs(db, session.id).length === 0;
+  return status === "paused" && !hasJobWait(db, session.id);
 }
 
 function reportRoute(db: DatabaseSync, card: Card, mateHears: boolean): string[] {
