@@ -86,25 +86,16 @@ function run({ script, args }) {
   return result.status === 0;
 }
 
-function prePush() {
-  const top = git(["rev-parse", "--show-toplevel"])?.trim();
-  if (!top) return 0;
-  process.chdir(top);
-  if (!existsSync("node_modules")) {
-    console.warn(
-      "pre-push: dependencies are not installed, so the checks were skipped. Run npm ci.",
-    );
-    return 0;
-  }
+function checkedCommits(input) {
   const head = git(["rev-parse", "HEAD"])?.trim();
-  const pushed = pushedCommits(readFileSync(0, "utf8"));
-  const commits = pushed.filter(({ sha }) => sha === head);
-  for (const { ref } of pushed.filter(({ sha }) => sha !== head))
-    console.warn(`pre-push: ${ref} is not checked out, so its checks were skipped.`);
-  if (!commits.length) return 0;
-  const found = changedFiles(process.argv[3] ?? "origin", commits);
-  if (found && !found.length) return 0;
-  const files = found && found.length <= maxScopedFiles ? found : undefined;
+  const pushed = pushedCommits(input);
+  for (const { ref, sha } of pushed)
+    if (sha !== head)
+      console.warn(`pre-push: ${ref} is not checked out, so its checks were skipped.`);
+  return pushed.filter(({ sha }) => sha === head);
+}
+
+function runChecks(files) {
   console.error(
     files
       ? `pre-push: checking ${String(files.length)} changed files`
@@ -121,6 +112,23 @@ function prePush() {
     `pre-push: ${failed.map(({ name }) => name).join(", ")} failed after ${seconds}s. Fix it and push again, or push with --no-verify to leave it to CI.`,
   );
   return 1;
+}
+
+function prePush() {
+  const top = git(["rev-parse", "--show-toplevel"])?.trim();
+  if (!top) return 0;
+  process.chdir(top);
+  if (!existsSync("node_modules")) {
+    console.warn(
+      "pre-push: dependencies are not installed, so the checks were skipped. Run npm ci.",
+    );
+    return 0;
+  }
+  const commits = checkedCommits(readFileSync(0, "utf8"));
+  if (!commits.length) return 0;
+  const found = changedFiles(process.argv[3] ?? "origin", commits);
+  if (found?.length === 0) return 0;
+  return runChecks(found && found.length <= maxScopedFiles ? found : undefined);
 }
 
 const command = process.argv[2];
