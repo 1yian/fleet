@@ -15,6 +15,7 @@ import {
   parseClientMessage,
   parseServerMessage,
   type Card,
+  type ClientMessage,
   type ServerMessage,
 } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
@@ -102,6 +103,7 @@ async function jobProxy(
   reportReply?: (reply: CallResult) => CallResult | undefined,
   beforeStop?: Promise<void>,
   idleReply?: (reply: CallResult) => CallResult | undefined,
+  outbound?: (message: ClientMessage) => void,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -142,9 +144,11 @@ async function jobProxy(
         jobsReply !== undefined ||
         reportReply !== undefined ||
         beforeStop !== undefined ||
-        idleReply !== undefined
+        idleReply !== undefined ||
+        outbound !== undefined
       ) {
         const message = parseClientMessage(text);
+        outbound?.(message);
         if (message.t === "call") {
           if (message.op === "job.idle" && idleReply !== undefined) idleReads.add(message.id);
           if (message.op === "jobs" && jobsReply !== undefined) jobReads.add(message.id);
@@ -541,15 +545,27 @@ for (const fault of ["failed", "hanging"] as const) {
   test(`a partial job list preserves the wait and a ${fault} read cannot block the result`, async (t) => {
     let mode: "observe" | "omit" | typeof fault = "observe";
     const lists: number[][] = [];
-    const disconnect = await jobProxy(t, callCardd, false, (reply) => {
-      assert.ok(reply.ok);
-      lists.push(check(OPS.jobs.result, reply.value).map(({ id }) => id));
-      if (mode === "omit") return { ...reply, value: [] };
-      if (mode === "failed")
-        return { t: "result", id: reply.id, ok: false, error: "jobs read unavailable" };
-      if (mode === "hanging") return undefined;
-      return reply;
-    });
+    const activities: string[] = [];
+    const disconnect = await jobProxy(
+      t,
+      callCardd,
+      false,
+      (reply) => {
+        assert.ok(reply.ok);
+        lists.push(check(OPS.jobs.result, reply.value).map(({ id }) => id));
+        if (mode === "omit") return { ...reply, value: [] };
+        if (mode === "failed")
+          return { t: "result", id: reply.id, ok: false, error: "jobs read unavailable" };
+        if (mode === "hanging") return undefined;
+        return reply;
+      },
+      undefined,
+      undefined,
+      undefined,
+      (message) => {
+        if (message.t === "activity") activities.push(message.state);
+      },
+    );
     const slow = commandAwaitingGo(81);
     h.onModel(() => ({ tool: "run_long", args: { label: "partial", command: slow.command } }));
     h.onModel(() => ({ text: "Waiting for the command" }));
@@ -571,14 +587,15 @@ for (const fault of ["failed", "hanging"] as const) {
     assert.deepEqual(lists.at(-1), [1]);
     h.onModel(() => ({ text: "Still waiting for the running job" }));
     h.onModel(() => ({ text: "No work to report yet" }));
+    const sentBefore = activities.length;
     pi.prompt("Check whether the job is still being waited on");
     await settled(2);
     assert.equal(said("Your run is ending without a handoff"), false);
-    const published = await untilAsync(async () => {
-      const state = (await cardView()).card.activity?.state;
-      return state === "running" ? undefined : state;
-    }, "the worker to publish its settled activity");
-    assert.equal(published, "waiting");
+    const sent = await until(() => {
+      const after = activities.slice(sentBefore);
+      return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
+    }, "the worker to send its settled activity after the partial list");
+    assert.equal(sent, "waiting");
     const beforeFault = lists.length;
     mode = fault;
     disconnect();

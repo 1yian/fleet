@@ -222,6 +222,77 @@ test("delivered startup fences do not advance card movement, but an executed job
   assert.equal((await pulseOf(card)).movedAt, result.createdAt);
 });
 
+async function registered(worker: Session, label: string, pid: number): Promise<number> {
+  const launch = randomUUID();
+  const { job } = check(
+    OPS["job.prepare"].result,
+    await worker.call("job.prepare", { label, command: `run ${label}`, launch }),
+  );
+  assert.deepEqual(await worker.call("job.register", { job, launch, pid }), { registered: true });
+  return job;
+}
+
+test("repeat accounting counts a registered job from its first registration, which a replay cannot move", async () => {
+  const late = await newCard(cleo, "Reserve before the note");
+  const lateWorker = await fleet.cardd.connect(await begin(cleo, late));
+  await lateWorker.call("report", { status: "working", text: "Preparing the suite." });
+  const lateLaunch = randomUUID();
+  const reserved = check(
+    OPS["job.prepare"].result,
+    await lateWorker.call("job.prepare", {
+      label: "suite",
+      command: "npm test",
+      launch: lateLaunch,
+    }),
+  );
+  await lateWorker.call("report", {
+    status: "note",
+    text: "Found the cause while the launch waited.",
+  });
+  await onBoard(late);
+  assert.deepEqual(
+    await lateWorker.call("job.register", { job: reserved.job, launch: lateLaunch, pid: 4100 }),
+    { registered: true },
+  );
+  await lateWorker.call("job.finish", { job: reserved.job, exitCode: 0, outputTail: "passed" });
+  const retry = await registered(lateWorker, "suite", 4101);
+  const again = await pulseOf(late);
+  assert.deepEqual(again.running, {
+    by: "job",
+    what: `job ${String(retry)} (suite), run again with nothing changed`,
+  });
+
+  const replayed = await newCard(cleo, "Replay the registration");
+  const replayWorker = await fleet.cardd.connect(await begin(cleo, replayed));
+  await replayWorker.call("report", { status: "working", text: "Preparing the suite." });
+  const replayLaunch = randomUUID();
+  const first = check(
+    OPS["job.prepare"].result,
+    await replayWorker.call("job.prepare", {
+      label: "suite",
+      command: "npm test",
+      launch: replayLaunch,
+    }),
+  );
+  await replayWorker.call("job.register", { job: first.job, launch: replayLaunch, pid: 4200 });
+  await replayWorker.call("report", { status: "note", text: "Found the cause after registering." });
+  await onBoard(replayed);
+  assert.deepEqual(
+    await replayWorker.call("job.register", {
+      job: first.job,
+      launch: replayLaunch,
+      pid: 4200,
+    }),
+    { registered: true },
+  );
+  await replayWorker.call("job.finish", { job: first.job, exitCode: 0, outputTail: "passed" });
+  const next = await registered(replayWorker, "suite", 4201);
+  assert.deepEqual((await pulseOf(replayed)).running, {
+    by: "job",
+    what: `job ${String(next)} (suite)`,
+  });
+});
+
 test("a repeated poll and a fresh suite on one card: the suite covers, and both jobs are counted", async () => {
   const card = await newCard(cleo, "Wait and test");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
