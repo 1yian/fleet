@@ -197,6 +197,31 @@ test("refunding a request retires its queued notice without dropping a later req
   );
 });
 
+test("a newer refunded restart leaves the earlier notice deliverable and frees its slot", async () => {
+  const token = await begin(fleet.main, card);
+  await (await fleet.cardd.connect(token)).close();
+  const older = requestOf(await restart("older"));
+  assert.deepEqual(await notice(older), { posted: true });
+  const newer = requestOf(await restart("newer"));
+  assert.deepEqual(await restartFailed("newer", newer), { recorded: true });
+  const text = "Also check the footer.";
+  await fleet.main.call("comment", { card: card.id, text });
+
+  fleet.cardd.startNewProcess(token);
+  const worker = await fleet.cardd.connect(token);
+  await worker.waitForEntry((entry) => entry.body === text, "the comment after the queued notice");
+  assert.deepEqual(
+    worker.entries
+      .filter(({ entry }) => entry.body.includes(NOTICE))
+      .map(({ entry }) => entry.fields["restartNotice"]),
+    [older],
+  );
+  assert.equal((await restart("older")).repeat, true);
+  assert.equal((await restart("newer")).repeat, false);
+  assert.equal((await restart("last-slot")).repeat, false);
+  await assert.rejects(restart("over-cap"), /was restarted 3 times in the last hour/);
+});
+
 test("the next replacement receives only its notice while both restart requests still count", async () => {
   const token = await begin(fleet.main, card);
   await (await fleet.cardd.connect(token)).close();
