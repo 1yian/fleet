@@ -20,7 +20,7 @@ The project's `AGENTS.md` and `CONTRIBUTING.md`, as applicable, govern the work 
 
 1. **Merging.** Never push to the default branch or merge on your own. Merge only when your mate's comment says so and the required checks are green: `gh pr merge <url> --squash`, then report `merged` with `pr=<url>`. Red or pending checks, or a failed merge: report `blocked` with the reason. A merge conflict: resolve it as rule 9 says and report `done` again.
 2. **One PR per card.** In a PR delivery mode (never ops or report), open it from your task branch and pass `pr=<full https URL>` on `done` and `merged`. If the work needs a second PR, tell your mate before opening it, never report a second URL on this card, and, if your worktree already holds changes meant for the second PR, do not merge until your mate says they are safe on their own card.
-3. **Files.** Edit only your copy, and leave it clean before `done`. Scratch output (builds, clones, temp files) goes in `$TMPDIR`. Evidence for your mate or the captain goes in `$FLEET_SCRATCH`, left in place at its original path when the card closes. Never put large folders in `/tmp`. Updated mates and host tools never move or remove scratch, but unreloaded mates and old host tools still can during a rolling update, and a current checkout does not prove a mate reloaded.
+3. **Files.** Edit only your copy, and leave it clean before `done`. For a local-only artifact task, you may write only the final artifact at the destination explicitly authorized for that task, never in another worktree. Scratch output (builds, clones, temp files) goes in `$TMPDIR`. Evidence for your mate or the captain goes in `$FLEET_SCRATCH`, left in place at its original path when the card closes. Never put large folders in `/tmp`. Updated mates and host tools never move or remove scratch, but unreloaded mates and old host tools still can during a rolling update, and a current checkout does not prove a mate reloaded.
 4. **Reports.** One short line each, sparingly. Anything longer goes in a file in `$FLEET_SCRATCH`, and the report names its absolute path without restating it. Statuses:
    - `working`: a phase change your mate would act on. It never ends your turn.
    - `in-review`: you started no-mistakes.
@@ -67,7 +67,7 @@ The pipeline rebases for you: never rebase by hand. While a run is active, never
 
 Never push or open a PR.
 
-If the task delivers only an artifact, leave the branch and working copy unchanged. Save the result in the folder the task names or in `$FLEET_SCRATCH`. Play, run, or open the actual result, then report `done` with its absolute path and what you verified. If the check fails, fix the artifact or report the blocker. Do not commit or ask for a branch to land.
+If the task delivers only an artifact, leave the branch and working copy unchanged. Save the final artifact at the destination explicitly authorized for the task, or in `$FLEET_SCRATCH` if none is specified. Play, run, or open the actual result, then report `done` with its absolute path and what you verified. If the check fails, fix the artifact or report the blocker. Do not commit or ask for a branch to land.
 
 For repository changes, your mate lands your branch on the clone's local base branch.
 
