@@ -69,6 +69,8 @@ jobs:
               - "e2e/pi/**"
               - "e2e/package.json"
               - "bun.lock"
+              - ".github/actions/install/**"
+              - ".github/actions/install-bun/**"
             board-e2e:
               - "packages/board/**"
               - "packages/cardd/**"
@@ -104,6 +106,8 @@ jobs:
               - "e2e/durations.json"
               - "bun.lock"
               - ".github/workflows/ci.yml"
+              - ".github/actions/install/**"
+              - ".github/actions/install-bun/**"
 
   static:
     timeout-minutes: 20
