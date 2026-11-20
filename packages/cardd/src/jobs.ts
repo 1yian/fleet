@@ -27,6 +27,9 @@ export const launchedJobSql = (alias: string): string =>
 export const outstandingJobSql = (alias: string): string =>
   jobStateSql(`${alias}.state`, JOB_RUNNING);
 
+export const startedAtSql = (alias: string): string =>
+  `coalesce(${alias}.registered_at, ${alias}.created_at)`;
+
 export const runningJobSql = (alias: string): string =>
   `(${outstandingJobSql(alias)} AND ${launchedJobSql(alias)})`;
 

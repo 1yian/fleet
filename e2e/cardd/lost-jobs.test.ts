@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
@@ -81,4 +82,41 @@ test("a lost job dropped by its worker or its mate stops its reminders for good,
     check(OPS["job.drop"].result, await back.call("job.drop", { job: byMate })),
     mate,
   );
+});
+
+test("a lost job is superseded by the same-label job that registered later, whatever order they were reserved in", async () => {
+  const card = await newCard(fleet.main, "overlapping launches");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  const reserve = async (label: string) => {
+    const launch = randomUUID();
+    const { job } = check(
+      OPS["job.prepare"].result,
+      await worker.call("job.prepare", { label, command: `run ${label}`, launch }),
+    );
+    return { job, launch };
+  };
+  const reservedFirst = await reserve("server");
+  const reservedSecond = await reserve("server");
+  assert.ok(reservedSecond.job > reservedFirst.job);
+  const register = (run: { job: number; launch: string }, pid: number) =>
+    worker.call("job.register", { job: run.job, launch: run.launch, pid });
+  assert.deepEqual(await register(reservedSecond, 4400), { registered: true });
+  await worker.call("jobs", {});
+  assert.deepEqual(await register(reservedFirst, 4401), { registered: true });
+
+  const reminders = async (job: number): Promise<Entry[]> =>
+    (await findings(card)).filter(
+      (entry) =>
+        entry.fields["condition"] === "job-lost-open" &&
+        entry.body.includes(`job ${String(job)} (`),
+    );
+  await fleet.main.waitForEntry(
+    (entry) =>
+      entry.card === card.id &&
+      entry.fields["condition"] === "job-lost-open" &&
+      entry.body.includes(`job ${String(reservedFirst.job)} (`) &&
+      Number(entry.fields["tier"]) >= 2,
+    "the later-registered job's reminders, which nothing supersedes",
+  );
+  assert.deepEqual(await reminders(reservedSecond.job), []);
 });

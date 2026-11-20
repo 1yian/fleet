@@ -293,6 +293,39 @@ test("repeat accounting counts a registered job from its first registration, whi
   });
 });
 
+test("repeat accounting follows registration order, not reservation order, for overlapping same-label launches", async () => {
+  const card = await newCard(cleo, "Launch the suite twice");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", { status: "working", text: "Preparing both suites." });
+  const reserve = async (command: string) => {
+    const launch = randomUUID();
+    const { job } = check(
+      OPS["job.prepare"].result,
+      await worker.call("job.prepare", { label: "suite", command, launch }),
+    );
+    return { job, launch };
+  };
+  const first = await reserve("npm test -- a");
+  const second = await reserve("npm test -- b");
+  assert.ok(second.job > first.job);
+  await worker.call("report", {
+    status: "note",
+    text: "Found the cause while both launches waited.",
+  });
+  await onBoard(card);
+  const register = (run: { job: number; launch: string }, pid: number) =>
+    worker.call("job.register", { job: run.job, launch: run.launch, pid });
+  assert.deepEqual(await register(second, 4300), { registered: true });
+  await onBoard(card);
+  assert.deepEqual(await register(first, 4301), { registered: true });
+  await worker.call("job.finish", { job: second.job, exitCode: 0, outputTail: "passed" });
+
+  assert.deepEqual((await pulseOf(card)).running, {
+    by: "job",
+    what: `job ${String(first.job)} (suite), run again with nothing changed`,
+  });
+});
+
 test("a repeated poll and a fresh suite on one card: the suite covers, and both jobs are counted", async () => {
   const card = await newCard(cleo, "Wait and test");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
