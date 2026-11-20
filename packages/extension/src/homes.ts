@@ -220,7 +220,7 @@ type LaneMatch =
 
 async function workspaceOf(
   { lane, home }: LaneHome,
-  purpose: "liveness" | "placement" | "close",
+  purpose: "liveness" | "placement" | "close" | "restart-held",
   deadline?: number,
 ): Promise<LaneMatch | undefined> {
   const matchesHome = (cwd: string | undefined) =>
@@ -232,8 +232,17 @@ async function workspaceOf(
     if (!current && !legacy) continue;
     if (current && purpose === "close") return { workspace, state: "matched" };
     const panes = await panesOf(workspace, row["pane_count"], deadline);
-    const [single] = panes;
-    if (panes.length !== 1 || single === undefined) {
+    const [first] = panes;
+    if (purpose === "close" || purpose === "restart-held") {
+      if (legacy && !matchesHome(first?.cwd)) continue;
+      if (purpose === "close") return { workspace, state: "matched" };
+      return first !== undefined && (await lanePaneState(first.pane, deadline)) !== "down"
+        ? { workspace, state: "running" }
+        : undefined;
+    }
+    if (panes.length !== 1 || first === undefined) {
+      if (purpose === "placement")
+        throw new HostUnread(`cannot verify the root pane for split workspace ${workspace}`);
       for (const { pane, cwd } of panes) {
         if (matchesHome(cwd) && (await lanePaneState(pane, deadline)) === "pi")
           return { workspace, state: "running" };
@@ -241,15 +250,14 @@ async function workspaceOf(
       throw new HostUnread(`no Pi observed in the lane home for split workspace ${workspace}`);
     }
     if (legacy || purpose === "placement") {
-      if (single.cwd === undefined || single.cwd === "")
+      if (first.cwd === undefined || first.cwd === "")
         throw new HostUnread(`herdr returned no root pane cwd for ${workspace}`);
-      if (!matchesHome(single.cwd)) continue;
+      if (!matchesHome(first.cwd)) continue;
     }
-    if (purpose === "close") return { workspace, state: "matched" };
-    const state = await lanePaneState(single.pane, deadline);
+    const state = await lanePaneState(first.pane, deadline);
     if (purpose === "placement" && state !== "pi") continue;
     if (state !== "down") return { workspace, state: "running" };
-    return { workspace, state: "idle", pane: single.pane };
+    return { workspace, state: "idle", pane: first.pane };
   }
   return undefined;
 }
@@ -309,12 +317,14 @@ function recentStarts(home: string, now: number): number[] {
 }
 
 const SHELL_WAIT_MS = 20_000;
+const LAUNCH_WAIT_MS = 10_000;
+const START_RECORD_MS = 1_000;
 
-async function untilPiShows(pane: string, sweep?: number): Promise<void> {
-  const deadline = Math.min(performance.now() + SHELL_WAIT_MS, sweep ?? Infinity);
+async function untilPiShows(pane: string, maintenance: boolean): Promise<void> {
+  const deadline = performance.now() + SHELL_WAIT_MS;
   while (
     remainingMs(deadline) > 0 &&
-    (await lanePaneState(pane, sweep === undefined ? undefined : deadline).catch(
+    (await lanePaneState(pane, maintenance ? deadline : undefined).catch(
       ifUnread("unread" as const),
     )) !== "pi"
   ) {
@@ -342,21 +352,25 @@ async function start(
   lift: boolean,
   deadline?: number,
 ): Promise<void> {
-  syncHome(root, info.home, deadline);
-  const pane = existingPane ?? (await createMatePane(info, deadline));
+  const launchDeadline =
+    deadline === undefined ? undefined : deadline - SHELL_WAIT_MS - START_RECORD_MS;
+  if (remainingMs(launchDeadline) < LAUNCH_WAIT_MS)
+    throw new HostUnread("not enough maintenance time to start the lane");
+  syncHome(root, info.home, launchDeadline);
+  const pane = existingPane ?? (await createMatePane(info, launchDeadline));
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
   const command = withCompileCache(direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi]);
   await laneHerdr(
     ["pane", "run", pane, `cd ${quote(info.home)} && ${command.map(quote).join(" ")}`],
     "mutate",
-    deadline,
+    launchDeadline,
   );
   if (lift) liftHold(info.home);
   mkdirSync(join(info.home, "state"), { recursive: true });
   const starts = [...recentStarts(info.home, Date.now()), Date.now()];
   writeFileSync(startsFile(info.home), `${starts.join("\n")}\n`);
-  await untilPiShows(pane, deadline);
+  await untilPiShows(pane, deadline !== undefined);
   const host = info.config.host ?? process.env["FLEET_HOST"] ?? "local";
   if (deadline === undefined) await arrangeHere(host).catch(() => undefined);
   else {
@@ -427,11 +441,12 @@ export async function up(
   return { outcomes };
 }
 
-async function close(info: LaneHome): Promise<void> {
-  const match = await workspaceOf(info, "close");
-  if (match === undefined) return;
+async function close(info: LaneHome, onlyRunning = false): Promise<boolean> {
+  const match = await workspaceOf(info, onlyRunning ? "restart-held" : "close");
+  if (match === undefined) return false;
   await claimFollowers(info.lane, match.workspace).catch(() => undefined);
   await laneHerdr(["workspace", "close", match.workspace], "mutate");
+  return true;
 }
 
 export async function stop(root: string, lane: string): Promise<void> {
@@ -446,9 +461,9 @@ export async function stop(root: string, lane: string): Promise<void> {
 
 async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
-  if (all && held !== undefined && (await observedLane(info))?.state !== "running")
+  const closed = await close(info, all && held !== undefined);
+  if (all && held !== undefined && !closed)
     return { lane: info.lane, action: "stopped", detail: held };
-  await close(info);
   const observed = await observedLane(info, true);
   if (observed?.state === "running") {
     if (held !== undefined) liftHold(info.home);

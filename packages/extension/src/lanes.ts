@@ -280,7 +280,7 @@ async function maintenanceResult(config: LaneConfig, host: string) {
   if (isRecord(answer)) {
     failed = text(answer, "failed");
     if (failed.trim() === "") throw new Error(`fleet on ${host} returned no failure detail`);
-    list = Object.keys(answer).length === 1 ? [] : answer["outcomes"];
+    list = answer["outcomes"];
   }
   const results = records(list);
   if (!Array.isArray(list) || results.length !== list.length)
@@ -372,6 +372,8 @@ function keepRunning(
   ctx: ExtensionContext,
 ): void {
   const unreachable = new Set<string>();
+  const maintenanceFailures = new Map<string, string>();
+  const diskFailures = new Map<string, string>();
   const unshared = new Set<string>();
   const supervising = new Set<string>();
   let shutDown = false;
@@ -392,11 +394,17 @@ function keepRunning(
     }
   };
   const watchDisk = diskWatcher(pi, config, ctx, isDown);
-  const reportDown = (host: string, error: unknown): void => {
-    if (error instanceof HostUnread || unreachable.has(host)) return;
-    unreachable.add(host);
-    const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-    tell([`${host} ${why}: ${messageOf(error)}`], true);
+  const reportDown = (host: string, error: unknown, failures: Map<string, string>): void => {
+    if (error instanceof HostUnread) return;
+    const message = messageOf(error);
+    if (error instanceof HostUnreachable) {
+      if (unreachable.has(host)) return;
+      unreachable.add(host);
+      tell([`${host} cannot be reached: ${message}`], true);
+    } else if (failures.get(host) !== message) {
+      failures.set(host, message);
+      tell([`${host} failed: ${message}`], true);
+    }
   };
   const maintain = async (host: string): Promise<void> => {
     await share(host);
@@ -406,12 +414,10 @@ function keepRunning(
         throw new HostUnread(messageOf(error));
       },
     );
-    if (
-      failed === undefined &&
-      out.every((row) => row["action"] !== "unread") &&
-      unreachable.delete(host)
-    )
-      tell([`${host} can be reached again`], false);
+    if (failed === undefined && out.every((row) => row["action"] !== "unread")) {
+      maintenanceFailures.delete(host);
+      if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
+    }
     const of = (action: string) => out.filter((row) => text(row, "action") === action);
     tell(
       of("started").map((row) => `${text(row, "lane")} started on ${host}`),
@@ -426,13 +432,14 @@ function keepRunning(
     try {
       await maintain(host);
     } catch (error) {
-      reportDown(host, error);
+      reportDown(host, error, maintenanceFailures);
       if (error instanceof HostUnreachable) return;
     }
     try {
       await watchDisk(host);
+      diskFailures.delete(host);
     } catch (error) {
-      reportDown(host, error);
+      reportDown(host, error, diskFailures);
     }
   };
   const superviseHost = async (host: string): Promise<void> => {
