@@ -218,24 +218,32 @@ test("/updatefleet leaves each mate's workspace followed by its own workers, wha
   process.stderr.write(`sidebar before the update: ${JSON.stringify(before)}\n`);
 
   await lab.submit(pane, "/updatefleet");
-  await until(
-    () => {
-      const sessions = join(h.dir, "sessions");
-      const text = readdirSync(sessions).map((file) => readFileSync(join(sessions, file), "utf8"));
-      return text.join("\n").includes("[fleet] update: Fleet updated.") ? true : undefined;
-    },
-    "main to record the update's report",
-    async () => `the sidebar reads ${JSON.stringify(await sidebar())}`,
-  );
+  const report = await waitForUpdate();
+  assert.match(report, /Mate placement unchanged:[^\n]+/);
+  assert.match(report, /cannot verify the root pane for split workspace/);
   await untilSidebar(EXPECTED_AFTER_UPDATE);
   await allRunPi();
   const labels = ["\u2514 main-one", "\u2514 far-one", "\u2514 ops-alpha", "\u2514 stale-owner"];
   const mates = await Promise.all(labels.map(async (label) => (await tokensOf(label))["mate"]));
-  assert.deepEqual(mates, [FLEET_HOST, FLEET_HOST, FLEET_HOST, FLEET_HOST]);
+  assert.deepEqual(mates, [undefined, undefined, undefined, "gone-host"]);
   assert.equal((await tokensOf("2ndmate-ops"))["lane"], undefined);
   assert.equal((await tokensOf("[held] held-worker"))["mate"], "previous-host");
   process.stderr.write(`sidebar after the update: ${JSON.stringify(await sidebar())}\n`);
 });
+
+function waitForUpdate(): Promise<string> {
+  return until(
+    () => {
+      const sessions = join(h.dir, "sessions");
+      const text = readdirSync(sessions)
+        .map((file) => readFileSync(join(sessions, file), "utf8"))
+        .join("\n");
+      return text.includes("[fleet] update: Fleet updated.") ? text : undefined;
+    },
+    "main to record the update's report",
+    async () => `the sidebar reads ${JSON.stringify(await sidebar())}`,
+  );
+}
 
 async function tokensOf(label: string): Promise<Record<string, unknown>> {
   const row = records((await lab.run(["workspace", "list"]))["workspaces"]).find(

@@ -188,12 +188,17 @@ async function laneHerdrOnce(
   const refusal = laneRefusal(reply, args);
   if (refusal !== undefined) throw refusal;
   const result = reply?.["result"];
-  const paneRun = mode === "mutate" && args[0] === "pane" && args[1] === "run";
-  if (isRecord(result) && reply?.["error"] === undefined && (!paneRun || result["type"] === "ok"))
+  if (isRecord(result) && reply?.["error"] === undefined && acceptsLaneResult(args, mode, result))
     return result;
   const message = `herdr ${args.slice(0, 2).join(" ")} returned no complete result`;
   throw mode === "observe" ? new HostUnread(message) : new Error(message);
 }
+
+const acceptsLaneResult = (
+  [noun, verb]: readonly string[],
+  mode: LaneCommand,
+  result: Record<string, unknown>,
+): boolean => mode !== "mutate" || noun !== "pane" || verb !== "run" || result["type"] === "ok";
 
 function jsonRecord(out: string): Record<string, unknown> | undefined {
   try {
@@ -434,7 +439,7 @@ async function foreground(
   };
 }
 
-function isPi(process: Record<string, unknown>): boolean {
+export function isPi(process: Record<string, unknown>): boolean {
   const argv = Array.isArray(process["argv"]) ? process["argv"] : [];
   const script = typeof argv[1] === "string" ? argv[1] : "";
   return (
@@ -464,39 +469,4 @@ export async function shellPid(host: string, pane: string): Promise<number | und
 export async function shellIdle(host: string, pane: string): Promise<boolean> {
   const { group, shell } = await foreground(host, pane);
   return group !== undefined && group === shell;
-}
-
-function completeLaneProcess(row: Record<string, unknown>): boolean {
-  const argv = row["argv"];
-  return (
-    Number.isInteger(row["pid"]) &&
-    typeof row["name"] === "string" &&
-    Array.isArray(argv) &&
-    argv.every((arg) => typeof arg === "string")
-  );
-}
-
-export async function lanePaneState(
-  pane: string,
-  deadline?: number,
-): Promise<"pi" | "busy" | "down"> {
-  const reply = await laneHerdr(["pane", "process-info", "--pane", pane], "observe", deadline);
-  const info = reply["process_info"];
-  if (!isRecord(info)) throw new HostUnread(`herdr returned no process info for pane ${pane}`);
-  const entries = info["foreground_processes"];
-  const processes = records(entries);
-  if (
-    !Array.isArray(entries) ||
-    processes.length !== entries.length ||
-    processes.some((row) => !completeLaneProcess(row))
-  )
-    throw new HostUnread(`herdr returned an incomplete process list for pane ${pane}`);
-  if (processes.some(isPi)) return "pi";
-  const shell = info["shell_pid"];
-  const group = info["foreground_process_group_id"];
-  if (!Number.isInteger(shell) || !Number.isInteger(group))
-    throw new HostUnread(`herdr returned no shell or foreground group for pane ${pane}`);
-  if (shell !== group && processes.length === 0)
-    throw new HostUnread(`herdr returned a foreground group without processes for pane ${pane}`);
-  return shell === group ? "down" : "busy";
 }
