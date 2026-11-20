@@ -8,7 +8,7 @@ import {
   UNREAD_DELIVERY,
 } from "./delivery-states.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
-import { noticeEligible } from "./restart-requests.ts";
+import { noticeState } from "./restart-requests.ts";
 import { addEntry, ENTRY_JSON, getCard, json, mainLane } from "./store.ts";
 import { identified } from "./maintenance.ts";
 import { holdFor } from "./waits.ts";
@@ -224,12 +224,13 @@ function keepDelivery(
   card: number,
   restartNotice: unknown,
 ): boolean {
-  if (typeof restartNotice !== "number" || noticeEligible(db, getCard(db, card), restartNotice))
-    return true;
-  db.prepare(
-    `DELETE FROM deliveries WHERE session = ? AND entry = ? AND state IN (${UNREAD_DELIVERY})`,
-  ).run(session, entry);
-  return false;
+  if (typeof restartNotice !== "number") return true;
+  const state = noticeState(db, getCard(db, card), restartNotice);
+  if (state === "retired")
+    db.prepare(
+      `DELETE FROM deliveries WHERE session = ? AND entry = ? AND state IN (${UNREAD_DELIVERY})`,
+    ).run(session, entry);
+  return state === "eligible";
 }
 
 export function toPush(

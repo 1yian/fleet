@@ -297,10 +297,8 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   }),
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
-  "card.restart.failed": (db, session, raw) => ({
-    value: restartFailed(db, session, check(OPS["card.restart.failed"].args, raw)),
-    notify: [],
-  }),
+  "card.restart.failed": (db, session, raw) =>
+    restartFailed(db, session, check(OPS["card.restart.failed"].args, raw)),
   "card.restart.notice": (db, session, raw) =>
     restartNotice(db, session, check(OPS["card.restart.notice"].args, raw)),
   report: (db, session, raw, _timing, note, _closeCheck, emptyBranch) => {

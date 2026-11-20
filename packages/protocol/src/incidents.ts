@@ -64,7 +64,7 @@ export const INCIDENT_OPS = {
     result: Type.Object({
       posted: Type.Boolean({
         description:
-          "False when the request was refunded or superseded, or the card is not working; queued notices are checked again at delivery",
+          "False if already queued, refunded, durably superseded, or the card is not working; a refundable successor defers delivery",
       }),
     }),
   },
