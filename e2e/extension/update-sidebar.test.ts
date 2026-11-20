@@ -153,7 +153,18 @@ test("/updatefleet orders every host's sidebar when no mate starts anywhere, and
   await untilSidebar(ORDERED);
   assertNoMateStarted();
   assert.match(report, /Sidebars:\n- local: ordered\n- p620: ordered/);
+  assert.doesNotMatch(report, /Mate placement unchanged/);
 });
+
+for (const fault of ["placement-object", "placement-non-record"]) {
+  test(`/updatefleet reports that mate placement is unchanged after ${fault}`, async () => {
+    writeFileSync(faults, `restart-lacks-direnv\n${fault}\n`);
+    await scrambledSidebarWithNoMateRunning();
+    const report = await updateReport();
+    assert.match(report, /Mate placement unchanged: invalid mate placement on p620/);
+    assertNoMateStarted();
+  });
+}
 
 test("/updatefleet names each host whose sidebar it could not order, and still orders the others", async () => {
   writeFileSync(faults, "restart-lacks-direnv\narrange-lacks-session\n");

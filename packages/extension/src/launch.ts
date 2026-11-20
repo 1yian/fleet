@@ -21,6 +21,7 @@ import { isRecord, parseLaneConfig, readLaneConfig, strings } from "./lane-confi
 import { checkLaneSecrets } from "./lane-secrets.ts";
 import { costRows } from "./cost.ts";
 import { setUpMemory } from "./memory.ts";
+import { MAINTENANCE_SWEEP_MS } from "./maintenance-budget.ts";
 import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences } from "./standing.ts";
@@ -227,6 +228,7 @@ function lane(): string {
 
 const maintenance = command === "up" && values.maintenance === true;
 const maintenanceJson = maintenance && values.json === true;
+const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
 function maintenanceFailure(message: string): void {
   console.log(JSON.stringify({ failed: message }));
@@ -237,7 +239,7 @@ if (command === "up" || command === "restart") {
     console.error(USAGE);
     process.exit(2);
   }
-  const problems = hostProblems(root, values.maintenance !== true);
+  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline);
   if (problems.length > 0) {
     if (maintenanceJson) {
       maintenanceFailure(problems.join("\n"));
@@ -265,7 +267,7 @@ switch (command ?? "") {
   }
   case "up":
     try {
-      show(await up(root, rest[0], maintenance));
+      show(await up(root, rest[0], maintenanceDeadline));
     } catch (error) {
       if (!maintenanceJson) throw error;
       maintenanceFailure(error instanceof Error ? error.message : String(error));

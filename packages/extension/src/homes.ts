@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { quote } from "@fleet/protocol/route";
 import { arrangeHere, claimFollowers } from "./arrange.ts";
 import { TRUST_ARG } from "./fleet-args.ts";
-import { field, HostUnread, laneHerdr, lanePaneState, records } from "./host.ts";
+import { field, HostUnread, laneHerdr, lanePaneState, onHost, records } from "./host.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
   isRecord,
@@ -25,6 +25,7 @@ import {
   readLaneConfig,
   type LaneConfig,
 } from "./lane-config.ts";
+import { remainingMs } from "./maintenance-budget.ts";
 import { withCompileCache } from "./scratch.ts";
 import { isWorkerWorkspace, legacyMatePrefix, mateTitle } from "./titles.ts";
 
@@ -47,11 +48,23 @@ export interface Outcome {
 const STARTS_BEFORE_HOLD = 3;
 const CRASH_WINDOW_MS = 10 * 60_000;
 
-const git = (cwd: string, ...args: string[]): string =>
-  execFileSync("git", ["-C", cwd, ...args], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+function gitWithin(cwd: string, args: readonly string[], deadline?: number): string {
+  const timeout = remainingMs(deadline);
+  if (timeout === 0) throw new HostUnread("maintenance deadline reached");
+  try {
+    return execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(deadline === undefined ? {} : { timeout, killSignal: "SIGKILL" }),
+    }).trim();
+  } catch (error) {
+    if (deadline !== undefined && Reflect.get(Object(error), "code") === "ETIMEDOUT")
+      throw new HostUnread("maintenance deadline reached");
+    throw error;
+  }
+}
+
+const git = (cwd: string, ...args: string[]): string => gitWithin(cwd, args);
 
 export function codeRoot(): string {
   const set = process.env["FLEET_ROOT"];
@@ -150,8 +163,13 @@ export function reconfigure(
   replaceFile(file, `${JSON.stringify(next, null, 2)}\n`);
 }
 
-async function observeList(noun: string, args: readonly string[], keys: readonly string[]) {
-  const result = await laneHerdr([noun, "list", ...args], "observe");
+async function observeList(
+  noun: string,
+  args: readonly string[],
+  keys: readonly string[],
+  deadline?: number,
+) {
+  const result = await laneHerdr([noun, "list", ...args], "observe", deadline);
   const list = result[`${noun}s`];
   const rows = records(list);
   if (
@@ -163,8 +181,8 @@ async function observeList(noun: string, args: readonly string[], keys: readonly
   return rows;
 }
 
-async function rootOfWorkspace(workspace: string) {
-  const [root] = await observeList("pane", ["--workspace", workspace], []);
+async function rootOfWorkspace(workspace: string, deadline?: number) {
+  const [root] = await observeList("pane", ["--workspace", workspace], [], deadline);
   const pane = field(root, "pane_id");
   if (pane === undefined || pane === "")
     throw new HostUnread(`herdr returned no root pane for ${workspace}`);
@@ -190,40 +208,44 @@ async function candidateMatches(
   workspace: string,
   home: string,
   placement: boolean,
+  deadline?: number,
 ): Promise<boolean> {
-  const { pane, cwd } = await rootOfWorkspace(workspace);
+  const { pane, cwd } = await rootOfWorkspace(workspace, deadline);
   if (cwd === undefined || cwd === "")
     throw new HostUnread(`herdr returned no root pane cwd for ${workspace}`);
   if (canonical(cwd) !== canonical(home)) return false;
-  return !placement || (await lanePaneState(pane)) === "pi";
+  return !placement || (await lanePaneState(pane, deadline)) === "pi";
 }
 
 async function workspaceOf(
   { lane, home }: LaneHome,
   placement = false,
+  deadline?: number,
 ): Promise<string | undefined> {
-  for (const row of await observeList("workspace", [], ["workspace_id", "label"])) {
+  for (const row of await observeList("workspace", [], ["workspace_id", "label"], deadline)) {
     const workspace = String(row["workspace_id"]);
     const current = row["label"] === mateTitle(lane);
     const legacy = row["label"] === `${legacyMatePrefix}${lane}` && !isWorkerWorkspace(row);
     if (current && !placement) return workspace;
     if (!current && !legacy) continue;
-    if (await candidateMatches(workspace, home, placement)) return workspace;
+    if (await candidateMatches(workspace, home, placement, deadline)) return workspace;
   }
   return undefined;
 }
 
-async function running(info: LaneHome): Promise<boolean> {
-  const workspace = await workspaceOf(info);
-  if (workspace === undefined) return false;
-  const { pane } = await rootOfWorkspace(workspace);
-  return (await lanePaneState(pane)) !== "down";
+async function observedLane(info: LaneHome, confirmAbsence = false, deadline?: number) {
+  const first = await workspaceOf(info, false, deadline);
+  const workspace =
+    first ?? (confirmAbsence ? await workspaceOf(info, false, deadline) : undefined);
+  if (workspace === undefined) return undefined;
+  const { pane } = await rootOfWorkspace(workspace, deadline);
+  return { pane, running: (await lanePaneState(pane, deadline)) !== "down" };
 }
 
 async function statusOf(info: LaneHome): Promise<Status> {
   const { lane, home } = info;
   try {
-    if (await running(info)) return { lane, state: "running" };
+    if ((await observedLane(info))?.running === true) return { lane, state: "running" };
     const reason = heldReason(home);
     return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
   } catch (error) {
@@ -253,11 +275,11 @@ export async function placementStatus(
   return out;
 }
 
-function syncHome(root: string, home: string): void {
-  const target = git(root, "rev-parse", "HEAD");
-  if (git(home, "rev-parse", "HEAD") === target || git(home, "status", "--porcelain") !== "")
-    return;
-  git(home, "checkout", "--detach", target);
+function syncHome(root: string, home: string, deadline?: number): void {
+  const target = gitWithin(root, ["rev-parse", "HEAD"], deadline);
+  const inHome = (...args: string[]) => gitWithin(home, args, deadline);
+  if (inHome("rev-parse", "HEAD") === target || inHome("status", "--porcelain") !== "") return;
+  inHome("checkout", "--detach", target);
 }
 
 function recentStarts(home: string, now: number): number[] {
@@ -271,21 +293,24 @@ function recentStarts(home: string, now: number): number[] {
 
 const SHELL_WAIT_MS = 20_000;
 
-async function untilPiShows(pane: string): Promise<void> {
-  const deadline = Date.now() + SHELL_WAIT_MS;
+async function untilPiShows(pane: string, sweep?: number): Promise<void> {
+  const deadline = Math.min(performance.now() + SHELL_WAIT_MS, sweep ?? Infinity);
   while (
-    Date.now() < deadline &&
-    (await lanePaneState(pane).catch(ifUnread("unread" as const))) !== "pi"
+    remainingMs(deadline) > 0 &&
+    (await lanePaneState(pane, sweep === undefined ? undefined : deadline).catch(
+      ifUnread("unread" as const),
+    )) !== "pi"
   ) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(100, remainingMs(deadline))));
   }
 }
 
-async function createMatePane(info: LaneHome): Promise<string> {
+async function createMatePane(info: LaneHome, deadline?: number): Promise<string> {
   const title = mateTitle(info.lane);
   const created = await laneHerdr(
     ["workspace", "create", "--cwd", info.home, "--label", title, "--no-focus"],
     "mutate",
+    deadline,
   );
   const root = created["root_pane"];
   const pane = field(isRecord(root) ? root : undefined, "pane_id");
@@ -293,26 +318,39 @@ async function createMatePane(info: LaneHome): Promise<string> {
   return pane;
 }
 
-async function start(root: string, info: LaneHome, lift = false): Promise<void> {
-  const workspace = await workspaceOf(info);
-  const existing = workspace === undefined ? undefined : await rootOfWorkspace(workspace);
-  syncHome(root, info.home);
-  const pane = existing?.pane ?? (await createMatePane(info));
+async function start(
+  root: string,
+  info: LaneHome,
+  existingPane: string | undefined,
+  lift: boolean,
+  deadline?: number,
+): Promise<void> {
+  syncHome(root, info.home, deadline);
+  const pane = existingPane ?? (await createMatePane(info, deadline));
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
   const command = withCompileCache(direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi]);
   await laneHerdr(
     ["pane", "run", pane, `cd ${quote(info.home)} && ${command.map(quote).join(" ")}`],
     "mutate",
+    deadline,
   );
   if (lift) liftHold(info.home);
   mkdirSync(join(info.home, "state"), { recursive: true });
   const starts = [...recentStarts(info.home, Date.now()), Date.now()];
   writeFileSync(startsFile(info.home), `${starts.join("\n")}\n`);
-  await untilPiShows(pane);
-  await arrangeHere(info.config.host ?? process.env["FLEET_HOST"] ?? "local").catch(
-    () => undefined,
-  );
+  await untilPiShows(pane, deadline);
+  const host = info.config.host ?? process.env["FLEET_HOST"] ?? "local";
+  if (deadline === undefined) await arrangeHere(host).catch(() => undefined);
+  else {
+    const timeout = remainingMs(deadline);
+    if (timeout > 0) {
+      const launch = fileURLToPath(new URL("./launch.ts", import.meta.url));
+      await onHost("local", [process.execPath, launch, "arrange", "--host", host], timeout).catch(
+        () => undefined,
+      );
+    }
+  }
 }
 
 const named = (root: string, lane: string | undefined): LaneHome[] => {
@@ -322,11 +360,16 @@ const named = (root: string, lane: string | undefined): LaneHome[] => {
   return found;
 };
 
-async function upOne(root: string, info: LaneHome, only: string | undefined): Promise<Outcome> {
+async function upOne(
+  root: string,
+  info: LaneHome,
+  only: string | undefined,
+  deadline?: number,
+): Promise<Outcome> {
   const { lane, home } = info;
-  const alive = await running(info);
+  const observed = await observedLane(info, true, deadline);
   const reason = heldReason(home);
-  if (alive) {
+  if (observed?.running === true) {
     if (reason !== undefined) liftHold(home);
     return { lane, action: "running" };
   }
@@ -337,20 +380,25 @@ async function upOne(root: string, info: LaneHome, only: string | undefined): Pr
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
     return { lane, action: "held", detail };
   }
-  await start(root, info, lift);
+  await start(root, info, observed?.pane, lift, deadline);
   return { lane, action: "started" };
 }
 
 export async function up(
   root: string,
   only: string | undefined,
-  maintenance: boolean,
+  deadline?: number,
 ): Promise<Outcome[]> {
   const out: Outcome[] = [];
   for (const info of named(root, only)) {
-    const work = withLifecycleLock(info.home, info.lane, () => upOne(root, info, only));
+    const work = withLifecycleLock(
+      info.home,
+      info.lane,
+      () => upOne(root, info, only, deadline),
+      deadline,
+    );
     const unread: Outcome = { lane: info.lane, action: "unread" };
-    out.push(await (maintenance ? work.catch(ifUnread(unread)) : work));
+    out.push(await (deadline === undefined ? work : work.catch(ifUnread(unread))));
   }
   return out;
 }
@@ -374,10 +422,15 @@ export async function stop(root: string, lane: string): Promise<void> {
 
 async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
-  if (all && held !== undefined && !(await running(info)))
+  if (all && held !== undefined && !(await observedLane(info))?.running)
     return { lane: info.lane, action: "stopped", detail: held };
   await close(info);
-  await start(root, info, true);
+  const observed = await observedLane(info, true);
+  if (observed?.running === true) {
+    if (held !== undefined) liftHold(info.home);
+    return { lane: info.lane, action: "running" };
+  }
+  await start(root, info, observed?.pane, true);
   return { lane: info.lane, action: "started" };
 }
 
