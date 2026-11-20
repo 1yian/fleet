@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { Delivery, OpResult } from "@fleet/protocol";
 import { ADD_WORKTREE } from "./clones.ts";
 import { contain, releaseAll } from "./containment.ts";
 import { extensionOn } from "./extension-path.ts";
 import { fleetArgs, TRUST_ARG } from "./fleet-args.ts";
 import {
+  AgentReadinessTimedOut,
   AgentStartRefused,
   field,
   herdr,
@@ -104,8 +106,11 @@ async function until(check: () => Promise<boolean>, waitMs: number): Promise<boo
 }
 
 class StartUnconfirmed extends Error {
+  readonly timedOut: boolean;
+
   constructor(cause: unknown) {
     super(toError(cause).message, { cause });
+    this.timedOut = cause instanceof AgentReadinessTimedOut;
   }
 }
 
@@ -152,19 +157,24 @@ async function exitedMessage(
   host: string,
   pane: string,
   worker: { session: string; token: string },
+  connected: boolean,
 ): Promise<string> {
-  return `Pi is not running in pane ${pane} on ${host} after ${worker.session} was started in it, so the worker never connected. ${await paneTail(host, pane, worker.token)}`;
+  const what = connected
+    ? `after ${worker.session} connected to Fleet`
+    : `after ${worker.session} was started in it, so the worker never connected`;
+  return `Pi is not running in pane ${pane} on ${host} ${what}. ${await paneTail(host, pane, worker.token)}`;
 }
 
 async function confirmStays(
   host: string,
   pane: string,
   worker: { session: string; token: string },
+  connected: boolean,
 ): Promise<void> {
   const deadline = Date.now() + STAY_MS;
   while (Date.now() < deadline) {
     if (await shellIdle(host, pane).catch(() => false))
-      throw new Error(await exitedMessage(host, pane, worker));
+      throw new Error(await exitedMessage(host, pane, worker, connected));
     await sleep(POLL_MS);
   }
 }
@@ -195,7 +205,10 @@ async function replacementError(
 ): Promise<Error | string> {
   const running = await piRunning(host, pane).catch(() => undefined);
   const cause = scrub(toError(error).message, [worker.token]);
-  if ((await replacementStarted()) === true) return cause;
+  const timedOut =
+    error instanceof AgentReadinessTimedOut ||
+    (error instanceof StartUnconfirmed && error.timedOut);
+  if (timedOut && (await replacementStarted()) === true) return cause;
   if (running === true) return toError(error);
   if (running === false && error instanceof StartUnconfirmed)
     return new Error(
@@ -229,10 +242,10 @@ async function startAgent(
     } else {
       const running = await piRunning(host, pane).catch(() => undefined);
       if (running !== false) throw error;
-      throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+      throw new Error(await exitedMessage(host, pane, worker, false), { cause: error });
     }
   }
-  confirmStays(host, pane, worker).catch((error: unknown) => {
+  confirmStays(host, pane, worker, readiness !== undefined).catch((error: unknown) => {
     lost(error instanceof Error ? error.message : String(error));
   });
   return readiness;
@@ -335,7 +348,6 @@ interface Recovery {
   card: number;
   host: string;
   actor: string;
-  generation: number;
   notice?: number | undefined;
 }
 
@@ -382,6 +394,7 @@ export async function replaceWorker(
       throw new DidNotStart(error);
     },
   );
+  const launched = randomUUID();
   const readiness = await startAgent(
     recovery.host,
     pane,
@@ -404,6 +417,7 @@ export async function replaceWorker(
         role: "worker",
         fleetProject: plan.fleetProject,
         avoid,
+        launch: launched,
       }),
       [
         TRUST_ARG,
@@ -420,12 +434,18 @@ export async function replaceWorker(
       const current = await link
         .call("attempt.resume", { card: recovery.card })
         .catch(() => undefined);
-      return current?.session === recovery.actor
-        ? current.generation > recovery.generation
-        : undefined;
+      return current?.session === recovery.actor ? current.process === launched : undefined;
     },
   );
-  await contain(recovery.host, pane, path);
+  try {
+    await contain(recovery.host, pane, path);
+  } catch (error) {
+    if (readiness === undefined) throw error;
+    throw new Error(
+      `${scrub(toError(error).message, [plan.token])}\nHerdr also reported:\n${readiness}`,
+      { cause: error },
+    );
+  }
   const started = `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
   return readiness === undefined
     ? started

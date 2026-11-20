@@ -25,7 +25,7 @@ import {
 import { keepingRefusals } from "./incident-escalation.ts";
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
-import { generationOf } from "./incident-store.ts";
+import { generationOf, processOf } from "./incident-store.ts";
 import { restartCard, restartFailed, restartNotice } from "./restarts.ts";
 import {
   hold,
@@ -258,7 +258,10 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     requireOpen(db, card);
     const attempt = resumeAttempt(db, card);
     const generation = generationOf(db, attempt.session);
-    return { value: { ...attempt, generation }, notify: [] };
+    return {
+      value: { ...attempt, generation, process: processOf(db, attempt.session) },
+      notify: [],
+    };
   },
   "branch.name": (db, session, raw) => {
     const args = check(OPS["branch.name"].args, raw);

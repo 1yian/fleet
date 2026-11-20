@@ -209,6 +209,18 @@ export const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Mov
   const moves = Object.entries(plans).find(([key]) => ask.includes(key))?.[1] ?? [];
   return moves[done] ?? { text: "noted" };
 };
+export const RESTART_REPEATED =
+  "This restart key was already recorded. No new launch was attempted.";
+
+export const restartRepeatFinished = (h: Harness) =>
+  h.waitFor(
+    (event) =>
+      event["type"] === "tool_execution_end" &&
+      event["tool"] === "restart_card" &&
+      event["text"] === RESTART_REPEATED,
+    "the mate's repeated restart_card call to finish while the start is gated",
+  );
+
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
 
