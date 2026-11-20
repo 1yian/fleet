@@ -9,7 +9,16 @@ import {
 } from "@fleet/protocol";
 import { requireCommentsRead } from "./deliveries.ts";
 import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
-import { dropLostJob, finishJob, ownJob, runningJobs, startJob, touchJob } from "./jobs.ts";
+import { jobCutover } from "./job-cutover.ts";
+import {
+  dropLostJob,
+  finishJob,
+  ownJob,
+  registerJob,
+  runningJobs,
+  startJob,
+  touchJob,
+} from "./jobs.ts";
 import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
@@ -264,8 +273,22 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "job.start": (db, session, raw, timing) => {
     const args = check(OPS["job.start"].args, raw);
     requireReviewDecision(db, session, args.command);
+    const job = startJob(db, session.id, { label: args.label, command: args.command });
+    return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
+  },
+  "job.prepare": (db, session, raw, timing) => {
+    const args = check(OPS["job.prepare"].args, raw);
+    requireReviewDecision(db, session, args.command);
     const job = startJob(db, session.id, args);
     return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
+  },
+  "job.register": (db, session, raw) => ({
+    value: { registered: registerJob(db, session.id, check(OPS["job.register"].args, raw)) },
+    notify: [],
+  }),
+  "job.cutover": (db, session, raw) => {
+    if (session.lane !== mainLane(db)) throw new Error("only main can control job cutover");
+    return { value: jobCutover(db, check(OPS["job.cutover"].args, raw)), notify: [] };
   },
   "job.alive": (db, session, raw) => {
     const args = check(OPS["job.alive"].args, raw);
@@ -289,6 +312,9 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
       id: args.job,
       exitCode: args.exitCode,
       outputTail: args.outputTail,
+      ...(args.beforeRegistration === undefined
+        ? {}
+        : { beforeRegistration: args.beforeRegistration }),
     });
     if (finished === undefined || session.card === null)
       return { value: { recorded: false }, notify: [] };

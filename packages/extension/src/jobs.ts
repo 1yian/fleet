@@ -1,13 +1,15 @@
-import { randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { check, OPS } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
+import { jobHandshake } from "./job-http.ts";
 import type { Link } from "./link.ts";
 import { forwardedEnvironment } from "./scratch.ts";
 
@@ -78,6 +80,24 @@ export class Jobs {
     for (const { id, label } of jobs) this.running.set(id, label);
   }
 
+  private async prepare(
+    url: string,
+    id: string,
+    label: string,
+    command: string,
+  ): Promise<{ job: number; heartbeatMs: number; registeredLaunch: boolean }> {
+    const outcome = await jobHandshake({ url, token: this.cardd.token }, "job.prepare", {
+      launch: id,
+      label,
+      command,
+    });
+    if (outcome.ok)
+      return { ...check(OPS["job.prepare"].result, outcome.value), registeredLaunch: true };
+    if (outcome.status !== 400 || outcome.error !== "unknown operation job.prepare")
+      throw new Error(outcome.error);
+    return { ...(await this.link.call("job.start", { label, command })), registeredLaunch: false };
+  }
+
   async launch(
     label: string,
     command: string,
@@ -85,21 +105,19 @@ export class Jobs {
   ): Promise<{ job: number; tab: string }> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
-    const { job, heartbeatMs } = await this.link.call("job.start", {
-      label,
-      command,
-    });
+    const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
+    const id = randomUUID();
+    const { job, heartbeatMs, registeredLaunch } = await this.prepare(url, id, label, command);
     this.running.set(job, label);
-    const file = join(tmpdir(), `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`);
+    const file = join(tmpdir(), `fleet-job-${String(job)}-${id}.json`);
     const tab = tabName(job, label);
     try {
-      const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
         url,
         token: this.cardd.token,
         job,
-        command,
+        ...(registeredLaunch ? { launch: { id, command } } : { command }),
         timeoutMs,
         heartbeatMs,
         tailLines,
@@ -123,9 +141,16 @@ export class Jobs {
       await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
     } catch (error) {
       rmSync(file, { force: true });
-      this.running.delete(job);
       const outputTail = `could not start: ${error instanceof Error ? error.message : String(error)}`;
-      await this.link.call("job.finish", { job, exitCode: 127, outputTail }).catch(() => 0);
+      const finished = await this.link
+        .call("job.finish", {
+          job,
+          exitCode: 127,
+          outputTail,
+          ...(registeredLaunch ? { beforeRegistration: id } : {}),
+        })
+        .catch(() => undefined);
+      if (!registeredLaunch || finished?.recorded === true) this.running.delete(job);
       throw error;
     }
     return { job, tab };

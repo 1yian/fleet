@@ -94,6 +94,18 @@ test("closing a card abandons its running job and does not call it lost", async 
   assert.equal(abandonedRow["session"], "closed");
   const aboutServer = (await findings(card)).filter((entry) => entry.body.includes("(server)"));
   assert.deepEqual(aboutServer, []);
+  const cutover = check(
+    OPS["job.cutover"].result,
+    await fleet.main.call("job.cutover", { action: "seal" }),
+  );
+  assert.equal(cutover.state, "draining");
+  assert.deepEqual(
+    cutover.blockers.map(({ job, state }) => [job, state]),
+    [
+      [lost, "lost"],
+      [running, "abandoned"],
+    ],
+  );
 });
 
 test("a dropped lost job can still finish, and the drop mark does not survive finish", async () => {

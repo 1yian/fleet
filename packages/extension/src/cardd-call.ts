@@ -21,6 +21,7 @@ export async function callCardd<N extends OpName>(
   lane: LaneConfig,
   op: N,
   args: OpArgs<N>,
+  signal?: AbortSignal,
 ): Promise<OpResult<N>> {
   const checked = check(OPS[op].args, args);
   const { value: token, note } = await laneToken(lane, bwsFor(lane.bws));
@@ -30,6 +31,7 @@ export async function callCardd<N extends OpName>(
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ op, args: checked }),
+    ...(signal === undefined ? {} : { signal }),
   });
   const outcome = check(HttpOutcomeSchema, await response.json());
   if (!outcome.ok) throw new Error(outcome.error);

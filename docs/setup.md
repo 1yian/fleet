@@ -761,6 +761,16 @@ A host that skipped it recovers the same way. Install bun, then run `git pull &&
 
 After that one time, `fleet update` refuses a host without bun (below 1.3.13) before it changes anything, and names the fix. `fleet cardd` checks the same way on `cardd`'s host: it refuses a host without bun (below 1.3.13) before the pull, names the host and the fix, and leaves the checkout where it was.
 
+### Job liveness cutover
+
+Install the registration release on the worker hosts and cardd before attempting a release that removes the heartbeat detector. The registration release leaves that detector in place. Old workers and already running jobs keep using their old protocol. Updated wrappers wait for cardd to confirm registration before invoking Bash. If the daemon explicitly says it predates registration, updated workers use the old job protocol until the daemon is upgraded.
+
+Before any later detector removal, use main's updated `bin/fleet`:
+
+1. Run `fleet job-cutover seal`. This permanently blocks new legacy launches in cardd, including requests from workers that have not reloaded. It does not stop jobs. A draining result exits nonzero and lists each blocker by job, card, and host. Updated workers can still launch registered jobs.
+2. Let legacy jobs finish, or explicitly stop them on their owning host. A lost or abandoned row, a launch error, and an exit of 130 are not proof that a legacy process stopped. A legacy wrapper can post 130 before it finishes stopping its process group. For each such blocker, verify that the wrapper and command are gone and that no pending launch can still start them. Only then record the evidence with `fleet job-cutover confirm-stop <job> '<evidence>'`. This records an operator confirmation, not a process check, and does not change the job's result. Do not confirm on the basis of a failed or partial read. If you cannot establish that the job cannot run, report a blocker and leave the detector in place.
+3. Run `fleet job-cutover status`. Proceed to a separate detector-removal release only if the command succeeds and reports `ready` against the upgraded daemon. An open seal, a draining result, or an unreadable reply is not ready. Do not restore a database from before the seal while relying on this result.
+
 ### One-time cleanup after the file explorer was removed
 
 Fleet no longer opens a Files tab and never targets one. A Files tab left by an earlier version stays open until someone closes it by hand, or until its workspace closes. Job tabs still close as before.

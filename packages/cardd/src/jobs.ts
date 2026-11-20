@@ -85,24 +85,54 @@ function transitionJob(
 export function startJob(
   db: DatabaseSync,
   session: string,
-  job: { label: string; command: string },
+  job: { label: string; command: string; launch?: string },
 ): number {
   const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
-      "INSERT INTO jobs (attempt, label, command, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (attempt, label, command, state, created_at, updated_at, launch_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-    .run(attemptOf(db, session), job.label, job.command, startedJob().state, now, now);
+    .run(
+      attemptOf(db, session),
+      job.label,
+      job.command,
+      startedJob().state,
+      now,
+      now,
+      job.launch ?? null,
+    );
   return Number(lastInsertRowid);
+}
+
+export function registerJob(
+  db: DatabaseSync,
+  session: string,
+  args: { job: number; launch: string; pid: number },
+): boolean {
+  const { changes } = db
+    .prepare(
+      `UPDATE jobs SET wrapper_pid = ?, updated_at = ?
+     WHERE id = ? AND attempt = ? AND launch_id = ? AND ${runningJobSql("state")}
+       AND (wrapper_pid IS NULL OR wrapper_pid = ?)`,
+    )
+    .run(args.pid, Date.now(), args.job, attemptOf(db, session), args.launch, args.pid);
+  return changes === 1;
 }
 
 export function finishJob(
   db: DatabaseSync,
   session: string,
-  job: { id: number; exitCode: number; outputTail: string },
+  job: { id: number; exitCode: number; outputTail: string; beforeRegistration?: string },
 ): { label: string } | undefined {
   const owned = ownedJob(db, session, job.id);
   if (owned === undefined) return undefined;
+  if (
+    job.beforeRegistration !== undefined &&
+    db
+      .prepare("SELECT id FROM jobs WHERE id = ? AND launch_id = ? AND wrapper_pid IS NULL")
+      .get(job.id, job.beforeRegistration) === undefined
+  )
+    return undefined;
   const moved = transitionJob(
     db,
     owned,
