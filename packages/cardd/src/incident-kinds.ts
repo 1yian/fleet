@@ -1,4 +1,5 @@
 import { CURL_SHELL_EXPANSION } from "./curl-shell.ts";
+import { hasCookieHeader, logicalView } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
 const MAX_RETRIES = 2;
@@ -233,12 +234,6 @@ function normalizeInput(text: string): string {
   return text.replace(/\r\n?/g, "\n").replace(/^\uFEFF/gm, "");
 }
 
-function logicalView(text: string): string {
-  return text.replace(/\\(?:\\|(\r?\n))/g, (pair, newline: unknown) =>
-    typeof newline === "string" ? "" : pair,
-  );
-}
-
 function hasEscapedCredentialKey(text: string): boolean {
   for (const [, key = ""] of text.matchAll(ESCAPED_KEY)) {
     const decoded = key.replace(KEY_ESCAPE, (_escape, hex: string) =>
@@ -335,6 +330,7 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
   if (curlCredentialOption(urls)) return CURL_WITHHELD;
+  if ([urls, logicalView(urls)].some(hasCookieHeader)) return YAML_WITHHELD;
   if (hasUnprovenValue(urls)) return YAML_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
   const hidden = SECRET_PATTERNS.reduce(
