@@ -450,7 +450,7 @@ async function start(
     deadline === undefined ? undefined : deadline - SHELL_WAIT_MS - START_RECORD_MS;
   if (remainingMs(launchDeadline) < LAUNCH_WAIT_MS)
     throw new HostUnread("not enough maintenance time to start the lane");
-  const history = lift ? [] : recentStarts(info.home, Date.now());
+  const history = recentStarts(info.home, Date.now());
   syncHome(root, info.home, launchDeadline);
   const pane = existingPane ?? (await createMatePane(info, launchDeadline));
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
@@ -463,7 +463,7 @@ async function start(
   );
   if (lift) liftHold(info.home);
   mkdirSync(join(info.home, "state"), { recursive: true });
-  const starts = [...history, Date.now()];
+  const starts = [...(lift ? [] : history), Date.now()];
   writeFileSync(startsFile(info.home), `${starts.join("\n")}\n`);
   await untilPiShows(pane, deadline !== undefined);
   const host = info.config.host ?? process.env["FLEET_HOST"] ?? "local";
@@ -510,13 +510,14 @@ async function upOne(
       : Math.min(deadline, performance.now() + LANE_OBSERVATION_MS);
   const observed = await workspaceOf(info, "liveness", observationDeadline);
   const reason = heldReason(home);
+  const history = recentStarts(home, Date.now());
   if (observed?.state === "running") {
     if (reason !== undefined) liftHold(home);
     return { lane, action: "running" };
   }
   const lift = only !== undefined && reason !== undefined;
   if (reason !== undefined && !lift) return { lane, action: "stopped", detail: reason };
-  if (!lift && recentStarts(home, Date.now()).length >= STARTS_BEFORE_HOLD) {
+  if (!lift && history.length >= STARTS_BEFORE_HOLD) {
     const detail = `started ${String(STARTS_BEFORE_HOLD)} times in ${String(CRASH_WINDOW_MS / 60_000)} minutes`;
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
     return { lane, action: "held", detail };
@@ -582,6 +583,7 @@ export async function stop(root: string, lane: string): Promise<void> {
 
 async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
+  recentStarts(info.home, Date.now());
   const match = await workspaceOf(info, all && held !== undefined ? "restart-held" : "close");
   if (all && held !== undefined && match?.state !== "running")
     return { lane: info.lane, action: "stopped", detail: held };

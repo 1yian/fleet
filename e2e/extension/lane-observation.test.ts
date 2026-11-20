@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, test } from "node:test";
@@ -166,7 +174,7 @@ function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1
 }
 
 const legacyMaintenance = ["up", "--maintenance", "--json"];
-const typedMaintenance = [...legacyMaintenance, "--maintenance-outcomes-v1"];
+const typedMaintenance = [...legacyMaintenance, "--maintenance-outcomes-v1", "0"];
 function maintenanceOutcomes(out: string): unknown {
   const reply: unknown = JSON.parse(out);
   assert.ok(isRecord(reply));
@@ -523,6 +531,48 @@ test("a later preference write failure does not hide an earlier confirmed aside"
     },
   );
   assert.equal(readFileSync(join(ops, "data", "captain-shared.md"), "utf8"), "- shared\n");
+});
+
+test("a hold with unread start history neither starts, closes, nor lifts anything", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  await idlePane("ops", home);
+  const before = (await workspace("ops"))?.["workspace_id"];
+  const stopped = join(home, "state", "stopped");
+  writeFileSync(stopped, "stopped by hand\n");
+  mkdirSync(join(home, "state", "starts"));
+  for (const args of [["up", "ops", "--json"], ["restart", "ops"], ["restart"]]) {
+    assert.throws(() => fleet(args), /could not read state\/starts \(EISDIR\)/);
+    assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n", args.join(" "));
+    assert.equal((await workspace("ops"))?.["workspace_id"], before, args.join(" "));
+  }
+  assert.deepEqual(maintain(), action("ops", "unread"));
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("a failure after the aside is written still reports where the edited copy was kept", async () => {
+  const ops = `${here.root}.worktrees/lane-ops`;
+  writeFileSync(join(ops, "data", "captain-shared.md"), "local edit\n");
+  const content = Buffer.from("- shared\n").toString("base64");
+  chmodSync(join(ops, "state"), 0o555);
+  try {
+    assert.throws(
+      () => fleet(["shared", "--content", content]),
+      (error: unknown) => {
+        const stderr = String(Reflect.get(Object(error), "stderr"));
+        assert.match(stderr, /lane ops could not be updated/);
+        assert.match(
+          stderr,
+          /^fleet-preserved: ops: shared preferences incomplete, edited copy preserved as data\/captain-shared\.edited-/m,
+        );
+        return true;
+      },
+    );
+  } finally {
+    chmodSync(join(ops, "state"), 0o755);
+  }
+  assert.ok(
+    readdirSync(join(ops, "data")).some((name) => name.startsWith("captain-shared.edited-")),
+  );
 });
 
 test("legacy split workspaces close by the original pane's home, not by Pi in a split", async () => {
