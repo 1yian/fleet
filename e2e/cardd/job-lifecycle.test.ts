@@ -109,6 +109,34 @@ test("closing a card abandons its running job and does not call it lost", async 
   );
 });
 
+test("an automatic stopped handoff is deferred while a reservation is outstanding and recorded once it ends", async () => {
+  const card = await newCard(fleet.main, "Hand off only without a wait");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await worker.call("report", { status: "working", text: "Starting the export" });
+  const args = { launch: randomUUID(), label: "export", command: "echo export" };
+  const { job } = check(OPS["job.prepare"].result, await worker.call("job.prepare", args));
+  const stop = { status: "stopped-if-idle", text: "ended the run without a handoff" };
+  const deferred = check(OPS.report.result, await worker.call("report", stop));
+  assert.equal(deferred.deferred, true);
+  const reports = async () =>
+    check(CardViewSchema, await fleet.main.call("card", { card: card.id })).entries.filter(
+      (entry) => entry.kind === "report" && entry.fields["status"] === "stopped",
+    );
+  assert.deepEqual(await reports(), []);
+
+  assert.deepEqual(await worker.call("job.stop", { job }), {
+    label: "export",
+    running: false,
+    cancelled: true,
+  });
+  const recorded = check(OPS.report.result, await worker.call("report", stop));
+  assert.equal(recorded.deferred, undefined);
+  assert.deepEqual(
+    (await reports()).map((entry) => entry.body),
+    ["ended the run without a handoff"],
+  );
+});
+
 test("a reservation does not enter the job watch until the owning wrapper registers", async () => {
   const card = await newCard(fleet.main, "A prepare receipt never arrived");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));

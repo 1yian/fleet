@@ -190,7 +190,7 @@ export class WorkerRun {
     });
     pi.on("agent_settled", async (event) => {
       if (this.leaving) return;
-      if (!event.aborted && (this.failures.lastFailed || this.mayEnd())) return;
+      if (!event.aborted && (this.failures.lastFailed || this.mayEnd() || !this.nudged)) return;
       const text = event.aborted
         ? "stopped from the pane"
         : `ended the run without a handoff: ${this.lastText}`;
