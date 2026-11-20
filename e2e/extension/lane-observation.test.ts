@@ -60,6 +60,16 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
+  'pane process-info:slow-idle')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      sleep 55
+      exec "$REAL_HERDR" "$@"
+    fi ;;
+  'pane process-info:pi-in-split')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
   'pane process-info:hanging-panes')
@@ -205,8 +215,8 @@ test("home matching needs the mate's cwd, not the cwd of an unrelated split", as
   const split = records([added["pane"]])[0]?.["pane_id"];
   assert.ok(typeof split === "string");
   assert.deepEqual(maintain("cwd", split), action("ops", "running"));
-  assert.deepEqual(JSON.parse(fleet(placement, "cwd", split)), [{ lane: "ops", mate: true }]);
-  assert.throws(() => fleet(placement, "cwd", root), /no Pi observed/);
+  assert.throws(() => fleet(placement, "cwd", split), /cannot verify the root pane/);
+  assert.throws(() => fleet(placement, "cwd", root), /cannot verify the root pane/);
 
   const starts = join(home, "state", "starts");
   const history = `${String(Date.now())}\n`.repeat(3);
@@ -217,6 +227,8 @@ test("home matching needs the mate's cwd, not the cwd of an unrelated split", as
     assert.equal(readFileSync(starts, "utf8"), history);
     assert.equal(existsSync(join(home, "state", "stopped")), false);
   }
+  await lab.run(["pane", "close", split]);
+  assert.deepEqual(JSON.parse(fleet(placement)), [{ lane: "ops", mate: true }]);
 });
 
 test("an idle split workspace is unread until only one pane remains", async () => {
@@ -239,6 +251,51 @@ test("an idle split workspace is unread until only one pane remains", async () =
   assert.equal(existsSync(join(home, "state", "starts")), false);
   await lab.run(["pane", "close", split]);
   assert.deepEqual(maintain(), action("ops", "started"));
+});
+
+test("legacy split workspaces close by the original pane's home, not by Pi in a split", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  for (const cwd of [here.root, home]) {
+    const created = await lab.run([
+      "workspace",
+      "create",
+      "--cwd",
+      cwd,
+      "--label",
+      "fleet-ops",
+      "--no-focus",
+    ]);
+    const id = records([created["workspace"]])[0]?.["workspace_id"];
+    const root = records([created["root_pane"]])[0]?.["pane_id"];
+    assert.ok(typeof id === "string" && typeof root === "string");
+    const added = await lab.run([
+      "pane",
+      "split",
+      root,
+      "--direction",
+      "right",
+      "--cwd",
+      home,
+      "--no-focus",
+    ]);
+    const split = records([added["pane"]])[0]?.["pane_id"];
+    assert.ok(typeof split === "string");
+    assert.deepEqual(maintain("pi-in-split", split), action("ops", "running"));
+    assert.equal(fleet(["stop", "ops"], "pi-in-split", split).trim(), "ops: stopped");
+    const listed = async () => records((await lab.run(["workspace", "list"]))["workspaces"]);
+    assert.equal(
+      (await listed()).some((row) => row["workspace_id"] === id),
+      cwd !== home,
+    );
+    if (cwd !== home) {
+      assert.match(fleet(["restart"], "pi-in-split", split), /ops: stopped: stopped by hand/);
+      assert.equal(
+        (await listed()).some((row) => row["workspace_id"] === id),
+        true,
+      );
+      await lab.run(["workspace", "close", id]);
+    }
+  }
 });
 
 test("a pane disappearing between list and process info leaves the lane unread", async () => {
@@ -334,6 +391,26 @@ test("maintenance returns an accepted start before the caller times out on two h
     { lane: "za", state: "down" },
     { lane: "zb", state: "down" },
   ]);
+});
+
+test("maintenance leaves an idle pane untouched when it cannot reserve launch and readiness time", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const created = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    home,
+    "--label",
+    "2ndmate-ops",
+    "--no-focus",
+  ]);
+  const pane = records([created["root_pane"]])[0]?.["pane_id"];
+  assert.ok(typeof pane === "string");
+  const out = fleet(["up", "--maintenance", "--json"], "slow-idle", pane, "60000");
+  assert.deepEqual(JSON.parse(out), action("ops", "unread"));
+  assert.equal(existsSync(join(home, "state", "starts")), false);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
+  assert.deepEqual(maintain(), action("ops", "started"));
 });
 
 test("an explicit stop accepts a complete workspace close reply without a type field", async () => {

@@ -283,7 +283,18 @@ test("main tells the captain when a host cannot be reached, and when it is back"
 
 test("unread transport and nested observations neither report failure nor clear a confirmed outage", async () => {
   const control = join(here.parent, "faults");
-  const faults = ["blank", "cut", "partial", "down", "nested", "failed", "down"];
+  const faults = [
+    "blank",
+    "cut",
+    "partial",
+    "failure-only",
+    "down",
+    "nested",
+    "failed",
+    "failure-with-start",
+    "operation-failure",
+    "down",
+  ];
   writeFileSync(control, faults.join("\n"));
   configureMain(here, cardd.url, mainToken, {
     hosts: { p620: ["node", TORN, control] },
@@ -303,9 +314,15 @@ test("unread transport and nested observations neither report failure nor clear 
       .slice(0, faults.length + 1),
     [...faults, "whole"],
   );
-  assert.equal(sessionText().split("p620 cannot be reached").length - 1, 1);
-  assert.equal(sessionText().split("p620 can be reached again").length - 1, 1);
-  assert.doesNotMatch(sessionText(), /\[fleet\] lanes: p620 (failed|could not be read)/);
+  const notices = sessionText();
+  const outage = "p620 cannot be reached";
+  const failure = "p620 failed: could not acquire the next lane's lifecycle lock";
+  const recovery = "p620 can be reached again";
+  for (const notice of [outage, "far started on p620", failure, recovery])
+    assert.equal(notices.split(notice).length - 1, 1, notice);
+  assert.ok(notices.indexOf(outage) < notices.indexOf(failure));
+  assert.ok(notices.indexOf(failure) < notices.indexOf(recovery));
+  assert.doesNotMatch(notices, /obsolete envelope|p620 could not be read/);
   await waitState(p620, "far", "running");
 });
 
