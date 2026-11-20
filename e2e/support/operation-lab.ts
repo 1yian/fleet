@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
 import { Cardd } from "./cardd.ts";
 import { toolResults, WORKER_WAIT_MS } from "./dispatch-lab.ts";
-import { Harness, type Pi, type Turn } from "./harness.ts";
+import { Harness, type Move, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { git } from "./remote.ts";
 import { Scratch } from "./scratch.ts";
@@ -90,7 +90,7 @@ const originLog = (): string => join(h.dir, "origin-calls.log");
 export const originCalls = (): string =>
   existsSync(originLog()) ? readFileSync(originLog(), "utf8") : "";
 
-export function dispatchOperation(): void {
+export function dispatchOperation(afterDispatch: Move = { text: "dispatched" }): void {
   h.onModel(() => {
     const script = join(h.dir, "origin.sh");
     writeFileSync(script, `#!/bin/sh\necho "$@" >> "${originLog()}"\nexit 1\n`, { mode: 0o755 });
@@ -113,7 +113,7 @@ export function dispatchOperation(): void {
     }),
     "mate",
   );
-  h.onModel(() => ({ text: "dispatched" }), "mate");
+  h.onModel(() => afterDispatch, "mate");
 }
 
 export function written(path: string): { tool: string; args: Record<string, string> } {

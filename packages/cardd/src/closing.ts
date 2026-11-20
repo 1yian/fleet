@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { check, OPS, type Card, type Next } from "@fleet/protocol";
+import { check, operationHandoff, OPS, type Card, type Entry, type Next } from "@fleet/protocol";
 import { endLiveAttempts } from "./attempts.ts";
 import { settleClosedCard } from "./maintenance.ts";
 import { requireOrdinary } from "./change.ts";
@@ -29,17 +29,26 @@ interface Done {
 }
 
 function notLanded(db: DatabaseSync, card: Card, check?: CloseCheck): string | undefined {
-  const { workerDone, emptyBranch } = finishFrom(cardEntries(db, card.id));
+  const entries = cardEntries(db, card.id);
+  const { workerDone, emptyBranch } = finishFrom(entries);
   const worked = db.prepare("SELECT 1 FROM attempts WHERE card = ?").get(card.id) !== undefined;
   if (worked && !workerDone) return "the worker has not reported done";
   if (card.kind !== "ship") return undefined;
   if (!worked) return "no worker ran it";
+  if (card.delivery === "ops") return unhandedOperation(entries);
   if (card.delivery === "local-only")
     return emptyBranch || loadCard(db, card.id).standing.stage === "merging"
       ? undefined
       : "its branch has not landed on the local base branch. close lands it once the landing is authorized: yolo on, or the captain's word for it on the merge question";
   if (card.pr !== null) return unmergedPr(card.pr, check);
   return undefined;
+}
+
+function unhandedOperation(entries: readonly Entry[]): string | undefined {
+  const evidence = operationHandoff(entries)?.fields["evidence"];
+  return typeof evidence === "string"
+    ? undefined
+    : "its worker has not handed over an evidence report";
 }
 
 function unmergedPr(pr: string, check: CloseCheck | undefined): string {
@@ -87,10 +96,6 @@ function closable(
 } {
   const { card } = reachable(db, session, args.card);
   const name = `c-${String(card.id)}`;
-  if (card.delivery === "ops")
-    throw new Error(
-      `${name} delivers ops; closing an operation is not available until authoritative retirement lands (tracked on its own card); leave it open`,
-    );
   requireOrdinary(db, card);
   if (card.status === "done" || card.status === "dropped")
     throw new Error(`${name} is already ${card.status}`);
@@ -146,7 +151,7 @@ function shipCardClonesToRefresh(
   db: DatabaseSync,
   card: Card,
 ): { project: string; host: string; path: string; base: string }[] {
-  if (card.kind !== "ship" || card.delivery === "local-only") return [];
+  if (card.kind !== "ship" || card.delivery === "local-only" || card.delivery === "ops") return [];
   const project = listProjects(db).find((each) => each.name === card.project);
   if (project === undefined) return [];
   return project.clones.map(({ host, path }) => ({
