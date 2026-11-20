@@ -7,15 +7,18 @@ const CODED_REASONS: readonly (readonly [string, string])[] = [
 
 const STATUS_LINE = /^HTTP\/\d(?:\.\d)?[ \t]+(\d{3})(?:[ \t]+([^\r\n]*))?(?=\r?\n)/i;
 
+const INLINE_RETRY = /^(.*?)\.?[ \t]*Retry-After:[ \t]*(\d+(?:\.\d+)?)[ \t]*$/i;
+
 export const VERSIONED_ENVELOPE = {
   exec(source: string): (string | undefined)[] | null {
     const found = STATUS_LINE.exec(source);
     if (found === null) return null;
     const [line = "", status = "", reason = ""] = found;
-    const lowered = reason.toLowerCase();
+    const hinted = INLINE_RETRY.exec(reason);
+    const lowered = (hinted?.[1] ?? reason).toLowerCase();
     const mismatched = CODED_REASONS.some(
       ([text, code]) => lowered.startsWith(text) && code !== status,
     );
-    return mismatched ? null : [line, status];
+    return mismatched ? null : [line, status, hinted?.[2]];
   },
 };

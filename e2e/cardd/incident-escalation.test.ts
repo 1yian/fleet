@@ -294,6 +294,12 @@ for (const [name, diagnostic, visible, delay, mode = "retry", clipped = false] o
     120_000,
   ],
   [
+    "a versioned response with a custom suffix and an inline retry hint",
+    "HTTP/1.1 503 Service Unavailable - maintenance. Retry-After: 120\nSet-Cookie: session=paper\n\n",
+    "[credential record withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
     "a versioned response with a known reason and a custom suffix",
     "HTTP/1.1 503 Service Unavailable - maintenance\nRetry-After: 120\nSet-Cookie: session=paper\n\n",
     "[credential record withheld: credential boundaries unclear]",

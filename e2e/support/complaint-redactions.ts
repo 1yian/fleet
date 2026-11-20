@@ -195,6 +195,8 @@ export const COOKIE_COMPLAINTS = [
   '> Authorization: Digest username="demo", response="paper"',
   "> Proxy-Authorization: Basic cGFwZXI6Y2Fub2U=",
   "> X-Api-Key: paper",
+  String.raw`{"trace":"0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72"}`,
+  String.raw`{"log":"{\"trace\":\"0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72\"}"}`,
   "0000: GET / HTTP/1.1\n0040: Host: localhost\r\nAuthoriz\n0080: ation: Basic cGFwZXI6Y2Fub2U=",
   "0000: 47 45 54 20 2f 20 48 54 54 50 2f 31 2e 31",
   "15:16:17.123456 0040: Host: localhost\r\nAuthoriz\n15:16:17.123457 0080: ation: Basic cGFwZXI6Y2Fub2U=",
