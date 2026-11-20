@@ -15,6 +15,7 @@ import { forwardedEnvironment } from "./scratch.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
+const PREPARE_ATTEMPTS = 3;
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
@@ -86,16 +87,28 @@ export class Jobs {
     label: string,
     command: string,
   ): Promise<{ job: number; heartbeatMs: number; registeredLaunch: boolean }> {
-    const outcome = await jobHandshake({ url, token: this.cardd.token }, "job.prepare", {
-      launch: id,
-      label,
-      command,
-    });
-    if (outcome.ok)
-      return { ...check(OPS["job.prepare"].result, outcome.value), registeredLaunch: true };
-    if (outcome.status !== 400 || outcome.error !== "unknown operation job.prepare")
-      throw new Error(outcome.error);
-    return { ...(await this.link.call("job.start", { label, command })), registeredLaunch: false };
+    const endpoint = { url, token: this.cardd.token };
+    const args = { launch: id, label, command };
+    for (let attempt = 0; attempt < PREPARE_ATTEMPTS; attempt += 1) {
+      const receipt = await jobHandshake(endpoint, "job.prepare", args)
+        .then((reply) =>
+          reply.ok ? { ...reply, value: check(OPS["job.prepare"].result, reply.value) } : reply,
+        )
+        .catch(() => undefined);
+      if (receipt === undefined || (!receipt.ok && receipt.status >= 500)) continue;
+      if (receipt.ok) return { ...receipt.value, registeredLaunch: true };
+      if (
+        attempt === 0 &&
+        receipt.status === 400 &&
+        receipt.error === "unknown operation job.prepare"
+      )
+        return {
+          ...(await this.link.call("job.start", { label, command })),
+          registeredLaunch: false,
+        };
+      throw new Error(receipt.error);
+    }
+    throw new Error(`Could not confirm the reservation for ${label}; no command was launched`);
   }
 
   async launch(
@@ -161,8 +174,7 @@ export class Jobs {
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
     const { label, running } = await this.link.call("job.stop", { job });
     const named = `job ${String(job)} (${label})`;
-    if (!running)
-      return `${named} is not running: nothing to stop. Its result is already recorded.`;
+    if (!running) return `${named} is not running: nothing to stop.`;
     const tabs = records((await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"]);
     const tab = field(
       tabs.find((each) => each["label"] === tabName(job, label)),
