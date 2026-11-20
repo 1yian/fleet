@@ -13,7 +13,7 @@ Read [docs/spec.md](docs/spec.md) for the design and [docs/build-plan.md](docs/b
 
 ## Rules
 
-- The gates in `.oxfmtrc.json`, `.oxlintrc.json`, `lint-plugin.js`, `tsconfig.json`, `knip.json`, and `.dependency-cruiser.cjs` are the rules. Inline disable comments do not work. Change a rule only in its config file, and say why in the pull request.
+- The gates in `.oxfmtrc.json`, `.oxlintrc.json`, `lint-plugin.js`, `tsconfig.json`, `knip.json`, and `.dependency-cruiser.cjs` are the rules. The lint gate rejects inline lint directives. Change a rule only in its config file, and say why in the pull request.
 - No comments in code. The `fleet/no-comments` lint rule fails on any comment. Say it with a name, a type, or a smaller function. A reason that no name can carry goes in [docs/code.md](docs/code.md).
 - Validate data that crosses a process boundary (websocket messages, database rows, environment variables, Pi events) with the schemas in `@fleet/protocol` or a narrowing helper. Trust typed data inside.
 - `cardd`, the extension, and the board share only `@fleet/protocol`. End-to-end tests import only `@fleet/protocol`.
