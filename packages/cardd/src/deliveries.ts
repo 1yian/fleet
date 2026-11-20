@@ -236,6 +236,19 @@ function deliveryEligibility(
   return state;
 }
 
+export function hasInFlightDelivery(db: DatabaseSync, session: string, card: number): boolean {
+  return db
+    .prepare(
+      `SELECT json_extract(e.fields, '$.restartNotice') AS notice
+       FROM deliveries d JOIN entries e ON e.id = d.entry
+       WHERE d.session = ? AND d.retired_at IS NULL AND d.state IN (${IN_FLIGHT_DELIVERY})`,
+    )
+    .all(session)
+    .some(
+      ({ notice }) => typeof notice !== "number" || noticeState(db, card, notice) === "eligible",
+    );
+}
+
 export function toPush(
   db: DatabaseSync,
   session: string,
