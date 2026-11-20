@@ -13,6 +13,7 @@ import {
 } from "@fleet/protocol";
 import Type from "typebox";
 import { yoloFor } from "./authority.ts";
+import { retireNoticeDeliveries } from "./delivery-states.ts";
 import { acceptsRestartNotice, affectsStanding, standingFrom, type Standing } from "./status.ts";
 import { listProjects } from "./projects.ts";
 
@@ -35,7 +36,7 @@ const CardRowSchema = Type.Omit(CardSchema, ["status", "updatedAt"]);
 const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', coalesce(project, historical_project),
   'kind', kind, 'revision', revision, 'pr', pr, 'delivery', delivery, 'intent', intent, 'spec', spec,
   'createdAt', created_at)`;
-const RESTART_NOTICE_ENTRIES = `SELECT id FROM entries WHERE card = ? AND kind = 'comment'
+const RESTART_NOTICE_ENTRIES = `SELECT id, card FROM entries WHERE card = ? AND kind = 'comment'
   AND json_type(fields, '$.restartNotice') = 'integer'`;
 export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
   'body', e.body, 'fields', json(e.fields), 'createdAt', e.created_at)`;
@@ -400,9 +401,7 @@ export function addEntry(
       db.prepare(`${RESTART_NOTICE_ENTRIES} LIMIT 1`).get(entry.card) !== undefined &&
       !acceptsRestartNotice(loadCard(db, entry.card, now), now)
     )
-      db.prepare(
-        `UPDATE deliveries SET retired_at = ? WHERE retired_at IS NULL AND entry IN (${RESTART_NOTICE_ENTRIES})`,
-      ).run(now, entry.card);
+      db.prepare(retireNoticeDeliveries(RESTART_NOTICE_ENTRIES)).run(now, entry.card);
   }
   const deliver = db.prepare(
     "INSERT INTO deliveries (session, entry, state, updated_at) VALUES (?, ?, 'pending', ?)",
