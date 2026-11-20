@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -1127,12 +1128,13 @@ for (const fault of [
   "relative scratch root",
   "unlink failure",
   "unlink failure and replacement",
+  "marker promotion failure",
 ] as const)
   test(`a legacy dispatch that Herdr never accepted keeps its wait and tab until cardd reports it lost, then removes its launch file across ${fault}`, async (t) => {
     const lossDelivery = Promise.withResolvers<void>();
     t.after(() => lossDelivery.resolve());
     const activities: string[] = [];
-    await jobProxy(
+    const disconnect = await jobProxy(
       t,
       async (op, args) =>
         op === "job.prepare"
@@ -1204,7 +1206,16 @@ exec ${quote(herdr)} "$@"
     const path = join(jobDir, name);
     const replacementTmp = join(h.dir, "replacement-tmp");
     const decoy = join(replacementTmp, name);
-    const failing = fault === "unlink failure" || fault === "unlink failure and replacement";
+    const failing = fault !== "worker reload" && fault !== "relative scratch root";
+    const promotionBlock = join(
+      process.env["FLEET_HOST_DIR"] ?? "",
+      "job-launch-files",
+      createHash("sha256")
+        .update(env["FLEET_TOKEN"] ?? "")
+        .digest("hex")
+        .slice(0, 32),
+      "1.pending",
+    );
     const delivered = (): number =>
       h.events.filter(
         (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
@@ -1221,14 +1232,31 @@ exec ${quote(herdr)} "$@"
       );
       assert.equal(launchFiles().length, 0);
     } else {
-      rmSync(path);
-      mkdirSync(path);
-      writeFileSync(join(path, "keep"), "");
+      if (fault === "marker promotion failure") {
+        mkdirSync(promotionBlock, { recursive: true });
+        writeFileSync(join(promotionBlock, "keep"), "");
+      } else {
+        rmSync(path);
+        mkdirSync(path);
+        writeFileSync(join(path, "keep"), "");
+      }
       lossDelivery.resolve();
     }
     await until(() => (said(lostMessage) ? true : undefined), "the loss to reach the worker");
     if (!failing) {
       assert.equal(readFileSync(decoy, "utf8"), "not the launch file");
+    } else if (fault === "marker promotion failure") {
+      await until(
+        () => (said("could not be marked for removal") ? true : undefined),
+        "the worker to report the failed marker promotion",
+      );
+      assert.equal(launchFiles().length, 1);
+      rmSync(promotionBlock, { recursive: true });
+      disconnect();
+      await until(
+        () => (launchFiles().length === 0 ? true : undefined),
+        "the next pass to finish the cleanup",
+      );
     } else {
       await until(
         () => (said(`launch file ${path} could not be removed`) ? true : undefined),
@@ -1237,7 +1265,19 @@ exec ${quote(herdr)} "$@"
       assert.ok(existsSync(path));
     }
     if (fault === "unlink failure and replacement") {
-      await settled(2);
+      const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
+      t.after(() => db.close());
+      await untilAsync(
+        () =>
+          db
+            .prepare(
+              "SELECT 1 AS found FROM deliveries WHERE session = ? AND entry = ? AND state IN ('acknowledged', 'confirmed')",
+            )
+            .get("c-1-a1", lost.id) === undefined
+            ? undefined
+            : true,
+        "cardd to persist the acknowledgment of the exact loss entry",
+      );
       assert.equal(delivered(), 1);
       rmSync(path, { recursive: true });
       writeFileSync(path, "launch file after writes recover");
@@ -1268,6 +1308,69 @@ exec ${quote(herdr)} "$@"
     assert.equal(existsSync(marker), false);
     assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
   });
+
+test("a legacy loss that arrives before dispatch stops the launch explicitly and leaves no launch file", async (t) => {
+  await jobProxy(t, async (op, args) =>
+    op === "job.prepare"
+      ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
+      : callCardd(op, args),
+  );
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const dispatches = join(jobDir, "dispatches");
+  const requested = join(jobDir, "tab-requested");
+  const release = join(jobDir, "release-tab");
+  const marker = join(jobDir, "unexpected-execution");
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
+const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'tab create' ]; then
+  touch ${quote(requested)}
+  node -e ${quote(waitForRelease)} || exit "$?"
+fi
+if [ "$1 $2" = 'pane run' ]; then
+  echo dispatch >> ${quote(dispatches)}
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  t.after(() => writeFileSync(release, ""));
+  const launchFiles = (): string[] =>
+    readdirSync(jobDir).filter((name) => /^fleet-job-1-.*\.json$/.test(name));
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "slow-tab", command: `touch ${quote(marker)}` },
+  }));
+  h.onModel(() => ({ text: "The launch failed" }));
+  worker();
+  await until(() => (existsSync(requested) ? true : undefined), "the launch to reach tab creation");
+  assert.equal(launchFiles().length, 1);
+  const lost = await untilAsync(
+    async () =>
+      (await cardView()).entries.find(
+        (entry) => entry.kind === "job-result" && entry.fields["lost"] === true,
+      ),
+    "cardd to report the job lost before dispatch",
+  );
+  await h.waitFor(
+    (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+    "the worker to apply the loss",
+  );
+  assert.equal(launchFiles().length, 0);
+  writeFileSync(release, "");
+  await settled(1);
+  assert.ok(said("Job 1 was reported lost before dispatch; nothing was run"));
+  assert.equal(said("Started job 1"), false);
+  assert.equal(said("Dispatched job 1"), false);
+  assert.equal(existsSync(dispatches), false);
+  assert.equal(existsSync(marker), false);
+});
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();

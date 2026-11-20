@@ -85,6 +85,7 @@ export class Jobs {
     number,
     { unstarted: boolean; ran: boolean; legacy: boolean }
   >();
+  private readonly unsettled = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -173,7 +174,9 @@ export class Jobs {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const why = error instanceof Error ? error.message : String(error);
+        this.unsettled.add(job);
         this.warn(`Job ${String(job)}'s launch record could not be marked for removal: ${why}`);
+        return;
       }
     }
     this.cleanLaunchFile(job);
@@ -199,6 +202,10 @@ export class Jobs {
   }
 
   private resumeLaunchCleanup(): void {
+    for (const job of [...this.unsettled]) {
+      this.unsettled.delete(job);
+      this.settleLaunchFile(job);
+    }
     let names: string[];
     try {
       names = readdirSync(this.ownerDir());
@@ -308,6 +315,7 @@ export class Jobs {
   ): Promise<{ job: number; tab: string; started: boolean }> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
+    this.resumeLaunchCleanup();
     const id = randomUUID();
     const preparing: Preparing = {};
     this.preparing.set(id, preparing);
@@ -372,6 +380,8 @@ export class Jobs {
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
+      if (launching.legacy && this.lastResult.has(job))
+        throw new Error(`Job ${String(job)} was reported lost before dispatch; nothing was run`);
       if (pending !== undefined) pending.dispatched = true;
       else if (!this.lastResult.has(job)) this.running.add(job);
       dispatched = true;
