@@ -188,7 +188,7 @@ A host's `/tmp` can be a memory filesystem with a fixed number of files. On p620
 
 The folder also holds `host.json`, the one place where you set anything for the host (see "Host settings" below). It is yours: the fleet never writes it, and `/updatefleet` never touches it.
 
-**What fills `/tmp`.** Two things, measured on p620 on Nov 10. Workers' evidence and scratch folders held 513,000 of the 618,000 inodes that `du` counted, in 427 `/tmp/fleet-*` folders (`/tmp/fleet-c-1300` alone had 88,000). The Node compile cache held about 335,000 more, which is what main's hand prune freed. Pi (`cli.js` and its extension loader, jiti), `tsc`, `eslint`, and `prettier` each call `module.enableCompileCache()` with no directory, which means `$TMPDIR/node-compile-cache`. An entry's name comes from the source path and content, so every worktree and every scratch copy of the repository adds new entries, and Node never removes one. `cardd` does not enable it. Nothing in this repository set it.
+**What fills `/tmp`.** Two things, measured on p620 on Nov 10. Workers' evidence and scratch folders held 513,000 of the 618,000 inodes that `du` counted, in 427 `/tmp/fleet-*` folders (`/tmp/fleet-c-1300` alone had 88,000). The Node compile cache held about 335,000 more, which is what main's hand prune freed. Pi (`cli.js` and its extension loader, jiti), `tsc`, and `eslint` each call `module.enableCompileCache()` with no directory, which means `$TMPDIR/node-compile-cache`. An entry's name comes from the source path and content, so every worktree and every scratch copy of the repository adds new entries, and Node never removes one. `cardd` does not enable it. Nothing in this repository set it.
 
 **A worker's environment.** Dispatch makes `scratch/c-<N>/tmp` on the worker's host and starts the worker's herdr workspace with three variables (`herdr workspace create --env`):
 
@@ -710,11 +710,7 @@ To show the hint, add a row to your own herdr client config. Keep herdr's defaul
 
 ```toml
 [ui.sidebar.spaces]
-rows = [
-  ["state_icon", "workspace"],
-  ["branch", "git_status"],
-  [{ token = "$away", dim = true }],
-]
+rows = [["state_icon", "workspace"], ["branch", "git_status"], [{ token = "$away", dim = true }]]
 ```
 
 ### Agent complaints

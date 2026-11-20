@@ -6,7 +6,12 @@ const MAX_REPLACEMENTS = 1;
 export type Phase = "turn" | "compaction" | "startup" | "lost";
 export type Mode = "retry" | "replace";
 export type Kind =
-  "stale-module" | "router-cooldown" | "vendor-quota" | "auth" | "transient" | "unknown";
+  | "stale-module"
+  | "router-cooldown"
+  | "vendor-quota"
+  | "auth"
+  | "transient"
+  | "unknown";
 
 const SECRET_PATTERNS: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
