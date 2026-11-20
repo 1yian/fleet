@@ -40,6 +40,7 @@ const DISPATCH = {
   },
 } as const;
 const NOTICE = "Your session was restarted on the same card and conversation.";
+const JOB_RESULT = "old job released by the test";
 
 async function waitForJobResult({ cardd, mainToken }: DispatchLab): Promise<void> {
   const deadline = Date.now() + WORKER_WAIT_MS;
@@ -50,7 +51,10 @@ async function waitForJobResult({ cardd, mainToken }: DispatchLab): Promise<void
     const thread = check(OPS.card.result, result.value);
     if (
       thread.entries.some(
-        (entry) => entry.kind === "job-result" && entry.fields["exitCode"] === 130,
+        (entry) =>
+          entry.kind === "job-result" &&
+          entry.fields["exitCode"] === 130 &&
+          entry.body.includes(JOB_RESULT),
       )
     )
       return;
@@ -62,6 +66,8 @@ async function waitForJobResult({ cardd, mainToken }: DispatchLab): Promise<void
 test("a restarted worker hears the restart notice on its first turn even when an interrupted job result is already queued", async () => {
   const armed = join(tempDir("slow-restart-"), "armed");
   const jobStarted = `${armed}.job`;
+  const jobRelease = `${armed}.job-release`;
+  const command = `touch '${jobStarted}'; while [ ! -f '${jobRelease}' ]; do sleep 0.05; done; printf '%s\\n' '${JOB_RESULT}'; exit 130`;
   parts = await startDispatchLab({
     hosts: { slow: ["node", SLOW, armed] },
     roots: { slow: CHECKOUT },
@@ -82,7 +88,7 @@ test("a restarted worker hears the restart notice on its first turn even when an
           "fix the scrollbar": [
             {
               tool: "run_long",
-              args: { label: "wait", command: `touch '${jobStarted}' && exec sleep 600` },
+              args: { label: "wait", command },
             },
           ],
         }),
@@ -102,12 +108,11 @@ test("a restarted worker hears the restart notice on its first turn even when an
     assert.ok(Date.now() < deadline, "the killed worker still runs");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  writeFileSync(armed, "armed\n");
-  mate.prompt("restart it", "followUp");
-
+  writeFileSync(jobRelease, "release the old job\n");
   await waitForJobResult(parts);
   const next = h.callsOf("worker").length;
-  writeFileSync(`${armed}.launch`, "launch\n");
+  writeFileSync(armed, "armed\n");
+  mate.prompt("restart it", "followUp");
   const first = await h.waitForCall(next, "worker", WORKER_WAIT_MS);
   writeFileSync(`${armed}.released`, "released\n");
 

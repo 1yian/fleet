@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
 import { gate, poll } from "../support/harness.ts";
 import {
   mateConnected,
+  plan,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -13,6 +15,18 @@ import {
 } from "../support/dispatch-lab.ts";
 
 const RESTART_NOTICE = "Your session was restarted on the same card and conversation.";
+const DISPATCH = {
+  tool: "dispatch",
+  args: {
+    title: "Users see one scrollbar",
+    name: "one-scrollbar",
+    kind: "ship",
+    project: "site",
+    intent: "Fix the scrollbar",
+    host: "far",
+    task: "fix the scrollbar",
+  },
+} as const;
 
 let parts: DispatchLab;
 afterEach(async (t) => {
@@ -28,21 +42,7 @@ test("a restart whose process could not be started never counts toward the hourl
   const down = join(h.dir, "far-down");
   const restart = { tool: "restart_card", args: { card: 1 } };
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
-  h.onModel(
-    () => ({
-      tool: "dispatch",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "site",
-        intent: "Fix the scrollbar",
-        host: "far",
-        task: "fix the scrollbar",
-      },
-    }),
-    "mate",
-  );
+  h.onModel(() => DISPATCH, "mate");
   h.onModel(() => {
     writeFileSync(down, "down\n");
     return restart;
@@ -79,5 +79,54 @@ test("a restart whose process could not be started never counts toward the hourl
   assert.equal(
     thread.entries.filter((entry) => entry.fields["restartFailed"] !== undefined).length,
     4,
+  );
+});
+
+test("the mate sees the launch error and cap warning when cardd cannot record the refund", async () => {
+  parts = await startDispatchLab();
+  const { cardd, h, mate } = parts;
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.exec(`CREATE TRIGGER refuse_refund BEFORE INSERT ON entries
+      WHEN NEW.kind = 'note' AND json_extract(NEW.fields, '$.restartFailed') IS NOT NULL
+      BEGIN SELECT RAISE(ABORT, 'refund cannot be recorded'); END`);
+  } finally {
+    db.close();
+  }
+  for (let call = 0; call < 8; call += 1) {
+    h.onModel(
+      (turns) =>
+        plan(turns, {
+          "ship the scrollbar fix": [DISPATCH],
+          "restart with the host offline": [{ tool: "restart_card", args: { card: 1 } }],
+        }),
+      "mate",
+    );
+  }
+  await mateConnected(h);
+  mate.prompt("ship the scrollbar fix", "followUp");
+  await poll(
+    () =>
+      h
+        .callsOf("mate")
+        .flatMap(toolResults)
+        .find((text) => text.startsWith("Dispatched c-1-a1")),
+    "the completed dispatch",
+    WORKER_WAIT_MS,
+  );
+  writeFileSync(join(h.dir, "far-down"), "down\n");
+  mate.prompt("restart with the host offline", "followUp");
+  const result = await poll(
+    () =>
+      h
+        .callsOf("mate")
+        .flatMap(toolResults)
+        .find((text) => text.includes("Operation timed out")),
+    "the failed restart tool result",
+    WORKER_WAIT_MS,
+  );
+  assert.match(
+    result,
+    /The restart refund was not confirmed; this request may still count toward the hourly cap\./,
   );
 });

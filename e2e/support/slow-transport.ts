@@ -9,11 +9,8 @@ const released = `${marker}.released`;
 if (command.includes("'contain' 'attach'") && existsSync(started)) {
   while (!existsSync(released)) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
 }
-if (existsSync(marker) && command.includes("'herdr' 'agent' 'start'")) {
+if (existsSync(marker) && command.includes("'herdr' 'agent' 'start'"))
   writeFileSync(started, "started\n");
-  while (!existsSync(`${marker}.launch`))
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-}
 const run = spawnSync("sh", ["-c", command], { encoding: "utf8" });
 process.stdout.write(run.stdout);
 process.stderr.write(run.stderr);

@@ -4,11 +4,13 @@ import type { Draft } from "./change.ts";
 import {
   IN_FLIGHT_DELIVERY,
   QUEUED_DELIVERY,
+  RETIRABLE_DELIVERY,
   SENT_DELIVERY,
   UNREAD_DELIVERY,
 } from "./delivery-states.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
-import { addEntry, ENTRY_JSON, json, mainLane } from "./store.ts";
+import { noticeEligible } from "./restart-requests.ts";
+import { addEntry, ENTRY_JSON, getCard, json, mainLane } from "./store.ts";
 import { identified } from "./maintenance.ts";
 import { holdFor } from "./waits.ts";
 import type { Timings } from "./timing.ts";
@@ -216,6 +218,21 @@ export function dueBatches(db: DatabaseSync, batching: Batching): string[] {
     .map((row) => String(row["id"]));
 }
 
+function keepDelivery(
+  db: DatabaseSync,
+  session: string,
+  entry: number,
+  card: number,
+  restartNotice: unknown,
+): boolean {
+  if (typeof restartNotice !== "number" || noticeEligible(db, getCard(db, card), restartNotice))
+    return true;
+  db.prepare(
+    `DELETE FROM deliveries WHERE session = ? AND entry = ? AND ${RETIRABLE_DELIVERY}`,
+  ).run(session, entry);
+  return false;
+}
+
 export function toPush(
   db: DatabaseSync,
   session: string,
@@ -238,20 +255,17 @@ export function toPush(
       .map((row) => Number(row["entry"])),
   );
   const lane = String(db.prepare("SELECT lane FROM sessions WHERE id = ?").get(session)?.["lane"]);
-  const all = rows.map((row) => {
-    const pushed = check(PushedEntrySchema, row);
-    const { name, again = false } = pushed;
-    const entry = identified(db, lane, holdFor(db, lane, pushed.entry));
+  const all = rows.flatMap((row) => {
+    const { entry: raw, name, again = false } = check(PushedEntrySchema, row);
+    if (!keepDelivery(db, session, raw.id, raw.card, raw.fields["restartNotice"])) return [];
+    const entry = identified(db, lane, holdFor(db, lane, raw));
     const push = {
       entry,
       name,
       again,
       mode: isSteer(entry) ? "steer" : "followUp",
     } as const;
-    return {
-      push,
-      held: queued.has(entry.id) && !again && !isSteer(entry) && isRoutine(entry),
-    };
+    return [{ push, held: queued.has(entry.id) && !again && !isSteer(entry) && isRoutine(entry) }];
   });
   const holding = all.some(({ held }) => held);
   const urgent = all.some(({ held }) => !held);
@@ -361,6 +375,8 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
     .flatMap((row) => {
       const session = String(row["session"]);
       const entry = check(EntrySchema, JSON.parse(String(row["j"])));
+      if (!keepDelivery(db, session, entry.id, entry.card, entry.fields["restartNotice"]))
+        return [];
       const due = now - Number(row["updated"]) >= t.intake;
       const resends = Number(row["resends"]) + (due ? 1 : 0);
       const owed =
@@ -380,13 +396,17 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
   if (HOLDS_ON_UNREAD.has(status)) return;
   const rows = db
     .prepare(
-      `SELECT e.author AS author, e.body AS body FROM deliveries d JOIN entries e ON e.id = d.entry
+      `SELECT e.id, e.card, e.author, e.body, json_extract(e.fields, '$.restartNotice') AS notice
+       FROM deliveries d JOIN entries e ON e.id = d.entry
        WHERE d.session = ? AND d.state IN (${UNREAD_DELIVERY}) AND e.kind = 'comment'
          AND json_extract(e.fields, '$.task') IS NULL
          AND json_extract(e.fields, '$.for') = 'worker'
        ORDER BY e.id`,
     )
-    .all(session);
+    .all(session)
+    .filter((row) =>
+      keepDelivery(db, session, Number(row["id"]), Number(row["card"]), row["notice"]),
+    );
   if (rows.length === 0) return;
   const unread = rows
     .map((row) => `from ${sender(String(row["author"]))}: ${String(row["body"])}`)

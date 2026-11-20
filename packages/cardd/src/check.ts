@@ -462,6 +462,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
       })
       .map(({ card }) => card.id),
   );
+  const incidentNotices = reconcileIncidents(db, now, t);
   const checks = [
     ...withIncidents(db, workerMatches(db, open, now, t), now, t),
     ...finishedCards(open, t),
@@ -485,7 +486,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
     ...scheduledWakes(db, t.wall()),
     ...firedSchedules(db, t.wall()),
     ...dueBatches(db, { now: t.wall(), window: t.batch }),
-    ...reconcileIncidents(db, now, t),
+    ...incidentNotices,
     ...lostMates(db, now, t),
     ...expireMaintenance(db, now, t),
     ...replyNudges(db, open, now, t),
