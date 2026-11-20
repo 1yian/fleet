@@ -118,6 +118,7 @@ function failRecovery(
     {
       type: "recovery-failed",
       recoverable,
+      generation: generationOf(db, inc.actor),
       classification: kind,
       error,
       eligibleAt: eligible,

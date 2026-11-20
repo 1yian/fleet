@@ -44,6 +44,46 @@ test("at most three ordinary restarts an hour for one card", async () => {
   assert.equal((await restart("a")).repeat, true);
 });
 
+const restartFailed = async (key: string, mate = fleet.main) =>
+  check(
+    OPS["card.restart.failed"].result,
+    await mate.call("card.restart.failed", {
+      card: card.id,
+      key,
+      error: "the host did not answer",
+    }),
+  );
+
+test("a restart that did not run stops counting toward the hour, and its key starts it again", async () => {
+  await fleet.cardd.connect(await begin(fleet.main, card));
+  for (const key of ["a", "b", "c"]) await restart(key);
+  await assert.rejects(restart("d"), /was restarted 3 times in the last hour/);
+
+  assert.deepEqual(await restartFailed("b"), { recorded: true });
+  assert.deepEqual(await restartFailed("b"), { recorded: false });
+  assert.deepEqual(await restartFailed("never-asked"), { recorded: false });
+  assert.equal((await restart("a")).repeat, true);
+  assert.equal((await restart("b")).repeat, false);
+  await assert.rejects(restart("e"), /was restarted 3 times in the last hour/);
+
+  const notes = (await fleet.cardd.thread(card.id)).entries.filter(
+    (entry) => entry.kind === "note",
+  );
+  assert.equal(notes.filter((entry) => entry.body.startsWith("Restart requested")).length, 4);
+  assert.deepEqual(
+    notes.filter((entry) => entry.fields["restartFailed"] !== undefined).map((entry) => entry.body),
+    ["The restart did not run, so it does not count toward the 3 an hour: the host did not answer"],
+  );
+});
+
+test("only the direct parent says that a restart did not run", async () => {
+  await fleet.cardd.connect(await begin(fleet.main, card));
+  await restart("a");
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  await assert.rejects(restartFailed("a", cleo), /only the direct parent can restart/);
+  assert.deepEqual(await restartFailed("a"), { recorded: true });
+});
+
 test("a pause during merging stays merging on the board and still refuses a restart", async () => {
   fleet.cardd.yolo("web");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));

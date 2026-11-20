@@ -169,3 +169,62 @@ test("an incident intent outside the lifecycle is rejected by the database", asy
     db.close();
   }
 });
+
+test("a recovery whose replacement does not verify leaves the incident on the replacement's generation, so the suggested restart runs", async () => {
+  const { fleet: current } = await started("0.01");
+  const card = await newCard(current.main, "replaced without an answer");
+  const token = await begin(current.main, card);
+  const first = await current.cardd.connect(token);
+  const opened = check(
+    OPS["incident.report"].result,
+    await first.call("incident.report", { error: "something odd happened" }),
+  );
+  const announced = await current.main.waitForEntry(
+    (entry) => entry.card === card.id && entry.body.includes("Recover with restart_card"),
+    "the first recovery advice",
+  );
+  assert.match(announced.body, /Incident \d+, process generation 1\./);
+  await current.main.call("card.restart", {
+    card: card.id,
+    incident: opened.incident,
+    generation: 1,
+    mode: "replace",
+    key: "replace-it",
+  });
+  await first.close();
+  current.cardd.startNewProcess(token);
+  const second = await current.cardd.connect(token);
+
+  const failed = await current.main.waitForEntry(
+    (entry) => entry.card === card.id && entry.body.includes("did not verify"),
+    "the failed replacement notice",
+  );
+  assert.match(
+    failed.body,
+    new RegExp(
+      `restart_card\\(card=${String(card.id)}, incident=${String(opened.incident)}, generation=2, mode=retry\\)`,
+    ),
+  );
+  await assert.rejects(
+    current.main.call("card.restart", {
+      card: card.id,
+      incident: opened.incident,
+      generation: 1,
+      mode: "retry",
+      key: "stale",
+    }),
+    /is about process generation 2, but the actor is on 2 and you named 1/,
+  );
+  const plan = check(
+    OPS["card.restart"].result,
+    await current.main.call("card.restart", {
+      card: card.id,
+      incident: opened.incident,
+      generation: 2,
+      mode: "retry",
+      key: "check-it",
+    }),
+  );
+  assert.deepEqual([plan.incident, plan.mode, plan.generation], [opened.incident, "retry", 2]);
+  await second.close();
+});

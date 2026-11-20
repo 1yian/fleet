@@ -5,6 +5,7 @@ import { requireOpen } from "./change.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
 import { intentOf, type IncidentIntent } from "./incident-lifecycle.ts";
+import { sanitize } from "./incident-kinds.ts";
 import { recover, requireCurrent } from "./incidents.ts";
 import { addEntry, getCard, laneCardOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
@@ -37,11 +38,14 @@ function targetOf(db: DatabaseSync, card: number, lane: string, mate: boolean): 
   return { actor: String(row["id"]), host: String(row["host"]), role: mate ? "mate" : "worker" };
 }
 
+const LIVE_REQUEST = `json_extract(e.fields, '$.restartKey') IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM entries f WHERE f.card = e.card AND f.kind = 'note' AND f.id > e.id
+    AND json_extract(f.fields, '$.restartFailed') = json_extract(e.fields, '$.restartKey'))`;
+
 function restartsInLastHour(db: DatabaseSync, card: number): number {
   const row = db
     .prepare(
-      `SELECT count(*) AS n FROM entries
-       WHERE card = ? AND kind = 'note' AND json_extract(fields, '$.restartKey') IS NOT NULL AND created_at > ?`,
+      `SELECT count(*) AS n FROM entries e WHERE e.card = ? AND e.kind = 'note' AND ${LIVE_REQUEST} AND e.created_at > ?`,
     )
     .get(card, Date.now() - HOUR_MS);
   return Number(row?.["n"]);
@@ -50,7 +54,8 @@ function restartsInLastHour(db: DatabaseSync, card: number): number {
 function alreadyRequested(db: DatabaseSync, card: number, key: string): boolean {
   const row = db
     .prepare(
-      "SELECT 1 FROM entries WHERE card = ? AND kind = 'note' AND json_extract(fields, '$.restartKey') = ?",
+      `SELECT 1 FROM entries e WHERE e.card = ? AND e.kind = 'note' AND ${LIVE_REQUEST}
+       AND json_extract(e.fields, '$.restartKey') = ?`,
     )
     .get(card, key);
   return row !== undefined;
@@ -215,4 +220,18 @@ export function restartCard(
   if (args.model !== undefined && !planned.value.repeat)
     repin(db, session.lane, card.id, args.model);
   return planned;
+}
+
+export function restartFailed(
+  db: DatabaseSync,
+  session: Session,
+  args: OpArgs<"card.restart.failed">,
+): { readonly recorded: boolean } {
+  const card = getCard(db, args.card);
+  requireDirectParent(session, card, laneCardOf(db, card.lane) === card.id);
+  if (!alreadyRequested(db, card.id, args.key)) return { recorded: false };
+  const body = `The restart did not run, so it does not count toward the ${String(RESTARTS_PER_HOUR)} an hour: ${sanitize(args.error)}`;
+  const fields = { restartFailed: args.key };
+  addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
+  return { recorded: true };
 }

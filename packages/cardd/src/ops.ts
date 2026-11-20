@@ -25,7 +25,7 @@ import {
 import { keepingRefusals } from "./incident-escalation.ts";
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
-import { restartCard } from "./restarts.ts";
+import { restartCard, restartFailed } from "./restarts.ts";
 import {
   hold,
   holdOf,
@@ -294,6 +294,10 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   }),
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
+  "card.restart.failed": (db, session, raw) => ({
+    value: restartFailed(db, session, check(OPS["card.restart.failed"].args, raw)),
+    notify: [],
+  }),
   report: (db, session, raw, _timing, note, _closeCheck, emptyBranch) => {
     const { status, ...fieldsFromRequest } = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");

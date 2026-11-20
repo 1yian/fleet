@@ -41,6 +41,20 @@ export const INCIDENT_OPS = {
     args: Type.Object({ lane: Type.String({ minLength: 1 }) }),
     result: Type.Object({ stopping: Type.Boolean() }),
   },
+  "card.restart.failed": {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      key: Key,
+      error: Type.String({
+        minLength: 1,
+        maxLength: 20_000,
+        description:
+          "Why the restart that cardd admitted under this key did not run, so it stops counting toward the hourly cap",
+      }),
+    }),
+    result: Type.Object({ recorded: Type.Boolean() }),
+  },
   "card.restart": {
     roles: ["mate"],
     args: Type.Object({

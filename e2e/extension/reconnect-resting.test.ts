@@ -33,13 +33,9 @@ async function until<T>(read: () => Promise<T | undefined>, what: string): Promi
 
 const cardOne = async () => (await parts.cardd.board()).cards.find((card) => card.id === 1);
 
-async function promptMate(text: string): Promise<void> {
-  await until(async () => {
-    const state = await parts.mate.state();
-    return state["isStreaming"] === false ? true : undefined;
-  }, "the mate to settle");
-  parts.mate.prompt(text);
-}
+const promptMate = (text: string): void => {
+  parts.mate.prompt(text, "followUp");
+};
 
 const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Move => {
   const at = turns.findLastIndex((turn) => turn.role === "user");
@@ -87,7 +83,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
   }
 
   await mateConnected(h);
-  await promptMate("ship the scrollbar fix");
+  promptMate("ship the scrollbar fix");
   await until(async () => ((await cardOne())?.status === "paused" ? true : undefined), "the pause");
   await until(
     () =>
@@ -106,7 +102,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
     "the worker to be lost",
   );
 
-  await promptMate("reconnect the worker");
+  promptMate("reconnect the worker");
   const result = await until(
     () =>
       Promise.resolve(
@@ -136,7 +132,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
     false,
   );
 
-  await promptMate("send the wake-up");
+  promptMate("send the wake-up");
   await until(
     () =>
       Promise.resolve(

@@ -155,6 +155,7 @@ type IncidentEvent =
   | {
       readonly type: "recovery-failed";
       readonly recoverable: boolean;
+      readonly generation: number;
       readonly classification: Kind;
       readonly error: string;
       readonly eligibleAt: number | null;
@@ -278,10 +279,10 @@ function writeFailed(
   at: number,
 ): void {
   db.prepare(
-    `UPDATE incidents SET state = ?, classification = ?, error = ?, eligible_at = ?, due_told = 0,
-       count = count + 1, last_at = ?, recovery_key = NULL, recovery_deadline = NULL
+    `UPDATE incidents SET state = ?, generation = ?, classification = ?, error = ?, eligible_at = ?,
+       due_told = 0, count = count + 1, last_at = ?, recovery_key = NULL, recovery_deadline = NULL
      WHERE id = ?`,
-  ).run(state, event.classification, event.error, event.eligibleAt, at, id);
+  ).run(state, event.generation, event.classification, event.error, event.eligibleAt, at, id);
 }
 
 function writeStarted(

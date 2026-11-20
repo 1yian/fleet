@@ -262,7 +262,7 @@ async function closeWorkspace(host: string, clone: string, session: string): Pro
 export async function replaceWorker(
   link: Link,
   launch: Launch,
-  recovery: { card: number; host: string; repeat: boolean },
+  recovery: { card: number; host: string; repeat: boolean; notice?: string | undefined },
   avoid: readonly string[] = [],
 ): Promise<string> {
   const plan = await link.call("attempt.resume", { card: recovery.card });
@@ -277,6 +277,8 @@ export async function replaceWorker(
   const { pane, path, workspace } = await worktreePane(recovery.host, plan, recovery.card);
   await claimOwned(recovery.host, workspace, plan, recovery.card);
   await contain(recovery.host, pane, path);
+  if (recovery.notice !== undefined)
+    await link.call("comment", { card: recovery.card, text: recovery.notice });
   await startAgent(
     recovery.host,
     pane,
