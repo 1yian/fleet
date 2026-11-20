@@ -48,13 +48,14 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"workspaces":[]}}'
       exit 0
     fi ;;
-  'workspace list:omit-title-once')
+  'workspace list:omit-title-once'|'workspace list:omit-id-once')
     if [ ! -e "$HERDR_FAULT_LOG" ]; then
       : > "$HERDR_FAULT_LOG"
       reply=$("$REAL_HERDR" "$@") || exit $?
       printf '%s' "$reply" | node -e '
         const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
-        reply.result.workspaces = reply.result.workspaces.filter((row) => row.label !== process.env.FAULT_PANE);
+        const field = process.env.HERDR_FAULT === "omit-id-once" ? "workspace_id" : "label";
+        reply.result.workspaces = reply.result.workspaces.filter((row) => row[field] !== process.env.FAULT_PANE);
         console.log(JSON.stringify(reply));
       '
       exit $?
@@ -689,15 +690,20 @@ test("an accepted start keeps the lifecycle lock until Pi shows, even when recor
 
 test("two current-title workspaces are ambiguous and never pick a pane to start, close, or report", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
-  const first = await idlePane("ops", home);
-  const second = await idlePane("ops", home);
+  const first = await idlePane("ops", home, "idle-duplicate");
+  assert.deepEqual(maintain(), action("ops", "started"));
+  const liveId = (await workspace("ops"))?.["workspace_id"];
+  assert.equal(typeof liveId, "string");
+  assert.deepEqual(maintain(), action("ops", "running"));
+  rmSync(join(home, "state", "starts"));
+  await lab.run(["workspace", "rename", String(first.split(":")[0]), "2ndmate-ops"]);
   const listed = async () =>
     records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["workspace_id"]);
   const before = await listed();
   assert.equal(before.length, 2);
-  assert.deepEqual(maintain("pi-in-split", second), action("ops", "unread"));
+  assert.deepEqual(maintain(), action("ops", "unread"));
   assert.equal(existsSync(join(home, "state", "starts")), false);
-  const status = records(JSON.parse(fleet(["status", "--json"], "pi-in-split", second)));
+  const status = records(JSON.parse(fleet(["status", "--json"])));
   assert.equal(status[0]?.["state"], "unknown");
   assert.match(String(status[0]?.["reason"]), /2 workspaces titled 2ndmate-ops/);
   assert.throws(() => fleet(["stop", "ops"]), /2 workspaces titled 2ndmate-ops/);
@@ -708,6 +714,31 @@ test("two current-title workspaces are ambiguous and never pick a pane to start,
   );
   assert.deepEqual(await listed(), before);
   assert.equal(existsSync(join(home, "state", "stopped")), false);
+
+  assert.ok(before.includes(liveId));
+  const args = typedMaintenance;
+  assert.deepEqual(
+    maintenanceOutcomes(fleet(args, "omit-id-once", liveId, "5000")),
+    action("ops", "unread"),
+  );
+  assert.ok(existsSync(faultLog()), "the first listing omitted the second workspace");
+  const starts = join(home, "state", "starts");
+  assert.equal(existsSync(starts), false, "no duplicate launch");
+  const recent = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, recent);
+  rmSync(faultLog());
+  assert.deepEqual(
+    maintenanceOutcomes(fleet(args, "omit-id-once", liveId, "5000")),
+    action("ops", "unread"),
+  );
+  assert.equal(readFileSync(starts, "utf8"), recent);
+  assert.equal(existsSync(join(home, "state", "stopped")), false, "no false hold");
+  rmSync(faultLog());
+  assert.throws(
+    () => fleet(["stop", "ops"], "omit-id-once", liveId, "5000"),
+    /2 workspaces titled/,
+  );
+  assert.deepEqual(await listed(), before, "neither workspace was closed");
 });
 
 test("two legacy workspaces rooted in the home are ambiguous, while unrelated same-title ones are ignored", async () => {
