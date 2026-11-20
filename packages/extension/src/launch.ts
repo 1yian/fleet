@@ -27,7 +27,6 @@ import { convergeSharedPreferences } from "./standing.ts";
 import { hostProblems } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
-import { wakeMate } from "./wake.ts";
 
 const USAGE = [
   "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange [--host NAME] | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
@@ -366,6 +365,7 @@ switch (command ?? "") {
     const [name, note] = rest;
     if (name === undefined || note === undefined) throw new Error(USAGE);
     const args = values.script === undefined ? { note } : { note, script: values.script };
+    const { wakeMate } = await import("./wake.ts");
     await wakeMate(existingHome(root, name), args).then(
       () => {
         console.log(`${name}: woken`);

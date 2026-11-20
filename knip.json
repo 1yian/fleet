@@ -24,6 +24,7 @@
         "support/owned-launch.ts",
         "support/reaper.ts",
         "support/roomy-disk.ts",
+        "support/clock-preload.ts",
         "support/fake-no-mistakes.ts",
         "trial/*.ts"
       ]
