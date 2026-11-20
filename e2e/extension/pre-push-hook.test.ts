@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { addRemote, git } from "../support/remote.ts";
@@ -48,6 +48,21 @@ test("a push of a file that fails format, lint and typecheck is refused", () => 
   assert.match(result.stderr, /pre-push: checking 1 changed files/);
   assert.match(result.stderr, /pre-push: format, lint, typecheck failed/);
   assert.ok(result.stderr.includes(PROBE), result.stderr);
+  assert.equal(remoteBranches(), "");
+});
+
+test("the format check refuses a committed file missing from the worktree", () => {
+  const file = "docs/hook-probe.md";
+  const path = join(scratch.root, file);
+  git(scratch.root, "switch", "-q", "-c", "feat/missing-format-file");
+  writeFileSync(path, "# Hook probe\n");
+  git(scratch.root, "add", file);
+  git(scratch.root, "commit", "-q", "-m", "probe");
+  unlinkSync(path);
+
+  const result = push();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /pre-push: format failed\n[^\n]*docs\/hook-probe\.md/);
   assert.equal(remoteBranches(), "");
 });
 

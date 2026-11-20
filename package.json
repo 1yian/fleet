@@ -12,7 +12,7 @@
   "scripts": {
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",
-    "format:files": "oxfmt --check --no-error-on-unmatched-pattern",
+    "format:files": "node format-files.js",
     "lint": "node lint.js",
     "typecheck": "node typecheck.js",
     "knip": "knip --treat-config-hints-as-errors",
