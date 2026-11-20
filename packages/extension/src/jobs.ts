@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { check, OPS } from "@fleet/protocol";
+import { check, OPS, type Entry } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
 import { joinContained } from "./containment.ts";
@@ -71,6 +71,8 @@ interface PendingDispatch {
   fenced: boolean;
 }
 
+const startupFenced = (pending: PendingDispatch | undefined): boolean => pending?.fenced === true;
+
 interface Preparing {
   fence?: { job: number; detail: string };
 }
@@ -78,6 +80,7 @@ interface Preparing {
 export class Jobs {
   private readonly preparing = new Map<string, Preparing>();
   private readonly running = new Set<number>();
+  private readonly lastResult = new Map<number, number>();
   private readonly pending = new Map<number, PendingDispatch>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
@@ -94,28 +97,48 @@ export class Jobs {
     return this.running.size > 0 || [...this.pending.values()].some(({ dispatched }) => dispatched);
   }
 
-  async sync(observed?: number): Promise<void> {
-    const jobs = await this.link.call("jobs", {});
-    this.running.clear();
+  async sync(): Promise<void> {
+    const jobs = await this.link.call("jobs", {}, 5000);
     for (const { id } of jobs) {
+      if (this.lastResult.has(id)) continue;
       this.running.add(id);
       this.clearPending(id);
     }
-    if (observed !== undefined) this.clearPending(observed);
   }
 
-  forgetTab(job: number): void {
+  observeResult(entry: Entry): void {
+    const { job, startupFenced, startupLaunch, exitCode, lost, revived } = entry.fields;
+    if (typeof job !== "number" || (this.lastResult.get(job) ?? 0) >= entry.id) return;
+    if (startupFenced !== true && typeof exitCode !== "number" && lost !== true && revived !== true)
+      return;
+    this.lastResult.set(job, entry.id);
+    if (startupFenced === true) {
+      this.confirmStartupFence(
+        job,
+        typeof startupLaunch === "string" ? startupLaunch : undefined,
+        entry.body,
+      );
+      return;
+    }
+    this.clearPending(job);
+    if (revived === true) this.running.add(job);
+    else this.running.delete(job);
+    if (typeof exitCode === "number") this.forgetTab(job);
+  }
+
+  private forgetTab(job: number): void {
     this.ownedTabs.delete(job);
   }
 
-  confirmStartupFence(job: number, launch?: string, detail = "startup was fenced"): void {
+  private confirmStartupFence(job: number, launch?: string, detail = "startup was fenced"): void {
     if (launch !== undefined) {
       const preparing = this.preparing.get(launch);
       if (preparing !== undefined) preparing.fence = { job, detail };
     }
     const pending = this.pending.get(job);
-    if (pending === undefined || (launch !== undefined && pending.launch !== launch)) return;
+    if (pending !== undefined && launch !== undefined && pending.launch !== launch) return;
     this.running.delete(job);
+    if (pending === undefined) return;
     pending.fenced = true;
     this.clearPending(job);
     const tab = this.ownedTabs.get(job);
@@ -249,14 +272,14 @@ export class Jobs {
       if (tabId !== undefined) this.ownedTabs.set(job, tabId);
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
-      if (pending?.fenced === true)
-        throw new Error(`Job ${String(job)} was fenced before dispatch`);
+      if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
       if (pending !== undefined) pending.dispatched = true;
-      else this.running.add(job);
+      else if (!this.lastResult.has(job)) this.running.add(job);
       await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
+      if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced during dispatch`);
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      if (pending?.fenced === true) throw error;
+      if (startupFenced(pending)) throw error;
       if (pending?.dispatched === true)
         throw new Error(
           `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,
@@ -273,7 +296,10 @@ export class Jobs {
           ...(registeredLaunch ? { beforeRegistration: id } : {}),
         })
         .catch(() => undefined);
-      if (pending !== undefined && finished?.recorded === true) this.confirmStartupFence(job);
+      if (finished?.recorded === true) {
+        if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
+        if (pending !== undefined) this.confirmStartupFence(job);
+      }
       if (pending === undefined) this.forgetTab(job);
       throw error;
     }
@@ -283,11 +309,16 @@ export class Jobs {
   async stop(job: number): Promise<string> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
+    const before = this.lastResult.get(job);
     const { label, running, cancelled, legacy } = await this.link.call("job.stop", { job });
     const named = `job ${String(job)} (${label})`;
     if (!running) {
-      this.running.delete(job);
-      if (cancelled === true) this.confirmStartupFence(job);
+      if (this.lastResult.get(job) === before) {
+        if (before === undefined) this.lastResult.set(job, 0);
+        this.running.delete(job);
+        if (cancelled === true) this.confirmStartupFence(job);
+        else this.clearPending(job);
+      }
       return cancelled === true
         ? `${named} was stopped before wrapper registration. Its command will not run.`
         : `${named} is not running: nothing to stop.`;

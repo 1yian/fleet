@@ -283,30 +283,6 @@ function sendEntry(
   );
 }
 
-function deliverAfterSync(
-  jobs: Jobs,
-  seen: Set<number>,
-  entry: Entry,
-  deliver: (extra: string) => void,
-): void {
-  const job = entry.fields["job"];
-  if (typeof job === "number" && entry.fields["startupFenced"] === true) {
-    const launch = entry.fields["startupLaunch"];
-    jobs.confirmStartupFence(job, typeof launch === "string" ? launch : undefined, entry.body);
-    deliver("");
-    return;
-  }
-  if (typeof job === "number" && typeof entry.fields["exitCode"] === "number") jobs.forgetTab(job);
-  jobs.sync(typeof job === "number" ? job : undefined).then(
-    () => {
-      deliver("");
-    },
-    () => {
-      seen.delete(entry.id);
-    },
-  );
-}
-
 function idsClearedOnSettle(pi: ExtensionAPI): Set<number> {
   const ids = new Set<number>();
   pi.on("agent_settled", () => {
@@ -380,9 +356,10 @@ function start(
     };
     const mateWork = role === "mate" ? afterEntry(link, entry) : undefined;
     if (mateWork !== undefined) void mateWork.then(deliver);
-    else if (entry.kind === "job-result" && jobs !== undefined)
-      deliverAfterSync(jobs, seen, entry, deliver);
-    else deliver("");
+    else {
+      if (entry.kind === "job-result") jobs?.observeResult(entry);
+      deliver("");
+    }
   };
   const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
   registerDropJob(pi, link);

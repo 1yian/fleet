@@ -12,8 +12,10 @@ import {
   HttpCallSchema,
   HttpOutcomeSchema,
   OPS,
+  parseClientMessage,
   parseServerMessage,
   type Card,
+  type ServerMessage,
 } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { WebSocket, WebSocketServer } from "ws";
@@ -90,10 +92,13 @@ test("a failed pipeline wakes the worker with failure, and the wait is not a sta
   assert.deepEqual(await labels(), ["1"]);
 });
 
+type CallResult = Extract<ServerMessage, { t: "result" }>;
+
 async function jobProxy(
   t: TestContext,
   call: (op: string, args: unknown) => Promise<{ status: number; body: unknown }>,
   dropFence = false,
+  jobsReply?: (reply: CallResult) => CallResult | undefined,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -115,12 +120,18 @@ async function jobProxy(
   };
   sockets.on("connection", (client) => {
     const upstream = new WebSocket(fleet.cardd.url);
+    const jobReads = new Set<number>();
     client.pause();
     upstream.on("open", () => {
       client.resume();
     });
     client.on("message", (raw) => {
-      if (upstream.readyState === WebSocket.OPEN) upstream.send(rawText(raw));
+      const text = rawText(raw);
+      if (jobsReply !== undefined) {
+        const message = parseClientMessage(text);
+        if (message.t === "call" && message.op === "jobs") jobReads.add(message.id);
+      }
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
     });
     upstream.on("message", (raw) => {
       const text = rawText(raw);
@@ -128,7 +139,12 @@ async function jobProxy(
       if (dropFence && message.t === "entry" && message.entry.fields["startupFenced"] === true) {
         dropFence = false;
         client.terminate();
-      } else if (client.readyState === WebSocket.OPEN) client.send(text);
+      } else if (client.readyState === WebSocket.OPEN) {
+        if (message.t === "result" && jobReads.delete(message.id) && jobsReply !== undefined) {
+          const reply = jobsReply(message);
+          if (reply !== undefined) client.send(JSON.stringify(reply));
+        } else client.send(text);
+      }
     });
     upstream.on("error", () => client.terminate());
     upstream.on("close", () => client.terminate());
@@ -471,6 +487,123 @@ exec ${quote(herdr)} "$@"
     assert.deepEqual(readFileSync(closes, "utf8").trim().split("\n"), [original, original]);
     assert.ok((await tabsInWorkspace()).some((tab) => tab["tab_id"] === decoy));
   });
+
+for (const fault of ["failed", "hanging"] as const) {
+  test(`a partial job list preserves the wait and a ${fault} read cannot block the result`, async (t) => {
+    let mode: "observe" | "omit" | typeof fault = "observe";
+    const lists: number[][] = [];
+    const disconnect = await jobProxy(t, callCardd, false, (reply) => {
+      assert.ok(reply.ok);
+      lists.push(check(OPS.jobs.result, reply.value).map(({ id }) => id));
+      if (mode === "omit") return { ...reply, value: [] };
+      if (mode === "failed")
+        return { t: "result", id: reply.id, ok: false, error: "jobs read unavailable" };
+      if (mode === "hanging") return undefined;
+      return reply;
+    });
+    const slow = commandAwaitingGo(81);
+    h.onModel(() => ({ tool: "run_long", args: { label: "partial", command: slow.command } }));
+    h.onModel(() => ({ text: "Waiting for the command" }));
+    const pi = worker();
+    await until(() => (existsSync(slow.ready) ? true : undefined), "the registered command to run");
+    await settled(1);
+    disconnect();
+    await until(
+      () => (lists.some((ids) => ids.includes(1)) ? true : undefined),
+      "a full list to show the registered job",
+    );
+    const beforePartial = lists.length;
+    mode = "omit";
+    disconnect();
+    await until(
+      () => (lists.length > beforePartial ? true : undefined),
+      "the partial reconnect list",
+    );
+    assert.deepEqual(lists.at(-1), [1]);
+    h.onModel(() => ({ text: "Still waiting for the running job" }));
+    h.onModel(() => ({ text: "No work to report yet" }));
+    pi.prompt("Check whether the job is still being waited on");
+    await settled(2);
+    assert.equal(said("Your run is ending without a handoff"), false);
+    const beforeFault = lists.length;
+    mode = fault;
+    disconnect();
+    await until(
+      () => (lists.length > beforeFault ? true : undefined),
+      "the unanswered or rejected job read",
+    );
+    writeFileSync(slow.go, "");
+    await until(
+      () => (said("job 1 (partial) exited 0: late") ? true : undefined),
+      "the durable result despite the list failure",
+    );
+    assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
+  });
+}
+
+test("pane success received after expiry cannot report a fenced launch as started", async (t) => {
+  const registration = Promise.withResolvers<void>();
+  t.after(() => registration.resolve());
+  await jobProxy(t, async (op, args) => {
+    if (op === "job.register") await registration.promise;
+    return callCardd(op, args);
+  });
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const accepted = join(jobDir, "pane-accepted");
+  const release = join(jobDir, "release-reply");
+  const marker = join(jobDir, "not-executed");
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
+const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  response=$(${quote(herdr)} "$@") || exit "$?"
+  touch ${quote(accepted)}
+  node -e ${quote(waitForRelease)} || exit "$?"
+  printf '%s\\n' "$response"
+  exit 0
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "delayed", command: `touch ${quote(marker)}` },
+  }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "Startup was fenced" } }));
+  worker();
+  await until(() => (existsSync(accepted) ? true : undefined), "herdr to accept the dispatch");
+  const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-delayed")?.[
+    "tab_id"
+  ];
+  assert.equal(typeof tab, "string");
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  try {
+    db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
+  } finally {
+    db.close();
+  }
+  await h.waitForNth(
+    (event) => event["type"] === "fleet_delivered",
+    2,
+    "the durable fence before the pane reply",
+  );
+  await waitTabGone(String(tab), "tab_id");
+  assert.equal(existsSync(marker), false);
+  writeFileSync(release, "");
+  await h.waitForCall(1);
+  assert.ok(said("Job 1 was fenced during dispatch"));
+  assert.equal(said("Started job 1"), false);
+  assert.deepEqual(await jobResults(), [
+    [1, 127, "could not start: wrapper did not register before the startup deadline"],
+  ]);
+});
 
 test("a job-file failure does not keep Pi waiting when cardd cannot record the startup error", async () => {
   const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
