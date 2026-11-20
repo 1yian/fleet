@@ -96,7 +96,7 @@ type CallResult = Extract<ServerMessage, { t: "result" }>;
 
 async function jobProxy(
   t: TestContext,
-  call: (op: string, args: unknown) => Promise<{ status: number; body: unknown }>,
+  call: (op: string, args: unknown) => Promise<{ status: number; body: unknown; close?: boolean }>,
   dropFence = false,
   jobsReply?: (reply: CallResult) => CallResult | undefined,
   reportReply?: (reply: CallResult) => CallResult | undefined,
@@ -110,7 +110,10 @@ async function jobProxy(
       void (async () => {
         const { op, args } = check(HttpCallSchema, JSON.parse(body));
         const result = await call(op, args);
-        res.writeHead(result.status, { "content-type": "application/json" });
+        res.writeHead(result.status, {
+          "content-type": "application/json",
+          ...(result.close === true ? { connection: "close" } : {}),
+        });
         res.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
       })().catch((error: unknown) => res.destroy(error instanceof Error ? error : undefined));
     });
@@ -857,17 +860,25 @@ test("a job keeps running across a worker restart, and its result arrives once",
   assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "run\n");
 });
 
-for (const legacy of [false, true]) {
-  test(`stop after reload ${legacy ? "still finds a confirmed legacy job" : "refuses a registered job without its exact tab ID"}`, async (t) => {
-    if (legacy) {
-      await jobProxy(t, (op, args) =>
-        op === "job.prepare"
-          ? Promise.resolve({
+for (const kind of ["legacy", "registered", "replaced connection"] as const) {
+  test(`stop after reload ${kind === "legacy" ? "still finds a confirmed legacy job" : `refuses a registered job without its exact tab ID (${kind})`}`, async (t) => {
+    const legacy = kind === "legacy";
+    if (kind !== "registered") {
+      await jobProxy(t, async (op, args) => {
+        if (legacy && op === "job.prepare")
+          return { status: 400, body: { ok: false, error: "unknown operation job.prepare" } };
+        if (kind === "replaced connection") {
+          if (op === "job.cutover")
+            return {
               status: 400,
-              body: { ok: false, error: "unknown operation job.prepare" },
-            })
-          : callCardd(op, args),
-      );
+              close: true,
+              body: { ok: false, error: "unknown operation job.cutover" },
+            };
+          if (op === "job.stop")
+            return { status: 200, body: { ok: true, value: { label: "reload", running: true } } };
+        }
+        return callCardd(op, args);
+      });
     }
     const { ready, go, command } = commandAwaitingGo(27);
     h.onModel(() => ({ tool: "run_long", args: { label: "reload", command } }));
@@ -914,6 +925,7 @@ for (const legacy of [false, true]) {
           (each) => each["tab_id"] === tab && each["label"] === "actual-job",
         ),
       );
+      assert.ok((await tabsInWorkspace()).some((each) => each["label"] === "job-1-reload"));
       assert.deepEqual(await jobResults(), []);
       writeFileSync(go, "");
       await h.waitForNth(
