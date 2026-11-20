@@ -336,7 +336,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     try {
       const config = readLaneConfig(home);
       if (config === undefined) throw new Error(`${LANE_FILE} in ${home} cannot be read`);
-      const result = await withLanes(() => updateFleet(config, link));
+      const result = await withLanes(hostsOf(config), () => updateFleet(config, link));
       return result.ok ? { ok: true, text: `${result.text}\n${mainLine()}` } : result;
     } finally {
       running = false;

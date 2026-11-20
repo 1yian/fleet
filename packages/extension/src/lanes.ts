@@ -47,16 +47,6 @@ const describe = (host: string, row: Record<string, unknown>): string => {
   return `${text(row, "lane")} (${host}): ${state}${more === "" ? "" : ` - ${more}`}`;
 };
 
-async function everyLane(
-  config: LaneConfig,
-): Promise<{ host: string; row: Record<string, unknown> }[]> {
-  const out: { host: string; row: Record<string, unknown> }[] = [];
-  for (const host of hostsOf(config)) {
-    for (const row of await rows(config, host, ["status"])) out.push({ host, row });
-  }
-  return out;
-}
-
 async function placementRows(config: LaneConfig, host: string): Promise<Record<string, unknown>[]> {
   const out = (await fleet(config, host, ["status", "--placement", "--json"]))
     .trim()
@@ -105,10 +95,26 @@ export async function mateHosts(config: LaneConfig): Promise<Map<string, string>
   return soleHosts(runningHosts);
 }
 
+class NotOnHost extends Error {}
+
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
-  const found = (await everyLane(config)).find((each) => text(each.row, "lane") === lane);
-  if (found === undefined) throw new Error(`no lane ${lane} is configured on any host`);
-  return found.host;
+  const lookups = hostsOf(config).map(async (host) => {
+    const listed = await rows(config, host, ["status"]);
+    if (listed.some((row) => text(row, "lane") === lane)) return host;
+    throw new NotOnHost(host);
+  });
+  try {
+    return await Promise.any(lookups);
+  } catch (error) {
+    const reasons: readonly unknown[] = error instanceof AggregateError ? error.errors : [error];
+    const failures = reasons.filter((reason) => !(reason instanceof NotOnHost)).map(messageOf);
+    throw new Error(
+      failures.length === 0
+        ? `no lane ${lane} is configured on any host`
+        : `no lane ${lane} was found on a host that answered, and ${failures.join("; ")}`,
+      { cause: error },
+    );
+  }
 }
 
 function sharedArgs(home: string): string[] {
@@ -155,42 +161,46 @@ const LaneParams = Type.Object({
   action: Type.Enum(["start", "stop", "restart"]),
 });
 
-let lanesHeld = false;
-let lanesQueue: Promise<void> = Promise.resolve();
+const heldHosts = new Set<string>();
+const hostQueues = new Map<string, Promise<void>>();
 
-export function withLanes<T>(work: () => Promise<T>): Promise<T> {
-  const run = lanesQueue.then(async () => {
-    lanesHeld = true;
+export function withLanes<T>(hosts: readonly string[], work: () => Promise<T>): Promise<T> {
+  const earlier = Promise.all(hosts.map((host) => hostQueues.get(host) ?? Promise.resolve()));
+  const run = earlier.then(async () => {
+    for (const host of hosts) heldHosts.add(host);
     try {
       return await work();
     } finally {
-      lanesHeld = false;
+      for (const host of hosts) heldHosts.delete(host);
     }
   });
-  lanesQueue = run.then(
+  const finished = run.then(
     () => undefined,
     () => undefined,
   );
+  for (const host of hosts) hostQueues.set(host, finished);
   return run;
 }
 
 export async function restartLane(home: string, lane: string): Promise<string> {
   const config = readLaneConfig(home);
   if (config === undefined) throw new Error("only a mate with lanes can restart one");
-  return withLanes(() => act(config, lane, "restart"));
+  return act(config, lane, "restart");
 }
 
-async function restartAll(config: LaneConfig): Promise<string[]> {
-  const lines: string[] = [];
-  for (const host of hostsOf(config)) {
+const restartHost = (config: LaneConfig, host: string): Promise<string[]> =>
+  withLanes([host], async () => {
     try {
-      for (const row of await rows(config, host, ["restart"])) lines.push(describe(host, row));
+      return (await rows(config, host, ["restart"])).map((row) => describe(host, row));
     } catch (error) {
-      lines.push(
-        `${host}: cannot be reached - ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return [`${host}: cannot be reached - ${messageOf(error)}`];
     }
-  }
+  });
+
+async function restartAll(config: LaneConfig): Promise<string[]> {
+  const lines = (
+    await Promise.all(hostsOf(config).map((host) => restartHost(config, host)))
+  ).flat();
   return lines.length === 0 ? ["No lanes are configured."] : lines;
 }
 
@@ -200,12 +210,14 @@ async function act(
   action: "start" | "stop" | "restart",
 ): Promise<string> {
   const host = await hostOfLane(config, lane);
-  if (action === "stop") {
-    await fleet(config, host, ["stop", lane]);
-    return `${lane} (${host}): stopped`;
-  }
-  const out = await rows(config, host, [action === "start" ? "up" : "restart", lane]);
-  return out.map((row) => describe(host, row)).join("\n");
+  return withLanes([host], async () => {
+    if (action === "stop") {
+      await fleet(config, host, ["stop", lane]);
+      return `${lane} (${host}): stopped`;
+    }
+    const out = await rows(config, host, [action === "start" ? "up" : "restart", lane]);
+    return out.map((row) => describe(host, row)).join("\n");
+  });
 }
 
 export function registerLanes(
@@ -226,11 +238,11 @@ export function registerLanes(
       if (name !== "all") {
         if (action === "stop")
           await link.call("lane.stopping", { lane: name }).catch(() => undefined);
-        return reply(await withLanes(() => act(config, name, action)));
+        return reply(await act(config, name, action));
       }
       if (action !== "restart")
         throw new Error('lane "all" only restarts: name each lane to start or stop it');
-      return reply((await withLanes(() => restartAll(config))).join("\n"));
+      return reply((await restartAll(config)).join("\n"));
     },
   });
   keepRunning(pi, config, home, ctx);
@@ -315,6 +327,35 @@ function diskWatcher(
   });
 }
 
+function costNotice(
+  pi: ExtensionAPI,
+  config: LaneConfig,
+  home: string,
+  isDown: () => boolean,
+): () => Promise<void> {
+  let costing = false;
+  return async () => {
+    if (costing || isDown() || !noticeDue(home, Date.now())) return;
+    costing = true;
+    try {
+      const lines = await costLines(config).catch(() => []);
+      if (lines.length === 0 || isDown()) return;
+      mkdirSync(join(home, "state"), { recursive: true });
+      writeFileSync(join(home, COST_NOTICE), String(Date.now()));
+      pi.sendMessage(
+        {
+          customType: "fleet-cost",
+          content: `[fleet] cost, last 24 hours:\n${lines.join("\n")}`,
+          display: true,
+        },
+        { triggerTurn: true, deliverAs: "followUp" },
+      );
+    } finally {
+      costing = false;
+    }
+  };
+}
+
 function keepRunning(
   pi: ExtensionAPI,
   config: LaneConfig,
@@ -323,7 +364,7 @@ function keepRunning(
 ): void {
   const unreachable = new Set<string>();
   const unshared = new Set<string>();
-  let ticking = false;
+  const supervising = new Set<string>();
   let shutDown = false;
   const isDown = (): boolean => shutDown;
   const tell = (lines: readonly string[], urgent: boolean): void => {
@@ -374,32 +415,19 @@ function keepRunning(
       reportDown(host, error);
     }
   };
-  const dailyCost = async (): Promise<void> => {
-    if (isDown() || !noticeDue(home, Date.now())) return;
-    const lines = await costLines(config).catch(() => []);
-    if (lines.length === 0 || isDown()) return;
-    mkdirSync(join(home, "state"), { recursive: true });
-    writeFileSync(join(home, COST_NOTICE), String(Date.now()));
-    pi.sendMessage(
-      {
-        customType: "fleet-cost",
-        content: `[fleet] cost, last 24 hours:\n${lines.join("\n")}`,
-        display: true,
-      },
-      { triggerTurn: true, deliverAs: "followUp" },
-    );
-  };
-  const tick = async (): Promise<void> => {
-    if (ticking || lanesHeld) return;
-    ticking = true;
+  const superviseHost = async (host: string): Promise<void> => {
+    if (supervising.has(host) || heldHosts.has(host)) return;
+    supervising.add(host);
     try {
-      await withLanes(async () => {
-        for (const host of hostsOf(config)) await checkHost(host);
-      });
-      await dailyCost();
+      await withLanes([host], () => checkHost(host));
     } finally {
-      ticking = false;
+      supervising.delete(host);
     }
+  };
+  const dailyCost = costNotice(pi, config, home, isDown);
+  const tick = async (): Promise<void> => {
+    await Promise.all(hostsOf(config).map(superviseHost));
+    await dailyCost();
   };
   const timer = setInterval(() => void tick(), INTERVAL_MS);
   timer.unref();

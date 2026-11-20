@@ -23,13 +23,14 @@ let here: Scratch;
 let p620: Scratch;
 let ghost: Session;
 let marker: string;
+let mainToken: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
   here = new Scratch();
   p620 = new Scratch();
   marker = join(here.parent, "p620-down");
-  const mainToken = cardd.addLane("main", undefined, here.root);
+  mainToken = cardd.addLane("main", undefined, here.root);
   configureMain(here, cardd.url, mainToken, {
     hosts: { p620: ["node", TRANSPORT, marker] },
     roots: { p620: p620.root },
@@ -67,7 +68,8 @@ async function until<T>(
     const value = await read();
     if (value !== undefined) return value;
     if (Date.now() > deadline) {
-      assert.fail(`timed out waiting for ${what}\n${(await detail?.()) ?? ""}`);
+      const why = await detail?.().catch((error: unknown) => `no detail: ${String(error)}`);
+      assert.fail(`timed out waiting for ${what}\n${why ?? ""}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
@@ -352,4 +354,69 @@ test("main stops, restarts, and starts lanes with lane, its board shows them, an
     /^ops \(local\): started$/,
   );
   await waitState(here, "ops", "running");
+});
+
+test("a host whose transport hangs delays no lane on another host when main starts or when a lane dies", async () => {
+  const hung = join(here.parent, "slow-hung");
+  writeFileSync(hung, "hang");
+  configureMain(here, cardd.url, mainToken, {
+    hosts: { slow: ["node", TRANSPORT, hung], p620: ["node", TRANSPORT, marker] },
+    roots: { p620: p620.root },
+  });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  await waitState(here, "ops", "running");
+  await waitState(p620, "far", "running");
+
+  const before = await groupOf("far");
+  process.kill(-before, "SIGKILL");
+  await until(
+    async () => ((await groupOf("far")) === before ? undefined : true),
+    "far to leave its old Pi",
+  );
+  await waitState(p620, "far", "running");
+  assert.notEqual(await groupOf("far"), before);
+});
+
+test("a host that hangs after main started delays no lane command on another host: lane restart and lane all restart", async () => {
+  const idle = new Scratch();
+  const hung = join(here.parent, "slow-hung");
+  configureMain(here, cardd.url, mainToken, {
+    hosts: { slow: ["node", TRANSPORT, hung], p620: ["node", TRANSPORT, marker] },
+    roots: { slow: idle.root, p620: p620.root },
+  });
+  try {
+    h.onModel(() => ({ tool: "lane", args: { name: "far", action: "restart" } }), "mate");
+    h.onModel((turns) => {
+      assert.match(toolResults(turns).at(-1) ?? "", /^far \(p620\): started$/);
+      return { tool: "lane", args: { name: "all", action: "restart" } };
+    }, "mate");
+    h.onModel(() => ({ text: "restarted" }), "mate");
+    await startMain(lab, here, h);
+    await waitState(here, "ops", "running");
+    await waitState(p620, "far", "running");
+    await waitPi("far");
+
+    writeFileSync(hung, "hang");
+    const farPi = async (): Promise<number | undefined> => {
+      const processes = records(
+        (await paneInfo("far").catch(() => []))[0]?.["foreground_processes"],
+      );
+      const pi = processes.find((each) => each["name"] === "pi" || each["argv0"] === "pi");
+      return pi === undefined ? undefined : Number(pi["pid"]);
+    };
+    const seen = new Set<number>();
+    const first = await farPi();
+    assert.notEqual(first, undefined);
+    seen.add(first ?? 0);
+    await wakeMain("Restart far");
+    await until(async () => {
+      const now = await farPi();
+      if (now !== undefined) seen.add(now);
+      return seen.size === 3 ? true : undefined;
+    }, "lane far and lane all restart to restart far's Pi while slow hangs");
+    assert.equal(h.callsOf("mate").length, 2);
+  } finally {
+    idle.dispose();
+  }
 });
