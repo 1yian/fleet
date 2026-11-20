@@ -765,6 +765,8 @@ After that one time, `fleet update` refuses a host without bun (below 1.3.13) be
 
 Install the registration release on the worker hosts and cardd before attempting a release that removes the heartbeat detector. The registration release leaves that detector in place. Old workers and already running jobs keep using their old protocol. Updated wrappers wait for cardd to confirm registration before invoking Bash. If the daemon explicitly says it predates registration, updated workers use the old job protocol until the daemon is upgraded. After a worker reload, stopping by a unique legacy tab label requires explicit legacy ownership or a capability refusal and fresh job ownership confirmation on the same connection to old cardd. A missing ownership field on its own is not enough.
 
+Upgrade cardd before reloading workers where possible. In the opposite order, updated workers can still make explicit reports and stop legacy jobs, but old cardd cannot atomically check for jobs and record an automatic `stopped` handoff. Until cardd is upgraded, workers that would normally stop automatically must report explicitly. An empty job list does not authorize an automatic stop.
+
 Before any later detector removal, use main's updated `bin/fleet`:
 
 1. Run `fleet job-cutover seal`. This permanently blocks new legacy launches in cardd, including requests from workers that have not reloaded. It does not stop jobs. A draining result exits nonzero and lists each blocker by job, card, and host. Updated workers can still launch registered jobs.

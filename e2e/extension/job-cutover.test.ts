@@ -163,7 +163,7 @@ async function upgradeDaemon(): Promise<void> {
   }, "the upgraded cardd to serve its exact commit");
 }
 
-test("an updated worker can stop its legacy job after reload against pre-registration cardd", async () => {
+test("an updated worker can stop its legacy job after reload but cannot hand off automatically against pre-registration cardd", async () => {
   const main = await cardd.connect(mainToken);
   const card = await newCard(main, "Stop a legacy job after reload");
   const token = await begin(main, card, "run the legacy job", "local");
@@ -199,6 +199,60 @@ test("an updated worker can stop its legacy job after reload against pre-registr
   await waitTabClosed(String(workspace), 1, "legacy");
   const jobs = await cardd.post(token, "jobs", {});
   assert.deepEqual(check(HttpOutcomeSchema, jobs.body), { ok: true, value: [] });
+  await pi.kill();
+
+  const idle = await newCard(main, "End an idle run on old cardd");
+  const idleToken = await begin(main, idle, "inspect the queue", "local");
+  assert.equal(
+    check(
+      HttpOutcomeSchema,
+      (
+        await cardd.post(idleToken, "report", {
+          status: "stopped-if-idle",
+          text: "automatic handoff",
+        })
+      ).body,
+    ).ok,
+    false,
+  );
+  h.onModel(() => ({ text: "There is nothing in the queue." }), "idle-old");
+  h.onModel(() => ({ text: "I have no handoff." }), "idle-old");
+  const idlePi = h.startPi(
+    `c-${String(idle.id)}-a1`,
+    {
+      ...env,
+      FLEET_TOKEN: idleToken,
+      FLEET_FAKE_AGENT: "idle-old",
+    },
+    [join(workerCode.root, EXTENSION)],
+  );
+  const nudged = await h.waitForCall(1, "idle-old");
+  assert.ok(nudged.some(({ text }) => text.includes("Your run is ending without a handoff")));
+  const view = async () => check(CardViewSchema, await main.call("card", { card: idle.id }));
+  await until(async () => {
+    const card = (await view()).card;
+    return card.activity?.state === "idle" ? card : undefined;
+  }, "the updated worker to finish its idle turn on old cardd");
+  assert.deepEqual(
+    (await view()).entries.filter((entry) => entry.kind === "report"),
+    [],
+  );
+
+  h.onModel(
+    () => ({ tool: "report", args: { status: "done", text: "Queue checked explicitly" } }),
+    "idle-old",
+  );
+  idlePi.prompt("File the explicit handoff");
+  await main.waitForEntry(
+    (entry) => entry.body === "Queue checked explicitly",
+    "the explicit handoff",
+  );
+  assert.deepEqual(
+    (await view()).entries
+      .filter((entry) => entry.kind === "report")
+      .map((entry) => entry.fields["status"]),
+    ["done"],
+  );
 });
 
 test("old host and cardd CLIs pull the additive stage without stranding either legacy wrapper; seal blocks until confirmed drain", async () => {

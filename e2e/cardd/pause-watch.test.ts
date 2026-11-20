@@ -159,6 +159,7 @@ test("an outstanding dispatch counts for pause advice, dated holds, and idle che
   await assert.rejects(main.call("hold", hold), /a dated hold needs a watcher that runs now/);
   const unwatched = await pauseOf(worker, "The export was cancelled", until);
   assert.match(unwatched.advice ?? "", /^Nothing runs for this pause\./);
+  ageBatch(cardd, "main", 6 * MINUTE);
   const notice = await main.waitForEntry(
     (entry) => entry.card === card.id && isPause(entry),
     "the unwatched pause",

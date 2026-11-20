@@ -313,7 +313,6 @@ export class Jobs {
         if (before === undefined) this.lastResult.set(job, 0);
         this.running.delete(job);
         if (cancelled === true) this.confirmStartupFence(job);
-        else this.clearPending(job);
       }
       return cancelled === true
         ? `${named} was stopped before wrapper registration. Its command will not run.`
