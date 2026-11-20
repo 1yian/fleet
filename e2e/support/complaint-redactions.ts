@@ -27,6 +27,10 @@ export const REDACTED_COMPLAINTS = [
     "The example `curl -I https://localhost` fails.",
   ],
   [
+    'Reply {"message":"Unauthorized","field":"token"} omits the header.',
+    'Reply {"message":"Unauthorized","field":"token"} omits the header.',
+  ],
+  [
     "The ${HOST} help text never explains how curl is configured.",
     "The ${HOST} help text never explains how curl is configured.",
   ],

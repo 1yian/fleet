@@ -170,3 +170,11 @@ for (const [name, diagnostic] of [
     assert.doesNotMatch(heard.body, /paper|canoe|shared|harbor|99999/);
   });
 }
+
+test("a diagnostic that only names a token field keeps its text and its auth classification", async () => {
+  const card = await newCard(cleo, "Report an auth failure");
+  await reportFailure(fleet, cleo, card, 'HTTP 401 {"message":"Unauthorized","field":"token"}');
+  const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+  assert.ok(heard.body.includes('{"message":"Unauthorized","field":"token"}'), heard.body);
+  assert.ok(heard.body.includes("Classified auth."), heard.body);
+});

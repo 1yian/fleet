@@ -1,7 +1,11 @@
 export const SECRET_NAME = String.raw`(?:[a-z\d]+[-_])*(?:api[-_ ]?key|secret[-_ ]?access[-_ ]?key|(?:(?:access|refresh|session)[-_ ]?)?token|(?:client[-_ ]?)?secret|password|authorization)`;
 const RECORD_NAME = String.raw`(?:${SECRET_NAME}|(?:proxy-)?authorization|(?:set-)?cookies?2?)`;
 const COOKIE_HEADER = new RegExp(
-  String.raw`(?<![\w-])(?:set-)?cookies?2?(?:\\?["'])?\s*:|["']\s*${RECORD_NAME}\\?["']\s*[,}\]]`,
+  [
+    String.raw`(?<![\w-])(?:set-)?cookies?2?(?:\\?["'])?\s*:`,
+    String.raw`["']name["']\s*:\s*["']${RECORD_NAME}["']`,
+    String.raw`\[\s*["']${RECORD_NAME}["']\s*,\s*["']`,
+  ].join("|"),
   "i",
 );
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
