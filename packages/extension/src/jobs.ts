@@ -69,7 +69,6 @@ interface PendingDispatch {
   readonly file: string;
   dispatched: boolean;
   fenced: boolean;
-  unstarted: boolean;
 }
 
 const startupFenced = (pending: PendingDispatch | undefined): boolean => pending?.fenced === true;
@@ -83,6 +82,7 @@ export class Jobs {
   private readonly running = new Set<number>();
   private readonly lastResult = new Map<number, number>();
   private readonly pending = new Map<number, PendingDispatch>();
+  private readonly launching = new Map<number, { unstarted: boolean }>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -124,9 +124,9 @@ export class Jobs {
       );
       return;
     }
-    const pending = this.pending.get(job);
-    if (pending !== undefined && entry.fields["commandNotStarted"] === true)
-      pending.unstarted = true;
+    const launching = this.launching.get(job);
+    if (launching !== undefined && entry.fields["commandNotStarted"] === true)
+      launching.unstarted = true;
     this.clearPending(job);
     if (revived === true) this.running.add(job);
     else this.running.delete(job);
@@ -234,8 +234,10 @@ export class Jobs {
     const file = join(tmpdir(), `fleet-job-${String(job)}-${id}.json`);
     const tab = tabName(job, label);
     const pending: PendingDispatch | undefined = registeredLaunch
-      ? { launch: id, file, dispatched: false, fenced: false, unstarted: false }
+      ? { launch: id, file, dispatched: false, fenced: false }
       : undefined;
+    const launching = { unstarted: false };
+    if (registeredLaunch) this.launching.set(job, launching);
     try {
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
@@ -277,13 +279,13 @@ export class Jobs {
       else if (!this.lastResult.has(job)) this.running.add(job);
       await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced during dispatch`);
-      if (pending?.unstarted === true)
+      if (launching.unstarted)
         throw new Error(
           `Job ${String(job)} did not start: its wrapper reported that the command never ran`,
         );
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      if (startupFenced(pending) || pending?.unstarted === true) throw error;
+      if (startupFenced(pending) || launching.unstarted) throw error;
       if (pending?.dispatched === true)
         throw new Error(
           `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,
@@ -306,6 +308,8 @@ export class Jobs {
       }
       if (pending === undefined) this.forgetTab(job);
       throw error;
+    } finally {
+      if (this.launching.get(job) === launching) this.launching.delete(job);
     }
     return { job, tab };
   }
