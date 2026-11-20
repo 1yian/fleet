@@ -52,6 +52,8 @@ export const REDACTED_COMPLAINTS = [
     '{"client_secret":"paper canoe","access_token":"short-demo"}',
     '{"client_secret":[hidden],"access_token":[hidden]}',
   ],
+  [String.raw`{"pass\u0077ord":"paper canoe"}`, '{"password":[hidden]}'],
+  [String.raw`{"to\u006Ben": "paper canoe"}`, '{"token": [hidden]}'],
   ["OPENAI_API_KEY=a OTHER_API_KEY='b c'", "OPENAI_API_KEY=[hidden] OTHER_API_KEY=[hidden]"],
   [String.raw`{\"refresh_token\":\"two words\"}`, String.raw`{\"refresh_token\":[hidden]}`],
   ["AWS_SECRET_ACCESS_KEY=demo/only+fake", "AWS_SECRET_ACCESS_KEY=[hidden]"],

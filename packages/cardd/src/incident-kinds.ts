@@ -94,6 +94,12 @@ const STRUCTURED_SECRET = new RegExp(
   String.raw`${SECRET_KEY}((?:\\?["']\s*[:=]|\s*:)\s*)(?:${STRUCTURED_VALUE})|\bBearer\s+[A-Za-z0-9._~+/=-]+`,
   "gi",
 );
+const ESCAPED_KEY = /(?:[\w-]|\\+u[\da-f]{4})+(?=\\?["']\s*:)/gi;
+const KEY_ESCAPE = /\\+u([\da-f]{4})/gi;
+const UNBOUNDED_QUOTED_SECRET = new RegExp(
+  String.raw`${SECRET_KEY}(?:\\?["']\s*[:=]|\s*[:=])\s*\\?["'\u0060]`,
+  "i",
+);
 const URL_WITHHELD = "[URL withheld: credential boundaries unclear]";
 const URL_AUTHORITY =
   /(?<=\b[a-z][a-z0-9+.-]*:\\?\/\\?\/)(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
@@ -211,8 +217,18 @@ function redactUrlUserinfo(text: string): string {
   return found.ambiguous || scanUrlUserinfo(joined).count > found.count ? URL_WITHHELD : found.text;
 }
 
+function decodeKeyEscapes(key: string): string {
+  return key.replace(KEY_ESCAPE, (escape, hex: string) => {
+    const char = String.fromCharCode(Number.parseInt(hex, 16));
+    return /[\w-]/.test(char) ? char : escape;
+  });
+}
+
 function normalizeInput(text: string): string {
-  return text.replace(/\r\n?/g, "\n").replace(/^\uFEFF/gm, "");
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/^\uFEFF/gm, "")
+    .replace(ESCAPED_KEY, decodeKeyEscapes);
 }
 
 export function redact(text: string, scope: "public" | "diagnostic"): string {
@@ -247,6 +263,7 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   if (curlCredentialOption(urls)) return CURL_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
   if (curlUnprovenAuthorization(structured)) return CURL_WITHHELD;
+  if (UNBOUNDED_QUOTED_SECRET.test(structured)) return YAML_WITHHELD;
   const hidden = SECRET_PATTERNS.reduce(
     (out, pattern) => out.replace(pattern, hiddenValue),
     structured,
