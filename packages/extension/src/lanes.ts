@@ -28,28 +28,13 @@ export async function fleet(
   return onFleetRoot(host, config.roots[host], args, wait);
 }
 
-function lastJson(out: string, host: string): unknown {
-  const line = out.trim().split("\n").at(-1) ?? "";
-  try {
-    return JSON.parse(line);
-  } catch {
-    throw new Error(`fleet on ${host} returned no complete JSON`);
-  }
-}
-
-function completeRows(value: unknown, host: string): Record<string, unknown>[] {
-  const out = records(value);
-  if (!Array.isArray(value) || out.length !== value.length)
-    throw new Error(`fleet on ${host} returned an incomplete list`);
-  return out;
-}
-
 async function rows(
   config: LaneConfig,
   host: string,
   args: readonly string[],
 ): Promise<Record<string, unknown>[]> {
-  return completeRows(lastJson(await fleet(config, host, [...args, "--json"]), host), host);
+  const out = (await fleet(config, host, [...args, "--json"])).trim().split("\n").at(-1) ?? "[]";
+  return records(JSON.parse(out));
 }
 
 const text = (row: Record<string, unknown>, key: string): string => {
@@ -72,8 +57,17 @@ async function everyLane(
   return out;
 }
 
-const placementRows = (config: LaneConfig, host: string) =>
-  rows(config, host, ["status", "--placement"]);
+async function placementRows(config: LaneConfig, host: string): Promise<Record<string, unknown>[]> {
+  const out = (await fleet(config, host, ["status", "--placement", "--json"]))
+    .trim()
+    .split("\n")
+    .at(-1);
+  const parsed: unknown = JSON.parse(out ?? "");
+  const homes = records(parsed);
+  if (!Array.isArray(parsed) || homes.length !== parsed.length)
+    throw new Error(`invalid mate placement on ${host}`);
+  return homes;
+}
 
 function placedName(host: string, row: Record<string, unknown>): string {
   if (host !== "local") return host;
@@ -188,41 +182,13 @@ export async function restartLane(home: string, lane: string): Promise<string> {
   return withLanes(hostsOf(config), () => act(config, lane, "restart"));
 }
 
-const MUTATION_ACTIONS = new Set(["running", "started", "held", "stopped"]);
-
-function outcomeRows(
-  value: unknown,
-  host: string,
-  maintenance: boolean,
-): Record<string, unknown>[] {
-  const out = completeRows(value, host);
-  for (const row of out) {
-    const action = text(row, "action");
-    const known = MUTATION_ACTIONS.has(action) || (maintenance && action === "unread");
-    if (text(row, "lane") === "" || !known || (action === "held" && text(row, "detail") === ""))
-      throw new Error(
-        `fleet on ${host} returned an incomplete ${maintenance ? "maintenance" : "lane mutation"} result`,
-      );
-  }
-  return out;
-}
-
-async function mutate(config: LaneConfig, host: string, args: readonly string[], lane?: string) {
-  const answer = lastJson(await fleet(config, host, [...args, "--json"]), host);
-  const out = outcomeRows(answer, host, false);
-  if (lane !== undefined && (out.length !== 1 || out[0]?.["lane"] !== lane))
-    throw new Error(`fleet on ${host} returned no mutation result for ${lane}`);
-  return out;
-}
-
 async function restartAll(config: LaneConfig): Promise<string[]> {
   const lines: string[] = [];
   for (const host of hostsOf(config)) {
     try {
-      for (const row of await mutate(config, host, ["restart"])) lines.push(describe(host, row));
+      for (const row of await rows(config, host, ["restart"])) lines.push(describe(host, row));
     } catch (error) {
-      const state = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-      lines.push(`${host}: ${state} - ${messageOf(error)}`);
+      lines.push(`${host}: cannot be reached - ${messageOf(error)}`);
     }
   }
   return lines.length === 0 ? ["No lanes are configured."] : lines;
@@ -235,12 +201,10 @@ async function act(
 ): Promise<string> {
   const host = await hostOfLane(config, lane);
   if (action === "stop") {
-    const answer = await fleet(config, host, ["stop", lane]);
-    if (answer.trim().split("\n").at(-1) !== `${lane}: stopped`)
-      throw new Error(`fleet on ${host} returned no stop result for ${lane}`);
+    await fleet(config, host, ["stop", lane]);
     return `${lane} (${host}): stopped`;
   }
-  const out = await mutate(config, host, [action === "start" ? "up" : "restart", lane], lane);
+  const out = await rows(config, host, [action === "start" ? "up" : "restart", lane]);
   return out.map((row) => describe(host, row)).join("\n");
 }
 
@@ -312,13 +276,28 @@ async function costLines(config: LaneConfig): Promise<string[]> {
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 
+const MAINTENANCE_ACTIONS = new Set(["running", "started", "held", "stopped", "unread"]);
+
 async function maintenanceResult(config: LaneConfig, host: string) {
-  const answer = lastJson(await fleet(config, host, ["up", "--maintenance", "--json"]), host);
+  const out = await fleet(config, host, ["up", "--maintenance", "--json"]);
+  const answer: unknown = JSON.parse(out.trim().split("\n").at(-1) ?? "");
   if (isRecord(answer) && Object.keys(answer).length === 1) {
     const failed = answer["failed"];
     if (typeof failed === "string" && failed.trim() !== "") return failed;
   }
-  return outcomeRows(answer, host, true);
+  const results = records(answer);
+  if (!Array.isArray(answer) || results.length !== answer.length)
+    throw new Error(`fleet on ${host} returned an incomplete maintenance list`);
+  for (const row of results) {
+    const action = text(row, "action");
+    if (
+      text(row, "lane") === "" ||
+      !MAINTENANCE_ACTIONS.has(action) ||
+      (action === "held" && text(row, "detail") === "")
+    )
+      throw new Error(`fleet on ${host} returned an incomplete maintenance result`);
+  }
+  return results;
 }
 
 async function maintenanceRows(config: LaneConfig, host: string) {

@@ -163,13 +163,12 @@ async function observeList(noun: string, args: readonly string[], keys: readonly
   return rows;
 }
 
-async function rootOfWorkspace(workspace: string): Promise<{ pane: string; cwd: string }> {
-  const [root] = await observeList("pane", ["--workspace", workspace], ["pane_id", "cwd"]);
+async function rootOfWorkspace(workspace: string) {
+  const [root] = await observeList("pane", ["--workspace", workspace], []);
   const pane = field(root, "pane_id");
-  const cwd = field(root, "cwd");
-  if (pane === undefined || cwd === undefined)
+  if (pane === undefined || pane === "")
     throw new HostUnread(`herdr returned no root pane for ${workspace}`);
-  return { pane, cwd };
+  return { pane, cwd: field(root, "cwd") };
 }
 
 const ifUnread =
@@ -193,6 +192,8 @@ async function candidateMatches(
   placement: boolean,
 ): Promise<boolean> {
   const { pane, cwd } = await rootOfWorkspace(workspace);
+  if (cwd === undefined || cwd === "")
+    throw new HostUnread(`herdr returned no root pane cwd for ${workspace}`);
   if (canonical(cwd) !== canonical(home)) return false;
   return !placement || (await lanePaneState(pane)) === "pi";
 }
