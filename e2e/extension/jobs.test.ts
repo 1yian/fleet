@@ -590,6 +590,19 @@ for (const fault of ["failed", "hanging"] as const) {
       () => (lists.some((ids) => ids.includes(1)) ? true : undefined),
       "a full list to show the registered job",
     );
+    h.onModel(() => ({ text: "Full snapshot acknowledged" }));
+    const fullDelivered = h.events.filter((event) => event["type"] === "fleet_delivered").length;
+    await fleet.main.call("comment", {
+      card: card.id,
+      text: "Acknowledge the full snapshot",
+      later: false,
+    });
+    await h.waitForNth(
+      (event) => event["type"] === "fleet_delivered",
+      fullDelivered + 1,
+      "a push that the worker can only receive after applying the full snapshot",
+    );
+    await settled(2);
     const beforePartial = lists.length;
     mode = "omit";
     disconnect();
@@ -611,10 +624,10 @@ for (const fault of ["failed", "hanging"] as const) {
       deliveredBefore + 1,
       "a push that the worker can only receive after applying the partial snapshot",
     );
-    await settled(2);
+    await settled(3);
     const sentBefore = activities.length;
     pi.prompt("Check whether the job is still being waited on");
-    await settled(3);
+    await settled(4);
     assert.equal(said("Your run is ending without a handoff"), false);
     const sent = await until(() => {
       const after = activities.slice(sentBefore);
@@ -1566,6 +1579,104 @@ exec ${quote(herdr)} "$@"
   assert.equal(existsSync(dispatches), false);
   assert.equal(existsSync(marker), false);
 });
+
+const staleNotice = (job: number, label: string, kind: "lost" | "revived"): number => {
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  try {
+    const fields = JSON.stringify({ job, label, [kind]: true });
+    const body =
+      kind === "lost"
+        ? `job ${String(job)} (${label}) lost: no heartbeat arrived`
+        : `job ${String(job)} (${label}) is running again`;
+    const { lastInsertRowid } = db
+      .prepare(
+        "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, 'check', 'job-result', ?, ?, ?)",
+      )
+      .run(card.id, body, fields, Date.now());
+    db.prepare(
+      "INSERT INTO deliveries (session, entry, state, updated_at) VALUES ('c-1-a1', ?, 'pending', ?)",
+    ).run(lastInsertRowid, Date.now());
+    return Number(lastInsertRowid);
+  } finally {
+    db.close();
+  }
+};
+
+for (const stale of [
+  "revival after an acknowledged completion",
+  "loss after an acknowledged revival",
+]) {
+  test(`a replayed ${stale} cannot change the replacement worker's wait`, async (t) => {
+    const activities: string[] = [];
+    await jobProxy(t, callCardd, false, undefined, undefined, undefined, undefined, (message) => {
+      if (message.t === "activity") activities.push(message.state);
+    });
+    const completed = stale.startsWith("revival");
+    const slow = commandAwaitingGo(85);
+    t.after(() => {
+      if (existsSync(h.dir)) writeFileSync(slow.go, "");
+    });
+    h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "stale", command: completed ? "echo done" : slow.command },
+    }));
+    h.onModel(() => ({ text: "Waiting for the job" }));
+    if (completed) h.onModel(() => ({ text: "The result was handled" }));
+    const first = worker();
+    if (completed) {
+      await h.waitForNth((e) => e["type"] === "fleet_delivered", 1, "the job result");
+      await settled(2);
+      const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
+      t.after(() => db.close());
+      await untilAsync(
+        () =>
+          db
+            .prepare(
+              `SELECT 1 AS found FROM deliveries d JOIN entries e ON e.id = d.entry
+               WHERE d.session = 'c-1-a1' AND e.kind = 'job-result'
+                 AND d.state IN ('acknowledged', 'confirmed')`,
+            )
+            .get() === undefined
+            ? undefined
+            : true,
+        "cardd to persist the acknowledgment of the completion",
+      );
+    } else {
+      await until(() => (existsSync(slow.ready) ? true : undefined), "the command to run");
+      await settled(1);
+    }
+    await first.kill();
+    const notice = staleNotice(1, "stale", completed ? "revived" : "lost");
+    const delivered = h.events.filter((event) => event["type"] === "fleet_delivered").length;
+    const settledBefore = h.events.filter((event) => event["type"] === "settled").length;
+    h.onModel(() => ({ text: "The stale notice was handled" }));
+    h.onModel(() => ({ text: "The follow-up was handled" }));
+    const second = worker();
+    await h.waitFor(
+      (event) => event["type"] === "fleet_delivered" && event["entryId"] === notice,
+      "the replacement worker to receive the stale notice",
+    );
+    assert.ok(h.events.filter((event) => event["type"] === "fleet_delivered").length > delivered);
+    await h.waitForNth(
+      (event) => event["type"] === "settled",
+      settledBefore + 1,
+      "the replacement worker to settle on the stale notice",
+    );
+    const sentBefore = activities.length;
+    second.prompt("Is the job still being waited on?");
+    await h.waitForNth(
+      (event) => event["type"] === "settled",
+      settledBefore + 2,
+      "the follow-up turn",
+    );
+    const settledActivity = await until(() => {
+      const after = activities.slice(sentBefore);
+      return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
+    }, "the worker to send its settled activity after the follow-up turn");
+    assert.equal(settledActivity, completed ? "idle" : "waiting");
+    assert.equal(existsSync(slow.ready), !completed);
+  });
+}
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();

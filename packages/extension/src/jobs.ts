@@ -86,6 +86,7 @@ export class Jobs {
     { unstarted: boolean; ran: boolean; legacy: boolean }
   >();
   private readonly unsettled = new Set<number>();
+  private readonly unverified = new Set<number>();
   private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
@@ -107,11 +108,36 @@ export class Jobs {
 
   async sync(): Promise<void> {
     this.resumeLaunchCleanup();
+    const before = new Map(this.lastResult);
     const jobs = await this.link.call("jobs", {}, 5000);
-    for (const { id } of jobs) {
-      if (this.lastResult.has(id)) continue;
-      this.running.add(id);
-      this.clearPending(id);
+    this.applyList(new Set(jobs.map(({ id }) => id)), before, [
+      ...new Set([...jobs.map(({ id }) => id), ...this.unverified]),
+    ]);
+  }
+
+  private applyList(
+    listed: ReadonlySet<number>,
+    before: ReadonlyMap<number, number>,
+    jobs: readonly number[],
+  ): void {
+    for (const id of jobs) {
+      if (this.lastResult.get(id) !== before.get(id)) continue;
+      if (listed.has(id)) {
+        this.unverified.delete(id);
+        this.running.add(id);
+        this.clearPending(id);
+      } else if (this.unverified.delete(id)) this.running.delete(id);
+    }
+  }
+
+  private async reconcile(job: number): Promise<void> {
+    this.unverified.add(job);
+    const before = new Map(this.lastResult);
+    try {
+      const jobs = await this.link.call("jobs", {}, 5000);
+      this.applyList(new Set(jobs.map(({ id }) => id)), before, [job]);
+    } catch {
+      return;
     }
   }
 
@@ -143,6 +169,7 @@ export class Jobs {
     if (revived === true) this.running.add(job);
     else this.running.delete(job);
     if (typeof exitCode === "number") this.forgetTab(job);
+    else void this.reconcile(job);
   }
 
   private owner(job: number): string {
