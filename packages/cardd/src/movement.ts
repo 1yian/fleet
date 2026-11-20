@@ -72,10 +72,12 @@ const changes =
   (entry: Entry): boolean =>
     MOVEMENT.has(entry.kind) && !AUTOMATIC.has(entry.author) && !repeated.has(entry.id);
 
-const completion = (entry: Entry): boolean =>
+const noStart = (entry: Entry): boolean =>
   entry.kind === "job-result" &&
-  entry.fields["lost"] !== true &&
-  entry.fields["startupFenced"] !== true;
+  (entry.fields["startupFenced"] === true || entry.fields["commandNotStarted"] === true);
+
+const completion = (entry: Entry): boolean =>
+  entry.kind === "job-result" && entry.fields["lost"] !== true && !noStart(entry);
 
 function changedExits(entries: readonly Entry[], runs: readonly Run[]): ReadonlySet<number> {
   const labels = new Map(runs.map((run) => [run.id, run.label]));
@@ -105,7 +107,8 @@ export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movemen
   const repeated = repeatedReports(entries);
   const changed = entries.findLast(changes(repeated))?.createdAt ?? 0;
   const base = Math.max(card.createdAt, changed, progressAt(db, card.id));
-  const runs = runsOf(db, card.id);
+  const unstarted = new Set(entries.filter(noStart).map((entry) => Number(entry.fields["job"])));
+  const runs = runsOf(db, card.id).filter((run) => !unstarted.has(run.id));
   const completions = entries.filter(completion);
   const differs = changedExits(completions, runs);
   const exitAt = completions.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;

@@ -238,15 +238,15 @@ export class Jobs {
         "--no-focus",
         ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
+      const tabId = field(records([created["tab"]])[0], "tab_id");
       if (pending !== undefined) {
-        const tabId = field(records([created["tab"]])[0], "tab_id");
         if (tabId === undefined) throw new Error("herdr did not return the job tab ID");
         if (pending.fenced) {
           void this.closeStartupTab(job, tabId);
           throw new Error(`Job ${String(job)} was fenced before dispatch`);
         }
-        this.ownedTabs.set(job, tabId);
       }
+      if (tabId !== undefined) this.ownedTabs.set(job, tabId);
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
       if (pending?.fenced === true)
@@ -274,6 +274,7 @@ export class Jobs {
         })
         .catch(() => undefined);
       if (pending !== undefined && finished?.recorded === true) this.confirmStartupFence(job);
+      if (pending === undefined) this.forgetTab(job);
       throw error;
     }
     return { job, tab };
@@ -282,7 +283,7 @@ export class Jobs {
   async stop(job: number): Promise<string> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
-    const { label, running, cancelled } = await this.link.call("job.stop", { job });
+    const { label, running, cancelled, legacy } = await this.link.call("job.stop", { job });
     const named = `job ${String(job)} (${label})`;
     if (!running) {
       this.running.delete(job);
@@ -293,6 +294,8 @@ export class Jobs {
     }
     let tab = this.ownedTabs.get(job);
     if (tab === undefined) {
+      if (legacy !== true)
+        return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
       const tabs = records(
         (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],
       );

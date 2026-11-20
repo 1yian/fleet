@@ -1,7 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { constants } from "node:os";
 import { basename } from "node:path";
-import { check, OPS } from "@fleet/protocol";
+import { check, OPS, type OpArgs } from "@fleet/protocol";
 import Type from "typebox";
 import { spawnDetached } from "./detached.ts";
 import { herdr } from "./host.ts";
@@ -132,7 +132,9 @@ function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
   };
 }
 
-async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> {
+type JobResult = Pick<OpArgs<"job.finish">, "exitCode" | "outputTail" | "commandNotStarted">;
+
+async function run(job: Job): Promise<JobResult> {
   const tail = new Tail(job.keep);
   console.error(
     "[run_long] WARNING: Bash pipefail is enabled, not errexit. A command list returns its last command's status: 'false; true' succeeds. Use 'suite && formatter' or preserve $? explicitly. Intentional || and if recovery retain normal shell semantics; nested shells own their failure policy.",
@@ -142,6 +144,7 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     env: shimmedEnv(process.env),
   });
   const pid = child.pid;
+  const startup = pid === undefined ? { commandNotStarted: true as const } : {};
   const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
     try {
       return pid !== undefined && process.kill(-pid, signal);
@@ -190,7 +193,12 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     void Promise.race([exited, sleep(EARLY_REPORT_MS)]).then(() => {
       tail.flush();
       const outputTail = `${tail.text()}\ninterrupted`.trim();
-      void call(job, "job.finish", { job: job.job, exitCode: INTERRUPTED_EXIT, outputTail });
+      void call(job, "job.finish", {
+        job: job.job,
+        exitCode: INTERRUPTED_EXIT,
+        outputTail,
+        ...startup,
+      });
     });
   };
   for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
@@ -208,7 +216,7 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   tail.flush();
   if (reason === "interrupted") tail.add(["interrupted"]);
   const forced = reason === "timeout" ? TIMEOUT_EXIT : INTERRUPTED_EXIT;
-  return { exitCode: reason === undefined ? code : forced, outputTail: tail.text() };
+  return { exitCode: reason === undefined ? code : forced, outputTail: tail.text(), ...startup };
 }
 
 function call(job: Job, op: string, args: object): Promise<Response | undefined> {
@@ -220,7 +228,7 @@ function call(job: Job, op: string, args: object): Promise<Response | undefined>
   );
 }
 
-async function post(job: Job, result: { exitCode: number; outputTail: string }): Promise<void> {
+async function post(job: Job, result: JobResult): Promise<void> {
   for (let wait = 1000; ; wait = Math.min(wait * 2, MAX_RETRY_MS)) {
     const response = await call(job, "job.finish", { job: job.job, ...result });
     if (response?.status === 200 || response?.status === 401) return;
@@ -257,13 +265,14 @@ for (const signal of STOP_SIGNALS) process.off(signal, stopBeforeRun);
 const heartbeat = setInterval(() => {
   void call(job, "job.alive", { job: job.job });
 }, job.heartbeatMs);
-const result = stopped
-  ? { exitCode: INTERRUPTED_EXIT, outputTail: "interrupted" }
+const result: JobResult = stopped
+  ? { exitCode: INTERRUPTED_EXIT, outputTail: "interrupted", commandNotStarted: true }
   : confirmed
     ? await run(job)
     : {
         exitCode: 127,
         outputTail: "could not start: cardd did not confirm wrapper registration",
+        commandNotStarted: true,
       };
 console.log(`\n[run_long] job ${String(job.job)} exited ${String(result.exitCode)}`);
 await post(job, result);

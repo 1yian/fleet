@@ -577,6 +577,75 @@ test("a job keeps running across a worker restart, and its result arrives once",
   assert.equal(existsSync(counter) ? readFileSync(counter, "utf8") : "", "run\n");
 });
 
+for (const legacy of [false, true]) {
+  test(`stop after reload ${legacy ? "still finds a confirmed legacy job" : "refuses a registered job without its exact tab ID"}`, async (t) => {
+    if (legacy) {
+      await jobProxy(t, (op, args) =>
+        op === "job.prepare"
+          ? Promise.resolve({
+              status: 400,
+              body: { ok: false, error: "unknown operation job.prepare" },
+            })
+          : callCardd(op, args),
+      );
+    }
+    const { ready, go, command } = commandAwaitingGo(27);
+    h.onModel(() => ({ tool: "run_long", args: { label: "reload", command } }));
+    h.onModel(() => ({ text: "Waiting for the job" }));
+    const pi = worker();
+    await until(() => (existsSync(ready) ? true : undefined), "the job command to start");
+    await settled(1);
+    const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-reload")?.[
+      "tab_id"
+    ];
+    assert.ok(typeof tab === "string");
+    if (!legacy) {
+      await lab.run(["tab", "rename", tab, "actual-job"]);
+      await lab.run([
+        "tab",
+        "create",
+        "--workspace",
+        workspace(),
+        "--label",
+        "job-1-reload",
+        "--no-focus",
+      ]);
+    }
+    pi.prompt("/probe-reload");
+    await h.waitForNth((event) => event["type"] === "fleet_connected", 2, "the worker to reload");
+    h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+    h.onModel(() => ({ text: "Stop attempted" }));
+    h.onModel(() => ({ tool: "report", args: { status: "done", text: "Reload test finished" } }));
+    pi.prompt("Stop the job after reloading");
+    await h.waitForCall(3);
+    if (legacy) {
+      assert.ok(said("Sent a stop to job 1 (reload)"));
+      await h.waitForNth(
+        (event) => event["type"] === "fleet_delivered",
+        2,
+        "the legacy stop result",
+      );
+      assert.deepEqual(await jobResults(), [[1, 130, "interrupted"]]);
+    } else {
+      assert.ok(said("has no verified tab ID in this worker session, so nothing was signalled"));
+      assert.equal(said("Sent a stop to job 1 (reload)"), false);
+      assert.ok(
+        (await tabsInWorkspace()).some(
+          (each) => each["tab_id"] === tab && each["label"] === "actual-job",
+        ),
+      );
+      assert.deepEqual(await jobResults(), []);
+      writeFileSync(go, "");
+      await h.waitForNth(
+        (event) => event["type"] === "fleet_delivered",
+        2,
+        "the untouched job's result",
+      );
+      assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
+    }
+  });
+}
+
 function pids(text: string): number[] {
   try {
     return execFileSync("pgrep", ["-f", text], { encoding: "utf8" })
