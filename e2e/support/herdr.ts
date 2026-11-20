@@ -9,6 +9,7 @@ import { guardScope } from "./reaper-client.ts";
 import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
 import { LAB_GROUPS_ENV, openGroupScope, signalOwnedGroup, sweepGroups } from "./marked.ts";
 import { retainRunRoot, tempDir } from "./run-root.ts";
+import "./hermetic-env.ts";
 import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
