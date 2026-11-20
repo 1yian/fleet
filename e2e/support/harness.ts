@@ -71,7 +71,7 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
-function rawText(data: RawData): string {
+export function rawText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   return Array.isArray(data)
     ? Buffer.concat(data).toString("utf8")
