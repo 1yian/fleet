@@ -251,17 +251,14 @@ function maintenanceFailure(failed: string): void {
   console.log(JSON.stringify({ failed, expected: [], outcomes: [] }));
 }
 
-if (command === "up" || command === "restart") {
+function checkLaunchPrerequisites(): void {
   if (values.host !== undefined) {
     console.error(USAGE);
     process.exit(2);
   }
   const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline);
   if (problems.length > 0) {
-    if (typedMaintenance) {
-      maintenanceFailure(problems.join("\n"));
-      process.exit(0);
-    }
+    if (typedMaintenance) throw new Error(problems.join("\n"));
     console.error(problems.join("\n"));
     process.exit(1);
   }
@@ -284,6 +281,7 @@ switch (command ?? "") {
   }
   case "up":
     try {
+      checkLaunchPrerequisites();
       const result = await up(root, rest[0], maintenanceDeadline, typedMaintenance ? offset : 0);
       const { outcomes, failed } = result;
       if (typedMaintenance) console.log(JSON.stringify(result));
@@ -330,6 +328,7 @@ switch (command ?? "") {
     console.log(`${lane()}: stopped`);
     break;
   case "restart":
+    checkLaunchPrerequisites();
     show(await restart(root, rest[0]));
     break;
   case "home": {

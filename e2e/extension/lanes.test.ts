@@ -281,6 +281,41 @@ test("main tells the captain when a host cannot be reached, and when it is back"
   assert.match(users(next), /\[fleet\] lanes: p620 can be reached again/);
 });
 
+test("a malformed lane config reports a maintenance failure and delays recovery until repaired", async () => {
+  const config = join(`${p620.root}.worktrees`, "lane-far", "config", "lane.json");
+  const valid = readFileSync(config, "utf8");
+  writeFileSync(marker, "down");
+  writeFileSync(config, "");
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const outage = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(users(outage), /p620 cannot be reached/);
+  rmSync(marker);
+  const failed = "[fleet] lanes: p620 failed: Unexpected end of JSON input";
+  const recovered = "p620 can be reached again";
+  const started = "far started on p620";
+  await until(
+    () =>
+      h
+        .callsOf("mate")
+        .map(users)
+        .find((message) => message.includes(failed)),
+    "main to report a definite prerequisite failure on p620",
+    async () => h.callsOf("mate").map(users).at(-1) ?? "no model call",
+  );
+  const beforeRepair = sessionText();
+  assert.ok(!beforeRepair.includes(recovered));
+  assert.ok(!beforeRepair.includes(started));
+  writeFileSync(config, valid);
+  await until(() => {
+    const notices = sessionText();
+    return notices.includes(recovered) && notices.includes(started) ? true : undefined;
+  }, "main to announce recovery and a successful start after repairing the lane config");
+  await waitState(p620, "far", "running");
+  const notices = sessionText();
+  assert.ok(notices.includes(failed) && notices.indexOf(failed) < notices.indexOf(recovered));
+});
+
 test("unread transport and nested observations neither report failure nor clear a confirmed outage", async () => {
   const control = join(here.parent, "faults");
   p620.addLane("spare", { url: cardd.url, token: cardd.addLane("spare", "main"), hold: true });
