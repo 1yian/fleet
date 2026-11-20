@@ -95,6 +95,10 @@ case "$1 $2:$HERDR_FAULT" in
     "$REAL_HERDR" "$@" >/dev/null || exit $?
     printf '%s' '{"result":{}}'
     exit 0 ;;
+  'pane run:incomplete-run')
+    printf '%s\\n' "$HERDR_FAULT" >> "$HERDR_FAULT_LOG"
+    printf '%s' '{"result":{}}'
+    exit 0 ;;
   'pane run:malformed') printf '%s' '{}'; exit 0 ;;
 esac
 exec "$REAL_HERDR" "$@"
@@ -390,6 +394,26 @@ test("legacy split workspaces close by the original pane's home, not by Pi in a 
   }
 });
 
+test("a legacy split listed first cannot mask the current-title lane", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const legacyPane = await idlePane("ops", home, "fleet-ops");
+  await lab.run(["pane", "split", legacyPane, "--direction", "right", "--no-focus"]);
+  await idlePane("ops", home);
+  const labels = async () =>
+    records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["label"]);
+  assert.deepEqual(await labels(), ["fleet-ops", "2ndmate-ops"]);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
+  assert.deepEqual(maintain(), action("ops", "started"));
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "running" }]);
+  assert.deepEqual(JSON.parse(fleet(["status", "--placement", "--json"])), [
+    { lane: "ops", mate: true },
+  ]);
+  assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");
+  assert.deepEqual(await labels(), ["fleet-ops"]);
+  assert.deepEqual(maintain(), action("ops", "unread"));
+  assert.equal(readFileSync(join(home, "state", "stopped"), "utf8"), "stopped by hand\n");
+});
+
 test("a pane disappearing between list and process info leaves the lane unread", async () => {
   assert.deepEqual(maintain(), action("ops", "started"));
   const home = `${here.root}.worktrees/lane-ops`;
@@ -482,14 +506,14 @@ test("maintenance returns a completed start alongside a later lifecycle failure"
   assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "started")]);
 });
 
-async function idlePane(lane: string, home: string): Promise<string> {
+async function idlePane(lane: string, home: string, title = `2ndmate-${lane}`): Promise<string> {
   const created = await lab.run([
     "workspace",
     "create",
     "--cwd",
     home,
     "--label",
-    `2ndmate-${lane}`,
+    title,
     "--no-focus",
   ]);
   const pane = records([created["root_pane"]])[0]?.["pane_id"];
@@ -577,6 +601,30 @@ test("refused and failed pane runs are not recorded or retried", () => {
     assert.equal(existsSync(`${here.root}.worktrees/lane-ops/state/starts`), false);
   }
   assert.equal(readFileSync(faultLog(), "utf8"), "refused-run\nfailed-run\n");
+});
+
+test("an incomplete run acknowledgement neither records a start nor lifts a hold", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const reply = maintain("incomplete-run");
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["outcomes"], []);
+  assert.match(String(reply["failed"]), /herdr pane run.*returned no complete result/);
+  assert.equal(existsSync(starts), false);
+  const history = `${String(Date.now())}\n`;
+  writeFileSync(starts, history);
+  writeFileSync(stopped, "stopped by hand\n");
+  assert.throws(() => fleet(["up", "ops", "--json"], "incomplete-run"), /no complete result/);
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.equal(readFileSync(faultLog(), "utf8"), "incomplete-run\nincomplete-run\n");
+  assert.deepEqual(
+    JSON.parse(fleet(["up", "ops", "--json"], "structured-run")),
+    action("ops", "started"),
+  );
+  assert.equal(existsSync(stopped), false);
+  assert.deepEqual(maintain(), action("ops", "running"));
 });
 
 test("a malformed mutation acknowledgement is an error, not a start or an unread observation", () => {

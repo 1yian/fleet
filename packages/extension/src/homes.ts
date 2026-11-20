@@ -226,11 +226,16 @@ async function findWorkspace(
 ): Promise<LaneMatch | undefined> {
   const matchesHome = (cwd: string | undefined) =>
     cwd !== undefined && cwd !== "" && canonical(cwd) === canonical(home);
-  for (const row of await observeList("workspace", [], ["workspace_id", "label"], deadline)) {
+  const listed = await observeList("workspace", [], ["workspace_id", "label"], deadline);
+  const title = mateTitle(lane);
+  const currentRows = listed.filter((row) => row["label"] === title);
+  const legacyRows = listed.filter(
+    (row) => row["label"] === `${legacyMatePrefix}${lane}` && !isWorkerWorkspace(row),
+  );
+  for (const row of [...currentRows, ...legacyRows]) {
     const workspace = String(row["workspace_id"]);
-    const current = row["label"] === mateTitle(lane);
-    const legacy = row["label"] === `${legacyMatePrefix}${lane}` && !isWorkerWorkspace(row);
-    if (!current && !legacy) continue;
+    const current = row["label"] === title;
+    const legacy = !current;
     if (current && purpose === "close") return { workspace, state: "matched" };
     const panes = await panesOf(workspace, row["pane_count"], deadline);
     const [first] = panes;
