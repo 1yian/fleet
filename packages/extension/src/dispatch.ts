@@ -259,17 +259,22 @@ async function closeWorkspace(host: string, clone: string, session: string): Pro
   if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
 }
 
-export async function replaceWorker(
-  link: Link,
-  launch: Launch,
-  recovery: { card: number; host: string; repeat: boolean; notice?: string | undefined },
-  avoid: readonly string[] = [],
-): Promise<string> {
-  const plan = await link.call("attempt.resume", { card: recovery.card });
-  if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
-  if (recovery.repeat)
-    return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
-  const extension = await extensionOn(recovery.host, launch.extension);
+export class DidNotStart extends Error {}
+
+interface Recovery {
+  card: number;
+  host: string;
+  repeat: boolean;
+  notice?: string | undefined;
+}
+
+interface Replacement {
+  plan: Plan;
+  pane: string;
+  path: string;
+}
+
+async function freshPane(plan: Plan, recovery: Recovery): Promise<Replacement> {
   const old = await worktreePane(recovery.host, plan, recovery.card);
   if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
   await closeWorkspace(recovery.host, plan.clone, plan.session);
@@ -277,11 +282,26 @@ export async function replaceWorker(
   const { pane, path, workspace } = await worktreePane(recovery.host, plan, recovery.card);
   await claimOwned(recovery.host, workspace, plan, recovery.card);
   await contain(recovery.host, pane, path);
+  return { plan, pane, path };
+}
+
+async function startReplacement(
+  link: Link,
+  launch: Launch,
+  recovery: Recovery,
+  avoid: readonly string[],
+): Promise<string | Replacement> {
+  const plan = await link.call("attempt.resume", { card: recovery.card });
+  if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
+  if (recovery.repeat)
+    return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
+  const extension = await extensionOn(recovery.host, launch.extension);
+  const fresh = await freshPane(plan, recovery);
   if (recovery.notice !== undefined)
     await link.call("comment", { card: recovery.card, text: recovery.notice });
   await startAgent(
     recovery.host,
-    pane,
+    fresh.pane,
     [
       [
         "agent",
@@ -290,7 +310,7 @@ export async function replaceWorker(
         "--kind",
         "pi",
         "--pane",
-        pane,
+        fresh.pane,
         "--timeout",
         String(HERDR_READY_WAIT_MS),
         "--",
@@ -314,6 +334,21 @@ export async function replaceWorker(
     plan,
     launch.lost,
   );
-  await contain(recovery.host, pane, path);
-  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
+  return fresh;
+}
+
+export async function replaceWorker(
+  link: Link,
+  launch: Launch,
+  recovery: Recovery,
+  avoid: readonly string[] = [],
+): Promise<string> {
+  const started = await startReplacement(link, launch, recovery, avoid).catch((error: unknown) => {
+    throw new DidNotStart(error instanceof Error ? error.message : String(error), {
+      cause: error,
+    });
+  });
+  if (typeof started === "string") return started;
+  await contain(recovery.host, started.pane, started.path);
+  return `Started ${started.plan.session} again on ${recovery.host}, on its own session and branch ${started.plan.branch}.`;
 }
