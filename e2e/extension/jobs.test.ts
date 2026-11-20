@@ -764,10 +764,26 @@ test("a registered no-start result received before the pane reply rejects the la
   const release = join(jobDir, "release-reply");
   const accepted = join(jobDir, "pane-accepted");
   const marker = join(jobDir, "not-executed");
-  await jobProxy(t, async (op, args) => {
-    const result = await callCardd(op, args);
-    return op === "job.register" ? { ...result, body: '{"ok":true,"value":{} }' } : result;
-  });
+  const registrationReply = Promise.withResolvers<void>();
+  t.after(() => registrationReply.resolve());
+  const lists: number[][] = [];
+  let registrations = 0;
+  const disconnect = await jobProxy(
+    t,
+    async (op, args) => {
+      const result = await callCardd(op, args);
+      if (op !== "job.register") return result;
+      registrations += 1;
+      if (registrations === 1) await registrationReply.promise;
+      return { ...result, body: '{"ok":true,"value":{} }' };
+    },
+    false,
+    (reply) => {
+      assert.ok(reply.ok);
+      lists.push(check(OPS.jobs.result, reply.value).map(({ id }) => id));
+      return reply;
+    },
+  );
   const bin = join(jobDir, "bin");
   mkdirSync(bin);
   const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
@@ -797,13 +813,24 @@ exec ${quote(herdr)} "$@"
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job did not start" } }));
   worker();
   await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
-  await untilAsync(
-    async () => ((await jobResults()).length === 1 ? true : undefined),
+  await until(() => (registrations === 1 ? true : undefined), "the registration request");
+  const beforeSnapshot = lists.length;
+  disconnect();
+  await until(
+    () => (lists.slice(beforeSnapshot).some((ids) => ids.includes(1)) ? true : undefined),
+    "the reconnect snapshot to show the registered job",
+  );
+  registrationReply.resolve();
+  const result = await untilAsync(
+    async () =>
+      (await cardView()).entries.find(
+        (entry) => entry.kind === "job-result" && entry.fields["commandNotStarted"] === true,
+      ),
     "the wrapper's durable no-start result",
   );
   await h.waitFor(
-    (event) => event["type"] === "fleet_delivered",
-    "the no-start result to reach the worker before the pane reply",
+    (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
+    "the exact no-start result to reach the worker before the pane reply",
   );
   writeFileSync(release, "");
   await h.waitForCall(1);
