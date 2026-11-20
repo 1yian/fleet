@@ -53,17 +53,17 @@ const failed = (outcome: Outcome): boolean =>
   outcome.code !== 0 || outcome.timedOut || outcome.unresolved.length > 0 || outcome.retained;
 
 function concurrency(): number {
+  const cap = Math.min(
+    MAX_DEFAULT_FILES,
+    Math.max(1, Math.floor(availableParallelism() / CORES_PER_FILE)),
+  );
   const override = process.env["FLEET_E2E_CONCURRENCY"];
-  if (override === undefined) {
-    return Math.min(
-      MAX_DEFAULT_FILES,
-      Math.max(1, Math.floor(availableParallelism() / CORES_PER_FILE)),
-    );
+  if (override === undefined) return cap;
+  const width = Number(override);
+  if (!/^\d+$/.test(override) || width < 1 || width > cap) {
+    throw new Error(`FLEET_E2E_CONCURRENCY must be an integer from 1 to ${String(cap)}`);
   }
-  if (!/^[1-9]\d*$/.test(override)) {
-    throw new Error("FLEET_E2E_CONCURRENCY must be a positive integer");
-  }
-  return Number(override);
+  return width;
 }
 
 function countsIn(log: string): Record<string, number> | undefined {
