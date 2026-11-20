@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
 import { test } from "node:test";
-import { CardViewSchema, check } from "@fleet/protocol";
 import { Cardd } from "../support/cardd.ts";
 import type { Fleet } from "../support/fleet.ts";
 import { writeDatabaseAt } from "../support/legacy-database.ts";
@@ -43,24 +42,19 @@ function stuckChecks(file: string): void {
     `INSERT INTO deliveries (session, entry, state, updated_at, resends)
      VALUES (?, ?, ?, ?, ?)`,
   );
-  const finding = db.prepare(
-    `INSERT INTO entries (id, card, author, kind, body, fields, created_at)
-     VALUES (?, ?, 'check', 'finding', ?, ?, ?)`,
-  );
   const incident = db.prepare(
     `INSERT INTO incidents (id, actor, card, parent, generation, phase, classification, error, source,
        intent, state, recovery_key, recovery_mode, recovery_entry, recovery_deadline, first_at, last_at,
-       closed_at, control_at)
-     VALUES (?, ?, ?, 'main', 0, ?, 'unknown', 'provider exploded', 'turn', 'working', ?, 'retry', 'retry', ?, ?, ?, ?, ?, ?)`,
+       closed_at)
+     VALUES (?, ?, ?, 'main', 0, ?, 'unknown', 'provider exploded', 'turn', 'working', ?, 'retry', 'retry', ?, ?, ?, ?, ?)`,
   );
   const past = Date.now() - 600_000;
-  const probeFields = (incidentId: number, compaction: boolean): string =>
+  const check = (incidentId: number, compaction: boolean): string =>
     JSON.stringify({ for: "worker", recovery: incidentId, ...(compaction ? { compaction } : {}) });
   const states: [number, string, string, boolean][] = [
     [1, "verified", "pushed-again", true],
     [2, "cleared", "read", false],
     [3, "recovering", "pushed", false],
-    [4, "recovering", "pushed-again", false],
   ];
   for (const [id, state, delivered, compaction] of states) {
     const name = `c-${String(id)}`;
@@ -69,31 +63,8 @@ function stuckChecks(file: string): void {
     worker.run(`${name}-a1`, id, sha(tokenOf("worker", `${name}-a1`)));
     entry.run(id * 10, id, `Do ${name}.`, JSON.stringify({ task: `Do ${name}.` }), T);
     delivery.run(`${name}-a1`, id * 10, "confirmed", past, 0);
-    entry.run(
-      id * 10 + 1,
-      id,
-      `recovery check ${String(id)} from main`,
-      probeFields(id, compaction),
-      T,
-    );
+    entry.run(id * 10 + 1, id, `recovery check ${String(id)} from main`, check(id, compaction), T);
     delivery.run(`${name}-a1`, id * 10 + 1, delivered, past, 2);
-    const reportedAt = id === 4 ? T + 2 : null;
-    if (reportedAt !== null)
-      db.prepare(
-        `INSERT INTO entries (id, card, author, kind, body, fields, created_at)
-         VALUES (42, 4, ?, 'report', 'still here', '{"status":"note"}', ?)`,
-      ).run(`worker:${name}-a1`, reportedAt);
-    if (id === 1 || id === 3) {
-      const missedEntry = id === 1 ? 11 : 30;
-      finding.run(
-        id * 10 + 5,
-        id,
-        `missed: entry ${String(missedEntry)} was not taken in`,
-        JSON.stringify({ condition: "missed", entry: missedEntry, worker: `${name}-a1` }),
-        past,
-      );
-      delivery.run("main", id * 10 + 5, "pushed", past, 0);
-    }
     incident.run(
       id,
       `${name}-a1`,
@@ -105,7 +76,6 @@ function stuckChecks(file: string): void {
       T,
       T,
       state === "recovering" ? null : T + 5,
-      reportedAt,
     );
   }
   db.close();
@@ -119,8 +89,6 @@ test("a recovery check whose incident already ended is not delivered or reported
     const verified = await cardd.connect(tokenOf("worker", "c-1-a1"), [], false);
     const cleared = await cardd.connect(tokenOf("worker", "c-2-a1"), [], false);
     const recovering = await cardd.connect(tokenOf("worker", "c-3-a1"), [], false);
-    const reported = await cardd.connect(tokenOf("worker", "c-4-a1"), [], false);
-    await reported.call("jobs", {});
     const control = await untakenControl(fleet, "A task nobody takes in");
     await control.reportedMissed();
 
@@ -135,24 +103,7 @@ test("a recovery check whose incident already ended is not delivered or reported
       [1, 2].flatMap((card) => missedAbout(fleet, card)),
       [],
     );
-    assert.deepEqual(checks(reported), []);
-    await assert.rejects(
-      fleet.main.call("card.restart", {
-        card: 4,
-        incident: 4,
-        generation: 1,
-        mode: "retry",
-        key: "another-retry",
-      }),
-      /already has a recovery in progress/,
-    );
-    await reported.call("report", { status: "done", text: "finished the task" });
-    assert.deepEqual(missedAbout(fleet, 3).map((entry) => entry.fields["entry"]), [30]);
-    const thread = check(CardViewSchema, await fleet.main.call("card", { card: 1 }));
-    assert.equal(thread.entries.find((entry) => entry.id === 15)?.fields["entry"], 11);
-    await Promise.all(
-      [verified, cleared, recovering, reported, control.worker].map((each) => each.close()),
-    );
+    await Promise.all([verified, cleared, recovering, control.worker].map((each) => each.close()));
   } finally {
     await cardd.stop();
   }

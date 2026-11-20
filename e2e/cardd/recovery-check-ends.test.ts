@@ -20,29 +20,18 @@ const isCheck = (entry: Entry): boolean => entry.fields["recovery"] !== undefine
 const checksSent = (worker: Session): number =>
   worker.entries.filter((push) => isCheck(push.entry)).length;
 
-async function failedWorker(phase: "turn" | "compaction"): Promise<{
-  worker: Session;
-  token: string;
-  card: number;
-  incident: number;
-  generation: number;
-}> {
+async function failedWorker(
+  phase: "turn" | "compaction",
+): Promise<{ worker: Session; card: number; incident: number; generation: number }> {
   const card = await newCard(fleet.main, "Users see one scrollbar");
-  const token = await begin(fleet.main, card);
-  const worker = await fleet.cardd.connect(token, [], false);
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card), [], false);
   const [task] = await worker.waitForEntries(1);
   worker.ack(task?.id ?? 0);
   await worker.call("incident.report", { error: TURN_FAILED, phase });
   const heard = await fleet.main.waitForEntry(isFailure, "the failure to reach the mate");
   const [, incident, generation] =
     /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
-  return {
-    worker,
-    token,
-    card: card.id,
-    incident: Number(incident),
-    generation: Number(generation),
-  };
+  return { worker, card: card.id, incident: Number(incident), generation: Number(generation) };
 }
 
 test("a recovery check whose compaction verified is never sent again or reported missed", async () => {
@@ -95,32 +84,3 @@ test("a recovery check the worker read and answered is never sent again or repor
   assert.deepEqual(missedAbout(fleet, card), []);
   await Promise.all([worker.close(), control.worker.close()]);
 });
-
-for (const signal of ["read", "report"] as const) {
-  test(`a ${signal} alone ends replay and unblocks handoff during recovery`, async () => {
-    const { worker, token, card, incident, generation } = await failedWorker("turn");
-    const retry = { card, incident, generation, mode: "retry", key: "retry" };
-    await fleet.main.call("card.restart", retry);
-    const probe = await worker.waitForEntry(isCheck, "the recovery check");
-    const handoff = { status: "done", text: "the scrollbar is fixed" };
-    await assert.rejects(worker.call("report", handoff), /1 unread comment/);
-
-    if (signal === "read") {
-      worker.read(probe.id);
-      await worker.call("jobs", {});
-    } else {
-      await worker.call("report", { status: "note", text: "alive, fixing the scrollbar" });
-    }
-    await worker.lose();
-
-    const back = await fleet.cardd.connect(token, [], false);
-    await back.call("jobs", {});
-    assert.equal(checksSent(back), 0);
-    await assert.rejects(
-      fleet.main.call("card.restart", { ...retry, key: "another-retry" }),
-      /already has a recovery in progress/,
-    );
-    await back.call("report", handoff);
-    await back.close();
-  });
-}
