@@ -60,6 +60,10 @@ const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
 const said = (text: string): boolean =>
   h.calls.some((turns) => turns.some((turn) => turn.text.includes(text)));
+const paneTail = (reply: "intact" | "unreadable"): string =>
+  reply === "intact"
+    ? `printf '%s\\n' "$response"\n  exit 0`
+    : `echo 'pane reply unavailable' >&2\n  exit 1`;
 const settled = (n: number) =>
   h.waitForNth((e) => e["type"] === "settled", n, `settle ${String(n)}`);
 
@@ -682,202 +686,208 @@ for (const fault of ["failed", "partial"] as const) {
   });
 }
 
-test("a generic stop before a delayed fence preserves exact tab cleanup and rejects stale pane success", async (t) => {
-  const registration = Promise.withResolvers<void>();
-  let registering = false;
-  const stopDelivery = Promise.withResolvers<void>();
-  const fenceDelivery = Promise.withResolvers<void>();
-  t.after(() => {
-    registration.resolve();
+for (const paneReply of ["intact", "unreadable"] as const)
+  test(`a generic stop before a delayed fence preserves exact tab cleanup and rejects an ${paneReply} pane reply`, async (t) => {
+    const registration = Promise.withResolvers<void>();
+    let registering = false;
+    const stopDelivery = Promise.withResolvers<void>();
+    const fenceDelivery = Promise.withResolvers<void>();
+    t.after(() => {
+      registration.resolve();
+      stopDelivery.resolve();
+      fenceDelivery.resolve();
+    });
+    await jobProxy(
+      t,
+      async (op, args) => {
+        if (op === "job.register") {
+          registering = true;
+          await registration.promise;
+        }
+        return callCardd(op, args);
+      },
+      fenceDelivery.promise,
+      undefined,
+      undefined,
+      stopDelivery.promise,
+    );
+    const bin = join(jobDir, "bin");
+    mkdirSync(bin);
+    const accepted = join(jobDir, "pane-accepted");
+    const release = join(jobDir, "release-reply");
+    const marker = join(jobDir, "not-executed");
+    const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+    const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
+const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
+    writeFileSync(
+      join(bin, "herdr"),
+      `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  response=$(${quote(herdr)} "$@") || exit "$?"
+  touch ${quote(accepted)}
+  node -e ${quote(waitForRelease)} || exit "$?"
+  ${paneTail(paneReply)}
+fi
+exec ${quote(herdr)} "$@"
+`,
+      { mode: 0o755 },
+    );
+    env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+    env["PROBE_STOP_RESULT"] = "1";
+    h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "delayed", command: `touch ${quote(marker)}` },
+      alongside: [{ tool: "stop_job", args: { job: 1 } }],
+    }));
+    h.onModel(() => ({ tool: "report", args: { status: "failed", text: "Startup was fenced" } }));
+    worker();
+    await until(
+      () => (existsSync(accepted) && registering ? true : undefined),
+      "Herdr to accept the dispatch and the wrapper to request registration",
+    );
+    const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-delayed")?.[
+      "tab_id"
+    ];
+    assert.equal(typeof tab, "string");
+    await lab.run(["tab", "rename", String(tab), "actual-delayed"]);
+    await lab.run([
+      "tab",
+      "create",
+      "--workspace",
+      workspace(),
+      "--label",
+      "job-1-delayed",
+      "--no-focus",
+    ]);
+    const decoy = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-delayed")?.[
+      "tab_id"
+    ];
+    assert.equal(typeof decoy, "string");
+    const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+    try {
+      db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
+    } finally {
+      db.close();
+    }
+    const fence = await untilAsync(
+      async () =>
+        (await cardView()).entries.find((entry) => entry.fields["startupFenced"] === true),
+      "cardd to commit expiry without delivering the fence",
+    );
+    const delivered = (event: Record<string, unknown>): boolean =>
+      event["type"] === "fleet_delivered" && event["entryId"] === fence.id;
     stopDelivery.resolve();
+    const stopped = await h.waitFor(
+      (event) => event["type"] === "stop_result",
+      "the worker to process the generic stop reply",
+    );
+    assert.equal(stopped["isError"], false);
+    assert.deepEqual(stopped["content"], [
+      { type: "text", text: "job 1 (delayed) is not running: nothing to stop." },
+    ]);
+    assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab));
+    assert.equal(h.events.some(delivered), false);
     fenceDelivery.resolve();
+    await h.waitFor(delivered, "the delayed fence before the pane reply");
+    await waitTabGone(String(tab), "tab_id");
+    assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === decoy));
+    assert.equal(existsSync(marker), false);
+    writeFileSync(release, "");
+    await h.waitForCall(1);
+    assert.ok(said("Job 1 was fenced during dispatch"));
+    assert.equal(said("Started job 1"), false);
+    assert.equal(said("pane reply unavailable"), false);
+    assert.deepEqual(await jobResults(), [
+      [1, 127, "could not start: wrapper did not register before the startup deadline"],
+    ]);
   });
-  await jobProxy(
-    t,
-    async (op, args) => {
-      if (op === "job.register") {
-        registering = true;
-        await registration.promise;
-      }
-      return callCardd(op, args);
-    },
-    fenceDelivery.promise,
-    undefined,
-    undefined,
-    stopDelivery.promise,
-  );
-  const bin = join(jobDir, "bin");
-  mkdirSync(bin);
-  const accepted = join(jobDir, "pane-accepted");
-  const release = join(jobDir, "release-reply");
-  const marker = join(jobDir, "not-executed");
-  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
-  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
-const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
-const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
-  writeFileSync(
-    join(bin, "herdr"),
-    `#!/bin/sh
-if [ "$1 $2" = 'pane run' ]; then
-  response=$(${quote(herdr)} "$@") || exit "$?"
-  touch ${quote(accepted)}
-  node -e ${quote(waitForRelease)} || exit "$?"
-  printf '%s\\n' "$response"
-  exit 0
-fi
-exec ${quote(herdr)} "$@"
-`,
-    { mode: 0o755 },
-  );
-  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
-  env["PROBE_STOP_RESULT"] = "1";
-  h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "delayed", command: `touch ${quote(marker)}` },
-    alongside: [{ tool: "stop_job", args: { job: 1 } }],
-  }));
-  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "Startup was fenced" } }));
-  worker();
-  await until(
-    () => (existsSync(accepted) && registering ? true : undefined),
-    "Herdr to accept the dispatch and the wrapper to request registration",
-  );
-  const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-delayed")?.[
-    "tab_id"
-  ];
-  assert.equal(typeof tab, "string");
-  await lab.run(["tab", "rename", String(tab), "actual-delayed"]);
-  await lab.run([
-    "tab",
-    "create",
-    "--workspace",
-    workspace(),
-    "--label",
-    "job-1-delayed",
-    "--no-focus",
-  ]);
-  const decoy = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-delayed")?.[
-    "tab_id"
-  ];
-  assert.equal(typeof decoy, "string");
-  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
-  try {
-    db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
-  } finally {
-    db.close();
-  }
-  const fence = await untilAsync(
-    async () => (await cardView()).entries.find((entry) => entry.fields["startupFenced"] === true),
-    "cardd to commit expiry without delivering the fence",
-  );
-  const delivered = (event: Record<string, unknown>): boolean =>
-    event["type"] === "fleet_delivered" && event["entryId"] === fence.id;
-  stopDelivery.resolve();
-  const stopped = await h.waitFor(
-    (event) => event["type"] === "stop_result",
-    "the worker to process the generic stop reply",
-  );
-  assert.equal(stopped["isError"], false);
-  assert.deepEqual(stopped["content"], [
-    { type: "text", text: "job 1 (delayed) is not running: nothing to stop." },
-  ]);
-  assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab));
-  assert.equal(h.events.some(delivered), false);
-  fenceDelivery.resolve();
-  await h.waitFor(delivered, "the delayed fence before the pane reply");
-  await waitTabGone(String(tab), "tab_id");
-  assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === decoy));
-  assert.equal(existsSync(marker), false);
-  writeFileSync(release, "");
-  await h.waitForCall(1);
-  assert.ok(said("Job 1 was fenced during dispatch"));
-  assert.equal(said("Started job 1"), false);
-  assert.deepEqual(await jobResults(), [
-    [1, 127, "could not start: wrapper did not register before the startup deadline"],
-  ]);
-});
 
-test("a registered no-start result received before the pane reply rejects the launch as not started", async (t) => {
-  const release = join(jobDir, "release-reply");
-  const accepted = join(jobDir, "pane-accepted");
-  const marker = join(jobDir, "not-executed");
-  const registrationReply = Promise.withResolvers<void>();
-  t.after(() => registrationReply.resolve());
-  const lists: number[][] = [];
-  let registrations = 0;
-  const disconnect = await jobProxy(
-    t,
-    async (op, args) => {
-      const result = await callCardd(op, args);
-      if (op !== "job.register") return result;
-      registrations += 1;
-      if (registrations === 1) await registrationReply.promise;
-      return { ...result, body: '{"ok":true,"value":{} }' };
-    },
-    false,
-    (reply) => {
-      assert.ok(reply.ok);
-      lists.push(check(OPS.jobs.result, reply.value).map(({ id }) => id));
-      return reply;
-    },
-  );
-  const bin = join(jobDir, "bin");
-  mkdirSync(bin);
-  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
-  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+for (const paneReply of ["intact", "unreadable"] as const)
+  test(`a registered no-start result received before an ${paneReply} pane reply rejects the launch as not started`, async (t) => {
+    const release = join(jobDir, "release-reply");
+    const accepted = join(jobDir, "pane-accepted");
+    const marker = join(jobDir, "not-executed");
+    const registrationReply = Promise.withResolvers<void>();
+    t.after(() => registrationReply.resolve());
+    const lists: number[][] = [];
+    let registrations = 0;
+    const disconnect = await jobProxy(
+      t,
+      async (op, args) => {
+        const result = await callCardd(op, args);
+        if (op !== "job.register") return result;
+        registrations += 1;
+        if (registrations === 1) await registrationReply.promise;
+        return { ...result, body: '{"ok":true,"value":{} }' };
+      },
+      false,
+      (reply) => {
+        assert.ok(reply.ok);
+        lists.push(check(OPS.jobs.result, reply.value).map(({ id }) => id));
+        return reply;
+      },
+    );
+    const bin = join(jobDir, "bin");
+    mkdirSync(bin);
+    const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+    const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
 const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
 const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
-  writeFileSync(
-    join(bin, "herdr"),
-    `#!/bin/sh
+    writeFileSync(
+      join(bin, "herdr"),
+      `#!/bin/sh
 if [ "$1 $2" = 'pane run' ]; then
   response=$(${quote(herdr)} "$@") || exit "$?"
   touch ${quote(accepted)}
   node -e ${quote(waitForRelease)} || exit "$?"
-  printf '%s\\n' "$response"
-  exit 0
+  ${paneTail(paneReply)}
 fi
 exec ${quote(herdr)} "$@"
 `,
-    { mode: 0o755 },
-  );
-  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
-  t.after(() => writeFileSync(release, ""));
-  h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "unconfirmed", command: `touch ${quote(marker)}` },
-  }));
-  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job did not start" } }));
-  worker();
-  await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
-  await until(() => (registrations === 1 ? true : undefined), "the registration request");
-  const beforeSnapshot = lists.length;
-  disconnect();
-  await until(
-    () => (lists.slice(beforeSnapshot).some((ids) => ids.includes(1)) ? true : undefined),
-    "the reconnect snapshot to show the registered job",
-  );
-  registrationReply.resolve();
-  const result = await untilAsync(
-    async () =>
-      (await cardView()).entries.find(
-        (entry) => entry.kind === "job-result" && entry.fields["commandNotStarted"] === true,
-      ),
-    "the wrapper's durable no-start result",
-  );
-  await h.waitFor(
-    (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
-    "the exact no-start result to reach the worker before the pane reply",
-  );
-  writeFileSync(release, "");
-  await h.waitForCall(1);
-  assert.ok(said("did not start: its wrapper reported that the command never ran"));
-  assert.equal(said("Started job 1"), false);
-  assert.equal(existsSync(marker), false);
-  assert.deepEqual(await jobResults(), [
-    [1, 127, "could not start: cardd did not confirm wrapper registration"],
-  ]);
-});
+      { mode: 0o755 },
+    );
+    env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+    t.after(() => writeFileSync(release, ""));
+    h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "unconfirmed", command: `touch ${quote(marker)}` },
+    }));
+    h.onModel(() => ({
+      tool: "report",
+      args: { status: "failed", text: "The job did not start" },
+    }));
+    worker();
+    await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
+    await until(() => (registrations === 1 ? true : undefined), "the registration request");
+    const beforeSnapshot = lists.length;
+    disconnect();
+    await until(
+      () => (lists.slice(beforeSnapshot).some((ids) => ids.includes(1)) ? true : undefined),
+      "the reconnect snapshot to show the registered job",
+    );
+    registrationReply.resolve();
+    const result = await untilAsync(
+      async () =>
+        (await cardView()).entries.find(
+          (entry) => entry.kind === "job-result" && entry.fields["commandNotStarted"] === true,
+        ),
+      "the wrapper's durable no-start result",
+    );
+    await h.waitFor(
+      (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
+      "the exact no-start result to reach the worker before the pane reply",
+    );
+    writeFileSync(release, "");
+    await h.waitForCall(1);
+    assert.ok(said("did not start: its wrapper reported that the command never ran"));
+    assert.equal(said("Started job 1"), false);
+    assert.equal(said("pane reply unavailable"), false);
+    assert.equal(existsSync(marker), false);
+    assert.deepEqual(await jobResults(), [
+      [1, 127, "could not start: cardd did not confirm wrapper registration"],
+    ]);
+  });
 
 test("a reconnect snapshot of a registered wrapper is not proof that the command ran, so a delayed pane reply reports an unconfirmed dispatch", async (t) => {
   const release = join(jobDir, "release-reply");
@@ -972,59 +982,64 @@ exec ${quote(herdr)} "$@"
   ]);
 });
 
-for (const paneReply of ["intact", "unreadable"] as const)
-  test(`a successful result received before an ${paneReply} pane reply still reports the launch as started`, async (t) => {
-    const release = join(jobDir, "release-reply");
-    const accepted = join(jobDir, "pane-accepted");
-    await jobProxy(t, callCardd);
-    const bin = join(jobDir, "bin");
-    mkdirSync(bin);
-    const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
-    const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+for (const legacy of [false, true])
+  for (const paneReply of ["intact", "unreadable"] as const)
+    test(`a successful result received before an ${paneReply} pane reply still reports the ${legacy ? "legacy " : ""}launch as started`, async (t) => {
+      const release = join(jobDir, "release-reply");
+      const accepted = join(jobDir, "pane-accepted");
+      await jobProxy(t, async (op, args) =>
+        legacy && op === "job.prepare"
+          ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
+          : callCardd(op, args),
+      );
+      const bin = join(jobDir, "bin");
+      mkdirSync(bin);
+      const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+      const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
 const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
 const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
-    writeFileSync(
-      join(bin, "herdr"),
-      `#!/bin/sh
+      writeFileSync(
+        join(bin, "herdr"),
+        `#!/bin/sh
 if [ "$1 $2" = 'pane run' ]; then
   response=$(${quote(herdr)} "$@") || exit "$?"
   touch ${quote(accepted)}
   node -e ${quote(waitForRelease)} || exit "$?"
-  ${paneReply === "intact" ? `printf '%s\\n' "$response"; exit 0` : `echo 'pane reply unavailable' >&2; exit 1`}
+  ${paneTail(paneReply)}
 fi
 exec ${quote(herdr)} "$@"
 `,
-      { mode: 0o755 },
-    );
-    env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
-    t.after(() => writeFileSync(release, ""));
-    h.onModel(() => ({
-      tool: "run_long",
-      args: { label: "quick", command: "echo finished-before-ack" },
-    }));
-    h.onModel(() => ({ tool: "report", args: { status: "done", text: "The job succeeded" } }));
-    worker();
-    await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
-    const result = await untilAsync(
-      async () =>
-        (await cardView()).entries.find(
-          (entry) => entry.kind === "job-result" && entry.fields["exitCode"] === 0,
-        ),
-      "the command's durable successful result",
-    );
-    await h.waitFor(
-      (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
-      "the exact successful result to reach the worker before the pane reply",
-    );
-    writeFileSync(release, "");
-    await h.waitForCall(1);
-    assert.ok(said("Started job 1 (quick) in tab job-1-quick."));
-    await until(
-      () => (said("job 1 (quick) exited 0: finished-before-ack") ? true : undefined),
-      "the successful result in the model's context",
-    );
-    assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
-  });
+        { mode: 0o755 },
+      );
+      env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+      t.after(() => writeFileSync(release, ""));
+      h.onModel(() => ({
+        tool: "run_long",
+        args: { label: "quick", command: "echo finished-before-ack" },
+      }));
+      h.onModel(() => ({ tool: "report", args: { status: "done", text: "The job succeeded" } }));
+      worker();
+      await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
+      const result = await untilAsync(
+        async () =>
+          (await cardView()).entries.find(
+            (entry) => entry.kind === "job-result" && entry.fields["exitCode"] === 0,
+          ),
+        "the command's durable successful result",
+      );
+      await h.waitFor(
+        (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
+        "the exact successful result to reach the worker before the pane reply",
+      );
+      writeFileSync(release, "");
+      await h.waitForCall(1);
+      assert.ok(said("Started job 1 (quick) in tab job-1-quick."));
+      await until(
+        () => (said("job 1 (quick) exited 0: finished-before-ack") ? true : undefined),
+        "the successful result in the model's context",
+      );
+      assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
+    });
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();

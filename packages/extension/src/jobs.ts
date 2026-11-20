@@ -82,7 +82,10 @@ export class Jobs {
   private readonly running = new Set<number>();
   private readonly lastResult = new Map<number, number>();
   private readonly pending = new Map<number, PendingDispatch>();
-  private readonly launching = new Map<number, { unstarted: boolean; ran: boolean }>();
+  private readonly launching = new Map<
+    number,
+    { unstarted: boolean; ran: boolean; legacy: boolean }
+  >();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -127,7 +130,12 @@ export class Jobs {
     const launching = this.launching.get(job);
     if (launching !== undefined && entry.fields["commandNotStarted"] === true)
       launching.unstarted = true;
-    else if (launching !== undefined && typeof exitCode === "number") launching.ran = true;
+    else if (
+      launching !== undefined &&
+      typeof exitCode === "number" &&
+      (!launching.legacy || exitCode === 0)
+    )
+      launching.ran = true;
     this.clearPending(job);
     if (revived === true) this.running.add(job);
     else this.running.delete(job);
@@ -237,8 +245,8 @@ export class Jobs {
     const pending: PendingDispatch | undefined = registeredLaunch
       ? { launch: id, file, dispatched: false, fenced: false }
       : undefined;
-    const launching = { unstarted: false, ran: false };
-    if (registeredLaunch) this.launching.set(job, launching);
+    const launching = { unstarted: false, ran: false, legacy: !registeredLaunch };
+    this.launching.set(job, launching);
     try {
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
@@ -278,16 +286,25 @@ export class Jobs {
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
       if (pending !== undefined) pending.dispatched = true;
       else if (!this.lastResult.has(job)) this.running.add(job);
-      await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
+      const paneFailure = await herdr("local", [
+        "pane",
+        "run",
+        pane,
+        `node ${quote(WRAPPER)} ${quote(file)}`,
+      ]).then(
+        () => undefined,
+        (error: unknown) => (error instanceof Error ? error : new Error(String(error))),
+      );
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced during dispatch`);
       if (launching.unstarted)
         throw new Error(
           `Job ${String(job)} did not start: its wrapper reported that the command never ran`,
         );
+      if (paneFailure !== undefined) throw paneFailure;
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
       if (startupFenced(pending) || launching.unstarted) throw error;
-      if (pending?.dispatched === true && launching.ran) return { job, tab, started: true };
+      if (launching.ran) return { job, tab, started: true };
       if (pending?.dispatched === true)
         throw new Error(
           `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,
@@ -313,7 +330,7 @@ export class Jobs {
     } finally {
       if (this.launching.get(job) === launching) this.launching.delete(job);
     }
-    return { job, tab, started: registeredLaunch && launching.ran };
+    return { job, tab, started: launching.ran };
   }
 
   async stop(job: number): Promise<string> {
