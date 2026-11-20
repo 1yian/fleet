@@ -121,6 +121,14 @@ export const REDACTED_COMPLAINTS = [
     String.raw`{"endpoint":"https:/\/[hidden]@localhost/path"}`,
   ],
   [
+    String.raw`{"url":"https:\u002f\u002fbuild:paper@localhost\u002fpath"}`,
+    String.raw`{"url":"https:\u002f\u002f[hidden]@localhost\u002fpath"}`,
+  ],
+  [
+    String.raw`{"url":"https:\u002F/build:paper@localhost/path"}`,
+    String.raw`{"url":"https:\u002F/[hidden]@localhost/path"}`,
+  ],
+  [
     String.raw`{"url":"https://build:paper\u002Bcanoe@localhost/path"}`,
     '{"url":"https://[hidden]@localhost/path"}',
   ],

@@ -97,13 +97,14 @@ const STRUCTURED_SECRET = new RegExp(
 const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+u[\da-f]{4})+)\\?["']\s*:/gi;
 const KEY_ESCAPE = /\\+u([\da-f]{4})/gi;
 const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
-const UNBOUNDED_QUOTED_SECRET = new RegExp(
+const OPENING_QUOTE = new RegExp(
   String.raw`${SECRET_KEY}(?:\\?["']\s*[:=]|\s*[:=])\s*\\?["'\u0060]|--fleet-token(?:\s*[:=]\s*|\s+)["'\u0060]`,
-  "i",
+  "gi",
 );
+const QUOTED_VALUE = new RegExp(QUOTED, "y");
 const URL_WITHHELD = "[URL withheld: credential boundaries unclear]";
 const URL_AUTHORITY =
-  /(?<=\b[a-z][a-z0-9+.-]*:\\?\/\\?\/)(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
+  /(?<=\b[a-z][a-z0-9+.-]*:(?:\\?\/|\\u002f)(?:\\?\/|\\u002f))(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
 const URL_AUTHORITY_TOKEN = /\\(?:u[\da-f]{4}|["\\bfnrt])|\\|"[,\]}]|@/gi;
 const SECRET_PATTERNS: readonly RegExp[] = [
   /(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|(?<![\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-])[\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-]+)@(?:[\p{L}\p{M}\p{N}-]+[.。．｡])+[\p{L}][\p{L}\p{M}\p{N}-]*/gu,
@@ -238,10 +239,25 @@ function hasEscapedCredentialKey(text: string): boolean {
   return false;
 }
 
-function hasPartialShellValue(text: string): boolean {
+function endsAtOpeningQuote(logical: string, end: number): boolean {
+  const quote = logical[end];
+  if (quote !== '"' && quote !== "'") return false;
+  if (logical[end - 1] === "\\") return true;
+  const before = logical.slice(0, end).match(quote === '"' ? /(?<!\\)"/g : /(?<!\\)'/g);
+  return (before?.length ?? 0) % 2 === 0;
+}
+
+function hasUnprovenValue(text: string): boolean {
   const logical = logicalView(text);
-  for (const match of logical.matchAll(SHELL_SECRET)) {
-    if (/["']/.test(logical[match.index + match[0].length] ?? "")) return true;
+  for (const pattern of [SHELL_SECRET, STRUCTURED_SECRET]) {
+    for (const match of logical.matchAll(pattern)) {
+      if (endsAtOpeningQuote(logical, match.index + match[0].length)) return true;
+    }
+  }
+  for (const match of logical.matchAll(OPENING_QUOTE)) {
+    const last = match.index + match[0].length - 1;
+    QUOTED_VALUE.lastIndex = logical[last - 1] === "\\" ? last - 1 : last;
+    if (!QUOTED_VALUE.test(logical)) return true;
   }
   return false;
 }
@@ -276,10 +292,9 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
   if (curlCredentialOption(urls)) return CURL_WITHHELD;
-  if (hasPartialShellValue(urls)) return YAML_WITHHELD;
+  if (hasUnprovenValue(urls)) return YAML_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
   if (curlUnprovenAuthorization(structured)) return CURL_WITHHELD;
-  if (UNBOUNDED_QUOTED_SECRET.test(logicalView(structured))) return YAML_WITHHELD;
   const hidden = SECRET_PATTERNS.reduce(
     (out, pattern) => out.replace(pattern, hiddenValue),
     structured,
