@@ -402,10 +402,10 @@ function syncHome(root: string, home: string, deadline?: number): void {
 
 function recentStarts(home: string, now: number): number[] {
   const text = readState(startsFile(home), "state/starts");
-  if (text === undefined || text === "") return [];
+  if (text === undefined) return [];
   const lines = text.split("\n");
   const complete = lines.pop() === "";
-  if (!complete || !lines.every((line) => /^[1-9]\d{0,15}$/.test(line)))
+  if (!complete || lines.length === 0 || !lines.every((line) => /^[1-9]\d{0,15}$/.test(line)))
     throw new HostUnread("state/starts is incomplete");
   return lines.map(Number).filter((time) => time > now - CRASH_WINDOW_MS);
 }
