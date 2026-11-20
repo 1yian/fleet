@@ -8,7 +8,7 @@ import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, records, type JsonRecord } from "../support/json.ts";
-import { mateArgs, Scratch } from "../support/scratch.ts";
+import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
 
 let cardd: Cardd;
 let h: Harness;
@@ -21,9 +21,8 @@ beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
   here = new Scratch();
-  cardd.addLane("main", undefined, here.root);
+  configureMain(here, cardd.url, cardd.addLane("main", undefined, here.root));
   addLane("ops");
-  lab = await HerdrLab.start(h.piEnv("mate"));
   real = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
   bin = join(here.parent, "bin");
   mkdirSync(bin);
@@ -69,8 +68,13 @@ case "$1 $2:$HERDR_FAULT" in
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
   'pane process-info:hanging-panes')
+    if [ -f "$HERDR_FAULT_LOG.targets" ]; then IFS= read -r FAULT_PANE < "$HERDR_FAULT_LOG.targets"; fi
     case ",$FAULT_PANE," in
-      *",$4,"*) printf '%s\\n' "$4" >> "$HERDR_FAULT_LOG"; exec sleep 120 ;;
+      *",$4,"*)
+        trap '' TERM
+        printf '%s\\n' "$4" >> "$HERDR_FAULT_LOG"
+        printf '%s\\n' "$$" >> "$HERDR_FAULT_LOG.pids"
+        exec sleep 180 ;;
     esac ;;
   'pane process-info:server-missing')
     if [ "$4" = "$FAULT_PANE" ]; then
@@ -105,6 +109,14 @@ exec "$REAL_HERDR" "$@"
 `,
     { mode: 0o755 },
   );
+  lab = await HerdrLab.start({
+    ...h.piEnv("mate"),
+    PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+    REAL_HERDR: real,
+    HERDR_FAULT: "hanging-panes",
+    HERDR_FAULT_LOG: faultLog(),
+    FLEET_SUPERVISE_MS: "1000",
+  });
 });
 
 afterEach(async (t) => {
@@ -571,6 +583,36 @@ test("maintenance leaves an idle pane untouched when it cannot reserve launch an
     "down",
   );
   assert.deepEqual(JSON.parse(fleet(["up", "ops", "--json"])), action("ops", "started"));
+});
+
+test("automatic sweeps rotate past repeated hangs and reap their probes", async () => {
+  const panes = [];
+  for (const lane of ["aa", "ab", "ac"]) panes.push(await idlePane(lane, addLane(lane)));
+  await idlePane("ops", `${here.root}.worktrees/lane-ops`);
+  writeFileSync(`${faultLog()}.targets`, `${panes.join(",")}\n`);
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const deadline = Date.now() + 140_000;
+  for (;;) {
+    const rows = records(JSON.parse(fleet(["status", "--json"])));
+    if (rows.find((row) => row["lane"] === "ops")?.["state"] === "running") break;
+    if (Date.now() >= deadline) assert.fail("ops did not start on a later automatic sweep");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.deepEqual(readFileSync(faultLog(), "utf8").trim().split("\n").slice(0, 5), [
+    ...panes,
+    ...panes.slice(1),
+  ]);
+  const pids = readFileSync(`${faultLog()}.pids`, "utf8")
+    .trim()
+    .split("\n")
+    .slice(0, 5)
+    .map(Number);
+  assert.equal(pids.length, 5);
+  for (const pid of pids) {
+    assert.ok(pid > 1);
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  }
 });
 
 test("an explicit stop accepts a complete workspace close reply without a type field", async () => {

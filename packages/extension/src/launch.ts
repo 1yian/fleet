@@ -78,13 +78,16 @@ if (rawArgs.length === 1 && rawArgs[0] === MAINTENANCE_OUTCOMES_OPTION) {
   console.log(MAINTENANCE_OUTCOMES_CAPABILITY);
   process.exit(0);
 }
+const offset = Number(rawArgs[4] ?? "0");
 const typedMaintenance =
-  rawArgs.length === 4 &&
+  (rawArgs.length === 4 || rawArgs.length === 5) &&
+  Number.isSafeInteger(offset) &&
+  offset >= 0 &&
   rawArgs[0] === "up" &&
   rawArgs[1] === "--maintenance" &&
   rawArgs[2] === "--json" &&
   rawArgs[3] === MAINTENANCE_OUTCOMES_OPTION;
-const cliArgs = typedMaintenance ? rawArgs.slice(0, -1) : rawArgs;
+const cliArgs = typedMaintenance ? rawArgs.slice(0, 3) : rawArgs;
 const placement =
   cliArgs.length === 3 &&
   cliArgs[0] === "status" &&
@@ -281,7 +284,7 @@ switch (command ?? "") {
   }
   case "up":
     try {
-      const result = await up(root, rest[0], maintenanceDeadline);
+      const result = await up(root, rest[0], maintenanceDeadline, typedMaintenance ? offset : 0);
       const { outcomes, failed } = result;
       if (typedMaintenance) console.log(JSON.stringify(result));
       else {

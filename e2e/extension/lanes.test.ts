@@ -332,6 +332,23 @@ test("unread transport and nested observations neither report failure nor clear 
   await waitState(p620, "far", "running");
 });
 
+test("a capability probe that ignores SIGTERM is stopped without running a sweep", async () => {
+  const control = join(here.parent, "hung-probe");
+  writeFileSync(`${control}.capability`, "hang-once");
+  configureMain(here, cardd.url, mainToken, {
+    hosts: { p620: ["node", TORN, control] },
+    roots: { p620: p620.root },
+  });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const turns = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(users(turns), /could not verify maintenance support on p620: .*stopped/);
+  const pid = Number(readFileSync(`${control}.pid`, "utf8"));
+  assert.ok(pid > 1);
+  assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  await waitState(p620, "far", "running");
+});
+
 test("maintenance waits on ambiguous support and reports a confirmed old host's failure", async () => {
   const control = join(here.parent, "version-faults");
   const capability = `${control}.capability`;

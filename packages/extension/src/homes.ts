@@ -392,9 +392,12 @@ async function start(
     const timeout = remainingMs(deadline);
     if (timeout > 0) {
       const launch = fileURLToPath(new URL("./launch.ts", import.meta.url));
-      await onHost("local", [process.execPath, launch, "arrange", "--host", host], timeout).catch(
-        () => undefined,
-      );
+      await onHost(
+        "local",
+        [process.execPath, launch, "arrange", "--host", host],
+        timeout,
+        true,
+      ).catch(() => undefined);
     }
   }
 }
@@ -438,11 +441,13 @@ export async function up(
   root: string,
   only: string | undefined,
   deadline?: number,
+  offset = 0,
 ): Promise<SweepResult> {
   const lanes = named(root, only);
   const expected = lanes.map(({ lane }) => lane);
+  const first = lanes.length === 0 ? 0 : offset % lanes.length;
   const outcomes: Outcome[] = [];
-  for (const info of lanes) {
+  for (const info of [...lanes.slice(first), ...lanes.slice(0, first)]) {
     try {
       outcomes.push(
         await withLifecycleLock(
