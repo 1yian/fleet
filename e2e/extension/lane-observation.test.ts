@@ -559,16 +559,23 @@ test("a torn start history is unread and never authorizes another launch", async
   await idlePane("ops", home);
   const starts = join(home, "state", "starts");
   const now = String(Date.now());
+  const stopped = join(home, "state", "stopped");
   const torn = `${now}\n${now}\n${now.slice(0, 7)}`;
-  writeFileSync(starts, torn);
-  assert.deepEqual(maintain(), action("ops", "unread"));
-  assert.equal(readFileSync(starts, "utf8"), torn);
-  assert.equal(existsSync(join(home, "state", "stopped")), false);
-  assert.throws(() => fleet(["stop", "ops"]), /state\/starts is incomplete/);
+  for (const unreadable of ["", torn]) {
+    writeFileSync(starts, unreadable);
+    assert.deepEqual(maintain(), action("ops", "unread"));
+    assert.equal(readFileSync(starts, "utf8"), unreadable);
+    assert.equal(existsSync(stopped), false);
+    assert.throws(() => fleet(["stop", "ops"]), /state\/starts is incomplete/);
+    assert.equal(existsSync(stopped), false);
+  }
   writeFileSync(starts, `${now}\n${now}\n${now}\n`);
   assert.deepEqual(maintain(), [
     { lane: "ops", action: "held", detail: "started 3 times in 10 minutes" },
   ]);
+  rmSync(starts);
+  rmSync(stopped);
+  assert.deepEqual(maintain(), action("ops", "started"));
 });
 
 test("an empty foreground list with a foreign group never lifts a hold or erases history", async () => {
