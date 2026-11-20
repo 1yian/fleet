@@ -90,7 +90,7 @@ test("a host whose lanes cannot be kept up still has its disk use read, pruned, 
   assert.ok(readFileSync(log, "utf8").includes("probe tidy"), "the hourly tidy was asked for");
   const said = (await lab.history(pane)).replace(/\s+/g, " ");
   assert.equal(said.split("lanes: far failed:").length - 1, 1);
-  assert.match(said, /the workspace of ops has no pane/);
+  assert.match(said, /could not create the workspace of ops/);
 });
 
 test("a directory listing that fails is retried on the next checks, and main hears one alarm that names the directories", async () => {

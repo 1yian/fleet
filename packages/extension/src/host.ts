@@ -10,6 +10,14 @@ export class HostUnreachable extends Error {}
 
 export class NoTransport extends HostUnreachable {}
 
+export class HostUnread extends Error {}
+
+class LanePaneNotFound extends Error {}
+
+class LaneServerMissing extends Error {}
+
+type LaneCommand = "observe" | "mutate";
+
 export class TimedOut extends Error {}
 
 export class WorkspaceNotFound extends Error {}
@@ -132,6 +140,62 @@ export async function herdr(
   }
 }
 
+export async function laneHerdr(
+  args: readonly string[],
+  mode: LaneCommand,
+): Promise<Record<string, unknown>> {
+  try {
+    return await laneHerdrOnce(args, mode);
+  } catch (error) {
+    if (!(error instanceof LaneServerMissing)) throw error;
+    await startServer(process.env["HERDR_SESSION"]);
+    return laneHerdrOnce(args, mode);
+  }
+}
+
+async function laneHerdrOnce(
+  args: readonly string[],
+  mode: LaneCommand,
+): Promise<Record<string, unknown>> {
+  const out = await herdrText("local", args, mode === "observe", mode);
+  const [noun, verb] = args;
+  const reply = jsonRecord(out);
+  const refusal = laneRefusal(reply, args);
+  if (refusal !== undefined) throw refusal;
+  if (noun === "pane" && verb === "run") {
+    if (out.trim() === "") return {};
+  } else if (isRecord(reply?.["result"]) && reply["error"] === undefined) return reply["result"];
+  const message = `herdr ${args.slice(0, 2).join(" ")} returned no complete result`;
+  throw mode === "observe" ? new HostUnread(message) : new Error(message);
+}
+
+function jsonRecord(out: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(out);
+    return isRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function laneRefusal(
+  reply: Record<string, unknown> | undefined,
+  [, verb]: readonly string[],
+): Error | undefined {
+  const error = reply?.["error"];
+  if (!isRecord(error) || reply?.["result"] !== undefined) return undefined;
+  if (typeof error["message"] !== "string" || error["message"].trim() === "") return undefined;
+  const message = scrub(error["message"]);
+  switch (error["code"]) {
+    case "pane_not_found":
+      return verb === "process-info" ? new LanePaneNotFound(message) : undefined;
+    case "server_not_running":
+      return new LaneServerMissing(message);
+    default:
+      return undefined;
+  }
+}
+
 async function herdrOnce(
   host: string,
   args: readonly string[],
@@ -143,7 +207,28 @@ async function herdrOnce(
 export const paneText = (host: string, pane: string): Promise<string> =>
   herdrText(host, ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", "200"], false);
 
-async function herdrText(host: string, args: readonly string[], probe: boolean): Promise<string> {
+function laneTransportFailure(
+  lane: LaneCommand,
+  args: readonly string[],
+  error: { code?: unknown; signal?: unknown },
+  out: string,
+  err: string,
+): Error {
+  const refusal =
+    error.code === 1 ? laneRefusal(jsonRecord(out.trim() === "" ? err : out), args) : undefined;
+  if (refusal !== undefined) return refusal;
+  const message = scrub(
+    `herdr ${args.slice(0, 2).join(" ")} failed: ${err.trim() || exitStatus(error)}`,
+  );
+  return lane === "observe" ? new HostUnread(message) : new Error(message);
+}
+
+async function herdrText(
+  host: string,
+  args: readonly string[],
+  probe: boolean,
+  lane?: LaneCommand,
+): Promise<string> {
   const session = process.env["HERDR_SESSION"];
   const split = args.includes("--") ? args.indexOf("--") : args.length;
   const select = session === undefined ? [] : ["--session", session];
@@ -156,7 +241,9 @@ async function herdrText(host: string, args: readonly string[], probe: boolean):
       rest,
       { timeout: probe ? PROBE_TIMEOUT_MS : 120_000 },
       (error, out, err) => {
-        if (error !== null && out.trim() === "") {
+        if (error !== null && lane !== undefined) {
+          reject(laneTransportFailure(lane, args, error, out, err));
+        } else if (error !== null && out.trim() === "") {
           const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
           reject(failure(via, error, scrub(message), probe));
         } else resolve(out);
@@ -338,6 +425,38 @@ export async function shellIdle(host: string, pane: string): Promise<boolean> {
   return group !== undefined && group === shell;
 }
 
-export async function paneMissing(host: string, pane: string): Promise<boolean> {
-  return (await foreground(host, pane)).missing;
+function completeLaneProcess(row: Record<string, unknown>): boolean {
+  const argv = row["argv"];
+  return (
+    Number.isInteger(row["pid"]) &&
+    typeof row["name"] === "string" &&
+    Array.isArray(argv) &&
+    argv.every((arg) => typeof arg === "string")
+  );
+}
+
+export async function lanePaneState(pane: string): Promise<"pi" | "busy" | "down"> {
+  const reply = await laneHerdr(["pane", "process-info", "--pane", pane], "observe").catch(
+    (error: unknown) => {
+      if (error instanceof LanePaneNotFound) return undefined;
+      throw error;
+    },
+  );
+  if (reply === undefined) return "down";
+  const info = reply["process_info"];
+  if (!isRecord(info)) throw new HostUnread(`herdr returned no process info for pane ${pane}`);
+  const entries = info["foreground_processes"];
+  const processes = records(entries);
+  if (
+    !Array.isArray(entries) ||
+    processes.length !== entries.length ||
+    processes.some((row) => !completeLaneProcess(row))
+  )
+    throw new HostUnread(`herdr returned an incomplete process list for pane ${pane}`);
+  if (processes.some(isPi)) return "pi";
+  const shell = info["shell_pid"];
+  const group = info["foreground_process_group_id"];
+  if (!Number.isInteger(shell) || !Number.isInteger(group))
+    throw new HostUnread(`herdr returned no shell or foreground group for pane ${pane}`);
+  return shell === group ? "down" : "busy";
 }
