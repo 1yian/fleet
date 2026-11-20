@@ -294,14 +294,16 @@ function hasUnboundedSecret(yaml: string): boolean {
 }
 
 function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
-  if (hasCredentialCollection(source) || hasEscapedCredentialKey(source)) return YAML_WITHHELD;
+  const sourceViews = [source, logicalView(source)];
+  if (sourceViews.some((view) => hasCredentialCollection(view) || hasEscapedCredentialKey(view)))
+    return YAML_WITHHELD;
   const yaml = redactYamlBlocks(source)
     .replace(YAML_FLOW_SECRET, '$1: "[hidden]"')
     .replace(
       YAML_SECRET,
       (_match, prefix: string, _indent: string, key: string) => `${prefix}${key}: [hidden]`,
     );
-  if (hasUnboundedSecret(yaml)) return YAML_WITHHELD;
+  if ([yaml, logicalView(yaml)].some(hasUnboundedSecret)) return YAML_WITHHELD;
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
   if (curlCredentialOption(urls)) return CURL_WITHHELD;

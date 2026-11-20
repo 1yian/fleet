@@ -236,6 +236,9 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     'Tool printed password=prefix`paper canoe',
     'Tool printed --fleet-token prefix`paper canoe',
     'Tool printed password=pre\\\nfix`paper canoe',
+    "Tool printed pass\\\nword: [paper, canoe]",
+    'Tool printed {"pass\\\n\\u0077ord":"paper canoe"}',
+    "Tool printed to\\\nken: !!str >\n paper canoe",
     'Tool printed password=\\\n"paper canoe',
   ];
   const expected = "[YAML withheld: credential boundaries unclear]";
