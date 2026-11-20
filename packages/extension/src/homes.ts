@@ -358,9 +358,10 @@ async function workspaceOf(
 async function statusOf(info: LaneHome): Promise<Status> {
   const { lane, home } = info;
   try {
+    const reason = heldReason(home);
+    recentStarts(home, Date.now());
     if ((await workspaceOf(info, "liveness"))?.state === "running")
       return { lane, state: "running" };
-    const reason = heldReason(home);
     return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
   } catch (error) {
     if (error instanceof HostUnread) return { lane, state: "unknown", reason: error.message };
@@ -440,6 +441,17 @@ async function createMatePane(info: LaneHome, deadline?: number): Promise<string
   return pane;
 }
 
+class AcceptedStartFailure extends Error {
+  readonly lane: string;
+
+  constructor(lane: string, error: unknown) {
+    super(
+      `${lane} started, but recording the start failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    this.lane = lane;
+  }
+}
+
 async function start(
   root: string,
   info: LaneHome,
@@ -462,10 +474,15 @@ async function start(
     "mutate",
     launchDeadline,
   );
-  if (lift) liftHold(info.home);
-  mkdirSync(join(info.home, "state"), { recursive: true });
-  const starts = [...(lift ? [] : history), Date.now()];
-  replaceFile(startsFile(info.home), `${starts.join("\n")}\n`);
+  let bookkeeping: unknown;
+  try {
+    if (lift) liftHold(info.home);
+    mkdirSync(join(info.home, "state"), { recursive: true });
+    const starts = [...(lift ? [] : history), Date.now()];
+    replaceFile(startsFile(info.home), `${starts.join("\n")}\n`);
+  } catch (error) {
+    bookkeeping = error;
+  }
   await untilPiShows(pane, deadline !== undefined);
   const host = info.config.host ?? process.env["FLEET_HOST"] ?? "local";
   if (deadline === undefined) await arrangeHere(host).catch(() => undefined);
@@ -481,6 +498,7 @@ async function start(
       ).catch(() => undefined);
     }
   }
+  if (bookkeeping !== undefined) throw new AcceptedStartFailure(info.lane, bookkeeping);
 }
 
 const named = (
@@ -550,6 +568,8 @@ export async function up(
       );
     } catch (error) {
       if (deadline === undefined) throw error;
+      if (error instanceof AcceptedStartFailure)
+        outcomes.push({ lane: error.lane, action: "started" });
       if (!(error instanceof HostUnread))
         return {
           expected,
@@ -574,6 +594,7 @@ export async function stop(root: string, lane: string): Promise<void> {
   if (unread.length > 0) throw new Error(unreadFailure(unread));
   for (const info of homes) {
     await withLifecycleLock(info.home, info.lane, async () => {
+      heldReason(info.home);
       recentStarts(info.home, Date.now());
       const match = await workspaceOf(info, "close");
       mkdirSync(join(info.home, "state"), { recursive: true });

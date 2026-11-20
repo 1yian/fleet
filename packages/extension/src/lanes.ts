@@ -473,7 +473,6 @@ function keepRunning(
   const unreachable = new Set<string>();
   const maintenanceFailures = new Map<string, string>();
   const sweepOffsets = new Map<string, number>();
-  const diskFailures = new Map<string, string>();
   const unshared = new Set<string>();
   const supervising = new Set<string>();
   let shutDown = false;
@@ -534,9 +533,11 @@ function keepRunning(
     }
     try {
       await watchDisk(host);
-      diskFailures.delete(host);
     } catch (error) {
-      reportDown(host, error, diskFailures);
+      if (unreachable.has(host)) return;
+      unreachable.add(host);
+      const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
+      tell([`${host} ${why}: ${messageOf(error)}`], true);
     }
   };
   const superviseHost = async (host: string): Promise<void> => {
