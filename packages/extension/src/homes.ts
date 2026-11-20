@@ -91,7 +91,16 @@ export function existingHome(root: string, lane: string): string {
   return home;
 }
 
-export function laneHomes(root: string): LaneHome[] {
+export interface UnreadLane {
+  readonly lane: string;
+  readonly message: string;
+}
+
+type Scanned =
+  | { readonly name: string; readonly home: string; readonly config: LaneConfig }
+  | { readonly name: string; readonly home: string; readonly error: unknown };
+
+function scanHomes(root: string): Scanned[] {
   const dir = `${root}.worktrees`;
   let entries: string[];
   try {
@@ -103,11 +112,40 @@ export function laneHomes(root: string): LaneHome[] {
   return entries
     .filter((name) => name.startsWith("lane-"))
     .sort()
-    .flatMap((name) => {
+    .flatMap((name): Scanned[] => {
       const home = join(dir, name);
-      const config = readLaneConfig(home);
-      return config === undefined ? [] : [{ lane: config.lane, home, config }];
+      try {
+        const config = readLaneConfig(home);
+        return config === undefined ? [] : [{ name, home, config }];
+      } catch (error) {
+        return [{ name, home, error }];
+      }
     });
+}
+
+export function discoverLanes(root: string): { homes: LaneHome[]; unread: UnreadLane[] } {
+  const homes: LaneHome[] = [];
+  const unread: UnreadLane[] = [];
+  for (const found of scanHomes(root)) {
+    if ("error" in found) {
+      const { error } = found;
+      unread.push({
+        lane: found.name.slice("lane-".length),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } else homes.push({ lane: found.config.lane, home: found.home, config: found.config });
+  }
+  return { homes, unread };
+}
+
+export const unreadFailure = (unread: readonly UnreadLane[]): string =>
+  unread.map(({ lane, message }) => `lane ${lane} could not be read: ${message}`).join("\n");
+
+export function laneHomes(root: string): LaneHome[] {
+  return scanHomes(root).map((found) => {
+    if ("error" in found) throw found.error;
+    return { lane: found.config.lane, home: found.home, config: found.config };
+  });
 }
 
 const stoppedFile = (home: string): string => join(home, "state", "stopped");
@@ -263,7 +301,6 @@ async function findWorkspace(
     const state = await lanePaneState(first.pane, deadline);
     if (purpose === "placement" && state !== "pi") continue;
     if (state !== "down") return { workspace, state: "running" };
-    if (purpose === "restart-held") return undefined;
     return { workspace, state: "idle", pane: first.pane };
   }
   return undefined;
@@ -277,7 +314,7 @@ function requiredCwd(cwd: string | undefined, workspace: string): string {
 
 async function workspaceOf(
   info: LaneHome,
-  purpose: Parameters<typeof findWorkspace>[1],
+  purpose: Parameters<typeof findWorkspace>[2],
   deadline?: number,
 ): Promise<LaneMatch | undefined> {
   const title = mateTitle(info.lane);
@@ -322,16 +359,20 @@ async function statusOf(info: LaneHome): Promise<Status> {
 }
 
 export async function status(root: string): Promise<Status[]> {
+  const { homes, unread } = discoverLanes(root);
   const out: Status[] = [];
-  for (const info of laneHomes(root)) out.push(await statusOf(info));
+  for (const info of homes) out.push(await statusOf(info));
+  for (const { lane, message } of unread) out.push({ lane, state: "unknown", reason: message });
   return out;
 }
 
 export async function placementStatus(
   root: string,
 ): Promise<{ lane: string; mate: boolean; host?: string }[]> {
+  const { homes, unread } = discoverLanes(root);
+  if (unread.length > 0) throw new Error(unreadFailure(unread));
   const out: { lane: string; mate: boolean; host?: string }[] = [];
-  for (const info of laneHomes(root)) {
+  for (const info of homes) {
     const mate = (await workspaceOf(info, "placement")) !== undefined;
     out.push({
       lane: info.lane,
@@ -430,10 +471,18 @@ async function start(
   }
 }
 
-const named = (root: string, lane: string | undefined): LaneHome[] => {
-  const all = laneHomes(root);
-  const found = lane === undefined ? all : all.filter((each) => each.lane === lane);
-  if (lane !== undefined && found.length === 0) throw new Error(`no lane ${lane} on this host`);
+const named = (
+  root: string,
+  lane: string | undefined,
+): { homes: LaneHome[]; unread: UnreadLane[] } => {
+  const all = discoverLanes(root);
+  if (lane === undefined) return all;
+  const found = {
+    homes: all.homes.filter((each) => each.lane === lane),
+    unread: all.unread.filter((each) => each.lane === lane),
+  };
+  if (found.homes.length + found.unread.length === 0)
+    throw new Error(`no lane ${lane} on this host`);
   return found;
 };
 
@@ -471,8 +520,9 @@ export async function up(
   deadline?: number,
   offset = 0,
 ): Promise<SweepResult> {
-  const lanes = named(root, only);
-  const expected = lanes.map(({ lane }) => lane);
+  const { homes: lanes, unread } = named(root, only);
+  const expected = [...lanes, ...unread].map(({ lane }) => lane);
+  const unreadFailed = unread.length === 0 ? [] : [unreadFailure(unread)];
   const first = lanes.length === 0 ? 0 : offset % lanes.length;
   const outcomes: Outcome[] = [];
   for (const info of [...lanes.slice(first), ...lanes.slice(0, first)]) {
@@ -491,12 +541,14 @@ export async function up(
         return {
           expected,
           outcomes,
-          failed: error instanceof Error ? error.message : String(error),
+          failed: [error instanceof Error ? error.message : String(error), ...unreadFailed].join(
+            "\n",
+          ),
         };
       outcomes.push({ lane: info.lane, action: "unread" });
     }
   }
-  return { expected, outcomes };
+  return { expected, outcomes, ...(unread.length === 0 ? {} : { failed: unreadFailed[0] ?? "" }) };
 }
 
 async function close(info: LaneHome, workspace: string): Promise<void> {
@@ -505,7 +557,9 @@ async function close(info: LaneHome, workspace: string): Promise<void> {
 }
 
 export async function stop(root: string, lane: string): Promise<void> {
-  for (const info of named(root, lane)) {
+  const { homes, unread } = named(root, lane);
+  if (unread.length > 0) throw new Error(unreadFailure(unread));
+  for (const info of homes) {
     await withLifecycleLock(info.home, info.lane, async () => {
       const match = await workspaceOf(info, "close");
       mkdirSync(join(info.home, "state"), { recursive: true });
@@ -518,7 +572,7 @@ export async function stop(root: string, lane: string): Promise<void> {
 async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
   const match = await workspaceOf(info, all && held !== undefined ? "restart-held" : "close");
-  if (all && held !== undefined && match === undefined)
+  if (all && held !== undefined && match?.state !== "running")
     return { lane: info.lane, action: "stopped", detail: held };
   if (match !== undefined) await close(info, match.workspace);
   const observed = await workspaceOf(info, "liveness");
@@ -531,12 +585,15 @@ async function restartOne(root: string, info: LaneHome, all: boolean): Promise<O
 }
 
 export async function restart(root: string, lane: string | undefined): Promise<Outcome[]> {
+  const { homes, unread } = named(root, lane);
   const out: Outcome[] = [];
-  for (const info of named(root, lane))
+  for (const info of homes)
     out.push(
       await withLifecycleLock(info.home, info.lane, () =>
         restartOne(root, info, lane === undefined),
       ),
     );
+  for (const { lane: name, message } of unread)
+    out.push({ lane: name, action: "unread", detail: message });
   return out;
 }

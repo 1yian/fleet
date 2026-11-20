@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { laneHomes } from "./homes.ts";
+import { discoverLanes, type UnreadLane } from "./homes.ts";
 
 type Tier = "pinned" | "aging" | "perishable";
 type Standing = "captain.md" | "captain-shared.md" | "learnings.md";
@@ -93,8 +93,12 @@ function converge(home: string, bytes: string | undefined): string {
 export function convergeSharedPreferences(
   root: string,
   bytes: string | undefined,
-): { lane: string; result: string }[] {
-  return laneHomes(root).map(({ lane, home }) => ({ lane, result: converge(home, bytes) }));
+): { results: { lane: string; result: string }[]; unread: UnreadLane[] } {
+  const { homes, unread } = discoverLanes(root);
+  return {
+    results: homes.map(({ lane, home }) => ({ lane, result: converge(home, bytes) })),
+    unread,
+  };
 }
 
 interface Entry {

@@ -14,6 +14,7 @@ import {
   restart,
   status,
   stop,
+  unreadFailure,
   up,
   type Outcome,
 } from "./homes.ts";
@@ -298,8 +299,10 @@ try {
         values.absent === true
           ? undefined
           : Buffer.from(values.content ?? "", "base64").toString("utf8");
-      for (const { lane: name, result } of convergeSharedPreferences(root, bytes))
+      const { results, unread } = convergeSharedPreferences(root, bytes);
+      for (const { lane: name, result } of results)
         console.log(`${name}: shared preferences ${result}`);
+      if (unread.length > 0) throw new Error(unreadFailure(unread));
       break;
     }
     case "arrange": {
@@ -322,7 +325,12 @@ try {
       break;
     case "restart":
       checkLaunchPrerequisites(root);
-      show(await restart(root, rest[0]));
+      const restarted = await restart(root, rest[0]);
+      show(restarted);
+      const unread = restarted.flatMap(({ lane: name, action, detail }) =>
+        action === "unread" ? [{ lane: name, message: detail ?? "" }] : [],
+      );
+      if (unread.length > 0) throw new Error(unreadFailure(unread));
       break;
     case "home": {
       if (rest[0] === "transport") {
