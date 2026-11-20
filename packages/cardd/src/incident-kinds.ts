@@ -29,10 +29,14 @@ const SHELL_SECRET = new RegExp(
 const CURL_WITHHELD = "[curl withheld: credential boundaries unclear]";
 const CURL_COMMAND = /(?<![\w-])curl(?![\w.-])/i;
 const CURL_CREDENTIAL_OPTION =
-  /(?<=\s)(?:--(?:proxy-)?user(?![\w-])|--oauth2-bearer(?![\w-])|-[^-\s]*[uU])/;
+  /(?<=\s)(?:--(?:proxy-)?user(?![\w-])|--oauth2-bearer(?![\w-])|--cookie(?![\w-])|-[^-\s]*[uUb])/;
 const CURL_CREDENTIAL_HEADER = new RegExp(
-  String.raw`(?<=\s)(?:--header[=\s]\s*|-[^-\s]*H\s*)${SECRET_NAME}\s*:(?!\s*(?:\[hidden\]|(?:Basic|Bearer)\s+\S+(?:\s|$)))`,
+  String.raw`(?<=\s)(?:--header[=\s]\s*|-[^-\s]*H\s*)(?:${SECRET_NAME}|(?:set-)?cookie)\s*:`,
   "i",
+);
+const CURL_PROVEN_HEADER = new RegExp(
+  String.raw`(?<=\s)(?:-H|--header)[ =]\s*(["'])authorization\s*:\s*(?:${AUTH_WORD})${LINE_SPLICE}\s+[A-Za-z0-9._~+/=-]+\1(?=\s|$)`,
+  "gi",
 );
 const CURL_PROXY_LOGIN = /(?<=\s)(?:--(?:pre)?proxy|--socks|-[^-\s]*x\s*\S*@)/;
 const CURL_UNPROVEN_USERINFO = /(?<=\s)[^\s@/]+:[^\s@/]*@/;
@@ -181,7 +185,10 @@ function redactYamlBlocks(text: string): string {
 }
 
 function curlCredentialOption(text: string): boolean {
-  const joined = text.replace(/\\\n/g, "").replace(/['"\\`]/g, "");
+  const joined = text
+    .replace(CURL_PROVEN_HEADER, "")
+    .replace(/\\\n/g, "")
+    .replace(/['"\\`]/g, "");
   const start = joined.search(CURL_COMMAND);
   const command = joined.slice(start);
   return (
@@ -316,16 +323,13 @@ function yamlSplicesDisagree(source: string): boolean {
   const logical = logicalView(source);
   if (logical === source) return false;
   const physical = logicalView(redactYamlScalars(neutralAuthorization(source)));
-  return (
-    neutralAuthorization(physical) !== redactYamlScalars(neutralAuthorization(logical))
-  );
+  return neutralAuthorization(physical) !== redactYamlScalars(neutralAuthorization(logical));
 }
 
 function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
-  const sourceViews = [source, logicalView(source)];
-  if (sourceViews.some((view) => hasCredentialCollection(view) || hasEscapedCredentialKey(view)))
-    return YAML_WITHHELD;
-  if (yamlSplicesDisagree(source) || SCHEME_CONTINUATION.test(logicalView(source)))
+  const views = [source, logicalView(source)];
+  const unclear = views.some((v) => hasCredentialCollection(v) || hasEscapedCredentialKey(v));
+  if (unclear || yamlSplicesDisagree(source) || SCHEME_CONTINUATION.test(views[1] ?? ""))
     return YAML_WITHHELD;
   const yaml = redactYamlScalars(source);
   if ([yaml, logicalView(yaml)].some(hasUnboundedSecret)) return YAML_WITHHELD;
