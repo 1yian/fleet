@@ -1,7 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { quote } from "@fleet/protocol/route";
@@ -9,10 +7,12 @@ import Type from "typebox";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
 import type { Link } from "./link.ts";
+import { jobFilePrefix, jobProcessGone } from "./job-process.ts";
 import { forwardedEnvironment } from "./scratch.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
+const WATCH_MS = Number(process.env["FLEET_JOB_WATCH_MS"]) || 30_000;
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
@@ -62,10 +62,18 @@ export class Jobs {
   private readonly running = new Map<number, string>();
   private readonly link: Link;
   private readonly cardd: { url: string; token: string };
+  private watching = false;
+  private readonly timer: NodeJS.Timeout;
 
   constructor(link: Link, cardd: { url: string; token: string }) {
     this.link = link;
     this.cardd = cardd;
+    this.timer = setInterval(() => void this.watch(), WATCH_MS);
+    this.timer.unref();
+  }
+
+  dispose(): void {
+    clearInterval(this.timer);
   }
 
   get waiting(): boolean {
@@ -76,6 +84,23 @@ export class Jobs {
     const jobs = await this.link.call("jobs", {});
     this.running.clear();
     for (const { id, label } of jobs) this.running.set(id, label);
+  }
+
+  private async watch(): Promise<void> {
+    if (this.watching || this.running.size === 0) return;
+    this.watching = true;
+    await this.reportGone()
+      .catch(() => undefined)
+      .finally(() => {
+        this.watching = false;
+      });
+  }
+
+  private async reportGone(): Promise<void> {
+    for (const { id, silent } of await this.link.call("jobs", {})) {
+      if (silent && (await jobProcessGone(id, WATCH_MS)))
+        await this.link.call("job.gone", { job: id });
+    }
   }
 
   async launch(
@@ -90,7 +115,7 @@ export class Jobs {
       command,
     });
     this.running.set(job, label);
-    const file = join(tmpdir(), `fleet-job-${String(job)}-${randomBytes(4).toString("hex")}.json`);
+    const file = `${jobFilePrefix(job)}${randomBytes(4).toString("hex")}.json`;
     const tab = tabName(job, label);
     try {
       const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");

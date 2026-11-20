@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { begin, confirmGone, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -22,9 +22,14 @@ const findings = async (card: Card): Promise<Entry[]> =>
 test("a lost job dropped by its worker or its mate stops its reminders for good, and an undropped one keeps them", async () => {
   const card = await newCard(fleet.main, "dropped jobs");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  const start = async (label: string): Promise<number> =>
-    check(OPS["job.start"].result, await worker.call("job.start", { label, command: "sleep 9" }))
-      .job;
+  const start = async (label: string): Promise<number> => {
+    const { job } = check(
+      OPS["job.start"].result,
+      await worker.call("job.start", { label, command: "sleep 9" }),
+    );
+    await confirmGone(worker, job);
+    return job;
+  };
   const byWorker = await start("server-a");
   const byMate = await start("server-b");
   const kept = await start("server-c");

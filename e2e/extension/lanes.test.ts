@@ -15,6 +15,7 @@ import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
+const TORN_READS = fileURLToPath(new URL("../support/torn-reads-transport.ts", import.meta.url));
 
 let cardd: Cardd;
 let h: Harness;
@@ -23,13 +24,14 @@ let here: Scratch;
 let p620: Scratch;
 let ghost: Session;
 let marker: string;
+let mainToken: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
   here = new Scratch();
   p620 = new Scratch();
   marker = join(here.parent, "p620-down");
-  const mainToken = cardd.addLane("main", undefined, here.root);
+  mainToken = cardd.addLane("main", undefined, here.root);
   configureMain(here, cardd.url, mainToken, {
     hosts: { p620: ["node", TRANSPORT, marker] },
     roots: { p620: p620.root },
@@ -276,6 +278,65 @@ test("main tells the captain when a host cannot be reached, and when it is back"
   await wakeMain("Drop the old banner");
   const next = await h.waitForCall(1, "mate", WAIT_MS);
   assert.match(users(next), /\[fleet\] lanes: p620 can be reached again/);
+});
+
+function readsThroughATornTransport(faults: string): { control: string; seen: () => string[] } {
+  const control = join(here.parent, "p620-reads");
+  writeFileSync(control, faults);
+  configureMain(here, cardd.url, mainToken, {
+    hosts: { p620: ["node", TORN_READS, control] },
+    roots: { p620: p620.root },
+  });
+  const seen = (): string[] => {
+    try {
+      return readFileSync(`${control}.log`, "utf8").split("\n").filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+  return { control, seen };
+}
+
+test("a lanes read that comes back empty or cut off is not a failure: main hears nothing, and the next checks still keep the lane up", async () => {
+  const { seen } = readsThroughATornTransport("blank\ncut\n");
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  await waitState(p620, "far", "running");
+  const whole = (): number => seen().filter((read) => read === "whole").length;
+  await until(() => (whole() >= 3 ? true : undefined), "three whole reads after two torn ones");
+  assert.deepEqual(seen().slice(0, 2), ["blank", "cut"]);
+
+  const before = await groupOf("far");
+  process.kill(-before, "SIGKILL");
+  await until(
+    async () => ((await groupOf("far")) === before ? undefined : true),
+    "far to leave its old Pi",
+  );
+  await waitState(p620, "far", "running");
+  await waitPi("far");
+  assert.doesNotMatch(sessionText(), /lanes: p620 (failed|could not be read|cannot be reached)/);
+  assert.equal(h.callsOf("mate").length, 0);
+});
+
+test("lanes reads that keep coming back empty are told once as could not be read, never as failed, and told again when they are whole", async () => {
+  const { control } = readsThroughATornTransport("blank*\n");
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  await waitState(p620, "far", "running");
+  const turns = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(
+    users(turns),
+    /\[fleet\] lanes: p620 could not be read: fleet on p620 answered with nothing/,
+  );
+  assert.doesNotMatch(users(turns), /lanes: p620 (failed|cannot be reached)/);
+
+  rmSync(control);
+  await until(
+    () => (sessionText().includes("p620 can be reached again") ? true : undefined),
+    "main to learn p620 is whole again",
+  );
+  assert.equal(sessionText().split("p620 could not be read").length - 1, 1);
+  assert.doesNotMatch(sessionText(), /lanes: p620 (failed|cannot be reached)/);
 });
 
 test("a mate that keeps dying is held, and only naming it starts it again", async () => {

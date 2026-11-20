@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
-import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
+import { HostUnread, HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
 import { sidebarHostName } from "./arrange.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
@@ -28,13 +28,23 @@ export async function fleet(
   return onFleetRoot(host, config.roots[host], args, wait);
 }
 
+function lastJson(host: string, out: string): unknown {
+  const line = out.trim().split("\n").at(-1) ?? "";
+  try {
+    return JSON.parse(line);
+  } catch {
+    throw new HostUnread(
+      `fleet on ${host} answered with ${line === "" ? "nothing" : "cut-off JSON"}`,
+    );
+  }
+}
+
 async function rows(
   config: LaneConfig,
   host: string,
   args: readonly string[],
 ): Promise<Record<string, unknown>[]> {
-  const out = (await fleet(config, host, [...args, "--json"])).trim().split("\n").at(-1) ?? "[]";
-  return records(JSON.parse(out));
+  return records(lastJson(host, await fleet(config, host, [...args, "--json"])));
 }
 
 const text = (row: Record<string, unknown>, key: string): string => {
@@ -58,11 +68,7 @@ async function everyLane(
 }
 
 async function placementRows(config: LaneConfig, host: string): Promise<Record<string, unknown>[]> {
-  const out = (await fleet(config, host, ["status", "--placement", "--json"]))
-    .trim()
-    .split("\n")
-    .at(-1);
-  const parsed: unknown = JSON.parse(out ?? "");
+  const parsed = lastJson(host, await fleet(config, host, ["status", "--placement", "--json"]));
   const homes = records(parsed);
   if (!Array.isArray(parsed) || homes.length !== parsed.length)
     throw new Error(`invalid mate placement on ${host}`);
@@ -125,6 +131,11 @@ const preservedLines = (host: string, out: string): string[] =>
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+function downWord(error: unknown): string {
+  if (error instanceof HostUnreachable) return "cannot be reached";
+  return error instanceof HostUnread ? "could not be read" : "failed";
+}
 
 export async function publishShared(home: string): Promise<string | undefined> {
   const config = readLaneConfig(home);
@@ -275,6 +286,7 @@ async function costLines(config: LaneConfig): Promise<string[]> {
 }
 
 const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
+const UNREAD_CHECKS_BEFORE_TELLING = 3;
 
 function deliver(
   pi: ExtensionAPI,
@@ -322,6 +334,7 @@ function keepRunning(
   ctx: ExtensionContext,
 ): void {
   const unreachable = new Set<string>();
+  const unread = new Map<string, number>();
   const unshared = new Set<string>();
   let ticking = false;
   let shutDown = false;
@@ -343,14 +356,19 @@ function keepRunning(
   };
   const watchDisk = diskWatcher(pi, config, ctx, isDown);
   const reportDown = (host: string, error: unknown): void => {
+    if (error instanceof HostUnread) {
+      const missed = (unread.get(host) ?? 0) + 1;
+      unread.set(host, missed);
+      if (missed < UNREAD_CHECKS_BEFORE_TELLING) return;
+    }
     if (unreachable.has(host)) return;
     unreachable.add(host);
-    const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-    tell([`${host} ${why}: ${messageOf(error)}`], true);
+    tell([`${host} ${downWord(error)}: ${messageOf(error)}`], true);
   };
   const maintain = async (host: string): Promise<void> => {
     await share(host);
     const out = await rows(config, host, ["up", "--maintenance"]);
+    unread.delete(host);
     if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
     const of = (action: string) => out.filter((row) => text(row, "action") === action);
     tell(

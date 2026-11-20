@@ -12,7 +12,15 @@ import {
   type Entry,
 } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, oldDatedHold, startFleet, status, type Fleet } from "../support/fleet.ts";
+import {
+  begin,
+  confirmGone,
+  newCard,
+  oldDatedHold,
+  startFleet,
+  status,
+  type Fleet,
+} from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
 
 let fleet: Fleet;
@@ -209,6 +217,7 @@ test("a job that watches the event is shown running, and shown gone when it fini
   ).job;
   const second = await newCard(cleo, "Second waiter");
   await cleo.call("hold", date(second, { job: silent, remaining: [] }));
+  await confirmGone(worker, silent);
   const lost = await waitReads(second, "gone");
   assert.equal(lost.what, `job ${String(silent)} (silent) is lost`);
 });

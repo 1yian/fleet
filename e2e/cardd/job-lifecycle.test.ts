@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { begin, confirmGone, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -60,6 +60,7 @@ test("closing a card abandons its running job and does not call it lost", async 
   const card = await newCard(fleet.main, "closed under a running job");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   const lost = await start(worker, "old");
+  await confirmGone(worker, lost);
   await fleet.main.waitForEntry(
     (entry) => entry.card === card.id && entry.fields["condition"] === "job-lost",
     "the silent job is lost",
@@ -100,6 +101,7 @@ test("a dropped lost job can still finish, and the drop mark does not survive fi
   const card = await newCard(fleet.main, "late result after drop");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
   const job = await start(worker, "server");
+  await confirmGone(worker, job);
   await fleet.main.waitForEntry(
     (entry) => entry.card === card.id && entry.fields["condition"] === "job-lost",
     "the job is lost",

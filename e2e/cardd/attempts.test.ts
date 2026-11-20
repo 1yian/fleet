@@ -389,7 +389,7 @@ test("a job result reaches the waiting worker once, through POST /call", async (
     OPS["job.start"].result,
     await worker.call("job.start", { label: "tests", command: "npm test" }),
   );
-  assert.deepEqual(await worker.call("jobs", {}), [{ id: job, label: "tests" }]);
+  assert.deepEqual(await worker.call("jobs", {}), [{ id: job, label: "tests", silent: false }]);
 
   const finish = { job, exitCode: 1, outputTail: "1 failing" };
   assert.deepEqual(await fleet.cardd.post(token, "job.finish", finish), {

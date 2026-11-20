@@ -30,7 +30,13 @@ beforeEach(async () => {
   env = { FLEET_URL: fleet.cardd.url, FLEET_TOKEN: token, FLEET_ROLE: "worker" };
   jobDir = join(h.dir, "jobs");
   mkdirSync(jobDir);
-  env = { ...env, HERDR_SESSION: lab.name, HERDR_WORKSPACE_ID: workspace, TMPDIR: jobDir };
+  env = {
+    ...env,
+    HERDR_SESSION: lab.name,
+    HERDR_WORKSPACE_ID: workspace,
+    TMPDIR: jobDir,
+    FLEET_JOB_WATCH_MS: "500",
+  };
 });
 afterEach(async (t) => {
   await lab.printIfFailed(t);
@@ -263,7 +269,7 @@ test("closing the job tab still reaches the worker: the result, or a lost job", 
     assert.ok(
       [
         "[fleet] c-1 users-see-one-scrollbar job 1 (tab) exited 130: started\ndying\ninterrupted",
-        "[fleet] c-1 users-see-one-scrollbar job 1 (tab) lost: no heartbeat arrived. It is not run again.",
+        "[fleet] c-1 users-see-one-scrollbar job 1 (tab) lost: its process is gone, and no result arrived. It is not run again.",
       ].includes(woken),
       woken,
     );
@@ -285,7 +291,7 @@ test("a cardd stall longer than the keep-alive timeouts does not lose a live job
 
   const woken = lastUser(await h.waitForCall(2, "default", 30_000)) ?? "";
   assert.equal(woken, "[fleet] c-1 users-see-one-scrollbar job 1 (stalled) exited 0: done");
-  assert.equal(said("no heartbeat"), false);
+  assert.equal(said("lost:"), false);
   assert.equal(
     findings().some((body) => body.includes("job lost")),
     false,
@@ -331,7 +337,7 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
         (turn) =>
           turn.role === "user" &&
           turn.text.startsWith(
-            "[fleet] c-1 users-see-one-scrollbar job 1 (first) lost: no heartbeat arrived",
+            "[fleet] c-1 users-see-one-scrollbar job 1 (first) lost: its process is gone",
           ),
       ),
     );
@@ -350,132 +356,4 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
     writeFileSync(first.go, "");
     writeFileSync(second.go, "");
   }
-});
-
-test("a result that arrives after the job was marked lost is still delivered once", async () => {
-  const slow = commandAwaitingGo(3);
-  h.onModel(() => ({ tool: "run_long", args: { label: "late", command: slow.command } }));
-  h.onModel(() => ({ text: "waiting for the job" }));
-  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "the job is lost" } }));
-  h.onModel(() => ({ text: "done" }));
-  h.onModel(() => ({ tool: "report", args: { status: "done", text: "the job ended after all" } }));
-  worker();
-  const wrapper = await wrapperOf(1, slow.ready);
-  process.kill(wrapper, "SIGSTOP");
-  try {
-    await until(() => (findings().length > 0 ? true : undefined), "the finding");
-    assert.ok(
-      (await h.waitForCall(3)).some(
-        (turn) =>
-          turn.role === "user" &&
-          turn.text.startsWith(
-            "[fleet] c-1 users-see-one-scrollbar job 1 (late) lost: no heartbeat arrived",
-          ),
-      ),
-    );
-    await until(
-      () => (fleet.main.entries.some(({ entry }) => entry.kind === "report") ? true : undefined),
-      "the worker's report",
-    );
-    writeFileSync(slow.go, "");
-  } finally {
-    process.kill(wrapper, "SIGCONT");
-  }
-
-  const after = await until(
-    () => h.calls.find((turns) => lastUser(turns)?.includes("exited 0") === true),
-    "the result",
-  );
-  assert.equal(lastUser(after), "[fleet] c-1 users-see-one-scrollbar job 1 (late) exited 0: late");
-  assert.equal(after.filter((turn) => turn.text.includes("exited 0")).length, 1);
-});
-
-test("replayed lost and revival notices never change the tracked wait: only the finished job's result ends it", async () => {
-  const slow = commandAwaitingGo(4);
-  const routing =
-    "pi-tiers: no usable model for tier 'default' (anthropic/claude-opus-5-5 on anthropic: cooling)";
-  const nudge = "Your run is ending without a handoff";
-  const again = "(sent again: the turn that got it ended before it was taken in)";
-  const settledCount = (): number => h.events.filter((event) => event["type"] === "settled").length;
-  const atCall: number[] = [];
-  const failing = { lost: true, revival: false };
-  const intake = (turns: Turn[]): { text: string } | { fail: string } | undefined => {
-    const text = lastUser(turns) ?? "";
-    if (text.includes("lost:") && !text.includes(again) && failing.lost) {
-      failing.lost = false;
-      return { fail: routing };
-    }
-    if (text.includes("is running again") && !text.includes(again) && failing.revival) {
-      failing.revival = false;
-      return { fail: routing };
-    }
-    return undefined;
-  };
-  h.onModel(() => {
-    atCall.push(settledCount());
-    return { tool: "run_long", args: { label: "stalled", command: slow.command } };
-  });
-  h.onModel(() => {
-    atCall.push(settledCount());
-    return { text: "waiting for the job" };
-  });
-  for (let i = 0; i < 30; i++)
-    h.onModel((turns) => {
-      atCall.push(settledCount());
-      return intake(turns) ?? { text: "still waiting" };
-    });
-  const callWith = (match: (text: string) => boolean, from = 0): Promise<number> =>
-    until(() => {
-      const found = h.calls.findIndex((turns, i) => i >= from && match(lastUser(turns) ?? ""));
-      return found < 0 ? undefined : found;
-    }, "a notice to reach the model");
-  const handled = async (call: number): Promise<void> => {
-    await until(() => ((atCall[call] ?? Infinity) < settledCount() ? true : undefined), "settle");
-  };
-  const nudges = (): number =>
-    h.calls.filter((turns) => (lastUser(turns) ?? "").includes(nudge)).length;
-  const stopped = (): boolean =>
-    fleet.main.entries.some(({ entry }) => entry.fields["status"] === "stopped");
-
-  worker();
-  const wrapper = await wrapperOf(1, slow.ready);
-  process.kill(wrapper, "SIGSTOP");
-  const lostCall = await callWith((text) => text.includes("lost:"));
-  await fleet.main.waitForEntry(
-    (entry) => entry.fields["condition"] === "runtime-failure",
-    "the failed lost notice",
-  );
-  process.kill(wrapper, "SIGCONT");
-  const revival = await callWith((text) => text.includes("is running again"), lostCall);
-  await handled(revival);
-  const replayedLost = await callWith(
-    (text) => text.includes("lost:") && text.includes(again),
-    revival,
-  );
-  await handled(replayedLost);
-  assert.equal(nudges(), 0);
-  assert.equal(stopped(), false);
-
-  failing.revival = true;
-  process.kill(wrapper, "SIGSTOP");
-  const secondLost = await callWith(
-    (text) => text.includes("lost:") && !text.includes(again),
-    replayedLost + 1,
-  );
-  await handled(secondLost);
-  process.kill(wrapper, "SIGCONT");
-  const failedRevival = await callWith((text) => text.includes("is running again"), secondLost);
-  await handled(failedRevival);
-  writeFileSync(slow.go, "");
-  const result = await callWith((text) => text.includes("exited 0"), failedRevival);
-  await handled(result);
-  const resultNudge = await callWith((text) => text.includes(nudge), result);
-  await handled(resultNudge);
-  const baseline = nudges();
-  const replayedRevival = await callWith(
-    (text) => text.includes("is running again") && text.includes(again),
-    result,
-  );
-  await handled(replayedRevival);
-  await until(() => (nudges() > baseline ? true : undefined), "a fresh nudge after the replay");
 });

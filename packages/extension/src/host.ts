@@ -8,6 +8,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export class HostUnreachable extends Error {}
 
+export class HostUnread extends Error {}
+
 export class NoTransport extends HostUnreachable {}
 
 export class WorkspaceNotFound extends Error {}
@@ -60,13 +62,15 @@ const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 60_000
 
 const failure = (
   via: readonly string[],
-  error: { code?: unknown; killed?: unknown },
+  error: { code?: unknown; killed?: unknown; signal?: unknown },
   message: string,
   probe: boolean,
-): Error =>
-  via.length > 0 && (error.code === 255 || (probe && error.killed === true))
-    ? new HostUnreachable(message)
-    : new Error(message);
+): Error => {
+  if (via.length > 0 && (error.code === 255 || (probe && error.killed === true)))
+    return new HostUnreachable(message);
+  if (error.killed === true || typeof error.signal === "string") return new HostUnread(message);
+  return new Error(message);
+};
 
 const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
   typeof error.signal === "string"

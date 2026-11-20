@@ -35,6 +35,16 @@ export async function begin(
   return check(OPS["attempt.begin"].result, value).token;
 }
 
+export async function confirmGone(worker: Session, job: number): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const gone = await worker.call("job.gone", { job });
+    if (check(OPS["job.gone"].result, gone).lost) return;
+    if (Date.now() > deadline) throw new Error(`job ${String(job)} did not go silent`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 export async function status(mate: Session, card: Card): Promise<Card["status"]> {
   const cards = check(OPS.board.result, await mate.call("board", {}));
   const found = cards.find((each) => each.id === card.id);

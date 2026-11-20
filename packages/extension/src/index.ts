@@ -404,6 +404,7 @@ function start(
   applyPolicies(pi, ctx, role);
   pi.on("session_shutdown", () => {
     worker?.dispose();
+    jobs?.dispose();
     link.stop();
   });
   registerIntake(pi, link, inFileAtStart);

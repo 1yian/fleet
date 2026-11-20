@@ -1,5 +1,7 @@
 export const MINUTE = 60_000;
 
+const MISSED_HEARTBEATS = 3;
+
 export interface Timings {
   readonly every: number;
   readonly neverConnected: number;
@@ -9,6 +11,7 @@ export interface Timings {
   readonly idleNudge: number;
   readonly idleTell: number;
   readonly heartbeat: number;
+  readonly silent: number;
   readonly intake: number;
   readonly intakeTold: number;
   readonly reply: number;
@@ -30,6 +33,7 @@ export interface Timings {
 
 export function timings(scale: number, wall: () => number = Date.now): Timings {
   const at = (minutes: number): number => Math.max(1, Math.round(minutes * MINUTE * scale));
+  const heartbeat = at(0.5);
   return {
     every: at(0.25),
     neverConnected: at(2),
@@ -38,7 +42,8 @@ export function timings(scale: number, wall: () => number = Date.now): Timings {
     spin: at(60),
     idleNudge: at(2),
     idleTell: at(5),
-    heartbeat: at(0.5),
+    heartbeat,
+    silent: MISSED_HEARTBEATS * heartbeat,
     intake: at(2),
     intakeTold: at(15),
     reply: at(2),

@@ -10,6 +10,7 @@ import {
 import { requireCommentsRead } from "./deliveries.ts";
 import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
 import { dropLostJob, finishJob, ownJob, runningJobs, startJob, touchJob } from "./jobs.ts";
+import { loseJobConfirmedGone } from "./job-loss.ts";
 import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
@@ -282,6 +283,11 @@ const HANDLERS: Record<OpName, Handler> = {
     addEntry(db, entry, [session.id]);
     return { value: { running }, notify: [session.id] };
   },
+  "job.gone": (db, session, raw, timing) => {
+    const args = check(OPS["job.gone"].args, raw);
+    const notify = loseJobConfirmedGone(db, session, args.job, Date.now() - timing.silent);
+    return { value: { lost: notify !== undefined }, notify: notify ?? [] };
+  },
   "job.finish": (db, session, raw) => {
     const args = check(OPS["job.finish"].args, raw);
     const finished = finishJob(db, session.id, {
@@ -335,7 +341,18 @@ const HANDLERS: Record<OpName, Handler> = {
     const { status, attention, until } = loadCard(db, session.card).standing;
     return { value: { status, attention, until }, notify: [] };
   },
-  jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
+  jobs: (db, session, _raw, timing) => {
+    const silentBefore = Date.now() - timing.silent;
+    const running = runningJobs(db, session.id);
+    return {
+      value: running.map(({ id, label, updatedAt }) => ({
+        id,
+        label,
+        silent: updatedAt < silentBefore,
+      })),
+      notify: [],
+    };
+  },
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
   "incident.clear": (db, session, raw) =>

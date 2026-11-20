@@ -163,30 +163,20 @@ export function dropLostJob(
   return { label: moved.label, state: moved.life.state, dropped: true };
 }
 
-export function loseSilentJobs(
+export function loseGoneJob(
   db: DatabaseSync,
-  before: number,
-): { id: number; label: string; card: number }[] {
+  session: string,
+  job: number,
+  silentBefore: number,
+): { label: string } | undefined {
+  const owned = ownedJob(db, session, job);
+  if (owned === undefined) return undefined;
   const silent = db
-    .prepare(
-      `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE ${runningJobSql("j.state")} AND j.updated_at < ? AND a.state IN ('starting', 'active')
-       ORDER BY j.id`,
-    )
-    .all(before);
-  const lost: { id: number; label: string; card: number }[] = [];
-  const at = Date.now();
-  for (const row of silent) {
-    const job = readJob(db, numberOf(row["id"], "id"));
-    if (job === undefined) continue;
-    if (transitionJob(db, job, { name: "lose" }, at) === undefined) continue;
-    lost.push({
-      id: job.id,
-      label: job.label,
-      card: numberOf(row["card"], "card"),
-    });
-  }
-  return lost;
+    .prepare("SELECT 1 FROM jobs WHERE id = ? AND updated_at < ?")
+    .get(job, silentBefore);
+  if (silent === undefined) return undefined;
+  if (transitionJob(db, owned, { name: "lose" }, Date.now()) === undefined) return undefined;
+  return { label: owned.label };
 }
 
 export function abandonRunningJobs(db: DatabaseSync, card: number, at: number): void {
@@ -205,11 +195,18 @@ export function abandonRunningJobs(db: DatabaseSync, card: number, at: number): 
   }
 }
 
-export function runningJobs(db: DatabaseSync, session: string): { id: number; label: string }[] {
+export function runningJobs(
+  db: DatabaseSync,
+  session: string,
+): { id: number; label: string; updatedAt: number }[] {
   return db
     .prepare(
-      `SELECT id, label FROM jobs WHERE attempt = ? AND ${runningJobSql("state")} ORDER BY id`,
+      `SELECT id, label, updated_at FROM jobs WHERE attempt = ? AND ${runningJobSql("state")} ORDER BY id`,
     )
     .all(attemptOf(db, session))
-    .map((row) => ({ id: numberOf(row["id"], "id"), label: textOf(row["label"], "label") }));
+    .map((row) => ({
+      id: numberOf(row["id"], "id"),
+      label: textOf(row["label"], "label"),
+      updatedAt: numberOf(row["updated_at"], "updated_at"),
+    }));
 }

@@ -102,6 +102,11 @@ export const JOB_OPS = {
     args: Type.Object({ job: Type.Integer() }),
     result: Type.Object({ running: Type.Boolean() }),
   },
+  "job.gone": {
+    roles: ["worker"],
+    args: Type.Object({ job: Type.Integer() }),
+    result: Type.Object({ lost: Type.Boolean() }),
+  },
   "job.finish": {
     roles: ["worker"],
     args: Type.Object({ job: Type.Integer(), exitCode: Type.Integer(), outputTail: Type.String() }),
@@ -124,6 +129,8 @@ export const JOB_OPS = {
   jobs: {
     roles: ["worker"],
     args: Type.Object({}),
-    result: Type.Array(Type.Object({ id: Type.Integer(), label: Type.String() })),
+    result: Type.Array(
+      Type.Object({ id: Type.Integer(), label: Type.String(), silent: Type.Boolean() }),
+    ),
   },
 } as const;
