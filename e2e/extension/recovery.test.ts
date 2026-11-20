@@ -163,16 +163,14 @@ test("a worker with a stale module is replaced on its own conversation and work,
 });
 
 function assertRecoveredConversation(h: Harness, incident: number): void {
-  const fresh = h.callsOf("worker").findLast((turns) => cardFor(turns) === 1) ?? [];
+  const checkText = `recovery check ${String(incident)} from main: this is a health check, not new work`;
+  const fresh = h.callsOf("worker").find(
+    (turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText),
+  );
+  assert.ok(fresh, "the replacement did not receive its recovery check");
   assert.ok(
     fresh.some((turn) => turn.text.includes("fix the scrollbar")),
     "the old conversation is gone",
-  );
-  assert.match(
-    lastUser(fresh) ?? "",
-    new RegExp(
-      `recovery check ${String(incident)} from main: this is a health check, not new work`,
-    ),
   );
   for (const [index, turns] of h.callsOf("worker").entries())
     if (cardFor(turns) === 1) assert.equal(h.modelsOf("worker")[index], "openai-codex/gpt-fixture");
@@ -194,7 +192,10 @@ function branchOfTree(tree: string): string {
   }).trim();
 }
 
-async function verifyDuplicate(incident: { incident: number; generation: number }): Promise<void> {
+async function verifyDuplicate(
+  incident: { incident: number; generation: number },
+  replaced = true,
+): Promise<void> {
   const duplicate = await parts.cardd.post(parts.mainToken, "card.restart", {
     card: 1,
     ...incident,
@@ -213,7 +214,7 @@ async function verifyDuplicate(incident: { incident: number; generation: number 
       host: "local",
       card: 1,
       generation: incident.generation,
-      replaced: true,
+      replaced,
       repeat: true,
     },
   });
@@ -378,7 +379,7 @@ test("a replacement requested again with the same key while it is still starting
   const gate = gateOf(join(h.dir, "worker-args"));
   let failed = false;
   let incident = { incident: 0, generation: 0 };
-  let starting: number | undefined;
+  let original: number | undefined;
   let phase: "first" | "again" | "done" = "first";
   const replace = (): { tool: string; args: Record<string, string | number> } => ({
     tool: "restart_card",
@@ -389,13 +390,13 @@ test("a replacement requested again with the same key while it is still starting
       if (turns.at(-1)?.role !== "user" || !lastUser(turns)?.includes("runtime failure"))
         return { text: "noted" };
       incident = incidentIn(turns);
+      original = await readyWorkerGroup(lab, "c-1-a1");
       execFileSync("sh", ["-c", 'mkfifo "$0"', gate]);
       phase = "again";
       return replace();
     }
     if (phase === "again") {
       phase = "done";
-      starting = await readyWorkerGroup(lab, "c-1-a1");
       return replace();
     }
     return { text: "noted" };
@@ -414,6 +415,24 @@ test("a replacement requested again with the same key while it is still starting
   await mateConnected(h);
   mate.prompt("ship it");
 
+  await waitFor(
+    () => Promise.resolve(existsSync(gate)),
+    (exists) => exists,
+    WORKER_WAIT_MS,
+  );
+  const starting = await waitFor(
+    () => workerGroupOf(lab, "c-1-a1"),
+    (group) => group !== undefined && group !== original,
+    WORKER_WAIT_MS,
+  );
+  const release = await open(gate, "w");
+  try {
+    await verifyDuplicate(incident, false);
+    assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
+  } finally {
+    await release.close();
+  }
+
   const results = await mateResults(h, 4);
   assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on local/);
   assert.equal(
@@ -423,8 +442,6 @@ test("a replacement requested again with the same key while it is still starting
   const sessions = (await cardd.post(parts.mainToken, "card", { card: 1 })).status;
   assert.equal(sessions, 200);
   assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
-  const release = await open(gate, "w");
-  await release.close();
   await waitFor(
     () => entriesOf(1),
     (view) => view.some((entry) => entry.body.includes("recovered (replace)")),
