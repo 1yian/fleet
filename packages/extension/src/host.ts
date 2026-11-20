@@ -1,6 +1,11 @@
+import type { ExecFileException } from "node:child_process";
 import { hostname } from "node:os";
 import { fleetHostName, routed } from "@fleet/protocol/route";
-import { type Detach, runOnTransport } from "@fleet/protocol/transport";
+import {
+  diedBeforeTheCommandStarted,
+  type Detach,
+  runOnTransport,
+} from "@fleet/protocol/transport";
 import { spawnDetached } from "./detached.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
@@ -31,6 +36,22 @@ type LaneCommand = "observe" | "mutate";
 export class TimedOut extends Error {}
 
 export class WorkspaceNotFound extends Error {}
+
+export class AgentStartRefused extends Error {}
+
+const startRefused = (code: unknown): boolean =>
+  code === "agent_pane_busy" || code === "agent_name_taken" || code === "server_not_running";
+
+function refusedStart(stderr: string): boolean {
+  try {
+    const payload: unknown = JSON.parse(stderr);
+    if (!isRecord(payload)) return false;
+    const detail = isRecord(payload["error"]) ? payload["error"] : payload;
+    return startRefused(detail["code"]);
+  } catch {
+    return false;
+  }
+}
 
 const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
 
@@ -147,14 +168,12 @@ export async function herdr(
   host: string,
   args: readonly string[],
   probe = false,
-  beforeRetry?: (error: unknown) => Promise<void>,
 ): Promise<Record<string, unknown>> {
   try {
     return await herdrOnce(host, args, probe);
   } catch (error) {
     if (!serverMissing(error) || transport(host).length > 0) throw error;
     await startServer(process.env["HERDR_SESSION"]);
-    await beforeRetry?.(error);
     return herdrOnce(host, args, probe);
   }
 }
@@ -237,6 +256,11 @@ async function herdrOnce(
   return resultOf(await herdrText(host, args, probe), host, args[0] ?? "");
 }
 
+export async function startReplacementOnce(host: string, args: readonly string[]): Promise<void> {
+  const text = await herdrText(host, args, false, undefined, undefined, false);
+  resultOf(text, host, "agent", false);
+}
+
 export const paneText = (host: string, pane: string): Promise<string> =>
   herdrText(host, ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", "200"], false);
 
@@ -256,12 +280,27 @@ function laneTransportFailure(
   return lane === "observe" ? new HostUnread(message) : new Error(message);
 }
 
+function rejectedBeforeStart(
+  file: string,
+  error: ExecFileException,
+  out: string,
+  err: string,
+): boolean {
+  return (
+    error.code === "ENOENT" ||
+    diedBeforeTheCommandStarted(file, error, err) ||
+    refusedStart(err) ||
+    refusedStart(out)
+  );
+}
+
 async function herdrText(
   host: string,
   args: readonly string[],
   probe: boolean,
   lane?: LaneCommand,
   deadline?: number,
+  replay = true,
 ): Promise<string> {
   const timeout = Math.min(probe ? PROBE_TIMEOUT_MS : 120_000, remainingMs(deadline));
   if (timeout === 0) throw new HostUnread("maintenance deadline reached");
@@ -279,22 +318,38 @@ async function herdrText(
       (error, out, err) => {
         if (error !== null && lane !== undefined) {
           reject(laneTransportFailure(lane, args, error, out, err));
-        } else if (error !== null && out.trim() === "") {
-          const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
-          reject(failure(via, error, scrub(message), probe));
-        } else resolve(out);
+          return;
+        }
+        if (error === null || (replay && out.trim() !== "")) {
+          resolve(out);
+          return;
+        }
+        const detail = err.trim() || (!replay && out.trim()) || exitStatus(error);
+        const message = scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${detail}`);
+        reject(
+          !replay && rejectedBeforeStart(file, error, out, err)
+            ? new AgentStartRefused(message)
+            : failure(via, error, message, probe),
+        );
       },
+      replay,
     );
   });
 }
 
-function resultOf(stdout: string, host: string, name: string): Record<string, unknown> {
+function resultOf(
+  stdout: string,
+  host: string,
+  name: string,
+  replay = true,
+): Record<string, unknown> {
   if (stdout.trim() === "") return {};
   const reply: unknown = JSON.parse(stdout);
   if (!isRecord(reply)) throw new Error(`herdr ${name} on ${host} returned no JSON object`);
   const error = reply["error"];
   if (isRecord(error)) {
     const message = scrub(String(error["message"]));
+    if (!replay && startRefused(error["code"])) throw new AgentStartRefused(message);
     if (error["code"] === "workspace_not_found" || message === "workspace_not_found")
       throw new WorkspaceNotFound(message);
     throw new Error(message);
