@@ -77,6 +77,55 @@ test("a worker resumed from a pause by a comment is watched for idleness at once
   assert.equal(shown.until, null);
 });
 
+test("a suppressed restart notice does not block the idle nudge and is delivered on refund", async () => {
+  const { main, cardd } = fleet;
+  const passes = await CheckPasses.open(fleet);
+  const card = await newCard(main, "Check the idle worker during a refundable restart");
+  const token = await begin(main, card);
+  const first = await cardd.connect(token, [], true, true);
+  const [task] = await first.waitForEntries(1);
+  assert.ok(task !== undefined);
+  await first.call("jobs", {});
+  await first.close();
+
+  const restart = async (key: string) => {
+    const { request } = check(
+      OPS["card.restart"].result,
+      await main.call("card.restart", { card: card.id, mode: "replace", key }),
+    );
+    assert.ok(request !== undefined);
+    return request;
+  };
+  const older = await restart("older");
+  assert.deepEqual(await main.call("card.restart.notice", { card: card.id, request: older }), {
+    posted: true,
+  });
+  const request = await restart("successor");
+  const worker = await cardd.connect(token, [task.id]);
+  ageSession(cardd, card, 3 * MINUTE);
+  await passes.next();
+  await worker.call("jobs", {});
+  assert.match(
+    worker.entries.find(({ entry }) => entry.fields["condition"] === "worker-idle-nudge")?.entry
+      .body ?? "",
+    /^reminder: you went idle without reporting\./,
+  );
+  assert.deepEqual(
+    worker.entries.filter(({ entry }) => entry.fields["restartNotice"] === older),
+    [],
+  );
+
+  assert.deepEqual(
+    await main.call("card.restart.failed", { card: card.id, key: "successor", request }),
+    { recorded: true },
+  );
+  const notice = await worker.waitForEntry(
+    (entry) => entry.fields["restartNotice"] === older,
+    "the older restart notice on the same connection after refund",
+  );
+  assert.match(notice.body, /^Your session was restarted on the same card and conversation\./);
+});
+
 const isPause = (entry: Entry): boolean =>
   entry.kind === "report" && entry.fields["status"] === "paused";
 
