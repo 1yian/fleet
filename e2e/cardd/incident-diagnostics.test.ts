@@ -281,3 +281,12 @@ test("an Unauthorized report that only names a token field keeps its text, is cl
     /is blocked/,
   );
 });
+
+test("a host and port timeout keeps its text and its transient classification", async () => {
+  const card = await newCard(cleo, "Report a network timeout");
+  await reportFailure(fleet, cleo, card, "dial tcp 127.0.0.1:8080: i/o timeout");
+  const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+  assert.ok(heard.body.includes("dial tcp 127.0.0.1:8080: i/o timeout"), heard.body);
+  assert.ok(heard.body.includes("Classified transient."), heard.body);
+  assert.ok(heard.body.includes("mode=retry"), heard.body);
+});

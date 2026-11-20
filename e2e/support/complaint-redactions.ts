@@ -31,6 +31,10 @@ export const REDACTED_COMPLAINTS = [
     'Reply {"message":"Unauthorized","field":"token"} omits the header.',
   ],
   [
+    "Dial tcp 127.0.0.1:8080: i/o timeout while 10.0.0.1:9000: connection refused.",
+    "Dial tcp 127.0.0.1:8080: i/o timeout while 10.0.0.1:9000: connection refused.",
+  ],
+  [
     "The ${HOST} help text never explains how curl is configured.",
     "The ${HOST} help text never explains how curl is configured.",
   ],
