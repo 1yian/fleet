@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HostUnread } from "./host.ts";
-import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
+import { isAbsent, readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
 export interface LaneHome {
@@ -55,16 +55,13 @@ type Scanned =
   | { readonly name: string; readonly home: string; readonly config: LaneConfig }
   | { readonly name: string; readonly home: string; readonly error: unknown };
 
-const isMissing = (error: unknown): boolean =>
-  error instanceof Error && "code" in error && error.code === "ENOENT";
-
 function scanHomes(root: string): Scanned[] {
   const dir = `${root}.worktrees`;
   let entries: string[];
   try {
     entries = readdirSync(dir);
   } catch (error) {
-    if (isMissing(error)) return [];
+    if (isAbsent(dir, error)) return [];
     throw error;
   }
   return entries

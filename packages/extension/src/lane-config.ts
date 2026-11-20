@@ -1,6 +1,6 @@
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { isUuid, type BwsConfig } from "./bws.ts";
 
 export interface CarddConfig {
@@ -169,11 +169,19 @@ export function exportHosts(lane: LaneConfig): void {
 export function isAbsent(file: string, error: unknown): boolean {
   if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) return false;
   try {
-    lstatSync(file);
+    if (lstatSync(file, { throwIfNoEntry: false }) !== undefined) return false;
+    return hasReadableAncestor(file);
+  } catch {
     return false;
-  } catch (entry) {
-    return entry instanceof Error && "code" in entry && entry.code === "ENOENT";
   }
+}
+
+function hasReadableAncestor(path: string): boolean {
+  const parent = dirname(path);
+  if (parent === path) return false;
+  const entry = lstatSync(parent, { throwIfNoEntry: false });
+  if (entry === undefined) return hasReadableAncestor(parent);
+  return entry.isSymbolicLink() ? statSync(parent).isDirectory() : entry.isDirectory();
 }
 
 export function readLaneConfig(home: string): LaneConfig | undefined {
