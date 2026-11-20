@@ -61,30 +61,32 @@ export async function refreshClonesInTurn(clones: readonly Clone[]): Promise<str
   return lines.filter((line) => !NOTHING_CHANGED.test(line));
 }
 
+async function refreshAndReport(pi: ExtensionAPI, link: Link): Promise<void> {
+  const projects = await link.call("projects", {});
+  const clones = projects
+    .filter(({ delivery }) => delivery !== "local-only")
+    .flatMap(({ name, base, clones: each }) =>
+      each.map(({ host, path }) => ({ project: name, host, path, base })),
+    );
+  const lines = await refreshClonesInTurn(clones);
+  if (lines.length === 0) return;
+  const urgent = lines.some((line) => line.includes(NEEDS_THE_CAPTAIN));
+  pi.sendMessage(
+    {
+      customType: "fleet-clones",
+      content: `[fleet] clones: ${lines.join("; ")}`,
+      display: true,
+    },
+    urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
+  );
+}
+
 export function refreshEveryCloneOnFirstConnect(pi: ExtensionAPI, link: Link): void {
   let started = false;
   pi.events.on("fleet:connected", () => {
     if (started) return;
     started = true;
-    void (async () => {
-      const projects = await link.call("projects", {});
-      const clones = projects
-        .filter(({ delivery }) => delivery !== "local-only")
-        .flatMap(({ name, base, clones: each }) =>
-          each.map(({ host, path }) => ({ project: name, host, path, base })),
-        );
-      const lines = await refreshClonesInTurn(clones);
-      if (lines.length === 0) return;
-      const urgent = lines.some((line) => line.includes(NEEDS_THE_CAPTAIN));
-      pi.sendMessage(
-        {
-          customType: "fleet-clones",
-          content: `[fleet] clones: ${lines.join("; ")}`,
-          display: true,
-        },
-        urgent ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: false },
-      );
-    })().catch((error: unknown) => {
+    void refreshAndReport(pi, link).catch((error: unknown) => {
       console.error(`clone refresh: ${String(error)}`);
     });
   });
