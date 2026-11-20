@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, test } from "node:test";
-import { check, OPS, type Entry } from "@fleet/protocol";
+import { CardViewSchema, check, OPS, type Entry } from "@fleet/protocol";
+import type { Session } from "../support/cardd.ts";
 import {
   ageDelivery,
   begin,
@@ -110,6 +111,94 @@ for (const receipt of ["read", "filed"] as const) {
       [],
     );
     assert.ok((await cardd.thread(card.id)).entries.some(({ id }) => id === original.id));
+  });
+}
+
+function copies(session: Session, id: number): Entry[] {
+  return session.entries.map(({ entry }) => entry).filter((entry) => entry.id === id);
+}
+
+async function missedAfterResends(main: Session, worker: Session, source: Entry): Promise<Entry> {
+  const actor = worker.welcome?.session;
+  assert.ok(actor !== undefined);
+  for (const count of [2, 3, 4]) {
+    ageDelivery(fleet.cardd, actor, source.id, "updated_at", 3 * MINUTE);
+    await worker.waitForEntry(
+      (entry) => entry.id === source.id && copies(worker, source.id).length >= count,
+      `copy ${String(count)} of entry ${String(source.id)}`,
+    );
+  }
+  return main.waitForEntry(
+    (entry) => missedOf(entry) && entry.fields["entry"] === source.id,
+    `main to hear that entry ${String(source.id)} was missed`,
+  );
+}
+
+for (const by of ["hold", "refund"] as const) {
+  test(`a restart notice retired by ${by} stops replay and chase of its missed finding`, async () => {
+    const { cardd, mainToken } = fleet;
+    const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+    const main = await cardd.connect(mainToken, [], false, true);
+    const card = await newCard(cleo, "Keep only live missed findings");
+    const worker = await cardd.connect(await begin(cleo, card), [], false);
+    const [task] = await worker.waitForEntries(1);
+    assert.ok(task !== undefined);
+    worker.ack(task.id);
+    await worker.call("jobs", {});
+
+    const key = "refundable-start";
+    const { request } = check(
+      OPS["card.restart"].result,
+      await cleo.call("card.restart", { card: card.id, mode: "replace", key }),
+    );
+    assert.ok(request !== undefined);
+    assert.deepEqual(await cleo.call("card.restart.notice", { card: card.id, request }), {
+      posted: true,
+    });
+    const notice = await worker.waitForEntry(
+      (entry) => entry.fields["restartNotice"] === request,
+      "the restart notice",
+    );
+    const missed = await missedAfterResends(main, worker, notice);
+    const text = "Check the footer as well.";
+    await cleo.call("comment", { card: card.id, text });
+    const steer = await worker.waitForEntry((entry) => entry.body === text, "the ordinary comment");
+    const ordinary = await missedAfterResends(main, worker, steer);
+    await main.close();
+
+    if (by === "hold") {
+      await park(cleo, card, "Wait for CI", 60 * MINUTE);
+      assert.equal(await status(cleo, card), "waiting");
+    } else {
+      assert.deepEqual(await cleo.call("card.restart.failed", { card: card.id, key, request }), {
+        recorded: true,
+      });
+    }
+
+    const reconnected = await cardd.connect(mainToken, [], false, true);
+    await reconnected.waitForEntry(
+      (entry) => entry.id === ordinary.id,
+      "the live finding to replay",
+    );
+    const replayed = copies(reconnected, missed.id);
+    const actor = reconnected.welcome?.session;
+    assert.ok(actor !== undefined);
+    for (const id of [missed.id, ordinary.id])
+      ageDelivery(cardd, actor, id, "updated_at", 3 * MINUTE);
+    const before = deliveryReceipt(cardd.db, actor, missed.id);
+    assert.equal(before?.["state"], "pushed");
+    reconnected.send({ t: "activity", state: "idle" });
+    await reconnected.call("board", {});
+    await passes.next();
+    await reconnected.call("board", {});
+    assert.deepEqual(copies(reconnected, ordinary.id), [ordinary, ordinary]);
+    assert.deepEqual([replayed, copies(reconnected, missed.id)], [[], []]);
+    assert.deepEqual(deliveryReceipt(cardd.db, actor, missed.id), before);
+    const history = check(CardViewSchema, await reconnected.call("card", { card: card.id }));
+    assert.deepEqual(
+      history.entries.find(({ id }) => id === missed.id),
+      missed,
+    );
   });
 }
 
