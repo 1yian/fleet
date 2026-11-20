@@ -208,6 +208,11 @@ for (const [name, diagnostic] of [
     String.raw`{"trace":"0000: GET / HTTP/1.1\r\n003a: Authorization: Basic cGFwZXI6Y2Fub2VwYXBlcjpjYW5vZXBhcGVy\r\n007a: Y2Fu"}`,
   ],
   [
+    "a trace-ascii header name split across rows",
+    "0000: GET / HTTP/1.1\n0040: Host: localhost\r\nAuthoriz\n0080: ation: Basic cGFwZXI6Y2Fub2U=",
+  ],
+  ["a trace hex dump", "0000: 47 45 54 20 2f 20 48 54 54 50 2f 31 2e 31 20 70 61 70 65 72"],
+  [
     "a wrapped trace-ascii authorization",
     "0000: GET / HTTP/1.1\n003a: Authorization: Basic cGFwZXI6Y2Fub2VwYXBlcjpjYW5vZXBhcGVy\n007a: Y2Fu",
   ],
