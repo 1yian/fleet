@@ -4,6 +4,7 @@ import type { Draft } from "./change.ts";
 import {
   IN_FLIGHT_DELIVERY,
   QUEUED_DELIVERY,
+  retireNoticeDeliveries,
   SENT_DELIVERY,
   UNREAD_DELIVERY,
 } from "./delivery-states.ts";
@@ -220,7 +221,6 @@ export function dueBatches(db: DatabaseSync, batching: Batching): string[] {
 
 function deliveryEligibility(
   db: DatabaseSync,
-  session: string,
   entry: number,
   card: number,
   restartNotice: unknown,
@@ -228,9 +228,8 @@ function deliveryEligibility(
   if (typeof restartNotice !== "number") return "eligible";
   const state = noticeState(db, card, restartNotice);
   if (state === "retired")
-    db.prepare("UPDATE deliveries SET retired_at = ? WHERE session = ? AND entry = ?").run(
+    db.prepare(retireNoticeDeliveries("SELECT id, card FROM entries WHERE id = ?")).run(
       Date.now(),
-      session,
       entry,
     );
   return state;
@@ -282,13 +281,7 @@ export function toPush(
   const now = Date.now();
   const all = rows.flatMap((row) => {
     const { entry: raw, name, again = false } = check(PushedEntrySchema, row);
-    const eligibility = deliveryEligibility(
-      db,
-      session,
-      raw.id,
-      raw.card,
-      raw.fields["restartNotice"],
-    );
+    const eligibility = deliveryEligibility(db, raw.id, raw.card, raw.fields["restartNotice"]);
     if (eligibility !== "eligible") {
       if (eligibility === "suppressed") deferReplay?.run(now, session, raw.id);
       return [];
@@ -400,7 +393,7 @@ export function remind(
 export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[] {
   const resend = db.prepare(
     `UPDATE deliveries SET state = ?, resends = resends + 1, updated_at = ?
-     WHERE session = ? AND entry = ?`,
+     WHERE session = ? AND entry = ? AND retired_at IS NULL`,
   );
   const told = db.prepare("UPDATE deliveries SET told_at = ? WHERE session = ? AND entry = ?");
   return db
@@ -410,8 +403,7 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
       const session = String(row["session"]);
       const entry = check(EntrySchema, JSON.parse(String(row["j"])));
       if (
-        deliveryEligibility(db, session, entry.id, entry.card, entry.fields["restartNotice"]) !==
-        "eligible"
+        deliveryEligibility(db, entry.id, entry.card, entry.fields["restartNotice"]) !== "eligible"
       )
         return [];
       const due = now - Number(row["updated"]) >= t.intake;
@@ -422,8 +414,13 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
       const heard = owed ? tellOwner(db, session, String(row["role"]), entry, resends) : [];
       if (heard.length > 0) told.run(now, session, entry.id);
       if (!due) return heard;
-      resend.run(nextDelivery(deliveryState(row["state"]), "resend"), now, session, entry.id);
-      return [session, ...heard];
+      const { changes } = resend.run(
+        nextDelivery(deliveryState(row["state"]), "resend"),
+        now,
+        session,
+        entry.id,
+      );
+      return changes === 0 ? heard : [session, ...heard];
     });
 }
 
@@ -443,7 +440,7 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
     .all(session)
     .filter(
       (row) =>
-        deliveryEligibility(db, session, Number(row["id"]), Number(row["card"]), row["notice"]) ===
+        deliveryEligibility(db, Number(row["id"]), Number(row["card"]), row["notice"]) ===
         "eligible",
     );
   if (rows.length === 0) return;
