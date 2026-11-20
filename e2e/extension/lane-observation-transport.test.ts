@@ -157,6 +157,39 @@ test("a pane disappearing between list and process info leaves the lane unread",
   assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
 });
 
+test("a pane split opened while the pane is being inspected leaves the lane unread", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const panesOf = async () =>
+    records((await lab.run(["pane", "list"]))["panes"]).map((row) => row["pane_id"]);
+  const rearm = async () => {
+    rmSync(`${faultLog()}.split`, { force: true });
+    const ids = await panesOf();
+    assert.deepEqual(ids, [root]);
+  };
+  for (const history of [undefined, `${String(Date.now())}\n`.repeat(3)]) {
+    await rearm();
+    if (history !== undefined) writeFileSync(starts, history);
+    assert.deepEqual(maintain("split-at-info", root), action("ops", "unread"));
+    assert.equal(existsSync(`${faultLog()}.split`), true);
+    assert.equal((await panesOf()).length, 2);
+    assert.equal(existsSync(starts), history !== undefined);
+    if (history !== undefined) assert.equal(readFileSync(starts, "utf8"), history);
+    assert.equal(existsSync(stopped), false);
+    assert.equal((await workspace("ops"))?.["pane_count"], 2);
+    await lab.run(["pane", "close", String((await panesOf()).find((id) => id !== root))]);
+  }
+  await rearm();
+  const rows: unknown = JSON.parse(fleet(["status", "--json"], "split-at-info", root));
+  assert.equal(records(rows)[0]?.["state"], "unknown");
+  await lab.run(["pane", "close", String((await panesOf()).find((id) => id !== root))]);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
+  rmSync(starts);
+  assert.deepEqual(maintain(), action("ops", "started"));
+});
+
 test("maintenance returns a completed start even when the next lane cannot be read", async () => {
   addLane("zz");
   assert.deepEqual(JSON.parse(fleet(["up", "zz", "--json"])), action("zz", "started"));

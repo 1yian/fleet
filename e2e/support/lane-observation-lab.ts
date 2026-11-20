@@ -53,6 +53,11 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
+  'pane process-info:split-at-info')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.split" ]; then
+      : > "$HERDR_FAULT_LOG.split"
+      "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+    fi ;;
   'pane process-info:pi-in-split')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
