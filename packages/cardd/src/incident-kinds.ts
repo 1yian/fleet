@@ -102,9 +102,10 @@ const OPENING_QUOTE = new RegExp(
   "gi",
 );
 const QUOTED_VALUE = new RegExp(QUOTED, "y");
+const QUOTED_SPANS = new RegExp(QUOTED, "g");
 const URL_WITHHELD = "[URL withheld: credential boundaries unclear]";
 const URL_AUTHORITY =
-  /(?<=\b[a-z][a-z0-9+.-]*:(?:\\?\/|\\u002f)(?:\\?\/|\\u002f))(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
+  /(?<=(?:[a-z0-9+.-]|\\+u[\da-f]{4})+(?::|\\+u003a)(?:\\?\/|\\+u002f)(?:\\?\/|\\+u002f))(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
 const URL_AUTHORITY_TOKEN = /\\(?:u[\da-f]{4}|["\\bfnrt])|\\|"[,\]}]|@/gi;
 const SECRET_PATTERNS: readonly RegExp[] = [
   /(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|(?<![\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-])[\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-]+)@(?:[\p{L}\p{M}\p{N}-]+[.。．｡])+[\p{L}][\p{L}\p{M}\p{N}-]*/gu,
@@ -247,11 +248,23 @@ function endsAtOpeningQuote(logical: string, end: number): boolean {
   return (before?.length ?? 0) % 2 === 0;
 }
 
+function hasStrayBacktick(logical: string, start: number, end: number): boolean {
+  const rest = logical.slice(start, end).replace(QUOTED_SPANS, "");
+  if (!rest.includes("\u0060")) return false;
+  const closesEarlierSpan =
+    rest.endsWith("\u0060") &&
+    rest.indexOf("\u0060") === rest.length - 1 &&
+    (logical.slice(0, start).split("\u0060").length - 1) % 2 === 1;
+  return !closesEarlierSpan;
+}
+
 function hasUnprovenValue(text: string): boolean {
   const logical = logicalView(text);
   for (const pattern of [SHELL_SECRET, STRUCTURED_SECRET]) {
     for (const match of logical.matchAll(pattern)) {
-      if (endsAtOpeningQuote(logical, match.index + match[0].length)) return true;
+      const end = match.index + match[0].length;
+      if (endsAtOpeningQuote(logical, end) || hasStrayBacktick(logical, match.index, end))
+        return true;
     }
   }
   for (const match of logical.matchAll(OPENING_QUOTE)) {
