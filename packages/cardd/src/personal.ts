@@ -36,7 +36,7 @@ if [ ! -e "$clone" ] && [ ! -L "$clone" ]; then
   stage=$(mktemp -d "$parent/.personal.XXXXXX")
   trap 'rm -rf "$stage"' 0
   repo=$stage/${PERSONAL_PROJECT}
-  git init -q -b main "$repo"
+  git -c core.hooksPath=/dev/null init -q -b main "$repo"
   tree=$(git -C "$repo" mktree </dev/null)
   root=$(git -C "$repo" -c user.name=fleet -c user.email=fleet@localhost commit-tree --no-gpg-sign "$tree" -m "Start the ${PERSONAL_PROJECT} project")
   git -C "$repo" -c core.hooksPath=/dev/null update-ref refs/heads/main "$root"
