@@ -29,9 +29,9 @@ export interface Launch {
 
 type Plan = OpResult<"attempt.begin">;
 
-async function scratchEnvironment(host: string, card: number): Promise<string[]> {
+async function paneEnvironment(host: string, plan: Plan, card: number): Promise<string[]> {
   const opened = await onHost(host, ["sh", "-c", OPEN_SCRATCH_SCRIPT, "scratch", String(card)]);
-  return workerEnvironment(parseOpened(opened));
+  return workerEnvironment(parseOpened(opened), plan.session);
 }
 
 async function worktreePane(
@@ -60,7 +60,7 @@ async function worktreePane(
     host,
     path,
     { name: plan.name },
-    await scratchEnvironment(host, card),
+    await paneEnvironment(host, plan, card),
   );
   return { pane: opened.pane, path, workspace: opened.workspace };
 }

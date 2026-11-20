@@ -189,15 +189,22 @@ The folder also holds `host.json`, the one place where you set anything for the 
 
 **What fills `/tmp`.** Two things, measured on p620 on Nov 10. Workers' evidence and scratch folders held 513,000 of the 618,000 inodes that `du` counted, in 427 `/tmp/fleet-*` folders (`/tmp/fleet-c-1300` alone had 88,000). The Node compile cache held about 335,000 more, which is what main's hand prune freed. Pi (`cli.js` and its extension loader, jiti), `tsc`, `eslint`, and `prettier` each call `module.enableCompileCache()` with no directory, which means `$TMPDIR/node-compile-cache`. An entry's name comes from the source path and content, so every worktree and every scratch copy of the repository adds new entries, and Node never removes one. `cardd` does not enable it. Nothing in this repository set it.
 
-**A worker's environment.** Dispatch makes `scratch/c-<N>/tmp` on the worker's host and starts the worker's herdr workspace with three variables (`herdr workspace create --env`):
+**A worker's environment.** Dispatch makes `scratch/c-<N>/tmp` on the worker's host and starts the worker's herdr workspace with five variables (`herdr workspace create --env`):
 
-| Variable             | Value                                         |
-| -------------------- | --------------------------------------------- |
-| `FLEET_SCRATCH`      | `~/.fleet/scratch/c-<N>`, the evidence folder |
-| `TMPDIR`             | `~/.fleet/scratch/c-<N>/tmp`                  |
-| `NODE_COMPILE_CACHE` | `~/.fleet/node-compile-cache`                 |
+| Variable                      | Value                                                           |
+| ----------------------------- | --------------------------------------------------------------- |
+| `FLEET_SCRATCH`               | `~/.fleet/scratch/c-<N>`, the evidence folder                   |
+| `TMPDIR`                      | `~/.fleet/scratch/c-<N>/tmp`                                    |
+| `NODE_COMPILE_CACHE`          | `~/.fleet/node-compile-cache`                                   |
+| `FLEET_ATTEMPT`               | `c-<N>-a<M>`, the attempt's own name (see "A worker's browser") |
+| `CHROME_DEVTOOLS_AXI_SESSION` | the same `c-<N>-a<M>`                                           |
 
-Pi, its extension cache, the worker's shell tools, `mktemp`, `npm`, `tsc`, `eslint`, and Chromium profiles then write on disk. A `run_long` job tab does not inherit the workspace's variables, so the extension passes the same three to the tab (`herdr tab create --env`). The worker contract tells the worker to put reports and evidence in `$FLEET_SCRATCH`. The end-to-end suite keeps its run folder on disk, in `/var/tmp` on Linux, with a short path for socket files (`e2e/run.ts` and `e2e/support/run-root.ts`), and removes it on normal exit, failure, or handled interruption. SIGKILL can leave running workers and a suite folder behind. Later suites do not remove it. The default keeps the suite's files off the Linux `/tmp` tmpfs.
+Pi, its extension cache, the worker's shell tools, `mktemp`, `npm`, `tsc`, `eslint`, and Chromium profiles then write on disk. A `run_long` job tab does not inherit the workspace's variables, so the extension passes the same five to the tab (`herdr tab create --env`). The worker contract tells the worker to put reports and evidence in `$FLEET_SCRATCH`. The end-to-end suite keeps its run folder on disk, in `/var/tmp` on Linux, with a short path for socket files (`e2e/run.ts` and `e2e/support/run-root.ts`), and removes it on normal exit, failure, or handled interruption. SIGKILL can leave running workers and a suite folder behind. Later suites do not remove it. The default keeps the suite's files off the Linux `/tmp` tmpfs.
+
+**A worker's browser.** Fleet does not run a browser, but it keeps two workers from sharing one browser's selected tab. `FLEET_ATTEMPT` and `CHROME_DEVTOOLS_AXI_SESSION` carry the attempt's name (`c-<N>-a<M>`: one per attempt, kept by a replacement worker of that attempt, new for a new attempt). Neither is set for a mate.
+
+- `chrome-devtools-axi`, the host's general browser tool. Without a session name it uses one default session for the whole account: one bridge on port 9224, one Chrome, and one selected page in `~/.chrome-devtools-axi/selected-page-id`. Any card's `newpage`, `selectpage`, `open` or `closepage` then moves, navigates or closes the page that every other card on the host acts on, whether the cards share a lane or not. `CHROME_DEVTOOLS_AXI_SESSION` gives each attempt its own bridge, its own Chrome and its own selected page, so a card cannot select, navigate or close another card's tab. Cards no longer share cookies, so a card signs in for itself. The shared sign-in that the default session gave was a side effect of one bridge on a throwaway profile, not a kept profile. The bridge port comes from a hash of the name (9225 to 10224), so two attempts can in rare cases hash to one port.
+- `fleet-browser`, the lane's persistent Chrome, is a separate service (`github.com/1yian/fleet-browser`). Fleet sends it the attempt name in `FLEET_ATTEMPT` so it can give each card its own tab on the shared lane Chrome and keep the lane's sign-ins. Until fleet-browser reads it, cards of one lane still share one active tab there.
 
 **A mate's environment.** `fleet up`, `fleet restart`, and the relaunch after `/updatefleet` start Pi with `NODE_COMPILE_CACHE` set to the same cache. A main that the captain starts by hand does not get it: put `export NODE_COMPILE_CACHE="$HOME/.fleet/node-compile-cache"` in the shell profile that starts it.
 
