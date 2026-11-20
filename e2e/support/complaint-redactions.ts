@@ -195,6 +195,8 @@ export const COOKIE_COMPLAINTS = [
   '> Authorization: Digest username="demo", response="paper"',
   "> Proxy-Authorization: Basic cGFwZXI6Y2Fub2U=",
   "> X-Api-Key: paper",
+  "0000: GET / HTTP/1.1\n003a: Authorization: Basic cGFwZXI6Y2Fub2VwYXBlcjpjYW5vZXBhcGVy\n007a: Y2Fu",
+  "0000: GET / HTTP/1.1\n003a: Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789ABCDEF\n007a: xyz",
   'The trace printed Authorization: Digest username="demo", response="paper".',
   'The trace printed Proxy-Authorization: Digest username="demo", response="paper".',
   "The trace printed Authorization: Negotiate paper canoe.",

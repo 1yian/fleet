@@ -200,6 +200,10 @@ for (const [name, diagnostic] of [
   ["a verbose digest authorization", '> Authorization: Digest username="demo", response="paper"'],
   ["a verbose api key header", "> X-Api-Key: paper"],
   [
+    "a wrapped trace-ascii authorization",
+    "0000: GET / HTTP/1.1\n003a: Authorization: Basic cGFwZXI6Y2Fub2VwYXBlcjpjYW5vZXBhcGVy\n007a: Y2Fu",
+  ],
+  [
     "an inline digest authorization",
     'The trace printed Authorization: Digest username="demo", response="paper".',
   ],
