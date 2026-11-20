@@ -256,12 +256,7 @@ function tellUnreadable(pi: ExtensionAPI, error: string, reloading: boolean): vo
 }
 
 function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: string }): Jobs {
-  const jobs = new Jobs(link, cardd, (text) => {
-    pi.sendMessage(
-      { customType: "fleet-job-cleanup", content: `[fleet] ${text}`, display: true },
-      { triggerTurn: false },
-    );
-  });
+  const jobs = new Jobs(link, cardd);
   jobs.register(pi);
   registerBranch(pi, link);
   return jobs;
@@ -280,6 +275,22 @@ function sendEntry(
   pi.sendMessage(
     { customType: "fleet", content, display: true, details: { entryId: entry.id } },
     { triggerTurn: entry.fields["compaction"] !== true, deliverAs: mode },
+  );
+}
+
+function deliverAfterSync(
+  jobs: Jobs,
+  seen: Set<number>,
+  id: number,
+  deliver: (extra: string) => void,
+): void {
+  jobs.sync().then(
+    () => {
+      deliver("");
+    },
+    () => {
+      seen.delete(id);
+    },
   );
 }
 
@@ -356,10 +367,9 @@ function start(
     };
     const mateWork = role === "mate" ? afterEntry(link, entry) : undefined;
     if (mateWork !== undefined) void mateWork.then(deliver);
-    else {
-      if (entry.kind === "job-result") jobs?.observeResult(entry);
-      deliver("");
-    }
+    else if (entry.kind === "job-result" && jobs !== undefined)
+      deliverAfterSync(jobs, seen, entry.id, deliver);
+    else deliver("");
   };
   const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
   registerDropJob(pi, link);

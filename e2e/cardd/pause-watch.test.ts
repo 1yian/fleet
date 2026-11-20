@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
-import { BoardSchema, CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
+import { BoardSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import {
   ageBatch,
@@ -101,78 +100,6 @@ async function pausedWorker(
   await worker.call("report", { status: "working", text: `starting ${title}` });
   return { card, worker };
 }
-
-test("an outstanding dispatch counts for pause advice, dated holds, and idle checks until fenced", async () => {
-  const { main, cardd } = fleet;
-  const card = await newCard(main, "Start a report export");
-  const worker = await idle(await begin(main, card));
-  await worker.call("report", { status: "working", text: "Starting the export" });
-  const { job } = check(
-    OPS["job.prepare"].result,
-    await worker.call("job.prepare", {
-      launch: randomUUID(),
-      label: "export",
-      command: "export-report",
-    }),
-  );
-  assert.deepEqual(await worker.call("jobs", {}), []);
-
-  const control = await newCard(main, "Idle without a dispatch");
-  const controlWorker = await idle(await begin(main, control));
-  await controlWorker.call("jobs", {});
-  ageSession(cardd, card, 3 * MINUTE);
-  ageSession(cardd, control, 3 * MINUTE);
-  await nudge(controlWorker, control);
-  const view = async (c: Card) => check(CardViewSchema, await main.call("card", { card: c.id }));
-  assert.deepEqual(
-    (await view(card)).entries.filter((entry) => entry.fields["condition"] === "worker-idle-nudge"),
-    [],
-  );
-
-  const until = Date.now() + PAUSE_MS;
-  const paused = await pauseOf(worker, "Waiting for the export", until);
-  assert.equal(paused.status, "paused");
-  assert.equal(paused.advice, undefined);
-  const held = await newCard(main, "Use the exported report");
-  const hold = { card: held.id, question: "Wait for the export?", until, job, remaining: [] };
-  await main.call("hold", hold);
-  const wait = async () => {
-    const dated = (await view(held)).card.datedWait;
-    return [dated?.watch, dated?.what];
-  };
-  const named = `job ${String(job)} (export)`;
-  assert.deepEqual(await wait(), ["running", named]);
-
-  assert.deepEqual(await worker.call("job.stop", { job }), {
-    label: "export",
-    running: false,
-    cancelled: true,
-  });
-  const fence = await worker.waitForEntry(
-    (entry) => entry.kind === "job-result" && entry.fields["job"] === job,
-    "the confirmed terminal result",
-  );
-  assert.equal(fence.fields["startupFenced"], true);
-  worker.read(fence.id);
-  worker.ack(fence.id);
-  assert.deepEqual(await wait(), ["gone", `${named} is finished`]);
-  await assert.rejects(main.call("hold", hold), /a dated hold needs a watcher that runs now/);
-  const unwatched = await pauseOf(worker, "The export was cancelled", until);
-  assert.match(unwatched.advice ?? "", /^Nothing runs for this pause\./);
-  ageBatch(cardd, "main", 6 * MINUTE);
-  const notice = await main.waitForEntry(
-    (entry) => entry.card === card.id && isPause(entry),
-    "the unwatched pause",
-  );
-  assert.equal(notice.body, "The export was cancelled");
-
-  await worker.call("report", { status: "working", text: "Looking for another export" });
-  worker.send({ t: "activity", state: "idle" });
-  await worker.call("jobs", {});
-  ageSession(cardd, card, 3 * MINUTE);
-  const idleAfterFence = await nudge(worker, card);
-  assert.ok(idleAfterFence.id > fence.id);
-});
 
 test("a pause with nothing running reaches its mate, and its end is listed for action", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));

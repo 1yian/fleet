@@ -80,12 +80,6 @@ export default function probe(pi: ExtensionAPI): void {
     },
   });
 
-  if (process.env["PROBE_STOP_RESULT"] === "1")
-    pi.on("tool_result", (event) => {
-      if (event.toolName === "stop_job")
-        report({ type: "stop_result", content: event.content, isError: event.isError });
-    });
-
   pi.events.on("fleet:delivered", (data) => {
     if (isRecord(data))
       report({ type: "fleet_delivered", entryId: optionalNumber(data, "entryId") });

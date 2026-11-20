@@ -1,24 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { check, OPS, type Entry } from "@fleet/protocol";
+import { check, OPS } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
-import { confirmLegacyStop, jobHandshake } from "./job-http.ts";
+import { jobHandshake } from "./job-http.ts";
 import type { Link } from "./link.ts";
 import { forwardedEnvironment } from "./scratch.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
-const PREPARE_ATTEMPTS = 3;
-const TAB_CLOSE_ATTEMPTS = 3;
 
 const RunLongParams = Type.Object({
   label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
@@ -64,152 +60,42 @@ interface JobOptions {
   readonly lineChars?: number;
 }
 
-interface PendingDispatch {
-  readonly launch: string;
-  readonly file: string;
-  dispatched: boolean;
-  fenced: boolean;
-}
-
-const startupFenced = (pending: PendingDispatch | undefined): boolean => pending?.fenced === true;
-
-interface Preparing {
-  fence?: { job: number; detail: string };
-}
-
 export class Jobs {
-  private readonly preparing = new Map<string, Preparing>();
-  private readonly running = new Set<number>();
-  private readonly lastResult = new Map<number, number>();
-  private readonly pending = new Map<number, PendingDispatch>();
-  private readonly launching = new Map<number, { unstarted: boolean }>();
-  private readonly ownedTabs = new Map<number, string>();
+  private readonly running = new Map<number, string>();
   private readonly link: Link;
-  private readonly endpoint: { url: string; token: string };
-  private readonly warn: (text: string) => void;
+  private readonly cardd: { url: string; token: string };
 
-  constructor(link: Link, cardd: { url: string; token: string }, warn: (text: string) => void) {
+  constructor(link: Link, cardd: { url: string; token: string }) {
     this.link = link;
-    this.endpoint = {
-      ...cardd,
-      url: cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call"),
-    };
-    this.warn = warn;
+    this.cardd = cardd;
   }
 
   get waiting(): boolean {
-    return this.running.size > 0 || [...this.pending.values()].some(({ dispatched }) => dispatched);
+    return this.running.size > 0;
   }
 
   async sync(): Promise<void> {
-    const jobs = await this.link.call("jobs", {}, 5000);
-    for (const { id } of jobs) {
-      if (this.lastResult.has(id)) continue;
-      this.running.add(id);
-      this.clearPending(id);
-    }
-  }
-
-  observeResult(entry: Entry): void {
-    const { job, startupFenced, startupLaunch, exitCode, lost, revived } = entry.fields;
-    if (typeof job !== "number" || (this.lastResult.get(job) ?? 0) >= entry.id) return;
-    if (startupFenced !== true && typeof exitCode !== "number" && lost !== true && revived !== true)
-      return;
-    this.lastResult.set(job, entry.id);
-    if (startupFenced === true) {
-      this.confirmStartupFence(
-        job,
-        typeof startupLaunch === "string" ? startupLaunch : undefined,
-        entry.body,
-      );
-      return;
-    }
-    const launching = this.launching.get(job);
-    if (launching !== undefined && entry.fields["commandNotStarted"] === true)
-      launching.unstarted = true;
-    this.clearPending(job);
-    if (revived === true) this.running.add(job);
-    else this.running.delete(job);
-    if (typeof exitCode === "number") this.forgetTab(job);
-  }
-
-  private forgetTab(job: number): void {
-    this.ownedTabs.delete(job);
-  }
-
-  private confirmStartupFence(job: number, launch?: string, detail = "startup was fenced"): void {
-    if (launch !== undefined) {
-      const preparing = this.preparing.get(launch);
-      if (preparing !== undefined) preparing.fence = { job, detail };
-    }
-    const pending = this.pending.get(job);
-    if (pending !== undefined && launch !== undefined && pending.launch !== launch) return;
-    this.running.delete(job);
-    if (pending === undefined) return;
-    pending.fenced = true;
-    this.clearPending(job);
-    const tab = this.ownedTabs.get(job);
-    if (tab !== undefined) {
-      this.forgetTab(job);
-      void this.closeStartupTab(job, tab);
-    }
-  }
-
-  private clearPending(job: number): void {
-    const pending = this.pending.get(job);
-    if (pending === undefined) return;
-    this.pending.delete(job);
-    void rm(pending.file, { force: true }).catch(() => undefined);
-  }
-
-  private async closeStartupTab(job: number, tab: string): Promise<void> {
-    for (let attempt = 1; attempt <= TAB_CLOSE_ATTEMPTS; attempt += 1) {
-      try {
-        await herdr("local", ["tab", "close", tab]);
-        return;
-      } catch (error) {
-        if (attempt === TAB_CLOSE_ATTEMPTS) {
-          const why = error instanceof Error ? error.message : String(error);
-          this.warn(
-            `Job ${String(job)} did not start, but its tab ${tab} could not be closed: ${why}`,
-          );
-        } else await delay(200);
-      }
-    }
+    const jobs = await this.link.call("jobs", {});
+    this.running.clear();
+    for (const { id, label } of jobs) this.running.set(id, label);
   }
 
   private async prepare(
+    url: string,
     id: string,
     label: string,
     command: string,
   ): Promise<{ job: number; heartbeatMs: number; registeredLaunch: boolean }> {
-    const args = { launch: id, label, command };
-    for (let attempt = 0; attempt < PREPARE_ATTEMPTS; attempt += 1) {
-      const receipt = await jobHandshake(this.endpoint, "job.prepare", args)
-        .then((reply) =>
-          reply.ok ? { ...reply, value: check(OPS["job.prepare"].result, reply.value) } : reply,
-        )
-        .catch(() => undefined);
-      if (receipt === undefined) continue;
-      if (receipt.ok) {
-        if ("unavailable" in receipt.value)
-          throw new Error(
-            `Job ${String(receipt.value.job)} cannot start: ${receipt.value.unavailable}`,
-          );
-        return { ...receipt.value, registeredLaunch: true };
-      }
-      if (
-        attempt === 0 &&
-        receipt.status === 400 &&
-        receipt.error === "unknown operation job.prepare"
-      )
-        return {
-          ...(await this.link.call("job.start", { label, command })),
-          registeredLaunch: false,
-        };
-      throw new Error(receipt.error);
-    }
-    throw new Error(`Could not confirm the reservation for ${label}; no command was launched`);
+    const outcome = await jobHandshake({ url, token: this.cardd.token }, "job.prepare", {
+      launch: id,
+      label,
+      command,
+    });
+    if (outcome.ok)
+      return { ...check(OPS["job.prepare"].result, outcome.value), registeredLaunch: true };
+    if (outcome.status !== 400 || outcome.error !== "unknown operation job.prepare")
+      throw new Error(outcome.error);
+    return { ...(await this.link.call("job.start", { label, command })), registeredLaunch: false };
   }
 
   async launch(
@@ -219,29 +105,17 @@ export class Jobs {
   ): Promise<{ job: number; tab: string }> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
+    const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
     const id = randomUUID();
-    const preparing: Preparing = {};
-    this.preparing.set(id, preparing);
-    const { job, heartbeatMs, registeredLaunch } = await this.prepare(id, label, command).catch(
-      (error: unknown) => {
-        this.preparing.delete(id);
-        throw error;
-      },
-    );
-    this.preparing.delete(id);
-    if (registeredLaunch && preparing.fence?.job === job)
-      throw new Error(`Job ${String(job)} cannot start: ${preparing.fence.detail}`);
+    const { job, heartbeatMs, registeredLaunch } = await this.prepare(url, id, label, command);
+    this.running.set(job, label);
     const file = join(tmpdir(), `fleet-job-${String(job)}-${id}.json`);
     const tab = tabName(job, label);
-    const pending: PendingDispatch | undefined = registeredLaunch
-      ? { launch: id, file, dispatched: false, fenced: false }
-      : undefined;
-    const launching = { unstarted: false };
-    if (registeredLaunch) this.launching.set(job, launching);
     try {
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
-        ...this.endpoint,
+        url,
+        token: this.cardd.token,
         job,
         ...(registeredLaunch ? { launch: { id, command } } : { command }),
         timeoutMs,
@@ -250,7 +124,6 @@ export class Jobs {
         lineChars,
       };
       writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
-      if (pending !== undefined) this.pending.set(job, pending);
       const created = await herdr("local", [
         "tab",
         "create",
@@ -263,37 +136,12 @@ export class Jobs {
         "--no-focus",
         ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
-      const tabId = field(records([created["tab"]])[0], "tab_id");
-      if (pending !== undefined) {
-        if (tabId === undefined) throw new Error("herdr did not return the job tab ID");
-        if (pending.fenced) {
-          void this.closeStartupTab(job, tabId);
-          throw new Error(`Job ${String(job)} was fenced before dispatch`);
-        }
-      }
-      if (tabId !== undefined) this.ownedTabs.set(job, tabId);
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
-      if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
-      if (pending !== undefined) pending.dispatched = true;
-      else if (!this.lastResult.has(job)) this.running.add(job);
       await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
-      if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced during dispatch`);
-      if (launching.unstarted)
-        throw new Error(
-          `Job ${String(job)} did not start: its wrapper reported that the command never ran`,
-        );
     } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
-      if (startupFenced(pending) || launching.unstarted) throw error;
-      if (pending?.dispatched === true)
-        throw new Error(
-          `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,
-          { cause: error },
-        );
       rmSync(file, { force: true });
-      const outputTail = `could not start: ${why}`;
-      this.running.delete(job);
+      const outputTail = `could not start: ${error instanceof Error ? error.message : String(error)}`;
       const finished = await this.link
         .call("job.finish", {
           job,
@@ -302,14 +150,8 @@ export class Jobs {
           ...(registeredLaunch ? { beforeRegistration: id } : {}),
         })
         .catch(() => undefined);
-      if (finished?.recorded === true) {
-        if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
-        if (pending !== undefined) this.confirmStartupFence(job);
-      }
-      if (pending === undefined) this.forgetTab(job);
+      if (!registeredLaunch || finished?.recorded === true) this.running.delete(job);
       throw error;
-    } finally {
-      if (this.launching.get(job) === launching) this.launching.delete(job);
     }
     return { job, tab };
   }
@@ -317,31 +159,15 @@ export class Jobs {
   async stop(job: number): Promise<string> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
-    const before = this.lastResult.get(job);
-    const { label, running, cancelled, legacy } = await this.link.call("job.stop", { job });
+    const { label, running } = await this.link.call("job.stop", { job });
     const named = `job ${String(job)} (${label})`;
-    if (!running) {
-      if (this.lastResult.get(job) === before) {
-        if (before === undefined) this.lastResult.set(job, 0);
-        this.running.delete(job);
-        if (cancelled === true) this.confirmStartupFence(job);
-      }
-      return cancelled === true
-        ? `${named} was stopped before wrapper registration. Its command will not run.`
-        : `${named} is not running: nothing to stop.`;
-    }
-    let tab = this.ownedTabs.get(job);
-    if (tab === undefined) {
-      if (legacy !== true && !(await confirmLegacyStop(this.endpoint, job, label)))
-        return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
-      const tabs = records(
-        (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],
-      );
-      const matches = tabs.filter((each) => each["label"] === tabName(job, label));
-      if (matches.length > 1)
-        return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
-      tab = field(matches[0], "tab_id");
-    }
+    if (!running)
+      return `${named} is not running: nothing to stop. Its result is already recorded.`;
+    const tabs = records((await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"]);
+    const tab = field(
+      tabs.find((each) => each["label"] === tabName(job, label)),
+      "tab_id",
+    );
     const panes = records(
       (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
     );

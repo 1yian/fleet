@@ -18,7 +18,6 @@ import { acknowledge, confirm, markRead, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
 import { adoptProcess } from "./incidents.ts";
 import { sanitize } from "./incident-kinds.ts";
-import { expireJobStarts } from "./jobs.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
@@ -146,19 +145,12 @@ class Hub {
     const started = performance.now();
     this.fillRepos();
     const filled = performance.now();
-    let startup: readonly string[] = [];
-    try {
-      startup = transaction(this.db, () => expireJobStarts(this.db, now));
-    } catch (error) {
-      console.warn(`Could not expire job startups: ${reason(error)}`);
-    }
-    const notify = new Set([
-      ...startup,
-      ...transaction(this.db, () => runCheck(this.db, now, this.timing, this.jobLossGrace)),
-    ]);
+    const notify = transaction(this.db, () =>
+      runCheck(this.db, now, this.timing, this.jobLossGrace),
+    );
     const checked = performance.now();
     for (const recipient of notify) this.flush(recipient, false);
-    if (notify.size > 0) this.web.changed();
+    if (notify.length > 0) this.web.changed();
     const ended = performance.now();
     const parts: [string, number][] = [
       ["fillRepos", filled - started],
@@ -177,13 +169,6 @@ class Hub {
       this.web.changed();
       return { ok: true, value: done.value };
     } catch (error) {
-      if (
-        (op === "job.prepare" || op === "job.register") &&
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ERR_SQLITE_ERROR"
-      )
-        return { ok: false, error: reason(error), retryable: true };
       return { ok: false, error: reason(error) };
     }
   }

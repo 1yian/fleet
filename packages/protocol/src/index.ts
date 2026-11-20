@@ -375,7 +375,7 @@ export const OPS = {
   report: {
     roles: ["worker"],
     args: Type.Object({
-      status: Type.Union([ReportStatus, Type.Literal("stopped-if-idle")]),
+      status: ReportStatus,
       text: Type.String({ minLength: 1 }),
       evidence: CompletionEvidence,
       key: Type.Optional(Key),
@@ -385,7 +385,6 @@ export const OPS = {
     }),
     result: Type.Object({
       ...CardSchema.properties,
-      deferred: Type.Optional(Type.Literal(true)),
       advice: Type.Optional(
         Type.String({
           description: "What the fleet tells the worker about this report, if anything",

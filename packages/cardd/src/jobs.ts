@@ -9,29 +9,10 @@ import {
   type JobLife,
   type JobState,
 } from "@fleet/protocol";
-import { addEntry } from "./store.ts";
-
-const STARTUP_MS = 30_000;
-const STARTUP_EXPIRED = {
-  exitCode: 127,
-  outputTail: "could not start: wrapper did not register before the startup deadline",
-};
-
-type JobResult = { exitCode: number; outputTail: string; commandNotStarted?: true };
 
 export const jobStateSql = (column: string, state: JobState): string => `${column} = '${state}'`;
 
-export const launchedJobSql = (alias: string): string =>
-  `(${alias}.launch_id IS NULL OR ${alias}.wrapper_pid IS NOT NULL)`;
-
-export const outstandingJobSql = (alias: string): string =>
-  jobStateSql(`${alias}.state`, JOB_RUNNING);
-
-export const startedAtSql = (alias: string): string =>
-  `coalesce(${alias}.registered_at, ${alias}.created_at)`;
-
-export const runningJobSql = (alias: string): string =>
-  `(${outstandingJobSql(alias)} AND ${launchedJobSql(alias)})`;
+export const runningJobSql = (column: string): string => jobStateSql(column, JOB_RUNNING);
 
 interface StoredJob {
   readonly id: number;
@@ -55,12 +36,9 @@ function lifeOf(state: unknown, droppedAt: unknown): JobLife {
   return { state: parseJobState(state), droppedAt };
 }
 
-function readJob(db: DatabaseSync, id: number) {
+function readJob(db: DatabaseSync, id: number): StoredJob | undefined {
   const row = db
-    .prepare(
-      `SELECT id, label, attempt, state, dropped_at, launch_id, ${launchedJobSql("j")} AS launched
-       FROM jobs j WHERE id = ?`,
-    )
+    .prepare("SELECT id, label, attempt, state, dropped_at FROM jobs WHERE id = ?")
     .get(id);
   if (row === undefined) return undefined;
   return {
@@ -68,8 +46,6 @@ function readJob(db: DatabaseSync, id: number) {
     label: textOf(row["label"], "label"),
     attempt: numberOf(row["attempt"], "attempt"),
     life: lifeOf(row["state"], row["dropped_at"]),
-    launched: row["launched"] === 1,
-    launch: row["launch_id"] === null ? null : textOf(row["launch_id"], "launch_id"),
   };
 }
 
@@ -79,7 +55,7 @@ function attemptOf(db: DatabaseSync, session: string): number {
   return id;
 }
 
-function ownedJob(db: DatabaseSync, session: string, id: number): ReturnType<typeof readJob> {
+function ownedJob(db: DatabaseSync, session: string, id: number): StoredJob | undefined {
   const job = readJob(db, id);
   if (job?.attempt !== attemptOf(db, session)) return undefined;
   return job;
@@ -106,59 +82,26 @@ function transitionJob(
   return { label: job.label, before: job.life.state, life: step.life, revived: step.revived };
 }
 
-function insertJob(
+export function startJob(
   db: DatabaseSync,
-  attempt: number,
+  session: string,
   job: { label: string; command: string; launch?: string },
-  now: number,
 ): number {
+  const now = Date.now();
   const { lastInsertRowid } = db
     .prepare(
       "INSERT INTO jobs (attempt, label, command, state, created_at, updated_at, launch_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-    .run(attempt, job.label, job.command, startedJob().state, now, now, job.launch ?? null);
+    .run(
+      attemptOf(db, session),
+      job.label,
+      job.command,
+      startedJob().state,
+      now,
+      now,
+      job.launch ?? null,
+    );
   return Number(lastInsertRowid);
-}
-
-export function startJob(
-  db: DatabaseSync,
-  session: string,
-  job: { label: string; command: string },
-): number {
-  return insertJob(db, attemptOf(db, session), job, Date.now());
-}
-
-export function prepareJob(
-  db: DatabaseSync,
-  session: string,
-  request: { label: string; command: string; launch: string },
-  heartbeatMs: number,
-): { job: number; heartbeatMs: number } | { job: number; unavailable: string } {
-  const attempt = attemptOf(db, session);
-  const now = Date.now();
-  const reservation = db
-    .prepare(
-      "SELECT id, attempt, label, command, state, wrapper_pid, created_at, output_tail FROM jobs WHERE launch_id = ?",
-    )
-    .get(request.launch);
-  if (reservation === undefined) return { job: insertJob(db, attempt, request, now), heartbeatMs };
-  if (
-    reservation["attempt"] !== attempt ||
-    reservation["label"] !== request.label ||
-    reservation["command"] !== request.command
-  )
-    throw new Error("The launch ID is already in use");
-  const job = numberOf(reservation["id"], "id");
-  const state = parseJobState(reservation["state"]);
-  if (!jobIsRunning(state))
-    return {
-      job,
-      unavailable: `already ${state}${typeof reservation["output_tail"] === "string" ? `: ${reservation["output_tail"]}` : ""}`,
-    };
-  if (reservation["wrapper_pid"] !== null) return { job, unavailable: "already registered" };
-  if (numberOf(reservation["created_at"], "created_at") <= now - STARTUP_MS)
-    return { job, unavailable: "startup deadline has passed" };
-  return { job, heartbeatMs };
 }
 
 export function registerJob(
@@ -166,23 +109,13 @@ export function registerJob(
   session: string,
   args: { job: number; launch: string; pid: number },
 ): boolean {
-  const now = Date.now();
   const { changes } = db
     .prepare(
-      `UPDATE jobs SET wrapper_pid = ?, registered_at = coalesce(registered_at, ?), updated_at = ?
-     WHERE id = ? AND attempt = ? AND launch_id = ? AND ${jobStateSql("state", JOB_RUNNING)}
-       AND (wrapper_pid = ? OR (wrapper_pid IS NULL AND created_at > ?))`,
+      `UPDATE jobs SET wrapper_pid = ?, updated_at = ?
+     WHERE id = ? AND attempt = ? AND launch_id = ? AND ${runningJobSql("state")}
+       AND (wrapper_pid IS NULL OR wrapper_pid = ?)`,
     )
-    .run(
-      args.pid,
-      now,
-      now,
-      args.job,
-      attemptOf(db, session),
-      args.launch,
-      args.pid,
-      now - STARTUP_MS,
-    );
+    .run(args.pid, Date.now(), args.job, attemptOf(db, session), args.launch, args.pid);
   return changes === 1;
 }
 
@@ -190,12 +123,14 @@ export function finishJob(
   db: DatabaseSync,
   session: string,
   job: { id: number; exitCode: number; outputTail: string; beforeRegistration?: string },
-): { label: string; fencedLaunch: string | null } | undefined {
+): { label: string } | undefined {
   const owned = ownedJob(db, session, job.id);
   if (owned === undefined) return undefined;
   if (
     job.beforeRegistration !== undefined &&
-    (owned.launched || owned.launch !== job.beforeRegistration)
+    db
+      .prepare("SELECT id FROM jobs WHERE id = ? AND launch_id = ? AND wrapper_pid IS NULL")
+      .get(job.id, job.beforeRegistration) === undefined
   )
     return undefined;
   const moved = transitionJob(
@@ -205,56 +140,7 @@ export function finishJob(
     Date.now(),
   );
   if (moved === undefined) return undefined;
-  return { label: moved.label, fencedLaunch: owned.launched ? null : owned.launch };
-}
-
-export function recordJobResult(
-  db: DatabaseSync,
-  target: { id: string; card: number | null },
-  job: number,
-  label: string,
-  result: JobResult,
-  fencedLaunch: string | null,
-): readonly string[] {
-  if (target.card === null) return [];
-  addEntry(
-    db,
-    {
-      card: target.card,
-      author: `job:${String(job)}`,
-      kind: "job-result",
-      body: result.outputTail,
-      fields: {
-        job,
-        label,
-        exitCode: result.exitCode,
-        ...(result.commandNotStarted === true ? { commandNotStarted: true } : {}),
-        ...(fencedLaunch === null ? {} : { startupFenced: true, startupLaunch: fencedLaunch }),
-      },
-    },
-    [target.id],
-  );
-  return [target.id];
-}
-
-export function expireJobStarts(db: DatabaseSync, now: number): string[] {
-  const expired = db
-    .prepare(
-      `SELECT j.id AS job, s.id AS session, a.card FROM jobs j
-       JOIN attempts a ON a.id = j.attempt JOIN sessions s ON s.attempt = a.id
-       WHERE ${jobStateSql("j.state", JOB_RUNNING)} AND NOT ${launchedJobSql("j")}
-         AND j.created_at <= ? AND a.state IN ('starting', 'active') ORDER BY j.id`,
-    )
-    .all(now - STARTUP_MS);
-  return expired.flatMap((row) => {
-    const job = numberOf(row["job"], "job");
-    const owned = readJob(db, job);
-    if (owned === undefined) return [];
-    const moved = transitionJob(db, owned, { name: "finish", ...STARTUP_EXPIRED }, now);
-    if (moved === undefined) return [];
-    const target = { id: textOf(row["session"], "session"), card: numberOf(row["card"], "card") };
-    return recordJobResult(db, target, job, moved.label, STARTUP_EXPIRED, owned.launch);
-  });
+  return { label: moved.label };
 }
 
 export function touchJob(
@@ -263,24 +149,21 @@ export function touchJob(
   job: number,
 ): { running: boolean; revived?: { label: string } } {
   const owned = ownedJob(db, session, job);
-  if (owned?.launched !== true) return { running: false };
+  if (owned === undefined) return { running: false };
   const moved = transitionJob(db, owned, { name: "alive" }, Date.now());
   if (moved === undefined || !jobIsRunning(moved.life.state)) return { running: false };
   if (moved.revived) return { running: true, revived: { label: moved.label } };
   return { running: true };
 }
 
-export function stopJob(db: DatabaseSync, session: string, job: number) {
+export function ownJob(
+  db: DatabaseSync,
+  session: string,
+  job: number,
+): { label: string; running: boolean } | undefined {
   const owned = ownedJob(db, session, job);
-  if (owned === undefined)
-    throw new Error(`job ${String(job)} is not one of this worker's jobs: nothing was stopped`);
-  const { label, life, launched } = owned;
-  const running = jobIsRunning(life.state);
-  if (!running || launched) return { label, running, legacy: running && owned.launch === null };
-
-  const result = { exitCode: 130, outputTail: "stopped before wrapper registration" };
-  transitionJob(db, owned, { name: "finish", ...result }, Date.now());
-  return { label, running: false, result, launch: owned.launch };
+  if (owned === undefined) return undefined;
+  return { label: owned.label, running: jobIsRunning(owned.life.state) };
 }
 
 export function dropLostJob(
@@ -317,8 +200,7 @@ export function loseSilentJobs(
   const silent = db
     .prepare(
       `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE ${runningJobSql("j")}
-         AND j.updated_at < ? AND a.state IN ('starting', 'active')
+       WHERE ${runningJobSql("j.state")} AND j.updated_at < ? AND a.state IN ('starting', 'active')
        ORDER BY j.id`,
     )
     .all(before);
@@ -341,7 +223,7 @@ export function abandonRunningJobs(db: DatabaseSync, card: number, at: number): 
   const ids = db
     .prepare(
       `SELECT j.id AS id FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE a.card = ? AND a.state IN ('starting', 'active') AND ${jobStateSql("j.state", JOB_RUNNING)}
+       WHERE a.card = ? AND a.state IN ('starting', 'active') AND ${runningJobSql("j.state")}
        ORDER BY j.id`,
     )
     .all(card);
@@ -353,19 +235,10 @@ export function abandonRunningJobs(db: DatabaseSync, card: number, at: number): 
   }
 }
 
-export function hasJobWait(db: DatabaseSync, session: string): boolean {
-  return (
-    db
-      .prepare(`SELECT 1 FROM jobs j WHERE attempt = ? AND ${outstandingJobSql("j")} LIMIT 1`)
-      .get(attemptOf(db, session)) !== undefined
-  );
-}
-
 export function runningJobs(db: DatabaseSync, session: string): { id: number; label: string }[] {
   return db
     .prepare(
-      `SELECT id, label FROM jobs j
-       WHERE attempt = ? AND ${runningJobSql("j")} ORDER BY id`,
+      `SELECT id, label FROM jobs WHERE attempt = ? AND ${runningJobSql("state")} ORDER BY id`,
     )
     .all(attemptOf(db, session))
     .map((row) => ({ id: numberOf(row["id"], "id"), label: textOf(row["label"], "label") }));

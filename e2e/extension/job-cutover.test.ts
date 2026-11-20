@@ -13,7 +13,6 @@ import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { parseRecord, records } from "../support/json.ts";
 import { until } from "../support/live-fleet.ts";
-import { groupIdentity, signalOwnedGroup } from "../support/marked.ts";
 import { ownWorkspacePackages } from "../support/protocol-skew.ts";
 import { addRemote, git, tip } from "../support/remote.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
@@ -91,8 +90,6 @@ function launch(label: string, command: string, agent = "default"): void {
 }
 
 const file = (path: string) => until(() => (existsSync(path) ? true : undefined), path);
-const fleetConnected = (event: Record<string, unknown>): boolean =>
-  event["type"] === "fleet_connected";
 const waitResult = (card: number, job: number, code: number) =>
   until(
     async () => {
@@ -107,26 +104,6 @@ const waitResult = (card: number, job: number, code: number) =>
     },
     `job ${String(job)} to record exit ${String(code)}`,
   );
-
-const waitGroupExit = (pid: number) =>
-  until(
-    () => {
-      try {
-        process.kill(-pid, 0);
-        return undefined;
-      } catch (error) {
-        if (Reflect.get(Object(error), "code") !== "ESRCH") throw error;
-        return true;
-      }
-    },
-    `process group ${String(pid)} to exit`,
-  );
-
-const waitTabClosed = (workspace: string, job: number, label: string) =>
-  until(async () => {
-    const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
-    return tabs.some((tab) => tab["label"] === `job-${String(job)}-${label}`) ? undefined : true;
-  }, `${label} wrapper to close its tab`);
 
 async function upgrade(): Promise<void> {
   const old = tip(workerCode.root);
@@ -163,97 +140,6 @@ async function upgradeDaemon(): Promise<void> {
   }, "the upgraded cardd to serve its exact commit");
 }
 
-test("an updated worker can stop its legacy job after reload but cannot hand off automatically against pre-registration cardd", async () => {
-  const main = await cardd.connect(mainToken);
-  const card = await newCard(main, "Stop a legacy job after reload");
-  const token = await begin(main, card, "run the legacy job", "local");
-  const created = await lab.run(["workspace", "create", "--no-focus"]);
-  const workspace = records([created["workspace"]])[0]?.["workspace_id"];
-  assert.equal(typeof workspace, "string");
-  await upgrade();
-  assert.equal(check(VersionSchema, await (await fetch(version())).json()).commit, LEGACY);
-  const env = {
-    ...lab.env,
-    FLEET_URL: cardd.url,
-    FLEET_TOKEN: token,
-    FLEET_ROLE: "worker",
-    HERDR_SESSION: lab.name,
-    HERDR_WORKSPACE_ID: String(workspace),
-  };
-  const ready = join(h.dir, "legacy-ready");
-  const run = `require('node:fs').writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => {}, 1000)`;
-  launch("legacy", `exec node -e ${quote(run)}`);
-  const pi = h.startPi("c-1-a1", env, [join(workerCode.root, EXTENSION)]);
-  await file(ready);
-  await h.waitForNth((event) => event["type"] === "settled", 1, "the launch to settle");
-  pi.prompt("/probe-reload");
-  await h.waitForNth(fleetConnected, 2, "the updated worker to reconnect after reload");
-  h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
-  h.onModel(() => ({ text: "Stop attempted" }));
-  pi.prompt("Stop the legacy job");
-  assert.match(toolResults(await h.waitForCall(3)).at(-1) ?? "", /Sent a stop to job 1 \(legacy\)/);
-  assert.equal((await waitResult(card.id, 1, 130)).body, "interrupted");
-  const pid = Number(readFileSync(ready, "utf8"));
-  assert.ok(Number.isInteger(pid) && pid > 1);
-  await waitGroupExit(pid);
-  await waitTabClosed(String(workspace), 1, "legacy");
-  const jobs = await cardd.post(token, "jobs", {});
-  assert.deepEqual(check(HttpOutcomeSchema, jobs.body), { ok: true, value: [] });
-  await pi.kill();
-
-  const idle = await newCard(main, "End an idle run on old cardd");
-  const idleToken = await begin(main, idle, "inspect the queue", "local");
-  assert.equal(
-    check(
-      HttpOutcomeSchema,
-      (
-        await cardd.post(idleToken, "report", {
-          status: "stopped-if-idle",
-          text: "automatic handoff",
-        })
-      ).body,
-    ).ok,
-    false,
-  );
-  h.onModel(() => ({ text: "There is nothing in the queue." }), "idle-old");
-  const idlePi = h.startPi(
-    `c-${String(idle.id)}-a1`,
-    {
-      ...env,
-      FLEET_TOKEN: idleToken,
-      FLEET_FAKE_AGENT: "idle-old",
-    },
-    [join(workerCode.root, EXTENSION)],
-  );
-  await h.waitForCall(0, "idle-old");
-  const view = async () => check(CardViewSchema, await main.call("card", { card: idle.id }));
-  await until(async () => {
-    const card = (await view()).card;
-    return card.activity?.state === "idle" ? card : undefined;
-  }, "the updated worker to finish its idle turn on old cardd");
-  assert.equal(h.callsOf("idle-old").length, 1);
-  assert.deepEqual(
-    (await view()).entries.filter((entry) => entry.kind === "report"),
-    [],
-  );
-
-  h.onModel(
-    () => ({ tool: "report", args: { status: "done", text: "Queue checked explicitly" } }),
-    "idle-old",
-  );
-  idlePi.prompt("File the explicit handoff");
-  await main.waitForEntry(
-    (entry) => entry.body === "Queue checked explicitly",
-    "the explicit handoff",
-  );
-  assert.deepEqual(
-    (await view()).entries
-      .filter((entry) => entry.kind === "report")
-      .map((entry) => entry.fields["status"]),
-    ["done"],
-  );
-});
-
 test("old host and cardd CLIs pull the additive stage without stranding either legacy wrapper; seal blocks until confirmed drain", async () => {
   const main = await cardd.connect(mainToken);
   const card = await newCard(main, "Drain the old wrappers");
@@ -273,14 +159,9 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   const go = join(h.dir, "natural-go");
   const interrupt = join(h.dir, "interrupt-ready");
   const never = join(h.dir, "never");
-  const ownedLaunch = lab.owned["FLEET_E2E_DETACH"];
-  assert.ok(ownedLaunch);
-  const helper = `require('node:fs').writeFileSync(${JSON.stringify(natural)}, String(process.pid)); setInterval(() => {}, 1000)`;
-  const helperArgs = JSON.stringify([ownedLaunch, "node", "-e", helper]);
-  const startHelper = `require('node:child_process').spawn(process.execPath, ${helperArgs}, { detached: true, stdio: 'ignore' }).unref()`;
   launch(
     "natural",
-    `node -e ${quote(startHelper)} && { while [ ! -f ${quote(go)} ]; do sleep 0.1; done; echo drained; exit 17; }`,
+    `touch ${quote(natural)}; while [ ! -f ${quote(go)} ]; do sleep 0.1; done; echo drained; exit 17`,
   );
   const pi = h.startPi("c-1-a1", env, [join(workerCode.root, EXTENSION)]);
   await file(natural);
@@ -292,9 +173,7 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   pi.prompt("Launch with the older worker code after the pull");
   await file(interrupt);
   await h.waitForCall(3);
-  const beforeUpgrade = h.events.filter(fleetConnected).length;
   await upgradeDaemon();
-  await h.waitForNth(fleetConnected, beforeUpgrade + 1, "the older worker to reconnect");
 
   assert.equal(cutover(1, "status").state, "open");
   const sealed = cutover(1, "seal");
@@ -315,56 +194,53 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
 
   writeFileSync(go, "");
   assert.equal((await waitResult(card.id, first.job, 17)).body, "drained");
-  await waitTabClosed(String(workspace), first.job, first.label);
-  const helperPid = Number(readFileSync(natural, "utf8"));
-  const helperIdentity = groupIdentity(helperPid);
-  assert.ok(helperIdentity, "the detached helper survived its wrapper and command");
   assert.deepEqual(
-    cutover(1, "status").blockers.map(({ job, state }) => [job, state]),
-    [
-      [first.job, "finished"],
-      [second.job, "running"],
-    ],
+    cutover(1, "status").blockers.map(({ job }) => job),
+    [second.job],
   );
   h.onModel(() => ({ tool: "stop_job", args: { job: second.job } }));
   h.onModel(() => ({ text: "stop sent" }));
   pi.prompt("Stop the other legacy job");
   await waitResult(card.id, second.job, 130);
+  assert.deepEqual(
+    cutover(1, "status").blockers.map(({ job }) => job),
+    [second.job],
+  );
   const pid = Number(readFileSync(interrupt, "utf8"));
   assert.ok(Number.isInteger(pid) && pid > 1);
-  await waitGroupExit(pid);
-  await waitTabClosed(String(workspace), second.job, second.label);
-  const remaining = cutover(
-    1,
-    "confirm-stop",
-    String(second.job),
-    "Verified the only command process group exited and the wrapper closed its tab after stop_job",
-  );
-  assert.equal(remaining.state, "draining");
-  assert.deepEqual(
-    remaining.blockers.map(({ job, state }) => [job, state]),
-    [[first.job, "finished"]],
-  );
-  assert.equal(groupIdentity(helperPid), helperIdentity);
-  assert.ok(signalOwnedGroup(helperPid, helperIdentity, "SIGTERM"));
-  await waitGroupExit(helperPid);
+  await until(() => {
+    try {
+      process.kill(-pid, 0);
+      return undefined;
+    } catch (error) {
+      if (Reflect.get(Object(error), "code") !== "ESRCH") throw error;
+      return true;
+    }
+  }, "the stopped command process group to exit");
+  await until(async () => {
+    const tabs = records(
+      (await lab.run(["tab", "list", "--workspace", String(workspace)]))["tabs"],
+    );
+    return tabs.some((tab) => tab["label"] === `job-${String(second.job)}-interrupt`)
+      ? undefined
+      : true;
+  }, "the stopped wrapper to close its tab");
   assert.deepEqual(
     cutover(
       0,
       "confirm-stop",
-      String(first.job),
-      "Verified the foreground command and wrapper exited, then stopped and verified the only detached helper's group was gone",
+      String(second.job),
+      "Verified the command process group exited and the wrapper closed its tab after stop_job",
     ),
     READY,
   );
 
   await pi.kill();
-  const beforeFresh = h.events.filter(fleetConnected).length;
   launch("registered", "echo from-the-new-wrapper", "fresh");
   const fresh = h.startPi("c-1-a1", { ...env, FLEET_FAKE_AGENT: "fresh" }, [
     join(workerCode.root, EXTENSION),
   ]);
-  await h.waitForNth(fleetConnected, beforeFresh + 1, "the new worker to connect");
+  await fresh.state();
   fresh.prompt("Run a registered job after handover");
   assert.equal((await waitResult(card.id, second.job + 1, 0)).body, "from-the-new-wrapper");
   assert.deepEqual(cutover(0, "status"), READY);

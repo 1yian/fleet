@@ -5,7 +5,6 @@ import {
   CardSchema,
   check,
   DELIVERIES,
-  JOB_RUNNING,
   type Activity,
   type Card,
   type Delivery,
@@ -432,9 +431,7 @@ export function activityOf(db: DatabaseSync, card: Card, lane: boolean): Activit
         .get(card.lane)
     : db
         .prepare(
-          `SELECT iif(s.state = 'idle' AND EXISTS (SELECT 1 FROM jobs j
-                 WHERE j.attempt = a.id AND j.state = '${JOB_RUNNING}'), 'waiting', s.state) AS state,
-             coalesce(s.last_seen, a.created_at) AS at
+          `SELECT s.state AS state, coalesce(s.last_seen, a.created_at) AS at
            FROM sessions s JOIN attempts a ON a.id = s.attempt
            WHERE a.card = ? AND a.state IN ('starting', 'active') AND s.state <> 'closed'`,
         )

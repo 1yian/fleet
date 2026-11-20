@@ -20,10 +20,6 @@ export const HttpCallSchema = Type.Object({ op: Type.String(), args: Type.Unknow
 
 export const HttpOutcomeSchema = Type.Union([
   Type.Object({ ok: Type.Literal(true), value: Type.Unknown() }),
-  Type.Object({
-    ok: Type.Literal(false),
-    error: Type.String(),
-    retryable: Type.Optional(Type.Literal(true)),
-  }),
+  Type.Object({ ok: Type.Literal(false), error: Type.String() }),
 ]);
 export type HttpOutcome = Static<typeof HttpOutcomeSchema>;

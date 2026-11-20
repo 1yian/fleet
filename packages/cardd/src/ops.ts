@@ -13,13 +13,10 @@ import { jobCutover } from "./job-cutover.ts";
 import {
   dropLostJob,
   finishJob,
-  hasJobWait,
-  prepareJob,
-  recordJobResult,
+  ownJob,
   registerJob,
   runningJobs,
   startJob,
-  stopJob,
   touchJob,
 } from "./jobs.ts";
 import { boardFor, cardView } from "./board.ts";
@@ -110,7 +107,7 @@ const NOTHING_RUNS =
   "Nothing runs for this pause. Your mate was told, and is told again if the pause ends and nothing ran since. If you wait on a task that finishes on its own, start a run_long watcher for it.";
 
 function unwatchedPause(db: DatabaseSync, session: Session, status: ReportStatus): boolean {
-  return status === "paused" && !hasJobWait(db, session.id);
+  return status === "paused" && runningJobs(db, session.id).length === 0;
 }
 
 function reportRoute(db: DatabaseSync, card: Card, mateHears: boolean): string[] {
@@ -129,7 +126,7 @@ function reportRecipients(
   db: DatabaseSync,
   session: Session,
   card: Card,
-  args: Omit<OpArgs<"report">, "status"> & { status: ReportStatus },
+  args: OpArgs<"report">,
   unwatched: boolean,
 ): string[] {
   if (args.replyTo === undefined)
@@ -282,7 +279,8 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "job.prepare": (db, session, raw, timing) => {
     const args = check(OPS["job.prepare"].args, raw);
     requireReviewDecision(db, session, args.command);
-    return { value: prepareJob(db, session.id, args, timing.heartbeat), notify: [] };
+    const job = startJob(db, session.id, args);
+    return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
   },
   "job.register": (db, session, raw) => ({
     value: { registered: registerJob(db, session.id, check(OPS["job.register"].args, raw)) },
@@ -320,23 +318,25 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     });
     if (finished === undefined || session.card === null)
       return { value: { recorded: false }, notify: [] };
-    return {
-      value: { recorded: true },
-      notify: recordJobResult(db, session, args.job, finished.label, args, finished.fencedLaunch),
+    const fields = { job: args.job, label: finished.label, exitCode: args.exitCode };
+    const entry = {
+      card: session.card,
+      author: `job:${String(args.job)}`,
+      kind: "job-result",
+      body: args.outputTail,
+      fields,
     };
+    addEntry(db, entry, [session.id]);
+    return { value: { recorded: true }, notify: [session.id] };
   },
   "job.stop": (db, session, raw) => {
     const args = check(OPS["job.stop"].args, raw);
-    const { label, running, result, launch, legacy } = stopJob(db, session.id, args.job);
-    if (result === undefined)
-      return {
-        value: { label, running, ...(legacy === true ? { legacy: true } : {}) },
-        notify: [],
-      };
-    return {
-      value: { label, running, cancelled: true },
-      notify: recordJobResult(db, session, args.job, label, result, launch),
-    };
+    const own = ownJob(db, session.id, args.job);
+    if (own === undefined)
+      throw new Error(
+        `job ${String(args.job)} is not one of this worker's jobs: nothing was stopped`,
+      );
+    return { value: { label: own.label, running: own.running }, notify: [] };
   },
   "job.drop": (db, session, raw) => {
     const args = check(OPS["job.drop"].args, raw);
@@ -362,7 +362,6 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     const { status, attention, until } = loadCard(db, session.card).standing;
     return { value: { status, attention, until }, notify: [] };
   },
-  "job.idle": (db, session) => ({ value: { idle: !hasJobWait(db, session.id) }, notify: [] }),
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
@@ -381,14 +380,8 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
   report: (db, session, raw, _timing, note, _closeCheck, emptyBranch) => {
-    const { status, ...fieldsFromRequest } = check(OPS.report.args, raw);
+    const args = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
-    if (status === "stopped-if-idle" && hasJobWait(db, session.id))
-      return { value: { ...getCard(db, session.card), deferred: true }, notify: [] };
-    const args = {
-      ...fieldsFromRequest,
-      status: status === "stopped-if-idle" ? "stopped" : status,
-    } satisfies { status: ReportStatus };
     requireDatedPause(args.status, args.until);
     requireCommentsRead(db, session.id, args.status);
     const card = openCardWithPr(db, session.card, args.pr);

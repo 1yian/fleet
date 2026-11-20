@@ -113,10 +113,7 @@ export const JOB_OPS = {
   "job.prepare": {
     roles: ["worker"],
     args: Type.Object({ ...StartJob.properties, launch: JobLaunchId }),
-    result: Type.Union([
-      StartedJob,
-      Type.Object({ job: Type.Integer(), unavailable: Type.String({ minLength: 1 }) }),
-    ]),
+    result: StartedJob,
   },
   "job.register": {
     roles: ["worker"],
@@ -158,19 +155,13 @@ export const JOB_OPS = {
       exitCode: Type.Integer(),
       outputTail: Type.String(),
       beforeRegistration: Type.Optional(JobLaunchId),
-      commandNotStarted: Type.Optional(Type.Literal(true)),
     }),
     result: Type.Object({ recorded: Type.Boolean() }),
   },
   "job.stop": {
     roles: ["worker"],
     args: Type.Object({ job: Type.Integer() }),
-    result: Type.Object({
-      label: Type.String(),
-      running: Type.Boolean(),
-      cancelled: Type.Optional(Type.Literal(true)),
-      legacy: Type.Optional(Type.Literal(true)),
-    }),
+    result: Type.Object({ label: Type.String(), running: Type.Boolean() }),
   },
   "job.drop": {
     roles: ["worker", "mate"],
@@ -180,11 +171,6 @@ export const JOB_OPS = {
       state: JobStateSchema,
       dropped: Type.Boolean(),
     }),
-  },
-  "job.idle": {
-    roles: ["worker"],
-    args: Type.Object({}),
-    result: Type.Object({ idle: Type.Boolean() }),
   },
   jobs: {
     roles: ["worker"],

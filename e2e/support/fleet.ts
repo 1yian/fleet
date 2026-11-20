@@ -229,34 +229,3 @@ export class CheckPasses {
     );
   }
 }
-
-export function pastClock(ms: number): void {
-  while (Date.now() <= ms);
-}
-
-function readOnly<T>(cardd: Cardd, read: (db: DatabaseSync) => T): T {
-  const db = new DatabaseSync(cardd.db, { readOnly: true, timeout: 5000 });
-  try {
-    return read(db);
-  } finally {
-    db.close();
-  }
-}
-
-export function registeredAt(cardd: Cardd, job: number): number {
-  return readOnly(cardd, (db) => {
-    const at = db.prepare("SELECT registered_at AS at FROM jobs WHERE id = ?").get(job)?.["at"];
-    if (typeof at !== "number") throw new Error(`job ${String(job)} has no registration time`);
-    return at;
-  });
-}
-
-export function lastReportAt(cardd: Cardd, card: Card): number {
-  return readOnly(cardd, (db) => {
-    const at = db
-      .prepare("SELECT max(created_at) AS at FROM entries WHERE card = ? AND kind = 'report'")
-      .get(card.id)?.["at"];
-    if (typeof at !== "number") throw new Error(`c-${String(card.id)} has no report`);
-    return at;
-  });
-}

@@ -5,11 +5,15 @@ const BLOCKERS = `
   SELECT j.id AS job, a.card, a.host, j.label, j.state
   FROM jobs j JOIN attempts a ON a.id = j.attempt
   LEFT JOIN job_stop_confirmations s ON j.id = s.job
-  WHERE j.launch_id IS NULL AND (j.state = 'running' OR s.job IS NULL)`;
+  WHERE j.launch_id IS NULL AND (
+    j.state = 'running' OR (s.job IS NULL AND (
+      j.state != 'finished' OR j.output_tail IS NULL OR j.exit_code = 130 OR
+      (j.exit_code = 127 AND j.output_tail GLOB 'could not start:*')
+    ))
+  )`;
 
 function confirmStop(db: DatabaseSync, job: number, evidence: string): void {
-  if (evidence.trim() === "")
-    throw new Error("Give the evidence that the legacy job's process tree cannot run");
+  if (evidence.trim() === "") throw new Error("Give the evidence that the legacy job cannot run");
   const blocker = db.prepare(`${BLOCKERS} AND j.id = ?`).get(job);
   if (blocker === undefined) throw new Error("That job is not a legacy cutover blocker");
   if (blocker["state"] === "running")

@@ -1,7 +1,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { constants } from "node:os";
 import { basename } from "node:path";
-import { check, OPS, type OpArgs } from "@fleet/protocol";
+import { check, OPS } from "@fleet/protocol";
 import Type from "typebox";
 import { spawnDetached } from "./detached.ts";
 import { herdr } from "./host.ts";
@@ -132,9 +132,7 @@ function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
   };
 }
 
-type JobResult = Pick<OpArgs<"job.finish">, "exitCode" | "outputTail" | "commandNotStarted">;
-
-async function run(job: Job): Promise<JobResult> {
+async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> {
   const tail = new Tail(job.keep);
   console.error(
     "[run_long] WARNING: Bash pipefail is enabled, not errexit. A command list returns its last command's status: 'false; true' succeeds. Use 'suite && formatter' or preserve $? explicitly. Intentional || and if recovery retain normal shell semantics; nested shells own their failure policy.",
@@ -144,7 +142,6 @@ async function run(job: Job): Promise<JobResult> {
     env: shimmedEnv(process.env),
   });
   const pid = child.pid;
-  const startup = pid === undefined ? { commandNotStarted: true as const } : {};
   const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
     try {
       return pid !== undefined && process.kill(-pid, signal);
@@ -193,12 +190,7 @@ async function run(job: Job): Promise<JobResult> {
     void Promise.race([exited, sleep(EARLY_REPORT_MS)]).then(() => {
       tail.flush();
       const outputTail = `${tail.text()}\ninterrupted`.trim();
-      void call(job, "job.finish", {
-        job: job.job,
-        exitCode: INTERRUPTED_EXIT,
-        outputTail,
-        ...startup,
-      });
+      void call(job, "job.finish", { job: job.job, exitCode: INTERRUPTED_EXIT, outputTail });
     });
   };
   for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
@@ -216,7 +208,7 @@ async function run(job: Job): Promise<JobResult> {
   tail.flush();
   if (reason === "interrupted") tail.add(["interrupted"]);
   const forced = reason === "timeout" ? TIMEOUT_EXIT : INTERRUPTED_EXIT;
-  return { exitCode: reason === undefined ? code : forced, outputTail: tail.text(), ...startup };
+  return { exitCode: reason === undefined ? code : forced, outputTail: tail.text() };
 }
 
 function call(job: Job, op: string, args: object): Promise<Response | undefined> {
@@ -228,7 +220,7 @@ function call(job: Job, op: string, args: object): Promise<Response | undefined>
   );
 }
 
-async function post(job: Job, result: JobResult): Promise<void> {
+async function post(job: Job, result: { exitCode: number; outputTail: string }): Promise<void> {
   for (let wait = 1000; ; wait = Math.min(wait * 2, MAX_RETRY_MS)) {
     const response = await call(job, "job.finish", { job: job.job, ...result });
     if (response?.status === 200 || response?.status === 401) return;
@@ -246,7 +238,13 @@ async function register(job: Job, launch: string): Promise<boolean> {
       launch,
       pid: process.pid,
     })
-      .then((reply) => reply.ok && check(OPS["job.register"].result, reply.value).registered)
+      .then((reply) =>
+        reply.ok
+          ? check(OPS["job.register"].result, reply.value).registered
+          : reply.status < 500
+            ? false
+            : undefined,
+      )
       .catch(() => undefined);
     if (outcome !== undefined) return outcome;
     if (attempt + 1 < REGISTRATION_ATTEMPTS) await sleep(250);
@@ -255,25 +253,16 @@ async function register(job: Job, launch: string): Promise<boolean> {
 }
 
 const job = readJob(process.argv[2] ?? "");
-let stopped = false;
-const stopBeforeRun = (): void => {
-  stopped = true;
-};
-for (const signal of STOP_SIGNALS) process.on(signal, stopBeforeRun);
+const confirmed = job.launch === undefined || (await register(job, job.launch));
 const heartbeat = setInterval(() => {
   void call(job, "job.alive", { job: job.job });
 }, job.heartbeatMs);
-const confirmed = job.launch === undefined || (await register(job, job.launch));
-for (const signal of STOP_SIGNALS) process.off(signal, stopBeforeRun);
-const result: JobResult = stopped
-  ? { exitCode: INTERRUPTED_EXIT, outputTail: "interrupted", commandNotStarted: true }
-  : confirmed
-    ? await run(job)
-    : {
-        exitCode: 127,
-        outputTail: "could not start: cardd did not confirm wrapper registration",
-        commandNotStarted: true,
-      };
+const result = confirmed
+  ? await run(job)
+  : {
+      exitCode: 127,
+      outputTail: "could not start: cardd did not confirm wrapper registration",
+    };
 console.log(`\n[run_long] job ${String(job.job)} exited ${String(result.exitCode)}`);
 await post(job, result);
 clearInterval(heartbeat);
