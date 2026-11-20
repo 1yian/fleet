@@ -36,6 +36,7 @@ type DeliveryEvent = "push" | "read" | "ack" | "confirm" | "resend";
 const AT_CONNECT = `${IN_FLIGHT_DELIVERY}, 'acknowledged'`;
 const WHEN_UP = QUEUED_DELIVERY;
 const AGAIN = "'resent', 'pushed-again'";
+const RECOVERY_CHECK = "e.kind = 'comment' AND json_extract(e.fields, '$.recovery') IS NOT NULL";
 const CHASEABLE = `${SENT_DELIVERY}, 'read', 'filed'`;
 
 function deliveryState(value: unknown): DeliveryState {
@@ -228,7 +229,10 @@ export function toPush(
     `SELECT json_object('entry', json(${ENTRY_JSON}), 'name', c.name,
        'again', json(iif(d.state IN (${AGAIN}), 'true', 'false'))) AS j
      FROM deliveries d JOIN entries e ON e.id = d.entry JOIN cards c ON c.id = e.card
-     WHERE d.session = ? AND d.state IN (${states}) ORDER BY e.id`,
+       JOIN sessions s ON s.id = d.session
+     WHERE d.session = ? AND d.state IN (${states})
+       AND NOT (s.role = 'worker' AND (${RECOVERY_CHECK}) AND d.state IN ('read', 'acknowledged'))
+     ORDER BY e.id`,
     session,
   );
   const queued = new Set(

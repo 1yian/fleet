@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { CardSchema, check, OPS, type Card, type Holder } from "@fleet/protocol";
 import { Cardd, type Session } from "./cardd.ts";
@@ -227,5 +228,15 @@ export class CheckPasses {
       (entry) => entry.card === card.id && entry.fields["condition"] === "worker-stalled",
       `the timed check to pass over a worker silent for six minutes (pass ${String(this.passes)})`,
     );
+  }
+}
+
+export async function untilOnThread(mate: Session, card: number, text: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const entries = check(OPS.card.result, await mate.call("card", { card })).entries;
+    if (entries.some((entry) => entry.body.includes(text))) return;
+    assert.ok(Date.now() < deadline, `c-${String(card)} never showed: ${text}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }

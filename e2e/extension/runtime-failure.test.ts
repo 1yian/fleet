@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { begin, newCard, startFleet, status, untilOnThread, type Fleet } from "../support/fleet.ts";
 import { gate, Harness, type Pi } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
 
@@ -441,7 +441,8 @@ test("a failed compaction is its own incident with the original error, and recov
   const turnsBefore = h.callsOf("cleo").length;
   compactorUp = true;
   await recover(fleet.main, heard, "retry");
-  setClock(T0 + 17_000);
+  await untilOnThread(fleet.main, heard.card, "recovered (retry)");
+  setClock(T0 + 30_000);
   const done = await fleet.main.waitForEntry(
     (entry) => entry.body.includes("recovered (retry)"),
     "a successful compaction",

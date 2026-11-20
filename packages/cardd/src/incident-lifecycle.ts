@@ -365,6 +365,13 @@ function writeLive(
   throw new Error(`incident ${event.type} has no writer`);
 }
 
+function endRecoveryCheck(db: DatabaseSync, incident: number): void {
+  db.prepare(
+    `DELETE FROM deliveries WHERE (session, entry) = (
+       SELECT actor, recovery_entry FROM incidents WHERE id = ?)`,
+  ).run(incident);
+}
+
 export function applyIncident(
   db: DatabaseSync,
   incident: IncidentView | undefined,
@@ -374,9 +381,7 @@ export function applyIncident(
   const subject = subjectOf(db, incident, event);
   if (subject === undefined && event.type === "controlled") return;
   const state = nextIncident(subject, event);
-  if (isTerminal(event.type)) {
-    writeClosed(db, required(subject), state, at);
-    return;
-  }
-  writeLive(db, subject, state, event, at);
+  if (isTerminal(event.type)) writeClosed(db, required(subject), state, at);
+  else writeLive(db, subject, state, event, at);
+  if (subject?.state === "recovering" && state !== "recovering") endRecoveryCheck(db, subject.id);
 }

@@ -19,6 +19,7 @@ import {
   type Incident,
 } from "./incident-store.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
+import { markRead } from "./deliveries.ts";
 import { QUEUED_DELIVERY, TAKEN_DELIVERY } from "./delivery-states.ts";
 import { transitionStop } from "./lane-stop.ts";
 import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
@@ -391,6 +392,10 @@ const CONTROL_OPS: ReadonlySet<string> = new Set(["report", "comment", "board"])
 export function noteControl(db: DatabaseSync, session: string, op: string): void {
   if (!CONTROL_OPS.has(op)) return;
   applyIncident(db, undefined, { type: "controlled", actor: session }, Date.now());
+  if (op !== "report") return;
+  const live = liveIncident(db, session);
+  if (live?.state === "recovering" && live.recoveryEntry !== null)
+    markRead(db, session, live.recoveryEntry);
 }
 
 function answeredAndActed(db: DatabaseSync, inc: Incident, acted: boolean): boolean {
