@@ -222,6 +222,50 @@ test("a newer refunded restart leaves the earlier notice deliverable and frees i
   await assert.rejects(restart("over-cap"), /was restarted 3 times in the last hour/);
 });
 
+for (const delivery of ["queued", "pushed", "posted during suppression"] as const) {
+  test(`refunding a successor releases the older ${delivery} notice on the same connection`, async () => {
+    const token = await begin(fleet.main, card);
+    const first = await fleet.cardd.connect(token, [], false);
+    if (delivery !== "pushed") await first.close();
+    const older = requestOf(await restart("older"));
+    if (delivery !== "posted during suppression")
+      assert.deepEqual(await notice(older), { posted: true });
+    if (delivery === "pushed") {
+      await first.waitForEntry(
+        (entry) => entry.fields["restartNotice"] === older,
+        "the original unread push",
+      );
+      await first.close();
+    }
+    const successor = await restart("successor");
+    const newer = requestOf(successor);
+    if (delivery === "posted during suppression")
+      assert.deepEqual(await notice(older), { posted: true });
+    const text = "Check the footer while the newer restart is pending.";
+    await fleet.main.call("comment", { card: card.id, text });
+    const worker = await fleet.cardd.connect(token);
+    await worker.waitForEntry(
+      (entry) => entry.body === text,
+      "the ordinary comment after reconnect",
+    );
+    assert.equal(
+      worker.entries.some(({ entry }) => entry.fields["restartNotice"] === older),
+      false,
+    );
+    assert.equal((await restart("older")).generation, successor.generation);
+
+    assert.deepEqual(await restartFailed("successor", newer), { recorded: true });
+    await worker.waitForEntry(
+      (entry) => entry.fields["restartNotice"] === older,
+      "the restored notice without reconnecting",
+    );
+    assert.equal((await restart("older")).repeat, true);
+    assert.equal((await restart("successor")).repeat, false);
+    assert.equal((await restart("last-slot")).repeat, false);
+    await assert.rejects(restart("over-cap"), /was restarted 3 times in the last hour/);
+  });
+}
+
 test("the next replacement receives only its notice while both restart requests still count", async () => {
   const token = await begin(fleet.main, card);
   await (await fleet.cardd.connect(token)).close();
