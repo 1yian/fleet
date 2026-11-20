@@ -93,13 +93,21 @@ export function parseOpened(output: string): WorkerScratch {
   return { scratch, cache };
 }
 
-export const workerEnvironment = ({ scratch, cache }: WorkerScratch): string[] => [
+export const workerEnvironment = ({ scratch, cache }: WorkerScratch, attempt: string): string[] => [
   `FLEET_SCRATCH=${scratch}`,
   `TMPDIR=${join(scratch, TMP_FOLDER)}`,
   `NODE_COMPILE_CACHE=${cache}`,
+  `FLEET_ATTEMPT=${attempt}`,
+  `CHROME_DEVTOOLS_AXI_SESSION=${attempt}`,
 ];
 
-const FORWARDED = ["FLEET_SCRATCH", "TMPDIR", "NODE_COMPILE_CACHE"] as const;
+const FORWARDED = [
+  "FLEET_SCRATCH",
+  "TMPDIR",
+  "NODE_COMPILE_CACHE",
+  "FLEET_ATTEMPT",
+  "CHROME_DEVTOOLS_AXI_SESSION",
+] as const;
 
 export function forwardedEnvironment(env: NodeJS.ProcessEnv): string[] {
   const scratch = env["FLEET_SCRATCH"];

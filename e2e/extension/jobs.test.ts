@@ -77,7 +77,7 @@ test("a failed pipeline wakes the worker with failure, and the wait is not a sta
   assert.deepEqual(await labels(), ["1"]);
 });
 
-test("a run_long job runs with the worker's scratch folder, temp folder, and compile cache, not the host's defaults", async () => {
+test("a run_long job runs with the worker's scratch folder, temp folder, compile cache, and attempt name, not the host's defaults", async () => {
   const scratch = join(h.dir, "card");
   const cache = join(h.dir, "cache");
   mkdirSync(join(scratch, "tmp"), { recursive: true });
@@ -86,10 +86,16 @@ test("a run_long job runs with the worker's scratch folder, temp folder, and com
     FLEET_SCRATCH: scratch,
     TMPDIR: join(scratch, "tmp"),
     NODE_COMPILE_CACHE: cache,
+    FLEET_ATTEMPT: "c-1-a1",
+    CHROME_DEVTOOLS_AXI_SESSION: "c-1-a1",
   };
   h.onModel(() => ({
     tool: "run_long",
-    args: { label: "tests", command: 'echo "$FLEET_SCRATCH $TMPDIR $NODE_COMPILE_CACHE"' },
+    args: {
+      label: "tests",
+      command:
+        'echo "$FLEET_SCRATCH $TMPDIR $NODE_COMPILE_CACHE $FLEET_ATTEMPT $CHROME_DEVTOOLS_AXI_SESSION"',
+    },
   }));
   h.onModel(() => ({ text: "waiting for the tests" }));
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "seen" } }));
@@ -97,7 +103,7 @@ test("a run_long job runs with the worker's scratch folder, temp folder, and com
   await fleet.main.waitForEntries(1);
   assert.equal(
     lastUser(await h.waitForCall(2)),
-    `[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 0: ${scratch} ${join(scratch, "tmp")} ${cache}`,
+    `[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 0: ${scratch} ${join(scratch, "tmp")} ${cache} c-1-a1 c-1-a1`,
   );
 });
 
