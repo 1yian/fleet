@@ -34,6 +34,7 @@ if (command.includes("'scratch'")) {
   process.stdout.write(
     `${JSON.stringify({
       failed: "fleet up: could not create the workspace of ops",
+      expected: ["cleo", "ops"],
       outcomes: started ? [{ lane: "cleo", action: "started" }] : [],
     })}\n`,
   );

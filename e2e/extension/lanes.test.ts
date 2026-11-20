@@ -283,6 +283,7 @@ test("main tells the captain when a host cannot be reached, and when it is back"
 
 test("unread transport and nested observations neither report failure nor clear a confirmed outage", async () => {
   const control = join(here.parent, "faults");
+  p620.addLane("spare", { url: cardd.url, token: cardd.addLane("spare", "main"), hold: true });
   const faults = [
     "blank",
     "cut",
@@ -290,6 +291,10 @@ test("unread transport and nested observations neither report failure nor clear 
     "failure-only",
     "down",
     "nested",
+    "omit-row",
+    "omit-all",
+    "duplicate-row",
+    "wrong-row",
     "failed",
     "failed-partial",
     "failure-with-start",

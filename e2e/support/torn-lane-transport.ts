@@ -38,19 +38,29 @@ function nextFault(): string {
 const fault = maintenance ? nextFault() : "whole";
 if (maintenance) appendFileSync(`${control}.log`, `${fault}\n`);
 if (fault === "cut") process.stdout.write(run.stdout.slice(0, run.stdout.length / 2));
-else if (fault === "partial") process.stdout.write('[{"lane":"far"}]\n');
-else if (fault === "nested") process.stdout.write('[{"lane":"far","action":"unread"}]\n');
-else if (fault === "failure-only") process.stdout.write('{"failed":"obsolete envelope"}\n');
+else if (fault === "partial")
+  process.stdout.write('{"expected":["far"],"outcomes":[{"lane":"far"}]}\n');
+else if (["nested", "omit-row", "omit-all", "duplicate-row", "wrong-row"].includes(fault)) {
+  const reply = JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "");
+  const [first] = reply.outcomes;
+  if (fault === "nested") first.action = "unread";
+  if (fault === "omit-row") reply.outcomes = reply.outcomes.slice(0, -1);
+  if (fault === "omit-all") reply.outcomes = [];
+  if (fault === "duplicate-row") reply.outcomes = [first, first];
+  if (fault === "wrong-row") reply.outcomes[1].lane = "unlisted";
+  process.stdout.write(`${JSON.stringify(reply)}\n`);
+} else if (fault === "failure-only") process.stdout.write('{"failed":"obsolete envelope"}\n');
 else if (fault === "legacy-failure")
   process.stderr.write("legacy maintenance could not acquire the lane lock\n");
 else if (fault === "failed-partial")
   process.stdout.write(
-    '{"failed":"unconfirmed mutation","outcomes":[{"lane":"unconfirmed","action":"started"}]}\n',
+    '{"failed":"unconfirmed mutation","expected":["unconfirmed"],"outcomes":[{"lane":"unconfirmed","action":"started"}]}\n',
   );
 else if (fault === "failure-with-start" || fault === "operation-failure")
   process.stdout.write(
     `${JSON.stringify({
       failed: "could not acquire the next lane's lifecycle lock",
+      expected: ["far", "spare"],
       outcomes: fault === "failure-with-start" ? [{ lane: "far", action: "started" }] : [],
     })}\n`,
   );

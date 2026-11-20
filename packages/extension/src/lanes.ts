@@ -44,14 +44,9 @@ async function rows(
   config: LaneConfig,
   host: string,
   args: readonly string[],
-  placement = false,
 ): Promise<Record<string, unknown>[]> {
-  const out = (await fleet(config, host, [...args, "--json"])).trim().split("\n").at(-1);
-  const parsed: unknown = JSON.parse(out ?? (placement ? "" : "[]"));
-  const list = records(parsed);
-  if (placement && (!Array.isArray(parsed) || list.length !== parsed.length))
-    throw new Error(`invalid mate placement on ${host}`);
-  return list;
+  const out = (await fleet(config, host, [...args, "--json"])).trim().split("\n").at(-1) ?? "[]";
+  return records(JSON.parse(out));
 }
 
 const text = (row: Record<string, unknown>, key: string): string => {
@@ -74,6 +69,18 @@ async function everyLane(
   return out;
 }
 
+async function placementRows(config: LaneConfig, host: string): Promise<Record<string, unknown>[]> {
+  const out = (await fleet(config, host, ["status", "--placement", "--json"]))
+    .trim()
+    .split("\n")
+    .at(-1);
+  const parsed: unknown = JSON.parse(out ?? "");
+  const homes = records(parsed);
+  if (!Array.isArray(parsed) || homes.length !== parsed.length)
+    throw new Error(`invalid mate placement on ${host}`);
+  return homes;
+}
+
 function placedName(host: string, row: Record<string, unknown>): string {
   if (host !== "local") return host;
   return sidebarHostName(typeof row["host"] === "string" ? row["host"] : undefined);
@@ -93,7 +100,7 @@ async function collectRunning(
   host: string,
   runningHosts: Map<string, string[]>,
 ): Promise<void> {
-  for (const row of await rows(config, host, ["status", "--placement"], true)) {
+  for (const row of await placementRows(config, host)) {
     const lane = text(row, "lane");
     const running = row["mate"];
     if (lane === "" || typeof running !== "boolean")
@@ -323,9 +330,22 @@ function readMaintenanceResult(out: string, host: string, typed: boolean) {
   const answer: unknown = JSON.parse(out.trim().split("\n").at(-1) ?? "");
   let list = answer;
   let failed: string | undefined;
-  if (typed && isRecord(answer)) {
-    failed = text(answer, "failed");
-    if (failed.trim() === "") throw new Error(`fleet on ${host} returned no failure detail`);
+  let missing: Set<string> | undefined;
+  if (typed) {
+    if (!isRecord(answer)) throw new Error(`fleet on ${host} returned no maintenance envelope`);
+    if (Object.hasOwn(answer, "failed")) {
+      failed = text(answer, "failed");
+      if (failed.trim() === "") throw new Error(`fleet on ${host} returned no failure detail`);
+    }
+    const expected = answer["expected"];
+    if (
+      !Array.isArray(expected) ||
+      !expected.every((lane) => typeof lane === "string" && lane.trim() !== "")
+    )
+      throw new Error(`fleet on ${host} returned no valid expected lane set`);
+    missing = new Set<string>(expected);
+    if (missing.size !== expected.length)
+      throw new Error(`fleet on ${host} returned duplicate expected lanes`);
     list = answer["outcomes"];
   }
   const results = records(list);
@@ -334,13 +354,16 @@ function readMaintenanceResult(out: string, host: string, typed: boolean) {
   for (const row of results) {
     const action = text(row, "action");
     if (
-      text(row, "lane") === "" ||
+      text(row, "lane").trim() === "" ||
+      (missing !== undefined && !missing.delete(text(row, "lane"))) ||
       !MAINTENANCE_ACTIONS.has(action) ||
       (!typed && action === "unread") ||
       (action === "held" && text(row, "detail") === "")
     )
       throw new Error(`fleet on ${host} returned an incomplete maintenance result`);
   }
+  if (failed === undefined && missing !== undefined && missing.size > 0)
+    throw new Error(`fleet on ${host} omitted maintenance outcomes`);
   return { results, failed };
 }
 
