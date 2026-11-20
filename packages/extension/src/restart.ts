@@ -54,9 +54,14 @@ async function launching<T>(
     return await start();
   } catch (error) {
     if (error instanceof DidNotStart && plan.request !== undefined) {
-      await link
+      const refund = await link
         .call("card.restart.failed", { card: plan.card, key, request: plan.request })
         .catch(() => undefined);
+      if (refund?.recorded !== true)
+        throw new Error(
+          `${error.message}\nThe restart refund was not confirmed; this request may still count toward the hourly cap.`,
+          { cause: error },
+        );
     }
     throw error;
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { check, OPS, type Card } from "@fleet/protocol";
+import { check, HttpOutcomeSchema, OPS, type Card } from "@fleet/protocol";
 import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
 import type { Session } from "../support/cardd.ts";
 
@@ -132,6 +132,69 @@ test("the restart notice is refused for a request that is not live, and only the
   assert.deepEqual(await restartFailed("n", request), { recorded: true });
   assert.deepEqual(await notice(request), { posted: false });
   assert.deepEqual(await notice(request + 1000), { posted: false });
+});
+
+test("a hold after the restart notice is queued keeps it off the worker's reconnect", async () => {
+  const token = await begin(fleet.main, card);
+  const worker = await fleet.cardd.connect(token);
+  const { job } = check(
+    OPS["job.start"].result,
+    await worker.call("job.start", { label: "checks", command: "npm test" }),
+  );
+  await worker.close();
+  const request = requestOf(await restart("held"));
+  assert.deepEqual(await notice(request), { posted: true });
+  const { body } = await fleet.cardd.post(token, "job.finish", {
+    job,
+    exitCode: 0,
+    outputTail: "all checks passed",
+  });
+  assert.deepEqual(check(HttpOutcomeSchema, body), { ok: true, value: { recorded: true } });
+  await park(fleet.main, card, "wait for CI", 3_600_000);
+  assert.equal((await restart("reconnect-held")).reconnect, true);
+
+  fleet.cardd.startNewProcess(token);
+  const replacement = await fleet.cardd.connect(token);
+  await replacement.waitForEntry(
+    (entry) => entry.kind === "job-result" && entry.body === "all checks passed",
+    "the queued job result",
+  );
+  assert.equal(
+    replacement.entries.some(({ entry }) => entry.body.includes(NOTICE)),
+    false,
+  );
+  assert.equal(await status(fleet.main, card), "waiting");
+  assert.equal(
+    (await fleet.cardd.thread(card.id)).entries.filter((entry) => entry.body.includes(NOTICE))
+      .length,
+    1,
+  );
+});
+
+test("refunding a request retires its queued notice without dropping a later request's notice or an ordinary comment", async () => {
+  const token = await begin(fleet.main, card);
+  await (await fleet.cardd.connect(token)).close();
+  const failed = requestOf(await restart("replace"));
+  assert.deepEqual(await notice(failed), { posted: true });
+  assert.deepEqual(await restartFailed("replace", failed), { recorded: true });
+  const next = requestOf(await restart("replace"));
+  assert.deepEqual(await notice(next), { posted: true });
+  const text = "Check the footer too.";
+  await fleet.main.call("comment", { card: card.id, text });
+
+  fleet.cardd.startNewProcess(token);
+  const replacement = await fleet.cardd.connect(token);
+  await replacement.waitForEntry((entry) => entry.body === text, "the ordinary comment");
+  const sent = replacement.entries.filter(({ entry }) => entry.body.includes(NOTICE));
+  assert.deepEqual(
+    sent.map(({ entry }) => entry.fields["restartNotice"]),
+    [next],
+  );
+  assert.equal(
+    (await fleet.cardd.thread(card.id)).entries.filter((entry) => entry.body.includes(NOTICE))
+      .length,
+    2,
+  );
 });
 
 test("a pause during merging stays merging on the board and still refuses a restart", async () => {

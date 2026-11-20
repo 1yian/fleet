@@ -3,6 +3,8 @@ import type { OpArgs } from "@fleet/protocol";
 import { connected, liveAttemptModel, repinAttempt } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { comment } from "./comments.ts";
+import { LIVE_REQUEST, noticeEligible, requestKey } from "./restart-requests.ts";
+import { RETIRABLE_DELIVERY } from "./delivery-states.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
 import { intentOf, type IncidentIntent } from "./incident-lifecycle.ts";
@@ -38,10 +40,6 @@ function targetOf(db: DatabaseSync, card: number, lane: string, mate: boolean): 
   return { actor: String(row["id"]), host: String(row["host"]), role: mate ? "mate" : "worker" };
 }
 
-const LIVE_REQUEST = `json_extract(e.fields, '$.restartKey') IS NOT NULL AND NOT EXISTS (
-  SELECT 1 FROM entries f WHERE f.card = e.card AND f.kind = 'note' AND f.id > e.id
-    AND json_extract(f.fields, '$.restartFailed') = e.id)`;
-
 const RESTARTED_NOTICE =
   "Your session was restarted on the same card and conversation. Continue your task from where you stopped.";
 
@@ -52,16 +50,6 @@ function restartsInLastHour(db: DatabaseSync, card: number): number {
     )
     .get(card, Date.now() - HOUR_MS);
   return Number(row?.["n"]);
-}
-
-function requestKey(db: DatabaseSync, card: number, request: number): string | undefined {
-  const row = db
-    .prepare(
-      `SELECT json_extract(e.fields, '$.restartKey') AS key FROM entries e
-       WHERE e.id = ? AND e.card = ? AND e.kind = 'note' AND ${LIVE_REQUEST}`,
-    )
-    .get(request, card);
-  return typeof row?.["key"] === "string" ? row["key"] : undefined;
 }
 
 function alreadyRequested(db: DatabaseSync, card: number, key: string): boolean {
@@ -251,6 +239,11 @@ export function restartFailed(
   const body = `The restart did not run, so it does not count toward the ${String(RESTARTS_PER_HOUR)} an hour: its worker process could not be started.`;
   const fields = { restartFailed: args.request };
   addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
+  db.prepare(
+    `DELETE FROM deliveries WHERE ${RETIRABLE_DELIVERY} AND entry IN (
+      SELECT id FROM entries WHERE card = ? AND kind = 'comment'
+        AND json_extract(fields, '$.restartNotice') = ?)`,
+  ).run(card.id, args.request);
   return { recorded: true };
 }
 
@@ -262,9 +255,8 @@ export function restartNotice(
   const card = getCard(db, args.card);
   const mate = laneCardOf(db, card.lane) === card.id;
   requireDirectParent(session, card, mate);
-  const working = card.status === "working" && intentOf(db, card.id, "worker") === "working";
-  if (mate || !working || requestKey(db, card.id, args.request) === undefined)
+  if (mate || !noticeEligible(db, card, args.request))
     return { value: { posted: false }, notify: [] };
-  const done = comment(db, session, { card: card.id, text: RESTARTED_NOTICE });
+  const done = comment(db, session, { card: card.id, text: RESTARTED_NOTICE }, args.request);
   return { value: { posted: true }, notify: done.notify };
 }

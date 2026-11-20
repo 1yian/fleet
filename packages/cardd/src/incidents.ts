@@ -8,7 +8,13 @@ import {
   type Mode,
   type Phase,
 } from "./incident-kinds.ts";
-import { applyIncident, insertOpened, intentOf, recoveryOffered } from "./incident-lifecycle.ts";
+import {
+  applyIncident,
+  insertOpened,
+  intentOf,
+  recoveryOffered,
+  retireOldAdvice,
+} from "./incident-lifecycle.ts";
 import {
   currentIntent,
   generationOf,
@@ -377,6 +383,7 @@ export function adoptProcess(db: DatabaseSync, session: string, process: string 
   );
   const live = liveIncident(db, session);
   if (live === undefined) return;
+  retireOldAdvice(db, live.id);
   if (live.state === "recovering") {
     if (live.recoveryMode === "replace" && live.recoveryEntry !== null)
       db.prepare(

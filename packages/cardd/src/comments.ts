@@ -88,7 +88,12 @@ function owesOf(route: Route, recipient: string | undefined, card: Card): { owes
   return { owes: recipient };
 }
 
-export function comment(db: DatabaseSync, session: Session, raw: unknown): Done {
+export function comment(
+  db: DatabaseSync,
+  session: Session,
+  raw: unknown,
+  restartNotice?: number,
+): Done {
   const args = check(OPS.comment.args, raw);
   const card = target(db, session, args);
   if (args.replyTo !== undefined) return answerReply(db, session, card, args);
@@ -107,6 +112,7 @@ export function comment(db: DatabaseSync, session: Session, raw: unknown): Done 
     resolves: args.resolves,
     later: args.later,
     withdraws: args.withdraws,
+    restartNotice,
     ...delivered,
     ...owes,
   };
