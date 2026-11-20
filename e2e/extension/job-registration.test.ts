@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,7 +18,7 @@ import { tempDir } from "../support/run-root.ts";
 const WRAPPER = fileURLToPath(new URL("../../packages/extension/src/job.ts", import.meta.url));
 
 test("a prepared wrapper does not run Bash until a complete registration receipt arrives", async (t) => {
-  const { main, cardd } = await startFleet({ CARDD_TIMING_SCALE: "0.04" });
+  const { main, cardd } = await startFleet({ CARDD_TIMING_SCALE: "0.025" });
   t.after(() => cardd.stop());
   const card = await newCard(main, "Prove the startup receipt");
   const token = await begin(main, card);
@@ -53,6 +53,7 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
   proxy.listen(0, "127.0.0.1");
   await once(proxy, "listening");
   t.after(() => {
+    permit.resolve();
     proxy.closeAllConnections();
     proxy.close();
   });
@@ -63,7 +64,7 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
   const start = async (label: string) => {
     const launch = randomUUID();
     const marker = join(dir, label);
-    const command = `touch ${quote(marker)}; echo ${label}`;
+    const command = `printf 'ran\\n' >> ${quote(marker)}; echo ${label}`;
     const response = await cardd.post(token, "job.prepare", { label, command, launch });
     const outcome = check(HttpOutcomeSchema, response.body);
     assert.ok(outcome.ok);
@@ -124,9 +125,24 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
     outputTail: "ambiguous pane result",
   });
   assert.deepEqual(lateLaunchError.body, { ok: true, value: { recorded: false } });
+  const receiptControl = await silent("receipt-window-control");
+  await main.waitForEntry(
+    (entry) => entry.fields["condition"] === "job-lost" && entry.fields["job"] === receiptControl,
+    "the detector to report a job admitted after registration while the receipt is held",
+  );
+  assert.deepEqual(await worker.call("jobs", {}), [{ id: first.job, label: "received" }]);
+  assert.equal(existsSync(first.marker), false);
   permit.resolve();
   assert.deepEqual(await first.exited, [0, null]);
-  assert.equal(existsSync(first.marker), true);
+  assert.equal(readFileSync(first.marker, "utf8"), "ran\n");
+  assert.equal(seen.filter(({ job }) => job === first.job).length, 2);
+  const afterReceipt = check(CardViewSchema, await main.call("card", { card: card.id }));
+  assert.deepEqual(
+    afterReceipt.entries
+      .filter((entry) => entry.fields["job"] === first.job)
+      .map((entry) => [entry.kind, entry.fields["exitCode"], entry.body]),
+    [["job-result", 0, "received"]],
+  );
 
   const movedAt = async () => {
     const pulse = check(OPS.board.result, await main.call("board", {})).find(
