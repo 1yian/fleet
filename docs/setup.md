@@ -763,7 +763,7 @@ After that one time, `fleet update` refuses a host without bun (below 1.3.13) be
 
 ### Job liveness cutover
 
-Install the registration release on the worker hosts and cardd before attempting a release that removes the heartbeat detector. The registration release leaves that detector in place. Old workers and already running jobs keep using their old protocol. Updated wrappers wait for cardd to confirm registration before invoking Bash. If the daemon explicitly says it predates registration, updated workers use the old job protocol until the daemon is upgraded.
+Install the registration release on the worker hosts and cardd before attempting a release that removes the heartbeat detector. The registration release leaves that detector in place. Old workers and already running jobs keep using their old protocol. Updated wrappers wait for cardd to confirm registration before invoking Bash. If the daemon explicitly says it predates registration, updated workers use the old job protocol until the daemon is upgraded. After a worker reload, stopping by a unique legacy tab label requires explicit legacy ownership or a capability refusal and fresh job ownership confirmation on the same connection to old cardd. A missing ownership field on its own is not enough.
 
 Before any later detector removal, use main's updated `bin/fleet`:
 

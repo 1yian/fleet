@@ -11,7 +11,7 @@ import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
-import { jobHandshake } from "./job-http.ts";
+import { confirmLegacyStop, jobHandshake } from "./job-http.ts";
 import type { Link } from "./link.ts";
 import { forwardedEnvironment } from "./scratch.ts";
 
@@ -84,12 +84,15 @@ export class Jobs {
   private readonly pending = new Map<number, PendingDispatch>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
-  private readonly cardd: { url: string; token: string };
+  private readonly endpoint: { url: string; token: string };
   private readonly warn: (text: string) => void;
 
   constructor(link: Link, cardd: { url: string; token: string }, warn: (text: string) => void) {
     this.link = link;
-    this.cardd = cardd;
+    this.endpoint = {
+      ...cardd,
+      url: cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call"),
+    };
     this.warn = warn;
   }
 
@@ -172,15 +175,13 @@ export class Jobs {
   }
 
   private async prepare(
-    url: string,
     id: string,
     label: string,
     command: string,
   ): Promise<{ job: number; heartbeatMs: number; registeredLaunch: boolean }> {
-    const endpoint = { url, token: this.cardd.token };
     const args = { launch: id, label, command };
     for (let attempt = 0; attempt < PREPARE_ATTEMPTS; attempt += 1) {
-      const receipt = await jobHandshake(endpoint, "job.prepare", args)
+      const receipt = await jobHandshake(this.endpoint, "job.prepare", args)
         .then((reply) =>
           reply.ok ? { ...reply, value: check(OPS["job.prepare"].result, reply.value) } : reply,
         )
@@ -214,19 +215,15 @@ export class Jobs {
   ): Promise<{ job: number; tab: string }> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
-    const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
     const id = randomUUID();
     const preparing: Preparing = {};
     this.preparing.set(id, preparing);
-    const { job, heartbeatMs, registeredLaunch } = await this.prepare(
-      url,
-      id,
-      label,
-      command,
-    ).catch((error: unknown) => {
-      this.preparing.delete(id);
-      throw error;
-    });
+    const { job, heartbeatMs, registeredLaunch } = await this.prepare(id, label, command).catch(
+      (error: unknown) => {
+        this.preparing.delete(id);
+        throw error;
+      },
+    );
     this.preparing.delete(id);
     if (registeredLaunch && preparing.fence?.job === job)
       throw new Error(`Job ${String(job)} cannot start: ${preparing.fence.detail}`);
@@ -238,8 +235,7 @@ export class Jobs {
     try {
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
-        url,
-        token: this.cardd.token,
+        ...this.endpoint,
         job,
         ...(registeredLaunch ? { launch: { id, command } } : { command }),
         timeoutMs,
@@ -325,7 +321,7 @@ export class Jobs {
     }
     let tab = this.ownedTabs.get(job);
     if (tab === undefined) {
-      if (legacy !== true)
+      if (legacy !== true && !(await confirmLegacyStop(this.endpoint, job, label)))
         return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
       const tabs = records(
         (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],

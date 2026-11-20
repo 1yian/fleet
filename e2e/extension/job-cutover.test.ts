@@ -163,6 +163,44 @@ async function upgradeDaemon(): Promise<void> {
   }, "the upgraded cardd to serve its exact commit");
 }
 
+test("an updated worker can stop its legacy job after reload against pre-registration cardd", async () => {
+  const main = await cardd.connect(mainToken);
+  const card = await newCard(main, "Stop a legacy job after reload");
+  const token = await begin(main, card, "run the legacy job", "local");
+  const created = await lab.run(["workspace", "create", "--no-focus"]);
+  const workspace = records([created["workspace"]])[0]?.["workspace_id"];
+  assert.equal(typeof workspace, "string");
+  await upgrade();
+  assert.equal(check(VersionSchema, await (await fetch(version())).json()).commit, LEGACY);
+  const env = {
+    ...lab.env,
+    FLEET_URL: cardd.url,
+    FLEET_TOKEN: token,
+    FLEET_ROLE: "worker",
+    HERDR_SESSION: lab.name,
+    HERDR_WORKSPACE_ID: String(workspace),
+  };
+  const ready = join(h.dir, "legacy-ready");
+  const run = `require('node:fs').writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => {}, 1000)`;
+  launch("legacy", `exec node -e ${quote(run)}`);
+  const pi = h.startPi("c-1-a1", env, [join(workerCode.root, EXTENSION)]);
+  await file(ready);
+  await h.waitForNth((event) => event["type"] === "settled", 1, "the launch to settle");
+  pi.prompt("/probe-reload");
+  await h.waitForNth(fleetConnected, 2, "the updated worker to reconnect after reload");
+  h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+  h.onModel(() => ({ text: "Stop attempted" }));
+  pi.prompt("Stop the legacy job");
+  assert.match(toolResults(await h.waitForCall(3)).at(-1) ?? "", /Sent a stop to job 1 \(legacy\)/);
+  assert.equal((await waitResult(card.id, 1, 130)).body, "interrupted");
+  const pid = Number(readFileSync(ready, "utf8"));
+  assert.ok(Number.isInteger(pid) && pid > 1);
+  await waitGroupExit(pid);
+  await waitTabClosed(String(workspace), 1, "legacy");
+  const jobs = await cardd.post(token, "jobs", {});
+  assert.deepEqual(check(HttpOutcomeSchema, jobs.body), { ok: true, value: [] });
+});
+
 test("old host and cardd CLIs pull the additive stage without stranding either legacy wrapper; seal blocks until confirmed drain", async () => {
   const main = await cardd.connect(mainToken);
   const card = await newCard(main, "Drain the old wrappers");
