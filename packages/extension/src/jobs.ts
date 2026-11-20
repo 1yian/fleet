@@ -341,6 +341,7 @@ export class Jobs {
       : undefined;
     const launching = { unstarted: false, ran: false, legacy: !registeredLaunch };
     this.launching.set(job, launching);
+    if (launching.legacy && !this.lastResult.has(job)) this.running.add(job);
     let dispatched = false;
     try {
       const { timeoutMs, tailLines, lineChars } = options;
@@ -386,7 +387,6 @@ export class Jobs {
       if (launching.legacy && this.lastResult.has(job))
         throw new Error(`Job ${String(job)} was reported lost before dispatch; nothing was run`);
       if (pending !== undefined) pending.dispatched = true;
-      else if (!this.lastResult.has(job)) this.running.add(job);
       dispatched = true;
       const paneFailure = await herdr("local", [
         "pane",
@@ -412,9 +412,11 @@ export class Jobs {
           `Could not confirm dispatch for job ${String(job)}; its result, loss, or failed startup arrives as a [fleet] message: ${why}`,
           { cause: error },
         );
-      if (registeredLaunch) this.removeFile(job, file);
-      else this.settleLaunchFile(job);
-      if (launching.legacy && this.lastResult.has(job)) throw error;
+      if (launching.legacy) {
+        this.settleLaunchFile(job);
+        throw error;
+      }
+      this.removeFile(job, file);
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link
@@ -422,14 +424,13 @@ export class Jobs {
           job,
           exitCode: 127,
           outputTail,
-          ...(registeredLaunch ? { beforeRegistration: id } : {}),
+          beforeRegistration: id,
         })
         .catch(() => undefined);
       if (finished?.recorded === true) {
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         if (pending !== undefined) this.confirmStartupFence(job);
       }
-      if (pending === undefined) this.forgetTab(job);
       throw error;
     } finally {
       if (this.launching.get(job) === launching) this.launching.delete(job);

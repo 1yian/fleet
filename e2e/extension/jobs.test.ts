@@ -1425,6 +1425,7 @@ test("an explicit stop receipt that precedes the prepare receipt fences the laun
   const bin = join(jobDir, "bin");
   mkdirSync(bin);
   const dispatches = join(jobDir, "dispatches");
+  const tabs = join(jobDir, "tab-requests");
   const marker = join(jobDir, "unexpected-execution");
   const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
   writeFileSync(
@@ -1432,6 +1433,9 @@ test("an explicit stop receipt that precedes the prepare receipt fences the laun
     `#!/bin/sh
 if [ "$1 $2" = 'pane run' ]; then
   echo dispatch >> ${quote(dispatches)}
+fi
+if [ "$1 $2" = 'tab create' ]; then
+  echo tab >> ${quote(tabs)}
 fi
 exec ${quote(herdr)} "$@"
 `,
@@ -1460,6 +1464,7 @@ exec ${quote(herdr)} "$@"
     (await tabsInWorkspace()).some((each) => String(each["label"]).startsWith("job-1-")),
     false,
   );
+  assert.equal(existsSync(tabs), false);
   prepareReply.resolve();
   await settled(1);
   assert.ok(said("Job 1 cannot start: it was stopped before dispatch"));
@@ -1468,6 +1473,95 @@ exec ${quote(herdr)} "$@"
   assert.equal(
     (await tabsInWorkspace()).some((each) => String(each["label"]).startsWith("job-1-")),
     false,
+  );
+  assert.equal(existsSync(tabs), false);
+  assert.equal(existsSync(dispatches), false);
+  assert.equal(existsSync(marker), false);
+});
+
+test("a legacy launcher failure never overwrites a committed loss that its worker has not yet received", async (t) => {
+  const lossDelivery = Promise.withResolvers<void>();
+  t.after(() => lossDelivery.resolve());
+  await jobProxy(
+    t,
+    async (op, args) =>
+      op === "job.prepare"
+        ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
+        : callCardd(op, args),
+    lossDelivery.promise,
+  );
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const dispatches = join(jobDir, "dispatches");
+  const requested = join(jobDir, "tab-requested");
+  const release = join(jobDir, "release-tab");
+  const marker = join(jobDir, "unexpected-execution");
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
+const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'tab create' ]; then
+  touch ${quote(requested)}
+  node -e ${quote(waitForRelease)} || exit "$?"
+  echo 'tab create unavailable' >&2
+  exit 1
+fi
+if [ "$1 $2" = 'pane run' ]; then
+  echo dispatch >> ${quote(dispatches)}
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  t.after(() => writeFileSync(release, ""));
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "doomed", command: `touch ${quote(marker)}` },
+  }));
+  h.onModel(() => ({ text: "The launch failed" }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job is lost" } }));
+  worker();
+  await until(() => (existsSync(requested) ? true : undefined), "the launch to reach tab creation");
+  const lost = await untilAsync(
+    async () =>
+      (await cardView()).entries.find(
+        (entry) => entry.kind === "job-result" && entry.fields["lost"] === true,
+      ),
+    "cardd to commit the loss",
+  );
+  assert.equal(
+    h.events.some((event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id),
+    false,
+  );
+  writeFileSync(release, "");
+  await settled(1);
+  assert.ok(said("tab create unavailable"));
+  assert.deepEqual(
+    (await cardView()).entries
+      .filter((entry) => entry.kind === "job-result")
+      .map((entry) => [entry.fields["lost"], entry.fields["exitCode"]]),
+    [[true, undefined]],
+  );
+  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
+  t.after(() => db.close());
+  assert.deepEqual(
+    { ...db.prepare("SELECT state, exit_code FROM jobs WHERE id = 1").get() },
+    {
+      state: "lost",
+      exit_code: null,
+    },
+  );
+  lossDelivery.resolve();
+  await until(
+    () =>
+      said("[fleet] c-1 users-see-one-scrollbar job 1 (doomed) lost: no heartbeat arrived")
+        ? true
+        : undefined,
+    "the loss to reach the worker after the launcher failed",
   );
   assert.equal(existsSync(dispatches), false);
   assert.equal(existsSync(marker), false);
