@@ -246,7 +246,7 @@ export function restartFailed(
       SELECT id FROM entries WHERE card = ? AND kind = 'comment'
         AND json_extract(fields, '$.restartNotice') = ?)`,
   ).run(Date.now(), card.id, args.request);
-  return { value: { recorded: true }, notify: releaseRestartNotices(db, card, args.request) };
+  return { value: { recorded: true }, notify: releaseRestartNotices(db, card.id, args.request) };
 }
 
 export function restartNotice(
@@ -257,7 +257,7 @@ export function restartNotice(
   const card = getCard(db, args.card);
   const mate = laneCardOf(db, card.lane) === card.id;
   requireDirectParent(session, card, mate);
-  if (mate || noticeState(db, card, args.request) === "retired")
+  if (mate || noticeState(db, card.id, args.request) === "retired")
     return { value: { posted: false }, notify: [] };
   const existing = db
     .prepare(

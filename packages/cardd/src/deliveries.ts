@@ -9,7 +9,7 @@ import {
 } from "./delivery-states.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
 import { noticeState } from "./restart-requests.ts";
-import { addEntry, ENTRY_JSON, getCard, json, mainLane } from "./store.ts";
+import { addEntry, ENTRY_JSON, json, mainLane } from "./store.ts";
 import { identified } from "./maintenance.ts";
 import { holdFor } from "./waits.ts";
 import type { Timings } from "./timing.ts";
@@ -226,7 +226,7 @@ function deliveryEligibility(
   restartNotice: unknown,
 ): ReturnType<typeof noticeState> {
   if (typeof restartNotice !== "number") return "eligible";
-  const state = noticeState(db, getCard(db, card), restartNotice);
+  const state = noticeState(db, card, restartNotice);
   if (state === "retired")
     db.prepare("UPDATE deliveries SET retired_at = ? WHERE session = ? AND entry = ?").run(
       Date.now(),
