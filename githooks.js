@@ -36,9 +36,9 @@ function pushedCommits(input) {
     .map((line) => {
       const fields = pushLine.exec(line);
       if (!fields) throw new Error(`Unexpected pre-push input: ${line}`);
-      return { ref: fields[1], sha: fields[2] };
+      return { ref: fields[1], sha: fields[2], remoteRef: fields[3] };
     })
-    .filter(({ ref, sha }) => ref.startsWith("refs/heads/") && !emptyObject.test(sha));
+    .filter(({ remoteRef, sha }) => remoteRef.startsWith("refs/heads/") && !emptyObject.test(sha));
 }
 
 function baseOf(remote, sha) {
