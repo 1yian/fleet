@@ -112,6 +112,7 @@ for (const [name, diagnostic] of [
   ["curl ANSI-C cookie header", "curl -H $'Cookie: session=paper' https://localhost"],
   ["curl ANSI-C option word", "curl $'-b' 'session=paper' https://localhost"],
   ["curl bare variable header", 'curl -H "$header: session=paper" https://localhost'],
+  ["curl scheme-less host first", 'curl localhost -H "$header: session=paper"'],
   ["curl backtick header name", "curl -H `echo Cookie`: session=paper https://localhost"],
   ["curl ANSI-C user option", "curl $'--user' 'demo:paper canoe' https://localhost"],
   ["curl http 1.0 proxy login", "curl --proxy1.0 build:paper@proxy:8080 https://localhost"],

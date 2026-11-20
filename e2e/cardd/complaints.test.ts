@@ -319,6 +319,8 @@ test("curl commands that may carry a credential option are withheld from both is
     'curl -H "$header: session=paper" https://localhost',
     "curl -H `echo Cookie`: session=paper https://localhost",
     "curl -H ${name}: session=paper https://localhost",
+    'curl localhost -H "$header: session=paper"',
+    "`curl -I https://localhost` then curl localhost -H ${name}: session=paper",
     'curl -H "$(printf Cookie): session=paper" https://localhost',
     "curl -H 'Cookie: session=paper' https://localhost",
     "curl --header 'Set-Cookie: session=paper' https://localhost",

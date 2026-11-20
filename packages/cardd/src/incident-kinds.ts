@@ -1,3 +1,4 @@
+import { CURL_SHELL_EXPANSION } from "./curl-shell.ts";
 import type { Timings } from "./timing.ts";
 
 const MAX_RETRIES = 2;
@@ -38,8 +39,6 @@ const CURL_PROVEN_HEADER = new RegExp(
   String.raw`(?<=\s)(?:-H|--header)[ =]\s*(["'])authorization\s*:\s*(?:${AUTH_WORD})${LINE_SPLICE}\s+[A-Za-z0-9._~+/=-]+\1(?=\s|$)`,
   "gi",
 );
-const CURL_SHELL_EXPANSION =
-  /(?<![\w-])c["']*u["']*r["']*l["']*(?![\w.-])\s+(?=[-'"$\u0060]|\S*:\/\/)[\s\S]*?(?:\$['"({\w]|\u0060)/i;
 const CURL_PROXY_LOGIN = /(?<=\s)(?:--(?:pre)?proxy|--socks|-[^-\s]*x\s*\S*@)/;
 const CURL_UNPROVEN_USERINFO = /(?<=\s)[^\s@/]+:[^\s@/]*@/;
 const CURL_CHECKS = [

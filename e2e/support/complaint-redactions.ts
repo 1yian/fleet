@@ -23,6 +23,10 @@ export const REDACTED_COMPLAINTS = [
   ["  - token: a b # note\r\n    ok: yes", "- token: [hidden] # note ok: yes"],
   ["Revision 0123456789abcdef0123456789abcdef01234567", "Revision [hidden]"],
   [
+    "The example `curl -I https://localhost` fails.",
+    "The example `curl -I https://localhost` fails.",
+  ],
+  [
     "The ${HOST} help text never explains how curl is configured.",
     "The ${HOST} help text never explains how curl is configured.",
   ],
