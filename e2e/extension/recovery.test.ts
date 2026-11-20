@@ -166,9 +166,9 @@ test("a worker with a stale module is replaced on its own conversation and work,
 
 function assertRecoveredConversation(h: Harness, incident: number): void {
   const checkText = `recovery check ${String(incident)} from main: this is a health check, not new work`;
-  const fresh = h
-    .callsOf("worker")
-    .find((turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText));
+  const fresh = h.callsOf("worker").find(
+    (turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText),
+  );
   assert.ok(fresh, "the replacement did not receive its recovery check");
   assert.ok(
     fresh.some((turn) => turn.text.includes("fix the scrollbar")),
@@ -382,7 +382,7 @@ test("a replacement requested again with the same key while it is still starting
   let failed = false;
   let incident = { incident: 0, generation: 0 };
   let original: number | undefined;
-  let phase: "first" | "done" = "first";
+  let phase: "first" | "again" | "done" = "first";
   const replace = (): { tool: string; args: Record<string, string | number> } => ({
     tool: "restart_card",
     args: { card: 1, ...incident, mode: "replace", key: "same" },
@@ -395,7 +395,7 @@ test("a replacement requested again with the same key while it is still starting
       original = await readyWorkerGroup(lab, "c-1-a1");
       execFileSync("sh", ["-c", 'mkfifo "$0"', gate]);
       phase = "done";
-      return { ...replace(), alongside: [replace()] };
+      return replace();
     }
     return { text: "noted" };
   });
@@ -427,11 +427,29 @@ test("a replacement requested again with the same key while it is still starting
     await release.close();
   }
 
-  const results = (await mateResults(h, 4)).slice(-2);
-  assert.equal(results.filter((text) => text === RESTART_REPEATED).length, 1);
-  assert.match(
-    results.find((text) => text !== RESTART_REPEATED) ?? "",
-    /^Started c-1-a1 again on local/,
+  await waitFor(
+    () => Promise.resolve(existsSync(gate)),
+    (exists) => exists,
+    WORKER_WAIT_MS,
+  );
+  const starting = await waitFor(
+    () => workerGroupOf(lab, "c-1-a1"),
+    (group) => group !== undefined && group !== original,
+    WORKER_WAIT_MS,
+  );
+  const release = await open(gate, "w");
+  try {
+    await verifyDuplicate(incident, false);
+    assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
+  } finally {
+    await release.close();
+  }
+
+  const results = await mateResults(h, 4);
+  assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on local/);
+  assert.equal(
+    results.at(-1),
+    "This restart key was already recorded. No new launch was attempted.",
   );
   assert.equal((await cardd.post(parts.mainToken, "card", { card: 1 })).status, 200);
   assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
