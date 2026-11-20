@@ -3,16 +3,21 @@
 # neither the base branch nor origin's (a git bundle), staged and unstaged changes (binary patches),
 # untracked files that are not ignored, and a manifest. Prints the archive path.
 # Every step is checked on its own, so a failed step stops the script before an
-# archive is published. Safe to rerun: an existing archive is kept. A worktree with
+# archive is published, and it is published by a rename inside the archive dir, so
+# the archive name never holds a partial file. Safe to rerun: an existing archive is kept. A worktree with
 # nothing unlanded gets no archive, and the script prints nothing.
 # Usage: sh -c "$(cat archive.sh)" archive <worktree> <base> <archive dir> <name>
 set -eu
 wt=$1 base=$2 arch=$3 name=$4
 out="$arch/$name.tar.zst"
+tmp="$arch/.$name.tar.zst.partial"
+rm -f "$tmp"
 if [ -f "$out" ]; then echo "$out"; exit 0; fi
 command -v zstd >/dev/null || { echo "zstd is required to archive" >&2; exit 1; }
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" "$tmp"' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 dir="$work/$name"
 mkdir -p "$dir"
 cd "$wt"
@@ -38,5 +43,7 @@ tar -cf "$work/snapshot.tar" -C "$work" "$name"
 zstd -19 -q -o "$work/archive.tar.zst" "$work/snapshot.tar"
 zstd -t -q "$work/archive.tar.zst"
 mkdir -p "$arch"
-mv "$work/archive.tar.zst" "$out"
+cp "$work/archive.tar.zst" "$tmp"
+zstd -t -q "$tmp"
+mv "$tmp" "$out"
 echo "$out"
