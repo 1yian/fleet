@@ -239,6 +239,9 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     "Tool printed pass\\\nword: [paper, canoe]",
     'Tool printed {"pass\\\n\\u0077ord":"paper canoe"}',
     "Tool printed to\\\nken: !!str >\n paper canoe",
+    "pass\\\nword: paper\n  canoe",
+    "password: pa\\\nper\n  canoe",
+    "token:\\\n paper\n  canoe",
     'Tool printed password=\\\n"paper canoe',
   ];
   const expected = "[YAML withheld: credential boundaries unclear]";
@@ -253,6 +256,7 @@ test("URL authorities split by shell quoting or line continuations are withheld 
   const examples = [
     "curl 'https://build:'paper\\\ncanoe@localhost/api",
     "curl https://build:paper\\\ncanoe@localhost/api",
+    "Git printed https://build:pa@ss\\\nword@localhost/path",
   ];
   const expected = "[URL withheld: credential boundaries unclear]";
   for (const [index, text] of examples.entries()) {

@@ -217,7 +217,9 @@ function scanUrlUserinfo(text: string): { text: string; ambiguous: boolean; coun
 function redactUrlUserinfo(text: string): string {
   const found = scanUrlUserinfo(text);
   const joined = text.replace(/\\\n/g, "").replace(/['"`]/g, "");
-  return found.ambiguous || scanUrlUserinfo(joined).count > found.count ? URL_WITHHELD : found.text;
+  const spliced = logicalView(found.text) !== scanUrlUserinfo(logicalView(text)).text;
+  const unproven = found.ambiguous || spliced || scanUrlUserinfo(joined).count > found.count;
+  return unproven ? URL_WITHHELD : found.text;
 }
 
 function normalizeInput(text: string): string {
@@ -293,16 +295,32 @@ function hasUnboundedSecret(yaml: string): boolean {
   return yaml.search(YAML_UNBOUNDED_SECRET) !== -1 || yaml.search(YAML_FLOW_UNBOUNDED_PLAIN) !== -1;
 }
 
-function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
-  const sourceViews = [source, logicalView(source)];
-  if (sourceViews.some((view) => hasCredentialCollection(view) || hasEscapedCredentialKey(view)))
-    return YAML_WITHHELD;
-  const yaml = redactYamlBlocks(source)
+function redactYamlScalars(text: string): string {
+  return redactYamlBlocks(text)
     .replace(YAML_FLOW_SECRET, '$1: "[hidden]"')
     .replace(
       YAML_SECRET,
       (_match, prefix: string, _indent: string, key: string) => `${prefix}${key}: [hidden]`,
     );
+}
+
+const neutralAuthorization = (text: string): string => text.replace(/authorization/gi, "x-auth");
+
+function yamlSplicesDisagree(source: string): boolean {
+  const logical = logicalView(source);
+  if (logical === source) return false;
+  const physical = logicalView(redactYamlScalars(neutralAuthorization(source)));
+  return (
+    neutralAuthorization(physical) !== redactYamlScalars(neutralAuthorization(logical))
+  );
+}
+
+function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
+  const sourceViews = [source, logicalView(source)];
+  if (sourceViews.some((view) => hasCredentialCollection(view) || hasEscapedCredentialKey(view)))
+    return YAML_WITHHELD;
+  if (yamlSplicesDisagree(source)) return YAML_WITHHELD;
+  const yaml = redactYamlScalars(source);
   if ([yaml, logicalView(yaml)].some(hasUnboundedSecret)) return YAML_WITHHELD;
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
