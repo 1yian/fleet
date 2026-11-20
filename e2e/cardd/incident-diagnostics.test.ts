@@ -200,6 +200,14 @@ for (const [name, diagnostic] of [
   ["a verbose digest authorization", '> Authorization: Digest username="demo", response="paper"'],
   ["a verbose api key header", "> X-Api-Key: paper"],
   [
+    "an HTTP/2 bracketed header",
+    '[HTTP/2] [1] [authorization: Digest username="demo", cnonce="paper"]',
+  ],
+  [
+    "a transcript field starting with a credential header",
+    String.raw`{"trace":"Authorization: Digest username=\"demo\", cnonce=\"paper\""}`,
+  ],
+  [
     "a cookie header beside a curl credential",
     "Cookie: session=paper\ncurl -u 'demo:paper canoe' https://localhost",
   ],
