@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
@@ -34,6 +34,12 @@ case "$1 $2:$HERDR_FAULT" in
   'workspace list:blank') exit 0 ;;
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
+  'workspace list:omit-once')
+    if [ ! -e "$HERDR_FAULT_LOG" ]; then
+      : > "$HERDR_FAULT_LOG"
+      printf '%s' '{"result":{"workspaces":[]}}'
+      exit 0
+    fi ;;
   'pane list:panes') printf '%s' '{"result":{}}'; exit 0 ;;
   'pane list:cwd')
     reply=$("$REAL_HERDR" "$@") || exit $?
@@ -46,6 +52,10 @@ case "$1 $2:$HERDR_FAULT" in
     exit $? ;;
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
+  'pane process-info:hanging-panes')
+    case ",$FAULT_PANE," in
+      *",$4,"*) printf '%s\\n' "$4" >> "$HERDR_FAULT_LOG"; exec sleep 120 ;;
+    esac ;;
   'pane process-info:server-missing')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"error":{"code":"server_not_running","message":"server not running"}}'
@@ -77,15 +87,23 @@ function addLane(lane: string): string {
   });
 }
 
-function fleet(args: readonly string[], fault = "", pane = ""): string {
-  return here.fleet(args, {
-    ...lab.env,
-    HERDR_SESSION: lab.name,
-    REAL_HERDR: real,
-    HERDR_FAULT: fault,
-    FAULT_PANE: pane,
-    FLEET_PROBE_TIMEOUT_MS: "1000",
-    PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+const faultLog = () => join(bin, "observations");
+
+function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1000"): string {
+  return execFileSync(process.execPath, [here.launch, ...args], {
+    encoding: "utf8",
+    timeout: 90_000,
+    env: {
+      ...process.env,
+      ...lab.env,
+      HERDR_SESSION: lab.name,
+      REAL_HERDR: real,
+      HERDR_FAULT: fault,
+      HERDR_FAULT_LOG: faultLog(),
+      FAULT_PANE: pane,
+      FLEET_PROBE_TIMEOUT_MS: probeTimeout,
+      PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+    },
   });
 }
 
@@ -128,6 +146,21 @@ test("missing nested pane or process fields neither start nor hold a lane", asyn
   assert.equal(readFileSync(stoppedFile, "utf8"), "stopped by hand\n");
   assert.deepEqual(maintain(), action("ops", "running"));
   assert.equal(existsSync(stoppedFile), false);
+});
+
+test("a workspace omitted once neither restarts nor crash-holds a running mate", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  const home = `${here.root}.worktrees/lane-ops`;
+  const startsFile = join(home, "state", "starts");
+  const original = readFileSync(startsFile, "utf8");
+  const repeated = `${String(Date.now())}\n`.repeat(3);
+  for (const history of [original, repeated]) {
+    writeFileSync(startsFile, history);
+    rmSync(faultLog(), { force: true });
+    assert.deepEqual(maintain("omit-once"), action("ops", "running"));
+    assert.equal(readFileSync(startsFile, "utf8"), history);
+    assert.equal(existsSync(join(home, "state", "stopped")), false);
+  }
 });
 
 test("only home matching needs the root pane's cwd, and no check needs a split's cwd", async () => {
@@ -188,6 +221,37 @@ test("maintenance returns a completed start even when the next lane cannot be re
     { lane: "zz", state: "unknown", reason: "server not running" },
   ]);
   assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "running")]);
+});
+
+test("maintenance returns an accepted start before the caller times out on two hanging reads", async () => {
+  const panes = [];
+  for (const lane of ["za", "zb"]) {
+    const home = addLane(lane);
+    const created = await lab.run([
+      "workspace",
+      "create",
+      "--cwd",
+      home,
+      "--label",
+      `2ndmate-${lane}`,
+      "--no-focus",
+    ]);
+    const pane = records([created["root_pane"]])[0]?.["pane_id"];
+    assert.ok(typeof pane === "string");
+    panes.push(pane);
+  }
+  const out = fleet(["up", "--maintenance", "--json"], "hanging-panes", panes.join(","), "60000");
+  assert.deepEqual(JSON.parse(out), [
+    ...action("ops", "started"),
+    ...action("za", "unread"),
+    ...action("zb", "unread"),
+  ]);
+  assert.deepEqual(readFileSync(faultLog(), "utf8").trim().split("\n"), panes);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
+    { lane: "ops", state: "running" },
+    { lane: "za", state: "down" },
+    { lane: "zb", state: "down" },
+  ]);
 });
 
 test("an explicit stop accepts a complete workspace close reply without a type field", async () => {

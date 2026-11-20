@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { ghLogin, type GhRun } from "./gh-login.ts";
 import { laneHomes } from "./homes.ts";
 import { isRecord, readLaneConfig } from "./lane-config.ts";
+import { remainingMs } from "./maintenance-budget.ts";
 
 interface Tool {
   readonly name: string;
@@ -66,16 +67,22 @@ function atLeast(found: readonly number[], floor: readonly number[]): boolean {
   return true;
 }
 
-const run = (file: string, args: readonly string[]): string =>
-  execFileSync(file, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: PROBE_TIMEOUT_MS,
-  });
-
-function probeProblem(tool: Tool, host: string): { output: string } | { problem: string } {
+function probeProblem(
+  tool: Tool,
+  host: string,
+  deadline?: number,
+): { output: string } | { problem: string } {
   try {
-    return { output: run(tool.name, tool.version) };
+    const timeout = Math.min(PROBE_TIMEOUT_MS, remainingMs(deadline));
+    if (timeout === 0) throw new Error("maintenance deadline reached");
+    return {
+      output: execFileSync(tool.name, tool.version, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout,
+        ...(deadline === undefined ? {} : { killSignal: "SIGKILL" }),
+      }),
+    };
   } catch (error) {
     const missing = Reflect.get(Object(error), "code") === "ENOENT";
     const why = missing ? "is missing" : `does not run (${String(error).split("\n")[0] ?? ""})`;
@@ -129,8 +136,13 @@ function loginProblem(tool: Tool, host: string): string | undefined {
   return `${tool.name} is not logged in on ${host}. Fix: ${tool.login.fix}`;
 }
 
-function toolProblem(tool: Tool, host: string, checkLogin: boolean): string | undefined {
-  const probed = probeProblem(tool, host);
+function toolProblem(
+  tool: Tool,
+  host: string,
+  checkLogin: boolean,
+  deadline?: number,
+): string | undefined {
+  const probed = probeProblem(tool, host, deadline);
   if ("problem" in probed) return probed.problem;
   return (
     versionProblem(tool, probed.output, host) ?? (checkLogin ? loginProblem(tool, host) : undefined)
@@ -182,10 +194,10 @@ function memoryProblems(root: string, host: string): string[] {
 
 export const bunProblems = (): string[] => [toolProblem(BUN, hostname(), false) ?? []].flat();
 
-export function hostProblems(root: string, checkLogin = true): string[] {
+export function hostProblems(root: string, checkLogin = true, deadline?: number): string[] {
   const host = hostname();
   return [
-    ...TOOLS.flatMap((tool) => toolProblem(tool, host, checkLogin) ?? []),
+    ...TOOLS.flatMap((tool) => toolProblem(tool, host, checkLogin, deadline) ?? []),
     ...memoryProblems(root, host),
   ];
 }

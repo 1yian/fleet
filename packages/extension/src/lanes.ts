@@ -9,6 +9,7 @@ import { HostUnread, HostUnreachable, onFleetRoot, onHost, records } from "./hos
 import { sidebarHostName } from "./arrange.ts";
 import type { Link } from "./link.ts";
 import { isRecord, readLaneConfig, type LaneConfig } from "./lane-config.ts";
+import { MAINTENANCE_COMMAND_MS } from "./maintenance-budget.ts";
 import { readShared } from "./standing.ts";
 import type { LaneRow } from "./views.ts";
 
@@ -32,9 +33,14 @@ async function rows(
   config: LaneConfig,
   host: string,
   args: readonly string[],
+  placement = false,
 ): Promise<Record<string, unknown>[]> {
-  const out = (await fleet(config, host, [...args, "--json"])).trim().split("\n").at(-1) ?? "[]";
-  return records(JSON.parse(out));
+  const out = (await fleet(config, host, [...args, "--json"])).trim().split("\n").at(-1);
+  const parsed: unknown = JSON.parse(out ?? (placement ? "" : "[]"));
+  const list = records(parsed);
+  if (placement && (!Array.isArray(parsed) || list.length !== parsed.length))
+    throw new Error(`invalid mate placement on ${host}`);
+  return list;
 }
 
 const text = (row: Record<string, unknown>, key: string): string => {
@@ -76,7 +82,7 @@ async function collectRunning(
   host: string,
   runningHosts: Map<string, string[]>,
 ): Promise<void> {
-  for (const row of await rows(config, host, ["status", "--placement"])) {
+  for (const row of await rows(config, host, ["status", "--placement"], true)) {
     const lane = text(row, "lane");
     const running = row["mate"];
     if (lane === "" || typeof running !== "boolean")
@@ -267,7 +273,7 @@ const INTERVAL_MS = Number(process.env["FLEET_SUPERVISE_MS"]) || 60_000;
 const MAINTENANCE_ACTIONS = new Set(["running", "started", "held", "stopped", "unread"]);
 
 async function maintenanceResult(config: LaneConfig, host: string) {
-  const out = await fleet(config, host, ["up", "--maintenance", "--json"]);
+  const out = await fleet(config, host, ["up", "--maintenance", "--json"], MAINTENANCE_COMMAND_MS);
   const answer: unknown = JSON.parse(out.trim().split("\n").at(-1) ?? "");
   if (isRecord(answer) && Object.keys(answer).length === 1) {
     const failed = answer["failed"];
