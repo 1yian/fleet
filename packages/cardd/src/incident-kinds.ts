@@ -30,6 +30,10 @@ const CURL_WITHHELD = "[curl withheld: credential boundaries unclear]";
 const CURL_COMMAND = /(?<![\w-])curl(?![\w.-])/i;
 const CURL_CREDENTIAL_OPTION =
   /(?<=\s)(?:--(?:proxy-)?user(?![\w-])|--oauth2-bearer(?![\w-])|-[^-\s]*[uU])/;
+const CURL_CREDENTIAL_HEADER = new RegExp(
+  String.raw`(?<=\s)(?:--header[=\s]\s*|-[^-\s]*H\s*)${SECRET_NAME}\s*:(?!\s*(?:\[hidden\]|(?:Basic|Bearer)\s+\S+(?:\s|$)))`,
+  "i",
+);
 const CURL_PROXY_LOGIN = /(?<=\s)(?:--(?:pre)?proxy|--socks|-[^-\s]*x\s*\S*@)/;
 const CURL_UNPROVEN_USERINFO = /(?<=\s)[^\s@/]+:[^\s@/]*@/;
 const YAML_KEY = String.raw`((?<yamlQuote>["']?)${SECRET_NAME}\k<yamlQuote>)[ \t]*:`;
@@ -183,17 +187,11 @@ function curlCredentialOption(text: string): boolean {
   return (
     start !== -1 &&
     (CURL_CREDENTIAL_OPTION.test(command) ||
+      CURL_CREDENTIAL_HEADER.test(command) ||
       CURL_PROXY_LOGIN.test(command) ||
       CURL_UNPROVEN_USERINFO.test(command))
   );
 }
-
-const CURL_PARTIAL_HEADER = new RegExp(
-  String.raw`(?:["'\u0060]\s*${SECRET_NAME}|\bauthorization)["']?\s*[:=]\s*\[hidden\][ \t]+[^\s"'\u0060]`,
-  "i",
-);
-const curlUnprovenAuthorization = (text: string): boolean =>
-  text.search(CURL_COMMAND) !== -1 && CURL_PARTIAL_HEADER.test(text.slice(text.search(CURL_COMMAND)));
 
 function scanUrlUserinfo(text: string): { text: string; ambiguous: boolean; count: number } {
   let ambiguous = false;
@@ -336,7 +334,6 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   if (curlCredentialOption(urls)) return CURL_WITHHELD;
   if (hasUnprovenValue(urls)) return YAML_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
-  if (curlUnprovenAuthorization(structured)) return CURL_WITHHELD;
   const hidden = SECRET_PATTERNS.reduce(
     (out, pattern) => out.replace(pattern, hiddenValue),
     structured,
