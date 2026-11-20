@@ -177,6 +177,13 @@ class Hub {
       this.web.changed();
       return { ok: true, value: done.value };
     } catch (error) {
+      if (
+        (op === "job.prepare" || op === "job.register") &&
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ERR_SQLITE_ERROR"
+      )
+        return { ok: false, error: reason(error), retryable: true };
       return { ok: false, error: reason(error) };
     }
   }

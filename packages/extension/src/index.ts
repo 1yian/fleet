@@ -296,6 +296,7 @@ function deliverAfterSync(
     deliver("");
     return;
   }
+  if (typeof job === "number" && typeof entry.fields["exitCode"] === "number") jobs.forgetTab(job);
   jobs.sync(typeof job === "number" ? job : undefined).then(
     () => {
       deliver("");

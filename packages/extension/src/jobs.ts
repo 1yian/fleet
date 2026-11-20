@@ -67,7 +67,6 @@ interface JobOptions {
 interface PendingDispatch {
   readonly launch: string;
   readonly file: string;
-  tab?: string;
   dispatched: boolean;
   fenced: boolean;
 }
@@ -80,6 +79,7 @@ export class Jobs {
   private readonly preparing = new Map<string, Preparing>();
   private readonly running = new Set<number>();
   private readonly pending = new Map<number, PendingDispatch>();
+  private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly cardd: { url: string; token: string };
   private readonly warn: (text: string) => void;
@@ -104,6 +104,10 @@ export class Jobs {
     if (observed !== undefined) this.clearPending(observed);
   }
 
+  forgetTab(job: number): void {
+    this.ownedTabs.delete(job);
+  }
+
   confirmStartupFence(job: number, launch?: string, detail = "startup was fenced"): void {
     if (launch !== undefined) {
       const preparing = this.preparing.get(launch);
@@ -114,7 +118,11 @@ export class Jobs {
     this.running.delete(job);
     pending.fenced = true;
     this.clearPending(job);
-    if (pending.tab !== undefined) void this.closeStartupTab(job, pending.tab);
+    const tab = this.ownedTabs.get(job);
+    if (tab !== undefined) {
+      this.forgetTab(job);
+      void this.closeStartupTab(job, tab);
+    }
   }
 
   private clearPending(job: number): void {
@@ -154,7 +162,7 @@ export class Jobs {
           reply.ok ? { ...reply, value: check(OPS["job.prepare"].result, reply.value) } : reply,
         )
         .catch(() => undefined);
-      if (receipt === undefined || (!receipt.ok && receipt.status >= 500)) continue;
+      if (receipt === undefined) continue;
       if (receipt.ok) {
         if ("unavailable" in receipt.value)
           throw new Error(
@@ -237,7 +245,7 @@ export class Jobs {
           void this.closeStartupTab(job, tabId);
           throw new Error(`Job ${String(job)} was fenced before dispatch`);
         }
-        pending.tab = tabId;
+        this.ownedTabs.set(job, tabId);
       }
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
@@ -283,11 +291,16 @@ export class Jobs {
         ? `${named} was stopped before wrapper registration. Its command will not run.`
         : `${named} is not running: nothing to stop.`;
     }
-    const tabs = records((await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"]);
-    const tab = field(
-      tabs.find((each) => each["label"] === tabName(job, label)),
-      "tab_id",
-    );
+    let tab = this.ownedTabs.get(job);
+    if (tab === undefined) {
+      const tabs = records(
+        (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],
+      );
+      const matches = tabs.filter((each) => each["label"] === tabName(job, label));
+      if (matches.length > 1)
+        return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
+      tab = field(matches[0], "tab_id");
+    }
     const panes = records(
       (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
     );

@@ -110,6 +110,9 @@ async function jobProxy(
     });
   });
   const sockets = new WebSocketServer({ server: proxy });
+  const disconnect = (): void => {
+    for (const client of sockets.clients) client.terminate();
+  };
   sockets.on("connection", (client) => {
     const upstream = new WebSocket(fleet.cardd.url);
     client.pause();
@@ -134,7 +137,7 @@ async function jobProxy(
   });
   await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
   t.after(() => {
-    for (const client of sockets.clients) client.terminate();
+    disconnect();
     sockets.close();
     proxy.closeAllConnections();
     proxy.close();
@@ -142,6 +145,7 @@ async function jobProxy(
   const address = proxy.address();
   assert.ok(address && typeof address !== "string");
   env["FLEET_URL"] = `ws://127.0.0.1:${String(address.port)}/session`;
+  return disconnect;
 }
 
 const callCardd = (op: string, args: unknown) =>
@@ -191,6 +195,53 @@ test("run_long recovers a committed reservation after torn prepare replies and r
     reservations.map((row) => row["id"]),
     [1],
   );
+});
+
+test("run_long retries transient HTTP 400 writes with the same prepare and registration identity", async (t) => {
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  t.after(() => db.close());
+  db.exec(`CREATE TRIGGER refuse_prepare BEFORE INSERT ON jobs WHEN NEW.label = 'recover-writes'
+    BEGIN SELECT RAISE(ABORT, 'injected prepare write failure'); END;
+    CREATE TRIGGER refuse_registration BEFORE UPDATE OF wrapper_pid ON jobs WHEN OLD.label = 'recover-writes'
+    BEGIN SELECT RAISE(ABORT, 'injected registration write failure'); END;`);
+  const prepares: unknown[] = [];
+  const registrations: unknown[] = [];
+  const refusals: { op: string; status: number }[] = [];
+  await jobProxy(t, async (op, args) => {
+    const result = await callCardd(op, args);
+    if (op !== "job.prepare" && op !== "job.register") return result;
+    const calls = op === "job.prepare" ? prepares : registrations;
+    calls.push(args);
+    if (calls.length === 1) {
+      refusals.push({ op, status: result.status });
+      db.exec(
+        op === "job.prepare" ? "DROP TRIGGER refuse_prepare" : "DROP TRIGGER refuse_registration",
+      );
+    }
+    return result;
+  });
+  const marker = join(jobDir, "executions");
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "recover-writes", command: `echo executed >> ${quote(marker)}; echo recovered` },
+  }));
+  h.onModel(() => ({ text: "Waiting for the recovered command" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "Write retries verified" } }));
+  worker();
+  await h.waitForCall(2);
+  assert.ok(said("Started job 1 (recover-writes)"));
+  await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the recovered job result");
+  assert.deepEqual(refusals, [
+    { op: "job.prepare", status: 400 },
+    { op: "job.register", status: 400 },
+  ]);
+  for (const calls of [prepares, registrations]) {
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], calls[1]);
+  }
+  assert.equal(db.prepare("SELECT count(*) AS count FROM jobs").get()?.["count"], 1);
+  assert.equal(readFileSync(marker, "utf8"), "executed\n");
+  assert.deepEqual(await jobResults(), [[1, 0, "recovered"]]);
 });
 
 for (const torn of [true, false]) {
@@ -250,7 +301,7 @@ for (const registrationFirst of [false, true]) {
     const release = Promise.withResolvers<void>();
     t.after(() => release.resolve());
     const registered = Promise.withResolvers<boolean>();
-    await jobProxy(t, async (op, args) => {
+    const disconnect = await jobProxy(t, async (op, args) => {
       if (op !== "job.register") return callCardd(op, args);
       if (!registrationFirst) {
         waiting.resolve();
@@ -266,6 +317,22 @@ for (const registrationFirst of [false, true]) {
       }
       return result;
     });
+    let decoy: unknown;
+    if (registrationFirst) {
+      await lab.run([
+        "tab",
+        "create",
+        "--workspace",
+        workspace(),
+        "--label",
+        "job-1-stopping",
+        "--no-focus",
+      ]);
+      decoy = (await tabsInWorkspace()).find((tab) => tab["label"] === "job-1-stopping")?.[
+        "tab_id"
+      ];
+      assert.equal(typeof decoy, "string");
+    }
     const marker = join(jobDir, "unexpected-execution");
     h.onModel(() => ({
       tool: "run_long",
@@ -273,6 +340,14 @@ for (const registrationFirst of [false, true]) {
     }));
     h.onModel(async () => {
       await waiting.promise;
+      if (registrationFirst) {
+        disconnect();
+        await h.waitForNth(
+          (event) => event["type"] === "fleet_connected",
+          2,
+          "the worker to resync running jobs",
+        );
+      }
       return { tool: "stop_job", args: { job: 1 } };
     });
     h.onModel(() => ({ text: "Stop requested" }));
@@ -289,6 +364,8 @@ for (const registrationFirst of [false, true]) {
     await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the job result");
     assert.deepEqual(await jobResults(), [[1, 130, output]]);
     assert.equal(existsSync(marker), false);
+    if (registrationFirst)
+      assert.ok((await tabsInWorkspace()).some((tab) => tab["tab_id"] === decoy));
   });
 }
 

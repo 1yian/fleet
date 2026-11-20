@@ -17,7 +17,10 @@ export async function jobHandshake<N extends "job.prepare" | "job.register">(
     signal: AbortSignal.timeout(5000),
   });
   const outcome = check(HttpOutcomeSchema, await response.json());
-  if (!outcome.ok) return { ...outcome, status: response.status };
+  if (!outcome.ok) {
+    if (outcome.retryable === true || response.status >= 500) throw new Error(outcome.error);
+    return { ...outcome, status: response.status };
+  }
   if (response.status !== 200)
     throw new Error(`Unexpected response to ${op}: ${String(response.status)}`);
   return outcome;
