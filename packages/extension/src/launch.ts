@@ -29,7 +29,7 @@ import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
 const CUTOVER_USAGE =
-  "fleet job-cutover status | seal | confirm-stop <job> <evidence that the legacy launch cannot run>";
+  "fleet job-cutover status | seal | confirm-stop <job> <evidence that the legacy job's process tree cannot run>";
 const USAGE = [
   CUTOVER_USAGE,
   "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange [--host NAME] | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",

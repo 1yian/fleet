@@ -121,7 +121,6 @@ export class Jobs {
     const url = this.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call");
     const id = randomUUID();
     const { job, heartbeatMs, registeredLaunch } = await this.prepare(url, id, label, command);
-    this.running.set(job, label);
     const file = join(tmpdir(), `fleet-job-${String(job)}-${id}.json`);
     const tab = tabName(job, label);
     try {
@@ -151,6 +150,7 @@ export class Jobs {
       ]);
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
+      this.running.set(job, label);
       await herdr("local", ["pane", "run", pane, `node ${quote(WRAPPER)} ${quote(file)}`]);
     } catch (error) {
       rmSync(file, { force: true });

@@ -13,6 +13,7 @@ import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { parseRecord, records } from "../support/json.ts";
 import { until } from "../support/live-fleet.ts";
+import { groupIdentity, signalOwnedGroup } from "../support/marked.ts";
 import { ownWorkspacePackages } from "../support/protocol-skew.ts";
 import { addRemote, git, tip } from "../support/remote.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
@@ -105,6 +106,23 @@ const waitResult = (card: number, job: number, code: number) =>
     `job ${String(job)} to record exit ${String(code)}`,
   );
 
+const waitGroupExit = (pid: number) =>
+  until(() => {
+    try {
+      process.kill(-pid, 0);
+      return undefined;
+    } catch (error) {
+      if (Reflect.get(Object(error), "code") !== "ESRCH") throw error;
+      return true;
+    }
+  }, `process group ${String(pid)} to exit`);
+
+const waitTabClosed = (workspace: string, job: number, label: string) =>
+  until(async () => {
+    const tabs = records((await lab.run(["tab", "list", "--workspace", workspace]))["tabs"]);
+    return tabs.some((tab) => tab["label"] === `job-${String(job)}-${label}`) ? undefined : true;
+  }, `${label} wrapper to close its tab`);
+
 async function upgrade(): Promise<void> {
   const old = tip(workerCode.root);
   git(workerCode.root, "push", "-q", "origin", `${next}:refs/heads/main`);
@@ -159,9 +177,14 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   const go = join(h.dir, "natural-go");
   const interrupt = join(h.dir, "interrupt-ready");
   const never = join(h.dir, "never");
+  const ownedLaunch = lab.owned["FLEET_E2E_DETACH"];
+  assert.ok(ownedLaunch);
+  const helper = `require('node:fs').writeFileSync(${JSON.stringify(natural)}, String(process.pid)); setInterval(() => {}, 1000)`;
+  const helperArgs = JSON.stringify([ownedLaunch, "node", "-e", helper]);
+  const startHelper = `require('node:child_process').spawn(process.execPath, ${helperArgs}, { detached: true, stdio: 'ignore' }).unref()`;
   launch(
     "natural",
-    `touch ${quote(natural)}; while [ ! -f ${quote(go)} ]; do sleep 0.1; done; echo drained; exit 17`,
+    `node -e ${quote(startHelper)} && { while [ ! -f ${quote(go)} ]; do sleep 0.1; done; echo drained; exit 17; }`,
   );
   const pi = h.startPi("c-1-a1", env, [join(workerCode.root, EXTENSION)]);
   await file(natural);
@@ -194,43 +217,44 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
 
   writeFileSync(go, "");
   assert.equal((await waitResult(card.id, first.job, 17)).body, "drained");
+  await waitTabClosed(workspace, first.job, first.label);
+  const helperPid = Number(readFileSync(natural, "utf8"));
+  const helperIdentity = groupIdentity(helperPid);
+  assert.ok(helperIdentity, "the detached helper survived its wrapper and command");
   assert.deepEqual(
-    cutover(1, "status").blockers.map(({ job }) => job),
-    [second.job],
+    cutover(1, "status").blockers.map(({ job, state }) => [job, state]),
+    [
+      [first.job, "finished"],
+      [second.job, "running"],
+    ],
   );
   h.onModel(() => ({ tool: "stop_job", args: { job: second.job } }));
   h.onModel(() => ({ text: "stop sent" }));
   pi.prompt("Stop the other legacy job");
   await waitResult(card.id, second.job, 130);
-  assert.deepEqual(
-    cutover(1, "status").blockers.map(({ job }) => job),
-    [second.job],
-  );
   const pid = Number(readFileSync(interrupt, "utf8"));
   assert.ok(Number.isInteger(pid) && pid > 1);
-  await until(() => {
-    try {
-      process.kill(-pid, 0);
-      return undefined;
-    } catch (error) {
-      if (Reflect.get(Object(error), "code") !== "ESRCH") throw error;
-      return true;
-    }
-  }, "the stopped command process group to exit");
-  await until(async () => {
-    const tabs = records(
-      (await lab.run(["tab", "list", "--workspace", String(workspace)]))["tabs"],
-    );
-    return tabs.some((tab) => tab["label"] === `job-${String(second.job)}-interrupt`)
-      ? undefined
-      : true;
-  }, "the stopped wrapper to close its tab");
+  await waitGroupExit(pid);
+  await waitTabClosed(workspace, second.job, second.label);
+  const remaining = cutover(
+    1,
+    "confirm-stop",
+    String(second.job),
+    "Verified the only command process group exited and the wrapper closed its tab after stop_job",
+  );
+  assert.equal(remaining.state, "draining");
+  assert.deepEqual(remaining.blockers.map(({ job, state }) => [job, state]), [
+    [first.job, "finished"],
+  ]);
+  assert.equal(groupIdentity(helperPid), helperIdentity);
+  assert.ok(signalOwnedGroup(helperPid, helperIdentity, "SIGTERM"));
+  await waitGroupExit(helperPid);
   assert.deepEqual(
     cutover(
       0,
       "confirm-stop",
-      String(second.job),
-      "Verified the command process group exited and the wrapper closed its tab after stop_job",
+      String(first.job),
+      "Verified the foreground command and wrapper exited, then stopped and verified the only detached helper's group was gone",
     ),
     READY,
   );
