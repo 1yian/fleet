@@ -6,14 +6,6 @@ export function fleetHostName(): string {
   return hostname().toLowerCase().split(".")[0] ?? "";
 }
 
-export function canonicalFleetHost(host: string, configured: boolean): string {
-  if (host === "local") return fleetHostName();
-  if (configured) return host;
-  const native = hostname().toLowerCase();
-  const name = host.toLowerCase();
-  return name === native || name === native.split(".")[0] ? fleetHostName() : host;
-}
-
 const DEFAULT_TOOL_DIRS = [
   "/opt/homebrew/bin",
   "/opt/homebrew/sbin",

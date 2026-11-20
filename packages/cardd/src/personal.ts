@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { check, missingPersonalClone, OPS, PERSONAL_PROJECT } from "@fleet/protocol";
-import { canonicalFleetHost, routed } from "@fleet/protocol/route";
+import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
@@ -22,9 +22,14 @@ owned_empty_clone() {
   root=$(cat "$1/$marker") &&
   branch=$(git -C "$1" symbolic-ref HEAD) && [ "$branch" = refs/heads/main ] &&
   history=$(git -C "$1" rev-list --parents HEAD) && [ "$root" = "$history" ] &&
+  refs=$(git -C "$1" for-each-ref --format='%(refname) %(objectname)') && [ "$refs" = "refs/heads/main $root" ] &&
+  top=$(git -C "$1" rev-parse --show-toplevel) &&
+  worktrees=$(git -C "$1" worktree list --porcelain) && [ "$worktrees" = "worktree $top
+HEAD $root
+branch refs/heads/main" ] &&
   tree=$(git -C "$1" ls-tree HEAD) && [ -z "$tree" ] &&
   remotes=$(git -C "$1" remote) && [ -z "$remotes" ] &&
-  changes=$(GIT_OPTIONAL_LOCKS=0 git -C "$1" -c core.fsmonitor=false status --porcelain --ignored) && [ -z "$changes" ]
+  changes=$(GIT_OPTIONAL_LOCKS=0 git -C "$1" -c core.fsmonitor=false status --porcelain --untracked-files=all --ignored) && [ -z "$changes" ]
 }
 if [ ! -e "$clone" ] && [ ! -L "$clone" ]; then
   mkdir -p "$parent"
@@ -90,7 +95,7 @@ export async function ensurePersonalProject(
     throw new Error(
       `only main can create the ${PERSONAL_PROJECT} project. Ask main, or dispatch under an existing project with a clone on ${host}`,
     );
-  if (host === "local" || canonicalFleetHost(host, Object.hasOwn(hosts, host)) !== host)
+  if (host === "local")
     throw new Error(
       `no canonical host specified for ${PERSONAL_PROJECT}: use a host name instead of ${host}`,
     );

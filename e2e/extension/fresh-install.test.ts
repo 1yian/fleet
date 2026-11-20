@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import {
   lastUser,
+  type DispatchLab,
   mateConnected,
   startDispatchLab,
   stopDispatchLab,
@@ -27,7 +28,8 @@ const dispatchUnder = (project: string, task: string) => ({
     kind: "ship",
     project,
     intent: "Make me a gameplay demo video of my Scratch game",
-    host: project === "personal" ? hostname() : "local",
+    host: "local",
+    delivery: "local-only",
     task,
   },
 });
@@ -67,22 +69,7 @@ test("only main bootstraps personal on the named Fleet host, then closes an empt
   h.onModel(() => dispatchUnder("fleet", task), "mate");
   h.onModel(() => dispatchUnder("personal", task), "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(
-    () => ({ tool: "close", args: { card: 2, summary: "Demo video checked and delivered." } }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "closed" }), "mate");
-  h.onModel(
-    () => ({
-      tool: "bash",
-      args: { command: `printf 'Demo starts\\n' > '${artifact}'; head -n 1 '${artifact}'` },
-    }),
-    "worker",
-  );
-  h.onModel((turns) => {
-    assert.match(toolResults(turns).at(-1) ?? "", /Demo starts/);
-    return { tool: "report", args: { status: "done", text: checked } };
-  }, "worker");
+  scriptArtifactHandoff(parts, 2, artifact, checked);
   await mateConnected(h);
   mate.prompt("make a gameplay demo video of my Scratch game");
 
@@ -125,6 +112,90 @@ test("only main bootstraps personal on the named Fleet host, then closes an empt
   assert.equal(git("rev-list", "--count", "main"), "1");
   assert.equal(git("rev-list", "--max-parents=0", "main"), git("rev-parse", "main"));
   assert.equal(git("ls-tree", "-r", "main"), "");
+});
+
+function scriptArtifactHandoff(
+  { h }: DispatchLab,
+  card: number,
+  artifact: string,
+  checked: string,
+) {
+  h.onModel(
+    () => ({ tool: "close", args: { card, summary: "Demo checked and delivered." } }),
+    "mate",
+  );
+  h.onModel(() => ({ text: "closed" }), "mate");
+  h.onModel(
+    () => ({
+      tool: "bash",
+      args: { command: `printf 'Demo starts\\n' > '${artifact}' && head -n 1 '${artifact}'` },
+    }),
+    "worker",
+  );
+  h.onModel((turns) => {
+    assert.match(toolResults(turns).at(-1) ?? "", /^Demo starts/m);
+    return { tool: "report", args: { status: "done", text: checked } };
+  }, "worker");
+}
+
+test("dispatch honors the registered local clone and closes a checked yolo artifact without landing", async (t) => {
+  const parts = await startDispatchLab({ workerShell: true, mate: hostEnv, cardd: hostEnv });
+  t.after(async () => {
+    await parts.lab.printIfFailed(t);
+    await stopDispatchLab(parts);
+  });
+  const { h, mate, cardd, clone } = parts;
+  cardd.addProject("personal", { local: clone }, "acme/personal", "direct-PR");
+  cardd.yolo("personal");
+  const registry = cardd.admin("project", "list").stdout;
+  const initial = execFileSync("git", ["-C", clone, "rev-parse", "main"], { encoding: "utf8" });
+  const artifact = join(tempDir("fleet-yolo-output-"), "demo.txt");
+  const checked = `${artifact}: opened the transcript and confirmed the demo starts`;
+  h.onModel(
+    () =>
+      dispatchUnder(
+        "personal",
+        `Save and verify the transcript at ${artifact}. Leave the branch unchanged.`,
+      ),
+    "mate",
+  );
+  h.onModel(() => ({ text: "dispatched" }), "mate");
+  scriptArtifactHandoff(parts, 1, artifact, checked);
+  await mateConnected(h);
+  mate.prompt("make a gameplay demo");
+
+  const done = await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+  assert.equal(toolResults(done)[0], "Dispatched c-1-a1 on local, branch c-1-a1.");
+  assert.equal(
+    lastUser(done),
+    `[fleet] c-1 gameplay-demo done: ${checked} (local-only: the branch is empty, so nothing lands) (card now merging)`,
+  );
+  assert.deepEqual((await cardd.board()).holds, []);
+  const closed = await h.waitForCall(3, "mate", WORKER_WAIT_MS);
+  assert.equal(toolResults(closed).at(-1), "c-1 is done.");
+  assert.equal(readFileSync(artifact, "utf8"), "Demo starts\n");
+  assert.equal(
+    execFileSync("git", ["-C", clone, "rev-parse", "main"], { encoding: "utf8" }),
+    initial,
+  );
+  assert.equal(cardd.admin("project", "list").stdout, registry);
+});
+
+test("bootstrap uses the default native host without inferring a custom route", async (t) => {
+  const home = tempDir("fleet-personal-native-");
+  const cardd = await Cardd.start({ FLEET_HOST: "", FLEET_HOST_DIR: home }, ["--hosts", "{}"]);
+  t.after(() => cardd.stop());
+  const main = await cardd.connect(cardd.addLane("main"));
+  const clone = join(home, "projects", "personal");
+  await assert.rejects(
+    main.call("project.personal", { host: fleetHost }),
+    /no host route configured/,
+  );
+  assert.equal(existsSync(clone), false);
+  assert.equal(cardd.admin("project", "list").stdout, "");
+  const native = hostname().toLowerCase().split(".")[0];
+  assert.equal(await main.call("project.personal", { host: native }), true);
+  assert.deepEqual(worktreesOf(clone), ["branch refs/heads/main"]);
 });
 
 test("bootstrap leaves an occupied checkout untouched and only provisions the winning host", async (t) => {
@@ -189,9 +260,11 @@ test("bootstrap retries after a failed commit or a lost framed reply", async (t)
   const cardd = await Cardd.start(
     {
       FLEET_HOST_DIR: home,
-      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_COUNT: "2",
       GIT_CONFIG_KEY_0: "core.hooksPath",
       GIT_CONFIG_VALUE_0: hooks,
+      GIT_CONFIG_KEY_1: "status.showUntrackedFiles",
+      GIT_CONFIG_VALUE_1: "no",
     },
     ["--hosts", JSON.stringify({ retry: ["sh", "-c", route, "transport", drop] })],
   );
@@ -219,6 +292,20 @@ test("bootstrap retries after a failed commit or a lost framed reply", async (t)
   assert.equal(cardd.admin("project", "list").stdout, "");
 
   rmSync(extra);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", clone, ...args], { encoding: "utf8" });
+  git("branch", "operator-work");
+  await assert.rejects(bootstrap(), /existing directory is not an empty Fleet bootstrap/);
+  assert.equal(git("rev-parse", "operator-work"), published);
+  git("branch", "-d", "operator-work");
+
+  const linked = join(home, "linked");
+  git("worktree", "add", "--detach", linked, "main");
+  await assert.rejects(bootstrap(), /existing directory is not an empty Fleet bootstrap/);
+  assert.equal(existsSync(linked), true);
+  git("worktree", "remove", linked);
+  assert.equal(cardd.admin("project", "list").stdout, "");
+
   assert.equal(await bootstrap(), true);
   assert.equal(head(), published);
   assert.equal(

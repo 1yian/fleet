@@ -12,11 +12,10 @@ import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import type { Complaints } from "./complaints.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
-import { isLocal, personalHost } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
-import { requireProject } from "./personal.ts";
+import { dispatchHost } from "./personal.ts";
 import { boardText, cardText, errorText, EXTRA_COLUMNS, SELECTIONS } from "./views.ts";
 
 const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${card.title}`;
@@ -301,9 +300,7 @@ export function registerMate(
     parameters: DispatchParams,
     execute: async (_id, params) => {
       const { title, name, kind, project, intent, task, delivery, model } = params;
-      const host = project === PERSONAL_PROJECT ? personalHost(params.host) : params.host;
-      isLocal(host);
-      await requireProject(link, host, project);
+      const host = await dispatchHost(link, params.host, project);
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>
