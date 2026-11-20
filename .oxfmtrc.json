@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "package-lock.json",
+    "docs/spec.md",
+    "packages/board/src/vendor/",
+    "packages/extension/vendor/",
+    "packages/extension/prompts/",
+    "/AGENTS.md"
+  ]
+}

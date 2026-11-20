@@ -10,9 +10,9 @@
     "e2e"
   ],
   "scripts": {
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "format:files": "prettier --check --ignore-unknown",
+    "format": "oxfmt --write",
+    "format:check": "oxfmt --check",
+    "format:files": "oxfmt --check --no-error-on-unmatched-pattern",
     "lint": "node lint.js",
     "typecheck": "node typecheck.js",
     "knip": "knip --treat-config-hints-as-errors",
@@ -29,8 +29,8 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "knip": "6.42.1",
     "oxc-parser": "0.159.0",
+    "oxfmt": "0.79.0",
     "oxlint": "1.94.0",
-    "prettier": "3.9.10",
     "tsrs": "0.25.0-ts7.1.0-beta",
     "typescript": "6.0.3"
   }
