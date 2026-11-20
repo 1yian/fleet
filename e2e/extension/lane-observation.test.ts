@@ -693,7 +693,7 @@ test("two current-title workspaces are ambiguous and never pick a pane to start,
   const first = await idlePane("ops", home, "idle-duplicate");
   assert.deepEqual(maintain(), action("ops", "started"));
   const liveId = (await workspace("ops"))?.["workspace_id"];
-  assert.equal(typeof liveId, "string");
+  assert.ok(typeof liveId === "string");
   assert.deepEqual(maintain(), action("ops", "running"));
   rmSync(join(home, "state", "starts"));
   await lab.run(["workspace", "rename", String(first.split(":")[0]), "2ndmate-ops"]);
