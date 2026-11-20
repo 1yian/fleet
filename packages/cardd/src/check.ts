@@ -97,7 +97,8 @@ const IDLE_WORKERS = (
   FROM (${workerCards(ids)}) w
   WHERE ${quietSql("w.state", "w.attemptId")}
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
-    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN (${IN_FLIGHT_DELIVERY}))`;
+    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session
+      AND d.retired_at IS NULL AND d.state IN (${IN_FLIGHT_DELIVERY}))`;
 
 const NUDGE_TEXT =
   "you went idle without reporting. If the work is done or you are stuck, call report now with the right status. If you are still working, carry on and report when you reach a handoff.";

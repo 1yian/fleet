@@ -228,9 +228,11 @@ function deliveryEligibility(
   if (typeof restartNotice !== "number") return "eligible";
   const state = noticeState(db, getCard(db, card), restartNotice);
   if (state === "retired")
-    db.prepare(
-      `DELETE FROM deliveries WHERE session = ? AND entry = ? AND state IN (${UNREAD_DELIVERY})`,
-    ).run(session, entry);
+    db.prepare("UPDATE deliveries SET retired_at = ? WHERE session = ? AND entry = ?").run(
+      Date.now(),
+      session,
+      entry,
+    );
   return state;
 }
 
@@ -246,12 +248,14 @@ export function toPush(
     `SELECT json_object('entry', json(${ENTRY_JSON}), 'name', c.name,
        'again', json(iif(d.state IN (${AGAIN}), 'true', 'false'))) AS j
      FROM deliveries d JOIN entries e ON e.id = d.entry JOIN cards c ON c.id = e.card
-     WHERE d.session = ? AND d.state IN (${states}) ORDER BY e.id`,
+     WHERE d.session = ? AND d.retired_at IS NULL AND d.state IN (${states}) ORDER BY e.id`,
     session,
   );
   const queued = new Set(
     db
-      .prepare("SELECT entry FROM deliveries WHERE session = ? AND state = 'pending'")
+      .prepare(
+        "SELECT entry FROM deliveries WHERE session = ? AND retired_at IS NULL AND state = 'pending'",
+      )
       .all(session)
       .map((row) => Number(row["entry"])),
   );
@@ -318,7 +322,7 @@ const UNREAD_RESENDS = 3;
 
 const CHASE_ROWS = `SELECT d.session AS session, d.state AS state, d.resends AS resends, d.told_at AS told, d.updated_at AS updated, s.role AS role, ${ENTRY_JSON} AS j
   FROM deliveries d JOIN sessions s ON s.id = d.session JOIN entries e ON e.id = d.entry
-  WHERE d.state IN (${CHASEABLE})
+  WHERE d.retired_at IS NULL AND d.state IN (${CHASEABLE})
     AND s.state IN ('idle', 'waiting')
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "d.session")}
     AND (?1 - d.updated_at >= ?2 OR (d.resends >= ${String(UNREAD_RESENDS)} AND (d.told_at IS NULL OR ?1 - d.told_at >= ?3)))
@@ -418,7 +422,7 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
     .prepare(
       `SELECT e.id, e.card, e.author, e.body, json_extract(e.fields, '$.restartNotice') AS notice
        FROM deliveries d JOIN entries e ON e.id = d.entry
-       WHERE d.session = ? AND d.state IN (${UNREAD_DELIVERY}) AND e.kind = 'comment'
+       WHERE d.session = ? AND d.retired_at IS NULL AND d.state IN (${UNREAD_DELIVERY}) AND e.kind = 'comment'
          AND json_extract(e.fields, '$.task') IS NULL
          AND json_extract(e.fields, '$.for') = 'worker'
        ORDER BY e.id`,
