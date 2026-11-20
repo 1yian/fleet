@@ -257,8 +257,8 @@ test("an expired startup that cannot be recorded does not hold back another card
     );
   const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
   try {
-    db.exec(`CREATE TRIGGER refuse_expiry BEFORE UPDATE OF state ON jobs
-      WHEN OLD.label = 'refused' AND NEW.state = 'finished'
+    db.exec(`CREATE TRIGGER refuse_expiry BEFORE INSERT ON entries
+      WHEN NEW.kind = 'job-result' AND NEW.card = ${String(poisoned.id)}
       BEGIN SELECT RAISE(ABORT, 'injected startup write failure'); END;
       UPDATE jobs SET created_at = created_at - 60000;`);
     const fence = await until(
@@ -281,6 +281,7 @@ test("an expired startup that cannot be recorded does not hold back another card
     );
     assert.equal(recovered.fields["job"], refused);
     assert.equal(jobRow(refused)["state"], "finished");
+    assert.equal((await results(poisoned)).length, 1);
     assert.equal((await results(healthy)).length, 1);
   } finally {
     db.close();

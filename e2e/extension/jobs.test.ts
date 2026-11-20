@@ -879,6 +879,87 @@ exec ${quote(herdr)} "$@"
   ]);
 });
 
+test("a reconnect snapshot of a registered wrapper is not proof that the command ran, so a delayed pane reply reports an unconfirmed dispatch", async (t) => {
+  const release = join(jobDir, "release-reply");
+  const accepted = join(jobDir, "pane-accepted");
+  const marker = join(jobDir, "not-executed");
+  const registrationReply = Promise.withResolvers<void>();
+  t.after(() => registrationReply.resolve());
+  const lists: number[][] = [];
+  let registrations = 0;
+  const disconnect = await jobProxy(
+    t,
+    async (op, args) => {
+      const result = await callCardd(op, args);
+      if (op !== "job.register") return result;
+      registrations += 1;
+      if (registrations === 1) await registrationReply.promise;
+      return { ...result, body: '{"ok":true,"value":{} }' };
+    },
+    false,
+    (reply) => {
+      assert.ok(reply.ok);
+      lists.push(check(OPS.jobs.result, reply.value).map(({ id }) => id));
+      return reply;
+    },
+  );
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
+const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  response=$(${quote(herdr)} "$@") || exit "$?"
+  touch ${quote(accepted)}
+  node -e ${quote(waitForRelease)} || exit "$?"
+  printf '%s\\n' "$response"
+  exit 0
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  t.after(() => writeFileSync(release, ""));
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "snapshotted", command: `touch ${quote(marker)}` },
+  }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job did not start" } }));
+  worker();
+  await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
+  await until(() => (registrations === 1 ? true : undefined), "the registration request");
+  const beforeSnapshot = lists.length;
+  disconnect();
+  await until(
+    () => (lists.slice(beforeSnapshot).some((ids) => ids.includes(1)) ? true : undefined),
+    "the reconnect snapshot to show the registered job",
+  );
+  writeFileSync(release, "");
+  await h.waitForCall(1);
+  assert.ok(
+    said(
+      "Dispatched job 1 (snapshotted) in tab job-1-snapshotted; its startup is not yet confirmed.",
+    ),
+  );
+  assert.equal(said("Started job 1"), false);
+  assert.equal(existsSync(marker), false);
+  assert.deepEqual(await jobResults(), []);
+  registrationReply.resolve();
+  await untilAsync(
+    async () => ((await jobResults()).length > 0 ? true : undefined),
+    "the wrapper's durable no-start result",
+  );
+  assert.equal(existsSync(marker), false);
+  assert.deepEqual(await jobResults(), [
+    [1, 127, "could not start: cardd did not confirm wrapper registration"],
+  ]);
+});
+
 test("a successful result received before the pane reply still reports the launch as started", async (t) => {
   const release = join(jobDir, "release-reply");
   const accepted = join(jobDir, "pane-accepted");

@@ -82,7 +82,7 @@ export class Jobs {
   private readonly running = new Set<number>();
   private readonly lastResult = new Map<number, number>();
   private readonly pending = new Map<number, PendingDispatch>();
-  private readonly launching = new Map<number, { unstarted: boolean }>();
+  private readonly launching = new Map<number, { unstarted: boolean; ran: boolean }>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -127,6 +127,7 @@ export class Jobs {
     const launching = this.launching.get(job);
     if (launching !== undefined && entry.fields["commandNotStarted"] === true)
       launching.unstarted = true;
+    else if (launching !== undefined && typeof exitCode === "number") launching.ran = true;
     this.clearPending(job);
     if (revived === true) this.running.add(job);
     else this.running.delete(job);
@@ -236,7 +237,7 @@ export class Jobs {
     const pending: PendingDispatch | undefined = registeredLaunch
       ? { launch: id, file, dispatched: false, fenced: false }
       : undefined;
-    const launching = { unstarted: false };
+    const launching = { unstarted: false, ran: false };
     if (registeredLaunch) this.launching.set(job, launching);
     try {
       const { timeoutMs, tailLines, lineChars } = options;
@@ -311,7 +312,7 @@ export class Jobs {
     } finally {
       if (this.launching.get(job) === launching) this.launching.delete(job);
     }
-    return { job, tab, started: registeredLaunch && !this.pending.has(job) };
+    return { job, tab, started: registeredLaunch && launching.ran };
   }
 
   async stop(job: number): Promise<string> {
