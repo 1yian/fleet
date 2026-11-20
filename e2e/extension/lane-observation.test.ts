@@ -284,7 +284,7 @@ test("status, placement, restart and stop confirm a one-off workspace omission",
   assert.ok(typeof original === "string");
   const afterOmission = (args: string[]) => {
     rmSync(faultLog(), { force: true });
-    return fleet(args, "omit-once");
+    return fleet(args, "omit-once", "", "5000");
   };
   assert.deepEqual(JSON.parse(afterOmission(["status", "--json"])), [
     { lane: "ops", state: "running" },
@@ -619,6 +619,38 @@ test("a failure after the aside is written still reports where the edited copy w
   );
 });
 
+test("an accepted start is still waited on and reported when recording it fails", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  await idlePane("ops", home);
+  mkdirSync(join(home, "state", "starts.next"));
+  const reply = maintain();
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["outcomes"], action("ops", "started"));
+  assert.match(String(reply["failed"]), /ops started, but recording the start failed/);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "running" }]);
+  assert.deepEqual(maintain(), action("ops", "running"));
+});
+
+test("status never publishes a definite state over unreadable lifecycle files", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  await idlePane("ops", home);
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  writeFileSync(starts, "");
+  const idle = records(JSON.parse(fleet(["status", "--json"])));
+  assert.equal(idle[0]?.["state"], "unknown");
+  assert.match(String(idle[0]?.["reason"]), /state\/starts is incomplete/);
+  rmSync(starts);
+  assert.deepEqual(maintain(), action("ops", "started"));
+  mkdirSync(stopped);
+  const live = records(JSON.parse(fleet(["status", "--json"])));
+  assert.equal(live[0]?.["state"], "unknown");
+  assert.match(String(live[0]?.["reason"]), /could not read state\/stopped/);
+  const before = (await workspace("ops"))?.["workspace_id"];
+  assert.throws(() => fleet(["stop", "ops"]), /could not read state\/stopped/);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before);
+});
+
 test("legacy split workspaces close by the original pane's home, not by Pi in a split", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
   for (const cwd of [here.root, home]) {
@@ -701,7 +733,7 @@ test("an omitted current title cannot authorize a legacy start, hold, or close",
   const stopped = join(home, "state", "stopped");
   const afterOmission = (args: string[], title = "2ndmate-ops") => {
     rmSync(faultLog(), { force: true });
-    return fleet(args, "omit-title-once", title);
+    return fleet(args, "omit-title-once", title, "5000");
   };
   assert.deepEqual(JSON.parse(afterOmission(["status", "--json"])), [
     { lane: "ops", state: "running" },
