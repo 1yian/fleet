@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { OPS, type OpResult } from "@fleet/protocol";
 import Type from "typebox";
-import { replaceWorker, type Launch } from "./dispatch.ts";
+import { DidNotStart, replaceWorker, type Launch } from "./dispatch.ts";
 import { restartLane } from "./lanes.ts";
 import type { Link } from "./link.ts";
 
@@ -55,10 +55,9 @@ async function launching<T>(
   try {
     return await start();
   } catch (error) {
-    if (!plan.repeat && plan.incident === null) {
-      const reason = error instanceof Error ? error.message : String(error);
+    if (error instanceof DidNotStart && !plan.repeat && plan.incident === null) {
       await link
-        .call("card.restart.failed", { card: plan.card, key, error: reason })
+        .call("card.restart.failed", { card: plan.card, key, error: error.message })
         .catch(() => undefined);
     }
     throw error;
@@ -68,16 +67,11 @@ async function launching<T>(
 const incidentOf = (plan: Plan): string =>
   plan.incident === null ? "" : ` (incident ${String(plan.incident)})`;
 
-async function restartMate(
-  link: Link,
-  home: string | undefined,
-  plan: Plan,
-  key: string,
-): Promise<string> {
+async function restartMate(home: string | undefined, plan: Plan): Promise<string> {
   if (home === undefined) throw new Error(`only main can replace the process of ${plan.actor}`);
   return plan.repeat
     ? `A restart of ${plan.lane} was already requested, so this repeat did nothing.`
-    : await launching(link, plan, key, () => restartLane(home, plan.lane));
+    : await restartLane(home, plan.lane);
 }
 
 async function restartWorker(
@@ -111,6 +105,6 @@ async function carryOut(
     return `Sent a recovery check to ${who}${incidentOf(plan)}. ${CHECK_NOTE}`;
   if (plan.replaced) return `${who} already runs a new process${incidentOf(plan)}.`;
   return plan.role === "mate"
-    ? restartMate(link, home, plan, key)
+    ? restartMate(home, plan)
     : restartWorker(link, launch, plan, key, avoid);
 }
