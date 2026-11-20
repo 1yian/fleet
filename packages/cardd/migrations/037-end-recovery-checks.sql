@@ -14,11 +14,8 @@ DELETE FROM deliveries WHERE entry IN (
     AND json_extract(f.fields, '$.entry') = e.id
 );
 
-UPDATE deliveries AS d SET state = 'read'
-WHERE d.state IN ('pushed', 'pushed-again') AND EXISTS (
-  SELECT 1 FROM entries e JOIN incidents i ON i.id = json_extract(e.fields, '$.recovery')
-  JOIN entries r ON r.card = e.card AND r.id > e.id
-  WHERE e.id = d.entry AND i.recovery_entry = e.id AND i.actor = d.session
-    AND i.state = 'recovering' AND r.kind = 'report' AND r.author = 'worker:' || d.session
-    AND r.created_at >= d.updated_at
+UPDATE deliveries SET state = 'read'
+WHERE state IN ('pushed', 'pushed-again') AND (session, entry) IN (
+  SELECT i.actor, i.recovery_entry FROM incidents i JOIN sessions s ON s.id = i.actor
+  WHERE i.state = 'recovering' AND i.control_at IS NOT NULL AND s.role = 'worker'
 );
