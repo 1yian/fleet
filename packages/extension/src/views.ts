@@ -429,7 +429,9 @@ function headerOf(
     );
   if (header.lanes !== undefined) {
     Object.assign(record, lanesOf(header.lanes, query.lanes === true));
-    const down = header.lanes.lanes.some((each) => each.state !== "running");
+    const down = header.lanes.lanes.some(
+      (each) => each.state === "down" || each.state === "stopped",
+    );
     if (down && query.lanes !== true)
       help.push("Call `board(lanes=true)` to see why a lane is down or stopped");
     if (down)

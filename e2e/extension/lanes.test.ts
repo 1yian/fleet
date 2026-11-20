@@ -15,6 +15,7 @@ import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
+const TORN = fileURLToPath(new URL("../support/torn-lane-transport.ts", import.meta.url));
 
 let cardd: Cardd;
 let h: Harness;
@@ -278,6 +279,44 @@ test("main tells the captain when a host cannot be reached, and when it is back"
   await wakeMain("Drop the old banner");
   const next = await h.waitForCall(1, "mate", WAIT_MS);
   assert.match(users(next), /\[fleet\] lanes: p620 can be reached again/);
+});
+
+test("unread transport and nested observations neither report failure nor clear a confirmed outage", async () => {
+  const control = join(here.parent, "faults");
+  const faults = ["blank", "cut", "partial", "failed", "down", "nested", "down"];
+  writeFileSync(control, faults.join("\n"));
+  configureMain(here, cardd.url, mainToken, {
+    hosts: { p620: ["node", TORN, control] },
+    roots: { p620: p620.root },
+  });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const turns = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(users(turns), /\[fleet\] lanes: p620 cannot be reached/);
+  await until(
+    () => (sessionText().includes("p620 can be reached again") ? true : undefined),
+    "main to report the first complete observation after the outage",
+  );
+  assert.deepEqual(
+    readFileSync(`${control}.log`, "utf8")
+      .split("\n")
+      .slice(0, faults.length + 1),
+    [...faults, "whole"],
+  );
+  assert.equal(sessionText().split("p620 cannot be reached").length - 1, 1);
+  assert.equal(sessionText().split("p620 can be reached again").length - 1, 1);
+  assert.doesNotMatch(sessionText(), /\[fleet\] lanes: p620 (failed|could not be read)/);
+  await waitState(p620, "far", "running");
+
+  writeFileSync(`${control}.mutation`, "");
+  h.onModel(() => ({ tool: "lane", args: { name: "far", action: "start" } }), "mate");
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await wakeMain("Check the explicit lane start reply");
+  const next = await h.waitForCall(2, "mate", WAIT_MS);
+  assert.equal(
+    toolResults(next).at(-1),
+    "fleet on p620 returned an incomplete lane mutation result",
+  );
 });
 
 test("a mate that keeps dying is held, and only naming it starts it again", async () => {

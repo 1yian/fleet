@@ -213,6 +213,7 @@ function show(outcomes: readonly Outcome[]): void {
       running: `already running in ${mateTitle(lane)}`,
       held: `held: ${detail ?? ""}`,
       stopped: `stopped: ${detail ?? ""}`,
+      unread: "unknown (could not read the lane)",
     }[action];
     console.log(`${lane}: ${text}`);
   }
@@ -224,6 +225,13 @@ function lane(): string {
   return name;
 }
 
+const maintenance = command === "up" && values.maintenance === true;
+const maintenanceJson = maintenance && values.json === true;
+
+function maintenanceFailure(message: string): void {
+  console.log(JSON.stringify({ failed: message }));
+}
+
 if (command === "up" || command === "restart") {
   if (values.host !== undefined) {
     console.error(USAGE);
@@ -231,6 +239,10 @@ if (command === "up" || command === "restart") {
   }
   const problems = hostProblems(root, values.maintenance !== true);
   if (problems.length > 0) {
+    if (maintenanceJson) {
+      maintenanceFailure(problems.join("\n"));
+      process.exit(0);
+    }
     console.error(problems.join("\n"));
     process.exit(1);
   }
@@ -252,7 +264,12 @@ switch (command ?? "") {
     break;
   }
   case "up":
-    show(await up(root, rest[0]));
+    try {
+      show(await up(root, rest[0], maintenance));
+    } catch (error) {
+      if (!maintenanceJson) throw error;
+      maintenanceFailure(error instanceof Error ? error.message : String(error));
+    }
     break;
   case "shared": {
     if (values.absent !== true && values.content === undefined) throw new Error(USAGE);
