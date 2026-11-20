@@ -483,6 +483,48 @@ test("an unreadable lane config is reported safely while healthy lanes still con
   assert.equal((await workspace("ops"))?.["workspace_id"], before);
 });
 
+test("an unreadable stop marker or start history is unknown and never authorizes a start", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  await idlePane("ops", home);
+  const stopped = join(home, "state", "stopped");
+  const starts = join(home, "state", "starts");
+  mkdirSync(stopped);
+  assert.deepEqual(maintain(), action("ops", "unread"));
+  assert.equal(existsSync(starts), false);
+  const status = records(JSON.parse(fleet(["status", "--json"])));
+  assert.equal(status[0]?.["state"], "unknown");
+  assert.match(String(status[0]?.["reason"]), /could not read state\/stopped \(EISDIR\)/);
+  rmSync(stopped, { recursive: true });
+  mkdirSync(starts);
+  assert.deepEqual(maintain(), action("ops", "unread"));
+  assert.equal(existsSync(stopped), false);
+  rmSync(starts, { recursive: true });
+  assert.deepEqual(maintain(), action("ops", "started"));
+});
+
+test("a later preference write failure does not hide an earlier confirmed aside", async () => {
+  addLane("zz");
+  const ops = `${here.root}.worktrees/lane-ops`;
+  const zz = `${here.root}.worktrees/lane-zz`;
+  writeFileSync(join(ops, "data", "captain-shared.md"), "local edit\n");
+  rmSync(join(zz, "data"), { recursive: true });
+  writeFileSync(join(zz, "data"), "");
+  const content = Buffer.from("- shared\n").toString("base64");
+  assert.throws(
+    () => fleet(["shared", "--content", content]),
+    (error: unknown) => {
+      const stderr = String(Reflect.get(Object(error), "stderr"));
+      assert.match(stderr, /lane zz could not be updated/);
+      assert.match(
+        stderr,
+        /^fleet-preserved: ops: shared preferences updated, edited copy preserved as data\//m,
+      );
+      return true;
+    },
+  );
+  assert.equal(readFileSync(join(ops, "data", "captain-shared.md"), "utf8"), "- shared\n");
+});
+
 test("legacy split workspaces close by the original pane's home, not by Pi in a split", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
   for (const cwd of [here.root, home]) {

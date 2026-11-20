@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { discoverLanes, type UnreadLane } from "./homes.ts";
+import { discoverLanes, unreadFailure } from "./homes.ts";
 
 type Tier = "pinned" | "aging" | "perishable";
 type Standing = "captain.md" | "captain-shared.md" | "learnings.md";
@@ -29,6 +29,17 @@ function readIfPresent(path: string): string | undefined {
     return readFileSync(path, "utf8");
   } catch {
     return undefined;
+  }
+}
+
+export const PRESERVED_PREFIX = "fleet-preserved: ";
+
+function readStrict(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
   }
 }
 
@@ -73,8 +84,8 @@ function converge(home: string, bytes: string | undefined): string {
   mkdirSync(join(home, "data"), { recursive: true });
   mkdirSync(join(home, "state"), { recursive: true });
   const target = pathOf(home, SHARED);
-  const current = readIfPresent(target);
-  const published = readIfPresent(publishedFile(home));
+  const current = readStrict(target);
+  const published = readStrict(publishedFile(home));
   const edited = current !== undefined && current !== bytes && current !== published;
   const kept = edited ? preserveAside(home, current) : undefined;
   const aside = kept === undefined ? "" : `, edited copy preserved as data/${kept}`;
@@ -93,12 +104,19 @@ function converge(home: string, bytes: string | undefined): string {
 export function convergeSharedPreferences(
   root: string,
   bytes: string | undefined,
-): { results: { lane: string; result: string }[]; unread: UnreadLane[] } {
+): { results: { lane: string; result: string }[]; failures: string[] } {
   const { homes, unread } = discoverLanes(root);
-  return {
-    results: homes.map(({ lane, home }) => ({ lane, result: converge(home, bytes) })),
-    unread,
-  };
+  const results: { lane: string; result: string }[] = [];
+  const failures = unread.length === 0 ? [] : [unreadFailure(unread)];
+  for (const { lane, home } of homes) {
+    try {
+      results.push({ lane, result: converge(home, bytes) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`lane ${lane} could not be updated: ${message}`);
+    }
+  }
+  return { results, failures };
 }
 
 interface Entry {
