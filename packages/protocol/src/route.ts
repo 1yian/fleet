@@ -1,9 +1,17 @@
 import { hostname } from "node:os";
 
 export function fleetHostName(): string {
-  const named = process.env["FLEET_HOST"]?.trim();
-  if (named && named.toLowerCase() !== "local") return named;
+  const named = process.env["FLEET_HOST"];
+  if (named && named !== "local") return named;
   return hostname().toLowerCase().split(".")[0] ?? "";
+}
+
+export function canonicalFleetHost(host: string, configured: boolean): string {
+  if (host === "local") return fleetHostName();
+  if (configured) return host;
+  const native = hostname().toLowerCase();
+  const name = host.toLowerCase();
+  return name === native || name === native.split(".")[0] ? fleetHostName() : host;
 }
 
 const DEFAULT_TOOL_DIRS = [

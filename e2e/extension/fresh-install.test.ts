@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
@@ -18,7 +19,7 @@ import { tempDir } from "../support/run-root.ts";
 const fleetHost = "fleet-personal-lab";
 const hostEnv = { FLEET_HOST: fleetHost };
 
-const dispatchUnder = (project: string) => ({
+const dispatchUnder = (project: string, task: string) => ({
   tool: "dispatch",
   args: {
     title: "Scratch gameplay demo video",
@@ -26,14 +27,15 @@ const dispatchUnder = (project: string) => ({
     kind: "ship",
     project,
     intent: "Make me a gameplay demo video of my Scratch game",
-    host: "local",
-    task: "Record the demo, then play the video back and check it before you report done",
+    host: project === "personal" ? hostname() : "local",
+    task,
   },
 });
 
 test("only main bootstraps personal on the named Fleet host, then closes an empty branch without approval", async (t) => {
   const parts = await startDispatchLab({
     freshInstall: true,
+    workerShell: true,
     mate: hostEnv,
     cardd: {
       ...hostEnv,
@@ -58,9 +60,12 @@ test("only main bootstraps personal on the named Fleet host, then closes an empt
   assert.equal(cardd.admin("project", "list").stdout, "");
   assert.equal(existsSync(clone), false);
 
+  const artifact = join(tempDir("fleet-demo-output-"), "demo.txt");
+  const task = `Save the demo transcript at ${artifact}, open it to verify it, and leave the branch unchanged.`;
+  const checked = `${artifact}: opened the transcript and confirmed the demo starts`;
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
-  h.onModel(() => dispatchUnder("fleet"), "mate");
-  h.onModel(() => dispatchUnder("personal"), "mate");
+  h.onModel(() => dispatchUnder("fleet", task), "mate");
+  h.onModel(() => dispatchUnder("personal", task), "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
   h.onModel(
     () => ({ tool: "close", args: { card: 2, summary: "Demo video checked and delivered." } }),
@@ -68,9 +73,16 @@ test("only main bootstraps personal on the named Fleet host, then closes an empt
   );
   h.onModel(() => ({ text: "closed" }), "mate");
   h.onModel(
-    () => ({ tool: "report", args: { status: "done", text: "video played back and checked" } }),
+    () => ({
+      tool: "bash",
+      args: { command: `printf 'Demo starts\\n' > '${artifact}'; head -n 1 '${artifact}'` },
+    }),
     "worker",
   );
+  h.onModel((turns) => {
+    assert.match(toolResults(turns).at(-1) ?? "", /Demo starts/);
+    return { tool: "report", args: { status: "done", text: checked } };
+  }, "worker");
   await mateConnected(h);
   mate.prompt("make a gameplay demo video of my Scratch game");
 
@@ -86,15 +98,16 @@ test("only main bootstraps personal on the named Fleet host, then closes an empt
   const workerFirst = await h.waitForCall(0, "worker");
   assert.equal(
     lastUser(workerFirst),
-    "[fleet] main on c-2 gameplay-demo: Record the demo, then play the video back and check it before you report done\n\nDelivery: local-only",
+    `[fleet] main on c-2 gameplay-demo: ${task}\n\nDelivery: local-only`,
   );
   assert.equal(
     lastUser(woken),
-    "[fleet] c-2 gameplay-demo done: video played back and checked (local-only: the branch is empty, so nothing lands) (card now with-mate)",
+    `[fleet] c-2 gameplay-demo done: ${checked} (local-only: the branch is empty, so nothing lands) (card now with-mate)`,
   );
   assert.deepEqual((await cardd.board()).holds, []);
   const closed = await h.waitForCall(5, "mate", WORKER_WAIT_MS);
   assert.equal(toolResults(closed).at(-1), "c-2 is done.");
+  assert.equal(readFileSync(artifact, "utf8"), "Demo starts\n");
 
   assert.equal(
     cardd.admin("project", "list").stdout,
@@ -121,7 +134,14 @@ test("bootstrap leaves an occupied checkout untouched and only provisions the wi
   const cardd = await Cardd.start({ ...hostEnv, FLEET_HOST_DIR: local }, [
     "--hosts",
     JSON.stringify({
-      first: ["env", `FLEET_HOST_DIR=${first}`, "sh", "-c"],
+      LOCAL: [
+        "env",
+        `FLEET_HOST_DIR=${first}`,
+        "sh",
+        "-c",
+        'echo startup-banner; exec sh -c "$1"',
+        "transport",
+      ],
       second: ["env", `FLEET_HOST_DIR=${second}`, "sh", "-c"],
     }),
   ]);
@@ -143,16 +163,66 @@ test("bootstrap leaves an occupied checkout untouched and only provisions the wi
   );
 
   await Promise.all([
-    main.call("project.personal", { host: "first" }).then((ack) => assert.equal(ack, true)),
+    main.call("project.personal", { host: "LOCAL" }).then((ack) => assert.equal(ack, true)),
     assert.rejects(
       main.call("project.personal", { host: "second" }),
-      /no clone on second.*Registered clone hosts: first/,
+      /no clone on second.*Registered clone hosts: LOCAL/,
     ),
   ]);
-  assert.equal(await main.call("project.personal", { host: "first" }), true);
+  assert.equal(await main.call("project.personal", { host: "LOCAL" }), true);
   assert.equal(existsSync(join(second, "projects")), false);
   assert.equal(
     cardd.admin("project", "list").stdout,
-    `personal: local-only, yolo off, repo not set, first=${join(first, "projects", "personal")}`,
+    `personal: local-only, yolo off, repo not set, LOCAL=${join(first, "projects", "personal")}`,
+  );
+});
+
+test("bootstrap retries after a failed commit or a lost framed reply", async (t) => {
+  const home = tempDir("fleet-personal-retry-");
+  const hooks = join(home, "hooks");
+  mkdirSync(hooks);
+  const hook = join(hooks, "pre-commit");
+  writeFileSync(hook, "#!/bin/sh\necho 'hook stopped bootstrap' >&2\nexit 1\n", { mode: 0o700 });
+  const drop = join(home, "drop-reply");
+  const route =
+    'if [ -e "$1" ]; then sh -c "$2" >/dev/null && echo "startup banner"; else exec sh -c "$2"; fi';
+  const cardd = await Cardd.start(
+    {
+      FLEET_HOST_DIR: home,
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.hooksPath",
+      GIT_CONFIG_VALUE_0: hooks,
+    },
+    ["--hosts", JSON.stringify({ retry: ["sh", "-c", route, "transport", drop] })],
+  );
+  t.after(() => cardd.stop());
+  const main = await cardd.connect(cardd.addLane("main"));
+  const bootstrap = () => main.call("project.personal", { host: "retry" });
+  const clone = join(home, "projects", "personal");
+  const head = () => execFileSync("git", ["-C", clone, "rev-parse", "HEAD"], { encoding: "utf8" });
+
+  await assert.rejects(bootstrap(), /hook stopped bootstrap/);
+  assert.equal(existsSync(clone), false);
+  assert.equal(cardd.admin("project", "list").stdout, "");
+
+  rmSync(hook);
+  writeFileSync(drop, "");
+  await assert.rejects(bootstrap(), /invalid personal clone path from retry/);
+  const published = head();
+  assert.equal(cardd.admin("project", "list").stdout, "");
+
+  rmSync(drop);
+  const extra = join(clone, "not-bootstrap-work.txt");
+  writeFileSync(extra, "preserve this\n");
+  await assert.rejects(bootstrap(), /existing directory is not an empty Fleet bootstrap/);
+  assert.equal(readFileSync(extra, "utf8"), "preserve this\n");
+  assert.equal(cardd.admin("project", "list").stdout, "");
+
+  rmSync(extra);
+  assert.equal(await bootstrap(), true);
+  assert.equal(head(), published);
+  assert.equal(
+    cardd.admin("project", "list").stdout,
+    `personal: local-only, yolo off, repo not set, retry=${clone}`,
   );
 });

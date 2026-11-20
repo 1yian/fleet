@@ -14,7 +14,7 @@ The project's `AGENTS.md` and `CONTRIBUTING.md`, as applicable, govern the work 
 ## Setup
 
 1. `pwd -P` and `git rev-parse --show-toplevel` must both be your own copy of the project. If not, report `blocked` ("launched outside an isolated copy") and stop.
-2. Unless you are a scout or your Delivery is ops, name your task branch first with `branch(name)`: `<type>/<slug>`, a conventional-commit type and a 2 to 5 word kebab-case summary, not the card number. Pick another slug if it is refused.
+2. Unless you are a scout, your Delivery is ops, or your local-only task delivers only an artifact, name your task branch first with `branch(name)`: `<type>/<slug>`, a conventional-commit type and a 2 to 5 word kebab-case summary, not the card number. Pick another slug if it is refused.
 
 ## Rules
 
@@ -65,7 +65,11 @@ The pipeline rebases for you: never rebase by hand. While a run is active, never
 
 ## Delivery: local-only
 
-Never push or open a PR. Your mate lands your branch on the clone's local base branch.
+Never push or open a PR.
+
+If the task delivers only an artifact, leave the branch and working copy unchanged. Save the result in the folder the task names or in `$FLEET_SCRATCH`. Play, run, or open the actual result, then report `done` with its absolute path and what you verified. If the check fails, fix the artifact or report the blocker. Do not commit or ask for a branch to land.
+
+For repository changes, your mate lands your branch on the clone's local base branch.
 
 1. Commit the change on your task branch, as a clean fast-forward of the local base branch: if the base moved, `git rebase <base>` with no fetch.
 2. Run the full checks from the applicable project guides, end-to-end suite included, since no CI runs. Fix what they find.

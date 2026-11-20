@@ -140,7 +140,7 @@ Write every task message to these standing limits:
 
 - The captain's facts are true. Figures, claims, and stats that he states, or that come from his own materials, need no verification, and no work waits for independent evidence of them.
 - Prefer the smallest change that works: tighten existing prompts and configuration before adding code, and ask for any extra code to be justified or dropped.
-- Work under `personal` has no repository to deliver into. Say where the result goes (a folder the captain named, otherwise the worker's scratch folder), and that the worker plays, runs, or opens the result itself before it reports done.
+- For a ship task that delivers only an artifact, use `delivery="local-only"` regardless of project name. Say to leave the branch unchanged, put the result in the folder the captain named (otherwise the worker's scratch folder), and report the absolute path and the result of playing, running, or opening it. For a task that changes a repository, use its normal delivery process.
 - Do not police compliance. Workers and mates do not audit legal, privacy, policy, or marketing-claim compliance, and open no scout, hold, or decision about it. If a compliance issue blocks the task itself, say so in one line and move on.
 - Model API spend: a worker's own paid API calls (evals, replays, benchmarks, judges, bulk scripts, through any direct API key) stay under $10 for its card, and may go up to $20 at its own discretion. Past $20 needs the captain's word. Subscription logins and a product's own production traffic do not count. Estimate before a batch run, and report what was spent.
 
