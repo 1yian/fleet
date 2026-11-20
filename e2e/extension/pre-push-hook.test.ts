@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { addRemote, git } from "../support/remote.ts";
@@ -51,20 +51,32 @@ test("a push of a file that fails format, lint and typecheck is refused", () => 
   assert.equal(remoteBranches(), "");
 });
 
-test("the format check refuses a committed file missing from the worktree", () => {
-  const file = "docs/hook-probe.md";
-  const path = join(scratch.root, file);
-  git(scratch.root, "switch", "-q", "-c", "feat/missing-format-file");
-  writeFileSync(path, "# Hook probe\n");
-  git(scratch.root, "add", file);
-  git(scratch.root, "commit", "-q", "-m", "probe");
-  unlinkSync(path);
+for (const substitution of ["missing file", "symlinked file", "symlinked directory"]) {
+  test(`the format check refuses a ${substitution} at a committed path`, () => {
+    const dir = "docs/hook-probe";
+    const file = `${dir}/probe.md`;
+    const path = join(scratch.root, file);
+    const directory = join(scratch.root, dir);
+    git(scratch.root, "switch", "-q", "-c", "feat/invalid-format-file");
+    mkdirSync(directory);
+    writeFileSync(path, "# Hook probe\n");
+    git(scratch.root, "add", file);
+    git(scratch.root, "commit", "-q", "-m", "probe");
 
-  const result = push();
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /pre-push: format failed\n[^\n]*docs\/hook-probe\.md/);
-  assert.equal(remoteBranches(), "");
-});
+    if (substitution === "symlinked directory") {
+      renameSync(directory, join(scratch.root, "docs/hook-target"));
+      symlinkSync("hook-target", directory);
+    } else {
+      unlinkSync(path);
+      if (substitution === "symlinked file") symlinkSync("../setup.md", path);
+    }
+
+    const result = push();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /pre-push: format failed\n[^\n]*docs\/hook-probe\/probe\.md/);
+    assert.equal(remoteBranches(), "");
+  });
+}
 
 test("the same push goes through once the file is clean, and --no-verify skips the hook", () => {
   git(scratch.root, "switch", "-q", "-c", "feat/clean");
