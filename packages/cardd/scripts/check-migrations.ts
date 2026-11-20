@@ -41,7 +41,7 @@ if (process.argv.includes("--write")) {
   writeFileSync(SCHEMA_FILE, schema);
   console.log("wrote schema.sql");
 } else if (readFileSync(SCHEMA_FILE, "utf8") !== schema) {
-  throw new Error("schema.sql is out of date. Run: npm run migrations:check -- --write");
+  throw new Error("schema.sql is out of date. Run: bun run migrations:check -- --write");
 }
 const base = process.env["MIGRATIONS_BASE"] ?? "";
 if (base !== "" && !/^0+$/.test(base)) {

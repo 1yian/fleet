@@ -53,7 +53,7 @@ use_fallback_mirrors_when_archive_is_unreachable() {
 
 plan_packages() {
   local report status=0
-  report=$(npx playwright install-deps --dry-run chromium 2>&1) || status=$?
+  report=$(bunx playwright install-deps --dry-run chromium 2>&1) || status=$?
   echo "$report"
   mapfile -t PACKAGES < <(sed -n 's/^  \([a-z0-9][a-z0-9.+:-]*\)$/\1/p' <<<"$report")
   return "$status"
@@ -70,7 +70,7 @@ install_packages() {
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${options[@]}" "${PACKAGES[@]}"
 }
 
-retry "Chromium download" npx playwright install chromium || {
+retry "Chromium download" bunx playwright install chromium || {
   error "Chromium could not be downloaded after ${ATTEMPTS} attempts. Playwright's download hosts were unreachable from this runner."
   exit 1
 }
@@ -92,7 +92,7 @@ retry "apt install of ${PACKAGES[*]}" install_packages || {
   exit 1
 }
 
-npx playwright install-deps --dry-run chromium || {
+bunx playwright install-deps --dry-run chromium || {
   error "Chromium still lacks system packages after apt installed them (output above)."
   exit 1
 }

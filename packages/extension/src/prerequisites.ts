@@ -25,6 +25,12 @@ const TOOLS: readonly Tool[] = [
     floor: "24.0.0",
     fix: "install Node 24 or later: brew install node@24 (macOS), or see https://nodejs.org",
   },
+  {
+    name: "bun",
+    version: ["--version"],
+    floor: "1.3.13",
+    fix: "install bun 1.3.13 or later: brew install oven-sh/bun/bun (macOS), or see https://bun.sh/docs/installation",
+  },
   { name: "git", version: ["--version"], floor: "2.31.0", fix: BREW_OR_APT("git") },
   {
     name: "gh",

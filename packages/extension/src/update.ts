@@ -11,7 +11,7 @@ const UPSTREAM = `origin/${BRANCH}`;
 const INSTALL_TIMEOUT_MS = 540_000;
 const ERROR_LINES = 6;
 const RESTART_TIMEOUT_MS = 60_000;
-const CARDD_CODE = ["packages/cardd/", "packages/protocol/", "package-lock.json"];
+const CARDD_CODE = ["packages/cardd/", "packages/protocol/", "bun.lock"];
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 export type HostUpdate =
@@ -127,8 +127,8 @@ export function checkHost(root: string): HostUpdate | undefined {
   return problems.length === 0 ? undefined : { state: "refused", root, problems };
 }
 
-const npm = (root: string, ...args: string[]): string =>
-  execFileSync("npm", args, {
+const bun = (root: string, ...args: string[]): string =>
+  execFileSync("bun", args, {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -140,11 +140,10 @@ function build(
   root: string,
   changed: readonly string[],
 ): { ok: true; installed: boolean } | { ok: false; step: string; error: string } {
-  const installed =
-    changed.includes("package-lock.json") || !existsSync(join(root, "node_modules"));
-  const install = installed ? attempt(() => npm(root, "ci", "--no-audit", "--no-fund")) : undefined;
-  if (install?.ok === false) return { ok: false, step: "npm ci", error: install.error };
-  const built = attempt(() => npm(root, "run", "build"));
+  const installed = changed.includes("bun.lock") || !existsSync(join(root, "node_modules"));
+  const install = installed ? attempt(() => bun(root, "install", "--frozen-lockfile")) : undefined;
+  if (install?.ok === false) return { ok: false, step: "bun install", error: install.error };
+  const built = attempt(() => bun(root, "run", "build"));
   return built.ok
     ? { ok: true, installed }
     : { ok: false, step: "build the board", error: built.error };
@@ -199,7 +198,7 @@ export function updateHost(root: string): HostUpdate {
     root,
     ...pulled,
     installed: step.installed,
-    boardChanged: touches(changed, ["packages/board/", "packages/protocol/", "package-lock.json"]),
+    boardChanged: touches(changed, ["packages/board/", "packages/protocol/", "bun.lock"]),
     carddChanged: touches(changed, CARDD_CODE),
     lanes,
   };
