@@ -26,6 +26,10 @@ export class MuxSsh {
     writeFileSync(join(this.bin, "mode"), mode);
   }
 
+  delayBothAttempts(ms: number): void {
+    writeFileSync(join(this.bin, "delay-ms"), String(ms));
+  }
+
   calls(): SshCall[] {
     let log: string;
     try {

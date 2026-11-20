@@ -25,6 +25,7 @@ export interface Limits {
   readonly maxBuffer?: number;
   readonly grace?: number;
   readonly detach?: Detach;
+  readonly sharedRetryBudget?: boolean;
 }
 
 export type Finished = (error: ExecFileException | null, stdout: string, stderr: string) => void;
@@ -124,17 +125,22 @@ function launch(
 export function runOnTransport(
   file: string,
   args: readonly string[],
-  limits: Limits,
+  { sharedRetryBudget, ...limits }: Limits,
   done: Finished,
 ): void {
-  const deadline = performance.now() + limits.timeout;
+  const deadline = sharedRetryBudget === true ? performance.now() + limits.timeout : undefined;
   launch(file, args, limits, (error, stdout, stderr) => {
     if (error === null || !diedBeforeTheCommandStarted(file, error, stderr)) {
       done(error, stdout, stderr);
       return;
     }
+    const direct = [...WITHOUT_THE_MASTER, ...args];
+    if (deadline === undefined) {
+      launch(file, direct, limits, done);
+      return;
+    }
     const timeout = Math.floor(deadline - performance.now());
     if (timeout <= 0) done(error, stdout, stderr);
-    else launch(file, [...WITHOUT_THE_MASTER, ...args], { ...limits, timeout }, done);
+    else launch(file, direct, { ...limits, timeout }, done);
   });
 }
