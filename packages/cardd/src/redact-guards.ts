@@ -1,5 +1,5 @@
 const COOKIE_HEADER =
-  /(?<![\w-])(?:set-)?cookie2?(?:\\?["'])?\s*:|["']\s*(?:set-)?cookie2?\\?["']\s*,/i;
+  /(?<![\w-])(?:set-)?cookie2?(?:\\?["'])?\s*:|["']\s*(?:set-)?cookie2?\\?["']\s*[,}\]]/i;
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
 const CONTROL_ESCAPE = /\\+[rntbf]/g;
 

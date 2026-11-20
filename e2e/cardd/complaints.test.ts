@@ -325,6 +325,8 @@ test("curl commands that may carry a credential option are withheld from both is
     'curl -H "$(printf Cookie): session=paper" https://localhost',
     "curl -H 'Cookie: session=paper' https://localhost",
     "curl -H 'Cookie2: session=paper' https://localhost",
+    "curl --proxy-header 'Proxy-Authorization: Custom paper' https://localhost",
+    "curl --proxy-header='Proxy-Authorization: Custom paper' https://localhost",
     "curl -H 'Set-Cookie2: session=paper' https://localhost",
     "curl --header 'Set-Cookie: session=paper' https://localhost",
     'curl -H "Authorization: Token abc" https://localhost',

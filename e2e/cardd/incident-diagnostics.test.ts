@@ -121,6 +121,15 @@ for (const [name, diagnostic] of [
   ["cookie2 header", "Cookie2: session=paper"],
   ["serialized transcript cookie", String.raw`{"trace":"GET / HTTP/1.1\r\nCookie: session=paper"}`],
   ["serialized header pair", String.raw`headers [["Cookie","session=paper"]]`],
+  ["HAR header record", String.raw`[{"name":"Cookie","value":"sid=paper"}]`],
+  [
+    "HAR header record with reversed order",
+    String.raw`[{"value":"sid=paper","name":"Set-Cookie"}]`,
+  ],
+  [
+    "curl proxy header",
+    "curl --proxy-header 'Proxy-Authorization: Custom paper' https://localhost",
+  ],
   ["nested serialized header pair", String.raw`{"headers":"[[\"Cookie\",\"session=paper\"]]"}`],
   [
     "doubly nested header pair",
