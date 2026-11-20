@@ -1,5 +1,5 @@
 import { CURL_SHELL_EXPANSION } from "./curl-shell.ts";
-import { hasCookieHeader, logicalView } from "./redact-guards.ts";
+import { hasCookieHeader, logicalView, SECRET_NAME } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
 const MAX_RETRIES = 2;
@@ -15,7 +15,6 @@ export type Kind =
   | "transient"
   | "unknown";
 
-const SECRET_NAME = String.raw`(?:[a-z\d]+[-_])*(?:api[-_ ]?key|secret[-_ ]?access[-_ ]?key|(?:(?:access|refresh|session)[-_ ]?)?token|(?:client[-_ ]?)?secret|password|authorization)`;
 const SECRET_KEY = String.raw`\b(${SECRET_NAME})`;
 const QUOTED = String.raw`\\"(?:\\\\(?:\\["\\]|[^"\\])|[^"\\])*\\"|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|(?<!\u0060)(?<ticks>\u0060+)(?!\u0060)[\s\S]*?(?<!\u0060)\k<ticks>(?!\u0060)`;
 const LINE_SPLICE = String.raw`(?:\\\r?\n)*`;

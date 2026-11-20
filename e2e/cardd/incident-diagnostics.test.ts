@@ -123,6 +123,15 @@ for (const [name, diagnostic] of [
   ["serialized header pair", String.raw`headers [["Cookie","session=paper"]]`],
   ["HAR header record", String.raw`[{"name":"Cookie","value":"sid=paper"}]`],
   [
+    "HAR authorization record",
+    String.raw`[{"name":"Authorization","value":"Basic cGFwZXI6Y2Fub2U="}]`,
+  ],
+  [
+    "HAR reversed proxy authorization",
+    String.raw`[{"value":"Basic cGFwZXI6Y2Fub2U=","name":"Proxy-Authorization"}]`,
+  ],
+  ["native cookies array", String.raw`{"request":{"cookies":[{"name":"sid","value":"paper"}]}}`],
+  [
     "HAR header record with reversed order",
     String.raw`[{"value":"sid=paper","name":"Set-Cookie"}]`,
   ],
