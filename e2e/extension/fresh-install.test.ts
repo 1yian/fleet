@@ -4,6 +4,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { CardSchema, check, OPS } from "@fleet/protocol";
+import { quote } from "@fleet/protocol/route";
 import { Cardd } from "../support/cardd.ts";
 import {
   lastUser,
@@ -35,17 +38,26 @@ const dispatchUnder = (project: string, task: string) => ({
 });
 
 test("only main bootstraps personal on the named Fleet host, then closes an empty branch without approval", async (t) => {
+  const hooks = tempDir("fleet-personal-hooks-");
+  for (const name of ["pre-commit", "commit-msg", "reference-transaction"])
+    writeFileSync(
+      join(hooks, name),
+      "#!/bin/sh\necho 'inherited hook must not run' >&2\nexit 1\n",
+      { mode: 0o700 },
+    );
   const parts = await startDispatchLab({
     freshInstall: true,
     workerShell: true,
     mate: hostEnv,
     cardd: {
       ...hostEnv,
-      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_COUNT: "3",
       GIT_CONFIG_KEY_0: "commit.gpgsign",
       GIT_CONFIG_VALUE_0: "true",
       GIT_CONFIG_KEY_1: "gpg.program",
       GIT_CONFIG_VALUE_1: "/nonexistent/fleet-test-signer",
+      GIT_CONFIG_KEY_2: "core.hooksPath",
+      GIT_CONFIG_VALUE_2: hooks,
     },
   });
   t.after(async () => {
@@ -112,6 +124,8 @@ test("only main bootstraps personal on the named Fleet host, then closes an empt
   assert.equal(git("rev-list", "--count", "main"), "1");
   assert.equal(git("rev-list", "--max-parents=0", "main"), git("rev-parse", "main"));
   assert.equal(git("ls-tree", "-r", "main"), "");
+  assert.equal(git("config", "--local", "--list").includes("hookspath="), false);
+  assert.equal(git("config", "--local", "--list").includes("gpgsign="), false);
 });
 
 function scriptArtifactHandoff(
@@ -248,25 +262,93 @@ test("bootstrap leaves an occupied checkout untouched and only provisions the wi
   );
 });
 
+const CARDD_CLI = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
+
+for (const cloneHost of ["race-host", "RACE-HOST"]) {
+  test(`bootstrap honors the winning administrator registration with clone key ${cloneHost}`, async (t) => {
+    const home = tempDir("fleet-personal-race-");
+    const registered = join(home, "admin-clone");
+    execFileSync("git", ["init", "-q", "-b", "main", registered]);
+    const register = join(home, "register-project");
+    const route = 'set -e; sh -c "$2"; . "$1"';
+    const cardd = await Cardd.start({ FLEET_HOST_DIR: home }, [
+      "--hosts",
+      JSON.stringify({ "race-host": ["sh", "-c", route, "transport", register] }),
+    ]);
+    t.after(() => cardd.stop());
+    writeFileSync(
+      register,
+      [
+        process.execPath,
+        CARDD_CLI,
+        "project",
+        "add",
+        "personal",
+        "--db",
+        cardd.db,
+        "--delivery",
+        "direct-PR",
+        "--repo",
+        "acme/owned-personal",
+        "--yolo",
+        "--clone",
+        `${cloneHost}=${registered}`,
+      ]
+        .map(quote)
+        .join(" "),
+    );
+    const main = await cardd.connect(cardd.addLane("main"));
+    const bootstrap = main.call("project.personal", { host: "race-host" });
+    if (cloneHost === "race-host") {
+      assert.equal(await bootstrap, true);
+      const card = check(
+        CardSchema,
+        await main.call("card.new", {
+          title: "Use admin project",
+          kind: "ship",
+          project: "personal",
+        }),
+      );
+      const attempt = check(
+        OPS["attempt.begin"].result,
+        await main.call("attempt.begin", {
+          card: card.id,
+          host: cloneHost,
+          task: "Work on the admin clone",
+        }),
+      );
+      assert.equal(attempt.clone, registered);
+      assert.equal(attempt.delivery, "direct-PR");
+    } else {
+      await assert.rejects(
+        bootstrap,
+        /no clone on race-host.*Registered clone hosts: RACE-HOST.*administrator can add a clone/,
+      );
+    }
+    assert.equal(
+      cardd.admin("project", "list").stdout,
+      `personal: direct-PR, yolo on, repo acme/owned-personal, ${cloneHost}=${registered}`,
+    );
+    assert.deepEqual(worktreesOf(join(home, "projects", "personal")), ["branch refs/heads/main"]);
+  });
+}
+
 test("bootstrap retries after a failed commit or a lost framed reply", async (t) => {
   const home = tempDir("fleet-personal-retry-");
-  const hooks = join(home, "hooks");
-  mkdirSync(hooks);
-  const hook = join(hooks, "pre-commit");
-  writeFileSync(hook, "#!/bin/sh\necho 'hook stopped bootstrap' >&2\nexit 1\n", { mode: 0o700 });
+  const fail = join(home, "invalid-commit-date");
+  writeFileSync(fail, "");
   const drop = join(home, "drop-reply");
-  const route =
-    'if [ -e "$1" ]; then sh -c "$2" >/dev/null && echo "startup banner"; else exec sh -c "$2"; fi';
+  const route = `
+    if [ -e "$1" ]; then export GIT_AUTHOR_DATE=not-a-date; fi
+    if [ -e "$2" ]; then sh -c "$3" >/dev/null && echo "startup banner"; else exec sh -c "$3"; fi`;
   const cardd = await Cardd.start(
     {
       FLEET_HOST_DIR: home,
-      GIT_CONFIG_COUNT: "2",
-      GIT_CONFIG_KEY_0: "core.hooksPath",
-      GIT_CONFIG_VALUE_0: hooks,
-      GIT_CONFIG_KEY_1: "status.showUntrackedFiles",
-      GIT_CONFIG_VALUE_1: "no",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "status.showUntrackedFiles",
+      GIT_CONFIG_VALUE_0: "no",
     },
-    ["--hosts", JSON.stringify({ retry: ["sh", "-c", route, "transport", drop] })],
+    ["--hosts", JSON.stringify({ retry: ["sh", "-c", route, "transport", fail, drop] })],
   );
   t.after(() => cardd.stop());
   const main = await cardd.connect(cardd.addLane("main"));
@@ -274,11 +356,11 @@ test("bootstrap retries after a failed commit or a lost framed reply", async (t)
   const clone = join(home, "projects", "personal");
   const head = () => execFileSync("git", ["-C", clone, "rev-parse", "HEAD"], { encoding: "utf8" });
 
-  await assert.rejects(bootstrap(), /hook stopped bootstrap/);
+  await assert.rejects(bootstrap(), /invalid date format/);
   assert.equal(existsSync(clone), false);
   assert.equal(cardd.admin("project", "list").stdout, "");
 
-  rmSync(hook);
+  rmSync(fail);
   writeFileSync(drop, "");
   await assert.rejects(bootstrap(), /invalid personal clone path from retry/);
   const published = head();

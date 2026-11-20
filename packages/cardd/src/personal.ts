@@ -5,7 +5,7 @@ import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
-import { addProject, listProjects, mainLane, type Session } from "./store.ts";
+import { insertProjectIfMissing, listProjects, mainLane, type Session } from "./store.ts";
 
 const HOST_DIR = "${FLEET_HOST_DIR:-$HOME/.fleet}";
 const CLONE_SUFFIX = `/projects/${PERSONAL_PROJECT}`;
@@ -37,8 +37,10 @@ if [ ! -e "$clone" ] && [ ! -L "$clone" ]; then
   trap 'rm -rf "$stage"' 0
   repo=$stage/${PERSONAL_PROJECT}
   git init -q -b main "$repo"
-  git -C "$repo" -c user.name=fleet -c user.email=fleet@localhost -c commit.gpgsign=false commit -q --allow-empty -m "Start the ${PERSONAL_PROJECT} project"
-  git -C "$repo" rev-parse HEAD > "$repo/$marker"
+  tree=$(git -C "$repo" mktree </dev/null)
+  root=$(git -C "$repo" -c user.name=fleet -c user.email=fleet@localhost commit-tree --no-gpg-sign "$tree" -m "Start the ${PERSONAL_PROJECT} project")
+  git -C "$repo" -c core.hooksPath=/dev/null update-ref refs/heads/main "$root"
+  printf '%s\\n' "$root" > "$repo/$marker"
   if ! owned_empty_clone "$repo"; then
     echo "the staged personal bootstrap is not empty" >&2
     exit 1
@@ -84,6 +86,14 @@ function makeClone(route: readonly string[], host: string): Promise<string> {
   });
 }
 
+function registeredOn(db: DatabaseSync, host: string): boolean {
+  const found = listProjects(db).find(({ name }) => name === PERSONAL_PROJECT);
+  if (found === undefined) return false;
+  if (!found.clones.some((clone) => clone.host === host))
+    throw missingPersonalClone(host, found.clones);
+  return true;
+}
+
 export async function ensurePersonalProject(
   db: DatabaseSync,
   session: Session,
@@ -101,20 +111,17 @@ export async function ensurePersonalProject(
     );
   const route = routeFor(hosts, host);
   const done = writer.then(async () => {
-    const found = listProjects(db).find(({ name }) => name === PERSONAL_PROJECT);
-    if (found !== undefined) {
-      if (!found.clones.some((clone) => clone.host === host))
-        throw missingPersonalClone(host, found.clones);
-      return;
-    }
+    if (registeredOn(db, host)) return;
     const clone = await makeClone(route, host);
-    addProject(db, {
+    const inserted = insertProjectIfMissing(db, {
       name: PERSONAL_PROJECT,
       delivery: "local-only",
       clones: { [host]: clone },
       yolo: false,
       repo: null,
     });
+    if (!inserted && !registeredOn(db, host))
+      throw new Error(`project ${PERSONAL_PROJECT} was removed during bootstrap; dispatch again`);
   });
   writer = done.catch(() => undefined);
   return done;
