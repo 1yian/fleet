@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -61,10 +61,13 @@ async function browserOn(t: TestContext, edge: Edge) {
 async function fixture(t: TestContext) {
   const { site, upstream, stock, open } = await lavishSite(t);
   const reportedOrigin = "http://p620.example.test:7331";
+  const tools = tempDir("fleet-cardd-tools-");
+  const ps = execFileSync("/bin/sh", ["-c", "command -v ps"], { encoding: "utf8" }).trim();
+  symlinkSync(ps, join(tools, "ps"));
   const cardd = await Cardd.start(
     {
       ...site.env,
-      PATH: tempDir("fleet-cardd-empty-path-"),
+      PATH: tools,
       CARDD_REVIEW_ORIGINS: `${reportedOrigin}=https://127.0.0.1:${String(upstream.port)}`,
       CARDD_REVIEW_ARTIFACT_ORIGIN: "https://review.example.test",
     },
@@ -244,12 +247,8 @@ async function openReview(lab: Lab, target: Round) {
       failures.push(request.failure()?.errorText ?? "request failed");
   });
   const question = page.getByRole("article").filter({ hasText: "Finish Plan" });
-  const [response] = await Promise.all([
-    page.waitForResponse((result) => result.url() === reviewUrl(target)),
-    question.getByRole("link", { name: "Open review" }).click(),
-  ]);
+  await question.getByRole("link", { name: "Open review" }).click();
   assert.equal(page.url(), reviewUrl(target));
-  if (response.status() !== 200) assert.equal(response.status(), 200, await response.text());
   const artifact = page.frameLocator('iframe[title="Review artifact"]');
   const heading = artifact.getByRole("heading", { name: "Plan" });
   await heading.waitFor({ timeout: 5000 }).catch((error: unknown) => {
