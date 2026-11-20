@@ -33,7 +33,7 @@ import {
   withdrawMerge,
   writeMergeQuestion,
 } from "./holds.ts";
-import { makePersonalClone, registerPersonalProject } from "./personal.ts";
+import { ensurePersonalProject } from "./personal.ts";
 import { loadPlan } from "./plans.ts";
 import { requireReviewDecision } from "./reviews.ts";
 import { doneStands } from "./status.ts";
@@ -75,7 +75,6 @@ type Handler = (
   note?: string,
   closeCheck?: CloseCheck,
   emptyBranch?: true,
-  personalClone?: string,
 ) => Done;
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
@@ -162,7 +161,7 @@ function rework(
   return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
-const HANDLERS: Record<OpName, Handler> = {
+const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "maintenance.request": (db, session, raw, timing) =>
     requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
   "maintenance.status": (db, session, raw) =>
@@ -214,11 +213,6 @@ const HANDLERS: Record<OpName, Handler> = {
     const args = check(OPS["project.yolo"].args, raw);
     setYolo(db, args.project, args.on);
     return { value: args, notify: [] };
-  },
-  "project.personal": (db, _session, raw, _timing, _note, _closeCheck, _empty, clone) => {
-    const args = check(OPS["project.personal"].args, raw);
-    registerPersonalProject(db, args.host, clone);
-    return { value: true, notify: [] };
   },
   projects: (db) => ({ value: listProjects(db), notify: [] }),
   comment,
@@ -460,6 +454,10 @@ async function performStored(
   timing: Timings,
   hosts: Hosts,
 ): Promise<Done> {
+  if (op === "project.personal") {
+    await ensurePersonalProject(db, session, hosts, args);
+    return { value: true, notify: [] };
+  }
   const report =
     op === "report" && session.card !== null
       ? await normalizeReport(db, hosts, session.card, args)
@@ -472,8 +470,6 @@ async function performStored(
     op === "close.begin" || op === "close.finish"
       ? await reverifyAtClose(db, hosts, op, args)
       : undefined;
-  const personalClone =
-    op === "project.personal" ? await makePersonalClone(db, session, hosts, args) : undefined;
   return transaction(db, () => {
     const result = HANDLERS[op](
       db,
@@ -483,7 +479,6 @@ async function performStored(
       report?.note,
       closeCheck,
       emptyBranch,
-      personalClone,
     );
     noteControl(db, session.id, op);
     return result;

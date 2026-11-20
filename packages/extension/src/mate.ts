@@ -8,6 +8,7 @@ import {
   type Card,
   type Schedule,
 } from "@fleet/protocol";
+import { fleetHostName } from "@fleet/protocol/route";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import type { Complaints } from "./complaints.ts";
@@ -28,7 +29,7 @@ const DispatchParams = Type.Object({
   kind: Type.Enum(["ship", "scout"]),
   project: Type.String({
     minLength: 1,
-    description: `A registered project's name, or "${PERSONAL_PROJECT}" for work that fits none of them: it always exists, though the board lists it only after its first use`,
+    description: `A registered project's name, or "${PERSONAL_PROJECT}" for work that fits none of them. If it is not registered, main's first dispatch creates it on the selected host`,
   }),
   intent: Type.String({ minLength: 1 }),
   host: Type.String({
@@ -297,12 +298,16 @@ export function registerMate(
   pi.registerTool({
     name: "dispatch",
     label: "Dispatch",
-    description: `Creates a new work card and starts its worker in its own worktree on a host. Dispatching is how all work gets done: never do it yourself in your own turn, not a one-off, a quick job, or work that fits no registered project. Work that fits none goes under project "${PERSONAL_PROJECT}", which always exists: dispatch makes it on first use. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.`,
+    description: `Creates a new work card and starts its worker in its own worktree on a host. Dispatching is how all work gets done: never do it yourself in your own turn, not a one-off, a quick job, or work that fits no registered project. Work that fits none goes under project "${PERSONAL_PROJECT}", which main's first dispatch creates if not already registered. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.`,
     parameters: DispatchParams,
     execute: async (_id, params) => {
       const { title, name, kind, project, intent, task, delivery, model } = params;
-      isLocal(params.host);
-      const host = await requireProject(link, params.host, project);
+      const host =
+        project === PERSONAL_PROJECT && params.host.toLowerCase() === "local"
+          ? fleetHostName()
+          : params.host;
+      isLocal(host);
+      await requireProject(link, host, project);
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>

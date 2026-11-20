@@ -17,8 +17,8 @@ export class WorkspaceNotFound extends Error {}
 const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
 
 function ownNames(): string[] {
-  const named = process.env["FLEET_HOST"];
-  if (named !== undefined && named !== "") return [named.toLowerCase(), firstLabel(named)];
+  const named = process.env["FLEET_HOST"]?.trim().toLowerCase();
+  if (named && named !== "local") return [named, firstLabel(named)];
   return [hostname().toLowerCase(), firstLabel(hostname())];
 }
 

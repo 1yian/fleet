@@ -29,7 +29,7 @@ export { ActedSchema, LATER_EXAMPLES, laterLine, type LaterResult } from "./late
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./waits.ts";
-export { PERSONAL_PROJECT } from "./personal.ts";
+export { missingPersonalClone, PERSONAL_PROJECT } from "./personal.ts";
 export * from "./pulse.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";

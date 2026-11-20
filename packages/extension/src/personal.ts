@@ -1,20 +1,19 @@
-import { PERSONAL_PROJECT } from "@fleet/protocol";
-import { ownHostName } from "./host.ts";
+import { missingPersonalClone, PERSONAL_PROJECT } from "@fleet/protocol";
 import type { Link } from "./link.ts";
 
-export async function requireProject(link: Link, host: string, project: string): Promise<string> {
+export async function requireProject(link: Link, host: string, project: string): Promise<void> {
   const registered = await link.call("projects", {});
   const found = registered.find(({ name }) => name === project);
   if (project !== PERSONAL_PROJECT) {
-    if (found !== undefined) return host;
+    if (found !== undefined) return;
     throw new Error(
-      `project ${project} is not registered, so nothing was created. board(projects=true) lists the registered projects. Work that fits none of them goes under project "${PERSONAL_PROJECT}", which dispatch makes on first use. Never do the work yourself`,
+      `project ${project} is not registered, so nothing was created. board(projects=true) lists the registered projects. Work that fits none of them goes under project "${PERSONAL_PROJECT}", which main's first dispatch creates if not already registered. Never do the work yourself`,
     );
   }
-  const named = host === "local" ? ownHostName() : host;
-  const clones = found?.clones ?? [];
-  const placed = [host, named].find((each) => clones.some((clone) => clone.host === each));
-  if (placed !== undefined) return placed;
-  await link.call("project.personal", { host: named });
-  return named;
+  if (found !== undefined) {
+    if (!found.clones.some((clone) => clone.host === host))
+      throw missingPersonalClone(host, found.clones);
+    return;
+  }
+  await link.call("project.personal", { host });
 }

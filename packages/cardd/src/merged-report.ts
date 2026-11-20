@@ -1,18 +1,19 @@
 import type { DatabaseSync } from "node:sqlite";
 import { hostname } from "node:os";
 import { check, inEvidenceScope, OPS, type Card, type OpArgs } from "@fleet/protocol";
-import { routed } from "@fleet/protocol/route";
+import { fleetHostName, routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import type { Hosts } from "./pulls.ts";
 import { cardEntries, getCard, listProjects } from "./store.ts";
 import { finishFrom } from "./status.ts";
 
 export function routeFor(hosts: Hosts, host: string): readonly string[] {
-  const configured = hosts[host];
+  const configured = Object.hasOwn(hosts, host) ? hosts[host] : undefined;
   if (configured !== undefined) return configured;
   const local = hostname().toLowerCase();
   if (
     host === "local" ||
+    host === fleetHostName() ||
     host.toLowerCase() === local ||
     host.toLowerCase() === local.split(".")[0]
   )
