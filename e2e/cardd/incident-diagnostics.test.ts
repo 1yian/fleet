@@ -79,6 +79,8 @@ for (const [name, diagnostic] of [
   ["spliced escaped credential key", 'Tool printed {"pass\\\n\\u0077ord":"paper canoe"}'],
   ["spliced unbounded YAML", "Tool printed to\\\nken: !!str >\n paper canoe"],
   ["spliced multiline scalar", "pass\\\nword: paper\n  canoe"],
+  ["spliced authorization scalar", "Auth\\\norization: paper\n  canoe"],
+  ["spliced prefixed authorization scalar", "x_Auth\\\norization: paper\n  canoe"],
   ["spliced scalar value", "password: pa\\\nper\n  canoe"],
   ["spliced URL userinfo", "Git printed https://build:pa@ss\\\nword@localhost/path"],
   ["spliced unterminated value", 'Tool printed password=\\\n"paper canoe'],

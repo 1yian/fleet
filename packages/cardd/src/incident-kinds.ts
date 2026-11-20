@@ -304,7 +304,11 @@ function redactYamlScalars(text: string): string {
     );
 }
 
-const neutralAuthorization = (text: string): string => text.replace(/authorization/gi, "x-auth");
+const AUTHORIZATION_KEY = new RegExp(
+  String.raw`(?<![\w-])${Array.from("authorization").join(LINE_SPLICE)}(?=(?:\\?["'])?\s*[:=]\s*(?:\\\r?\n[ \t]*)*(?:${AUTH_WORD})${LINE_SPLICE}\s+)`,
+  "gi",
+);
+const neutralAuthorization = (text: string): string => text.replace(AUTHORIZATION_KEY, "x-auth");
 
 function yamlSplicesDisagree(source: string): boolean {
   const logical = logicalView(source);

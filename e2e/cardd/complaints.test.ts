@@ -240,6 +240,8 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     'Tool printed {"pass\\\n\\u0077ord":"paper canoe"}',
     "Tool printed to\\\nken: !!str >\n paper canoe",
     "pass\\\nword: paper\n  canoe",
+    "Auth\\\norization: paper\n  canoe",
+    "x_Auth\\\norization: paper\n  canoe",
     "password: pa\\\nper\n  canoe",
     "token:\\\n paper\n  canoe",
     'Tool printed password=\\\n"paper canoe',
