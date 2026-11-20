@@ -13,6 +13,7 @@ import { jobCutover } from "./job-cutover.ts";
 import {
   dropLostJob,
   finishJob,
+  prepareJob,
   recordJobResult,
   registerJob,
   runningJobs,
@@ -280,8 +281,7 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "job.prepare": (db, session, raw, timing) => {
     const args = check(OPS["job.prepare"].args, raw);
     requireReviewDecision(db, session, args.command);
-    const job = startJob(db, session.id, args);
-    return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
+    return { value: prepareJob(db, session.id, args, timing.heartbeat), notify: [] };
   },
   "job.register": (db, session, raw) => ({
     value: { registered: registerJob(db, session.id, check(OPS["job.register"].args, raw)) },
@@ -321,16 +321,16 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
       return { value: { recorded: false }, notify: [] };
     return {
       value: { recorded: true },
-      notify: recordJobResult(db, session, args.job, finished.label, args, finished.startupFenced),
+      notify: recordJobResult(db, session, args.job, finished.label, args, finished.fencedLaunch),
     };
   },
   "job.stop": (db, session, raw) => {
     const args = check(OPS["job.stop"].args, raw);
-    const { label, running, result } = stopJob(db, session.id, args.job);
+    const { label, running, result, launch } = stopJob(db, session.id, args.job);
     if (result === undefined) return { value: { label, running }, notify: [] };
     return {
       value: { label, running, cancelled: true },
-      notify: recordJobResult(db, session, args.job, label, result, true),
+      notify: recordJobResult(db, session, args.job, label, result, launch),
     };
   },
   "job.drop": (db, session, raw) => {

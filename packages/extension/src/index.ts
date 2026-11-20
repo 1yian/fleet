@@ -256,7 +256,12 @@ function tellUnreadable(pi: ExtensionAPI, error: string, reloading: boolean): vo
 }
 
 function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: string }): Jobs {
-  const jobs = new Jobs(link, cardd);
+  const jobs = new Jobs(link, cardd, (text) => {
+    pi.sendMessage(
+      { customType: "fleet-job-cleanup", content: `[fleet] ${text}`, display: true },
+      { triggerTurn: false },
+    );
+  });
   jobs.register(pi);
   registerBranch(pi, link);
   return jobs;
@@ -286,7 +291,8 @@ function deliverAfterSync(
 ): void {
   const job = entry.fields["job"];
   if (typeof job === "number" && entry.fields["startupFenced"] === true) {
-    jobs.confirmStartupFence(job);
+    const launch = entry.fields["startupLaunch"];
+    jobs.confirmStartupFence(job, typeof launch === "string" ? launch : undefined, entry.body);
     deliver("");
     return;
   }

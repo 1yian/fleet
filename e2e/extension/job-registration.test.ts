@@ -66,7 +66,9 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
     const response = await cardd.post(token, "job.prepare", { label, command, launch });
     const outcome = check(HttpOutcomeSchema, response.body);
     assert.ok(outcome.ok);
-    const { job, heartbeatMs } = check(OPS["job.prepare"].result, outcome.value);
+    const prepared = check(OPS["job.prepare"].result, outcome.value);
+    assert.ok("heartbeatMs" in prepared);
+    const { job, heartbeatMs } = prepared;
     const file = join(dir, `fleet-job-${String(job)}-${launch}.json`);
     writeFileSync(
       file,
