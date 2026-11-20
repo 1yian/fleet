@@ -106,16 +106,31 @@ function addSite(
   return { clone, remote, env };
 }
 
-const siteOf = (cardd: Cardd, options: LabOptions) =>
-  options.freshInstall === true ? freshSite() : addSite(cardd, options);
-
-function freshSite(): { clone: string; remote: undefined; env: Record<string, string> } {
+function freshHome(): { clone: string; env: Record<string, string> } {
   const fresh = tempDir("fleet-fresh-home-");
   return {
     clone: join(fresh, ".fleet", "projects", "personal"),
-    remote: undefined,
     env: { HOME: fresh, FLEET_HOST_DIR: "" },
   };
+}
+
+async function startSite(
+  carddEnv: Record<string, string> | undefined,
+  carddArgs: readonly string[],
+  site: LabOptions,
+): Promise<{
+  cardd: Cardd;
+  clone: string;
+  remote: string | undefined;
+  env: Record<string, string>;
+}> {
+  if (site.freshInstall !== true) {
+    const cardd = await Cardd.start(carddEnv, carddArgs);
+    return { cardd, ...addSite(cardd, site) };
+  }
+  const fresh = freshHome();
+  const cardd = await Cardd.start({ ...carddEnv, ...fresh.env }, carddArgs);
+  return { cardd, clone: fresh.clone, remote: undefined, env: fresh.env };
 }
 
 export async function startDispatchLab({
@@ -130,11 +145,10 @@ export async function startDispatchLab({
   ...site
 }: LabOptions = {}): Promise<DispatchLab> {
   const checkout = resolve(dirname(extension), "..", "..", "..");
-  const cardd = await Cardd.start(carddEnv, carddArgs);
+  const { cardd, clone, remote, env } = await startSite(carddEnv, carddArgs, site);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = tempDir("fleet-home-");
   const mainToken = cardd.addLane("main", undefined, home);
-  const { clone, remote, env } = siteOf(cardd, site);
   const h = await Harness.start();
   const lab = await HerdrLab.start({
     ...h.piEnv("worker"),

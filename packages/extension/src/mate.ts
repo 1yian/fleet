@@ -300,9 +300,9 @@ export function registerMate(
     description: `Creates a new work card and starts its worker in its own worktree on a host. Dispatching is how all work gets done: never do it yourself in your own turn, not a one-off, a quick job, or work that fits no registered project. Work that fits none goes under project "${PERSONAL_PROJECT}", which always exists: dispatch makes it on first use. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.`,
     parameters: DispatchParams,
     execute: async (_id, params) => {
-      const { title, name, kind, project, intent, host, task, delivery, model } = params;
-      isLocal(host);
-      await requireProject(link, host, project);
+      const { title, name, kind, project, intent, task, delivery, model } = params;
+      isLocal(params.host);
+      const host = await requireProject(link, params.host, project);
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>
