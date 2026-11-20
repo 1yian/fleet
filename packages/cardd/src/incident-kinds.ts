@@ -188,12 +188,12 @@ function curlCredentialOption(text: string): boolean {
   );
 }
 
-function curlUnprovenAuthorization(text: string): boolean {
-  const start = text.search(CURL_COMMAND);
-  return (
-    start !== -1 && /authorization["']?\s*[:=]\s*\[hidden\][ \t]+[^\s"'`]/i.test(text.slice(start))
-  );
-}
+const CURL_PARTIAL_HEADER = new RegExp(
+  String.raw`(?:["'\u0060]\s*${SECRET_NAME}|\bauthorization)["']?\s*[:=]\s*\[hidden\][ \t]+[^\s"'\u0060]`,
+  "i",
+);
+const curlUnprovenAuthorization = (text: string): boolean =>
+  text.search(CURL_COMMAND) !== -1 && CURL_PARTIAL_HEADER.test(text.slice(text.search(CURL_COMMAND)));
 
 function scanUrlUserinfo(text: string): { text: string; ambiguous: boolean; count: number } {
   let ambiguous = false;
