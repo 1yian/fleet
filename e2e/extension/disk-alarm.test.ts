@@ -8,7 +8,7 @@ import { until, replayed, stopMain } from "../support/disk-session.ts";
 import { gate, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { publishRecord, type JsonRecord } from "../support/json.ts";
-import { configureMain, roomyDiskEnv, Scratch, startMain } from "../support/scratch.ts";
+import { configureMain, Scratch, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -51,7 +51,6 @@ beforeEach(async () => {
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "300",
-    ...roomyDiskEnv(),
   });
 });
 afterEach(async (t) => {
