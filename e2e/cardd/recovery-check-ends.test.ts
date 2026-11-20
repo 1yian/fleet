@@ -20,18 +20,29 @@ const isCheck = (entry: Entry): boolean => entry.fields["recovery"] !== undefine
 const checksSent = (worker: Session): number =>
   worker.entries.filter((push) => isCheck(push.entry)).length;
 
-async function failedWorker(
-  phase: "turn" | "compaction",
-): Promise<{ worker: Session; card: number; incident: number; generation: number }> {
+async function failedWorker(phase: "turn" | "compaction"): Promise<{
+  worker: Session;
+  token: string;
+  card: number;
+  incident: number;
+  generation: number;
+}> {
   const card = await newCard(fleet.main, "Users see one scrollbar");
-  const worker = await fleet.cardd.connect(await begin(fleet.main, card), [], false);
+  const token = await begin(fleet.main, card);
+  const worker = await fleet.cardd.connect(token, [], false);
   const [task] = await worker.waitForEntries(1);
   worker.ack(task?.id ?? 0);
   await worker.call("incident.report", { error: TURN_FAILED, phase });
   const heard = await fleet.main.waitForEntry(isFailure, "the failure to reach the mate");
   const [, incident, generation] =
     /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
-  return { worker, card: card.id, incident: Number(incident), generation: Number(generation) };
+  return {
+    worker,
+    token,
+    card: card.id,
+    incident: Number(incident),
+    generation: Number(generation),
+  };
 }
 
 test("a recovery check whose compaction verified is never sent again or reported missed", async () => {
@@ -83,4 +94,27 @@ test("a recovery check the worker read and answered is never sent again or repor
   assert.equal(checksSent(worker), 1);
   assert.deepEqual(missedAbout(fleet, card), []);
   await Promise.all([worker.close(), control.worker.close()]);
+});
+
+test("a recovery check the worker read and answered is not sent again when the worker reconnects mid-recovery", async () => {
+  const { worker, token, card, incident, generation } = await failedWorker("turn");
+  await fleet.main.call("card.restart", {
+    card,
+    incident,
+    generation,
+    mode: "retry",
+    key: "retry",
+  });
+  const [, check] = await worker.waitForEntries(2);
+  worker.read(check?.id ?? 0);
+  await worker.call("report", { status: "note", text: "alive, working on the scrollbar" });
+  await worker.lose();
+
+  const back = await fleet.cardd.connect(token, [], false);
+  const control = await untakenControl(fleet, "A task nobody takes in");
+  await control.reportedMissed();
+
+  assert.equal(checksSent(back), 0);
+  assert.deepEqual(missedAbout(fleet, card), []);
+  await Promise.all([back.close(), control.worker.close()]);
 });

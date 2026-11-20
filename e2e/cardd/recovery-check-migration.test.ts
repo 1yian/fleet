@@ -65,6 +65,18 @@ function stuckChecks(file: string): void {
     delivery.run(`${name}-a1`, id * 10, "confirmed", past, 0);
     entry.run(id * 10 + 1, id, `recovery check ${String(id)} from main`, check(id, compaction), T);
     delivery.run(`${name}-a1`, id * 10 + 1, delivered, past, 2);
+    if (state !== "recovering") {
+      db.prepare(
+        "INSERT INTO entries (id, card, author, kind, body, fields, created_at) VALUES (?, ?, 'check', 'finding', ?, ?, ?)",
+      ).run(
+        id * 10 + 5,
+        id,
+        `missed: the worker on ${name} did not take in this comment from mate:main, re-sent 9 times`,
+        JSON.stringify({ condition: "missed", entry: id * 10 + 1, worker: `${name}-a1` }),
+        T,
+      );
+      delivery.run("main", id * 10 + 5, "pushed", past, 0);
+    }
     incident.run(
       id,
       `${name}-a1`,

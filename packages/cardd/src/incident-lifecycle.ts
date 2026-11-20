@@ -367,7 +367,12 @@ function writeLive(
 
 function endRecoveryCheck(db: DatabaseSync, incident: number): void {
   db.prepare(
-    "DELETE FROM deliveries WHERE entry = (SELECT recovery_entry FROM incidents WHERE id = ?)",
+    `DELETE FROM deliveries WHERE entry IN (
+       SELECT recovery_entry FROM incidents WHERE id = ?1
+       UNION
+       SELECT f.id FROM entries f, incidents i
+       WHERE i.id = ?1 AND f.kind = 'finding' AND json_extract(f.fields, '$.condition') = 'missed'
+         AND json_extract(f.fields, '$.entry') = i.recovery_entry)`,
   ).run(incident);
 }
 
