@@ -1,33 +1,31 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
-import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { ageSession, begin, MINUTE, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 
 let fleet: Fleet;
-let beat: NodeJS.Timeout | undefined;
 beforeEach(async () => {
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  fleet = await startFleet({ CARDD_CHECK_EVERY_MS: "50" });
 });
 afterEach(async () => {
-  clearInterval(beat);
-  beat = undefined;
   await fleet.cardd.stop();
 });
 
 test("a silent worker waiting on a live long job is not reported stalled, but is once the job ends", async () => {
   const card = await newCard(fleet.main, "live watch");
   const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-  const { job, heartbeatMs } = check(
+  const { job } = check(
     OPS["job.start"].result,
     await worker.call("job.start", { label: "watch", command: "watch events" }),
   );
   worker.send({ t: "activity", state: "running" });
-  beat = setInterval(() => {
-    worker.call("job.alive", { job }).catch(() => undefined);
-  }, heartbeatMs);
+  await worker.call("job.alive", { job });
   const control = await newCard(fleet.main, "unattended control");
   const silent = await fleet.cardd.connect(await begin(fleet.main, control));
   silent.send({ t: "activity", state: "running" });
+  await silent.call("jobs", {});
+  ageSession(fleet.cardd, card, 11 * MINUTE);
+  ageSession(fleet.cardd, control, 11 * MINUTE);
   await fleet.main.waitForEntry(
     (entry) =>
       entry.card === control.id &&

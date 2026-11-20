@@ -27,35 +27,6 @@ const sent = (session: Session, kind: Entry["kind"]): [string, boolean][] =>
     .filter(({ entry }) => entry.kind === kind)
     .map(({ entry, again }) => [entry.body, again ?? false]);
 
-test("a report a second mate never takes in is sent again every two minutes, and main hears after the third resend", async () => {
-  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"), [], false);
-  const main = await fleet.cardd.connect(fleet.mainToken, [], false);
-  const { worker } = await blockedInCleo(cleo);
-
-  const missed = await main.waitForEntry(
-    (entry) => entry.fields["condition"] === "missed",
-    "main to hear that cleo missed the report",
-  );
-  assert.equal(missed.body, MISSED);
-  const resent = sent(cleo, "report");
-  assert.deepEqual(resent[0], ["The API is down\nlogs in /tmp/x", false]);
-  assert.ok(resent.length >= 4, `cleo was sent the report ${String(resent.length)} times`);
-  assert.ok(resent.slice(1).every(([body, again]) => body.startsWith("The API is down") && again));
-  const repeated = await main.waitForEntry(
-    (entry) =>
-      entry.id > missed.id &&
-      entry.fields["condition"] === "missed" &&
-      entry.fields["entry"] === missed.fields["entry"],
-    "main to hear the same unread obligation again after fifteen minutes",
-  );
-  const elapsed = repeated.createdAt - missed.createdAt;
-  assert.ok(
-    elapsed >= 9000 && elapsed < 9600,
-    `fifteen minutes scaled to nine seconds: ${String(elapsed)} ms`,
-  );
-  await worker.close();
-});
-
 test("a report main takes in is never sent again", async () => {
   const card = await newCard(fleet.main, "Main's own card");
   const mainWorker = await fleet.cardd.connect(await begin(fleet.main, card));

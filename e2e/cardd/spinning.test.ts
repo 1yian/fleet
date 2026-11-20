@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { CardViewSchema, check, type Card } from "@fleet/protocol";
-import { begin, newCard, startFleet } from "../support/fleet.ts";
+import { begin, MINUTE, newCard, startFleet } from "../support/fleet.ts";
 
 test("a running tool that keeps producing output is never a stall, and a long turn with no report, commit, or file change is spinning", async () => {
-  const fleet = await startFleet({ CARDD_TIMING_SCALE: "0.1" });
-  const beats: NodeJS.Timeout[] = [];
+  const fleet = await startFleet({ CARDD_CHECK_EVERY_MS: "50" });
   try {
     const quiet = await newCard(fleet.main, "stalls");
     const quietWorker = await fleet.cardd.connect(await begin(fleet.main, quiet));
@@ -18,17 +17,14 @@ test("a running tool that keeps producing output is never a stall, and a long tu
       [working, true],
     ] as const) {
       const worker = await fleet.cardd.connect(await begin(fleet.main, card));
-      const send = (): void => {
-        worker.send({ t: "activity", state: "running", progress });
-      };
-      send();
+      worker.send({ t: "activity", state: "running", progress });
       await worker.call("jobs", {});
-      beats.push(setInterval(send, 40));
     }
+    await quietWorker.call("jobs", {});
 
     const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
     try {
-      const past = Date.now() - 61 * 60_000;
+      const past = Date.now() - 61 * MINUTE;
       db.prepare(
         "UPDATE sessions SET turn_since = ? WHERE attempt IN (SELECT id FROM attempts WHERE card IN (?, ?))",
       ).run(past, spinning.id, working.id);
@@ -58,7 +54,6 @@ test("a running tool that keeps producing output is never a stall, and a long tu
     assert.ok(!productive.includes("worker-spinning"));
     assert.deepEqual(fleet.cardd.gh.calls(), [], "no wake, report, or close may invoke gh");
   } finally {
-    for (const beat of beats) clearInterval(beat);
     await fleet.cardd.stop();
   }
 });

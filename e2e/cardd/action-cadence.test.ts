@@ -2,20 +2,27 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, park, startFleet, type Fleet } from "../support/fleet.ts";
+import {
+  ageCards,
+  ageEntry,
+  begin,
+  CheckPasses,
+  MINUTE,
+  newCard,
+  park,
+  startFleet,
+  type Fleet,
+} from "../support/fleet.ts";
 
-const SCALE = 0.005;
-const MINUTE = 60_000 * SCALE;
-const HOUR = 3_600_000;
+const HOUR = 60 * MINUTE;
 
 let fleet: Fleet;
-let beats: NodeJS.Timeout[] = [];
+let passes: CheckPasses;
 beforeEach(async () => {
-  fleet = await startFleet({ CARDD_TIMING_SCALE: String(SCALE) });
+  fleet = await startFleet({ CARDD_CHECK_EVERY_MS: "50" });
+  passes = await CheckPasses.open(fleet);
 });
 afterEach(async () => {
-  for (const beat of beats) clearInterval(beat);
-  beats = [];
   await fleet.cardd.stop();
 });
 
@@ -38,12 +45,17 @@ const watchedPart = (entry: Entry): string => entry.body.split(/\n(?=Dated waits
 const listed = (text: string): string[] =>
   (text.match(/^- c-\d+/gm) ?? []).map((line) => line.slice(2));
 
-const afterTenMinutes = (gap: number, what: string): void => {
-  assert.ok(
-    gap >= 10 * MINUTE && gap < 20 * MINUTE,
-    `${what} came ${String(Math.round(gap))}ms after its cause: expected ${String(10 * MINUTE)}ms to ${String(20 * MINUTE)}ms (10 to 20 minutes)`,
-  );
-};
+async function afterTenMinutes(
+  session: Session,
+  tier: number,
+  age: (ms: number) => void,
+): Promise<Entry> {
+  age(9 * MINUTE);
+  await passes.next();
+  assert.equal(lists(session).length, tier - 1, `list ${String(tier)} came before ten minutes`);
+  age(MINUTE);
+  return list(session, tier);
+}
 
 const report = (session: Session, card: Card, status: string): Promise<Entry> =>
   session.waitForEntry(
@@ -61,17 +73,19 @@ test("blocked and needs-decision reports reach the mate at once, and the one lis
   await stuckWorker.call("report", { status: "blocked", text: "the API is down" });
   await askedWorker.call("report", { status: "needs-decision", key: "name", text: "Which name?" });
 
-  const blocked = await report(cleo, stuck, "blocked");
+  await report(cleo, stuck, "blocked");
   await report(cleo, asked, "needs-decision");
   assert.deepEqual(lists(cleo), [], "the reports came before any list");
 
-  const first = await list(cleo, 1);
-  afterTenMinutes(first.createdAt - blocked.createdAt, "the first list");
+  const first = await afterTenMinutes(cleo, 1, (ms) => {
+    ageCards(fleet.cardd, [stuck, asked], ms);
+  });
   assert.match(first.body, /^reminder: 2 cards need a decision or action from you\./);
   assert.deepEqual((first.body.match(/c-\d+/g) ?? []).sort(), [name(stuck), name(asked)].sort());
 
-  const second = await list(cleo, 2);
-  afterTenMinutes(second.createdAt - first.createdAt, "the second list");
+  const second = await afterTenMinutes(cleo, 2, (ms) => {
+    ageEntry(fleet.cardd, first.id, ms);
+  });
   assert.deepEqual(second.body.match(/c-\d+/g), first.body.match(/c-\d+/g));
   assert.deepEqual(
     cleo.entries
@@ -88,10 +102,7 @@ test("an idle park keeps the ten minute cadence, and a watched wait with healthy
 
   const running = await newCard(quinn, "Healthy work");
   const runner = await fleet.cardd.connect(await begin(quinn, running));
-  const beat = setInterval(() => {
-    runner.send({ t: "activity", state: "running", progress: true });
-  }, 40);
-  beats.push(beat);
+  runner.send({ t: "activity", state: "running", progress: true });
   await runner.call("report", { status: "in-review", text: "checks are running" });
   const followed = await newCard(main, "Waits on the healthy worker");
   await main.call("hold", {
@@ -126,14 +137,16 @@ test("an idle park keeps the ten minute cadence, and a watched wait with healthy
   );
   assert.ok(hold !== undefined);
 
-  const first = await list(main, 1);
-  afterTenMinutes(first.createdAt - hold.createdAt, "the first list");
+  const first = await afterTenMinutes(main, 1, (ms) => {
+    ageCards(fleet.cardd, [parked], ms);
+  });
   assert.match(first.body, /^reminder: 1 card needs a decision or action from you\./);
   assert.deepEqual(listed(actingPart(first)), [name(parked)]);
   assert.deepEqual(listed(watchedPart(first)).sort(), [followed, dated].map(name).sort());
   assert.ok(!listed(first.body).includes(name(running)), "healthy running work has no line");
-  const second = await list(main, 2);
-  afterTenMinutes(second.createdAt - first.createdAt, "the second list");
+  const second = await afterTenMinutes(main, 2, (ms) => {
+    ageEntry(fleet.cardd, first.id, ms);
+  });
   assert.deepEqual(listed(actingPart(second)), [name(parked)]);
 
   assert.deepEqual(

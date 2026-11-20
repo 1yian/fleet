@@ -102,6 +102,14 @@ function clockFrom(file: string | undefined): () => number {
   };
 }
 
+function checkEvery(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const ms = Number(raw);
+  if (!Number.isInteger(ms) || ms < 1)
+    throw new Error("CARDD_CHECK_EVERY_MS must be a whole number of milliseconds, at least 1");
+  return ms;
+}
+
 function parseClone(pair: string): [string, string] {
   const split = pair.indexOf("=");
   const host = pair.slice(0, split);
@@ -120,6 +128,7 @@ if (command === "serve") {
   const scale = Number(process.env["CARDD_TIMING_SCALE"] ?? "1");
   if (!(scale > 0)) throw new Error("CARDD_TIMING_SCALE must be a positive number");
   const clock = clockFrom(process.env["CARDD_CLOCK_FILE"]);
+  const every = checkEvery(process.env["CARDD_CHECK_EVERY_MS"]);
   const access = parseAccess([
     values["public-host"],
     values["access-team"],
@@ -130,7 +139,7 @@ if (command === "serve") {
     console.warn(
       "cardd: --browser is ignored, the fleet has no browser any more. Remove it from the launch arguments; a later release refuses it.",
     );
-  const url = await serve(db, host, Number(port), timings(scale, clock), {
+  const url = await serve(db, host, Number(port), timings(scale, clock, every), {
     files: values.board,
     hostnames: values.hostname,
     hosts,

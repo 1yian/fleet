@@ -3,7 +3,11 @@ import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import {
+  ageCards,
+  ageDated,
+  ageEntry,
   begin,
+  MINUTE,
   newCard,
   OUTSIDE_DATE,
   oldDatedHold,
@@ -14,7 +18,7 @@ import {
 
 let fleet: Fleet;
 beforeEach(async () => {
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  fleet = await startFleet({ CARDD_CHECK_EVERY_MS: "50" });
 });
 afterEach(async () => {
   await fleet.cardd.stop();
@@ -52,12 +56,15 @@ const names = (entry: Entry): string[] => entry.body.match(/c-\d+/g) ?? [];
 const watchedPart = (entry: Entry): string => entry.body.split(/\n(?=Dated waits)/)[1] ?? "";
 const actingPart = (entry: Entry): string => entry.body.split(/\n(?=Dated waits)/)[0] ?? "";
 const name = (card: Card): string => `c-${String(card.id)}`;
+const CHASE = 10 * MINUTE;
+const HOUR = 3_600_000;
 
 test("several actionable cards reach their mate as one bundle, repeated flat, and nothing else is sent for them", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const one = await blocked(cleo, "First blocker");
   const two = await blocked(cleo, "Second blocker");
   const three = await blocked(cleo, "Third blocker");
+  ageCards(fleet.cardd, [one, two, three], CHASE);
 
   const first = await bundle(cleo, 1);
   assert.match(
@@ -67,6 +74,7 @@ test("several actionable cards reach their mate as one bundle, repeated flat, an
   assert.doesNotMatch(first.body, /Waiting on the captain/);
   assert.doesNotMatch(first.body, /so reminders stop/);
   assert.deepEqual(names(first).sort(), [one, two, three].map(name).sort());
+  ageEntry(fleet.cardd, first.id, CHASE);
   const second = await bundle(cleo, 2);
   assert.deepEqual(names(second).sort(), names(first).sort());
   assert.equal(second.createdAt - first.createdAt >= 1, true);
@@ -83,9 +91,10 @@ test("a mate with nothing to act on hears no bundle, and each mate hears only it
   const quiet = await fleet.cardd.connect(fleet.cardd.addLane("quinn", "main"));
   const mine = await blocked(cleo, "Cleo blocker");
   const theirs = await blocked(fleet.main, "Main blocker");
+  ageCards(fleet.cardd, [mine, theirs], CHASE);
 
-  const forCleo = await bundle(cleo, 2);
-  const forMain = await bundle(fleet.main, 2);
+  const forCleo = await bundle(cleo, 1);
+  const forMain = await bundle(fleet.main, 1);
   assert.deepEqual(names(forCleo), [name(mine)]);
   assert.deepEqual(names(forMain), [name(theirs)]);
   assert.deepEqual(bundles(quiet), []);
@@ -99,6 +108,7 @@ test("main's bundle holds its own cards, an escalated hold, and every captain de
   await cleo.call("hold", { card: decision.id, question: "Which one?" });
   await fleet.main.call("hold", { card: decision.id, question: "Which one?", to: "captain" });
   const own = await blocked(fleet.main, "Main blocker");
+  ageCards(fleet.cardd, [escalated, decision, own], CHASE);
 
   const entry = await bundle(fleet.main, 1);
   assert.deepEqual(names(entry).sort(), [escalated, decision, own].map(name).sort());
@@ -136,13 +146,15 @@ test("main's bundle holds its own cards, an escalated hold, and every captain de
 test("a card held until a date drops out of the bundle, and comes back when the date passes", async () => {
   const kept = await blocked(fleet.main, "Kept blocker");
   const snoozed = await blocked(fleet.main, "Snoozed blocker");
-  const until = Date.now() + 5_000;
+  const until = Date.now() + HOUR;
   await fleet.main.call("hold", { card: snoozed.id, question: "later?", until, ...OUTSIDE_DATE });
+  ageDated(fleet.cardd, [kept, snoozed], CHASE);
 
   const first = await bundle(fleet.main, 1);
   assert.deepEqual(namesIn(actingPart(first).split("\n").slice(1).join("\n")), [name(kept)]);
   assert.deepEqual(namesIn(watchedPart(first)), [name(snoozed)]);
-  assert.ok(Date.now() < until, "the first bundle arrived before the hold ended");
+  ageDated(fleet.cardd, [snoozed], HOUR);
+  ageEntry(fleet.cardd, first.id, CHASE);
   const later = await fleet.main.waitForEntry(
     (entry) =>
       entry.fields["condition"] === "decisions" && actingPart(entry).includes(name(snoozed)),
@@ -172,13 +184,14 @@ test("a worker that waits on its mate cannot pause: it is refused and listed onc
   );
   assert.equal(await status(cleo, waiting), "working");
   await waitingWorker.call("report", { ...slot, status: "blocked" });
+  ageCards(fleet.cardd, [waiting, quota], CHASE);
 
-  assert.deepEqual(names(await bundle(cleo, 1)), [name(waiting)]);
+  const first = await bundle(cleo, 1);
+  assert.deepEqual(names(first), [name(waiting)]);
+  ageEntry(fleet.cardd, first.id, CHASE);
   assert.deepEqual(names(await bundle(cleo, 2)), [name(waiting)]);
   assert.equal(await status(cleo, quota), "paused");
 });
-
-const HOUR = 3_600_000;
 
 test("a dated wait with something behind it is listed as information, and an idle park is listed for action", async () => {
   const { main } = fleet;
@@ -209,6 +222,8 @@ test("a dated wait with something behind it is listed as information, and an idl
     left: [],
   });
 
+  ageDated(fleet.cardd, [act, quota, park], CHASE);
+
   const entry = await bundleWith(main, act, quota, park);
   assert.match(entry.body, /^reminder: 2 cards need a decision or action from you\./);
   assert.doesNotMatch(entry.body, /Waiting on the captain/);
@@ -238,7 +253,7 @@ test("a dated wait with something behind it is listed as information, and an idl
 test("dated waits alone start no list on the 10 minute cadence, and a card held for the captain's later is told apart from one parked with nothing running", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
   const quinn = await fleet.cardd.connect(fleet.cardd.addLane("quinn", "main"));
-  await blocked(quinn, "Clock for the test");
+  const clock = await blocked(quinn, "Clock for the test");
   const quota = await newCard(cleo, "Waits on the quota");
   await cleo.call("hold", {
     card: quota.id,
@@ -258,6 +273,10 @@ test("dated waits alone start no list on the 10 minute cadence, and a card held 
     source: "record",
     remaining: [],
   });
+  ageCards(fleet.cardd, [clock, quota, later], CHASE);
+  const firstClock = await bundle(quinn, 1);
+  ageCards(fleet.cardd, [quota, later], CHASE);
+  ageEntry(fleet.cardd, firstClock.id, CHASE);
   await bundle(quinn, 2);
   assert.deepEqual(bundles(fleet.main), []);
   assert.deepEqual(bundles(cleo), []);
