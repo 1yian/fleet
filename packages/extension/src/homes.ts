@@ -106,7 +106,7 @@ function scanHomes(root: string): Scanned[] {
   try {
     entries = readdirSync(dir);
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    if (isMissing(error)) return [];
     throw error;
   }
   return entries
@@ -253,12 +253,22 @@ const ifUnread =
     throw error;
   };
 
-function heldReason(home: string): string | undefined {
+const isMissing = (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === "ENOENT";
+
+function readState(file: string, name: string): string | undefined {
   try {
-    return readFileSync(stoppedFile(home), "utf8").trim() || "stopped";
-  } catch {
-    return undefined;
+    return readFileSync(file, "utf8");
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
+    throw new HostUnread(`could not read ${name} (${code})`);
   }
+}
+
+function heldReason(home: string): string | undefined {
+  const text = readState(stoppedFile(home), "state/stopped");
+  return text === undefined ? undefined : text.trim() || "stopped";
 }
 
 type LaneMatch =
@@ -391,12 +401,12 @@ function syncHome(root: string, home: string, deadline?: number): void {
 }
 
 function recentStarts(home: string, now: number): number[] {
-  try {
-    const times = readFileSync(startsFile(home), "utf8").split("\n").map(Number);
-    return times.filter((time) => time > now - CRASH_WINDOW_MS);
-  } catch {
-    return [];
-  }
+  const text = readState(startsFile(home), "state/starts");
+  if (text === undefined) return [];
+  return text
+    .split("\n")
+    .map(Number)
+    .filter((time) => time > now - CRASH_WINDOW_MS);
 }
 
 const LANE_OBSERVATION_MS = 18_000;
@@ -440,6 +450,7 @@ async function start(
     deadline === undefined ? undefined : deadline - SHELL_WAIT_MS - START_RECORD_MS;
   if (remainingMs(launchDeadline) < LAUNCH_WAIT_MS)
     throw new HostUnread("not enough maintenance time to start the lane");
+  const history = lift ? [] : recentStarts(info.home, Date.now());
   syncHome(root, info.home, launchDeadline);
   const pane = existingPane ?? (await createMatePane(info, launchDeadline));
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
@@ -452,7 +463,7 @@ async function start(
   );
   if (lift) liftHold(info.home);
   mkdirSync(join(info.home, "state"), { recursive: true });
-  const starts = [...recentStarts(info.home, Date.now()), Date.now()];
+  const starts = [...history, Date.now()];
   writeFileSync(startsFile(info.home), `${starts.join("\n")}\n`);
   await untilPiShows(pane, deadline !== undefined);
   const host = info.config.host ?? process.env["FLEET_HOST"] ?? "local";

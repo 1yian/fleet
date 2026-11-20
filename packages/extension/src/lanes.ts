@@ -23,7 +23,7 @@ import {
   MAINTENANCE_PROBE_MS,
   remainingMs,
 } from "./maintenance-budget.ts";
-import { readShared } from "./standing.ts";
+import { PRESERVED_PREFIX, readShared } from "./standing.ts";
 import type { LaneRow } from "./views.ts";
 
 const LAUNCH = fileURLToPath(new URL("./launch.ts", import.meta.url));
@@ -142,13 +142,11 @@ const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 function sharedFailure(host: string, error: unknown): { notes: string[]; failure: string } {
-  const message = messageOf(error);
+  const lines = messageOf(error).split("\n");
+  const kept = (line: string): boolean => line.startsWith(PRESERVED_PREFIX);
   return {
-    notes: preservedLines(host, message),
-    failure: message
-      .split("\n")
-      .filter((line) => !line.includes("preserved as"))
-      .join("\n"),
+    notes: lines.filter(kept).map((line) => `${line.slice(PRESERVED_PREFIX.length)} (on ${host})`),
+    failure: lines.filter((line) => !kept(line)).join("\n"),
   };
 }
 

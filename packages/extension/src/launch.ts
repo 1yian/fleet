@@ -14,7 +14,6 @@ import {
   restart,
   status,
   stop,
-  unreadFailure,
   up,
   type Outcome,
 } from "./homes.ts";
@@ -29,7 +28,7 @@ import {
 } from "./maintenance-budget.ts";
 import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
-import { convergeSharedPreferences } from "./standing.ts";
+import { convergeSharedPreferences, PRESERVED_PREFIX } from "./standing.ts";
 import { hostProblems } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
@@ -299,16 +298,18 @@ try {
         values.absent === true
           ? undefined
           : Buffer.from(values.content ?? "", "base64").toString("utf8");
-      const { results, unread } = convergeSharedPreferences(root, bytes);
-      const lines = results.map(
-        ({ lane: name, result }) => `${name}: shared preferences ${result}`,
-      );
-      for (const line of lines) console.log(line);
-      if (unread.length > 0)
+      const { results, failures } = convergeSharedPreferences(root, bytes);
+      const line = ({ lane: name, result }: (typeof results)[number]): string =>
+        `${name}: shared preferences ${result}`;
+      for (const each of results) console.log(line(each));
+      if (failures.length > 0)
         throw new Error(
-          [unreadFailure(unread), ...lines.filter((line) => line.includes("preserved as"))].join(
-            "\n",
-          ),
+          [
+            ...failures,
+            ...results
+              .filter(({ result }) => result.includes(", edited copy preserved as "))
+              .map((each) => `${PRESERVED_PREFIX}${line(each)}`),
+          ].join("\n"),
         );
       break;
     }

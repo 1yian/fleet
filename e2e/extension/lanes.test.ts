@@ -347,6 +347,23 @@ for (const fault of ["malformed", "unreadable"]) {
   });
 }
 
+test("a failure line that mentions a preserved copy is still reported as a failure", async () => {
+  const name = "preserved as x";
+  p620.addLane(name, { url: cardd.url, token: cardd.addLane(name, "main"), hold: true });
+  writeFileSync(join(`${p620.root}.worktrees`, `lane-${name}`, "config", "lane.json"), "");
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  await until(
+    () =>
+      h
+        .callsOf("mate")
+        .map(users)
+        .find((message) => message.includes(`p620 failed: lane ${name} could not be read`)),
+    "main to report the unreadable lane as a failure",
+    async () => h.callsOf("mate").map(users).at(-1) ?? "no model call",
+  );
+});
+
 test("unread transport and nested observations neither report failure nor clear a confirmed outage", async () => {
   const control = join(here.parent, "faults");
   p620.addLane("spare", { url: cardd.url, token: cardd.addLane("spare", "main"), hold: true });
