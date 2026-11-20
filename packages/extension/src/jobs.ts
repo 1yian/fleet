@@ -86,6 +86,7 @@ export class Jobs {
     { unstarted: boolean; ran: boolean; legacy: boolean }
   >();
   private readonly unsettled = new Set<number>();
+  private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -328,6 +329,8 @@ export class Jobs {
     this.preparing.delete(id);
     if (registeredLaunch && preparing.fence?.job === job)
       throw new Error(`Job ${String(job)} cannot start: ${preparing.fence.detail}`);
+    if (registeredLaunch && this.cancelledJobs.has(job))
+      throw new Error(`Job ${String(job)} cannot start: it was stopped before dispatch`);
     const file = join(
       resolve(tmpdir()),
       registeredLaunch ? `fleet-job-${String(job)}-${id}.json` : this.legacyLaunchName(job),
@@ -440,6 +443,7 @@ export class Jobs {
     const before = this.lastResult.get(job);
     const { label, running, cancelled, legacy } = await this.link.call("job.stop", { job });
     const named = `job ${String(job)} (${label})`;
+    if (cancelled === true) this.cancelledJobs.add(job);
     if (!running) {
       if (this.lastResult.get(job) === before) {
         if (before === undefined) this.lastResult.set(job, 0);

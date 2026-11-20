@@ -1152,6 +1152,7 @@ for (const fault of [
     const bin = join(jobDir, "bin");
     mkdirSync(bin);
     const dispatches = join(jobDir, "dispatches");
+    const signals = join(jobDir, "signals");
     const marker = join(jobDir, "unexpected-execution");
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
     writeFileSync(
@@ -1161,6 +1162,9 @@ if [ "$1 $2" = 'pane run' ]; then
   echo dispatch >> ${quote(dispatches)}
   echo 'pane reply unavailable' >&2
   exit 1
+fi
+if [ "$1 $2" = 'pane send-keys' ] || [ "$1 $2" = 'tab close' ]; then
+  echo "$@" >> ${quote(signals)}
 fi
 exec ${quote(herdr)} "$@"
 `,
@@ -1307,6 +1311,7 @@ exec ${quote(herdr)} "$@"
     assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab?.["tab_id"]));
     assert.equal(existsSync(marker), false);
     assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
+    assert.equal(existsSync(signals), false);
   });
 
 test("a legacy loss that arrives before dispatch stops the launch explicitly and leaves no launch file", async (t) => {
@@ -1318,6 +1323,7 @@ test("a legacy loss that arrives before dispatch stops the launch explicitly and
   const bin = join(jobDir, "bin");
   mkdirSync(bin);
   const dispatches = join(jobDir, "dispatches");
+  const signals = join(jobDir, "signals");
   const requested = join(jobDir, "tab-requested");
   const release = join(jobDir, "release-tab");
   const marker = join(jobDir, "unexpected-execution");
@@ -1334,6 +1340,9 @@ if [ "$1 $2" = 'tab create' ]; then
 fi
 if [ "$1 $2" = 'pane run' ]; then
   echo dispatch >> ${quote(dispatches)}
+fi
+if [ "$1 $2" = 'pane send-keys' ] || [ "$1 $2" = 'tab close' ]; then
+  echo "$@" >> ${quote(signals)}
 fi
 exec ${quote(herdr)} "$@"
 `,
@@ -1369,6 +1378,7 @@ exec ${quote(herdr)} "$@"
   assert.equal(said("Started job 1"), false);
   assert.equal(said("Dispatched job 1"), false);
   assert.equal(existsSync(dispatches), false);
+  assert.equal(existsSync(signals), false);
   assert.equal(existsSync(marker), false);
   assert.deepEqual(
     (await cardView()).entries
@@ -1386,6 +1396,81 @@ exec ${quote(herdr)} "$@"
     },
   );
   assert.ok((await tabsInWorkspace()).some((each) => each["label"] === "job-1-slow-tab"));
+});
+
+test("an explicit stop receipt that precedes the prepare receipt fences the launch before any tab exists", async (t) => {
+  const prepareReply = Promise.withResolvers<void>();
+  const fenceDelivery = Promise.withResolvers<void>();
+  const stopGate = Promise.withResolvers<void>();
+  t.after(() => {
+    prepareReply.resolve();
+    fenceDelivery.resolve();
+    stopGate.resolve();
+  });
+  await jobProxy(
+    t,
+    async (op, args) => {
+      const result = await callCardd(op, args);
+      if (op === "job.prepare") {
+        stopGate.resolve();
+        await prepareReply.promise;
+      }
+      return result;
+    },
+    fenceDelivery.promise,
+    undefined,
+    undefined,
+    stopGate.promise,
+  );
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const dispatches = join(jobDir, "dispatches");
+  const marker = join(jobDir, "unexpected-execution");
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  echo dispatch >> ${quote(dispatches)}
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  env["PROBE_STOP_RESULT"] = "1";
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "cancelled", command: `touch ${quote(marker)}` },
+    alongside: [{ tool: "stop_job", args: { job: 1 } }],
+  }));
+  h.onModel(() => ({ text: "The launch was stopped" }));
+  worker();
+  const stopped = await h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the stop to be confirmed before the prepare receipt",
+  );
+  assert.deepEqual(stopped["content"], [
+    {
+      type: "text",
+      text: "job 1 (cancelled) was stopped before wrapper registration. Its command will not run.",
+    },
+  ]);
+  assert.equal(
+    (await tabsInWorkspace()).some((each) => String(each["label"]).startsWith("job-1-")),
+    false,
+  );
+  prepareReply.resolve();
+  await settled(1);
+  assert.ok(said("Job 1 cannot start: it was stopped before dispatch"));
+  assert.equal(said("Dispatched job 1"), false);
+  assert.equal(said("Started job 1"), false);
+  assert.equal(
+    (await tabsInWorkspace()).some((each) => String(each["label"]).startsWith("job-1-")),
+    false,
+  );
+  assert.equal(existsSync(dispatches), false);
+  assert.equal(existsSync(marker), false);
 });
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
