@@ -7,7 +7,7 @@ let reaper: ReturnType<typeof spawnOwned> | undefined;
 
 export function tell(message: string): void {
   if (reaper === undefined) {
-    reaper = spawnOwned("node", [REAPER], { stdio: ["pipe", "ignore", "inherit"] });
+    reaper = spawnOwned(process.execPath, [REAPER], { stdio: ["pipe", "ignore", "inherit"] });
     reaper.unref();
     reaper.stdin?.on("error", () => undefined);
     if (reaper.stdin instanceof Socket) reaper.stdin.unref();

@@ -7,6 +7,9 @@ import { tempDir } from "./run-root.ts";
 const FAKE = fileURLToPath(new URL("./fake-gh.ts", import.meta.url));
 const FAKE_DIRENV = fileURLToPath(new URL("./fake-direnv.ts", import.meta.url));
 
+const shimOf = (script: string): string =>
+  `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`;
+
 export class FakeGitHub {
   private readonly dir = tempDir("fleet-gh-");
   private readonly file = join(this.dir, "prs.json");
@@ -14,10 +17,10 @@ export class FakeGitHub {
   constructor() {
     publishRecord(this.file, {});
     const shim = join(this.dir, "gh");
-    writeFileSync(shim, `#!/bin/sh\nexec node ${JSON.stringify(FAKE)} "$@"\n`);
+    writeFileSync(shim, shimOf(FAKE));
     chmodSync(shim, 0o755);
     const direnv = join(this.dir, "direnv");
-    writeFileSync(direnv, `#!/bin/sh\nexec node ${JSON.stringify(FAKE_DIRENV)} "$@"\n`);
+    writeFileSync(direnv, shimOf(FAKE_DIRENV));
     chmodSync(direnv, 0o755);
   }
 

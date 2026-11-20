@@ -23,6 +23,7 @@ import { tempDir } from "./run-root.ts";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 const KEEPALIVE = fileURLToPath(new URL("./keepalive.ts", import.meta.url));
+const NODE = process.execPath;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -108,7 +109,7 @@ export class Cardd {
 
   addLane(name: string, parent?: string, home = `/homes/${name}`): string {
     const args = [MAIN, "lane", "add", name, "--db", this.db, "--home", home];
-    return execFileSync("node", parent === undefined ? args : [...args, "--parent", parent], {
+    return execFileSync(NODE, parent === undefined ? args : [...args, "--parent", parent], {
       encoding: "utf8",
     }).trim();
   }
@@ -132,21 +133,21 @@ export class Cardd {
   ): void {
     const args = [MAIN, "project", "add", name, "--db", this.db, "--delivery", delivery];
     const cloneArgs = clones.flatMap((clone) => ["--clone", clone]);
-    execFileSync("node", [...args, ...cloneArgs, ...more], {
+    execFileSync(NODE, [...args, ...cloneArgs, ...more], {
       stdio: ["ignore", "pipe", "pipe"],
     });
   }
 
   moveClone(project: string, host: string, path: string): string {
     const args = [MAIN, "project", "clone", project, `${host}=${path}`, "--db", this.db];
-    return execFileSync("node", args, {
+    return execFileSync(NODE, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
   }
 
   admin(...args: readonly string[]): { status: number | null; stdout: string; stderr: string } {
-    const { status, stdout, stderr } = spawnSync("node", [MAIN, ...args, "--db", this.db], {
+    const { status, stdout, stderr } = spawnSync(NODE, [MAIN, ...args, "--db", this.db], {
       encoding: "utf8",
     });
     return { status, stdout: stdout.trim(), stderr };
@@ -220,7 +221,7 @@ export class Cardd {
 
   setRepo(project: string, repo: string): string {
     const args = [MAIN, "project", "repo", project, repo, "--db", this.db];
-    return execFileSync("node", args, {
+    return execFileSync(NODE, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
@@ -228,7 +229,7 @@ export class Cardd {
 
   yolo(project: string, on = true): string {
     const args = [MAIN, "project", "yolo", project, on ? "on" : "off", "--db", this.db];
-    return execFileSync("node", args, { encoding: "utf8" }).trim();
+    return execFileSync(NODE, args, { encoding: "utf8" }).trim();
   }
 
   async post(token: string, op: string, args: unknown): Promise<{ status: number; body: unknown }> {
@@ -341,7 +342,7 @@ export class Cardd {
   private async supervise(main: string): Promise<void> {
     const port = await freePort();
     const serve = [main, "serve", "--db", this.db, "--listen", `127.0.0.1:${String(port)}`];
-    const child = spawnGuarded("node", [KEEPALIVE, this.pidFile, "node", ...serve], {
+    const child = spawnGuarded(NODE, [KEEPALIVE, this.pidFile, NODE, ...serve], {
       stdio: ["ignore", "pipe", "inherit"],
       env: this.env,
     });
@@ -365,7 +366,7 @@ export class Cardd {
 
   private async boot(port = "0"): Promise<void> {
     const child = spawnGuarded(
-      "node",
+      NODE,
       [MAIN, "serve", "--db", this.db, "--listen", `127.0.0.1:${port}`, ...this.args],
       {
         stdio: ["ignore", "pipe", "pipe"],
@@ -385,7 +386,7 @@ export class Cardd {
 
   failToServe(...flags: string[]): { status: number | null; stderr: string } {
     const args = [MAIN, "serve", "--db", this.db, ...flags];
-    const { status, stderr } = spawnSync("node", args, { encoding: "utf8", env: this.env });
+    const { status, stderr } = spawnSync(NODE, args, { encoding: "utf8", env: this.env });
     return { status, stderr };
   }
 

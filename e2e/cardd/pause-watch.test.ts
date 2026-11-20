@@ -2,18 +2,28 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { BoardSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import {
+  ageBatch,
+  ageCard,
+  ageEntry,
+  agePause,
+  ageSession,
+  begin,
+  CheckPasses,
+  MINUTE,
+  newCard,
+  startFleet,
+  type Fleet,
+} from "../support/fleet.ts";
 
-const PAUSE_MS = 3_000;
+const PAUSE_MS = 60 * MINUTE;
+const PAUSE_ENDED = PAUSE_MS + 10 * MINUTE;
 
 let fleet: Fleet;
-let beats: NodeJS.Timeout[] = [];
 beforeEach(async () => {
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  fleet = await startFleet({ CARDD_CHECK_EVERY_MS: "50" });
 });
 afterEach(async () => {
-  for (const beat of beats) clearInterval(beat);
-  beats = [];
   const calls = fleet.cardd.gh.calls();
   await fleet.cardd.stop();
   assert.deepEqual(calls, [], "no wake, report, or close may invoke gh");
@@ -39,7 +49,7 @@ test("a worker resumed from a pause by a comment is watched for idleness at once
   await resumedWorker.call("report", {
     status: "paused",
     text: "waiting",
-    until: Date.now() + 3_600_000,
+    until: Date.now() + PAUSE_MS,
   });
   await fleet.main.call("comment", { card: resumed.id, text: "the wait is over, carry on" });
   const steer = await resumedWorker.waitForEntry(
@@ -48,11 +58,15 @@ test("a worker resumed from a pause by a comment is watched for idleness at once
   );
   resumedWorker.ack(steer.id);
   resumedWorker.send({ t: "activity", state: "idle" });
+  await resumedWorker.call("jobs", {});
 
   const control = await newCard(fleet.main, "idle control, never paused");
   const controlWorker = await idle(await begin(fleet.main, control));
   controlWorker.send({ t: "activity", state: "idle" });
+  await controlWorker.call("jobs", {});
 
+  ageSession(fleet.cardd, resumed, 3 * MINUTE);
+  ageSession(fleet.cardd, control, 3 * MINUTE);
   await nudge(controlWorker, control);
   await nudge(resumedWorker, resumed);
   const board = check(BoardSchema, await fleet.cardd.board());
@@ -89,6 +103,7 @@ async function pausedWorker(
 
 test("a pause with nothing running reaches its mate, and its end is listed for action", async () => {
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  const passes = await CheckPasses.open(fleet);
 
   const watched = await newCard(cleo, "Transcode the archive");
   const watchedToken = await begin(cleo, watched);
@@ -97,11 +112,6 @@ test("a pause with nothing running reaches its mate, and its end is listed for a
     OPS["job.start"].result,
     await watcher.call("job.start", { label: "transcode", command: "transcode archive" }),
   ).job;
-  beats.push(
-    setInterval(() => {
-      watcher.call("job.alive", { job }).catch(() => undefined);
-    }, 20),
-  );
   await watcher.call("report", { status: "working", text: "transcoding" });
   const behindJob = await pauseOf(
     watcher,
@@ -130,6 +140,7 @@ test("a pause with nothing running reaches its mate, and its end is listed for a
   const waiting = "waiting for the provider before the next status read";
   const told = await pauseOf(worker, waiting, until);
   worker.send({ t: "activity", state: "idle" });
+  ageBatch(fleet.cardd, "cleo", 6 * MINUTE);
 
   const heard = await cleo.waitForEntry(isPause, "the paused report");
   assert.match(told.advice ?? "", /^Nothing runs for this pause\..*start a run_long watcher/);
@@ -141,18 +152,22 @@ test("a pause with nothing running reaches its mate, and its end is listed for a
     [heard],
     "the pause behind a running job was not sent",
   );
+  await passes.next();
   assert.deepEqual(
     cleo.entries.map(({ entry }) => entry).filter((entry) => entry.author === "check"),
     [],
     "nothing is listed before the date",
   );
 
+  await watcher.call("job.alive", { job });
+  agePause(fleet.cardd, watched, PAUSE_ENDED);
+  agePause(fleet.cardd, card, PAUSE_ENDED);
   const list = await listing(cleo, "pause ended", "the list that names the ended pause");
-  assert.ok(list.createdAt >= until, "the list came after the date");
+  assert.ok(list.createdAt >= until - PAUSE_ENDED, "the list came after the date");
   assert.match(list.body, /^reminder: 1 card needs a decision or action from you\./);
   assert.ok(
     list.body.includes(
-      `- c-${String(card.id)} Render the intro clip - its worker's pause ended 0 min ago and nothing ran since: "${waiting}"`,
+      `- c-${String(card.id)} Render the intro clip - its worker's pause ended 10 min ago and nothing ran since: "${waiting}"`,
     ),
     list.body,
   );
@@ -166,6 +181,8 @@ test("a listed pause ends when its worker reports or its mate steers, and the ot
   const until = Date.now() + PAUSE_MS;
   await pauseOf(reported.worker, "waiting on the provider", until);
   await pauseOf(steered.worker, "waiting on the render", until);
+  agePause(fleet.cardd, reported.card, PAUSE_ENDED);
+  agePause(fleet.cardd, steered.card, PAUSE_ENDED);
 
   const both = await cleo.waitForEntry(
     (entry) =>
@@ -174,13 +191,15 @@ test("a listed pause ends when its worker reports or its mate steers, and the ot
       entry.body.includes(steered.card.title),
     "the list of both ended pauses",
   );
-  assert.ok(both.createdAt >= until);
+  assert.ok(both.createdAt >= until - PAUSE_ENDED);
 
   await reported.worker.call("report", { status: "note", text: "still waiting, nothing to do" });
   await cleo.call("comment", { card: steered.card.id, text: "the wait is over, carry on" });
   const stuck = await newCard(cleo, "Needs a decision");
   const stuckWorker = await fleet.cardd.connect(await begin(cleo, stuck));
   await stuckWorker.call("report", { status: "blocked", text: "the API is down" });
+  ageEntry(fleet.cardd, both.id, 10 * MINUTE);
+  ageCard(fleet.cardd, stuck, 10 * MINUTE);
 
   const after = await listing(cleo, stuck.title, "the next list, with the blocked card");
   assert.ok(!after.body.includes(reported.card.title), "a later worker report ended its pause");
@@ -201,14 +220,9 @@ test("a watcher that only repeats its earlier run does not hide an ended pause f
       }),
     ).job;
     if (round === 1) await worker.call("job.finish", { job, exitCode: 124, outputTail: "" });
-    else
-      beats.push(
-        setInterval(() => {
-          worker.call("job.alive", { job }).catch(() => undefined);
-        }, 20),
-      );
   }
   worker.send({ t: "activity", state: "waiting" });
+  agePause(fleet.cardd, card, PAUSE_ENDED);
 
   const list = await listing(cleo, "pause ended", "the list that names the ended pause");
   assert.ok(list.body.includes(`c-${String(card.id)} Watch the provider`), list.body);
