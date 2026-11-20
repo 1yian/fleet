@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { routed } from "@fleet/protocol/route";
-import { runOnTransport } from "@fleet/protocol/transport";
+import { type Detach, runOnTransport, TIMED_OUT } from "@fleet/protocol/transport";
 import { spawnDetached } from "./detached.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -9,6 +9,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export class HostUnreachable extends Error {}
 
 export class NoTransport extends HostUnreachable {}
+
+export class TimedOut extends Error {}
 
 export class WorkspaceNotFound extends Error {}
 
@@ -57,6 +59,8 @@ export const scrub = (text: string, secrets: readonly string[] = []): string =>
     );
 
 const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 60_000;
+
+export const SCAN_TIMEOUT_MS = Number(process.env["FLEET_SCAN_TIMEOUT_MS"]) || 180_000;
 
 const failure = (
   via: readonly string[],
@@ -177,22 +181,37 @@ function resultOf(stdout: string, host: string, name: string): Record<string, un
 
 export const HELPER_MARK = "FLEET_HELPER";
 
+const ownGroup: Detach = (file, args) =>
+  spawnDetached(file, args, { stdio: ["ignore", "pipe", "pipe"] });
+
 async function run(
   host: string,
   argv: readonly string[],
   timeout: number,
   spawned: readonly string[],
+  detach?: Detach,
 ): Promise<string> {
   const via = transport(host);
   const [file = "", ...rest] = routed(via, spawned);
   return new Promise((resolve, reject) => {
-    runOnTransport(file, rest, { timeout, maxBuffer: 16 * 1024 * 1024 }, (error, out, err) => {
-      if (error === null) resolve(out);
-      else {
-        const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
-        reject(failure(via, error, scrub(message), false));
-      }
-    });
+    runOnTransport(
+      file,
+      rest,
+      { timeout, maxBuffer: 16 * 1024 * 1024, ...(detach === undefined ? {} : { detach }) },
+      (error, out, err) => {
+        if (error === null) resolve(out);
+        else if (error.code === TIMED_OUT)
+          reject(
+            new TimedOut(
+              `${argv[0] ?? ""} on ${host} did not finish within ${String(timeout)} ms and was stopped`,
+            ),
+          );
+        else {
+          const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
+          reject(failure(via, error, scrub(message), false));
+        }
+      },
+    );
   });
 }
 
@@ -203,7 +222,7 @@ export const onHelper = (
   host: string,
   argv: readonly string[],
   timeout = 600_000,
-): Promise<string> => run(host, argv, timeout, ["env", `${HELPER_MARK}=1`, ...argv]);
+): Promise<string> => run(host, argv, timeout, ["env", `${HELPER_MARK}=1`, ...argv], ownGroup);
 
 const FLEET_ON_ROOT = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
 

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { onHelper, onHost, piPids, shellPid } from "./host.ts";
+import { onHelper, onHost, piPids, SCAN_TIMEOUT_MS, shellPid } from "./host.ts";
 
 const script = (name: string): string =>
   readFileSync(fileURLToPath(new URL(`./contain/${name}.sh`, import.meta.url)), "utf8");
@@ -24,10 +24,10 @@ function asBackend(name: string): Backend {
   return found;
 }
 
-function backendOn(host: string): Promise<Backend> {
+function backendOn(host: string, timeout?: number): Promise<Backend> {
   let found = known.get(host);
   if (found === undefined) {
-    found = onHost(host, ["sh", "-c", DETECT]).then(asBackend);
+    found = onHost(host, ["sh", "-c", DETECT], timeout).then(asBackend);
     known.set(host, found);
     found.catch(() => known.delete(host));
   }
@@ -39,17 +39,14 @@ async function run(
   action: string,
   worktree: string,
   pids: number[],
+  timeout?: number,
 ): Promise<string> {
-  const backend = await backendOn(host);
-  return onHelper(host, [
-    "sh",
-    "-c",
-    scriptFor(backend),
-    "contain",
-    action,
-    worktree,
-    ...pids.map(String),
-  ]);
+  const backend = await backendOn(host, timeout);
+  return onHelper(
+    host,
+    ["sh", "-c", scriptFor(backend), "contain", action, worktree, ...pids.map(String)],
+    timeout,
+  );
 }
 
 const SHELL_WAIT_TRIES = 50;
@@ -72,8 +69,12 @@ export async function joinContained(host: string, pane: string, worktree: string
   await run(host, "join", worktree, await pidsIn(host, pane, SHELL_WAIT_TRIES));
 }
 
-export async function releaseAll(host: string, worktree: string): Promise<string> {
-  const out = await run(host, "kill", worktree, []);
+export async function releaseAll(
+  host: string,
+  worktree: string,
+  timeout = SCAN_TIMEOUT_MS,
+): Promise<string> {
+  const out = await run(host, "kill", worktree, [], timeout);
   if (out.split("\n").some((line) => line.split("\t")[1] === "ALIVE"))
     throw new Error(`processes of ${worktree} on ${host} survived containment cleanup`);
   return out;

@@ -3,7 +3,16 @@ import { fileURLToPath } from "node:url";
 import type { Next, OpArgs, OpResult } from "@fleet/protocol";
 import { releaseAll, SERVICE_SCRIPT } from "./containment.ts";
 import { refreshClonesInTurn } from "./clones.ts";
-import { field, HELPER_MARK, herdr, HostUnreachable, onHelper, worktreeOf } from "./host.ts";
+import {
+  field,
+  HELPER_MARK,
+  herdr,
+  HostUnreachable,
+  onHelper,
+  SCAN_TIMEOUT_MS,
+  TimedOut,
+  worktreeOf,
+} from "./host.ts";
 import type { Link } from "./link.ts";
 
 const ARCHIVE_SCRIPT = readFileSync(
@@ -18,6 +27,50 @@ const STOP_PROCS_SCRIPT = [
 ].join("\n");
 
 type Attempt = OpResult<"close.begin">["attempts"][number];
+
+const DEADLINE_MS = Number(process.env["FLEET_CLOSE_DEADLINE_MS"]) || 600_000;
+
+const STEPS = [
+  "check what is unlanded",
+  "land the branch locally",
+  "stop the worker's processes",
+  "archive unlanded work",
+  "remove the worktree",
+  "delete the task branch",
+  "record the close",
+] as const;
+
+class CloseStalled extends Error {}
+
+interface Budget {
+  readonly card: number;
+  readonly end: number;
+}
+
+const seconds = (ms: number): string => `${String(Math.max(1, Math.round(ms / 1000)))} s`;
+
+function stepsOf({ card, end }: Budget, { session, host }: Attempt) {
+  return async <T>(
+    name: (typeof STEPS)[number],
+    work: (timeout: number) => Promise<T>,
+    cap = Infinity,
+  ): Promise<T> => {
+    const remaining = end - Date.now();
+    const stalled = (why: string, error?: unknown): CloseStalled =>
+      new CloseStalled(
+        `c-${String(card)} was not closed. Step "${name}" for ${session} on ${host} ${why}, so close stopped there. Not done: ${STEPS.slice(STEPS.indexOf(name)).join(", ")}. c-${String(card)} stays open: close it again when ${host} answers.`,
+        { cause: error },
+      );
+    const overall = `ran past close's overall limit of ${seconds(DEADLINE_MS)}`;
+    if (remaining <= 0) throw stalled(overall);
+    try {
+      return await work(Math.min(cap, remaining));
+    } catch (error) {
+      if (!(error instanceof TimedOut)) throw error;
+      throw stalled(cap < remaining ? `did not finish within ${seconds(cap)}` : overall, error);
+    }
+  };
+}
 
 const ORIGIN_BASE_IF_FETCHED = `origin=""
 if git -C "$clone" rev-parse -q --verify "refs/remotes/origin/$base" >/dev/null; then
@@ -79,11 +132,11 @@ before=$(git -C "$clone" rev-parse --short HEAD)
 git -C "$clone" merge -q --ff-only "$branch"
 echo "$before..$(git -C "$clone" rev-parse --short HEAD)"`;
 
-async function landLocally(card: number, plan: OpResult<"close.begin">): Promise<string> {
+async function dirtyWork(plan: OpResult<"close.begin">, budget: Budget): Promise<string[]> {
   const dirty: string[] = [];
   for (const attempt of plan.attempts) {
     try {
-      const { dirty: files } = await unlandedCounts(attempt);
+      const { dirty: files } = await unlandedCounts(attempt, budget);
       if (files > 0)
         dirty.push(
           `${attempt.session} on ${attempt.host} has ${describe({ ahead: 0, dirty: files }, attempt.base)}`,
@@ -92,6 +145,15 @@ async function landLocally(card: number, plan: OpResult<"close.begin">): Promise
       if (attempt.live || !(error instanceof HostUnreachable)) throw error;
     }
   }
+  return dirty;
+}
+
+async function landLocally(
+  card: number,
+  plan: OpResult<"close.begin">,
+  budget: Budget,
+): Promise<string> {
+  const dirty = await dirtyWork(plan, budget);
   if (dirty.length > 0)
     throw new Error(
       `c-${String(card)} cannot land: ${dirty.join("; ")}. Have the worker commit or remove them, then close it again.`,
@@ -100,17 +162,12 @@ async function landLocally(card: number, plan: OpResult<"close.begin">): Promise
   if (newest === undefined) throw new Error(`c-${String(card)} has no branch to land`);
   const { host, clone, branch, base } = newest;
   try {
-    const moved = await onHelper(host, [
-      "sh",
-      "-c",
-      LAND_LOCALLY_SCRIPT,
-      "land",
-      clone,
-      branch,
-      base,
-    ]);
+    const moved = await stepsOf(budget, newest)("land the branch locally", (timeout) =>
+      onHelper(host, ["sh", "-c", LAND_LOCALLY_SCRIPT, "land", clone, branch, base], timeout),
+    );
     return `Landed ${branch} on local ${base} on ${host} (${moved.trim()}).`;
   } catch (error) {
+    if (error instanceof CloseStalled) throw error;
     const why = error instanceof Error ? error.message : String(error);
     throw new Error(`c-${String(card)} did not land: ${why}`, { cause: error });
   }
@@ -125,20 +182,17 @@ interface Unlanded {
   files: string[];
 }
 
-async function unlandedCounts(attempt: Attempt): Promise<Unlanded> {
+async function unlandedCounts(attempt: Attempt, budget: Budget): Promise<Unlanded> {
   const { host, clone, branch, base, session } = attempt;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
-  const out = await onHelper(host, [
-    "sh",
-    "-c",
-    UNLANDED_COUNTS_SCRIPT,
-    "landing",
-    path,
-    clone,
-    branch,
-    base,
-  ]);
+  const out = await stepsOf(budget, attempt)("check what is unlanded", (timeout) =>
+    onHelper(
+      host,
+      ["sh", "-c", UNLANDED_COUNTS_SCRIPT, "landing", path, clone, branch, base],
+      timeout,
+    ),
+  );
   const [counts = "", ...rest] = out.trimEnd().split("\n");
   const [ahead = 0, dirty = 0] = counts.trim().split(" ").map(Number);
   const tagged = (tag: string) =>
@@ -154,9 +208,9 @@ function describe({ ahead, dirty }: { ahead: number; dirty: number }, base: stri
   return parts.join(" and ");
 }
 
-async function inspect(attempt: Attempt): Promise<Unlanded> {
+async function inspect(attempt: Attempt, budget: Budget): Promise<Unlanded> {
   try {
-    return await unlandedCounts(attempt);
+    return await unlandedCounts(attempt, budget);
   } catch (error) {
     if (attempt.live || !(error instanceof HostUnreachable)) throw error;
     return EMPTY;
@@ -167,12 +221,13 @@ async function unlandedWarning(
   card: number,
   plan: OpResult<"close.begin">,
   confirmed: boolean,
+  budget: Budget,
 ): Promise<string | undefined> {
   if (!plan.verify || confirmed) return undefined;
   const left: string[] = [];
   const detail: string[] = [];
   for (const attempt of plan.attempts) {
-    const found = await inspect(attempt);
+    const found = await inspect(attempt, budget);
     const what = describe(found, attempt.base);
     if (what === "") continue;
     left.push(`${attempt.session} on ${attempt.host} has ${what}`);
@@ -204,8 +259,9 @@ function processesOf(session: string, out: string): { stopped: string[]; spared:
   return { stopped, spared };
 }
 
-async function retire(attempt: Attempt): Promise<Retired> {
+async function retire(attempt: Attempt, budget: Budget): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
+  const step = stepsOf(budget, attempt);
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const tree = worktreeOf(listed, session);
@@ -216,26 +272,40 @@ async function retire(attempt: Attempt): Promise<Retired> {
     const workspace = field(tree, "open_workspace_id");
     if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
     const path = field(tree, "path") ?? "";
-    const found = await onHelper(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path]);
-    processes = processesOf(session, found + (await releaseAll(host, path)));
-    await onHelper(host, ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session]);
-    await onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path]);
+    const stopStep = "stop the worker's processes";
+    const found = await step(
+      stopStep,
+      (timeout) => onHelper(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path], timeout),
+      SCAN_TIMEOUT_MS,
+    );
+    const released = await step(
+      stopStep,
+      (timeout) => releaseAll(host, path, timeout),
+      SCAN_TIMEOUT_MS,
+    );
+    processes = processesOf(session, found + released);
+    await step("archive unlanded work", (timeout) =>
+      onHelper(
+        host,
+        ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session],
+        timeout,
+      ),
+    );
+    await step("remove the worktree", (timeout) =>
+      onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path], timeout),
+    );
   }
   const out = `${archiveDir}/${session}.tar.zst`;
   let archive = "";
   for (const each of drop) {
-    archive = (
-      await onHelper(host, [
-        "sh",
-        "-c",
-        DELETE_ARCHIVED_BRANCH_SCRIPT,
-        "finish",
-        clone,
-        each,
-        base,
-        out,
-      ])
-    ).trim();
+    const dropped = await step("delete the task branch", (timeout) =>
+      onHelper(
+        host,
+        ["sh", "-c", DELETE_ARCHIVED_BRANCH_SCRIPT, "finish", clone, each, base, out],
+        timeout,
+      ),
+    );
+    archive = dropped.trim();
   }
   return { archive: archive === "" ? null : archive, ...processes };
 }
@@ -327,8 +397,9 @@ async function teardown(
   plan: OpResult<"close.begin">,
 ): Promise<string> {
   const { card: id, text, confirm, next } = request;
-  const moved = plan.land ? await landLocally(id, plan) : "";
-  const warning = await unlandedWarning(id, plan, confirm === true);
+  const budget = { card: id, end: Date.now() + DEADLINE_MS };
+  const moved = plan.land ? await landLocally(id, plan, budget) : "";
+  const warning = await unlandedWarning(id, plan, confirm === true, budget);
   if (warning !== undefined) return warning;
   const archives: string[] = [];
   const stopped: string[] = [];
@@ -336,7 +407,7 @@ async function teardown(
   const left: { session: string; host: string; reason: string }[] = [];
   for (const attempt of plan.attempts) {
     try {
-      const retired = await retire(attempt);
+      const retired = await retire(attempt, budget);
       if (retired.archive !== null) archives.push(`${attempt.host}:${retired.archive}`);
       stopped.push(...retired.stopped);
       spared.push(...retired.spared);
