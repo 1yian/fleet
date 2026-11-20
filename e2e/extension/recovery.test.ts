@@ -382,7 +382,7 @@ test("a replacement requested again with the same key while it is still starting
   let failed = false;
   let incident = { incident: 0, generation: 0 };
   let original: number | undefined;
-  let phase: "first" | "again" | "done" = "first";
+  let phase: "first" | "done" = "first";
   const replace = (): { tool: string; args: Record<string, string | number> } => ({
     tool: "restart_card",
     args: { card: 1, ...incident, mode: "replace", key: "same" },
@@ -395,7 +395,7 @@ test("a replacement requested again with the same key while it is still starting
       original = await readyWorkerGroup(lab, "c-1-a1");
       execFileSync("sh", ["-c", 'mkfifo "$0"', gate]);
       phase = "done";
-      return replace();
+      return { ...replace(), alongside: [replace()] };
     }
     return { text: "noted" };
   });
@@ -419,17 +419,19 @@ test("a replacement requested again with the same key while it is still starting
   );
   const release = await open(gate, "w");
   try {
+    await restartRepeatFinished(h);
+    assert.equal(toolResults(h.callsOf("mate").at(-1) ?? []).length, 2);
     await verifyDuplicate(incident, false);
     assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
   } finally {
     await release.close();
   }
 
-  const results = await mateResults(h, 4);
-  assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on local/);
-  assert.equal(
-    results.at(-1),
-    "This restart key was already recorded. No new launch was attempted.",
+  const results = (await mateResults(h, 4)).slice(-2);
+  assert.equal(results.filter((text) => text === RESTART_REPEATED).length, 1);
+  assert.match(
+    results.find((text) => text !== RESTART_REPEATED) ?? "",
+    /^Started c-1-a1 again on local/,
   );
   assert.equal((await cardd.post(parts.mainToken, "card", { card: 1 })).status, 200);
   assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);

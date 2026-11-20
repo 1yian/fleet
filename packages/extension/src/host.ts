@@ -39,19 +39,41 @@ export class WorkspaceNotFound extends Error {}
 
 export class AgentStartRefused extends Error {}
 
+export class AgentReadinessTimedOut extends Error {}
+
 const startRefused = (code: unknown): boolean =>
   code === "agent_pane_busy" || code === "agent_name_taken" || code === "server_not_running";
 
-function refusedStart(stderr: string): boolean {
+const readinessTimeout = (payload: Record<string, unknown>): boolean =>
+  isRecord(payload["error"]) &&
+  payload["error"]["code"] === "timeout" &&
+  payload["id"] === "cli:agent:start";
+
+function structured(output: string): Record<string, unknown> | undefined {
   try {
-    const payload: unknown = JSON.parse(stderr);
-    if (!isRecord(payload)) return false;
-    const detail = isRecord(payload["error"]) ? payload["error"] : payload;
-    return startRefused(detail["code"]);
+    const payload: unknown = JSON.parse(output);
+    return isRecord(payload) ? payload : undefined;
   } catch {
     return false;
   }
 }
+
+function refusalOf(output: string): string | undefined {
+  const payload = structured(output);
+  if (payload === undefined) return undefined;
+  const detail = isRecord(payload["error"]) ? payload["error"] : payload;
+  if (!startRefused(detail["code"])) return undefined;
+  const message = detail["message"];
+  return typeof message === "string" && message.trim() !== "" ? message : String(detail["code"]);
+}
+
+const timedOutStart = (...outputs: string[]): boolean =>
+  outputs.some((text) =>
+    text.split("\n").some((line) => {
+      const payload = structured(line.trim());
+      return payload !== undefined && readinessTimeout(payload);
+    }),
+  );
 
 const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
 
@@ -294,6 +316,19 @@ function rejectedBeforeStart(
   );
 }
 
+function startFailure(
+  file: string,
+  error: ExecFileException,
+  out: string,
+  err: string,
+  message: (detail: string) => string,
+): Error | undefined {
+  const refusal = refusalDetail(file, error, out, err);
+  if (refusal !== undefined) return new AgentStartRefused(message(refusal));
+  if (!timedOutStart(out, err)) return undefined;
+  return new AgentReadinessTimedOut(message(err.trim() || out.trim() || exitStatus(error)));
+}
+
 async function herdrText(
   host: string,
   args: readonly string[],
@@ -326,6 +361,11 @@ async function herdrText(
           resolve(out);
           return;
         }
+        const started = replay ? undefined : startFailure(file, error, out, err, message);
+        if (started !== undefined) {
+          reject(started);
+          return;
+        }
         const detail = err.trim() || (!replay && out.trim()) || exitStatus(error);
         const message = scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${detail}`);
         reject(
@@ -337,6 +377,15 @@ async function herdrText(
       replay,
     );
   });
+}
+
+function startError(
+  error: Record<string, unknown>,
+  reply: Record<string, unknown>,
+  message: string,
+): Error | undefined {
+  if (startRefused(error["code"])) return new AgentStartRefused(message);
+  return readinessTimeout(reply) ? new AgentReadinessTimedOut(message) : undefined;
 }
 
 function resultOf(
@@ -351,7 +400,8 @@ function resultOf(
   const error = reply["error"];
   if (isRecord(error)) {
     const message = scrub(String(error["message"]));
-    if (!replay && startRefused(error["code"])) throw new AgentStartRefused(message);
+    const start = replay ? undefined : startError(error, reply, message);
+    if (start !== undefined) throw start;
     if (error["code"] === "workspace_not_found" || message === "workspace_not_found")
       throw new WorkspaceNotFound(message);
     throw new Error(message);

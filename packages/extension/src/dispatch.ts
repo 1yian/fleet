@@ -5,6 +5,7 @@ import { contain, releaseAll } from "./containment.ts";
 import { extensionOn } from "./extension-path.ts";
 import { fleetArgs, TRUST_ARG } from "./fleet-args.ts";
 import {
+  AgentReadinessTimedOut,
   AgentStartRefused,
   field,
   herdr,
@@ -105,8 +106,11 @@ async function until(check: () => Promise<boolean>, waitMs: number): Promise<boo
 }
 
 class StartUnconfirmed extends Error {
+  readonly timedOut: boolean;
+
   constructor(cause: unknown) {
     super(toError(cause).message, { cause });
+    this.timedOut = cause instanceof AgentReadinessTimedOut;
   }
 }
 
@@ -207,7 +211,10 @@ async function replacementError(
 ): Promise<Error | string> {
   const running = await piRunning(host, pane).catch(() => undefined);
   const cause = scrub(toError(error).message, [worker.token]);
-  if ((await replacementStarted()) === true) return cause;
+  const timedOut =
+    error instanceof AgentReadinessTimedOut ||
+    (error instanceof StartUnconfirmed && error.timedOut);
+  if (timedOut && (await replacementStarted()) === true) return cause;
   if (running === true) return toError(error);
   if (running === false && error instanceof StartUnconfirmed)
     return new Error(
@@ -241,7 +248,7 @@ async function startAgent(
     } else {
       const running = await piRunning(host, pane).catch(() => undefined);
       if (running !== false) throw error;
-      throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+      throw new Error(await exitedMessage(host, pane, worker, false), { cause: error });
     }
   }
   confirmStays(host, pane, worker, readiness !== undefined).catch((error: unknown) => {
@@ -393,6 +400,7 @@ export async function replaceWorker(
       throw new DidNotStart(error);
     },
   );
+  const launched = randomUUID();
   const readiness = await startAgent(
     recovery.host,
     pane,
@@ -435,7 +443,15 @@ export async function replaceWorker(
       return current?.session === recovery.actor ? current.process === launched : undefined;
     },
   );
-  await contain(recovery.host, pane, path);
+  try {
+    await contain(recovery.host, pane, path);
+  } catch (error) {
+    if (readiness === undefined) throw error;
+    throw new Error(
+      `${scrub(toError(error).message, [plan.token])}\nHerdr also reported:\n${readiness}`,
+      { cause: error },
+    );
+  }
   const started = `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
   return readiness === undefined
     ? started
