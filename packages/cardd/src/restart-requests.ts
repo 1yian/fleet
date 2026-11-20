@@ -62,7 +62,7 @@ export function releaseRestartNotices(db: DatabaseSync, card: Card, refunded: nu
     .prepare(
       `SELECT d.session, json_extract(e.fields, '$.restartNotice') AS request
      FROM deliveries d JOIN entries e ON e.id = d.entry
-     WHERE e.card = ? AND e.kind = 'comment' AND d.state IN (${QUEUED_DELIVERY})
+     WHERE e.card = ? AND e.kind = 'comment' AND d.retired_at IS NULL AND d.state IN (${QUEUED_DELIVERY})
        AND json_extract(e.fields, '$.restartNotice') < ?`,
     )
     .all(card.id, refunded);

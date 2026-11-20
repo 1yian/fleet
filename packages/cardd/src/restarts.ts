@@ -4,7 +4,6 @@ import { connected, liveAttemptModel, repinAttempt } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { comment } from "./comments.ts";
 import { LIVE_REQUEST, noticeState, releaseRestartNotices, requestOf } from "./restart-requests.ts";
-import { UNREAD_DELIVERY } from "./delivery-states.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
 import { intentOf, type IncidentIntent } from "./incident-lifecycle.ts";
@@ -243,10 +242,10 @@ export function restartFailed(
   const fields = { restartFailed: args.request };
   addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
   db.prepare(
-    `DELETE FROM deliveries WHERE state IN (${UNREAD_DELIVERY}) AND entry IN (
+    `UPDATE deliveries SET retired_at = ? WHERE retired_at IS NULL AND entry IN (
       SELECT id FROM entries WHERE card = ? AND kind = 'comment'
         AND json_extract(fields, '$.restartNotice') = ?)`,
-  ).run(card.id, args.request);
+  ).run(Date.now(), card.id, args.request);
   return { value: { recorded: true }, notify: releaseRestartNotices(db, card, args.request) };
 }
 
