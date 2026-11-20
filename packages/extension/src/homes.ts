@@ -243,7 +243,7 @@ async function findWorkspace(
         : undefined;
     }
     if (panes.length !== 1) {
-      if (purpose === "placement")
+      if (legacy || purpose === "placement")
         throw new HostUnread(`cannot verify the root pane for split workspace ${workspace}`);
       for (const { pane, cwd } of panes) {
         if (matchesHome(cwd) && (await lanePaneState(pane, deadline)) === "pi")
@@ -325,6 +325,7 @@ function recentStarts(home: string, now: number): number[] {
   }
 }
 
+const LANE_OBSERVATION_MS = 18_000;
 const SHELL_WAIT_MS = 20_000;
 const LAUNCH_WAIT_MS = 10_000;
 const START_RECORD_MS = 1_000;
@@ -407,7 +408,11 @@ async function upOne(
   deadline?: number,
 ): Promise<Outcome> {
   const { lane, home } = info;
-  const observed = await workspaceOf(info, "liveness", deadline);
+  const observationDeadline =
+    deadline === undefined
+      ? undefined
+      : Math.min(deadline, performance.now() + LANE_OBSERVATION_MS);
+  const observed = await workspaceOf(info, "liveness", observationDeadline);
   const reason = heldReason(home);
   if (observed?.state === "running") {
     if (reason !== undefined) liftHold(home);
