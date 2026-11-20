@@ -144,13 +144,21 @@ test("a failed refund shows both the idle pane context and the scrubbed refusal 
   assert.doesNotMatch(result, /was started in it|the worker never connected/);
   assert.match(result, /Last lines of the pane:\nIdle shell context --fleet-token \[hidden\]/);
   assert.match(result, /fixture refused the start --fleet-token \[hidden\]/);
-  assert.doesNotMatch(result, /fixture-secret/);
+  assert.match(result, /fixture transport warning --fleet-token \[hidden\]/);
+  assert.doesNotMatch(result, /fixture-secret|stdout-fixture-metadata/);
   assert.match(
     result,
     /The restart refund was not confirmed; this request may still count toward the hourly cap\./,
   );
   const thread = await cardd.thread(1);
-  assert.ok(thread.entries.every((entry) => !entry.body.includes("fixture refused the start")));
+  assert.ok(
+    thread.entries.every(
+      ({ body }) =>
+        !/fixture refused the start|fixture transport warning|Idle shell context|stdout-fixture-metadata/.test(
+          body,
+        ),
+    ),
+  );
 });
 
 async function verifyCountedRestart(
