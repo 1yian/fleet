@@ -176,14 +176,26 @@ export function ageBatch(cardd: Cardd, lane: string, ms: number): void {
   }
 }
 
-export function agePause(cardd: Cardd, card: Card, ms: number): void {
-  ageCard(cardd, card, ms);
+export function agePauses(cardd: Cardd, cards: readonly Card[], ms: number): void {
+  const ids = cards.map(({ id }) => id);
+  const marks = ids.map(() => "?").join(", ");
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });
   try {
+    db.exec("DROP TRIGGER IF EXISTS entries_no_update");
+    db.exec("BEGIN IMMEDIATE");
+    db.prepare(`UPDATE entries SET created_at = created_at - ? WHERE card IN (${marks})`).run(
+      ms,
+      ...ids,
+    );
+    db.prepare(`UPDATE cards SET created_at = created_at - ? WHERE id IN (${marks})`).run(
+      ms,
+      ...ids,
+    );
     db.prepare(
       `UPDATE entries SET fields = json_set(fields, '$.until', json_extract(fields, '$.until') - ?)
-       WHERE card = ? AND kind = 'report' AND json_extract(fields, '$.status') = 'paused'`,
-    ).run(ms, card.id);
+       WHERE card IN (${marks}) AND kind = 'report' AND json_extract(fields, '$.status') = 'paused'`,
+    ).run(ms, ...ids);
+    db.exec("COMMIT");
   } finally {
     db.close();
   }

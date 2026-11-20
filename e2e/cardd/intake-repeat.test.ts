@@ -36,7 +36,7 @@ test("a report a second mate never takes in is sent again every two minutes, and
   const [report] = await cleo.waitForEntries(1);
   assert.equal(report?.kind, "report");
   for (const resend of [1, 2, 3]) {
-    ageDelivery(fleet.cardd, "cleo", report?.id ?? 0, "updated_at", 3 * MINUTE);
+    ageDelivery(fleet.cardd, "cleo", report.id, "updated_at", 3 * MINUTE);
     await cleo.waitForEntries(1 + resend);
   }
 
@@ -49,14 +49,14 @@ test("a report a second mate never takes in is sent again every two minutes, and
     resent.slice(1).every(([body, again]) => String(body).startsWith("The API is down") && again),
   );
 
-  ageDelivery(fleet.cardd, "cleo", report?.id ?? 0, "told_at", 14 * MINUTE);
+  ageDelivery(fleet.cardd, "cleo", report.id, "told_at", 14 * MINUTE);
   await passes.next();
   assert.deepEqual(
     main.entries.map(({ entry }) => entry).filter(missedOf),
     [missed],
     "main heard again before fifteen minutes had passed",
   );
-  ageDelivery(fleet.cardd, "cleo", report?.id ?? 0, "told_at", MINUTE);
+  ageDelivery(fleet.cardd, "cleo", report.id, "told_at", MINUTE);
   const repeated = await main.waitForEntry(
     (entry) =>
       entry.id > missed.id && missedOf(entry) && entry.fields["entry"] === missed.fields["entry"],
