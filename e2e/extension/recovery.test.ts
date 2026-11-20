@@ -419,26 +419,6 @@ test("a replacement requested again with the same key while it is still starting
   );
   const release = await open(gate, "w");
   try {
-    await restartRepeatFinished(h);
-    assert.equal(toolResults(h.callsOf("mate").at(-1) ?? []).length, 2);
-    await verifyDuplicate(incident, false);
-    assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
-  } finally {
-    await release.close();
-  }
-
-  await waitFor(
-    () => Promise.resolve(existsSync(gate)),
-    (exists) => exists,
-    WORKER_WAIT_MS,
-  );
-  const starting = await waitFor(
-    () => workerGroupOf(lab, "c-1-a1"),
-    (group) => group !== undefined && group !== original,
-    WORKER_WAIT_MS,
-  );
-  const release = await open(gate, "w");
-  try {
     await verifyDuplicate(incident, false);
     assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
   } finally {

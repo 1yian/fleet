@@ -204,13 +204,10 @@ async function replacementError(
   worker: { session: string; token: string },
   error: unknown,
   replacementStarted: ReplacementStarted,
-): Promise<Error> {
+): Promise<Error | string> {
   const running = await piRunning(host, pane).catch(() => undefined);
   const cause = scrub(toError(error).message, [worker.token]);
-  if ((await replacementStarted()) === true)
-    return new Error(`${cause}\nThe replacement connected before readiness failed.`, {
-      cause: error,
-    });
+  if ((await replacementStarted()) === true) return cause;
   if (running === true) return toError(error);
   if (running === false && error instanceof StartUnconfirmed)
     return new Error(
@@ -237,11 +234,15 @@ async function startAgent(
       if (error !== undefined) throw error;
     }
   } catch (error) {
-    if (replacementStarted !== undefined)
-      throw await replacementError(host, pane, worker, error, replacementStarted);
-    const running = await piRunning(host, pane).catch(() => undefined);
-    if (running !== false) throw error;
-    throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+    if (replacementStarted !== undefined) {
+      const outcome = await replacementError(host, pane, worker, error, replacementStarted);
+      if (outcome instanceof Error) throw outcome;
+      readiness = outcome;
+    } else {
+      const running = await piRunning(host, pane).catch(() => undefined);
+      if (running !== false) throw error;
+      throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+    }
   }
   confirmStays(host, pane, worker, readiness !== undefined).catch((error: unknown) => {
     lost(error instanceof Error ? error.message : String(error));
@@ -387,12 +388,12 @@ export async function replaceWorker(
   recovery: Recovery,
   avoid: readonly string[] = [],
 ): Promise<string> {
-  const fresh = await prepareReplacement(link, launch, recovery).catch((error: unknown) => {
-    throw new DidNotStart(error);
-  });
-  if (typeof fresh === "string") return fresh;
-  const { plan, pane, path, extension } = fresh;
-  await startAgent(
+  const { plan, pane, path, extension } = await prepareReplacement(link, launch, recovery).catch(
+    (error: unknown) => {
+      throw new DidNotStart(error);
+    },
+  );
+  const readiness = await startAgent(
     recovery.host,
     pane,
     [
@@ -434,15 +435,7 @@ export async function replaceWorker(
       return current?.session === recovery.actor ? current.process === launched : undefined;
     },
   );
-  try {
-    await contain(recovery.host, pane, path);
-  } catch (error) {
-    if (readiness === undefined) throw error;
-    throw new Error(
-      `${scrub(toError(error).message, [plan.token])}\nHerdr also reported:\n${readiness}`,
-      { cause: error },
-    );
-  }
+  await contain(recovery.host, pane, path);
   const started = `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
   return readiness === undefined
     ? started
