@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -281,40 +281,48 @@ test("main tells the captain when a host cannot be reached, and when it is back"
   assert.match(users(next), /\[fleet\] lanes: p620 can be reached again/);
 });
 
-test("a malformed lane config reports a maintenance failure and delays recovery until repaired", async () => {
-  const config = join(`${p620.root}.worktrees`, "lane-far", "config", "lane.json");
-  const valid = readFileSync(config, "utf8");
-  writeFileSync(marker, "down");
-  writeFileSync(config, "");
-  h.onModel(() => ({ text: "noted" }), "mate");
-  await startMain(lab, here, h);
-  const outage = await h.waitForCall(0, "mate", WAIT_MS);
-  assert.match(users(outage), /p620 cannot be reached/);
-  rmSync(marker);
-  const failed = "[fleet] lanes: p620 failed: Unexpected end of JSON input";
-  const recovered = "p620 can be reached again";
-  const started = "far started on p620";
-  await until(
-    () =>
-      h
-        .callsOf("mate")
-        .map(users)
-        .find((message) => message.includes(failed)),
-    "main to report a definite prerequisite failure on p620",
-    async () => h.callsOf("mate").map(users).at(-1) ?? "no model call",
-  );
-  const beforeRepair = sessionText();
-  assert.ok(!beforeRepair.includes(recovered));
-  assert.ok(!beforeRepair.includes(started));
-  writeFileSync(config, valid);
-  await until(() => {
+for (const fault of ["malformed", "unreadable"]) {
+  test(`an ${fault === "malformed" ? "invalid" : fault} lane config prevents maintenance recovery until repaired`, async () => {
+    const config = join(`${p620.root}.worktrees`, "lane-far", "config", "lane.json");
+    const backup = `${config}.backup`;
+    writeFileSync(marker, "down");
+    renameSync(config, backup);
+    if (fault === "malformed") writeFileSync(config, "");
+    else mkdirSync(config);
+    h.onModel(() => ({ text: "noted" }), "mate");
+    await startMain(lab, here, h);
+    const outage = await h.waitForCall(0, "mate", WAIT_MS);
+    assert.match(users(outage), /p620 cannot be reached/);
+    rmSync(marker);
+    const detail = fault === "malformed" ? "Unexpected end of JSON input" : "EISDIR";
+    const failed = `[fleet] lanes: p620 failed: ${detail}`;
+    const recovered = "p620 can be reached again";
+    const started = "far started on p620";
+    await until(
+      () =>
+        h
+          .callsOf("mate")
+          .map(users)
+          .find((message) => message.includes(failed)),
+      "main to report a definite prerequisite failure on p620",
+      async () => h.callsOf("mate").map(users).at(-1) ?? "no model call",
+    );
+    for (const args of [["status"], ["status", "--placement"]])
+      assert.throws(() => rowsOf(p620, args), new RegExp(detail));
+    const beforeRepair = sessionText();
+    assert.ok(!beforeRepair.includes(recovered));
+    assert.ok(!beforeRepair.includes(started));
+    rmSync(config, { recursive: true });
+    renameSync(backup, config);
+    await until(() => {
+      const notices = sessionText();
+      return notices.includes(recovered) && notices.includes(started) ? true : undefined;
+    }, "main to announce recovery and a successful start after repairing the lane config");
+    await waitState(p620, "far", "running");
     const notices = sessionText();
-    return notices.includes(recovered) && notices.includes(started) ? true : undefined;
-  }, "main to announce recovery and a successful start after repairing the lane config");
-  await waitState(p620, "far", "running");
-  const notices = sessionText();
-  assert.ok(notices.includes(failed) && notices.indexOf(failed) < notices.indexOf(recovered));
-});
+    assert.ok(notices.includes(failed) && notices.indexOf(failed) < notices.indexOf(recovered));
+  });
+}
 
 test("unread transport and nested observations neither report failure nor clear a confirmed outage", async () => {
   const control = join(here.parent, "faults");
