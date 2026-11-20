@@ -62,7 +62,6 @@ export class Cardd {
   output = "";
   errors = "";
   private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");
-
   private args: readonly string[];
 
   private constructor(env: NodeJS.ProcessEnv, args: readonly string[]) {
