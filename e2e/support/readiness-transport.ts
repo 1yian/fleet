@@ -19,6 +19,10 @@ if (replacement) {
   }
   appendFileSync(starts, "start\n");
 }
+if (mode === "refuse" && command.includes("'herdr' 'pane' 'read'")) {
+  process.stdout.write("Idle shell context --fleet-token pane-fixture-secret\n");
+  process.exit(0);
+}
 const afterStart = existsSync(starts);
 const processInfo = command.includes("'herdr' 'pane' 'process-info'");
 if (mode !== "visible" && afterStart && processInfo) {
