@@ -46,14 +46,27 @@ export const INCIDENT_OPS = {
     args: Type.Object({
       card: Type.Integer(),
       key: Key,
-      error: Type.String({
-        minLength: 1,
-        maxLength: 20_000,
+      request: Type.Integer({
         description:
-          "Why the restart that cardd admitted under this key did not run, so it stops counting toward the hourly cap",
+          "The request id that card.restart returned for this key, so a late report cannot cancel a later request that reuses the key",
       }),
     }),
     result: Type.Object({ recorded: Type.Boolean() }),
+  },
+  "card.restart.notice": {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      request: Type.Integer({
+        description: "The request id that card.restart returned for the restart being carried out",
+      }),
+    }),
+    result: Type.Object({
+      posted: Type.Boolean({
+        description:
+          "False when the restart is no longer live or the card is not working, so cardd wrote nothing and the card kept its status",
+      }),
+    }),
   },
   "card.restart": {
     roles: ["mate"],
@@ -94,6 +107,12 @@ export const INCIDENT_OPS = {
       generation: Type.Integer(),
       replaced: Type.Boolean(),
       repeat: Type.Boolean(),
+      request: Type.Optional(
+        Type.Integer({
+          description:
+            "The id of the restart request cardd wrote for an ordinary restart, absent for a repeat or an incident recovery",
+        }),
+      ),
       reconnect: Type.Optional(
         Type.Boolean({
           description:

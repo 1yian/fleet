@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { poll } from "../support/harness.ts";
+import { gate, poll } from "../support/harness.ts";
 import {
   mateConnected,
   startDispatchLab,
@@ -20,7 +20,9 @@ afterEach(async (t) => {
   await stopDispatchLab(parts);
 });
 
-test("a restart whose process could not be started never counts toward the hourly cap, so the mate can try again", async () => {
+test("a restart whose process could not be started never counts toward the hourly cap, so the mate can try again", async (t) => {
+  const inFlight = gate();
+  t.after(inFlight.open);
   parts = await startDispatchLab();
   const { h, mate, cardd } = parts;
   const down = join(h.dir, "far-down");
@@ -46,12 +48,16 @@ test("a restart whose process could not be started never counts toward the hourl
     return restart;
   }, "mate");
   for (let failing = 0; failing < 3; failing += 1) h.onModel(() => restart, "mate");
-  h.onModel(() => {
+  h.onModel(async () => {
+    await h.waitForCall(0, "worker", WORKER_WAIT_MS);
     rmSync(down);
     return restart;
   }, "mate");
   h.onModel(() => ({ text: "restarted" }), "mate");
-  h.onModel(() => ({ text: "working" }), "worker");
+  h.onModel(async () => {
+    await inFlight.wait;
+    return { text: "working" };
+  }, "worker");
   await mateConnected(h);
   mate.prompt("ship the scrollbar fix");
 

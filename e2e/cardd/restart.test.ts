@@ -44,26 +44,29 @@ test("at most three ordinary restarts an hour for one card", async () => {
   assert.equal((await restart("a")).repeat, true);
 });
 
-const restartFailed = async (key: string, mate = fleet.main) =>
+const restartFailed = async (key: string, request: number | undefined, mate = fleet.main) =>
   check(
     OPS["card.restart.failed"].result,
-    await mate.call("card.restart.failed", {
-      card: card.id,
-      key,
-      error: "the host did not answer",
-    }),
+    await mate.call("card.restart.failed", { card: card.id, key, request }),
   );
+
+const requestOf = (plan: { request?: number | undefined }): number => {
+  assert.ok(plan.request !== undefined, "an ordinary restart that ran carries its request id");
+  return plan.request;
+};
 
 test("a restart that did not run stops counting toward the hour, and its key starts it again", async () => {
   await fleet.cardd.connect(await begin(fleet.main, card));
-  for (const key of ["a", "b", "c"]) await restart(key);
+  const requests = new Map<string, number>();
+  for (const key of ["a", "b", "c"]) requests.set(key, requestOf(await restart(key)));
   await assert.rejects(restart("d"), /was restarted 3 times in the last hour/);
 
-  assert.deepEqual(await restartFailed("b"), { recorded: true });
-  assert.deepEqual(await restartFailed("b"), { recorded: false });
-  assert.deepEqual(await restartFailed("never-asked"), { recorded: false });
+  assert.deepEqual(await restartFailed("b", requests.get("b")), { recorded: true });
+  assert.deepEqual(await restartFailed("b", requests.get("b")), { recorded: false });
+  assert.deepEqual(await restartFailed("never-asked", requests.get("a")), { recorded: false });
   assert.equal((await restart("a")).repeat, true);
-  assert.equal((await restart("b")).repeat, false);
+  const reopened = await restart("b");
+  assert.equal(reopened.repeat, false);
   await assert.rejects(restart("e"), /was restarted 3 times in the last hour/);
 
   const notes = (await fleet.cardd.thread(card.id)).entries.filter(
@@ -72,16 +75,63 @@ test("a restart that did not run stops counting toward the hour, and its key sta
   assert.equal(notes.filter((entry) => entry.body.startsWith("Restart requested")).length, 4);
   assert.deepEqual(
     notes.filter((entry) => entry.fields["restartFailed"] !== undefined).map((entry) => entry.body),
-    ["The restart did not run, so it does not count toward the 3 an hour: the host did not answer"],
+    [
+      "The restart did not run, so it does not count toward the 3 an hour: its worker process could not be started.",
+    ],
   );
+});
+
+test("a late report that an old request did not run cannot cancel a later request that reuses its key", async () => {
+  await fleet.cardd.connect(await begin(fleet.main, card));
+  const first = requestOf(await restart("k"));
+  assert.deepEqual(await restartFailed("k", first), { recorded: true });
+  const second = requestOf(await restart("k"));
+  assert.notEqual(second, first);
+  assert.deepEqual(await restartFailed("k", first), { recorded: false });
+  assert.equal((await restart("k")).repeat, true);
+  assert.deepEqual(await restartFailed("k", second), { recorded: true });
 });
 
 test("only the direct parent says that a restart did not run", async () => {
   await fleet.cardd.connect(await begin(fleet.main, card));
-  await restart("a");
+  const request = requestOf(await restart("a"));
   const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
-  await assert.rejects(restartFailed("a", cleo), /only the direct parent can restart/);
-  assert.deepEqual(await restartFailed("a"), { recorded: true });
+  await assert.rejects(restartFailed("a", request, cleo), /only the direct parent can restart/);
+  assert.deepEqual(await restartFailed("a", request), { recorded: true });
+});
+
+const notice = async (request: number, mate = fleet.main) =>
+  check(
+    OPS["card.restart.notice"].result,
+    await mate.call("card.restart.notice", { card: card.id, request }),
+  );
+
+const NOTICE = "Your session was restarted on the same card and conversation.";
+
+test("the restart notice reaches a working card's worker, and a card that waits on its mate is neither written to nor moved to working", async () => {
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  const request = requestOf(await restart("n"));
+  assert.deepEqual(await notice(request), { posted: true });
+  await worker.waitForEntry((entry) => entry.body.includes(NOTICE), "the restart notice");
+  assert.equal(await status(fleet.main, card), "working");
+
+  const pending = requestOf(await restart("m"));
+  await worker.call("report", { status: "blocked", text: "needs a decision" });
+  assert.equal(await status(fleet.main, card), "with-mate");
+  const before = (await fleet.cardd.thread(card.id)).entries.length;
+  assert.deepEqual(await notice(pending), { posted: false });
+  assert.equal((await fleet.cardd.thread(card.id)).entries.length, before);
+  assert.equal(await status(fleet.main, card), "with-mate");
+});
+
+test("the restart notice is refused for a request that is not live, and only the direct parent can ask", async () => {
+  await fleet.cardd.connect(await begin(fleet.main, card));
+  const request = requestOf(await restart("n"));
+  const cleo = await fleet.cardd.connect(fleet.cardd.addLane("cleo", "main"));
+  await assert.rejects(notice(request, cleo), /only the direct parent can restart/);
+  assert.deepEqual(await restartFailed("n", request), { recorded: true });
+  assert.deepEqual(await notice(request), { posted: false });
+  assert.deepEqual(await notice(request + 1000), { posted: false });
 });
 
 test("a pause during merging stays merging on the board and still refuses a restart", async () => {

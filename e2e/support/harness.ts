@@ -132,7 +132,7 @@ export class Pi {
     return poll(() => this.uiRequests.find(match), what);
   }
 
-  prompt(message: string, whileRunning?: "steer" | "followUp"): void {
+  prompt(message: string, whileRunning?: "followUp"): void {
     this.command({
       type: "prompt",
       message,

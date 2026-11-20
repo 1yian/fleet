@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Cardd } from "./cardd.ts";
-import { Harness, type Pi, type Turn } from "./harness.ts";
+import { Harness, type Move, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 import { addRemote, git as gitIn } from "./remote.ts";
@@ -195,6 +195,13 @@ export const toolResults = (turns: Turn[]): string[] =>
   turns.filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
 export const lastUser = (turns: Turn[]): string | undefined =>
   turns.findLast((turn) => turn.role === "user")?.text;
+export const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Move => {
+  const at = turns.findLastIndex((turn) => turn.role === "user");
+  const done = turns.slice(at).filter((turn) => turn.role === "toolResult").length;
+  const ask = turns[at]?.text ?? "";
+  const moves = Object.entries(plans).find(([key]) => ask.includes(key))?.[1] ?? [];
+  return moves[done] ?? { text: "noted" };
+};
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
 

@@ -2,10 +2,10 @@ import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
 import { connected, liveAttemptModel, repinAttempt } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
+import { comment } from "./comments.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
 import { intentOf, type IncidentIntent } from "./incident-lifecycle.ts";
-import { sanitize } from "./incident-kinds.ts";
 import { recover, requireCurrent } from "./incidents.ts";
 import { addEntry, getCard, laneCardOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
@@ -40,7 +40,10 @@ function targetOf(db: DatabaseSync, card: number, lane: string, mate: boolean): 
 
 const LIVE_REQUEST = `json_extract(e.fields, '$.restartKey') IS NOT NULL AND NOT EXISTS (
   SELECT 1 FROM entries f WHERE f.card = e.card AND f.kind = 'note' AND f.id > e.id
-    AND json_extract(f.fields, '$.restartFailed') = json_extract(e.fields, '$.restartKey'))`;
+    AND json_extract(f.fields, '$.restartFailed') = e.id)`;
+
+const RESTARTED_NOTICE =
+  "Your session was restarted on the same card and conversation. Continue your task from where you stopped.";
 
 function restartsInLastHour(db: DatabaseSync, card: number): number {
   const row = db
@@ -49,6 +52,16 @@ function restartsInLastHour(db: DatabaseSync, card: number): number {
     )
     .get(card, Date.now() - HOUR_MS);
   return Number(row?.["n"]);
+}
+
+function requestKey(db: DatabaseSync, card: number, request: number): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT json_extract(e.fields, '$.restartKey') AS key FROM entries e
+       WHERE e.id = ? AND e.card = ? AND e.kind = 'note' AND ${LIVE_REQUEST}`,
+    )
+    .get(request, card);
+  return typeof row?.["key"] === "string" ? row["key"] : undefined;
 }
 
 function alreadyRequested(db: DatabaseSync, card: number, key: string): boolean {
@@ -148,13 +161,17 @@ function ordinaryRestart(
       `c-${String(card.id)} was restarted ${String(RESTARTS_PER_HOUR)} times in the last hour`,
     );
   const generation = generationOf(db, target.actor);
-  if (!repeat) {
-    const body = resting
-      ? "Reconnect requested: the worker's process was disconnected. The card keeps its state and nothing is resumed."
-      : "Restart requested on the same conversation, branch, and work.";
-    const fields = { restartKey: key, generation };
-    addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
-  }
+  const body = resting
+    ? "Reconnect requested: the worker's process was disconnected. The card keeps its state and nothing is resumed."
+    : "Restart requested on the same conversation, branch, and work.";
+  const fields = { restartKey: key, generation };
+  const request = repeat
+    ? undefined
+    : addEntry(
+        db,
+        { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields },
+        [],
+      );
   const value = {
     ...target,
     card: card.id,
@@ -164,6 +181,7 @@ function ordinaryRestart(
     generation,
     replaced: false,
     repeat,
+    ...(request === undefined ? {} : { request }),
     reconnect: resting,
   };
   return { value, notify: [] };
@@ -229,9 +247,24 @@ export function restartFailed(
 ): { readonly recorded: boolean } {
   const card = getCard(db, args.card);
   requireDirectParent(session, card, laneCardOf(db, card.lane) === card.id);
-  if (!alreadyRequested(db, card.id, args.key)) return { recorded: false };
-  const body = `The restart did not run, so it does not count toward the ${String(RESTARTS_PER_HOUR)} an hour: ${sanitize(args.error)}`;
-  const fields = { restartFailed: args.key };
+  if (requestKey(db, card.id, args.request) !== args.key) return { recorded: false };
+  const body = `The restart did not run, so it does not count toward the ${String(RESTARTS_PER_HOUR)} an hour: its worker process could not be started.`;
+  const fields = { restartFailed: args.request };
   addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
   return { recorded: true };
+}
+
+export function restartNotice(
+  db: DatabaseSync,
+  session: Session,
+  args: OpArgs<"card.restart.notice">,
+): { readonly value: { readonly posted: boolean }; readonly notify: readonly string[] } {
+  const card = getCard(db, args.card);
+  const mate = laneCardOf(db, card.lane) === card.id;
+  requireDirectParent(session, card, mate);
+  const working = card.status === "working" && intentOf(db, card.id, "worker") === "working";
+  if (mate || !working || requestKey(db, card.id, args.request) === undefined)
+    return { value: { posted: false }, notify: [] };
+  const done = comment(db, session, { card: card.id, text: RESTARTED_NOTICE });
+  return { value: { posted: true }, notify: done.notify };
 }
