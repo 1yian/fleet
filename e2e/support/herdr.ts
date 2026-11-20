@@ -13,6 +13,12 @@ import "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
 const OWNED_LAUNCH = fileURLToPath(new URL("./owned-launch.ts", import.meta.url));
+const OFFLINE_CONFIG = `onboarding = false
+
+[update]
+version_check = false
+manifest_check = false
+`;
 
 export class HerdrLab {
   readonly name = `fleet-lab-${randomBytes(3).toString("hex")}`;
@@ -25,7 +31,7 @@ export class HerdrLab {
 
   static async start(env: Record<string, string>): Promise<HerdrLab> {
     const lab = new HerdrLab();
-    writeFileSync(lab.config, "onboarding = false\n");
+    writeFileSync(lab.config, OFFLINE_CONFIG);
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
     lab.owned = {
       [LAB_GROUPS_ENV]: lab.groups,
