@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { tempDir } from "./run-root.ts";
 
 const LIVE_ENVIRONMENT = [
@@ -21,6 +24,15 @@ const LIVE_ENVIRONMENT = [
 ];
 
 for (const name of LIVE_ENVIRONMENT) Reflect.deleteProperty(process.env, name);
+
+const BASH = execFileSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).trim();
+const PANE_SHELL = join(tempDir("pane-shell-"), "shell");
+writeFileSync(
+  PANE_SHELL,
+  `#!/bin/sh\nexport HISTFILE=/dev/null\nexec '${BASH}' --noprofile --norc "$@"\n`,
+  { mode: 0o755 },
+);
+process.env["SHELL"] = PANE_SHELL;
 
 process.env["FLEET_TAILSCALE"] = "false";
 process.env["ELEMENT_HOME"] = tempDir("element-");

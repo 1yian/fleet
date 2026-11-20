@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,10 @@ const SIDEBAR = fileURLToPath(new URL("./update-sidebar.test.ts", import.meta.ur
 const ONE_TEST = "/updatefleet orders every host's sidebar when no mate starts anywhere";
 const PROBE = fileURLToPath(new URL("./cardd-probe.test.ts", import.meta.url));
 const PROBE_TEST = "main is told once when cardd refuses new connections";
+const LAUNCH = fileURLToPath(new URL("./launch.test.ts", import.meta.url));
+const LAUNCH_TEST =
+  "fleet up starts a second mate in its own workspace once, and again on its own conversation";
+const SHELL_RC_FILES = [".zshenv", ".zshrc", ".zprofile", ".bashrc", ".bash_profile", ".profile"];
 const RUN_MS = 240_000;
 const GUARDED = new URL("../support/guarded.ts", import.meta.url).href;
 
@@ -35,6 +40,24 @@ function liveMateEnvironment(): Record<string, string> {
     FLEET_ROOT: join(live, "fleet"),
     FLEET_CONFIG_DIR: join(live, "config"),
   };
+}
+
+function hostWhoseShellPutsAnotherPiFirst(): { env: Record<string, string>; ran: string } {
+  const root = tempDir("fleet-host-rc-");
+  const bin = join(root, "bin");
+  const home = join(root, "home");
+  const ran = join(root, "decoy-ran");
+  mkdirSync(bin);
+  mkdirSync(home);
+  writeFileSync(
+    join(bin, "pi"),
+    `#!/bin/sh\necho "the host's pi ran instead of the repo's Pi" >&2\necho ran >> '${ran}'\nexit 1\n`,
+    { mode: 0o755 },
+  );
+  for (const name of SHELL_RC_FILES)
+    writeFileSync(join(home, name), `export PATH='${bin}':"$PATH"\n`);
+  const bash = execFileSync("sh", ["-c", "command -v bash"], { encoding: "utf8" }).trim();
+  return { env: { HOME: home, ZDOTDIR: home, SHELL: bash }, ran };
 }
 
 function runFrom(
@@ -79,6 +102,18 @@ test("an end-to-end run started from a shell that carries a live mate's fleet en
   assert.equal(existsSync(join(live, "config")), false, "the run wrote the live fleet config");
   assert.equal(code, "0", output.split("\n").slice(-80).join("\n"));
   assert.match(output, /✔ \/updatefleet orders every host's sidebar/);
+});
+
+test("an end-to-end run whose host shell puts another pi first on the PATH starts the repo's Pi in every lane pane", async () => {
+  const { env, ran } = hostWhoseShellPutsAnotherPiFirst();
+  const { code, output } = await runFrom(env, LAUNCH, LAUNCH_TEST);
+  assert.equal(
+    existsSync(ran),
+    false,
+    `a lane pane ran the host's pi:\n${output.split("\n").slice(-80).join("\n")}`,
+  );
+  assert.equal(code, "0", output.split("\n").slice(-80).join("\n"));
+  assert.match(output, /✔ fleet up starts a second mate in its own workspace/);
 });
 
 test("an end-to-end run started from a worker's herdr pane leaves that pane's workspace alone", async () => {
