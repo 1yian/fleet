@@ -48,7 +48,7 @@ export const INCIDENT_OPS = {
       key: Key,
       request: Type.Integer({
         description:
-          "The request id that card.restart returned for this key, so a late report cannot cancel a later request that reuses the key",
+          "The worker restart request id that card.restart returned for this key; a request whose worker connected in a newer generation is not refundable",
       }),
     }),
     result: Type.Object({ recorded: Type.Boolean() }),
@@ -110,7 +110,7 @@ export const INCIDENT_OPS = {
       request: Type.Optional(
         Type.Integer({
           description:
-            "The id of the restart request cardd wrote for an ordinary restart, absent for a repeat or an incident recovery",
+            "The id of an ordinary worker restart request, absent for repeats, incident recoveries, and lane restarts",
         }),
       ),
       reconnect: Type.Optional(
