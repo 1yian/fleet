@@ -100,6 +100,7 @@ async function jobProxy(
   dropFence: boolean | Promise<void> = false,
   jobsReply?: (reply: CallResult) => CallResult | undefined,
   reportReply?: (reply: CallResult) => CallResult | undefined,
+  beforeStop?: Promise<void>,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -132,14 +133,21 @@ async function jobProxy(
     });
     client.on("message", (raw) => {
       const text = rawText(raw);
-      if (jobsReply !== undefined || reportReply !== undefined) {
+      const forward = (): void => {
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
+      };
+      if (jobsReply !== undefined || reportReply !== undefined || beforeStop !== undefined) {
         const message = parseClientMessage(text);
-        if (message.t === "call" && message.op === "jobs" && jobsReply !== undefined)
-          jobReads.add(message.id);
-        if (message.t === "call" && message.op === "report" && reportReply !== undefined)
-          reports.add(message.id);
+        if (message.t === "call") {
+          if (message.op === "jobs" && jobsReply !== undefined) jobReads.add(message.id);
+          if (message.op === "report" && reportReply !== undefined) reports.add(message.id);
+          if (message.op === "job.stop" && beforeStop !== undefined) {
+            void beforeStop.then(forward);
+            return;
+          }
+        }
       }
-      if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
+      forward();
     });
     upstream.on("message", (raw) => {
       const text = rawText(raw);
@@ -633,18 +641,27 @@ for (const fault of ["failed", "partial"] as const) {
 
 test("a generic stop before a delayed fence preserves exact tab cleanup and rejects stale pane success", async (t) => {
   const registration = Promise.withResolvers<void>();
+  let registering = false;
+  const stopDelivery = Promise.withResolvers<void>();
   const fenceDelivery = Promise.withResolvers<void>();
   t.after(() => {
     registration.resolve();
+    stopDelivery.resolve();
     fenceDelivery.resolve();
   });
   await jobProxy(
     t,
     async (op, args) => {
-      if (op === "job.register") await registration.promise;
+      if (op === "job.register") {
+        registering = true;
+        await registration.promise;
+      }
       return callCardd(op, args);
     },
     fenceDelivery.promise,
+    undefined,
+    undefined,
+    stopDelivery.promise,
   );
   const bin = join(jobDir, "bin");
   mkdirSync(bin);
@@ -670,20 +687,18 @@ exec ${quote(herdr)} "$@"
     { mode: 0o755 },
   );
   env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
-  const launch = JSON.stringify({ label: "delayed", command: `touch ${quote(marker)}` });
+  env["PROBE_STOP_RESULT"] = "1";
   h.onModel(() => ({
-    tool: "codemode",
-    args: {
-      code: `const launched = tools.run_long(${launch}).catch(error => String(error));
-await tools.slow_tool({});
-const stop = await tools.stop_job({ job: 1 });
-await tools.report({ status: "note", text: JSON.stringify(stop) });
-return await launched;`,
-    },
+    tool: "run_long",
+    args: { label: "delayed", command: `touch ${quote(marker)}` },
+    alongside: [{ tool: "stop_job", args: { job: 1 } }],
   }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "Startup was fenced" } }));
   worker();
-  await until(() => (existsSync(accepted) ? true : undefined), "herdr to accept the dispatch");
+  await until(
+    () => (existsSync(accepted) && registering ? true : undefined),
+    "Herdr to accept the dispatch and the wrapper to request registration",
+  );
   const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-delayed")?.[
     "tab_id"
   ];
@@ -708,29 +723,25 @@ return await launched;`,
   } finally {
     db.close();
   }
-  await untilAsync(
-    async () => ((await jobResults()).length === 1 ? true : undefined),
+  const fence = await untilAsync(
+    async () => (await cardView()).entries.find((entry) => entry.fields["startupFenced"] === true),
     "cardd to commit expiry without delivering the fence",
   );
-  await h.waitFor((event) => event["type"] === "tool_waiting", "the stop to be staged");
-  h.releaseTool();
-  await untilAsync(
-    async () =>
-      (await cardReports()).some(
-        ([status, body]) =>
-          status === "note" && body.includes("job 1 (delayed) is not running: nothing to stop."),
-      )
-        ? true
-        : undefined,
-    "the worker to receive the generic stop reply",
+  const delivered = (event: Record<string, unknown>): boolean =>
+    event["type"] === "fleet_delivered" && event["entryId"] === fence.id;
+  stopDelivery.resolve();
+  const stopped = await h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the worker to process the generic stop reply",
   );
+  assert.equal(stopped["isError"], false);
+  assert.deepEqual(stopped["content"], [
+    { type: "text", text: "job 1 (delayed) is not running: nothing to stop." },
+  ]);
   assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab));
+  assert.equal(h.events.some(delivered), false);
   fenceDelivery.resolve();
-  await h.waitForNth(
-    (event) => event["type"] === "fleet_delivered",
-    2,
-    "the delayed fence before the pane reply",
-  );
+  await h.waitFor(delivered, "the delayed fence before the pane reply");
   await waitTabGone(String(tab), "tab_id");
   assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === decoy));
   assert.equal(existsSync(marker), false);
