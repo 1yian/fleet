@@ -247,6 +247,7 @@ export class Jobs {
       : undefined;
     const launching = { unstarted: false, ran: false, legacy: !registeredLaunch };
     this.launching.set(job, launching);
+    let dispatched = false;
     try {
       const { timeoutMs, tailLines, lineChars } = options;
       const body = {
@@ -286,6 +287,7 @@ export class Jobs {
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
       if (pending !== undefined) pending.dispatched = true;
       else if (!this.lastResult.has(job)) this.running.add(job);
+      dispatched = true;
       const paneFailure = await herdr("local", [
         "pane",
         "run",
@@ -305,9 +307,9 @@ export class Jobs {
       const why = error instanceof Error ? error.message : String(error);
       if (startupFenced(pending) || launching.unstarted) throw error;
       if (launching.ran) return { job, tab, started: true };
-      if (pending?.dispatched === true)
+      if (dispatched)
         throw new Error(
-          `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,
+          `Could not confirm dispatch for job ${String(job)}; its result, loss, or failed startup arrives as a [fleet] message: ${why}`,
           { cause: error },
         );
       rmSync(file, { force: true });

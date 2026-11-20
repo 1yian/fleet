@@ -573,7 +573,7 @@ for (const fault of ["failed", "hanging"] as const) {
     const slow = commandAwaitingGo(81);
     h.onModel(() => ({ tool: "run_long", args: { label: "partial", command: slow.command } }));
     h.onModel(() => ({ text: "Waiting for the command" }));
-    const pi = worker();
+    worker();
     await until(() => (existsSync(slow.ready) ? true : undefined), "the registered command to run");
     await settled(1);
     disconnect();
@@ -592,7 +592,11 @@ for (const fault of ["failed", "hanging"] as const) {
     h.onModel(() => ({ text: "Still waiting for the running job" }));
     h.onModel(() => ({ text: "No work to report yet" }));
     const sentBefore = activities.length;
-    pi.prompt("Check whether the job is still being waited on");
+    await fleet.main.call("comment", {
+      card: card.id,
+      text: "Check whether the job is still being waited on",
+      later: false,
+    });
     await settled(2);
     assert.equal(said("Your run is ending without a handoff"), false);
     const sent = await until(() => {
@@ -1040,6 +1044,52 @@ exec ${quote(herdr)} "$@"
       );
       assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
     });
+
+test("a legacy dispatch whose pane reply fails while the command runs keeps its wait and records only the real result", async (t) => {
+  await jobProxy(t, async (op, args) =>
+    op === "job.prepare"
+      ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
+      : callCardd(op, args),
+  );
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const dispatches = join(jobDir, "dispatches");
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  response=$(${quote(herdr)} "$@") || exit "$?"
+  echo dispatch >> ${quote(dispatches)}
+  echo 'pane reply unavailable' >&2
+  exit 1
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  const slow = commandAwaitingGo(84);
+  t.after(() => {
+    if (existsSync(h.dir)) writeFileSync(slow.go, "");
+  });
+  h.onModel(() => ({ tool: "run_long", args: { label: "inflight", command: slow.command } }));
+  h.onModel(() => ({ text: "Waiting for the command" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "The legacy job finished" } }));
+  worker();
+  await until(() => (existsSync(slow.ready) ? true : undefined), "the legacy command to run");
+  await settled(1);
+  assert.ok(said("Could not confirm dispatch for job 1"));
+  assert.equal(said("Started job 1"), false);
+  assert.equal(said("Your run is ending without a handoff"), false);
+  assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
+  assert.deepEqual(await jobResults(), []);
+  assert.equal(await status(fleet.main, card), "working");
+  writeFileSync(slow.go, "");
+  await fleet.main.waitForEntry((entry) => entry.body === "The legacy job finished", "the handoff");
+  assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
+  assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
+});
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();
