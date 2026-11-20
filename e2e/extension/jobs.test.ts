@@ -1370,6 +1370,22 @@ exec ${quote(herdr)} "$@"
   assert.equal(said("Dispatched job 1"), false);
   assert.equal(existsSync(dispatches), false);
   assert.equal(existsSync(marker), false);
+  assert.deepEqual(
+    (await cardView()).entries
+      .filter((entry) => entry.kind === "job-result")
+      .map((entry) => [entry.fields["lost"], entry.fields["exitCode"]]),
+    [[true, undefined]],
+  );
+  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
+  t.after(() => db.close());
+  assert.deepEqual(
+    { ...db.prepare("SELECT state, exit_code FROM jobs WHERE id = 1").get() },
+    {
+      state: "lost",
+      exit_code: null,
+    },
+  );
+  assert.ok((await tabsInWorkspace()).some((each) => each["label"] === "job-1-slow-tab"));
 });
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {

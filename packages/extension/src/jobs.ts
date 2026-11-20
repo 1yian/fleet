@@ -411,6 +411,7 @@ export class Jobs {
         );
       if (registeredLaunch) this.removeFile(job, file);
       else this.settleLaunchFile(job);
+      if (launching.legacy && this.lastResult.has(job)) throw error;
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link
