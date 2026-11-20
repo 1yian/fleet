@@ -135,6 +135,31 @@ test("a lane check and a clone refresh recover when the ssh master refuses to pa
     );
 });
 
+test("the maintenance capability probe shares its timeout with the direct SSH fallback", async () => {
+  ssh.mode = "wedged";
+  ssh.delayBothAttempts(2500);
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  await until(
+    () =>
+      h
+        .callsOf("mate")
+        .map(users)
+        .find((text) => /could not verify maintenance support on p620: .*stopped/.test(text)),
+    "main to report that the capability probe ran out of time",
+  );
+  const calls = ssh.calls();
+  const probes = calls.filter((call) => call.command.endsWith("'--maintenance-outcomes-v1'"));
+  assert.deepEqual(
+    probes.slice(0, 2).map((call) => call.direct),
+    [false, true],
+  );
+  assert.equal(
+    calls.some((call) => call.command.includes("'up' '--maintenance'")),
+    false,
+  );
+});
+
 test("a host that cannot be reached is still reported unreachable, with the reason from the retry, after a refused master", async () => {
   const { heard, site, fresh } = await startMainWith("wedged-down");
 

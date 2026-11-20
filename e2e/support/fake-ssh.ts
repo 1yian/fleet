@@ -16,6 +16,12 @@ const mode = existsSync(modeFile) ? readFileSync(modeFile, "utf8").trim() : "hea
 
 appendFileSync(join(dir, "calls.jsonl"), `${JSON.stringify({ host, direct, command })}\n`);
 
+const delayFile = join(dir, "delay-ms");
+if (existsSync(delayFile)) {
+  const delay = Number(readFileSync(delayFile, "utf8"));
+  await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
 const dropsAfterTheCommand = mode === "fell-back-then-dropped";
 
 const refuses = (): void => {

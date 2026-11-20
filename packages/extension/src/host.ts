@@ -268,7 +268,7 @@ async function herdrText(
     runOnTransport(
       file,
       rest,
-      { timeout, ...(deadline === undefined ? {} : { detach: ownGroup }) },
+      { timeout, ...(deadline === undefined ? {} : { detach: ownGroup, sharedRetryBudget: true }) },
       (error, out, err) => {
         if (error !== null && lane !== undefined) {
           reject(laneTransportFailure(lane, args, error, out, err));
@@ -307,6 +307,7 @@ async function run(
   spawned: readonly string[],
   detach?: Detach,
   grace?: number,
+  sharedRetryBudget = false,
 ): Promise<string> {
   const via = transport(host);
   const [file = "", ...rest] = routed(via, spawned);
@@ -319,6 +320,7 @@ async function run(
         maxBuffer: 16 * 1024 * 1024,
         ...(detach === undefined ? {} : { detach }),
         ...(grace === undefined ? {} : { grace }),
+        sharedRetryBudget,
       },
       (error, out, err) => {
         if (error === null) resolve(out);
@@ -347,7 +349,7 @@ export const onHost = (
   argv: readonly string[],
   timeout = 600_000,
   hard = false,
-): Promise<string> => run(host, argv, timeout, argv, hard ? ownGroup : undefined);
+): Promise<string> => run(host, argv, timeout, argv, hard ? ownGroup : undefined, undefined, hard);
 
 export const onHelper = (
   host: string,
