@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -104,6 +104,7 @@ export class Jobs {
   }
 
   async sync(): Promise<void> {
+    this.resumeLaunchCleanup();
     const jobs = await this.link.call("jobs", {}, 5000);
     for (const { id } of jobs) {
       if (this.lastResult.has(id)) continue;
@@ -126,7 +127,7 @@ export class Jobs {
       );
       return;
     }
-    if (lost === true || typeof exitCode === "number") this.dropLegacyFile(job);
+    if (lost === true || typeof exitCode === "number") this.settleLaunchFile(job);
     const launching = this.launching.get(job);
     if (launching !== undefined && entry.fields["commandNotStarted"] === true)
       launching.unstarted = true;
@@ -153,27 +154,61 @@ export class Jobs {
     return `fleet-job-${String(job)}-${this.owner(job)}.json`;
   }
 
-  private launchRecord(job: number): string {
-    return join(hostDir(), "job-launch-files", `${this.owner(job)}.path`);
+  private ownerDir(): string {
+    const owner = createHash("sha256").update(this.endpoint.token).digest("hex").slice(0, 32);
+    return join(hostDir(), "job-launch-files", owner);
   }
 
-  private dropLegacyFile(job: number): void {
-    const record = this.launchRecord(job);
-    let file: string;
+  private launchRecord(job: number): string {
+    return join(this.ownerDir(), `${String(job)}.path`);
+  }
+
+  private pendingRecord(job: number): string {
+    return join(this.ownerDir(), `${String(job)}.pending`);
+  }
+
+  private settleLaunchFile(job: number): void {
     try {
-      file = readFileSync(record, "utf8").trim();
+      renameSync(this.launchRecord(job), this.pendingRecord(job));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const why = error instanceof Error ? error.message : String(error);
-        this.warn(`Job ${String(job)}'s launch record ${record} could not be read: ${why}`);
+        this.warn(`Job ${String(job)}'s launch record could not be marked for removal: ${why}`);
+      }
+    }
+    this.cleanLaunchFile(job);
+  }
+
+  private cleanLaunchFile(job: number): void {
+    const marker = this.pendingRecord(job);
+    let file: string;
+    try {
+      file = readFileSync(marker, "utf8").trim();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        const why = error instanceof Error ? error.message : String(error);
+        this.warn(`Job ${String(job)}'s launch record ${marker} could not be read: ${why}`);
       }
       return;
     }
     if (!isAbsolute(file) || basename(file) !== this.legacyLaunchName(job)) {
-      this.warn(`Job ${String(job)}'s launch record ${record} does not name its launch file`);
+      this.warn(`Job ${String(job)}'s launch record ${marker} does not name its launch file`);
       return;
     }
-    if (this.removeFile(job, file)) this.removeFile(job, record);
+    if (this.removeFile(job, file)) this.removeFile(job, marker);
+  }
+
+  private resumeLaunchCleanup(): void {
+    let names: string[];
+    try {
+      names = readdirSync(this.ownerDir());
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const match = /^(\d+)\.pending$/.exec(name);
+      if (match?.[1] !== undefined) this.cleanLaunchFile(Number(match[1]));
+    }
   }
 
   private removeFile(job: number, file: string): boolean {
@@ -308,7 +343,7 @@ export class Jobs {
         lineChars,
       };
       if (!registeredLaunch) {
-        mkdirSync(dirname(this.launchRecord(job)), { recursive: true });
+        mkdirSync(this.ownerDir(), { recursive: true });
         writeFileSync(this.launchRecord(job), file, { mode: 0o600 });
       }
       writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
@@ -364,7 +399,8 @@ export class Jobs {
           `Could not confirm dispatch for job ${String(job)}; its result, loss, or failed startup arrives as a [fleet] message: ${why}`,
           { cause: error },
         );
-      if (this.removeFile(job, file)) this.removeFile(job, this.launchRecord(job));
+      if (registeredLaunch) this.removeFile(job, file);
+      else this.settleLaunchFile(job);
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link

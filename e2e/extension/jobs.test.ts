@@ -1122,7 +1122,12 @@ exec ${quote(herdr)} "$@"
   assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
 });
 
-for (const fault of ["worker reload", "relative scratch root", "unlink failure"] as const)
+for (const fault of [
+  "worker reload",
+  "relative scratch root",
+  "unlink failure",
+  "unlink failure and replacement",
+] as const)
   test(`a legacy dispatch that Herdr never accepted keeps its wait and tab until cardd reports it lost, then removes its launch file across ${fault}`, async (t) => {
     const lossDelivery = Promise.withResolvers<void>();
     t.after(() => lossDelivery.resolve());
@@ -1199,7 +1204,12 @@ exec ${quote(herdr)} "$@"
     const path = join(jobDir, name);
     const replacementTmp = join(h.dir, "replacement-tmp");
     const decoy = join(replacementTmp, name);
-    if (fault !== "unlink failure") {
+    const failing = fault === "unlink failure" || fault === "unlink failure and replacement";
+    const delivered = (): number =>
+      h.events.filter(
+        (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+      ).length;
+    if (!failing) {
       mkdirSync(replacementTmp);
       writeFileSync(decoy, "not the launch file");
       await first.kill();
@@ -1217,7 +1227,7 @@ exec ${quote(herdr)} "$@"
       lossDelivery.resolve();
     }
     await until(() => (said(lostMessage) ? true : undefined), "the loss to reach the worker");
-    if (fault !== "unlink failure") {
+    if (!failing) {
       assert.equal(readFileSync(decoy, "utf8"), "not the launch file");
     } else {
       await until(
@@ -1225,6 +1235,28 @@ exec ${quote(herdr)} "$@"
         "the worker to report the failed unlink",
       );
       assert.ok(existsSync(path));
+    }
+    if (fault === "unlink failure and replacement") {
+      await settled(2);
+      assert.equal(delivered(), 1);
+      rmSync(path, { recursive: true });
+      writeFileSync(path, "launch file after writes recover");
+      mkdirSync(replacementTmp);
+      writeFileSync(decoy, "not the launch file");
+      await first.kill();
+      env["TMPDIR"] = replacementTmp;
+      worker();
+      await h.waitForNth(
+        (event) => event["type"] === "fleet_connected",
+        2,
+        "the replacement worker to connect",
+      );
+      await until(
+        () => (launchFiles().length === 0 ? true : undefined),
+        "the replacement worker to finish the interrupted cleanup",
+      );
+      assert.equal(readFileSync(decoy, "utf8"), "not the launch file");
+      assert.equal(delivered(), 1);
     }
     assert.deepEqual(
       (await cardView()).entries
