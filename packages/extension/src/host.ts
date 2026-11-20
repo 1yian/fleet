@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { routed } from "@fleet/protocol/route";
+import { fleetHostName, routed } from "@fleet/protocol/route";
 import { type Detach, runOnTransport } from "@fleet/protocol/transport";
 import { spawnDetached } from "./detached.ts";
 
@@ -25,11 +25,11 @@ function ownNames(): string[] {
 export const ownHostName = (): string => ownNames().at(-1) ?? "local";
 
 const ownsHostName = (host: string): boolean =>
-  host === "local" || ownNames().includes(host.toLowerCase());
+  host === "local" || host === fleetHostName() || ownNames().includes(host.toLowerCase());
 
 function transport(host: string): string[] {
   const hosts: unknown = JSON.parse(process.env["FLEET_HOSTS"] ?? "{}");
-  const entry = isRecord(hosts) ? hosts[host] : undefined;
+  const entry = isRecord(hosts) && Object.hasOwn(hosts, host) ? hosts[host] : undefined;
   if (Array.isArray(entry)) return entry.filter((part) => typeof part === "string");
   if (ownsHostName(host)) return [];
   throw new NoTransport(`no transport for ${host}`);

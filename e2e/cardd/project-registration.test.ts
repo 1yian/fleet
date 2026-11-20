@@ -8,8 +8,12 @@ import { tempDir } from "../support/run-root.ts";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 
-for (const explicit of [true, false]) {
-  test(`project registration ${explicit ? "with --repo skips discovery" : "infers only the new project's repo"}`, () => {
+for (const [explicit, host] of [
+  [true, "local"],
+  [false, "local"],
+  [false, "constructor"],
+] as const) {
+  test(`project registration ${explicit ? "with --repo skips discovery" : `infers only the new project's repo on ${host}`}`, () => {
     const root = tempDir("fleet-registration-");
     const db = join(root, "cards.db");
     const marker = join(root, "transport-called");
@@ -51,7 +55,7 @@ for (const explicit of [true, false]) {
       "--delivery",
       "no-mistakes",
       "--clone",
-      `local=${clone}`,
+      `${host}=${clone}`,
       "--hosts",
       JSON.stringify(hosts),
       ...(explicit ? ["--repo", "acme/explicit"] : []),
@@ -61,7 +65,7 @@ for (const explicit of [true, false]) {
     assert.equal(existsSync(marker), false, "explicit --repo must not invoke the clone transport");
     assert.equal(
       cli("project", "list"),
-      `${before}\nnew: no-mistakes, yolo off, repo ${repo}, local=${clone}`,
+      `${before}\nnew: no-mistakes, yolo off, repo ${repo}, ${host}=${clone}`,
     );
   });
 }

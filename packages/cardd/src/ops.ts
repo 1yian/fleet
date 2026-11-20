@@ -33,6 +33,7 @@ import {
   withdrawMerge,
   writeMergeQuestion,
 } from "./holds.ts";
+import { ensurePersonalProject } from "./personal.ts";
 import { loadPlan } from "./plans.ts";
 import { requireReviewDecision } from "./reviews.ts";
 import { doneStands } from "./status.ts";
@@ -48,7 +49,6 @@ import {
   addEntry,
   cardEntries,
   getCard,
-  listProjects,
   loadCard,
   mainLane,
   setYolo,
@@ -56,6 +56,7 @@ import {
   transaction,
   type Session,
 } from "./store.ts";
+import { listProjects } from "./projects.ts";
 
 interface Done {
   readonly value: unknown;
@@ -160,7 +161,7 @@ function rework(
   return REWORK.has(status) ? withdrawMerge(db, card) : [];
 }
 
-const HANDLERS: Record<OpName, Handler> = {
+const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "maintenance.request": (db, session, raw, timing) =>
     requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
   "maintenance.status": (db, session, raw) =>
@@ -372,7 +373,7 @@ const HANDLERS: Record<OpName, Handler> = {
       replyTo: args.replyTo,
       evidence: args.evidence,
       emptyBranch,
-      ...landingOf(db, card, args),
+      ...landingOf(db, card, args, emptyBranch),
       ...(note === undefined ? {} : { prNote: note }),
     };
     const report: Draft = {
@@ -401,7 +402,12 @@ function openCardWithPr(db: DatabaseSync, id: number, pr: string | undefined): C
   return getCard(db, id);
 }
 
-function landingOf(db: DatabaseSync, card: Card, args: OpArgs<"report">): LandingFields {
+function landingOf(
+  db: DatabaseSync,
+  card: Card,
+  args: OpArgs<"report">,
+  emptyBranch: true | undefined,
+): LandingFields {
   if (args.merged === true) {
     if ((args.status !== "done" && args.status !== "merged") || card.pr === null)
       throw new Error("a merged report must be done and name its PR URL");
@@ -409,12 +415,17 @@ function landingOf(db: DatabaseSync, card: Card, args: OpArgs<"report">): Landin
   }
   if (args.status !== "done" || card.kind !== "ship") return {};
   if (card.delivery === "ops") return { landing: "operation: no PR expected" };
-  if (card.delivery === "local-only") return localLandingFields(db, card);
+  if (card.delivery === "local-only") return localLandingFields(db, card, emptyBranch);
   if (card.pr !== null) return { pr: card.pr };
   return { prNote: "no PR URL reported: the worker reports it with report(pr=<full url>)" };
 }
 
-function localLandingFields(db: DatabaseSync, card: Card): LandingFields {
+function localLandingFields(
+  db: DatabaseSync,
+  card: Card,
+  emptyBranch: true | undefined,
+): LandingFields {
+  if (emptyBranch === true) return { landing: "local-only: the branch is empty, so nothing lands" };
   const local = localLanding(db, card.id);
   if (local === undefined) return { landing: "local-only: the card has no branch" };
   return {
@@ -443,6 +454,10 @@ async function performStored(
   timing: Timings,
   hosts: Hosts,
 ): Promise<Done> {
+  if (op === "project.personal") {
+    await ensurePersonalProject(db, session, hosts, args);
+    return { value: true, notify: [] };
+  }
   const report =
     op === "report" && session.card !== null
       ? await normalizeReport(db, hosts, session.card, args)

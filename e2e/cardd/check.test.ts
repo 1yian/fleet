@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { reach } from "../support/reach.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -26,15 +27,6 @@ const tiersOf = async (card: Card, condition: string): Promise<number[]> =>
     .filter((entry) => entry.fields["condition"] === condition)
     .map((entry) => Number(entry.fields["tier"]));
 const rising = (tiers: readonly number[]): number[] => [...new Set(tiers)].sort((a, b) => a - b);
-
-const reach = (session: Session, card: Card, condition: string, tier: number): Promise<Entry> =>
-  session.waitForEntry(
-    (entry) =>
-      entry.card === card.id &&
-      entry.fields["condition"] === condition &&
-      Number(entry.fields["tier"]) >= tier,
-    `${condition} tier ${String(tier)} on c-${String(card.id)}`,
-  );
 
 async function metronome(ticks: number): Promise<void> {
   const card = await newCard(fleet.main, "a clock for the test");

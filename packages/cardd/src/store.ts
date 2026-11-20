@@ -13,6 +13,7 @@ import {
 import Type from "typebox";
 import { yoloFor } from "./authority.ts";
 import { standingFrom, type Standing } from "./status.ts";
+import { listProjects } from "./projects.ts";
 
 export interface Session {
   readonly id: string;
@@ -155,31 +156,36 @@ export function reachable(
 export const isLaneCard = (db: DatabaseSync, card: Card): boolean =>
   laneCardOf(db, card.lane) === card.id;
 
-export function addProject(
-  db: DatabaseSync,
-  project: {
-    name: string;
-    delivery: string;
-    clones: Record<string, string>;
-    yolo: boolean;
-    repo: string | null;
-  },
-): void {
+interface NewProject {
+  name: string;
+  delivery: string;
+  clones: Record<string, string>;
+  yolo: boolean;
+  repo: string | null;
+}
+
+export function insertProjectIfMissing(db: DatabaseSync, project: NewProject): boolean {
   if (project.delivery === "ops")
     throw new Error("ops is card-only: project changes keep their registered delivery mode");
-  if (db.prepare("SELECT 1 FROM projects WHERE name = ?").get(project.name) !== undefined)
+  const { changes } = db
+    .prepare(
+      "INSERT INTO projects (name, delivery, clones, yolo, repo) VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO NOTHING",
+    )
+    .run(
+      project.name,
+      project.delivery,
+      JSON.stringify(project.clones),
+      project.yolo ? 1 : 0,
+      project.repo,
+    );
+  return changes !== 0;
+}
+
+export function addProject(db: DatabaseSync, project: NewProject): void {
+  if (!insertProjectIfMissing(db, project))
     throw new Error(
       `project ${project.name} is already in the registry: project list shows it. project clone adds a host's clone, and project repo, delivery, and yolo change the rest`,
     );
-  db.prepare(
-    "INSERT INTO projects (name, delivery, clones, yolo, repo) VALUES (?, ?, ?, ?, ?)",
-  ).run(
-    project.name,
-    project.delivery,
-    JSON.stringify(project.clones),
-    project.yolo ? 1 : 0,
-    project.repo,
-  );
 }
 
 export function setClone(db: DatabaseSync, project: string, host: string, path: string): void {
@@ -468,31 +474,4 @@ export function mainLane(db: DatabaseSync): string {
   const name = db.prepare("SELECT name FROM lanes WHERE parent IS NULL").get()?.["name"];
   if (typeof name !== "string") throw new Error("there is no main lane");
   return name;
-}
-
-interface Project {
-  readonly name: string;
-  readonly delivery: string;
-  readonly base: string;
-  readonly clones: { host: string; path: string }[];
-  readonly yolo: boolean;
-}
-
-export function listProjects(db: DatabaseSync): Project[] {
-  return db
-    .prepare(
-      "SELECT name, delivery, default_base AS base, clones, yolo FROM projects ORDER BY name",
-    )
-    .all()
-    .map((row) => {
-      const clones: unknown = JSON.parse(String(row["clones"]));
-      const paths = typeof clones === "object" && clones !== null ? Object.entries(clones) : [];
-      return {
-        name: String(row["name"]),
-        delivery: String(row["delivery"]),
-        base: String(row["base"]),
-        clones: paths.map(([host, path]) => ({ host, path: String(path) })),
-        yolo: row["yolo"] === 1,
-      };
-    });
 }

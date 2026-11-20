@@ -5,7 +5,8 @@ import { runOnTransport } from "@fleet/protocol/transport";
 import { localLanding } from "./attempts.ts";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
-import { getCard, listProjects } from "./store.ts";
+import { getCard } from "./store.ts";
+import { listProjects } from "./projects.ts";
 
 const CHECK_TIMEOUT_MS = 30_000;
 

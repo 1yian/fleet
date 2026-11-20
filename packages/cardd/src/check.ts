@@ -13,7 +13,7 @@ import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
 import { describe, labelOf, nextStep } from "./incident-text.ts";
 import { remaining } from "./incident-kinds.ts";
 import { replyNudges } from "./replies.ts";
-import { finishedOpen, idleNow, resting } from "./status.ts";
+import { finishedOpen, idleNow, resting, type Finish } from "./status.ts";
 import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
@@ -198,12 +198,14 @@ function withIncidents(
   });
 }
 
-function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: unknown): string {
-  if (merged) return "Close it now with close(card, summary).";
+function closeAdvice(kind: string, finish: Finish, hasPr: boolean, delivery: unknown): string {
+  if (finish.merged) return "Close it now with close(card, summary).";
   if (delivery === "ops")
     return "Its worker handed over the evidence report. Close it with close(card, summary): if close warns about commits or files left in the worktree, call close again with confirm=true to archive them. If the operation did not happen and will not, close(card, summary=<why>, landed=false).";
   if (kind === "ship" && delivery === "local-only")
-    return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
+    return finish.emptyBranch
+      ? "Nothing lands from its empty branch. Close it now with close(card, summary); no landing approval is needed."
+      : "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   if (kind === "scout")
     return "Relay the findings, then close it with close(card, summary, next=<build, decision, or drop>): the findings need a ship card that builds them, a decision of the captain's that waits on a card, or the reason that nothing is built. Use close(card, summary=<why>, landed=false) if it did not land.";
   if (kind !== "ship")
@@ -232,14 +234,14 @@ function finishedMatches(
     status: string;
     since: number;
   },
-  finish: { merged: boolean; at: number },
+  finish: Finish,
   now: number,
   t: Timings,
 ): Match[] {
   const since = Math.max(card.since, finish.at);
   const tier = repeatTier(now - since, t.chase, t.chase);
   if (tier === 0) return [];
-  const close = closeAdvice(card.kind, finish.merged, card.pr !== null, card.delivery);
+  const close = closeAdvice(card.kind, finish, card.pr !== null, card.delivery);
   const waited = `${card.status}, ${String(minutesSince(now, since))} min`;
   const text = `reminder: c-${String(card.id)} is finished and still open (${waited}). ${close}`;
   return [{ card: card.id, lane: card.lane, condition: "finished", text, tier }];

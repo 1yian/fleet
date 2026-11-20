@@ -1,13 +1,21 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardName, DELIVERIES, NextSchema, OPS, type Card, type Schedule } from "@fleet/protocol";
+import {
+  CardName,
+  DELIVERIES,
+  NextSchema,
+  OPS,
+  PERSONAL_PROJECT,
+  type Card,
+  type Schedule,
+} from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import type { Complaints } from "./complaints.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
-import { isLocal } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
+import { dispatchHost } from "./personal.ts";
 import { boardText, cardText, errorText, EXTRA_COLUMNS, SELECTIONS } from "./views.ts";
 
 const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${card.title}`;
@@ -17,7 +25,10 @@ const DispatchParams = Type.Object({
   title: Type.String({ minLength: 1 }),
   name: CardName,
   kind: Type.Enum(["ship", "scout"]),
-  project: Type.String({ minLength: 1 }),
+  project: Type.String({
+    minLength: 1,
+    description: `A registered project's name, or "${PERSONAL_PROJECT}" for work that fits none of them. If it is not registered, main's first dispatch creates it on the selected host`,
+  }),
   intent: Type.String({ minLength: 1 }),
   host: Type.String({
     minLength: 1,
@@ -285,12 +296,11 @@ export function registerMate(
   pi.registerTool({
     name: "dispatch",
     label: "Dispatch",
-    description:
-      "Creates a new work card and starts its worker in its own worktree on a host. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.",
+    description: `Creates a new work card and starts its worker in its own worktree on a host. Dispatching is how all work gets done: never do it yourself in your own turn, not a one-off, a quick job, or work that fits no registered project. Work that fits none goes under project "${PERSONAL_PROJECT}", which main's first dispatch creates if not already registered. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.`,
     parameters: DispatchParams,
     execute: async (_id, params) => {
-      const { title, name, kind, project, intent, host, task, delivery, model } = params;
-      isLocal(host);
+      const { title, name, kind, project, intent, task, delivery, model } = params;
+      const host = await dispatchHost(link, params.host, project);
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>
