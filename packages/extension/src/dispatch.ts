@@ -139,18 +139,21 @@ const STAY_MS = 3000;
 
 const EXIT_LINES = 20;
 
+async function paneTail(host: string, pane: string, token: string): Promise<string> {
+  const text = await paneText(host, pane).catch(() => "");
+  const lines = scrub(text, [token])
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line !== "");
+  return `The pane is still open. Last lines of the pane:\n${lines.slice(-EXIT_LINES).join("\n")}`;
+}
+
 async function exitedMessage(
   host: string,
   pane: string,
   worker: { session: string; token: string },
 ): Promise<string> {
-  const text = await paneText(host, pane).catch(() => "");
-  const lines = scrub(text, [worker.token])
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line !== "");
-  const shown = lines.slice(-EXIT_LINES).join("\n");
-  return `Pi is not running in pane ${pane} on ${host} after ${worker.session} was started in it, so the worker never connected. The pane is still open. Last lines of the pane:\n${shown}`;
+  return `Pi is not running in pane ${pane} on ${host} after ${worker.session} was started in it, so the worker never connected. ${await paneTail(host, pane, worker.token)}`;
 }
 
 async function confirmStays(
@@ -202,7 +205,10 @@ async function replacementError(
       `${cause}\nThe replacement could not be confirmed after the start command; the request was not refunded.`,
       { cause: error },
     );
-  const context = running === false ? await exitedMessage(host, pane, worker) : undefined;
+  const context =
+    running === false
+      ? `The replacement did not start. Pi is not running in pane ${pane} on ${host}. ${await paneTail(host, pane, worker.token)}`
+      : undefined;
   return new DidNotStart(error, context, worker.token);
 }
 

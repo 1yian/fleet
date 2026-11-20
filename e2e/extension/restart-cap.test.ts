@@ -140,7 +140,9 @@ test("a failed refund shows both the idle pane context and the scrubbed refusal 
     "the failed restart tool result",
     WORKER_WAIT_MS,
   );
-  assert.match(result, /Pi is not running in pane/);
+  assert.match(result, /The replacement did not start\. Pi is not running in pane/);
+  assert.doesNotMatch(result, /was started in it|the worker never connected/);
+  assert.match(result, /Last lines of the pane:\nIdle shell context --fleet-token \[hidden\]/);
   assert.match(result, /fixture refused the start --fleet-token \[hidden\]/);
   assert.doesNotMatch(result, /fixture-secret/);
   assert.match(
