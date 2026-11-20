@@ -240,6 +240,13 @@ async function waitForRestartNotice({ h }: DispatchLab): Promise<void> {
   );
 }
 
+function mateResultAfter({ h }: DispatchLab, prompt: string): string | undefined {
+  return h.callsOf("mate").flatMap((turns) => {
+    const at = turns.findLastIndex((turn) => turn.role === "user");
+    return turns[at]?.text === prompt ? toolResults(turns.slice(at + 1)) : [];
+  })[0];
+}
+
 const readinessCases = [
   {
     mode: "before",
@@ -278,13 +285,16 @@ for (const { mode, situation, generation, error } of readinessCases) {
     });
     const { h, lab, mate } = parts;
     const restart = { card: 1, key: "readiness", mode: "replace" } as const;
+    const restartMove = { tool: "restart_card", args: restart };
+    const repeatPrompt = "repeat the counted restart request";
     const results = () => h.callsOf("mate").flatMap(toolResults);
     for (let call = 0; call < 12; call += 1) {
       h.onModel(
         (turns) =>
           plan(turns, {
             "ship the scrollbar fix": [DISPATCH],
-            "restart after dispatch": [{ tool: "restart_card", args: restart }],
+            "restart after dispatch": [restartMove],
+            [repeatPrompt]: [restartMove],
           }),
         "mate",
       );
@@ -324,6 +334,17 @@ for (const { mode, situation, generation, error } of readinessCases) {
     assert.match(result, /worker readiness confirmation failed --fleet-token \[hidden\]/);
     assert.doesNotMatch(result, /fixture-secret/);
     assert.match(result, error);
+
+    mate.prompt(repeatPrompt, "followUp");
+    const repeated = await poll(
+      () => mateResultAfter(parts, repeatPrompt),
+      "the mate's tool result for the same restart key",
+      WORKER_WAIT_MS,
+    );
+    assert.equal(
+      repeated,
+      "A process of c-1-a1 already runs or is starting on far, so this repeated request left it alone.",
+    );
     assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
 
     await verifyCountedRestart(parts, restart.key, generation);
