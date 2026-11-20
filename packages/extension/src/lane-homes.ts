@@ -55,7 +55,7 @@ type Scanned =
   | { readonly name: string; readonly home: string; readonly config: LaneConfig }
   | { readonly name: string; readonly home: string; readonly error: unknown };
 
-export const isMissing = (error: unknown): boolean =>
+const isMissing = (error: unknown): boolean =>
   error instanceof Error && "code" in error && error.code === "ENOENT";
 
 function scanHomes(root: string): Scanned[] {

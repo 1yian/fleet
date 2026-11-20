@@ -18,7 +18,6 @@ import {
   discoverLanes,
   gitWithin,
   homeOf,
-  isMissing,
   unreadFailure,
   type LaneHome,
   type UnreadLane,
@@ -26,6 +25,7 @@ import {
 import { idlePaneOf, lanePaneState, workspaceOf } from "./lane-observation.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
+  isAbsent,
   isRecord,
   LANE_FILE,
   mateStartArgs,
@@ -145,7 +145,7 @@ function readState(file: string, name: string): string | undefined {
   try {
     return readFileSync(file, "utf8");
   } catch (error) {
-    if (isMissing(error)) return undefined;
+    if (isAbsent(file, error)) return undefined;
     const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
     throw new HostUnread(`could not read ${name} (${code})`);
   }

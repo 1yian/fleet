@@ -258,22 +258,26 @@ function addLane(lane: string): string {
 
 const faultLog = () => join(bin, "observations");
 
+function fleetEnv(fault = "", pane = "", probeTimeout = "1000"): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...lab.env,
+    HERDR_SESSION: lab.name,
+    REAL_HERDR: real,
+    HERDR_FAULT: fault,
+    HERDR_FAULT_LOG: faultLog(),
+    FAULT_PANE: pane,
+    FLEET_PROBE_TIMEOUT_MS: probeTimeout,
+    FLEET_LIFECYCLE_WAIT_MS: "100",
+    PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+  };
+}
+
 function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1000"): string {
   return execFileSync(process.execPath, [here.launch, ...args], {
     encoding: "utf8",
     timeout: 90_000,
-    env: {
-      ...process.env,
-      ...lab.env,
-      HERDR_SESSION: lab.name,
-      REAL_HERDR: real,
-      HERDR_FAULT: fault,
-      HERDR_FAULT_LOG: faultLog(),
-      FAULT_PANE: pane,
-      FLEET_PROBE_TIMEOUT_MS: probeTimeout,
-      FLEET_LIFECYCLE_WAIT_MS: "100",
-      PATH: `${bin}:${process.env["PATH"] ?? ""}`,
-    },
+    env: fleetEnv(fault, pane, probeTimeout),
   });
 }
 
@@ -327,6 +331,7 @@ export {
   addLane,
   faultLog,
   fleet,
+  fleetEnv,
   legacyMaintenance,
   typedMaintenance,
   maintenanceOutcomes,

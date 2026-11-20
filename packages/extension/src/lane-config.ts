@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { isUuid, type BwsConfig } from "./bws.ts";
@@ -166,13 +166,23 @@ export function exportHosts(lane: LaneConfig): void {
   process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
 }
 
+export function isAbsent(file: string, error: unknown): boolean {
+  if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) return false;
+  try {
+    lstatSync(file);
+    return false;
+  } catch (entry) {
+    return entry instanceof Error && "code" in entry && entry.code === "ENOENT";
+  }
+}
+
 export function readLaneConfig(home: string): LaneConfig | undefined {
   const file = join(home, LANE_FILE);
   let text: string;
   try {
     text = readFileSync(file, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    if (isAbsent(file, error)) return undefined;
     throw error;
   }
   let config: unknown;

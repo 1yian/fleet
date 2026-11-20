@@ -259,14 +259,21 @@ function checkLaunchPrerequisites(root: string): void {
   }
 }
 
+const writeReply = (text: string): Promise<void> =>
+  new Promise((resolve) => {
+    process.stdout.write(`${text}\n`, () => {
+      resolve();
+    });
+  });
+
 async function showTypedMaintenance(): Promise<void> {
   try {
     const root = codeRoot(maintenanceDeadline);
     checkLaunchPrerequisites(root);
-    console.log(JSON.stringify(await up(root, rest[0], maintenanceDeadline, offset)));
+    await writeReply(JSON.stringify(await up(root, rest[0], maintenanceDeadline, offset)));
   } catch (error) {
     const failed = error instanceof Error ? error.message : String(error);
-    console.log(JSON.stringify({ failed, expected: [], outcomes: [] }));
+    await writeReply(JSON.stringify({ failed, expected: [], outcomes: [] }));
   }
 }
 
