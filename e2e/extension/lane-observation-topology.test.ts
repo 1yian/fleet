@@ -210,6 +210,16 @@ test("a final pane read that drops the Pi pane's home evidence never lifts a hol
   assert.equal(readFileSync(`${faultLog()}.lists`, "utf8"), "x\nx\nx\n");
   assert.equal(readFileSync(starts, "utf8"), history);
   assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("a legacy workspace outside the lane home that loses its cwd on the final read never authorizes a start", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const foreign = await idlePane("ops", here.root, "fleet-ops");
+  const starts = join(home, "state", "starts");
+  assert.deepEqual(maintain("cwd-drop-final", foreign), action("ops", "unread"));
+  assert.equal(readFileSync(`${faultLog()}.lists`, "utf8"), "x\nx\nx\n");
+  assert.equal(existsSync(starts), false);
+  assert.equal(await workspace("ops"), undefined);
   rmSync(`${faultLog()}.lists`);
-  assert.deepEqual(maintain("cwd-drop-final", split), action("ops", "unread"));
+  assert.deepEqual(maintain(), action("ops", "started"));
 });

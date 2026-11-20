@@ -94,8 +94,7 @@ async function legacyMatches(
       obs,
       workspace,
       panes,
-      (now) =>
-        `${membership(now)} ${String(now[0]?.pane)} ${String(matchesHome(now[0]?.cwd, home))}`,
+      (now) => `${membership(now)} ${String(now[0]?.pane)} ${homeEvidence(now[0]?.cwd, home)}`,
     );
     obs.log.push(`legacy ${workspace} ${first.pane} ${String(rooted)} ${membership(panes)}`);
     if (rooted) verified.push({ workspace, pane: first.pane });
@@ -131,6 +130,13 @@ async function findLegacy(
   if (state !== "down") return { workspace: only.workspace, state: "running" };
   return { workspace: only.workspace, state: "idle", pane: only.pane };
 }
+
+const homeEvidence = (cwd: string | undefined, home: string): string =>
+  cwd === undefined || cwd === ""
+    ? "missing"
+    : canonical(cwd) === canonical(home)
+      ? "home"
+      : "foreign";
 
 const matchesHome = (cwd: string | undefined, home: string): boolean =>
   cwd !== undefined && cwd !== "" && canonical(cwd) === canonical(home);
@@ -180,7 +186,7 @@ async function findCurrent(
     workspace,
     panes,
     (now) =>
-      `${membership(now)} ${String(now[0]?.pane)} ${purpose === "placement" ? String(matchesHome(now[0]?.cwd, home)) : "-"}`,
+      `${membership(now)} ${String(now[0]?.pane)} ${purpose === "placement" ? homeEvidence(now[0]?.cwd, home) : "-"}`,
   );
   if (purpose === "placement" && !matchesHome(requiredCwd(first.cwd, workspace), home)) {
     obs.log.push(`foreign ${workspace} ${first.pane}`);
