@@ -97,7 +97,7 @@ type CallResult = Extract<ServerMessage, { t: "result" }>;
 async function jobProxy(
   t: TestContext,
   call: (op: string, args: unknown) => Promise<{ status: number; body: unknown; close?: boolean }>,
-  dropFence = false,
+  dropFence: boolean | Promise<void> = false,
   jobsReply?: (reply: CallResult) => CallResult | undefined,
   reportReply?: (reply: CallResult) => CallResult | undefined,
 ) {
@@ -145,8 +145,13 @@ async function jobProxy(
       const text = rawText(raw);
       const message = parseServerMessage(text);
       if (dropFence && message.t === "entry" && message.entry.fields["startupFenced"] === true) {
+        const fence = dropFence;
         dropFence = false;
-        client.terminate();
+        if (fence === true) client.terminate();
+        else
+          void fence.then(() => {
+            if (client.readyState === WebSocket.OPEN) client.send(text);
+          });
       } else if (client.readyState === WebSocket.OPEN) {
         if (message.t === "result" && jobReads.delete(message.id) && jobsReply !== undefined) {
           const reply = jobsReply(message);
@@ -626,13 +631,21 @@ for (const fault of ["failed", "partial"] as const) {
   });
 }
 
-test("pane success received after expiry cannot report a fenced launch as started", async (t) => {
+test("a generic stop before a delayed fence preserves exact tab cleanup and rejects stale pane success", async (t) => {
   const registration = Promise.withResolvers<void>();
-  t.after(() => registration.resolve());
-  await jobProxy(t, async (op, args) => {
-    if (op === "job.register") await registration.promise;
-    return callCardd(op, args);
+  const fenceDelivery = Promise.withResolvers<void>();
+  t.after(() => {
+    registration.resolve();
+    fenceDelivery.resolve();
   });
+  await jobProxy(
+    t,
+    async (op, args) => {
+      if (op === "job.register") await registration.promise;
+      return callCardd(op, args);
+    },
+    fenceDelivery.promise,
+  );
   const bin = join(jobDir, "bin");
   mkdirSync(bin);
   const accepted = join(jobDir, "pane-accepted");
@@ -657,9 +670,16 @@ exec ${quote(herdr)} "$@"
     { mode: 0o755 },
   );
   env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  const launch = JSON.stringify({ label: "delayed", command: `touch ${quote(marker)}` });
   h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "delayed", command: `touch ${quote(marker)}` },
+    tool: "codemode",
+    args: {
+      code: `const launched = tools.run_long(${launch}).catch(error => String(error));
+await tools.slow_tool({});
+const stop = await tools.stop_job({ job: 1 });
+await tools.report({ status: "note", text: JSON.stringify(stop) });
+return await launched;`,
+    },
   }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "Startup was fenced" } }));
   worker();
@@ -668,18 +688,51 @@ exec ${quote(herdr)} "$@"
     "tab_id"
   ];
   assert.equal(typeof tab, "string");
+  await lab.run(["tab", "rename", String(tab), "actual-delayed"]);
+  await lab.run([
+    "tab",
+    "create",
+    "--workspace",
+    workspace(),
+    "--label",
+    "job-1-delayed",
+    "--no-focus",
+  ]);
+  const decoy = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-delayed")?.[
+    "tab_id"
+  ];
+  assert.equal(typeof decoy, "string");
   const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
   try {
     db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
   } finally {
     db.close();
   }
+  await untilAsync(
+    async () => ((await jobResults()).length === 1 ? true : undefined),
+    "cardd to commit expiry without delivering the fence",
+  );
+  await h.waitFor((event) => event["type"] === "tool_waiting", "the stop to be staged");
+  h.releaseTool();
+  await untilAsync(
+    async () =>
+      (await cardReports()).some(
+        ([status, body]) =>
+          status === "note" && body.includes("job 1 (delayed) is not running: nothing to stop."),
+      )
+        ? true
+        : undefined,
+    "the worker to receive the generic stop reply",
+  );
+  assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab));
+  fenceDelivery.resolve();
   await h.waitForNth(
     (event) => event["type"] === "fleet_delivered",
     2,
-    "the durable fence before the pane reply",
+    "the delayed fence before the pane reply",
   );
   await waitTabGone(String(tab), "tab_id");
+  assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === decoy));
   assert.equal(existsSync(marker), false);
   writeFileSync(release, "");
   await h.waitForCall(1);
