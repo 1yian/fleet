@@ -229,8 +229,10 @@ export function toPush(
     `SELECT json_object('entry', json(${ENTRY_JSON}), 'name', c.name,
        'again', json(iif(d.state IN (${AGAIN}), 'true', 'false'))) AS j
      FROM deliveries d JOIN entries e ON e.id = d.entry JOIN cards c ON c.id = e.card
+       JOIN sessions s ON s.id = d.session
      WHERE d.session = ? AND d.state IN (${states})
-       AND NOT ((${RECOVERY_CHECK}) AND d.state IN ('read', 'acknowledged')) ORDER BY e.id`,
+       AND NOT (s.role = 'worker' AND (${RECOVERY_CHECK}) AND d.state IN ('read', 'acknowledged'))
+     ORDER BY e.id`,
     session,
   );
   const queued = new Set(

@@ -20,6 +20,12 @@ const isCheck = (entry: Entry): boolean => entry.fields["recovery"] !== undefine
 const checksSent = (worker: Session): number =>
   worker.entries.filter((push) => isCheck(push.entry)).length;
 
+function recoveryOf(heard: Entry): { card: number; incident: number; generation: number } {
+  const [, incident, generation] =
+    /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
+  return { card: heard.card, incident: Number(incident), generation: Number(generation) };
+}
+
 async function failedWorker(phase: "turn" | "compaction"): Promise<{
   worker: Session;
   token: string;
@@ -34,15 +40,7 @@ async function failedWorker(phase: "turn" | "compaction"): Promise<{
   worker.ack(task?.id ?? 0);
   await worker.call("incident.report", { error: TURN_FAILED, phase });
   const heard = await fleet.main.waitForEntry(isFailure, "the failure to reach the mate");
-  const [, incident, generation] =
-    /Incident (\d+), process generation (\d+)/.exec(heard.body) ?? [];
-  return {
-    worker,
-    token,
-    card: card.id,
-    incident: Number(incident),
-    generation: Number(generation),
-  };
+  return { worker, token, ...recoveryOf(heard) };
 }
 
 test("a recovery check whose compaction verified is never sent again or reported missed", async () => {
@@ -94,6 +92,36 @@ test("a recovery check the worker read and answered is never sent again or repor
   assert.equal(checksSent(worker), 1);
   assert.deepEqual(missedAbout(fleet, card), []);
   await Promise.all([worker.close(), control.worker.close()]);
+});
+
+test("a mate's unverified recovery check replays after read or acknowledgement", async () => {
+  const token = fleet.cardd.addLane("cleo", "main");
+  const mate = await fleet.cardd.connect(token, [], false);
+  await mate.call("incident.report", { error: TURN_FAILED });
+  const heard = await fleet.main.waitForEntry(isFailure, "the second mate's failure");
+  const { card, incident, generation } = recoveryOf(heard);
+  await fleet.main.call("card.restart", { card, incident, generation, mode: "retry", key: "retry" });
+  const probe = await mate.waitForEntry(isCheck, "the second mate's recovery check");
+  mate.read(probe.id);
+  await mate.call("card", { card });
+  await mate.lose();
+
+  const afterRead = await fleet.cardd.connect(token, [], false);
+  await afterRead.call("card", { card });
+  assert.equal(afterRead.entries.find(({ entry }) => isCheck(entry))?.entry.id, probe.id);
+  afterRead.ack(probe.id);
+  await afterRead.call("card", { card });
+  await afterRead.lose();
+
+  const afterAck = await fleet.cardd.connect(token, [], false);
+  await afterAck.call("card", { card });
+  assert.equal(afterAck.entries.find(({ entry }) => isCheck(entry))?.entry.id, probe.id);
+  await afterAck.call("board", {});
+  await fleet.main.waitForEntry(
+    (entry) => entry.card === card && entry.body.includes("recovered (retry)"),
+    "the mate's recovery to verify after the board call",
+  );
+  await afterAck.close();
 });
 
 for (const signal of ["read", "report"] as const) {
