@@ -41,7 +41,7 @@ function progressAt(db: DatabaseSync, card: number): number {
 function runsOf(db: DatabaseSync, card: number): Run[] {
   return db
     .prepare(
-      `SELECT j.id AS id, j.label AS label, j.created_at AS at, ${runningJobSql("j")} AS running
+      `SELECT j.id AS id, j.label AS label, coalesce(j.registered_at, j.created_at) AS at, ${runningJobSql("j")} AS running
        FROM jobs j JOIN attempts a ON a.id = j.attempt
        WHERE a.card = ? AND a.state IN ('starting', 'active') AND ${launchedJobSql("j")}
        ORDER BY j.id`,

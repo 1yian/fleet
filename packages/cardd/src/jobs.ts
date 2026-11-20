@@ -166,11 +166,20 @@ export function registerJob(
   const now = Date.now();
   const { changes } = db
     .prepare(
-      `UPDATE jobs SET wrapper_pid = ?, updated_at = ?
+      `UPDATE jobs SET wrapper_pid = ?, registered_at = coalesce(registered_at, ?), updated_at = ?
      WHERE id = ? AND attempt = ? AND launch_id = ? AND ${jobStateSql("state", JOB_RUNNING)}
        AND (wrapper_pid = ? OR (wrapper_pid IS NULL AND created_at > ?))`,
     )
-    .run(args.pid, now, args.job, attemptOf(db, session), args.launch, args.pid, now - STARTUP_MS);
+    .run(
+      args.pid,
+      now,
+      now,
+      args.job,
+      attemptOf(db, session),
+      args.launch,
+      args.pid,
+      now - STARTUP_MS,
+    );
   return changes === 1;
 }
 

@@ -190,7 +190,7 @@ CREATE TABLE "jobs" (
   output_tail TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  dropped_at INTEGER, launch_id TEXT, wrapper_pid INTEGER CHECK (wrapper_pid IS NULL OR (wrapper_pid > 0 AND launch_id IS NOT NULL)),
+  dropped_at INTEGER, launch_id TEXT, wrapper_pid INTEGER CHECK (wrapper_pid IS NULL OR (wrapper_pid > 0 AND launch_id IS NOT NULL)), registered_at INTEGER CHECK (registered_at IS NULL OR launch_id IS NOT NULL),
   CHECK ((state = 'finished') = (exit_code IS NOT NULL)),
   CHECK (dropped_at IS NULL OR state = 'lost')
 ) STRICT;
