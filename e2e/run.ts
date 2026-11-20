@@ -286,7 +286,7 @@ function costOf(): (file: string) => number {
 function balanced(files: readonly string[], count: number): string[][] {
   const cost = costOf();
   const bins = Array.from({ length: count }, () => ({ load: 0, files: new Array<string>() }));
-  for (const file of [...files].sort((a, b) => cost(b) - cost(a) || a.localeCompare(b))) {
+  for (const file of [...files].sort((a, b) => cost(b) - cost(a) || (a < b ? -1 : a > b ? 1 : 0))) {
     const bin = bins.reduce((least, each) => (each.load < least.load ? each : least));
     bin.load += cost(file);
     bin.files.push(file);
@@ -301,9 +301,11 @@ function filesToRun(): string[] {
   const count = Number(found?.[2]);
   if (found === null || index > count) throw new Error("--shard must be N/M with N from 1 to M");
   const named = process.argv.slice(2).filter((arg) => arg !== shard);
-  const files = (named.length > 0 ? named : ["e2e/**/*.test.ts"]).flatMap((pattern) =>
-    globSync(pattern, { cwd: ROOT }),
-  );
+  const files = (named.length > 0 ? named : ["e2e/**/*.test.ts"]).flatMap((pattern) => {
+    const matched = globSync(pattern, { cwd: ROOT });
+    if (matched.length === 0) throw new Error(`no end-to-end test file matches ${pattern}`);
+    return matched;
+  });
   return balanced(files, count)[index - 1] ?? [];
 }
 

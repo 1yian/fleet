@@ -73,7 +73,7 @@ function readBody(request: IncomingMessage): Promise<string> {
 
 function abortedIsFine(request: IncomingMessage, answering: Promise<void>): void {
   void answering.catch((error: unknown) => {
-    if (!request.destroyed) throw error;
+    if (request.complete) throw error;
   });
 }
 
