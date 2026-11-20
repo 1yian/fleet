@@ -187,7 +187,10 @@ async function laneHerdrOnce(
   const reply = jsonRecord(out);
   const refusal = laneRefusal(reply, args);
   if (refusal !== undefined) throw refusal;
-  if (isRecord(reply?.["result"]) && reply["error"] === undefined) return reply["result"];
+  const result = reply?.["result"];
+  const paneRun = mode === "mutate" && args[0] === "pane" && args[1] === "run";
+  if (isRecord(result) && reply?.["error"] === undefined && (!paneRun || result["type"] === "ok"))
+    return result;
   const message = `herdr ${args.slice(0, 2).join(" ")} returned no complete result`;
   throw mode === "observe" ? new HostUnread(message) : new Error(message);
 }
