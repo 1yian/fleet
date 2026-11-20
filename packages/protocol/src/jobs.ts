@@ -160,7 +160,7 @@ export const JOB_OPS = {
   },
   "job.stop": {
     roles: ["worker"],
-    args: Type.Object({ job: Type.Integer(), beforeRegistration: Type.Optional(JobLaunchId) }),
+    args: Type.Object({ job: Type.Integer() }),
     result: Type.Object({
       label: Type.String(),
       running: Type.Boolean(),

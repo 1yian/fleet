@@ -13,6 +13,7 @@ import { jobCutover } from "./job-cutover.ts";
 import {
   dropLostJob,
   finishJob,
+  recordJobResult,
   registerJob,
   runningJobs,
   startJob,
@@ -85,28 +86,6 @@ type Handler = (
   closeCheck?: CloseCheck,
   emptyBranch?: true,
 ) => Done;
-
-function recordJobResult(
-  db: DatabaseSync,
-  session: Session,
-  job: number,
-  label: string,
-  result: { exitCode: number; outputTail: string },
-): readonly string[] {
-  if (session.card === null) return [];
-  addEntry(
-    db,
-    {
-      card: session.card,
-      author: `job:${String(job)}`,
-      kind: "job-result",
-      body: result.outputTail,
-      fields: { job, label, exitCode: result.exitCode },
-    },
-    [session.id],
-  );
-  return [session.id];
-}
 
 const TO_MATE: ReadonlySet<ReportStatus> = new Set([
   "in-review",
@@ -342,16 +321,16 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
       return { value: { recorded: false }, notify: [] };
     return {
       value: { recorded: true },
-      notify: recordJobResult(db, session, args.job, finished.label, args),
+      notify: recordJobResult(db, session, args.job, finished.label, args, finished.startupFenced),
     };
   },
   "job.stop": (db, session, raw) => {
     const args = check(OPS["job.stop"].args, raw);
-    const { label, running, result } = stopJob(db, session.id, args);
+    const { label, running, result } = stopJob(db, session.id, args.job);
     if (result === undefined) return { value: { label, running }, notify: [] };
     return {
       value: { label, running, cancelled: true },
-      notify: recordJobResult(db, session, args.job, label, result),
+      notify: recordJobResult(db, session, args.job, label, result, true),
     };
   },
   "job.drop": (db, session, raw) => {

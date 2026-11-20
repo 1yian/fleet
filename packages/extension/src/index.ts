@@ -285,6 +285,11 @@ function deliverAfterSync(
   deliver: (extra: string) => void,
 ): void {
   const job = entry.fields["job"];
+  if (typeof job === "number" && entry.fields["startupFenced"] === true) {
+    jobs.confirmStartupFence(job);
+    deliver("");
+    return;
+  }
   jobs.sync(typeof job === "number" ? job : undefined).then(
     () => {
       deliver("");
