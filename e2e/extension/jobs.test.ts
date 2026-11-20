@@ -101,6 +101,7 @@ async function jobProxy(
   jobsReply?: (reply: CallResult) => CallResult | undefined,
   reportReply?: (reply: CallResult) => CallResult | undefined,
   beforeStop?: Promise<void>,
+  idleReply?: (reply: CallResult) => CallResult | undefined,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -127,6 +128,7 @@ async function jobProxy(
     const upstream = new WebSocket(fleet.cardd.url);
     const jobReads = new Set<number>();
     const reports = new Set<number>();
+    const idleReads = new Set<number>();
     client.pause();
     upstream.on("open", () => {
       client.resume();
@@ -136,9 +138,15 @@ async function jobProxy(
       const forward = (): void => {
         if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
       };
-      if (jobsReply !== undefined || reportReply !== undefined || beforeStop !== undefined) {
+      if (
+        jobsReply !== undefined ||
+        reportReply !== undefined ||
+        beforeStop !== undefined ||
+        idleReply !== undefined
+      ) {
         const message = parseClientMessage(text);
         if (message.t === "call") {
+          if (message.op === "job.idle" && idleReply !== undefined) idleReads.add(message.id);
           if (message.op === "jobs" && jobsReply !== undefined) jobReads.add(message.id);
           if (message.op === "report" && reportReply !== undefined) reports.add(message.id);
           if (message.op === "job.stop" && beforeStop !== undefined) {
@@ -163,6 +171,13 @@ async function jobProxy(
       } else if (client.readyState === WebSocket.OPEN) {
         if (message.t === "result" && jobReads.delete(message.id) && jobsReply !== undefined) {
           const reply = jobsReply(message);
+          if (reply !== undefined) client.send(JSON.stringify(reply));
+        } else if (
+          message.t === "result" &&
+          idleReads.delete(message.id) &&
+          idleReply !== undefined
+        ) {
+          const reply = idleReply(message);
           if (reply !== undefined) client.send(JSON.stringify(reply));
         } else if (
           message.t === "result" &&
@@ -583,7 +598,7 @@ for (const fault of ["failed", "hanging"] as const) {
 for (const fault of ["failed", "partial"] as const) {
   test(`an automatic stop after cold reload respects a running job despite a ${fault} initial list`, async (t) => {
     const faultSent = Promise.withResolvers<number[]>();
-    const reportAnswered = Promise.withResolvers<void>();
+    let reportCalls = 0;
     let reloading = false;
     await jobProxy(
       t,
@@ -598,7 +613,7 @@ for (const fault of ["failed", "partial"] as const) {
           : { ...reply, value: [] };
       },
       (reply) => {
-        reportAnswered.resolve();
+        reportCalls += 1;
         return reply;
       },
     );
@@ -624,12 +639,12 @@ for (const fault of ["failed", "partial"] as const) {
     h.onModel(() => ({ text: "The command still has work" }));
     second.prompt("Check on the command after reload");
     await settled(2);
-    await reportAnswered.promise;
     const published = await untilAsync(async () => {
       const state = (await cardView()).card.activity?.state;
       return state === "running" ? undefined : state;
     }, "the worker to publish its settled activity");
     assert.equal(published, "waiting");
+    assert.equal(reportCalls, 0);
     assert.equal(said("Your run is ending without a handoff"), false);
     assert.deepEqual(await cardReports(), []);
     assert.equal(await status(fleet.main, card), "working");
@@ -901,15 +916,53 @@ exec ${quote(herdr)} "$@"
   assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
 });
 
+test("an unknown idle verdict skips the nudge and the automatic stop, and a later confirmed idle run gets both", async (t) => {
+  let unknown = true;
+  let reportCalls = 0;
+  await jobProxy(
+    t,
+    callCardd,
+    false,
+    undefined,
+    (reply) => {
+      reportCalls += 1;
+      return reply;
+    },
+    undefined,
+    (reply) =>
+      unknown ? { t: "result", id: reply.id, ok: false, error: "idle verdict unavailable" } : reply,
+  );
+  h.onModel(() => ({ text: "Nothing is running." }));
+  const pi = worker();
+  await settled(1);
+  assert.equal(said("Your run is ending without a handoff"), false);
+  assert.equal(reportCalls, 0);
+  assert.deepEqual(await cardReports(), []);
+  assert.equal(await status(fleet.main, card), "working");
+
+  unknown = false;
+  h.onModel(() => ({ text: "Still nothing is running." }));
+  h.onModel(() => ({ text: "Confirmed idle, nothing to report." }));
+  pi.prompt("Check again");
+  await fleet.main.waitForEntry(
+    (entry) => entry.kind === "report" && entry.fields["status"] === "stopped",
+    "the stopped handoff after a confirmed idle nudge",
+  );
+  assert.ok(said("Your run is ending without a handoff"));
+  assert.deepEqual(await cardReports(), [
+    ["stopped", "ended the run without a handoff: Confirmed idle, nothing to report."],
+  ]);
+});
+
 test("a failed job-file write cannot hand off as stopped until cardd fences the reservation", async (t) => {
   const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
   t.after(() => db.close());
   db.exec(`CREATE TRIGGER refuse_startup_result BEFORE UPDATE ON jobs
     WHEN OLD.label = 'pre-dispatch' AND NEW.state = 'finished'
     BEGIN SELECT RAISE(ABORT, 'startup result unavailable'); END;`);
-  const reportAnswered = Promise.withResolvers<CallResult>();
+  let reportCalls = 0;
   await jobProxy(t, callCardd, false, undefined, (reply) => {
-    reportAnswered.resolve(reply);
+    reportCalls += 1;
     return reply;
   });
   const marker = join(h.dir, "unexpected-execution");
@@ -920,9 +973,7 @@ test("a failed job-file write cannot hand off as stopped until cardd fences the 
   h.onModel(() => ({ text: "The job failed to start." }));
   worker();
   await settled(1);
-  const reply = await reportAnswered.promise;
-  assert.ok(reply.ok);
-  assert.equal(check(OPS.report.result, reply.value).deferred, true);
+  assert.equal(reportCalls, 0);
   assert.ok(said("ENOENT"));
   assert.equal(said("Your run is ending without a handoff"), false);
   db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
