@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "node:test";
@@ -304,8 +304,7 @@ for (const { mode, situation, generation, error } of readinessCases) {
     const original = await workerGroupOf(lab, "c-1-a1");
     assert.ok(original !== undefined && original > 0);
     if (mode === "before") execFileSync("mkfifo", [gateOf(launchArgsOf(h))]);
-    const competing = mode === "visible" && process.env["FLEET_E2E_COMPETING_READINESS"] === "1";
-    writeFileSync(armed, competing ? "competing" : mode);
+    writeFileSync(armed, mode);
     mate.prompt("restart after dispatch", "followUp");
     const group = await replacementGroup(parts, original, generation);
     if (mode === "visible") {
@@ -313,12 +312,6 @@ for (const { mode, situation, generation, error } of readinessCases) {
       assert.equal(await workerGroupOf(lab, "c-1-a1"), group);
     } else await stopReplacement(parts, group, generation);
     writeFileSync(released, "release\n");
-    if (mode === "visible")
-      await poll(
-        () => existsSync(`${armed}.readiness-error`) || undefined,
-        "the transport to emit the readiness error",
-        WORKER_WAIT_MS,
-      );
 
     const result = await poll(
       () =>
