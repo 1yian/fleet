@@ -89,6 +89,25 @@ class ConvergeFailure extends Error {
   }
 }
 
+function writeShared(
+  home: string,
+  target: string,
+  current: string | undefined,
+  published: string | undefined,
+  bytes: string | undefined,
+): "unchanged" | "removed" | "updated" {
+  if (bytes === undefined) {
+    if (current === undefined) return "unchanged";
+    rmSync(target);
+    rmSync(publishedFile(home), { force: true });
+    return "removed";
+  }
+  if (current !== bytes) publish(target, bytes, READ_ONLY);
+  chmodSync(target, READ_ONLY);
+  if (published !== bytes) publish(publishedFile(home), bytes, 0o600);
+  return current === bytes ? "unchanged" : "updated";
+}
+
 function converge(home: string, bytes: string | undefined): { result: string; aside?: string } {
   mkdirSync(join(home, "data"), { recursive: true });
   mkdirSync(join(home, "state"), { recursive: true });
@@ -100,16 +119,8 @@ function converge(home: string, bytes: string | undefined): { result: string; as
   const aside = kept === undefined ? "" : `, edited copy preserved as data/${kept}`;
   const keptOnly = kept === undefined ? {} : { aside: kept };
   try {
-    if (bytes === undefined) {
-      if (current === undefined) return { result: "unchanged" };
-      rmSync(target);
-      rmSync(publishedFile(home), { force: true });
-      return { result: `removed${aside}`, ...keptOnly };
-    }
-    if (current !== bytes) publish(target, bytes, READ_ONLY);
-    chmodSync(target, READ_ONLY);
-    if (published !== bytes) publish(publishedFile(home), bytes, 0o600);
-    return { result: current === bytes ? "unchanged" : `updated${aside}`, ...keptOnly };
+    const result = writeShared(home, target, current, published, bytes);
+    return { result: `${result}${aside}`, ...keptOnly };
   } catch (error) {
     throw new ConvergeFailure(error, kept);
   }

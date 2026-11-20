@@ -1,3 +1,4 @@
+import { parseRecord, records } from "./json.ts";
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -56,13 +57,14 @@ if (fault === "cut") process.stdout.write(run.stdout.slice(0, run.stdout.length 
 else if (fault === "partial")
   process.stdout.write('{"expected":["far"],"outcomes":[{"lane":"far"}]}\n');
 else if (["nested", "omit-row", "omit-all", "duplicate-row", "wrong-row"].includes(fault)) {
-  const reply = JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "");
-  const [first] = reply.outcomes;
-  if (fault === "nested") first.action = "unread";
-  if (fault === "omit-row") reply.outcomes = reply.outcomes.slice(0, -1);
-  if (fault === "omit-all") reply.outcomes = [];
-  if (fault === "duplicate-row") reply.outcomes = [first, first];
-  if (fault === "wrong-row") reply.outcomes[1].lane = "unlisted";
+  const reply = parseRecord(run.stdout.trim().split("\n").at(-1) ?? "");
+  const outcomes = records(reply["outcomes"]);
+  const [first, second] = outcomes;
+  if (fault === "nested" && first !== undefined) first["action"] = "unread";
+  if (fault === "omit-row") reply["outcomes"] = outcomes.slice(0, -1);
+  if (fault === "omit-all") reply["outcomes"] = [];
+  if (fault === "duplicate-row") reply["outcomes"] = [first, first];
+  if (fault === "wrong-row" && second !== undefined) second["lane"] = "unlisted";
   process.stdout.write(`${JSON.stringify(reply)}\n`);
 } else if (fault === "failure-only") process.stdout.write('{"failed":"obsolete envelope"}\n');
 else if (fault === "legacy-failure")
