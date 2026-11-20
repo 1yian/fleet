@@ -97,7 +97,7 @@ if [ ! -f "/etc/$NAME-broker/config.json" ]; then
 }
 JSON
 fi
-chown "root:$NAME-broker" "/etc/$NAME-broker/config.json"
+chown "root:$NAME" "/etc/$NAME-broker/config.json"
 chmod 640 "/etc/$NAME-broker/config.json"
 install -m 644 "$APP_DIR/deploy/$NAME.nft" "$CONF_DIR/$NAME.nft"
 sed -e "s|@NODE_BIN@|$NODE_BIN|" -e "s|@APP_DIR@|$APP_DIR|" "$APP_DIR/deploy/$NAME.service" >"/etc/systemd/system/$NAME.service"

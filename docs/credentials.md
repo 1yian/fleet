@@ -42,4 +42,4 @@ What the agent sees back: the steps taken (`username, password, otp`), the resul
 3. For a login that is not in Personal, give it to the lane directly. The password goes in on stdin and is never printed: `sudo deploy/broker-import.sh <lane> <item title> <username> <https website> < password-file`.
 4. For mail: provide the mailbox as a lane item with username and app password. Zoho IMAP is the default. A mailbox on another server needs the optional custom fields `server`, `port`, `tls` on the item, which only the Personal route (step 2) can carry; the import in step 3 creates just username, password and website.
 
-`deploy/install.sh` installs the 1Password CLI (`op` 2.42.0, checksum pinned), the broker unit and a root-owned broker config.
+`deploy/install.sh` installs the 1Password CLI (`op` 2.42.0, checksum pinned), the broker unit and a root-owned broker config (group `fleet-browser`, mode 640) that the broker service can read.
