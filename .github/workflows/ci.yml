@@ -16,7 +16,7 @@ permissions:
 jobs:
   changes:
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
@@ -103,7 +103,7 @@ jobs:
     timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -122,7 +122,7 @@ jobs:
     timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.cardd == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -136,7 +136,7 @@ jobs:
 
   secrets:
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     env:
       GITLEAKS_VERSION: 8.30.1
     steps:
@@ -157,7 +157,7 @@ jobs:
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.pi == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -171,7 +171,7 @@ jobs:
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.cardd-e2e == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -184,14 +184,14 @@ jobs:
 
   e2e-extension:
     timeout-minutes: 30
-    name: e2e-extension (${{ matrix.shard }}/4)
+    name: e2e-extension (${{ matrix.shard }}/12)
     needs: changes
     if: needs.changes.outputs.extension-e2e == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -218,13 +218,13 @@ jobs:
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
-      - run: node --test --test-timeout=300000 --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 "e2e/extension/**/*.test.ts"
+      - run: node --test --test-timeout=300000 --test-concurrency=1 --test-shard=${{ matrix.shard }}/12 "e2e/extension/**/*.test.ts"
 
   e2e-board:
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.board-e2e == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -244,7 +244,7 @@ jobs:
     timeout-minutes: 10
     needs: changes
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - name: Behavior changes need end-to-end tests
         env:
@@ -273,7 +273,7 @@ jobs:
         tests-required,
       ]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - name: Every job passed or was skipped
         env:
