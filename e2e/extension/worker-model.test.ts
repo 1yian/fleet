@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,10 @@ let mainToken: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
+  mkdirSync(join(h.dir, "agent", "extensions"), { recursive: true });
+  execFileSync("herdr", ["integration", "install", "pi"], {
+    env: { ...process.env, PI_CODING_AGENT_DIR: join(h.dir, "agent") },
+  });
   scratch = new Scratch();
   mainToken = cardd.addLane("main", undefined, scratch.root);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
@@ -66,6 +71,13 @@ async function dispatchWorker(
       },
     };
   }, "mate");
+  for (let call = 0; call < 2; call += 1)
+    h.onModel((turns) => {
+      if (!isWorker(turns)) return { text: "dispatched" };
+      return turns.at(-1)?.role === "toolResult"
+        ? { text: "continuing" }
+        : { tool: "run_long", args: { label: "wait", command: "sleep 300" } };
+    }, "mate");
   const pane = await startMain(lab, scratch, h, false, settingsArgs(h));
   const asked: unknown = await cleo.call("card.new", { title: "Ship the fix", kind: "scout" });
   await cleo.call("hold", {
