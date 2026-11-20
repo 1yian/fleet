@@ -1,6 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
-  jobIsRunning,
   parseJobState,
   parseWait,
   type DatedWait,
@@ -9,7 +8,7 @@ import {
   type Wait,
 } from "@fleet/protocol";
 import { requireCaptainWords } from "./authority.ts";
-import { launchedJobSql } from "./jobs.ts";
+import { outstandingJobSql } from "./jobs.ts";
 import { factsFrom, type Standing } from "./status.ts";
 import { cardEntries, mainLane, reachable, type Loaded, type Session } from "./store.ts";
 
@@ -32,13 +31,13 @@ const ABSENT: Record<"job" | "schedule" | "worker", (id: number) => Watching> = 
 
 function jobWatch(db: DatabaseSync, id: number): Watching {
   const row = db
-    .prepare(`SELECT label, state, ${launchedJobSql("j")} AS launched FROM jobs j WHERE id = ?`)
+    .prepare(
+      `SELECT label, state, ${outstandingJobSql("j")} AS outstanding FROM jobs j WHERE id = ?`,
+    )
     .get(id);
   if (row === undefined) return ABSENT.job(id);
   const name = `job ${String(id)} (${String(row["label"])})`;
-  const state = parseJobState(row["state"]);
-  if (!jobIsRunning(state)) return gone(`${name} is ${state}`);
-  return row["launched"] === 1 ? alive(name) : gone(`${name} is awaiting wrapper registration`);
+  return row["outstanding"] === 1 ? alive(name) : gone(`${name} is ${parseJobState(row["state"])}`);
 }
 
 function scheduleWatch(db: DatabaseSync, id: number): Watching {

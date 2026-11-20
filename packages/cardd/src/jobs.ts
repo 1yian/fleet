@@ -24,8 +24,11 @@ export const jobStateSql = (column: string, state: JobState): string => `${colum
 export const launchedJobSql = (alias: string): string =>
   `(${alias}.launch_id IS NULL OR ${alias}.wrapper_pid IS NOT NULL)`;
 
+export const outstandingJobSql = (alias: string): string =>
+  jobStateSql(`${alias}.state`, JOB_RUNNING);
+
 export const runningJobSql = (alias: string): string =>
-  `(${jobStateSql(`${alias}.state`, JOB_RUNNING)} AND ${launchedJobSql(alias)})`;
+  `(${outstandingJobSql(alias)} AND ${launchedJobSql(alias)})`;
 
 interface StoredJob {
   readonly id: number;
@@ -341,9 +344,7 @@ export function abandonRunningJobs(db: DatabaseSync, card: number, at: number): 
 export function hasJobWait(db: DatabaseSync, session: string): boolean {
   return (
     db
-      .prepare(
-        `SELECT 1 FROM jobs WHERE attempt = ? AND ${jobStateSql("state", JOB_RUNNING)} LIMIT 1`,
-      )
+      .prepare(`SELECT 1 FROM jobs j WHERE attempt = ? AND ${outstandingJobSql("j")} LIMIT 1`)
       .get(attemptOf(db, session)) !== undefined
   );
 }
