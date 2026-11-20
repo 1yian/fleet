@@ -149,6 +149,11 @@ export async function startDispatchLab({
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
   const home = tempDir("fleet-home-");
   const mainToken = cardd.addLane("main", undefined, home);
+  const piConfig = tempDir("herdr-pi-");
+  mkdirSync(join(piConfig, "extensions"));
+  execFileSync("herdr", ["integration", "install", "pi"], {
+    env: { ...process.env, PI_CODING_AGENT_DIR: piConfig },
+  });
   const h = await Harness.start();
   const lab = await HerdrLab.start({
     ...h.piEnv("worker"),
@@ -171,6 +176,8 @@ export async function startDispatchLab({
         ...h
           .piArgs(workerShell)
           .filter((arg) => !(site.needsTrust === true && arg === "--no-approve")),
+        "-e",
+        join(piConfig, "extensions", "herdr-agent-state.ts"),
         ...workerArgs,
       ]),
       FLEET_HOSTS: JSON.stringify({
