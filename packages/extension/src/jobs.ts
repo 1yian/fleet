@@ -287,6 +287,7 @@ export class Jobs {
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
       if (startupFenced(pending) || launching.unstarted) throw error;
+      if (pending?.dispatched === true && launching.ran) return { job, tab, started: true };
       if (pending?.dispatched === true)
         throw new Error(
           `Could not confirm dispatch for job ${String(job)}; startup is still being checked: ${why}`,

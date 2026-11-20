@@ -930,6 +930,7 @@ exec ${quote(herdr)} "$@"
     args: { label: "snapshotted", command: `touch ${quote(marker)}` },
   }));
   h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job did not start" } }));
+  h.onModel(() => ({ text: "Noted" }));
   worker();
   await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
   await until(() => (registrations === 1 ? true : undefined), "the registration request");
@@ -938,6 +939,17 @@ exec ${quote(herdr)} "$@"
   await until(
     () => (lists.slice(beforeSnapshot).some((ids) => ids.includes(1)) ? true : undefined),
     "the reconnect snapshot to show the registered job",
+  );
+  const deliveredBefore = h.events.filter((event) => event["type"] === "fleet_delivered").length;
+  await fleet.main.call("comment", {
+    card: card.id,
+    text: "Queued behind the snapshot",
+    later: false,
+  });
+  await h.waitForNth(
+    (event) => event["type"] === "fleet_delivered",
+    deliveredBefore + 1,
+    "a push that the worker can only receive after applying the snapshot",
   );
   writeFileSync(release, "");
   await h.waitForCall(1);
@@ -960,59 +972,59 @@ exec ${quote(herdr)} "$@"
   ]);
 });
 
-test("a successful result received before the pane reply still reports the launch as started", async (t) => {
-  const release = join(jobDir, "release-reply");
-  const accepted = join(jobDir, "pane-accepted");
-  await jobProxy(t, callCardd);
-  const bin = join(jobDir, "bin");
-  mkdirSync(bin);
-  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
-  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+for (const paneReply of ["intact", "unreadable"] as const)
+  test(`a successful result received before an ${paneReply} pane reply still reports the launch as started`, async (t) => {
+    const release = join(jobDir, "release-reply");
+    const accepted = join(jobDir, "pane-accepted");
+    await jobProxy(t, callCardd);
+    const bin = join(jobDir, "bin");
+    mkdirSync(bin);
+    const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+    const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
 const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
 const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
-  writeFileSync(
-    join(bin, "herdr"),
-    `#!/bin/sh
+    writeFileSync(
+      join(bin, "herdr"),
+      `#!/bin/sh
 if [ "$1 $2" = 'pane run' ]; then
   response=$(${quote(herdr)} "$@") || exit "$?"
   touch ${quote(accepted)}
   node -e ${quote(waitForRelease)} || exit "$?"
-  printf '%s\\n' "$response"
-  exit 0
+  ${paneReply === "intact" ? `printf '%s\\n' "$response"; exit 0` : `echo 'pane reply unavailable' >&2; exit 1`}
 fi
 exec ${quote(herdr)} "$@"
 `,
-    { mode: 0o755 },
-  );
-  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
-  t.after(() => writeFileSync(release, ""));
-  h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "quick", command: "echo finished-before-ack" },
-  }));
-  h.onModel(() => ({ tool: "report", args: { status: "done", text: "The job succeeded" } }));
-  worker();
-  await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
-  const result = await untilAsync(
-    async () =>
-      (await cardView()).entries.find(
-        (entry) => entry.kind === "job-result" && entry.fields["exitCode"] === 0,
-      ),
-    "the command's durable successful result",
-  );
-  await h.waitFor(
-    (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
-    "the exact successful result to reach the worker before the pane reply",
-  );
-  writeFileSync(release, "");
-  await h.waitForCall(1);
-  assert.ok(said("Started job 1 (quick) in tab job-1-quick."));
-  await until(
-    () => (said("job 1 (quick) exited 0: finished-before-ack") ? true : undefined),
-    "the successful result in the model's context",
-  );
-  assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
-});
+      { mode: 0o755 },
+    );
+    env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+    t.after(() => writeFileSync(release, ""));
+    h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "quick", command: "echo finished-before-ack" },
+    }));
+    h.onModel(() => ({ tool: "report", args: { status: "done", text: "The job succeeded" } }));
+    worker();
+    await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
+    const result = await untilAsync(
+      async () =>
+        (await cardView()).entries.find(
+          (entry) => entry.kind === "job-result" && entry.fields["exitCode"] === 0,
+        ),
+      "the command's durable successful result",
+    );
+    await h.waitFor(
+      (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
+      "the exact successful result to reach the worker before the pane reply",
+    );
+    writeFileSync(release, "");
+    await h.waitForCall(1);
+    assert.ok(said("Started job 1 (quick) in tab job-1-quick."));
+    await until(
+      () => (said("job 1 (quick) exited 0: finished-before-ack") ? true : undefined),
+      "the successful result in the model's context",
+    );
+    assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
+  });
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();
