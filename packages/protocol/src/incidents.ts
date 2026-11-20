@@ -27,6 +27,7 @@ export const INCIDENT_OPS = {
         "vendor-quota",
         "auth",
         "transient",
+        "withheld",
         "unknown",
       ]),
     }),

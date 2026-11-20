@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, CLOSE } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
-import { COOKIE_COMPLAINTS, REDACTED_COMPLAINTS } from "../support/complaint-redactions.ts";
+import { FIXTURES, withheldFor } from "../support/complaint-redactions.ts";
 import type { FakeIssue } from "../support/github.ts";
 import { poll } from "../support/harness.ts";
 
@@ -188,7 +188,7 @@ test("internationalized email and URL userinfo with an embedded @ stay out of bo
   );
 });
 test("complete credential values and email local parts are removed from both fields", async () => {
-  for (const [index, [text, expected]] of REDACTED_COMPLAINTS.entries()) {
+  for (const [index, [text, expected]] of FIXTURES.redacted.entries()) {
     await worker.call("complaint.publish", { text });
     const issue = (await filed(index + 1))[index];
     assert.equal(issue?.title, expected);
@@ -218,7 +218,7 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     "{token: &shared !!str 'paper canoe', next: yes}",
     "label: &shared paper canoe\ntoken: *shared",
     "{<<: {note: paper canoe}, next: yes}",
-    ...COOKIE_COMPLAINTS,
+    ...FIXTURES.cookies,
     'Tool returned {"password":"paper canoe',
     'password="paper canoe',
     String.raw`{"pass\u0077ord":["paper","canoe"]}`,
@@ -249,12 +249,11 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     "token:\\\n paper\n  canoe",
     'Tool printed password=\\\n"paper canoe',
   ];
-  const expected = "[YAML withheld: credential boundaries unclear]";
   for (const [index, text] of examples.entries()) {
     await worker.call("complaint.publish", { text });
     const issue = (await filed(index + 1))[index];
-    assert.equal(issue?.title, expected);
-    assert.equal(literalSentence(issue.body), expected);
+    assert.equal(issue?.title, withheldFor(text));
+    assert.equal(literalSentence(issue.body), withheldFor(text));
   }
 });
 test("URL authorities split by shell quoting or line continuations are withheld from both issue fields", async () => {
@@ -325,6 +324,7 @@ test("curl commands that may carry a credential option are withheld from both is
     'curl -H "$(printf Cookie): session=paper" https://localhost',
     "curl -H 'Cookie: session=paper' https://localhost",
     "curl -H 'Cookie2: session=paper' https://localhost",
+    ...FIXTURES.curlData,
     "curl --proxy-header 'Proxy-Authorization: Custom paper' https://localhost",
     "curl --proxy-header='Proxy-Authorization: Custom paper' https://localhost",
     "curl -H 'Set-Cookie2: session=paper' https://localhost",

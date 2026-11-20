@@ -1,4 +1,4 @@
-import { CURL_SHELL_EXPANSION } from "./curl-shell.ts";
+import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
 import { hasCookieHeader, logicalView, SECRET_NAME } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
@@ -13,6 +13,7 @@ export type Kind =
   | "vendor-quota"
   | "auth"
   | "transient"
+  | "withheld"
   | "unknown";
 
 const SECRET_KEY = String.raw`\b(${SECRET_NAME})`;
@@ -46,6 +47,7 @@ const CURL_CHECKS = [
   CURL_CREDENTIAL_HEADER,
   CURL_PROXY_LOGIN,
   CURL_UNPROVEN_USERINFO,
+  CURL_DATA_SECRET,
 ];
 const YAML_KEY = String.raw`((?<yamlQuote>["']?)${SECRET_NAME}\k<yamlQuote>)[ \t]*:`;
 const YAML_SCALAR_LINE = String.raw`[^\r\n]+?(?=(?<![ \t])[ \t]+#|$)`;
@@ -81,6 +83,7 @@ const YAML_FLOW_UNBOUNDED_PLAIN = new RegExp(
   String.raw`(?<=[{\[,]${YAML_FLOW_SPACE}?)${YAML_KEY}${YAML_FLOW_SPACE}?(?!['"\u0060])[^\s,\[\]{}]+\s+[^\s,\[\]{}#]`,
   "gi",
 );
+const RECORD_WITHHELD = "[credential record withheld: credential boundaries unclear]";
 const YAML_WITHHELD = "[YAML withheld: credential boundaries unclear]";
 const YAML_FLOW_VALUE = String.raw`(?:${YAML_TAG}${YAML_FLOW_SPACE}(?:${YAML_FLOW_SINGLE_QUOTED}|${yamlDoubleQuoted(YAML_FLOW_BREAK)}|${YAML_FLOW_PLAIN})|${YAML_FLOW_SINGLE_QUOTED})`;
 const YAML_FLOW_SECRET = new RegExp(
@@ -329,7 +332,7 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
   if (curlCredentialOption(urls)) return CURL_WITHHELD;
-  if ([urls, logicalView(urls)].some(hasCookieHeader)) return YAML_WITHHELD;
+  if ([urls, logicalView(urls)].some(hasCookieHeader)) return RECORD_WITHHELD;
   if (hasUnprovenValue(urls)) return YAML_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
   const hidden = SECRET_PATTERNS.reduce(
@@ -419,12 +422,15 @@ export function diagnoseFailure(text: string): {
   const source = normalizeInput(text);
   const diagnostic = redactNormalized(source, "diagnostic");
   const error = clipDiagnostic(diagnostic);
-  if (diagnostic === YAML_WITHHELD || diagnostic === URL_WITHHELD || diagnostic === CURL_WITHHELD) {
+  const marked = [YAML_WITHHELD, URL_WITHHELD, CURL_WITHHELD, RECORD_WITHHELD].includes(diagnostic);
+  if (marked) {
     const envelope = HTTP_ENVELOPE.exec(source);
     const [line = "", status = "", inline] = envelope ?? [];
     const seconds =
       inline ?? (envelope === null ? undefined : headerRetryAfter(source.slice(line.length)));
-    return { error, signals: { kind: classify(status), retryAfter: milliseconds(seconds) } };
+    const kind =
+      envelope === null && diagnostic === RECORD_WITHHELD ? "withheld" : classify(status);
+    return { error, signals: { kind, retryAfter: milliseconds(seconds) } };
   }
   return { error, signals: { kind: classify(error), retryAfter: retryAfterMs(diagnostic) } };
 }
@@ -461,7 +467,7 @@ function modesFor(phase: Phase, kind: Kind): Mode[] {
   if (kind === "stale-module") return ["replace"];
   if (kind === "router-cooldown" || kind === "transient") return ["retry"];
   if (kind === "vendor-quota") return ["replace"];
-  if (kind === "auth") return [];
+  if (kind === "auth" || kind === "withheld") return [];
   return ["retry", "replace"];
 }
 

@@ -209,3 +209,25 @@ export const COOKIE_COMPLAINTS = [
   'Headers {"Cookie":"session=paper"}',
   "Co\\\nokie: session=paper",
 ];
+
+export const CURL_DATA_COMPLAINTS = [
+  "curl --data-urlencode 'password=paper canoe' https://localhost",
+  "curl -d 'token=paper canoe' https://localhost",
+  "curl --data-raw 'user=demo&password=paper canoe' https://localhost",
+  `curl -d '{"password":"paper canoe"}' https://localhost`,
+  "curl -F 'client_secret=paper canoe' https://localhost",
+  "curl --form=api_key=paper\\ canoe https://localhost",
+];
+
+export const RECORD_WITHHELD = "[credential record withheld: credential boundaries unclear]";
+
+export const withheldFor = (text: string): string =>
+  COOKIE_COMPLAINTS.includes(text)
+    ? RECORD_WITHHELD
+    : "[YAML withheld: credential boundaries unclear]";
+
+export const FIXTURES = {
+  cookies: COOKIE_COMPLAINTS,
+  curlData: CURL_DATA_COMPLAINTS,
+  redacted: REDACTED_COMPLAINTS,
+};

@@ -106,6 +106,9 @@ for (const [name, diagnostic] of [
   ["curl grouped header option", "curl -sH X-Auth-Token:paper\\ canoe https://localhost"],
   ["curl basic header with a tail", "curl -H 'Authorization: Basic paper canoe' https://localhost"],
   ["curl hidden marker with a tail", "curl -H 'X-Api-Key: [hidden] canoe' https://localhost"],
+  ["curl form password argument", "curl --data-urlencode 'password=paper canoe' https://localhost"],
+  ["curl json body password", `curl -d '{"password":"paper canoe"}' https://localhost`],
+  ["curl multipart secret", "curl -F 'client_secret=paper canoe' https://localhost"],
   ["curl cookie option", "curl --cookie 'session=paper' https://localhost"],
   ["curl short cookie option", "curl -b 'session=paper' https://localhost"],
   ["curl cookie header", "curl -H 'Cookie: session=paper' https://localhost"],
@@ -165,16 +168,50 @@ for (const [name, diagnostic] of [
     const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
     assert.match(
       heard.body,
-      /: \[(?:YAML|curl|URL) withheld: credential boundaries unclear\]\. Classified unknown\./,
+      /: \[(?:YAML|curl|URL|credential record) withheld: credential boundaries unclear\]\. Classified (?:unknown|withheld)\./,
     );
     assert.doesNotMatch(heard.body, /paper|canoe|shared|harbor|99999/);
   });
 }
 
-test("a diagnostic that only names a token field keeps its text and its auth classification", async () => {
+for (const [name, diagnostic] of [
+  ["a HAR cookie record", String.raw`[{"value":"sid=paper","name":"Cookie"}]`],
+  ["a raw cookie header", "Cookie: session=paper"],
+  ["a native cookies array", String.raw`{"cookies":[{"name":"sid","value":"paper"}]}`],
+] as const) {
+  test(`${name} without a trusted envelope is refused recovery through card.restart`, async () => {
+    const card = await newCard(cleo, "Report a failing diagnostic");
+    await reportFailure(fleet, cleo, card, diagnostic);
+    const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+    assert.ok(heard.body.includes("Classified withheld."), heard.body);
+    assert.doesNotMatch(heard.body, /paper/);
+    await assert.rejects(
+      cleo.call("card.restart", {
+        card: card.id,
+        incident: 1,
+        generation: 1,
+        mode: "retry",
+        key: "withheld-retry",
+      }),
+      /is blocked/,
+    );
+  });
+}
+
+test("an Unauthorized report that only names a token field keeps its text, is classified auth, and is refused recovery", async () => {
   const card = await newCard(cleo, "Report an auth failure");
-  await reportFailure(fleet, cleo, card, 'HTTP 401 {"message":"Unauthorized","field":"token"}');
+  await reportFailure(fleet, cleo, card, '{"message":"Unauthorized","field":"token"}');
   const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
   assert.ok(heard.body.includes('{"message":"Unauthorized","field":"token"}'), heard.body);
   assert.ok(heard.body.includes("Classified auth."), heard.body);
+  await assert.rejects(
+    cleo.call("card.restart", {
+      card: card.id,
+      incident: 1,
+      generation: 1,
+      mode: "retry",
+      key: "auth-retry",
+    }),
+    /is blocked/,
+  );
 });

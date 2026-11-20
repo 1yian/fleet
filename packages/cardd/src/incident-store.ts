@@ -36,6 +36,7 @@ const KIND_NAMES: readonly Kind[] = [
   "vendor-quota",
   "auth",
   "transient",
+  "withheld",
 ];
 const kindOf = (value: unknown): Kind => KIND_NAMES.find((kind) => kind === value) ?? "unknown";
 
