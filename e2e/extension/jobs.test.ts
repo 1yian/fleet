@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { join } from "node:path";
@@ -167,6 +167,36 @@ test("run_long recovers a committed reservation after torn prepare replies and r
   t.after(() => db.close());
   const reservations = db.prepare("SELECT id FROM jobs WHERE label = ?").all("recover");
   assert.deepEqual(reservations.map((row) => row["id"]), [1]);
+});
+
+test("a job-file failure does not keep Pi waiting when cardd cannot record the startup error", async () => {
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  try {
+    db.exec(`CREATE TRIGGER refuse_startup_result BEFORE UPDATE ON jobs
+      WHEN OLD.label = 'pre-dispatch' AND NEW.state = 'finished'
+      BEGIN SELECT RAISE(ABORT, 'startup result unavailable'); END;`);
+  } finally {
+    db.close();
+  }
+  const marker = join(h.dir, "unexpected-execution");
+  h.onModel(() => {
+    rmSync(jobDir, { recursive: true });
+    return { tool: "run_long", args: { label: "pre-dispatch", command: `touch ${quote(marker)}` } };
+  });
+  h.onModel(() => ({ text: "The job failed to start." }));
+  h.onModel(() => ({ text: "There is no job to wait for." }));
+  worker();
+  await settled(1);
+  assert.ok(said("ENOENT"));
+  assert.ok(said("Your run is ending without a handoff"));
+  const stopped = await fleet.main.waitForEntry(
+    (entry) => entry.fields["status"] === "stopped",
+    "the worker's stopped handoff after the failed launch",
+  );
+  assert.match(stopped.body, /There is no job to wait for/);
+  assert.equal(existsSync(marker), false);
+  const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
+  assert.deepEqual(view.entries.filter((entry) => entry.kind === "job-result"), []);
 });
 
 test("a run_long job runs with the worker's scratch folder, temp folder, and compile cache, not the host's defaults", async () => {
