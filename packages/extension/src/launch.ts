@@ -21,7 +21,11 @@ import { isRecord, parseLaneConfig, readLaneConfig, strings } from "./lane-confi
 import { checkLaneSecrets } from "./lane-secrets.ts";
 import { costRows } from "./cost.ts";
 import { setUpMemory } from "./memory.ts";
-import { MAINTENANCE_SWEEP_MS } from "./maintenance-budget.ts";
+import {
+  MAINTENANCE_OUTCOMES_CAPABILITY,
+  MAINTENANCE_OUTCOMES_OPTION,
+  MAINTENANCE_SWEEP_MS,
+} from "./maintenance-budget.ts";
 import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences } from "./standing.ts";
@@ -69,7 +73,18 @@ if (process.argv.slice(2).some((arg) => arg === "--token" || arg.startsWith("--t
   process.exit(2);
 }
 
-const cliArgs = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+if (rawArgs.length === 1 && rawArgs[0] === MAINTENANCE_OUTCOMES_OPTION) {
+  console.log(MAINTENANCE_OUTCOMES_CAPABILITY);
+  process.exit(0);
+}
+const typedMaintenance =
+  rawArgs.length === 4 &&
+  rawArgs[0] === "up" &&
+  rawArgs[1] === "--maintenance" &&
+  rawArgs[2] === "--json" &&
+  rawArgs[3] === MAINTENANCE_OUTCOMES_OPTION;
+const cliArgs = typedMaintenance ? rawArgs.slice(0, -1) : rawArgs;
 const placement =
   cliArgs.length === 3 &&
   cliArgs[0] === "status" &&
@@ -227,7 +242,6 @@ function lane(): string {
 }
 
 const maintenance = command === "up" && values.maintenance === true;
-const maintenanceJson = maintenance && values.json === true;
 const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
 function maintenanceFailure(failed: string, outcomes: readonly Outcome[] = []): void {
@@ -241,7 +255,7 @@ if (command === "up" || command === "restart") {
   }
   const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline);
   if (problems.length > 0) {
-    if (maintenanceJson) {
+    if (typedMaintenance) {
       maintenanceFailure(problems.join("\n"));
       process.exit(0);
     }
@@ -268,13 +282,18 @@ switch (command ?? "") {
   case "up":
     try {
       const { outcomes, failed } = await up(root, rest[0], maintenanceDeadline);
-      if (failed !== undefined && maintenanceJson) maintenanceFailure(failed, outcomes);
+      if (typedMaintenance && failed !== undefined) maintenanceFailure(failed, outcomes);
       else {
+        if (maintenance && values.json === true && !typedMaintenance) {
+          if (failed !== undefined) throw new Error(failed);
+          if (outcomes.some(({ action }) => action === "unread"))
+            throw new Error("maintenance could not read every lane");
+        }
         show(outcomes);
         if (failed !== undefined) throw new Error(failed);
       }
     } catch (error) {
-      if (!maintenanceJson) throw error;
+      if (!typedMaintenance) throw error;
       maintenanceFailure(error instanceof Error ? error.message : String(error));
     }
     break;

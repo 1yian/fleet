@@ -291,6 +291,7 @@ test("unread transport and nested observations neither report failure nor clear 
     "down",
     "nested",
     "failed",
+    "failed-partial",
     "failure-with-start",
     "operation-failure",
     "down",
@@ -322,8 +323,38 @@ test("unread transport and nested observations neither report failure nor clear 
     assert.equal(notices.split(notice).length - 1, 1, notice);
   assert.ok(notices.indexOf(outage) < notices.indexOf(failure));
   assert.ok(notices.indexOf(failure) < notices.indexOf(recovery));
-  assert.doesNotMatch(notices, /obsolete envelope|p620 could not be read/);
+  assert.doesNotMatch(notices, /obsolete envelope|unconfirmed|p620 could not be read/);
   await waitState(p620, "far", "running");
+});
+
+test("maintenance waits on ambiguous support and reports a confirmed old host's failure", async () => {
+  const control = join(here.parent, "version-faults");
+  const capability = `${control}.capability`;
+  writeFileSync(control, "legacy-failure\n");
+  writeFileSync(capability, "ambiguous");
+  configureMain(here, cardd.url, mainToken, {
+    hosts: { p620: ["node", TORN, control] },
+    roots: { p620: p620.root },
+  });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const blocked = await h.waitForCall(0, "mate", WAIT_MS);
+  assert.match(users(blocked), /could not verify maintenance support on p620/);
+  assert.equal(states(p620)["far"], "down");
+  assert.throws(() => readFileSync(`${control}.log`), { code: "ENOENT" });
+  writeFileSync(capability, "legacy");
+  await until(
+    () =>
+      sessionText().includes("legacy maintenance could not acquire the lane lock")
+        ? true
+        : undefined,
+    "main to report the old host's operation failure",
+  );
+  await waitState(p620, "far", "running");
+  const probes = readFileSync(`${control}.probes`, "utf8").trim().split("\n");
+  assert.equal(probes[0], "ambiguous");
+  assert.ok(probes.includes("legacy"));
+  assert.equal(readFileSync(`${control}.log`, "utf8").split("\n")[0], "legacy-failure");
 });
 
 test("a mate that keeps dying is held, and only naming it starts it again", async () => {
