@@ -181,6 +181,11 @@ export const JOB_OPS = {
       dropped: Type.Boolean(),
     }),
   },
+  "job.idle": {
+    roles: ["worker"],
+    args: Type.Object({}),
+    result: Type.Object({ idle: Type.Boolean() }),
+  },
   jobs: {
     roles: ["worker"],
     args: Type.Object({}),

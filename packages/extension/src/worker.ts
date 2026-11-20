@@ -166,7 +166,7 @@ export class WorkerRun {
     pi.on("message_end", (event) => {
       if (event.message.role === "assistant") this.lastText = textOf(event.message);
     });
-    pi.on("agent_before_settle", (event) => {
+    pi.on("agent_before_settle", async (event) => {
       if (
         this.failures.lastFailed ||
         this.mayEnd() ||
@@ -174,6 +174,11 @@ export class WorkerRun {
         this.nudged
       )
         return undefined;
+      const idle = await this.link.call("job.idle", {}, CARDD_DEADLINE_MS).then(
+        (verdict) => verdict.idle,
+        () => false,
+      );
+      if (!idle) return undefined;
       this.nudged = true;
       const nudge = {
         type: "custom_message",
