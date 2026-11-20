@@ -1,11 +1,20 @@
 import type { DatabaseSync } from "node:sqlite";
-import { QUEUED_DELIVERY } from "./delivery-states.ts";
+import { QUEUED_DELIVERY, retireNoticeDeliveries } from "./delivery-states.ts";
 import { acceptsRestartNotice } from "./status.ts";
 import { loadCard } from "./store.ts";
 
 export const LIVE_REQUEST = `json_extract(e.fields, '$.restartKey') IS NOT NULL AND NOT EXISTS (
   SELECT 1 FROM entries f WHERE f.card = e.card AND f.kind = 'note' AND f.id > e.id
     AND json_extract(f.fields, '$.restartFailed') = e.id)`;
+
+const supersessionOf = (card: string, request: string): string => `(SELECT max(CASE
+  WHEN e.kind = 'comment' OR s.generation > json_extract(e.fields, '$.generation') THEN 2
+  ELSE 1 END)
+  FROM entries e LEFT JOIN sessions s ON s.id = json_extract(e.fields, '$.actor')
+  WHERE e.card = ${card} AND e.id > ${request} AND (
+    (e.kind = 'note' AND ${LIVE_REQUEST}) OR
+    (e.kind = 'comment' AND json_extract(e.fields, '$.recoveryMode') = 'replace')
+  ))`;
 
 interface Request {
   readonly key: string;
@@ -41,20 +50,18 @@ export function noticeState(
     requestOf(db, card, request) === undefined
   )
     return "retired";
-  const row = db
-    .prepare(
-      `SELECT max(CASE
-       WHEN e.kind = 'comment' OR s.generation > json_extract(e.fields, '$.generation') THEN 2
-       ELSE 1 END) AS supersession
-     FROM entries e LEFT JOIN sessions s ON s.id = json_extract(e.fields, '$.actor')
-     WHERE e.card = ? AND e.id > ? AND (
-       (e.kind = 'note' AND ${LIVE_REQUEST}) OR
-       (e.kind = 'comment' AND json_extract(e.fields, '$.recoveryMode') = 'replace')
-     )`,
-    )
-    .get(card, request);
+  const row = db.prepare(`SELECT ${supersessionOf("?", "?")} AS supersession`).get(card, request);
   if (row?.["supersession"] === 2) return "retired";
   return row?.["supersession"] === 1 ? "suppressed" : "eligible";
+}
+
+export function retireSupersededNotices(db: DatabaseSync, card: number): void {
+  const request = "json_extract(n.fields, '$.restartNotice')";
+  db.prepare(
+    retireNoticeDeliveries(`SELECT n.id, n.card FROM entries n
+      WHERE n.card = ? AND n.kind = 'comment' AND json_type(n.fields, '$.restartNotice') = 'integer'
+        AND ${supersessionOf("n.card", request)} = 2`),
+  ).run(Date.now(), card);
 }
 
 export function releaseRestartNotices(db: DatabaseSync, card: number, refunded: number): string[] {

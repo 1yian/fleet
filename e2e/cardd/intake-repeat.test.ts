@@ -134,13 +134,14 @@ async function missedAfterResends(main: Session, worker: Session, source: Entry)
   );
 }
 
-for (const by of ["hold", "refund"] as const) {
+for (const by of ["hold", "refund", "incident replacement", "generation advance"] as const) {
   test(`a restart notice retired by ${by} stops replay and chase of its missed finding`, async () => {
     const { cardd, mainToken } = fleet;
     const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
     const main = await cardd.connect(mainToken, [], false, true);
     const card = await newCard(cleo, "Keep only live missed findings");
-    const worker = await cardd.connect(await begin(cleo, card), [], false);
+    const token = await begin(cleo, card);
+    const worker = await cardd.connect(token, [], false);
     const [task] = await worker.waitForEntries(1);
     assert.ok(task !== undefined);
     worker.ack(task.id);
@@ -169,10 +170,47 @@ for (const by of ["hold", "refund"] as const) {
     if (by === "hold") {
       await park(cleo, card, "Wait for CI", 60 * MINUTE);
       assert.equal(await status(cleo, card), "waiting");
-    } else {
+    } else if (by === "refund") {
       assert.deepEqual(await cleo.call("card.restart.failed", { card: card.id, key, request }), {
         recorded: true,
       });
+    } else if (by === "incident replacement") {
+      const { incident } = check(
+        OPS["incident.report"].result,
+        await worker.call("incident.report", { error: "something odd happened" }),
+      );
+      await worker.close();
+      const plan = check(
+        OPS["card.restart"].result,
+        await cleo.call("card.restart", {
+          card: card.id,
+          incident,
+          generation: 1,
+          mode: "replace",
+          key: "incident-replacement",
+        }),
+      );
+      assert.equal(plan.repeat, false);
+    } else {
+      await worker.close();
+      const nextKey = "new-worker-process";
+      const next = check(
+        OPS["card.restart"].result,
+        await cleo.call("card.restart", { card: card.id, mode: "replace", key: nextKey }),
+      );
+      assert.ok(next.request !== undefined);
+      assert.equal(cardd.startNewProcess(token), true);
+      const replacement = await cardd.connect(token, [task.id, notice.id, steer.id], false, true);
+      await replacement.call("jobs", {});
+      assert.deepEqual(copies(replacement, notice.id), []);
+      assert.deepEqual(
+        await cleo.call("card.restart.failed", {
+          card: card.id,
+          key: nextKey,
+          request: next.request,
+        }),
+        { recorded: false },
+      );
     }
 
     const reconnected = await cardd.connect(mainToken, [], false, true);
