@@ -78,11 +78,11 @@ if (rawArgs.length === 1 && rawArgs[0] === MAINTENANCE_OUTCOMES_OPTION) {
   console.log(MAINTENANCE_OUTCOMES_CAPABILITY);
   process.exit(0);
 }
-const offset = Number(rawArgs[4] ?? "0");
+const offset = Number(rawArgs[4]);
 const typedMaintenance =
-  (rawArgs.length === 4 || rawArgs.length === 5) &&
+  rawArgs.length === 5 &&
+  /^(?:0|[1-9]\d*)$/.test(rawArgs[4] ?? "") &&
   Number.isSafeInteger(offset) &&
-  offset >= 0 &&
   rawArgs[0] === "up" &&
   rawArgs[1] === "--maintenance" &&
   rawArgs[2] === "--json" &&
@@ -298,18 +298,12 @@ try {
         values.absent === true
           ? undefined
           : Buffer.from(values.content ?? "", "base64").toString("utf8");
-      const { results, failures } = convergeSharedPreferences(root, bytes);
-      const line = ({ lane: name, result }: (typeof results)[number]): string =>
-        `${name}: shared preferences ${result}`;
-      for (const each of results) console.log(line(each));
+      const { results, failures, preserved } = convergeSharedPreferences(root, bytes);
+      for (const { lane: name, result } of results)
+        console.log(`${name}: shared preferences ${result}`);
       if (failures.length > 0)
         throw new Error(
-          [
-            ...failures,
-            ...results
-              .filter(({ result }) => result.includes(", edited copy preserved as "))
-              .map((each) => `${PRESERVED_PREFIX}${line(each)}`),
-          ].join("\n"),
+          [...failures, ...preserved.map((line) => `${PRESERVED_PREFIX}${line}`)].join("\n"),
         );
       break;
     }

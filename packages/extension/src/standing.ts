@@ -80,7 +80,16 @@ function publish(path: string, bytes: string, mode: number): void {
   renameSync(next, path);
 }
 
-function converge(home: string, bytes: string | undefined): string {
+class ConvergeFailure extends Error {
+  readonly aside: string | undefined;
+
+  constructor(error: unknown, aside: string | undefined) {
+    super(error instanceof Error ? error.message : String(error));
+    this.aside = aside;
+  }
+}
+
+function converge(home: string, bytes: string | undefined): { result: string; aside?: string } {
   mkdirSync(join(home, "data"), { recursive: true });
   mkdirSync(join(home, "state"), { recursive: true });
   const target = pathOf(home, SHARED);
@@ -89,34 +98,46 @@ function converge(home: string, bytes: string | undefined): string {
   const edited = current !== undefined && current !== bytes && current !== published;
   const kept = edited ? preserveAside(home, current) : undefined;
   const aside = kept === undefined ? "" : `, edited copy preserved as data/${kept}`;
-  if (bytes === undefined) {
-    if (current === undefined) return "unchanged";
-    rmSync(target);
-    rmSync(publishedFile(home), { force: true });
-    return `removed${aside}`;
+  const keptOnly = kept === undefined ? {} : { aside: kept };
+  try {
+    if (bytes === undefined) {
+      if (current === undefined) return { result: "unchanged" };
+      rmSync(target);
+      rmSync(publishedFile(home), { force: true });
+      return { result: `removed${aside}`, ...keptOnly };
+    }
+    if (current !== bytes) publish(target, bytes, READ_ONLY);
+    chmodSync(target, READ_ONLY);
+    if (published !== bytes) publish(publishedFile(home), bytes, 0o600);
+    return { result: current === bytes ? "unchanged" : `updated${aside}`, ...keptOnly };
+  } catch (error) {
+    throw new ConvergeFailure(error, kept);
   }
-  if (current !== bytes) publish(target, bytes, READ_ONLY);
-  chmodSync(target, READ_ONLY);
-  if (published !== bytes) publish(publishedFile(home), bytes, 0o600);
-  return current === bytes ? "unchanged" : `updated${aside}`;
 }
 
 export function convergeSharedPreferences(
   root: string,
   bytes: string | undefined,
-): { results: { lane: string; result: string }[]; failures: string[] } {
+): { results: { lane: string; result: string }[]; failures: string[]; preserved: string[] } {
   const { homes, unread } = discoverLanes(root);
   const results: { lane: string; result: string }[] = [];
+  const preserved: string[] = [];
   const failures = unread.length === 0 ? [] : [unreadFailure(unread)];
   for (const { lane, home } of homes) {
     try {
-      results.push({ lane, result: converge(home, bytes) });
+      const { result, aside } = converge(home, bytes);
+      results.push({ lane, result });
+      if (aside !== undefined) preserved.push(`${lane}: shared preferences ${result}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       failures.push(`lane ${lane} could not be updated: ${message}`);
+      if (error instanceof ConvergeFailure && error.aside !== undefined)
+        preserved.push(
+          `${lane}: shared preferences incomplete, edited copy preserved as data/${error.aside}`,
+        );
     }
   }
-  return { results, failures };
+  return { results, failures, preserved };
 }
 
 interface Entry {
