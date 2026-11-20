@@ -366,11 +366,7 @@ async function workspaceOf(
     };
   };
   const first = await read();
-  const current = await findWorkspace(first.current, info.home, purpose, false, deadline);
-  if (current !== undefined) return current;
   const fresh = await read();
-  const found = await findWorkspace(fresh.current, info.home, purpose, false, deadline);
-  if (found !== undefined) return found;
   const same = (before: typeof first.current, after: typeof fresh.current) =>
     before.length === after.length &&
     before.every((row, index) => {
@@ -379,8 +375,11 @@ async function workspaceOf(
         row["workspace_id"] === next?.["workspace_id"] && row["pane_count"] === next?.["pane_count"]
       );
     });
-  if (!same(first.current, fresh.current) || !same(first.legacy, fresh.legacy))
-    throw new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
+  const changed = () => new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
+  if (first.current.length > 0 && !same(first.current, fresh.current)) throw changed();
+  const found = await findWorkspace(fresh.current, info.home, purpose, false, deadline);
+  if (found !== undefined) return found;
+  if (!same(first.current, fresh.current) || !same(first.legacy, fresh.legacy)) throw changed();
   return findWorkspace(fresh.legacy, info.home, purpose, true, deadline);
 }
 
