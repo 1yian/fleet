@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { connect } from "node:net";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Card } from "@fleet/protocol";
+import {
+  CardViewSchema,
+  check,
+  HttpCallSchema,
+  HttpOutcomeSchema,
+  OPS,
+  type Card,
+} from "@fleet/protocol";
+import { quote } from "@fleet/protocol/route";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
 import { Harness, type Pi, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
@@ -75,6 +86,87 @@ test("a failed pipeline wakes the worker with failure, and the wait is not a sta
   while ((await labels()).includes("job-1-tests") && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 50));
   assert.deepEqual(await labels(), ["1"]);
+});
+
+test("run_long recovers a committed reservation after torn prepare replies and runs once", async (t) => {
+  const upstream = new URL(fleet.cardd.url);
+  const token = env["FLEET_TOKEN"] ?? "";
+  const receipts: number[] = [];
+  const proxy = createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8").on("data", (chunk: string) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      void (async () => {
+        const { op, args } = check(HttpCallSchema, JSON.parse(body));
+        const result = await fleet.cardd.post(token, op, args);
+        res.writeHead(result.status, { "content-type": "application/json" });
+        const outcome = check(HttpOutcomeSchema, result.body);
+        if (op === "job.prepare" && outcome.ok) {
+          receipts.push(check(OPS["job.prepare"].result, outcome.value).job);
+          if (receipts.length === 1) {
+            res.end('{"ok":true,"value":');
+            return;
+          }
+          if (receipts.length === 2) {
+            res.end(JSON.stringify({ ok: true, value: { job: receipts[1] } }));
+            return;
+          }
+        }
+        res.end(JSON.stringify(result.body));
+      })().catch((error: unknown) => res.destroy(error instanceof Error ? error : undefined));
+    });
+  });
+  proxy.on("upgrade", (req, client, head) => {
+    const server = connect(Number(upstream.port), upstream.hostname, () => {
+      const headers = Object.entries(req.headers).map(
+        ([name, value]) => `${name}: ${String(value)}`,
+      );
+      server.write(`GET ${upstream.pathname} HTTP/1.1\r\n${headers.join("\r\n")}\r\n\r\n`);
+      server.write(head);
+      client.pipe(server).pipe(client);
+    });
+    const close = (): void => {
+      client.destroy();
+      server.destroy();
+    };
+    t.after(close);
+    for (const socket of [client, server]) socket.on("error", close).on("close", close);
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    proxy.closeAllConnections();
+    proxy.close();
+  });
+  const address = proxy.address();
+  assert.ok(address && typeof address !== "string");
+  env["FLEET_URL"] = `ws://127.0.0.1:${String(address.port)}${upstream.pathname}`;
+
+  const marker = join(jobDir, "executions");
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "recover", command: `echo executed >> ${quote(marker)}; echo recovered` },
+  }));
+  h.onModel(() => ({ text: "waiting for the command" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "result received" } }));
+  worker();
+  await h.waitForCall(2);
+  assert.ok(said("Started job 1 (recover) in tab job-1-recover."));
+  await fleet.main.waitForEntry((entry) => entry.body === "result received", "the worker handoff");
+  assert.deepEqual(receipts, [1, 1, 1]);
+  assert.equal(readFileSync(marker, "utf8"), "executed\n");
+  const view = check(CardViewSchema, await fleet.main.call("card", { card: card.id }));
+  assert.deepEqual(
+    view.entries
+      .filter((entry) => entry.kind === "job-result")
+      .map((entry) => [entry.fields["job"], entry.fields["exitCode"], entry.body]),
+    [[1, 0, "recovered"]],
+  );
+  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
+  t.after(() => db.close());
+  const reservations = db.prepare("SELECT id FROM jobs WHERE label = ?").all("recover");
+  assert.deepEqual(reservations.map((row) => row["id"]), [1]);
 });
 
 test("a run_long job runs with the worker's scratch folder, temp folder, and compile cache, not the host's defaults", async () => {

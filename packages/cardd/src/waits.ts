@@ -9,6 +9,7 @@ import {
   type Wait,
 } from "@fleet/protocol";
 import { requireCaptainWords } from "./authority.ts";
+import { launchedJobSql } from "./jobs.ts";
 import { factsFrom, type Standing } from "./status.ts";
 import { cardEntries, mainLane, reachable, type Loaded, type Session } from "./store.ts";
 
@@ -30,11 +31,14 @@ const ABSENT: Record<"job" | "schedule" | "worker", (id: number) => Watching> = 
 };
 
 function jobWatch(db: DatabaseSync, id: number): Watching {
-  const row = db.prepare("SELECT label, state FROM jobs WHERE id = ?").get(id);
+  const row = db
+    .prepare(`SELECT label, state, ${launchedJobSql("j")} AS launched FROM jobs j WHERE id = ?`)
+    .get(id);
   if (row === undefined) return ABSENT.job(id);
   const name = `job ${String(id)} (${String(row["label"])})`;
   const state = parseJobState(row["state"]);
-  return jobIsRunning(state) ? alive(name) : gone(`${name} is ${state}`);
+  if (!jobIsRunning(state)) return gone(`${name} is ${state}`);
+  return row["launched"] === 1 ? alive(name) : gone(`${name} is awaiting wrapper registration`);
 }
 
 function scheduleWatch(db: DatabaseSync, id: number): Watching {

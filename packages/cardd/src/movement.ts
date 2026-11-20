@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Entry } from "@fleet/protocol";
-import { runningJobSql } from "./jobs.ts";
+import { launchedJobSql, runningJobSql } from "./jobs.ts";
 import type { Loaded } from "./store.ts";
 import { SCHEDULE, SCRIPT } from "./wakes.ts";
 
@@ -41,9 +41,10 @@ function progressAt(db: DatabaseSync, card: number): number {
 function runsOf(db: DatabaseSync, card: number): Run[] {
   return db
     .prepare(
-      `SELECT j.id AS id, j.label AS label, j.created_at AS at, ${runningJobSql("j.state")} AS running
+      `SELECT j.id AS id, j.label AS label, j.created_at AS at, ${runningJobSql("j")} AS running
        FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE a.card = ? AND a.state IN ('starting', 'active') ORDER BY j.id`,
+       WHERE a.card = ? AND a.state IN ('starting', 'active') AND ${launchedJobSql("j")}
+       ORDER BY j.id`,
     )
     .all(card)
     .map((row) => ({
