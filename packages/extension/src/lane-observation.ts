@@ -29,11 +29,8 @@ async function observeList(
   return rows;
 }
 
-const paneKey = (panes: readonly { pane: string }[]): string =>
-  panes
-    .map(({ pane }) => pane)
-    .sort()
-    .join(",");
+const paneKey = (panes: readonly { pane: string; cwd: string | undefined }[]): string =>
+  JSON.stringify(panes.map(({ pane, cwd }) => [pane, cwd ?? null]));
 
 type Topology = Map<string, string>;
 

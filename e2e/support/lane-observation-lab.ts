@@ -53,11 +53,28 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
-  'pane process-info:split-at-info')
+  'pane process-info:split-at-info'|'pane process-info:pi-split-at-info')
     if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.split" ]; then
       : > "$HERDR_FAULT_LOG.split"
       "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+      if [ "$HERDR_FAULT" = 'pi-split-at-info' ]; then
+        printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+        exit 0
+      fi
     fi ;;
+  'pane list:cwd-flip')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    if [ ! -e "$HERDR_FAULT_LOG.listed" ]; then
+      : > "$HERDR_FAULT_LOG.listed"
+      printf '%s' "$reply"
+      exit 0
+    fi
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.panes) if (row.pane_id === process.env.FAULT_PANE) delete row.cwd;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
   'pane process-info:pi-in-split')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'

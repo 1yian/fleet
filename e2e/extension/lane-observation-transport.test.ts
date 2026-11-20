@@ -190,6 +190,32 @@ test("a pane split opened while the pane is being inspected leaves the lane unre
   assert.deepEqual(maintain(), action("ops", "started"));
 });
 
+test("a split opened while Pi is being seen never lifts a hold or erases start history", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, history);
+  writeFileSync(stopped, "stopped by hand\n");
+  assert.deepEqual(maintain("pi-split-at-info", root), action("ops", "unread"));
+  assert.equal(existsSync(`${faultLog()}.split`), true);
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("a legacy workspace whose home evidence vanishes on the confirming read is never closed", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const legacy = await idlePane("ops", home, "fleet-ops");
+  const labels = async () =>
+    records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["label"]);
+  assert.throws(() => fleet(["stop", "ops"], "cwd-flip", legacy), /unread|incomplete|changed/);
+  assert.deepEqual(await labels(), ["fleet-ops"]);
+  rmSync(`${faultLog()}.listed`, { force: true });
+  assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");
+  assert.deepEqual(await labels(), []);
+});
+
 test("maintenance returns a completed start even when the next lane cannot be read", async () => {
   addLane("zz");
   assert.deepEqual(JSON.parse(fleet(["up", "zz", "--json"])), action("zz", "started"));
