@@ -33,7 +33,7 @@ const CURL_COMMAND = /(?<![\w-])curl(?![\w.-])/i;
 const CURL_CREDENTIAL_OPTION =
   /(?<=\s)(?:--(?:proxy-)?user(?![\w-])|--oauth2-bearer(?![\w-])|--cookie(?![\w-])|-[^-\s]*[uUb])/;
 const CURL_CREDENTIAL_HEADER = new RegExp(
-  String.raw`(?<=\s)(?:--header[=\s]\s*|-[^-\s]*H\s*)(?:${SECRET_NAME}|(?:set-)?cookie)\s*:`,
+  String.raw`(?<=\s)(?:--header[=\s]\s*|-[^-\s]*H\s*)(?:${SECRET_NAME}|(?:set-)?cookie2?)\s*:`,
   "i",
 );
 const CURL_PROVEN_HEADER = new RegExp(

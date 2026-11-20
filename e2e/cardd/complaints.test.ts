@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { CardSchema, check, CLOSE } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
-import { REDACTED_COMPLAINTS } from "../support/complaint-redactions.ts";
+import { COOKIE_COMPLAINTS, REDACTED_COMPLAINTS } from "../support/complaint-redactions.ts";
 import type { FakeIssue } from "../support/github.ts";
 import { poll } from "../support/harness.ts";
 
@@ -218,11 +218,7 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     "{token: &shared !!str 'paper canoe', next: yes}",
     "label: &shared paper canoe\ntoken: *shared",
     "{<<: {note: paper canoe}, next: yes}",
-    "GET / HTTP/1.1\nHost: localhost\nCookie: session=paper",
-    "HTTP/1.1 200 OK\nSet-Cookie: session=paper; HttpOnly",
-    "cookie: paper=canoe; river=sail",
-    'Headers {"Cookie":"session=paper"}',
-    "Co\\\nokie: session=paper",
+    ...COOKIE_COMPLAINTS,
     'Tool returned {"password":"paper canoe',
     'password="paper canoe',
     String.raw`{"pass\u0077ord":["paper","canoe"]}`,
@@ -328,6 +324,8 @@ test("curl commands that may carry a credential option are withheld from both is
     "`curl -I https://localhost` then curl localhost -H ${name}: session=paper",
     'curl -H "$(printf Cookie): session=paper" https://localhost',
     "curl -H 'Cookie: session=paper' https://localhost",
+    "curl -H 'Cookie2: session=paper' https://localhost",
+    "curl -H 'Set-Cookie2: session=paper' https://localhost",
     "curl --header 'Set-Cookie: session=paper' https://localhost",
     'curl -H "Authorization: Token abc" https://localhost',
     'curl --header="Authorization: NTLM abc" https://localhost',

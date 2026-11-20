@@ -174,3 +174,16 @@ export const REDACTED_COMPLAINTS = [
   ['{"token":[hidden],"next":"yes"}', '{"token":[hidden],"next":"yes"}'],
   ["The only clue was token: [hidden].", "The only clue was token: [hidden]."],
 ] as const;
+
+export const COOKIE_COMPLAINTS = [
+  "GET / HTTP/1.1\nHost: localhost\nCookie: session=paper",
+  "HTTP/1.1 200 OK\nSet-Cookie: session=paper; HttpOnly",
+  "cookie: paper=canoe; river=sail",
+  "Cookie: [hidden]; session=paper",
+  "Set-Cookie2: [hidden]; session=paper",
+  String.raw`Headers {"Co\u006fkie":"session=paper"}`,
+  String.raw`Headers {\"Set-Co\u006fkie\":\"session=paper\"}`,
+  "Cookie2: session=paper",
+  'Headers {"Cookie":"session=paper"}',
+  "Co\\\nokie: session=paper",
+];
