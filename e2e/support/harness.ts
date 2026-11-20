@@ -71,6 +71,12 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
+function abortedIsFine(request: IncomingMessage, answering: Promise<void>): void {
+  void answering.catch((error: unknown) => {
+    if (!request.destroyed) throw error;
+  });
+}
+
 export function rawText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   return Array.isArray(data)
@@ -199,14 +205,14 @@ export class Harness {
     const harness = new Harness(server, new WebSocketServer({ server, path: "/probe" }));
     server.on("request", (request, response) => {
       if (request.method === "POST" && request.url?.startsWith("/anthropic/v1/messages") === true) {
-        void harness.answerWire(request, response);
+        abortedIsFine(request, harness.answerWire(request, response));
         return;
       }
       if (request.method !== "POST" || request.url !== "/model") {
         response.writeHead(404).end();
         return;
       }
-      void harness.answerModel(request, response);
+      abortedIsFine(request, harness.answerModel(request, response));
     });
 
     harness.sockets.on("connection", (socket) => {
