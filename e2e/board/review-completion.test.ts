@@ -64,6 +64,7 @@ async function fixture(t: TestContext) {
   const cardd = await Cardd.start(
     {
       ...site.env,
+      PATH: tempDir("fleet-cardd-empty-path-"),
       CARDD_REVIEW_ORIGINS: `${reportedOrigin}=https://127.0.0.1:${String(upstream.port)}`,
       CARDD_REVIEW_ARTIFACT_ORIGIN: "https://review.example.test",
     },
@@ -243,8 +244,12 @@ async function openReview(lab: Lab, target: Round) {
       failures.push(request.failure()?.errorText ?? "request failed");
   });
   const question = page.getByRole("article").filter({ hasText: "Finish Plan" });
-  await question.getByRole("link", { name: "Open review" }).click();
+  const [response] = await Promise.all([
+    page.waitForResponse((result) => result.url() === reviewUrl(target)),
+    question.getByRole("link", { name: "Open review" }).click(),
+  ]);
   assert.equal(page.url(), reviewUrl(target));
+  if (response.status() !== 200) assert.equal(response.status(), 200, await response.text());
   const artifact = page.frameLocator('iframe[title="Review artifact"]');
   const heading = artifact.getByRole("heading", { name: "Plan" });
   await heading.waitFor({ timeout: 5000 }).catch((error: unknown) => {
