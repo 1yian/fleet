@@ -45,7 +45,7 @@ function writeIncidentDatabase(file: string): void {
     `INSERT INTO entries (card, author, kind, body, fields, created_at)
      VALUES (?, 'mate:cleo', 'comment', ?, ?, ?)`,
   );
-  for (const id of [1, 2, 3, 4]) {
+  for (const id of [1, 2, 3, 4, 5]) {
     const name = `c-${String(id)}`;
     const ended = id === 3;
     card.run(id, `Card ${String(id)}`, name, T);
@@ -69,6 +69,12 @@ function writeIncidentDatabase(file: string): void {
   insert.run(3, "c-3-a1", 3, "working", "verified", past, T, T, T + 5);
   insert.run(4, "c-4-a1", 4, "completed", "blocked", null, T, T, null);
   seededIncidents = db.prepare("SELECT * FROM incidents ORDER BY id").all();
+  db.prepare("UPDATE sessions SET generation = 2 WHERE id = 'c-5-a1'").run();
+  db.prepare(
+    `INSERT INTO incidents (id, actor, card, parent, generation, phase, classification, error, source,
+       intent, state, eligible_at, due_told, first_at, last_at)
+     VALUES (5, 'c-5-a1', 5, 'cleo', 1, 'turn', 'unknown', 'odd failure', 'turn', 'working', 'open', NULL, 1, ?, ?)`,
+  ).run(T, T);
   db.close();
 }
 
@@ -85,7 +91,7 @@ async function polled<T>(read: () => Promise<T | undefined>, what: string): Prom
 const withoutDueTold = (rows: readonly Record<string, unknown>[]): unknown[] =>
   rows.map((row) => Object.entries(row).filter(([column]) => column !== "due_told"));
 
-test("a fleet's live incidents survive the intent migration, and an old merging incident is still offered recovery", async () => {
+test("a fleet's live incidents survive the intent migration, an old merging incident is still offered recovery, and an incident left on an old process generation moves to its actor's", async () => {
   const cardd = await Cardd.start({ CARDD_TIMING_SCALE: "0.01" }, [], writeIncidentDatabase);
   try {
     const cleo = await cardd.connect(incidentToken("mate", "cleo"));
@@ -115,6 +121,12 @@ test("a fleet's live incidents survive the intent migration, and an old merging 
           "3 verified working told=0",
           "4 blocked completed told=0",
         ],
+      );
+      const moved = db.prepare("SELECT state, generation FROM incidents WHERE id = 5").get();
+      assert.deepEqual(
+        [moved?.["state"], moved?.["generation"]],
+        ["open", 2],
+        "an open incident that a replacement left on its old generation follows the actor",
       );
       assert.throws(
         () =>

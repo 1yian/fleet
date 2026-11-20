@@ -57,6 +57,7 @@ export class Cardd {
   private child: ChildProcess | undefined;
   private supervised = false;
   private readonly processes = new Map<string, string>();
+  readonly startNewProcess = (token: string): boolean => this.processes.delete(token);
   private readonly env: NodeJS.ProcessEnv;
   output = "";
   errors = "";
