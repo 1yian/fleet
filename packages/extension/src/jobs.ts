@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -127,7 +126,7 @@ export class Jobs {
       );
       return;
     }
-    if (lost === true || typeof exitCode === "number") void this.dropLegacyFile(job);
+    if (lost === true || typeof exitCode === "number") this.dropLegacyFile(job);
     const launching = this.launching.get(job);
     if (launching !== undefined && entry.fields["commandNotStarted"] === true)
       launching.unstarted = true;
@@ -158,11 +157,11 @@ export class Jobs {
     return join(hostDir(), "job-launch-files", `${this.owner(job)}.path`);
   }
 
-  private async dropLegacyFile(job: number): Promise<void> {
+  private dropLegacyFile(job: number): void {
     const record = this.launchRecord(job);
     let file: string;
     try {
-      file = (await readFile(record, "utf8")).trim();
+      file = readFileSync(record, "utf8").trim();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const why = error instanceof Error ? error.message : String(error);
@@ -174,12 +173,12 @@ export class Jobs {
       this.warn(`Job ${String(job)}'s launch record ${record} does not name its launch file`);
       return;
     }
-    if (await this.removeFile(job, file)) await this.removeFile(job, record);
+    if (this.removeFile(job, file)) this.removeFile(job, record);
   }
 
-  private async removeFile(job: number, file: string): Promise<boolean> {
+  private removeFile(job: number, file: string): boolean {
     try {
-      await rm(file, { force: true });
+      rmSync(file, { force: true });
       return true;
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
@@ -214,7 +213,7 @@ export class Jobs {
     const pending = this.pending.get(job);
     if (pending === undefined) return;
     this.pending.delete(job);
-    void this.removeFile(job, pending.file);
+    this.removeFile(job, pending.file);
   }
 
   private async closeStartupTab(job: number, tab: string): Promise<void> {
@@ -286,9 +285,10 @@ export class Jobs {
     this.preparing.delete(id);
     if (registeredLaunch && preparing.fence?.job === job)
       throw new Error(`Job ${String(job)} cannot start: ${preparing.fence.detail}`);
-    const file = registeredLaunch
-      ? join(tmpdir(), `fleet-job-${String(job)}-${id}.json`)
-      : join(tmpdir(), this.legacyLaunchName(job));
+    const file = join(
+      resolve(tmpdir()),
+      registeredLaunch ? `fleet-job-${String(job)}-${id}.json` : this.legacyLaunchName(job),
+    );
     const tab = tabName(job, label);
     const pending: PendingDispatch | undefined = registeredLaunch
       ? { launch: id, file, dispatched: false, fenced: false }
@@ -364,7 +364,7 @@ export class Jobs {
           `Could not confirm dispatch for job ${String(job)}; its result, loss, or failed startup arrives as a [fleet] message: ${why}`,
           { cause: error },
         );
-      if (await this.removeFile(job, file)) await this.removeFile(job, this.launchRecord(job));
+      if (this.removeFile(job, file)) this.removeFile(job, this.launchRecord(job));
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link

@@ -1122,7 +1122,7 @@ exec ${quote(herdr)} "$@"
   assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
 });
 
-for (const fault of ["worker reload", "unlink failure"] as const)
+for (const fault of ["worker reload", "relative scratch root", "unlink failure"] as const)
   test(`a legacy dispatch that Herdr never accepted keeps its wait and tab until cardd reports it lost, then removes its launch file across ${fault}`, async (t) => {
     const lossDelivery = Promise.withResolvers<void>();
     t.after(() => lossDelivery.resolve());
@@ -1170,6 +1170,7 @@ exec ${quote(herdr)} "$@"
     }));
     h.onModel(() => ({ text: "Waiting for the command" }));
     h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job is lost" } }));
+    if (fault === "relative scratch root") env["TMPDIR"] = "../jobs";
     const first = worker();
     await settled(1);
     await until(
@@ -1198,7 +1199,7 @@ exec ${quote(herdr)} "$@"
     const path = join(jobDir, name);
     const replacementTmp = join(h.dir, "replacement-tmp");
     const decoy = join(replacementTmp, name);
-    if (fault === "worker reload") {
+    if (fault !== "unlink failure") {
       mkdirSync(replacementTmp);
       writeFileSync(decoy, "not the launch file");
       await first.kill();
@@ -1208,6 +1209,7 @@ exec ${quote(herdr)} "$@"
         (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
         "the replacement worker to receive the exact loss entry",
       );
+      assert.equal(launchFiles().length, 0);
     } else {
       rmSync(path);
       mkdirSync(path);
@@ -1215,11 +1217,7 @@ exec ${quote(herdr)} "$@"
       lossDelivery.resolve();
     }
     await until(() => (said(lostMessage) ? true : undefined), "the loss to reach the worker");
-    if (fault === "worker reload") {
-      await until(
-        () => (launchFiles().length === 0 ? true : undefined),
-        "the launch file to be removed by the replacement worker",
-      );
+    if (fault !== "unlink failure") {
       assert.equal(readFileSync(decoy, "utf8"), "not the launch file");
     } else {
       await until(
