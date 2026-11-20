@@ -319,12 +319,18 @@ test("a lost job is reminded to its mate each tier until the worker runs it agai
       .job;
   const dropped = await start("tests");
   const rerun = await start("build");
-  await reach(fleet.main, card, "job-lost-open", 2);
-  const twice = fleet.main.entries.filter(
-    ({ entry }) => entry.fields["condition"] === "job-lost-open",
-  );
-  assert.ok(twice.some(({ entry }) => entry.body.includes(`job ${String(dropped)} (tests)`)));
-  assert.ok(twice.some(({ entry }) => entry.body.includes(`job ${String(rerun)} (build)`)));
+  for (const [job, label] of [
+    [dropped, "tests"],
+    [rerun, "build"],
+  ] as const)
+    await fleet.main.waitForEntry(
+      (entry) =>
+        entry.card === card.id &&
+        entry.fields["condition"] === "job-lost-open" &&
+        Number(entry.fields["tier"]) >= 2 &&
+        entry.body.includes(`job ${String(job)} (${label})`),
+      `the second reminder of job ${String(job)} (${label})`,
+    );
 
   await worker.call("job.finish", { job: dropped, exitCode: 130, outputTail: "" });
   const again = check(
