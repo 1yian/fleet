@@ -250,7 +250,7 @@ jobs:
         timeout-minutes: 15
       - name: Install stock Lavish for the authenticated browser review
         run: npm install -g lavish-axi@0.1.97
-      - run: node e2e/run.ts "e2e/board/**/*.test.ts"
+      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
 
   tests-required:
     timeout-minutes: 10
