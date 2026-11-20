@@ -61,11 +61,6 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
-  'pane process-info:slow-idle')
-    if [ "$4" = "$FAULT_PANE" ]; then
-      sleep 55
-      exec "$REAL_HERDR" "$@"
-    fi ;;
   'pane process-info:pi-in-split')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
@@ -82,6 +77,20 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"error":{"code":"server_not_running","message":"server not running"}}'
       exit 1
     fi ;;
+  'workspace close:silent-close')
+    exec "$REAL_HERDR" "$@" >/dev/null ;;
+  'pane run:structured-run')
+    "$REAL_HERDR" "$@" >/dev/null || exit $?
+    printf '%s' '{"result":{"type":"ok"}}'
+    exit 0 ;;
+  'pane run:refused-run'|'pane run:failed-run')
+    printf '%s\\n' "$HERDR_FAULT" >> "$HERDR_FAULT_LOG"
+    if [ "$HERDR_FAULT" = 'refused-run' ]; then
+      printf '%s' '{"error":{"code":"refused","message":"run refused"}}'
+      exit 0
+    fi
+    printf '%s' '{"result":{"type":"ok"}}'
+    exit 1 ;;
   'workspace close:close-without-type')
     "$REAL_HERDR" "$@" >/dev/null || exit $?
     printf '%s' '{"result":{}}'
@@ -354,7 +363,16 @@ test("legacy split workspaces close by the original pane's home, not by Pi in a 
     ]);
     const split = records([added["pane"]])[0]?.["pane_id"];
     assert.ok(typeof split === "string");
-    assert.deepEqual(maintain("pi-in-split", split), action("ops", "running"));
+    const stopped = join(home, "state", "stopped");
+    const starts = join(home, "state", "starts");
+    const history = `${String(Date.now())}\n`.repeat(3);
+    writeFileSync(stopped, "stopped by hand\n");
+    writeFileSync(starts, history);
+    assert.deepEqual(maintain("pi-in-split", split), action("ops", "unread"));
+    const status: unknown = JSON.parse(fleet(["status", "--json"], "pi-in-split", split));
+    assert.equal(records(status)[0]?.["state"], "unknown");
+    assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+    assert.equal(readFileSync(starts, "utf8"), history);
     assert.equal(fleet(["stop", "ops"], "pi-in-split", split).trim(), "ops: stopped");
     const listed = async () => records((await lab.run(["workspace", "list"]))["workspaces"]);
     assert.equal(
@@ -464,25 +482,39 @@ test("maintenance returns a completed start alongside a later lifecycle failure"
   assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "started")]);
 });
 
+async function idlePane(lane: string, home: string): Promise<string> {
+  const created = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    home,
+    "--label",
+    `2ndmate-${lane}`,
+    "--no-focus",
+  ]);
+  const pane = records([created["root_pane"]])[0]?.["pane_id"];
+  assert.ok(typeof pane === "string");
+  return pane;
+}
+
+const hangingSweep = (panes: string[]) =>
+  maintenanceOutcomes(fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000"));
+
+test("an early hanging observation does not starve a later healthy lane", async () => {
+  const pane = await idlePane("ops", `${here.root}.worktrees/lane-ops`);
+  addLane("zz");
+  assert.deepEqual(hangingSweep([pane]), [...action("ops", "unread"), ...action("zz", "started")]);
+  assert.equal(readFileSync(faultLog(), "utf8").trim(), pane);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
+    { lane: "ops", state: "down" },
+    { lane: "zz", state: "running" },
+  ]);
+});
+
 test("maintenance returns an accepted start before the caller times out on two hanging reads", async () => {
   const panes = [];
-  for (const lane of ["za", "zb"]) {
-    const home = addLane(lane);
-    const created = await lab.run([
-      "workspace",
-      "create",
-      "--cwd",
-      home,
-      "--label",
-      `2ndmate-${lane}`,
-      "--no-focus",
-    ]);
-    const pane = records([created["root_pane"]])[0]?.["pane_id"];
-    assert.ok(typeof pane === "string");
-    panes.push(pane);
-  }
-  const out = fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000");
-  assert.deepEqual(maintenanceOutcomes(out), [
+  for (const lane of ["za", "zb"]) panes.push(await idlePane(lane, addLane(lane)));
+  assert.deepEqual(hangingSweep(panes), [
     ...action("ops", "started"),
     ...action("za", "unread"),
     ...action("zb", "unread"),
@@ -496,23 +528,25 @@ test("maintenance returns an accepted start before the caller times out on two h
 });
 
 test("maintenance leaves an idle pane untouched when it cannot reserve launch and readiness time", async () => {
+  const panes = [];
+  for (const lane of ["aa", "ab", "ac"]) panes.push(await idlePane(lane, addLane(lane)));
   const home = `${here.root}.worktrees/lane-ops`;
-  const created = await lab.run([
-    "workspace",
-    "create",
-    "--cwd",
-    home,
-    "--label",
-    "2ndmate-ops",
-    "--no-focus",
+  await idlePane("ops", home);
+  assert.deepEqual(hangingSweep(panes), [
+    ...action("aa", "unread"),
+    ...action("ab", "unread"),
+    ...action("ac", "unread"),
+    ...action("ops", "unread"),
   ]);
-  const pane = records([created["root_pane"]])[0]?.["pane_id"];
-  assert.ok(typeof pane === "string");
-  const out = fleet(typedMaintenance, "slow-idle", pane, "60000");
-  assert.deepEqual(maintenanceOutcomes(out), action("ops", "unread"));
+  assert.deepEqual(readFileSync(faultLog(), "utf8").trim().split("\n"), panes);
   assert.equal(existsSync(join(home, "state", "starts")), false);
-  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
-  assert.deepEqual(maintain(), action("ops", "started"));
+  assert.equal(
+    records(JSON.parse(fleet(["status", "--json"]))).find((row) => row["lane"] === "ops")?.[
+      "state"
+    ],
+    "down",
+  );
+  assert.deepEqual(JSON.parse(fleet(["up", "ops", "--json"])), action("ops", "started"));
 });
 
 test("an explicit stop accepts a complete workspace close reply without a type field", async () => {
@@ -522,6 +556,27 @@ test("an explicit stop accepts a complete workspace close reply without a type f
   assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
     { lane: "ops", state: "stopped", reason: "stopped by hand" },
   ]);
+});
+
+test("structured pane run and silent workspace close both succeed", async () => {
+  assert.deepEqual(maintain("structured-run"), action("ops", "started"));
+  assert.deepEqual(maintain(), action("ops", "running"));
+  assert.equal(fleet(["stop", "ops"], "silent-close").trim(), "ops: stopped");
+  assert.equal(await workspace("ops"), undefined);
+});
+
+test("refused and failed pane runs are not recorded or retried", () => {
+  for (const [fault, expected] of [
+    ["refused-run", /no complete result/],
+    ["failed-run", /exit status 1/],
+  ] as const) {
+    const reply = maintain(fault);
+    assert.ok(isRecord(reply));
+    assert.deepEqual(reply["outcomes"], []);
+    assert.match(String(reply["failed"]), expected);
+    assert.equal(existsSync(`${here.root}.worktrees/lane-ops/state/starts`), false);
+  }
+  assert.equal(readFileSync(faultLog(), "utf8"), "refused-run\nfailed-run\n");
 });
 
 test("a malformed mutation acknowledgement is an error, not a start or an unread observation", () => {

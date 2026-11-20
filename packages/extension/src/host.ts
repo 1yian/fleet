@@ -122,15 +122,16 @@ function startServer(session: string | undefined, limit?: number): Promise<void>
     });
     const deadline = Math.min(performance.now() + SERVER_WAIT_MS, limit ?? Infinity);
     while (remainingMs(deadline) > 0) {
-      const up = await herdrOnce(
-        "local",
-        ["workspace", "list"],
-        true,
-        limit === undefined ? undefined : deadline,
-      ).then(
-        () => true,
-        (error: unknown) => !serverMissing(error) && !(error instanceof HostUnread),
-      );
+      const args = ["workspace", "list"];
+      const up = await (limit === undefined
+        ? herdrOnce("local", args, true).then(
+            () => true,
+            (error: unknown) => !serverMissing(error),
+          )
+        : laneHerdrOnce(args, "observe", deadline).then(
+            () => true,
+            () => false,
+          ));
       if (up) return;
       if (child.exited) break;
       await new Promise((resolve) => setTimeout(resolve, Math.min(100, remainingMs(deadline))));
@@ -182,13 +183,11 @@ async function laneHerdrOnce(
   deadline?: number,
 ): Promise<Record<string, unknown>> {
   const out = await herdrText("local", args, mode === "observe", mode, deadline);
-  const [noun, verb] = args;
+  if (mode === "mutate" && out.trim() === "") return {};
   const reply = jsonRecord(out);
   const refusal = laneRefusal(reply, args);
   if (refusal !== undefined) throw refusal;
-  if (noun === "pane" && verb === "run") {
-    if (out.trim() === "") return {};
-  } else if (isRecord(reply?.["result"]) && reply["error"] === undefined) return reply["result"];
+  if (isRecord(reply?.["result"]) && reply["error"] === undefined) return reply["result"];
   const message = `herdr ${args.slice(0, 2).join(" ")} returned no complete result`;
   throw mode === "observe" ? new HostUnread(message) : new Error(message);
 }
@@ -224,9 +223,8 @@ async function herdrOnce(
   host: string,
   args: readonly string[],
   probe: boolean,
-  deadline?: number,
 ): Promise<Record<string, unknown>> {
-  return resultOf(await herdrText(host, args, probe, undefined, deadline), host, args[0] ?? "");
+  return resultOf(await herdrText(host, args, probe), host, args[0] ?? "");
 }
 
 export const paneText = (host: string, pane: string): Promise<string> =>
