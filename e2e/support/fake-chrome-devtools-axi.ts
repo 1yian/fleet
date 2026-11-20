@@ -137,7 +137,7 @@ function closePage(operand: string | undefined): string {
 }
 
 function run(): string {
-  switch (command) {
+  switch (String(command)) {
     case "newpage": {
       const page = openPage(operands[0] ?? fail("newpage needs a url"));
       return `page: {id: ${String(page.id)}, url: ${page.url}}`;
@@ -151,7 +151,6 @@ function run(): string {
       return listPages();
     case "closepage":
       return closePage(operands[0]);
-    case undefined:
     default:
       return fail(`unknown command ${String(command)}`);
   }
