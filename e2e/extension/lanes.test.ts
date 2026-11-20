@@ -283,7 +283,7 @@ test("main tells the captain when a host cannot be reached, and when it is back"
 
 test("unread transport and nested observations neither report failure nor clear a confirmed outage", async () => {
   const control = join(here.parent, "faults");
-  const faults = ["blank", "cut", "partial", "failed", "down", "nested", "down"];
+  const faults = ["blank", "cut", "partial", "down", "nested", "failed", "down"];
   writeFileSync(control, faults.join("\n"));
   configureMain(here, cardd.url, mainToken, {
     hosts: { p620: ["node", TORN, control] },

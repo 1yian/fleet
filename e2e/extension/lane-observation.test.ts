@@ -46,6 +46,15 @@ case "$1 $2:$HERDR_FAULT" in
     exit $? ;;
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
+  'pane process-info:server-missing')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"error":{"code":"server_not_running","message":"server not running"}}'
+      exit 1
+    fi ;;
+  'workspace close:close-without-type')
+    "$REAL_HERDR" "$@" >/dev/null || exit $?
+    printf '%s' '{"result":{}}'
+    exit 0 ;;
   'pane run:malformed') printf '%s' '{}'; exit 0 ;;
 esac
 exec "$REAL_HERDR" "$@"
@@ -170,7 +179,24 @@ test("maintenance returns a completed start even when the next lane cannot be re
     ...action("ops", "started"),
     ...action("zz", "unread"),
   ]);
+  assert.deepEqual(maintain("server-missing", String(pane)), [
+    ...action("ops", "running"),
+    ...action("zz", "unread"),
+  ]);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"], "server-missing", String(pane))), [
+    { lane: "ops", state: "running" },
+    { lane: "zz", state: "unknown", reason: "server not running" },
+  ]);
   assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "running")]);
+});
+
+test("an explicit stop accepts a complete workspace close reply without a type field", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  assert.equal(fleet(["stop", "ops"], "close-without-type").trim(), "ops: stopped");
+  assert.equal(await workspace("ops"), undefined);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
+    { lane: "ops", state: "stopped", reason: "stopped by hand" },
+  ]);
 });
 
 test("a malformed mutation acknowledgement is an error, not a start or an unread observation", () => {

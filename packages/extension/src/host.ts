@@ -148,8 +148,14 @@ export async function laneHerdr(
     return await laneHerdrOnce(args, mode);
   } catch (error) {
     if (!(error instanceof LaneServerMissing)) throw error;
-    await startServer(process.env["HERDR_SESSION"]);
-    return laneHerdrOnce(args, mode);
+    try {
+      await startServer(process.env["HERDR_SESSION"]);
+      return await laneHerdrOnce(args, mode);
+    } catch (failure) {
+      if (mode === "observe" && !(failure instanceof LanePaneNotFound) && failure instanceof Error)
+        throw new HostUnread(failure.message);
+      throw failure;
+    }
   }
 }
 

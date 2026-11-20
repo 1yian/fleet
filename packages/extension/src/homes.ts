@@ -359,8 +359,7 @@ async function close(info: LaneHome): Promise<void> {
   const workspace = await workspaceOf(info);
   if (workspace === undefined) return;
   await claimFollowers(info.lane, workspace).catch(() => undefined);
-  const closed = await laneHerdr(["workspace", "close", workspace], "mutate");
-  if (closed["type"] !== "ok") throw new Error("herdr did not acknowledge workspace close");
+  await laneHerdr(["workspace", "close", workspace], "mutate");
 }
 
 export async function stop(root: string, lane: string): Promise<void> {
