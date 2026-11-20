@@ -14,7 +14,7 @@ import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
-import { listComplaints, recordComplaint } from "./complaints.ts";
+import { fileComplaint } from "./complaints.ts";
 import {
   acknowledgeMaintenance,
   maintenanceStatus,
@@ -171,14 +171,10 @@ const HANDLERS: Record<OpName, Handler> = {
   }),
   "maintenance.ack": (db, session, raw) =>
     acknowledgeMaintenance(db, session, check(OPS["maintenance.ack"].args, raw)),
-  complain: (db, session, raw, timing) => ({
-    value: { id: recordComplaint(db, session, check(OPS.complain.args, raw), timing.wall()) },
-    notify: [],
-  }),
-  complaints: (db, session, raw) => ({
-    value: listComplaints(db, session, check(OPS.complaints.args, raw)),
-    notify: [],
-  }),
+  complain: (db, session, raw, timing) => {
+    fileComplaint(db, session, check(OPS.complain.args, raw), timing.wall());
+    return { value: null, notify: [] };
+  },
   "close.begin": (db, session, raw, _timing, _note, closeCheck) =>
     closeBegin(db, session, raw, closeCheck),
   "close.finish": (db, session, raw, _timing, _note, closeCheck) =>

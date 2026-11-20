@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
-import { check, OPS, parseClientMessage, type Card } from "@fleet/protocol";
+import { parseClientMessage, type Card } from "@fleet/protocol";
 import { begin, newCard, startFleet, status, type Fleet } from "../support/fleet.ts";
-import { Harness, type Pi, type Turn } from "../support/harness.ts";
+import { Harness, poll, type Pi, type Turn } from "../support/harness.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const QUESTION = "Did anything about the system annoy you?";
@@ -45,12 +45,14 @@ const asked = (turns: Turn[] | undefined): number =>
   (turns ?? []).filter((turn) => turn.role === "user" && turn.text.includes(QUESTION)).length;
 const toolResults = (turns: Turn[] | undefined): string[] =>
   (turns ?? []).filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
-const recorded = async () => check(OPS.complaints.result, await fleet.main.call("complaints", {}));
+const filed = () => fleet.cardd.gh.issues();
+const filedBy = (count: number) =>
+  poll(() => (filed().length >= count ? filed() : undefined), `${String(count)} filed issue(s)`);
 const settled = (n: number) =>
   h.waitForNth((e) => e["type"] === "settled", n, `settle ${String(n)}`);
 
 for (const final of ["done", "blocked", "failed"]) {
-  test(`a worker sees the question before its ${final} handoff and records feedback first`, async () => {
+  test(`a worker sees the question before its ${final} handoff and files feedback first`, async () => {
     h.onModel(() => ({ tool: "report", args: { status: "working", text: "setup done" } }));
     h.onModel(() => ({ tool: "complain", args: { text: SENTENCE } }));
     h.onModel(async () => {
@@ -64,7 +66,7 @@ for (const final of ["done", "blocked", "failed"]) {
         prompt,
         /Before a final `done`, `blocked`, or `failed`, ask yourself once:[^\n]+`complain` once, then report/,
       );
-      assert.equal((await recorded())[0]?.text, SENTENCE);
+      assert.equal((await filedBy(1))[0]?.title, SENTENCE);
       return { tool: "report", args: { status: final, text: "handing off" } };
     });
     h.onModel(() => ({ text: "finished" }));
@@ -77,24 +79,30 @@ for (const final of ["done", "blocked", "failed"]) {
       [0, 0, 0, 0],
       "the role context supplies the question without a post-handoff steer",
     );
-    assert.equal(toolResults(h.calls[2]).at(-1), "Recorded complaint 1.");
+    assert.equal(
+      toolResults(h.calls[2]).at(-1),
+      "Sent. cardd files it as a GitHub issue. Carry on.",
+    );
     assert.deepEqual(
-      (await recorded()).map(({ text, session, role, lane, card: on, project }) => ({
-        text,
-        session,
-        role,
-        lane,
-        on,
-        project,
+      filed().map(({ repo, title, labels, body }) => ({
+        repo,
+        title,
+        labels,
+        details: body
+          .split("\n")
+          .filter((line) => line.startsWith("- ") && !line.startsWith("- Time: ")),
       })),
       [
         {
-          text: SENTENCE,
-          session: `c-${String(card.id)}-a1`,
-          role: "worker",
-          lane: "main",
-          on: card.id,
-          project: "web",
+          repo: "1yian/fleet",
+          title: SENTENCE,
+          labels: ["complaint"],
+          details: [
+            "- Role: worker",
+            "- Lane: main",
+            `- Card: c-${String(card.id)}`,
+            "- Project: web",
+          ],
         },
       ],
     );
@@ -165,8 +173,9 @@ test("an open connection that never answers complain times out, warns, and still
   assert.equal(warning["notifyType"], "warning");
   assert.equal(received, 1);
   assert.match(String(warning["message"]), /cardd did not answer in time/);
-  assert.match(toolResults(h.calls[1]).at(-1) ?? "", /^Not recorded: cardd did not take it/);
-  assert.deepEqual(await recorded(), []);
+  assert.match(toolResults(h.calls[1]).at(-1) ?? "", /^Not sent: cardd did not take it/);
+  assert.deepEqual(filed(), []);
+  assert.deepEqual(fleet.cardd.gh.calls(), []);
   assert.equal(h.calls.length, 3);
   assert.deepEqual(
     fleet.main.entries.map(({ entry }) => [entry.fields["status"], entry.body]),

@@ -718,12 +718,14 @@ rows = [
 
 ### Agent complaints
 
-Agents can tell the fleet what annoyed them about its setup. A worker's role context asks "Did anything about the system annoy you?" once per run, before its final `done`, `blocked`, or `failed` report. If yes, it calls `complain` and waits for the recording result before reporting, so an immediate card close cannot interrupt that attempt. A mate is asked once per run, right after its own `close` ended a card. If the answer is yes, the agent calls `complain` with one sentence. If the answer is no, it does nothing: no comment, no entry, no extra model call.
+Agents can tell the captain what annoyed them about the fleet's setup. A worker's role context asks "Did anything about the system annoy you?" once per run, before its final `done`, `blocked`, or `failed` report. If yes, it calls `complain` and waits for the result before reporting, so an immediate card close cannot interrupt that attempt. A mate is asked once per run, right after its own `close` ended a card. If the answer is yes, the agent calls `complain` with one sentence. If the answer is no, it does nothing: no comment, no entry, no extra model call.
 
-- `complaints(limit?)` is the read path. Ask main, or call it as a mate. Main sees every lane's complaints and a second mate its own lane's, newest first, 20 by default. Each line has the id, time, session, role, lane, card, project, and the sentence.
-- `cardd` keeps them in `cards.db`, in the `complaints` table, so they outlive the card, its worktree, and its lane. Nothing in the repository holds one.
+- `cardd` files each complaint as an issue on the public repository `1yian/fleet`, labelled `complaint`. The title is the sentence, and the body adds the time, role, lane, and, when it names one, card and project. Read them there: `gh issue list --repo 1yian/fleet --label complaint`. There is no `complaints` tool and no board view.
+- The `cardd` host needs `gh` logged in (`gh auth login`, as the prerequisites already ask) as an account that can write to `1yian/fleet`. `cardd` runs plain `gh` in its own environment, so a `GH_TOKEN` in the environment of its launchd job or supervisor takes precedence over the login. On the first complaint `cardd` creates the label if it is missing. When it cannot, it logs the reason in `~/.fleet/cardd.log` and files the issue without the label.
 - A complaint is feedback only. Nothing reads one as authority to change infrastructure, bypass a check, or alter a rule. The captain decides what to do with them.
-- A sentence is at most 500 characters, and credential patterns in it become `[hidden]`. When `cardd` is down, the sentence is dropped with a warning in the agent's pane, and the work goes on.
+- A sentence is at most 500 characters. Because the repository is public, credential-shaped text, URLs with a login inside, and email addresses in it become `[hidden]` before `cardd` files it. Lane and project names are not hidden.
+- When `cardd` is down, the sentence is dropped with a warning in the agent's pane, and the work goes on. When `cardd` cannot file the issue (GitHub is down, `gh` is logged out, the account has no access), it drops the sentence and logs `a complaint from <session> was dropped, not filed on 1yian/fleet: <why>` in `~/.fleet/cardd.log`. Nothing retries.
+- Complaints recorded before this change stay in the `complaints` table of `cards.db`. Nothing reads or writes the table now.
 
 ## 7. Updating the fleet
 
