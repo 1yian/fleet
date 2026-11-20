@@ -204,12 +204,46 @@ test("a split opened while Pi is being seen never lifts a hold or erases start h
   assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
 });
 
+test("Pi leaving a pane between reads never lifts a hold or erases start history", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, history);
+  writeFileSync(stopped, "stopped by hand\n");
+  assert.deepEqual(maintain("pi-then-shell", root), action("ops", "unread"));
+  assert.equal(existsSync(`${faultLog()}.pi`), true);
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("a utility pane changing directory does not discard valid Pi evidence in a split", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const root = await idlePane("ops", home);
+  const added = await lab.run([
+    "pane",
+    "split",
+    root,
+    "--direction",
+    "right",
+    "--cwd",
+    home,
+    "--no-focus",
+  ]);
+  const split = records([added["pane"]])[0]?.["pane_id"];
+  assert.ok(typeof split === "string");
+  const rows: unknown = JSON.parse(fleet(["status", "--json"], "split-utility-flip", split));
+  assert.equal(records(rows)[0]?.["state"], "running");
+  assert.equal(existsSync(`${faultLog()}.utility`), true);
+});
+
 test("a legacy workspace whose home evidence vanishes on the confirming read is never closed", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
   const legacy = await idlePane("ops", home, "fleet-ops");
   const labels = async () =>
     records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["label"]);
-  assert.throws(() => fleet(["stop", "ops"], "cwd-flip", legacy), /unread|incomplete|changed/);
+  assert.throws(() => fleet(["stop", "ops"], "cwd-flip", legacy), /no root pane cwd/);
   assert.deepEqual(await labels(), ["fleet-ops"]);
   rmSync(`${faultLog()}.listed`, { force: true });
   assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");

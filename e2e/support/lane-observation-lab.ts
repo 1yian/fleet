@@ -62,6 +62,30 @@ case "$1 $2:$HERDR_FAULT" in
         exit 0
       fi
     fi ;;
+  'pane process-info:pi-then-shell')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.pi" ]; then
+      : > "$HERDR_FAULT_LOG.pi"
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:split-utility-flip')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane list:split-utility-flip')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    if [ ! -e "$HERDR_FAULT_LOG.utility" ]; then
+      : > "$HERDR_FAULT_LOG.utility"
+      printf '%s' "$reply"
+      exit 0
+    fi
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.panes) if (row.pane_id !== process.env.FAULT_PANE) row.cwd = "/tmp";
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
   'pane list:cwd-flip')
     reply=$("$REAL_HERDR" "$@") || exit $?
     if [ ! -e "$HERDR_FAULT_LOG.listed" ]; then

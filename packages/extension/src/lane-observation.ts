@@ -29,17 +29,7 @@ async function observeList(
   return rows;
 }
 
-const paneKey = (panes: readonly { pane: string; cwd: string | undefined }[]): string =>
-  JSON.stringify(panes.map(({ pane, cwd }) => [pane, cwd ?? null]));
-
-type Topology = Map<string, string>;
-
-async function panesOf(
-  workspace: string,
-  count: unknown,
-  deadline?: number,
-  seen?: Topology,
-) {
+async function panesOf(workspace: string, count: unknown, deadline?: number) {
   const rows = await observeList("pane", ["--workspace", workspace], ["pane_id"], deadline);
   const panes = rows.map((row) => ({ pane: String(row["pane_id"]), cwd: field(row, "cwd") }));
   if (
@@ -49,7 +39,6 @@ async function panesOf(
     rows.some((row) => row["workspace_id"] !== workspace)
   )
     throw new HostUnread(`herdr returned an incomplete pane list for ${workspace}`);
-  seen?.set(workspace, paneKey(panes));
   return panes;
 }
 
@@ -67,12 +56,11 @@ async function legacyMatches(
   home: string,
   closing: boolean,
   deadline: number | undefined,
-  seen: Topology,
 ) {
   const verified: { workspace: string; pane: string }[] = [];
   for (const row of rows) {
     const workspace = String(row["workspace_id"]);
-    const panes = await panesOf(workspace, row["pane_count"], deadline, seen);
+    const panes = await panesOf(workspace, row["pane_count"], deadline);
     const [first] = panes;
     if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
     if (!closing && panes.length !== 1)
@@ -92,14 +80,12 @@ async function findLegacy(
   home: string,
   purpose: Purpose,
   deadline: number | undefined,
-  seen: Topology,
 ): Promise<LaneMatch | undefined> {
   const only = await legacyMatches(
     rows,
     home,
     purpose === "close" || purpose === "restart-held",
     deadline,
-    seen,
   );
   if (only === undefined) return undefined;
   if (purpose === "close") return { workspace: only.workspace, state: "matched" };
@@ -135,12 +121,11 @@ async function findCurrent(
   home: string,
   purpose: Purpose,
   deadline: number | undefined,
-  seen: Topology,
 ): Promise<LaneMatch | undefined> {
   if (row === undefined) return undefined;
   const workspace = String(row["workspace_id"]);
   if (purpose === "close") return { workspace, state: "matched" };
-  const panes = await panesOf(workspace, row["pane_count"], deadline, seen);
+  const panes = await panesOf(workspace, row["pane_count"], deadline);
   const [first] = panes;
   if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
   if (panes.length !== 1) return inspectSplit(workspace, panes, home, purpose, deadline);
@@ -170,18 +155,8 @@ const sameRows = (before: Rows, after: Rows): boolean =>
     );
   });
 
-async function sameTopology(
-  seen: Topology,
-  rows: Rows,
-  deadline: number | undefined,
-): Promise<boolean> {
-  for (const [workspace, key] of seen) {
-    const row = rows.find((r) => r["workspace_id"] === workspace);
-    if (row === undefined) return false;
-    if (paneKey(await panesOf(workspace, row["pane_count"], deadline)) !== key) return false;
-  }
-  return true;
-}
+const sameMatch = (a: LaneMatch | undefined, b: LaneMatch | undefined): boolean =>
+  a?.workspace === b?.workspace && a?.state === b?.state && idlePaneOf(a) === idlePaneOf(b);
 
 export async function workspaceOf(
   info: { lane: string; home: string },
@@ -201,24 +176,23 @@ export async function workspaceOf(
     };
   };
   const changed = () => new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
+  type Listed = Awaited<ReturnType<typeof read>>;
+  const decide = async (rows: Listed, before?: Listed) => {
+    const current = await findCurrent(rows.current[0], info.home, purpose, deadline);
+    if (current !== undefined) return current;
+    if (
+      before !== undefined &&
+      (!sameRows(before.current, rows.current) || !sameRows(before.legacy, rows.legacy))
+    )
+      throw changed();
+    return findLegacy(rows.legacy, info.home, purpose, deadline);
+  };
   const first = await read();
   const fresh = await read();
   if (first.current.length > 0 && !sameRows(first.current, fresh.current)) throw changed();
-  const seen: Topology = new Map();
-  let found = await findCurrent(fresh.current[0], info.home, purpose, deadline, seen);
-  const viaCurrent = found !== undefined;
-  if (!viaCurrent) {
-    if (!sameRows(first.current, fresh.current) || !sameRows(first.legacy, fresh.legacy))
-      throw changed();
-    found = await findLegacy(fresh.legacy, info.home, purpose, deadline, seen);
-  }
-  const last = await read();
-  if (
-    !sameRows(fresh.current, last.current) ||
-    (!viaCurrent && !sameRows(fresh.legacy, last.legacy)) ||
-    !(await sameTopology(seen, [...last.current, ...last.legacy], deadline))
-  )
-    throw changed();
+  const found = await decide(fresh, first);
+  const again = await decide(await read(), fresh);
+  if (!sameMatch(found, again)) throw changed();
   return found;
 }
 
