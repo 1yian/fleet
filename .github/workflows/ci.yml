@@ -84,6 +84,8 @@ jobs:
               - "packages/**"
               - "e2e/support/**"
               - "e2e/extension/**"
+              - "e2e/run.ts"
+              - "e2e/durations.json"
               - ".githooks/**"
               - "githooks.js"
               - "lint.js"
@@ -97,7 +99,10 @@ jobs:
               - "e2e/support/fleet.ts"
               - "e2e/support/public-host.ts"
               - "e2e/cardd/**"
+              - "e2e/run.ts"
+              - "e2e/durations.json"
               - "package-lock.json"
+              - ".github/workflows/ci.yml"
 
   static:
     timeout-minutes: 20
