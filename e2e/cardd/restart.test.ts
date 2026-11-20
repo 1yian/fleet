@@ -245,7 +245,30 @@ test("main restarts a second mate by its lane card, and nobody else restarts it"
     OPS["card.restart"].result,
     await fleet.main.call("card.restart", { card: laneCard.id, mode: "replace", key: "m" }),
   );
-  assert.deepEqual([plan.role, plan.lane, plan.incident], ["mate", "cleo", null]);
+  assert.deepEqual(
+    [plan.role, plan.lane, plan.incident, plan.request],
+    ["mate", "cleo", null, undefined],
+  );
+  const entry = (await fleet.cardd.thread(laneCard.id)).entries.find(
+    (note) => note.fields["restartKey"] === "m",
+  );
+  assert.ok(entry);
+  assert.deepEqual(
+    await fleet.main.call("card.restart.failed", {
+      card: laneCard.id,
+      key: "m",
+      request: entry.id,
+    }),
+    { recorded: false },
+  );
+  const restartLane = async (key: string) =>
+    check(
+      OPS["card.restart"].result,
+      await fleet.main.call("card.restart", { card: laneCard.id, mode: "replace", key }),
+    );
+  assert.equal((await restartLane("m")).repeat, true);
+  for (const key of ["second", "third"]) assert.equal((await restartLane(key)).repeat, false);
+  await assert.rejects(restartLane("fourth"), /was restarted 3 times in the last hour/);
   await assert.rejects(
     cleo.call("card.restart", { card: laneCard.id, mode: "replace", key: "self" }),
     /only the direct parent can restart/,

@@ -101,11 +101,28 @@ async function until(check: () => Promise<boolean>, waitMs: number): Promise<boo
   return true;
 }
 
-async function launchOnce(host: string, pane: string, args: string[]): Promise<Error | undefined> {
-  const launched = until(() => shellIdle(host, pane), SHELL_WAIT_MS)
-    .then(() => herdr(host, args))
-    .then(() => undefined, toError);
+type RetryGuard = (error: unknown) => Promise<void>;
+
+async function launchOnce(
+  host: string,
+  pane: string,
+  args: string[],
+  guard: RetryGuard | undefined,
+  previous: Error | undefined,
+): Promise<Error | undefined> {
   const watch = { over: false };
+  const launched = until(() => shellIdle(host, pane), SHELL_WAIT_MS).then(async () => {
+    if (guard !== undefined && previous !== undefined) {
+      await guard(previous);
+      if (watch.over) return;
+    }
+    try {
+      await herdr(host, args, false, guard);
+      return undefined;
+    } catch (error) {
+      return toError(error);
+    }
+  }, toError);
   const appeared = (async (): Promise<undefined> => {
     while (!watch.over && !(await piRunning(host, pane).catch(() => false))) await sleep(POLL_MS);
     return undefined;
@@ -150,19 +167,32 @@ async function confirmStays(
 
 export class DidNotStart extends Error {}
 
+class StartedBeforeReady extends Error {
+  constructor(error: unknown) {
+    super(`${toError(error).message}\nThe replacement connected before readiness failed.`, {
+      cause: error,
+    });
+  }
+}
+
+type ReplacementStarted = () => Promise<boolean | undefined>;
+
 async function startAgent(
   host: string,
   pane: string,
   args: string[],
   worker: { session: string; token: string },
   lost: (text: string) => void,
-  refundUninspectable = false,
+  replacementStarted?: ReplacementStarted,
 ): Promise<void> {
   try {
-    await launchAgent(host, pane, args);
+    await launchAgent(host, pane, args, replacementStarted);
   } catch (error) {
+    if (error instanceof StartedBeforeReady) throw error;
     const running = await piRunning(host, pane).catch(() => undefined);
-    if (running === true || (running === undefined && !refundUninspectable)) throw error;
+    if (running === true || (running === undefined && replacementStarted === undefined))
+      throw error;
+    if ((await replacementStarted?.()) === true) throw new StartedBeforeReady(error);
     const message =
       running === undefined ? toError(error).message : await exitedMessage(host, pane, worker);
     throw new DidNotStart(message, { cause: error });
@@ -172,11 +202,27 @@ async function startAgent(
   });
 }
 
-async function launchAgent(host: string, pane: string, args: string[]): Promise<void> {
+async function launchAgent(
+  host: string,
+  pane: string,
+  args: string[],
+  replacementStarted?: ReplacementStarted,
+): Promise<void> {
   const deadline = Date.now() + SHELL_WAIT_MS;
+  const guard =
+    replacementStarted === undefined
+      ? undefined
+      : async (error: unknown) => {
+          const started = await replacementStarted();
+          if (started === true) throw new StartedBeforeReady(error);
+          if (started === undefined) throw toError(error);
+        };
+  let previous: Error | undefined;
   for (let tries = 1; ;) {
-    const error = await launchOnce(host, pane, args);
+    const error = await launchOnce(host, pane, args, guard, previous);
     if (error === undefined) return;
+    if (error instanceof StartedBeforeReady) throw error;
+    previous = error;
     if (refused(error) && Date.now() < deadline) {
       await sleep(POLL_MS);
       continue;
@@ -268,6 +314,8 @@ async function closeWorkspace(host: string, clone: string, session: string): Pro
 interface Recovery {
   card: number;
   host: string;
+  actor: string;
+  generation: number;
   repeat: boolean;
   notice?: number | undefined;
 }
@@ -351,7 +399,14 @@ export async function replaceWorker(
     ].flat(),
     plan,
     launch.lost,
-    true,
+    async () => {
+      const current = await link
+        .call("attempt.resume", { card: recovery.card })
+        .catch(() => undefined);
+      return current?.session === recovery.actor
+        ? current.generation > recovery.generation
+        : undefined;
+    },
   );
   await contain(recovery.host, pane, path);
   return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;

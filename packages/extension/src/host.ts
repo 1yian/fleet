@@ -147,12 +147,14 @@ export async function herdr(
   host: string,
   args: readonly string[],
   probe = false,
+  beforeRetry?: (error: unknown) => Promise<void>,
 ): Promise<Record<string, unknown>> {
   try {
     return await herdrOnce(host, args, probe);
   } catch (error) {
     if (!serverMissing(error) || transport(host).length > 0) throw error;
     await startServer(process.env["HERDR_SESSION"]);
+    await beforeRetry?.(error);
     return herdrOnce(host, args, probe);
   }
 }

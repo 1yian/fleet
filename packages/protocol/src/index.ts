@@ -357,7 +357,7 @@ export const OPS = {
   "attempt.resume": {
     roles: ["mate"],
     args: Type.Object({ card: Type.Integer() }),
-    result: AttemptPlan,
+    result: Type.Object({ ...AttemptPlan.properties, generation: Type.Integer() }),
   },
   "branch.name": {
     roles: ["worker"],

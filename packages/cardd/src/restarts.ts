@@ -3,7 +3,7 @@ import type { OpArgs } from "@fleet/protocol";
 import { connected, liveAttemptModel, repinAttempt } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { comment } from "./comments.ts";
-import { LIVE_REQUEST, noticeEligible, requestKey } from "./restart-requests.ts";
+import { LIVE_REQUEST, noticeEligible, requestOf } from "./restart-requests.ts";
 import { RETIRABLE_DELIVERY } from "./delivery-states.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
@@ -152,7 +152,7 @@ function ordinaryRestart(
   const body = resting
     ? "Reconnect requested: the worker's process was disconnected. The card keeps its state and nothing is resumed."
     : "Restart requested on the same conversation, branch, and work.";
-  const fields = { restartKey: key, generation };
+  const fields = { restartKey: key, actor: target.actor, generation };
   const request = repeat
     ? undefined
     : addEntry(
@@ -169,7 +169,7 @@ function ordinaryRestart(
     generation,
     replaced: false,
     repeat,
-    ...(request === undefined ? {} : { request }),
+    ...(mate || request === undefined ? {} : { request }),
     reconnect: resting,
   };
   return { value, notify: [] };
@@ -234,8 +234,12 @@ export function restartFailed(
   args: OpArgs<"card.restart.failed">,
 ): { readonly recorded: boolean } {
   const card = getCard(db, args.card);
-  requireDirectParent(session, card, laneCardOf(db, card.lane) === card.id);
-  if (requestKey(db, card.id, args.request) !== args.key) return { recorded: false };
+  const mate = laneCardOf(db, card.lane) === card.id;
+  requireDirectParent(session, card, mate);
+  if (mate) return { recorded: false };
+  const request = requestOf(db, card.id, args.request);
+  if (request?.key !== args.key || generationOf(db, request.actor) > request.generation)
+    return { recorded: false };
   const body = `The restart did not run, so it does not count toward the ${String(RESTARTS_PER_HOUR)} an hour: its worker process could not be started.`;
   const fields = { restartFailed: args.request };
   addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
