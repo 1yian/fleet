@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
-import { check, OPS } from "@fleet/protocol";
-import { Cardd, type Session } from "../support/cardd.ts";
+import { Cardd } from "../support/cardd.ts";
 import {
   branchesOf,
   toolResults,
@@ -10,7 +9,7 @@ import {
   workersOf,
   worktreesOf,
 } from "../support/dispatch-lab.ts";
-import { Harness, type Pi, type Turn } from "../support/harness.ts";
+import { Harness, poll, type Pi, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
 
@@ -24,7 +23,6 @@ let scratch: Scratch;
 let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
-let main: Session;
 let mate: Pi;
 
 beforeEach(async () => {
@@ -33,7 +31,7 @@ beforeEach(async () => {
   h = await Harness.start();
   const token = cardd.addLane("main", undefined, scratch.root);
   configureMain(scratch, cardd.url, token);
-  main = await cardd.connect(token);
+  await cardd.connect(token);
   const cnpToken = cardd.addLane("cnp", "main");
   scratch.addLane("cnp", { url: cardd.url, token: cnpToken });
   cardd.addProject("fleet", { local: scratch.root });
@@ -63,6 +61,11 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
+const filedBy = (count: number) =>
+  poll(
+    () => (cardd.gh.issues().length >= count ? cardd.gh.issues() : undefined),
+    `${String(count)} filed issue(s)`,
+  );
 const asked = (turns: Turn[] | undefined): number =>
   (turns ?? []).filter((turn) => turn.role === "user" && turn.text.includes(QUESTION)).length;
 
@@ -84,20 +87,15 @@ function scriptWork(workerAnswer: "yes" | "no", mateAnswer: "yes" | "no"): void 
     "mate",
   );
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(async () => {
-    const recorded = check(OPS.complaints.result, await main.call("complaints", {}));
-    assert.deepEqual(
-      recorded.map(({ text }) => text),
-      workerAnswer === "yes" ? [WORKER_SENTENCE] : [],
-    );
-    return {
+  h.onModel(
+    () => ({
       tool: "close",
       args: { card: 2, summary: "Assessment delivered", next: { drop: "nothing to build" } },
-    };
-  }, "mate");
+    }),
+    "mate",
+  );
   if (mateAnswer === "yes")
     h.onModel(() => ({ tool: "complain", args: { text: MATE_SENTENCE, card: 2 } }), "mate");
-  h.onModel(() => ({ tool: "complaints", args: {} }), "mate");
   h.onModel(() => ({ text: "closed" }), "mate");
   if (workerAnswer === "yes")
     h.onModel(() => {
@@ -126,67 +124,70 @@ async function finishWork(mateCalls: number): Promise<Turn[]> {
   return h.waitForCall(mateCalls - 1, "mate", WORKER_WAIT_MS);
 }
 
-test("a worker and a mate that answer yes leave one attributed complaint each, which outlives the closed card and its removed worktree and shows in the review", async () => {
+test("a worker and a mate that answer yes file one attributed issue each, which outlives the closed card and its removed worktree", async (t) => {
+  const release = cardd.gh.holdIssues();
+  t.after(release);
   scriptWork("yes", "yes");
   const before = Date.now();
-  const results = toolResults(await finishWork(7));
+  await finishWork(6);
 
   const worker = h.callsOf("worker");
   assert.ok(worker.length >= 2 && worker.length <= 3);
   assert.equal(asked(worker[0]), 0);
   assert.equal(asked(worker[1]), 0);
-  assert.equal(toolResults(worker[1] ?? []).at(-1), "Recorded complaint 1.");
+  assert.equal(
+    toolResults(worker[1] ?? []).at(-1),
+    "Accepted by cardd for filing as a GitHub issue. Carry on.",
+  );
   const mateCalls = h.callsOf("mate");
   assert.equal(asked(mateCalls[3]), 0);
   assert.equal(asked(mateCalls[4]), 1);
-  assert.equal(asked(mateCalls[6]), 1);
-
-  const listed = check(OPS.complaints.result, await main.call("complaints", {}));
-  assert.deepEqual(
-    listed.map(({ at, ...kept }) => ({ ...kept, recent: at >= before && at <= Date.now() })),
-    [
-      {
-        id: 2,
-        session: "cnp",
-        role: "mate",
-        lane: "cnp",
-        card: 2,
-        project: "fleet",
-        text: MATE_SENTENCE,
-        recent: true,
-      },
-      {
-        id: 1,
-        session: "c-2-a1",
-        role: "worker",
-        lane: "cnp",
-        card: 2,
-        project: "fleet",
-        text: WORKER_SENTENCE,
-        recent: true,
-      },
-    ],
+  assert.equal(asked(mateCalls[5]), 1);
+  assert.equal(
+    toolResults(mateCalls[5] ?? []).at(-1),
+    "Accepted by cardd for filing as a GitHub issue. Carry on.",
   );
-  const [newest = "", older = "", ...rest] = (results.at(-1) ?? "").split("\n");
-  assert.equal(rest.length, 0);
-  assert.match(newest, /^#2 \d{4}-\d\d-\d\dT[\d:.]+Z cnp \(mate, lane cnp, c-2, fleet\): /);
-  assert.ok(newest.endsWith(MATE_SENTENCE));
-  assert.match(older, /^#1 \d{4}-\d\d-\d\dT[\d:.]+Z c-2-a1 \(worker, lane cnp, c-2, fleet\): /);
-  assert.ok(older.endsWith(WORKER_SENTENCE));
 
   const thread = await cardd.thread(2);
   assert.equal(thread.card.status, "done");
   assert.deepEqual(worktreesOf(scratch.root), ["branch refs/heads/main"]);
   assert.deepEqual(branchesOf(scratch.root), ["main"]);
   assert.deepEqual(await workersOf(lab), []);
-  const written = JSON.stringify(thread.entries);
+  await poll(() => cardd.gh.calls()[1], "both pending GitHub calls");
+  assert.deepEqual(cardd.gh.issues(), []);
+  release();
+
+  const issues = await filedBy(2);
+  const details = (title: string) => {
+    const issue = issues.find((each) => each.title === title);
+    assert.ok(issue);
+    assert.equal(issue.repo, "github.com/1yian/fleet");
+    const lines = issue.body.split("\n").filter((line) => line.startsWith("- "));
+    const at = Date.parse((lines[0] ?? "").replace("- Time: ", ""));
+    assert.ok(at >= before && at <= Date.now());
+    return lines.slice(1);
+  };
+  assert.deepEqual(details(MATE_SENTENCE), [
+    "- Role: mate",
+    "- Lane: `cnp`",
+    "- Card: c-2",
+    "- Project: `fleet`",
+  ]);
+  assert.deepEqual(details(WORKER_SENTENCE), [
+    "- Role: worker",
+    "- Lane: `cnp`",
+    "- Card: c-2",
+    "- Project: `fleet`",
+  ]);
+
+  const written = JSON.stringify((await cardd.thread(2)).entries);
   assert.equal(written.includes(WORKER_SENTENCE), false);
   assert.equal(written.includes(MATE_SENTENCE), false);
 });
 
-test("a worker and a mate that answer no record nothing, add nothing to the card, and finish with no extra model call", async () => {
+test("a worker and a mate that answer no file nothing, add nothing to the card, and finish with no extra model call", async () => {
   scriptWork("no", "no");
-  const results = toolResults(await finishWork(6));
+  await finishWork(5);
 
   const worker = h.callsOf("worker");
   assert.ok(worker.length >= 1 && worker.length <= 2);
@@ -194,8 +195,8 @@ test("a worker and a mate that answer no record nothing, add nothing to the card
   assert.equal(asked(worker[1]), 0);
   const mateCalls = h.callsOf("mate");
   assert.equal(asked(mateCalls[4]), 1);
-  assert.equal(results.at(-1), "No complaints.");
-  assert.deepEqual(check(OPS.complaints.result, await main.call("complaints", {})), []);
+  assert.deepEqual(cardd.gh.calls(), []);
+  assert.deepEqual(cardd.gh.issues(), []);
 
   const thread = await cardd.thread(2);
   assert.equal(thread.card.status, "done");

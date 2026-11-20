@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import {
   check,
   CLOSE,
@@ -50,6 +51,7 @@ export class Link {
   private latest: "running" | "idle" | "waiting" | undefined;
   private nextId = 1;
   private readonly pending = new Map<number, (result: Result) => void>();
+  private readonly connection = new EventTarget();
   private readonly untold: ClientMessage[] = [];
   private readonly options: LinkOptions;
   private announced = false;
@@ -135,6 +137,13 @@ export class Link {
     });
   }
 
+  async waitForReconnect(graceMs: number): Promise<void> {
+    if (this.connected || this.stopped) return;
+    await once(this.connection, "welcome", { signal: AbortSignal.timeout(graceMs) }).catch(
+      () => undefined,
+    );
+  }
+
   read(entry: number): void {
     this.tell({ t: "read", entry });
   }
@@ -174,6 +183,7 @@ export class Link {
     this.backoff = 250;
     for (const message of this.untold.splice(0)) this.send(message);
     if (this.latest !== undefined) this.send({ t: "activity", state: this.latest });
+    this.connection.dispatchEvent(new Event("welcome"));
     this.options.onConnect();
   }
 

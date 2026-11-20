@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { check, OPS, type Card, type Entry } from "@fleet/protocol";
+import type { Card, Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { is, reportFailure } from "../support/incidents.ts";
 
 const MODEL = "openai-codex/gpt-fixture";
 const RATE_LIMITED = "HTTP 429 rate limit exceeded. Retry-After: 10800";
@@ -17,10 +18,6 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-const is =
-  (condition: string) =>
-  (entry: Entry): boolean =>
-    entry.fields["condition"] === condition;
 const onceEach = (session: Session): Entry[] => [
   ...new Map(session.entries.map((push) => [push.entry.id, push.entry])).values(),
 ];
@@ -36,25 +33,11 @@ const reachedTier = (session: Session, card: Card, condition: string, tier: numb
     `${condition} tier ${String(tier)} on c-${String(card.id)}`,
   );
 
-async function failingWorker(
+const failingWorker = (
   card: Card,
   error: string,
   options: { model?: string; mate?: Session } = {},
-): Promise<Session> {
-  const { model, mate = cleo } = options;
-  const plan = check(
-    OPS["attempt.begin"].result,
-    await mate.call("attempt.begin", {
-      card: card.id,
-      host: "maverick",
-      task: "the task",
-      ...(model === undefined ? {} : { model }),
-    }),
-  );
-  const worker = await fleet.cardd.connect(plan.token);
-  await worker.call("incident.report", { error });
-  return worker;
-}
+): Promise<Session> => reportFailure(fleet, options.mate ?? cleo, card, error, options.model);
 
 const INCIDENT_IDS = /Incident (\d+), process generation (\d+)/;
 
@@ -203,8 +186,17 @@ test("a pause and a resume of the same unrecoverable incident do not tell main a
 
 test("a failure whose retry becomes eligible at a known time does not reach main, even when the mate asks for it too early", async () => {
   const card = await newCard(cleo, "Users see Spanish copy");
-  await failingWorker(card, RATE_LIMITED, { model: MODEL });
+  const before = Date.now();
+  await failingWorker(card, `${RATE_LIMITED}\nRequest filter: *.json`, { model: MODEL });
   const incident = await incidentHeard(cleo);
+  const [heard] = heardBy(cleo, "runtime-failure", card);
+  assert.match(
+    heard?.body ?? "",
+    /\[YAML withheld: credential boundaries unclear\]\. Classified transient\./,
+  );
+  assert.match(heard?.body ?? "", /mode=retry\), eligible at/);
+  assert.ok(Date.parse(eligibleAt(cleo, card) ?? "") >= before + 10_800_000, heard?.body);
+  assert.doesNotMatch(heard?.body ?? "", /Request filter|rate limit exceeded/);
   await assert.rejects(
     restart(card, incident, { mode: "retry", key: "early" }),
     /is not eligible for recovery until/,
@@ -214,22 +206,218 @@ test("a failure whose retry becomes eligible at a known time does not reach main
   assert.deepEqual(heardBy(fleet.main, "runtime-failure-unrecoverable"), []);
 });
 
+async function noticeAfter(
+  card: Card,
+  diagnostic: string,
+  recovering: boolean,
+  description: string,
+): Promise<{ incident: { incident: number; generation: number }; notice: Entry }> {
+  const worker = await failingWorker(card, recovering ? "worker turn ended" : diagnostic);
+  const incident = await incidentHeard(cleo);
+  if (recovering) {
+    await restart(card, incident, { mode: "retry", key: "first" });
+    await worker.call("incident.report", { error: diagnostic });
+  }
+  const notice = await cleo.waitForEntry(
+    (entry) =>
+      is("runtime-failure")(entry) && (!recovering || entry.body.includes("did not verify")),
+    description,
+  );
+  return { incident, notice };
+}
+
+function assertClippedExcerpt(body: string, recovering: boolean): void {
+  const excerpt = recovering ? /did not verify: (.*?)\. Recover with/ : /failed: (.*?) Classified/;
+  const displayed = excerpt.exec(body)?.[1];
+  assert.ok(displayed?.endsWith("..."), body);
+  assert.ok(displayed !== undefined);
+  assert.equal(displayed.length, 603, body);
+  assert.doesNotMatch(displayed, /quota headers|Retry-After/);
+}
+
+function assertEligibleAfter(body: string, before: number, delay: number): void {
+  const eligible = Date.parse(ELIGIBLE_AT.exec(body)?.[1] ?? "");
+  if (delay === 0) assert.ok(eligible >= before && eligible < before + 120_000, body);
+  else assert.ok(eligible >= before + delay && eligible <= Date.now() + delay, body);
+}
+
+const LONG_DIAGNOSTIC_HEAD = String.raw`HTTP 429 revision 0123456789abcdef0123456789abcdef01234567 connection https:\/\/fixture:paper\u002Bcanoe@localhost\/path`;
+for (const [name, diagnostic, visible, delay, mode = "retry", clipped = false] of [
+  [
+    "a quoted retry hint with an already scrubbed token",
+    'HTTP 429 {"retry_after": 10800, "token": [hidden], "secretAccessKey": "fixture/403+paper/canoe", "SessionToken": "fixture/99999+paper/canoe="}',
+    'HTTP 429 {"retry_after": 10800, "token": [hidden], "secretAccessKey": [hidden], "SessionToken": [hidden]}',
+    10_800_000,
+  ],
+  [
+    "a retry hint beyond the displayed diagnostic",
+    `${LONG_DIAGNOSTIC_HEAD} ${"provider ".repeat(56)}quota headers were unavailable. Retry-After: 120`,
+    String.raw`HTTP 429 revision 0123456789abcdef0123456789abcdef01234567 connection https:\/\/[hidden]@localhost\/path`,
+    120_000,
+    "retry",
+    true,
+  ],
+  [
+    "a leading retry hint with ambiguous URL userinfo",
+    `429 Too Many Requests. Retry-After: 120\n${String.raw`https:\/\/fixture:paper\u002Zcanoe@localhost\/path`}`,
+    "[URL withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
+    "a separate retry header before a withheld body",
+    "HTTP/1.1 429 Too Many Requests\r\nContent-Type: text/plain\r\nRetry-After: 120\r\n\r\nRetry-After: 99999\r\n403 curl --user='demo:paper canoe",
+    "[curl withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
+    "a body-only retry hint after the HTTP headers",
+    "HTTP/1.1 429 Too Many Requests\nContent-Type: text/plain\n\nRetry-After: 99999\ntoken: [paper, canoe]",
+    "[YAML withheld: credential boundaries unclear]",
+    0,
+  ],
+  [
+    "a bare provider status with a withheld credential collection",
+    "429 Too Many Requests. Retry-After: 120\ntoken:\n- 403 Retry-After: 99999 paper\n- canoe",
+    "[YAML withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
+    "a standard internal server error",
+    "HTTP 500 Internal Server Error. Retry-After: 120\nSessionToken: [paper, 403 Retry-After: 99999 canoe]",
+    "[YAML withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
+    "a standard bad gateway error",
+    "HTTP/1.1 502 Bad Gateway. Retry-After: 120\nSessionToken: [paper, 403 Retry-After: 99999 canoe]",
+    "[YAML withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
+    "a standard gateway timeout",
+    "504 Gateway Timeout. Retry-After: 120\nSessionToken: [paper, 403 Retry-After: 99999 canoe]",
+    "[YAML withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
+    "a standard payment error",
+    "402 Payment Required. Retry-After: 120\nSessionToken: [paper, 403 Retry-After: 99999 canoe]",
+    "[YAML withheld: credential boundaries unclear]",
+    120_000,
+    "replace",
+  ],
+] as const) {
+  for (const recovering of [false, true]) {
+    test(`${name} ${delay > 0 ? "delays" : "does not delay"} ${recovering ? "further" : "initial"} recovery`, async () => {
+      const card = await newCard(cleo, "Restore provider access");
+      const before = Date.now();
+      const { incident, notice } = await noticeAfter(
+        card,
+        diagnostic,
+        recovering,
+        "the incident with the provider retry hint",
+      );
+      assert.ok(notice.body.includes(visible), notice.body);
+      assert.doesNotMatch(notice.body, /\b(?:403|99999)\b|paper|canoe/);
+      if (clipped) assertClippedExcerpt(notice.body, recovering);
+      assertEligibleAfter(notice.body, before, delay);
+      const otherMode = mode === "retry" ? "replace" : "retry";
+      await assert.rejects(
+        restart(card, incident, { mode: otherMode, key: "wrong-mode" }),
+        mode === "retry"
+          ? /\(transient, turn\)\. Available: retry/
+          : /\(vendor-quota, turn\)\. Available: replace/,
+      );
+      if (delay > 0)
+        await assert.rejects(
+          restart(card, incident, { mode, key: "too-early" }),
+          /is not eligible for recovery until/,
+        );
+    });
+  }
+}
+
+for (const [status, separator, recovering] of [
+  ["HTTP/1.1 401 Unauthorized", "\r\n", false],
+  ["403 Forbidden", "\r", true],
+] as const) {
+  test(`${status} stops ${recovering ? "further" : "initial"} recovery even with a withheld diagnostic`, async () => {
+    const card = await newCard(cleo, "Restore provider authentication");
+    const diagnostic = `\uFEFF${status}${separator}secretAccessKey: [paper, 402 Retry-After: 99999 canoe]`;
+    const { incident, notice: heard } = await noticeAfter(
+      card,
+      diagnostic,
+      recovering,
+      "the authentication failure",
+    );
+    assert.match(heard.body, /: \[YAML withheld: credential boundaries unclear\]\./);
+    assert.doesNotMatch(heard.body, /secretAccessKey|paper|canoe|99999|Retry-After/);
+    for (const mode of ["retry", "replace"]) {
+      await assert.rejects(
+        restart(card, incident, { mode, key: `refused-${mode}` }),
+        /incident \d+ is blocked: auth is not repaired by recovering/,
+      );
+    }
+  });
+}
+
+test("a recovery that gets no response within the verification window fails and leaves a normal retry", async () => {
+  const card = await newCard(cleo, "Users see one scrollbar");
+  await failingWorker(card, "HTTP 529 overloaded");
+  const incident = await incidentHeard(cleo);
+  await cleo.waitForEntry(
+    (entry) => is("runtime-failure")(entry) && entry.body.includes("is eligible for recovery now"),
+    "the retry becoming eligible",
+  );
+  await restart(card, incident, { mode: "retry", key: "silent" });
+  const failed = await cleo.waitForEntry(
+    (entry) =>
+      is("runtime-failure")(entry) &&
+      entry.body.includes(
+        "did not verify: no real response and action within the verification window",
+      ),
+    "the verification timeout notice",
+  );
+  assert.match(failed.body, /Recover with restart_card\([^)]*mode=retry\)/);
+  await assert.rejects(
+    restart(card, incident, { mode: "replace", key: "wrong-mode" }),
+    /Available: retry/,
+  );
+});
+
 test("a failure that needs no model refusal escalates when its retries are spent, and not before", async () => {
   const card = await newCard(cleo, "Users see one scrollbar");
-  const worker = await failingWorker(card, "HTTP 529 overloaded");
+  const worker = await failingWorker(
+    card,
+    "HTTP 529 overloaded\npassword: '403 Retry-After: 99999'",
+  );
   const incident = await incidentHeard(cleo);
+  const [initial] = heardBy(cleo, "runtime-failure", card);
+  assert.match(initial?.body ?? "", /password: \[hidden\]\. Classified transient\./);
+  assert.doesNotMatch(initial?.body ?? "", /\b(?:403|99999)\b/);
   const eligibleNotices = (): Entry[] =>
     heardBy(cleo, "runtime-failure", card).filter((entry) =>
       entry.body.includes("is eligible for recovery now"),
     );
   for (const attempt of [1, 2]) {
-    await cleo.waitForEntry(
+    const ready = await cleo.waitForEntry(
       (entry) => eligibleNotices()[attempt - 1]?.id === entry.id,
       `eligibility notice ${String(attempt)}`,
     );
     assert.deepEqual(heardBy(fleet.main, "runtime-failure-unrecoverable"), []);
     await restart(card, incident, { mode: "retry", key: `retry-${String(attempt)}` });
-    await worker.call("incident.report", { error: "HTTP 529 overloaded" });
+    await worker.call("incident.report", {
+      error: "HTTP 529 overloaded\n- - token: '403 Retry-After: 99999 paper canoe'\n    next: yes",
+    });
+    const failure = await cleo.waitForEntry(
+      (entry) =>
+        entry.id > ready.id &&
+        is("runtime-failure")(entry) &&
+        entry.body.includes("did not verify"),
+      "the withheld recovery diagnostic",
+    );
+    assert.match(failure.body, /did not verify: \[YAML withheld: credential boundaries unclear\]/);
+    assert.doesNotMatch(failure.body, /paper canoe|\b(?:403|99999)\b|529 overloaded/);
   }
 
   const told = await fleet.main.waitForEntry(

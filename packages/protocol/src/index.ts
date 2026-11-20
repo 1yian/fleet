@@ -19,7 +19,6 @@ export * from "./address.ts";
 export * from "./approval.ts";
 export { laidOut } from "./question.ts";
 export * from "./branch.ts";
-export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
 export * from "./http.ts";
 export * from "./next.ts";
@@ -423,7 +422,7 @@ const ClientMessage = Type.Union([
   Type.Object({
     t: Type.Literal("call"),
     id: Type.Integer(),
-    op: Type.Enum(Object.keys(OPS)),
+    op: Type.Enum([...Object.keys(OPS), "complain"]),
     args: Type.Unknown(),
   }),
 ]);

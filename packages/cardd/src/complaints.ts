@@ -1,9 +1,14 @@
+import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
-import { type Complaint, type OpArgs } from "@fleet/protocol";
-import { sanitize } from "./incident-kinds.ts";
+import { promisify } from "node:util";
+import { type OpArgs } from "@fleet/protocol";
+import { redact } from "./incident-kinds.ts";
 import { mainLane, type Session } from "./store.ts";
 
-const DEFAULT_LIMIT = 20;
+const REPO = "github.com/1yian/fleet";
+const TITLE_LIMIT = 80;
+const GH_TIMEOUT_MS = 30_000;
+const exec = promisify(execFile);
 
 interface About {
   readonly card: number | null;
@@ -25,40 +30,57 @@ function aboutCard(db: DatabaseSync, session: Session, id: number | undefined): 
   };
 }
 
-export function recordComplaint(
-  db: DatabaseSync,
-  session: Session,
-  args: OpArgs<"complain">,
-  now: number,
-): number {
-  const { card, project } = aboutCard(db, session, session.card ?? args.card);
-  const { lastInsertRowid } = db
-    .prepare(
-      "INSERT INTO complaints (at, session, role, lane, card, project, text) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .run(now, session.id, session.role, session.lane, card, project, sanitize(args.text));
-  return Number(lastInsertRowid);
+interface Issue {
+  readonly title: string;
+  readonly body: string;
 }
 
-const complaintFrom = (row: Record<string, unknown>): Complaint => ({
-  id: Number(row["id"]),
-  at: Number(row["at"]),
-  session: String(row["session"]),
-  role: row["role"] === "mate" ? "mate" : "worker",
-  lane: String(row["lane"]),
-  card: typeof row["card"] === "number" ? row["card"] : null,
-  project: typeof row["project"] === "string" ? row["project"] : null,
-  text: String(row["text"]),
-});
+function literalCode(text: string): string {
+  const line = text.replace(/\r\n?|\n/g, " ");
+  if (!/\S/.test(line)) return line;
+  let width = 1;
+  for (const [run] of line.matchAll(/`+/g)) width = Math.max(width, run.length + 1);
+  const fence = "`".repeat(width);
+  const pad = /^[` ]|[` ]$/.test(line) ? " " : "";
+  return `${fence}${pad}${line}${pad}${fence}`;
+}
 
-export function listComplaints(
+function issueFor(session: Session, text: string, about: About, now: number): Issue {
+  const scrubbed = redact(text, "public");
+  const characters = Array.from(scrubbed);
+  const details = [
+    `Time: ${new Date(now).toISOString()}`,
+    `Role: ${session.role}`,
+    `Lane: ${literalCode(session.lane)}`,
+    ...(about.card === null ? [] : [`Card: c-${String(about.card)}`]),
+    ...(about.project === null ? [] : [`Project: ${literalCode(about.project)}`]),
+  ];
+  return {
+    title:
+      characters.length > TITLE_LIMIT
+        ? `${characters.slice(0, TITLE_LIMIT - 3).join("")}...`
+        : scrubbed,
+    body: `    ${scrubbed}\n\n${details.map((line) => `- ${line}`).join("\n")}\n`,
+  };
+}
+
+export function fileComplaint(
   db: DatabaseSync,
   session: Session,
-  args: OpArgs<"complaints">,
-): Complaint[] {
-  const everything = session.lane === mainLane(db);
-  return db
-    .prepare(`SELECT * FROM complaints WHERE ? OR lane = ? ORDER BY id DESC LIMIT ?`)
-    .all(everything ? 1 : 0, session.lane, args.limit ?? DEFAULT_LIMIT)
-    .map(complaintFrom);
+  args: OpArgs<"complaint.publish">,
+  now: number,
+): void {
+  const about = aboutCard(db, session, session.card ?? args.card);
+  const { title, body } = issueFor(session, args.text, about, now);
+  void Promise.resolve()
+    .then(() =>
+      exec("gh", ["issue", "create", "--repo", REPO, "--title", title, "--body", body], {
+        timeout: GH_TIMEOUT_MS,
+      }),
+    )
+    .catch(() => {
+      console.error(
+        `cardd: complaint filing unconfirmed for ${session.id} on ${REPO}: gh issue create failed`,
+      );
+    });
 }
