@@ -760,7 +760,7 @@ Before that first update, on every host that runs a mate, a worker, or `cardd`, 
 
 A host that skipped it recovers the same way. Install bun, then run `git pull && bun install --frozen-lockfile && bun run build` in the checkout of every host and in `cardd`'s checkout, then run `/updatefleet` again. `git pull` does nothing where the checkout already moved. The explicit install matters because a later update does not reinstall packages that already exist unless `bun.lock` changes, so only this step replaces an npm-installed tree with the one `bun.lock` describes.
 
-After that one time, `fleet update` refuses a host without bun (below 1.3.13) before it changes anything, and names the fix. `fleet cardd` does not check for bun first: on a host without it, the pull happens and the update then fails at the `bun install` or board build step.
+After that one time, `fleet update` refuses a host without bun (below 1.3.13) before it changes anything, and names the fix. `fleet cardd` checks the same way on `cardd`'s host: it refuses a host without bun (below 1.3.13) before the pull, names the host and the fix, and leaves the checkout where it was.
 
 ### One-time cleanup after the file explorer was removed
 
