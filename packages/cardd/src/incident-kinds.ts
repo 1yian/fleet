@@ -1,4 +1,5 @@
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
+import { VERSIONED_ENVELOPE } from "./http-envelope.ts";
 import { hasCookieRecord, logicalView, SECRET_NAME } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
@@ -424,7 +425,7 @@ export function diagnoseFailure(text: string): {
   const error = clipDiagnostic(diagnostic);
   const marked = [YAML_WITHHELD, URL_WITHHELD, CURL_WITHHELD, RECORD_WITHHELD].includes(diagnostic);
   if (marked) {
-    const envelope = HTTP_ENVELOPE.exec(source);
+    const envelope = HTTP_ENVELOPE.exec(source) ?? VERSIONED_ENVELOPE.exec(source);
     const [line = "", status = "", inline] = envelope ?? [];
     const seconds =
       inline ?? (envelope === null ? undefined : headerRetryAfter(source.slice(line.length)));

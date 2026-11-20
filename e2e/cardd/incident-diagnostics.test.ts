@@ -200,6 +200,14 @@ for (const [name, diagnostic] of [
   ["a verbose digest authorization", '> Authorization: Digest username="demo", response="paper"'],
   ["a verbose api key header", "> X-Api-Key: paper"],
   [
+    "a timestamped wrapped trace authorization",
+    "15:16:17.123456 0000: GET / HTTP/1.1\n15:16:17.123457 003a: Authorization: Basic cGFwZXI6Y2Fub2VwYXBlcjpjYW5vZXBhcGVy\n15:16:17.123458 007a: Y2Fu",
+  ],
+  [
+    "a serialized wrapped trace authorization",
+    String.raw`{"trace":"0000: GET / HTTP/1.1\r\n003a: Authorization: Basic cGFwZXI6Y2Fub2VwYXBlcjpjYW5vZXBhcGVy\r\n007a: Y2Fu"}`,
+  ],
+  [
     "a wrapped trace-ascii authorization",
     "0000: GET / HTTP/1.1\n003a: Authorization: Basic cGFwZXI6Y2Fub2VwYXBlcjpjYW5vZXBhcGVy\n007a: Y2Fu",
   ],

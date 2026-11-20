@@ -294,6 +294,12 @@ for (const [name, diagnostic, visible, delay, mode = "retry", clipped = false] o
     120_000,
   ],
   [
+    "a versioned response with a custom reason and a cookie",
+    "HTTP/1.1 503 Backend fetch failed\nRetry-After: 120\nSet-Cookie: session=paper\n\n",
+    "[credential record withheld: credential boundaries unclear]",
+    120_000,
+  ],
+  [
     "a standard bad gateway error",
     "HTTP/1.1 502 Bad Gateway. Retry-After: 120\nSessionToken: [paper, 403 Retry-After: 99999 canoe]",
     "[YAML withheld: credential boundaries unclear]",
