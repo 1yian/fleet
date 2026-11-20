@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { Card } from "@fleet/protocol";
 import { QUEUED_DELIVERY } from "./delivery-states.ts";
-import { intentOf } from "./incident-lifecycle.ts";
+import { acceptsRestartNotice } from "./status.ts";
+import { loadCard } from "./store.ts";
 
 export const LIVE_REQUEST = `json_extract(e.fields, '$.restartKey') IS NOT NULL AND NOT EXISTS (
   SELECT 1 FROM entries f WHERE f.card = e.card AND f.kind = 'note' AND f.id > e.id
@@ -32,13 +32,13 @@ export function requestOf(db: DatabaseSync, card: number, request: number): Requ
 
 export function noticeState(
   db: DatabaseSync,
-  card: Card,
+  card: number,
   request: number,
 ): "eligible" | "suppressed" | "retired" {
+  const now = Date.now();
   if (
-    card.status !== "working" ||
-    requestOf(db, card.id, request) === undefined ||
-    intentOf(db, card.id, "worker") !== "working"
+    !acceptsRestartNotice(loadCard(db, card, now), now) ||
+    requestOf(db, card, request) === undefined
   )
     return "retired";
   const row = db
@@ -52,12 +52,12 @@ export function noticeState(
        (e.kind = 'comment' AND json_extract(e.fields, '$.recoveryMode') = 'replace')
      )`,
     )
-    .get(card.id, request);
+    .get(card, request);
   if (row?.["supersession"] === 2) return "retired";
   return row?.["supersession"] === 1 ? "suppressed" : "eligible";
 }
 
-export function releaseRestartNotices(db: DatabaseSync, card: Card, refunded: number): string[] {
+export function releaseRestartNotices(db: DatabaseSync, card: number, refunded: number): string[] {
   const rows = db
     .prepare(
       `SELECT d.session, json_extract(e.fields, '$.restartNotice') AS request
@@ -65,7 +65,7 @@ export function releaseRestartNotices(db: DatabaseSync, card: Card, refunded: nu
      WHERE e.card = ? AND e.kind = 'comment' AND d.retired_at IS NULL AND d.state IN (${QUEUED_DELIVERY})
        AND json_extract(e.fields, '$.restartNotice') < ?`,
     )
-    .all(card.id, refunded);
+    .all(card, refunded);
   const notify = new Set<string>();
   for (const row of rows) {
     if (noticeState(db, card, Number(row["request"])) === "eligible")

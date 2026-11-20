@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS, type Entry } from "@fleet/protocol";
 import {
@@ -28,6 +29,19 @@ afterEach(async () => {
 
 const missedOf = (entry: Entry): boolean => entry.fields["condition"] === "missed";
 
+function deliveryReceipt(path: string, session: string, entry: number) {
+  const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 });
+  try {
+    return db
+      .prepare(
+        "SELECT state, updated_at, resends, told_at FROM deliveries WHERE session = ? AND entry = ?",
+      )
+      .get(session, entry);
+  } finally {
+    db.close();
+  }
+}
+
 for (const receipt of ["read", "filed"] as const) {
   test(`a ${receipt} restart notice retired while waiting cannot return after release`, async () => {
     const { main, cardd } = fleet;
@@ -55,13 +69,9 @@ for (const receipt of ["read", "filed"] as const) {
     await park(main, card, "wait for CI", 60 * MINUTE);
     assert.equal(await status(main, card), "waiting");
     const inFile = receipt === "filed" ? [task.id, original.id] : [task.id];
-    const waiting = await cardd.connect(token, inFile, false);
+    const waiting = await cardd.connect(token, inFile, false, true);
     const actor = waiting.welcome?.session;
     assert.ok(actor !== undefined);
-    if (receipt === "filed") {
-      ageDelivery(cardd, actor, original.id, "updated_at", 3 * MINUTE);
-      await passes.next();
-    }
     await waiting.call("jobs", {});
     assert.deepEqual(
       waiting.entries.filter(({ entry }) => entry.id === original.id),
@@ -76,13 +86,24 @@ for (const receipt of ["read", "filed"] as const) {
     const resumed = receipt === "filed" ? waiting : await cardd.connect(token, [task.id], false);
     const steer = await resumed.waitForEntry((entry) => entry.body === text, "the resume comment");
     if (receipt === "filed") {
+      ageDelivery(cardd, actor, original.id, "updated_at", 3 * MINUTE);
       ageDelivery(cardd, actor, steer.id, "updated_at", 3 * MINUTE);
+      const before = deliveryReceipt(cardd.db, actor, original.id);
+      assert.equal(before?.["state"], "filed");
+      assert.equal(before["resends"], 0);
+      resumed.send({ t: "activity", state: "idle" });
+      await resumed.call("jobs", {});
       await passes.next();
       await resumed.call("jobs", {});
       assert.deepEqual(
         resumed.entries.filter(({ entry }) => entry.id === steer.id).map(({ again }) => again),
         [false, true],
       );
+      assert.deepEqual(
+        resumed.entries.filter(({ entry }) => entry.id === original.id),
+        [],
+      );
+      assert.deepEqual(deliveryReceipt(cardd.db, actor, original.id), before);
     }
     assert.deepEqual(
       resumed.entries.filter(({ entry }) => entry.id === original.id),
