@@ -184,6 +184,11 @@ export const COOKIE_COMPLAINTS = [
   String.raw`Headers {"Co\u006fkie":"session=paper"}`,
   String.raw`Headers {\"Set-Co\u006fkie\":\"session=paper\"}`,
   "Cookie2: session=paper",
+  String.raw`{"trace":"GET / HTTP/1.1\r\nCookie: session=paper"}`,
+  String.raw`{"trace":"HTTP/1.1 200 OK\r\nSet-Cookie2: session=paper"}`,
+  String.raw`{"trace":"GET / HTTP/1.1\\r\\nCookie: session=paper"}`,
+  String.raw`headers [["Cookie","session=paper"]]`,
+  String.raw`headers [["Set-Cookie","session=paper"]]`,
   'Headers {"Cookie":"session=paper"}',
   "Co\\\nokie: session=paper",
 ];
