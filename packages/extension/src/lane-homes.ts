@@ -64,7 +64,7 @@ function scanHomes(root: string): Scanned[] {
     if (isAbsent(dir, error)) return [];
     throw error;
   }
-  return entries
+  const scanned = entries
     .filter((name) => name.startsWith("lane-"))
     .sort()
     .flatMap((name): Scanned[] => {
@@ -76,6 +76,34 @@ function scanHomes(root: string): Scanned[] {
         return [{ name, home, error }];
       }
     });
+  return rejectSharedIdentities(scanned);
+}
+
+const identityOf = (found: Scanned): string =>
+  "error" in found ? found.name.slice("lane-".length) : found.config.lane;
+
+function rejectSharedIdentities(scanned: Scanned[]): Scanned[] {
+  let current = scanned;
+  for (;;) {
+    const claims = new Map<string, Scanned[]>();
+    for (const found of current)
+      claims.set(identityOf(found), [...(claims.get(identityOf(found)) ?? []), found]);
+    const shared = [...claims.entries()].filter(([, owners]) => owners.length > 1);
+    if (shared.length === 0) return current;
+    const rejected = new Set(
+      shared.flatMap(([, owners]) => owners.filter((owner) => !("error" in owner))),
+    );
+    current = current.map((found) => {
+      if (!rejected.has(found)) return found;
+      const lane = identityOf(found);
+      const homes = (claims.get(lane) ?? []).map((owner) => owner.name).join(", ");
+      return {
+        name: found.name,
+        home: found.home,
+        error: new Error(`lane ${lane} is claimed by more than one home (${homes})`),
+      };
+    });
+  }
 }
 
 export function discoverLanes(root: string): { homes: LaneHome[]; unread: UnreadLane[] } {
