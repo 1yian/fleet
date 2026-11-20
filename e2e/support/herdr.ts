@@ -11,6 +11,8 @@ import { LAB_GROUPS_ENV, openGroupScope, signalOwnedGroup, sweepGroups } from ".
 import { retainRunRoot, tempDir } from "./run-root.ts";
 import "./tool-stubs.ts";
 
+const ROOMY_DISK = new URL("./roomy-disk.ts", import.meta.url).href;
+
 const WAIT_MS = 30_000;
 const OWNED_LAUNCH = fileURLToPath(new URL("./owned-launch.ts", import.meta.url));
 const OFFLINE_CONFIG = `onboarding = false
@@ -30,6 +32,7 @@ export class HerdrLab {
   private disarm = (): void => undefined;
 
   static async start(env: Record<string, string>): Promise<HerdrLab> {
+    const options = env["NODE_OPTIONS"] ?? process.env["NODE_OPTIONS"] ?? "";
     const lab = new HerdrLab();
     writeFileSync(lab.config, OFFLINE_CONFIG);
     const stop = `herdr session stop ${lab.name}; herdr session delete ${lab.name}`;
@@ -38,7 +41,7 @@ export class HerdrLab {
       FLEET_E2E_DETACH: OWNED_LAUNCH,
       HERDR_CONFIG_PATH: lab.config,
     };
-    lab.env = { ...env, ...lab.owned };
+    lab.env = { ...env, NODE_OPTIONS: `${options} --import=${ROOMY_DISK}`.trim(), ...lab.owned };
     guardScope(lab.groups);
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawnGuarded(

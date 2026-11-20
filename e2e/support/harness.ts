@@ -354,7 +354,9 @@ export class Harness {
   async stop(): Promise<void> {
     await Promise.all(this.pis.map((pi) => pi.kill()));
     this.sockets.close();
-    await new Promise((resolve) => this.server.close(resolve));
+    const closed = new Promise((resolve) => this.server.close(resolve));
+    this.server.closeAllConnections();
+    await closed;
   }
 
   private async answerModel(request: IncomingMessage, response: ServerResponse): Promise<void> {
