@@ -338,6 +338,16 @@ export function abandonRunningJobs(db: DatabaseSync, card: number, at: number): 
   }
 }
 
+export function hasJobWait(db: DatabaseSync, session: string): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1 FROM jobs WHERE attempt = ? AND ${jobStateSql("state", JOB_RUNNING)} LIMIT 1`,
+      )
+      .get(attemptOf(db, session)) !== undefined
+  );
+}
+
 export function runningJobs(db: DatabaseSync, session: string): { id: number; label: string }[] {
   return db
     .prepare(

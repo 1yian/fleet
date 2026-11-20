@@ -13,6 +13,7 @@ import { jobCutover } from "./job-cutover.ts";
 import {
   dropLostJob,
   finishJob,
+  hasJobWait,
   prepareJob,
   recordJobResult,
   registerJob,
@@ -379,8 +380,14 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
   report: (db, session, raw, _timing, note, _closeCheck, emptyBranch) => {
-    const args = check(OPS.report.args, raw);
+    const { status, ...fieldsFromRequest } = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");
+    if (status === "stopped-if-idle" && hasJobWait(db, session.id))
+      return { value: { ...getCard(db, session.card), deferred: true }, notify: [] };
+    const args = {
+      ...fieldsFromRequest,
+      status: status === "stopped-if-idle" ? "stopped" : status,
+    } satisfies { status: ReportStatus };
     requireDatedPause(args.status, args.until);
     requireCommentsRead(db, session.id, args.status);
     const card = openCardWithPr(db, session.card, args.pr);
