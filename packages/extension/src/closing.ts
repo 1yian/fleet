@@ -49,26 +49,52 @@ interface Budget {
 
 const seconds = (ms: number): string => `${String(Math.max(1, Math.round(ms / 1000)))} s`;
 
+const OWN_CAP_MS = 600_000;
+
+const STOP_GRACE_MS = 2_000;
+
 function stepsOf({ card, end }: Budget, { session, host }: Attempt) {
-  return async <T>(
-    name: (typeof STEPS)[number],
-    work: (timeout: number) => Promise<T>,
-    cap = Infinity,
-  ): Promise<T> => {
-    const remaining = end - Date.now();
-    const stalled = (why: string, error?: unknown): CloseStalled =>
-      new CloseStalled(
-        `c-${String(card)} was not closed. Step "${name}" for ${session} on ${host} ${why}, so close stopped there. Not done: ${STEPS.slice(STEPS.indexOf(name)).join(", ")}. c-${String(card)} stays open: close it again when ${host} answers.`,
-        { cause: error },
-      );
-    const overall = `ran past close's overall limit of ${seconds(DEADLINE_MS)}`;
-    if (remaining <= 0) throw stalled(overall);
-    try {
-      return await work(Math.min(cap, remaining));
-    } catch (error) {
-      if (!(error instanceof TimedOut)) throw error;
-      throw stalled(cap < remaining ? `did not finish within ${seconds(cap)}` : overall, error);
-    }
+  const stalled = (name: (typeof STEPS)[number], why: string, error?: unknown): CloseStalled =>
+    new CloseStalled(
+      `c-${String(card)} was not closed. Step "${name}" for ${session} on ${host} ${why}, so close stopped there. Not done: ${STEPS.slice(STEPS.indexOf(name)).join(", ")}. c-${String(card)} stays open: close it again when ${host} answers.`,
+      { cause: error },
+    );
+  const overall = `ran past close's overall limit of ${seconds(DEADLINE_MS)}`;
+  return {
+    scan: async <T>(
+      name: (typeof STEPS)[number],
+      work: (timeout: number) => Promise<T>,
+      cap = Infinity,
+    ): Promise<T> => {
+      const remaining = end - Date.now();
+      if (remaining <= 0) throw stalled(name, overall);
+      try {
+        return await work(Math.min(cap, remaining));
+      } catch (error) {
+        if (!(error instanceof TimedOut)) throw error;
+        throw stalled(
+          name,
+          cap < remaining ? `did not finish within ${seconds(cap)}` : overall,
+          error,
+        );
+      }
+    },
+    destroy: async <T>(
+      name: (typeof STEPS)[number],
+      work: (timeout: number, grace: number) => Promise<T>,
+    ): Promise<T> => {
+      if (end - Date.now() <= 0)
+        throw stalled(
+          name,
+          `did not start because close ran past its overall limit of ${seconds(DEADLINE_MS)}`,
+        );
+      try {
+        return await work(OWN_CAP_MS, STOP_GRACE_MS);
+      } catch (error) {
+        if (!(error instanceof TimedOut)) throw error;
+        throw stalled(name, `did not finish within ${seconds(OWN_CAP_MS)}`, error);
+      }
+    },
   };
 }
 
@@ -162,8 +188,15 @@ async function landLocally(
   if (newest === undefined) throw new Error(`c-${String(card)} has no branch to land`);
   const { host, clone, branch, base } = newest;
   try {
-    const moved = await stepsOf(budget, newest)("land the branch locally", (timeout) =>
-      onHelper(host, ["sh", "-c", LAND_LOCALLY_SCRIPT, "land", clone, branch, base], timeout),
+    const moved = await stepsOf(budget, newest).destroy(
+      "land the branch locally",
+      (timeout, grace) =>
+        onHelper(
+          host,
+          ["sh", "-c", LAND_LOCALLY_SCRIPT, "land", clone, branch, base],
+          timeout,
+          grace,
+        ),
     );
     return `Landed ${branch} on local ${base} on ${host} (${moved.trim()}).`;
   } catch (error) {
@@ -186,7 +219,7 @@ async function unlandedCounts(attempt: Attempt, budget: Budget): Promise<Unlande
   const { host, clone, branch, base, session } = attempt;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const path = field(worktreeOf(listed, session), "path") ?? `${clone}.worktrees/${session}`;
-  const out = await stepsOf(budget, attempt)("check what is unlanded", (timeout) =>
+  const out = await stepsOf(budget, attempt).scan("check what is unlanded", (timeout) =>
     onHelper(
       host,
       ["sh", "-c", UNLANDED_COUNTS_SCRIPT, "landing", path, clone, branch, base],
@@ -261,7 +294,7 @@ function processesOf(session: string, out: string): { stopped: string[]; spared:
 
 async function retire(attempt: Attempt, budget: Budget): Promise<Retired> {
   const { host, clone, branch, base, session } = attempt;
-  const step = stepsOf(budget, attempt);
+  const { scan, destroy } = stepsOf(budget, attempt);
   const archiveDir = `${clone}.archive`;
   const listed = await herdr(host, ["worktree", "list", "--cwd", clone], !attempt.live);
   const tree = worktreeOf(listed, session);
@@ -273,36 +306,38 @@ async function retire(attempt: Attempt, budget: Budget): Promise<Retired> {
     if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
     const path = field(tree, "path") ?? "";
     const stopStep = "stop the worker's processes";
-    const found = await step(
+    const found = await scan(
       stopStep,
       (timeout) => onHelper(host, ["sh", "-c", STOP_PROCS_SCRIPT, "stop", path], timeout),
       SCAN_TIMEOUT_MS,
     );
-    const released = await step(
+    const released = await scan(
       stopStep,
       (timeout) => releaseAll(host, path, timeout),
       SCAN_TIMEOUT_MS,
     );
     processes = processesOf(session, found + released);
-    await step("archive unlanded work", (timeout) =>
+    await destroy("archive unlanded work", (timeout, grace) =>
       onHelper(
         host,
         ["sh", "-c", ARCHIVE_SCRIPT, "archive", path, base, archiveDir, session],
         timeout,
+        grace,
       ),
     );
-    await step("remove the worktree", (timeout) =>
-      onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path], timeout),
+    await destroy("remove the worktree", (timeout, grace) =>
+      onHelper(host, ["git", "-C", clone, "worktree", "remove", "--force", path], timeout, grace),
     );
   }
   const out = `${archiveDir}/${session}.tar.zst`;
   let archive = "";
   for (const each of drop) {
-    const dropped = await step("delete the task branch", (timeout) =>
+    const dropped = await destroy("delete the task branch", (timeout, grace) =>
       onHelper(
         host,
         ["sh", "-c", DELETE_ARCHIVED_BRANCH_SCRIPT, "finish", clone, each, base, out],
         timeout,
+        grace,
       ),
     );
     archive = dropped.trim();

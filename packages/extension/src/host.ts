@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { routed } from "@fleet/protocol/route";
-import { type Detach, runOnTransport, TIMED_OUT } from "@fleet/protocol/transport";
+import { type Detach, runOnTransport } from "@fleet/protocol/transport";
 import { spawnDetached } from "./detached.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -190,6 +190,7 @@ async function run(
   timeout: number,
   spawned: readonly string[],
   detach?: Detach,
+  grace?: number,
 ): Promise<string> {
   const via = transport(host);
   const [file = "", ...rest] = routed(via, spawned);
@@ -197,10 +198,15 @@ async function run(
     runOnTransport(
       file,
       rest,
-      { timeout, maxBuffer: 16 * 1024 * 1024, ...(detach === undefined ? {} : { detach }) },
+      {
+        timeout,
+        maxBuffer: 16 * 1024 * 1024,
+        ...(detach === undefined ? {} : { detach }),
+        ...(grace === undefined ? {} : { grace }),
+      },
       (error, out, err) => {
         if (error === null) resolve(out);
-        else if (error.code === TIMED_OUT)
+        else if (error.killed === true)
           reject(
             new TimedOut(
               `${argv[0] ?? ""} on ${host} did not finish within ${String(timeout)} ms and was stopped`,
@@ -222,7 +228,9 @@ export const onHelper = (
   host: string,
   argv: readonly string[],
   timeout = 600_000,
-): Promise<string> => run(host, argv, timeout, ["env", `${HELPER_MARK}=1`, ...argv], ownGroup);
+  grace?: number,
+): Promise<string> =>
+  run(host, argv, timeout, ["env", `${HELPER_MARK}=1`, ...argv], ownGroup, grace);
 
 const FLEET_ON_ROOT = 'root=${1:-$HOME/.fleet/app}; shift; exec "$root/bin/fleet" "$@"';
 

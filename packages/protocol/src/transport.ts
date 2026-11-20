@@ -13,7 +13,7 @@ const WITHOUT_THE_MASTER = ["-o", "ControlMaster=no", "-o", "ControlPath=none"];
 
 const SSH_UNREACHABLE = 255;
 
-export const TIMED_OUT = "ETIMEDOUT";
+const TIMED_OUT = "ETIMEDOUT";
 
 export type Detach = (
   file: string,
@@ -23,6 +23,7 @@ export type Detach = (
 export interface Limits {
   readonly timeout: number;
   readonly maxBuffer?: number;
+  readonly grace?: number;
   readonly detach?: Detach;
 }
 
@@ -41,35 +42,46 @@ const DEFAULT_MAX_BUFFER = 1024 * 1024;
 
 const TOO_MUCH_OUTPUT = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
 
+function signalGroup(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
+}
+
 function stopGroup(child: ChildProcess): void {
   child.stdout?.destroy();
   child.stderr?.destroy();
-  if (child.pid === undefined) return;
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    child.kill("SIGKILL");
-  }
+  signalGroup(child, "SIGKILL");
 }
 
 function collect(
   child: ChildProcessByStdio<null, Readable, Readable>,
-  { timeout, maxBuffer = DEFAULT_MAX_BUFFER }: Omit<Limits, "detach">,
+  { timeout, grace, maxBuffer = DEFAULT_MAX_BUFFER }: Omit<Limits, "detach">,
   done: Finished,
 ): void {
   let out = "";
   let err = "";
   let stoppedFor: string | undefined;
   let finished = false;
+  let killer: NodeJS.Timeout | undefined;
   const stop = (reason: string): void => {
     stoppedFor ??= reason;
-    stopGroup(child);
+    if (reason === TIMED_OUT && grace !== undefined && killer === undefined) {
+      signalGroup(child, "SIGTERM");
+      killer = setTimeout(() => {
+        stopGroup(child);
+      }, grace);
+    } else stopGroup(child);
   };
   const timer = setTimeout(() => {
     stop(TIMED_OUT);
   }, timeout);
   const finish = (error: ExecFileException | null): void => {
     clearTimeout(timer);
+    clearTimeout(killer);
     if (finished) return;
     finished = true;
     done(error, out, err);
@@ -92,7 +104,7 @@ function collect(
         ? Object.assign(new Error(`Command failed: ${child.spawnfile}`), {
             code: stoppedFor ?? code,
             ...(signal === null ? {} : { signal }),
-            killed: stoppedFor !== undefined,
+            killed: stoppedFor === TIMED_OUT,
           })
         : null,
     );

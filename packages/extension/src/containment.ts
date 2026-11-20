@@ -41,11 +41,12 @@ async function run(
   pids: number[],
   timeout?: number,
 ): Promise<string> {
+  const started = Date.now();
   const backend = await backendOn(host, timeout);
   return onHelper(
     host,
     ["sh", "-c", scriptFor(backend), "contain", action, worktree, ...pids.map(String)],
-    timeout,
+    timeout === undefined ? undefined : Math.max(1, timeout - (Date.now() - started)),
   );
 }
 
