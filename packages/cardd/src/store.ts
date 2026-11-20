@@ -13,6 +13,7 @@ import {
 import Type from "typebox";
 import { yoloFor } from "./authority.ts";
 import { standingFrom, type Standing } from "./status.ts";
+import { listProjects } from "./projects.ts";
 
 export interface Session {
   readonly id: string;
@@ -473,31 +474,4 @@ export function mainLane(db: DatabaseSync): string {
   const name = db.prepare("SELECT name FROM lanes WHERE parent IS NULL").get()?.["name"];
   if (typeof name !== "string") throw new Error("there is no main lane");
   return name;
-}
-
-interface Project {
-  readonly name: string;
-  readonly delivery: string;
-  readonly base: string;
-  readonly clones: { host: string; path: string }[];
-  readonly yolo: boolean;
-}
-
-export function listProjects(db: DatabaseSync): Project[] {
-  return db
-    .prepare(
-      "SELECT name, delivery, default_base AS base, clones, yolo FROM projects ORDER BY name",
-    )
-    .all()
-    .map((row) => {
-      const clones: unknown = JSON.parse(String(row["clones"]));
-      const paths = typeof clones === "object" && clones !== null ? Object.entries(clones) : [];
-      return {
-        name: String(row["name"]),
-        delivery: String(row["delivery"]),
-        base: String(row["base"]),
-        clones: paths.map(([host, path]) => ({ host, path: String(path) })),
-        yolo: row["yolo"] === 1,
-      };
-    });
 }

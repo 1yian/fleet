@@ -4,7 +4,8 @@ import { check, inEvidenceScope, OPS, type Card, type OpArgs } from "@fleet/prot
 import { fleetHostName, routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import type { Hosts } from "./pulls.ts";
-import { cardEntries, getCard, listProjects } from "./store.ts";
+import { cardEntries, getCard } from "./store.ts";
+import { listProjects } from "./projects.ts";
 import { finishFrom } from "./status.ts";
 
 export function routeFor(hosts: Hosts, host: string): readonly string[] {

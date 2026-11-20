@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardSchema, CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
+import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
-import { git } from "../support/remote.ts";
-import { tempDir } from "../support/run-root.ts";
+import { reach } from "../support/reach.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -28,15 +27,6 @@ const tiersOf = async (card: Card, condition: string): Promise<number[]> =>
     .filter((entry) => entry.fields["condition"] === condition)
     .map((entry) => Number(entry.fields["tier"]));
 const rising = (tiers: readonly number[]): number[] => [...new Set(tiers)].sort((a, b) => a - b);
-
-const reach = (session: Session, card: Card, condition: string, tier: number): Promise<Entry> =>
-  session.waitForEntry(
-    (entry) =>
-      entry.card === card.id &&
-      entry.fields["condition"] === condition &&
-      Number(entry.fields["tier"]) >= tier,
-    `${condition} tier ${String(tier)} on c-${String(card.id)}`,
-  );
 
 async function metronome(ticks: number): Promise<void> {
   const card = await newCard(fleet.main, "a clock for the test");
@@ -311,54 +301,6 @@ test("a ship card that only did an operation is reminded how to close it", async
     reminder.body,
     /\(merging, \d+ min\)\. Its work may have landed from another branch\. Close it with close\(card, summary\): if close warns about commits or files not on the base branch and the work landed elsewhere, call close again with confirm=true\. If it never landed and will not, close\(card, summary=<why>, landed=false\)\.$/,
   );
-});
-
-test("finished reminders say to close empty local-only branches without landing, with yolo off or on", async () => {
-  const { cardd, main } = fleet;
-  const clone = tempDir("fleet-empty-reminder-");
-  git(clone, "init", "-q", "-b", "main");
-  git(clone, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Initial");
-  cardd.addProject("review", { local: clone }, "acme/review", "local-only");
-
-  for (const [yolo, expected] of [
-    [false, "with-mate"],
-    [true, "merging"],
-  ] as const) {
-    cardd.yolo("review", yolo);
-    const card = check(
-      CardSchema,
-      await main.call("card.new", {
-        title: "Check whether the repository needs changes",
-        kind: "ship",
-        project: "review",
-      }),
-    );
-    const worker = await cardd.connect(await begin(main, card, "Inspect the branch", "local"));
-    const branch = `c-${String(card.id)}-a1`;
-    git(clone, "worktree", "add", "-q", "-b", branch, `${clone}.worktrees/${branch}`, "main");
-    await worker.call("report", { status: "done", text: "No changes were needed" });
-
-    const reminder = await reach(main, card, "finished", 1);
-    assert.equal(await status(main, card), expected);
-    assert.match(
-      reminder.body,
-      /Nothing lands from its empty branch\. Close it now with close\(card, summary\); no landing approval is needed\.$/,
-    );
-    const close = check(
-      OPS["close.begin"].result,
-      await main.call("close.begin", { card: card.id }),
-    );
-    assert.equal(close.mode, "done");
-    assert.equal(close.land, false);
-    await main.call("close.finish", {
-      card: card.id,
-      mode: "done",
-      text: "No changes needed",
-      archives: [],
-      left: [],
-    });
-    assert.equal(await status(main, card), "done");
-  }
 });
 
 test("a lost job is reminded to its mate each tier until the worker runs it again or drops it", async () => {

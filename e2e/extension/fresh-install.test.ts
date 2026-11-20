@@ -248,7 +248,9 @@ test("bootstrap leaves an occupied checkout untouched and only provisions the wi
   );
 
   await Promise.all([
-    main.call("project.personal", { host: "LOCAL" }).then((ack) => assert.equal(ack, true)),
+    main.call("project.personal", { host: "LOCAL" }).then((ack) => {
+      assert.equal(ack, true);
+    }),
     assert.rejects(
       main.call("project.personal", { host: "second" }),
       /no clone on second.*Registered clone hosts: LOCAL/,

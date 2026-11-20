@@ -5,7 +5,8 @@ import { routed } from "@fleet/protocol/route";
 import { runOnTransport } from "@fleet/protocol/transport";
 import { routeFor } from "./merged-report.ts";
 import type { Hosts } from "./pulls.ts";
-import { insertProjectIfMissing, listProjects, mainLane, type Session } from "./store.ts";
+import { insertProjectIfMissing, mainLane, type Session } from "./store.ts";
+import { listProjects } from "./projects.ts";
 
 const HOST_DIR = "${FLEET_HOST_DIR:-$HOME/.fleet}";
 const CLONE_SUFFIX = `/projects/${PERSONAL_PROJECT}`;

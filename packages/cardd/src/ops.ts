@@ -49,7 +49,6 @@ import {
   addEntry,
   cardEntries,
   getCard,
-  listProjects,
   loadCard,
   mainLane,
   setYolo,
@@ -57,6 +56,7 @@ import {
   transaction,
   type Session,
 } from "./store.ts";
+import { listProjects } from "./projects.ts";
 
 interface Done {
   readonly value: unknown;

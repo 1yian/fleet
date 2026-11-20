@@ -11,12 +11,12 @@ import {
   addEntry,
   cardEntries,
   getCard,
-  listProjects,
   loadCard,
   mainLane,
   reachable,
   type Session,
 } from "./store.ts";
+import { listProjects } from "./projects.ts";
 
 export interface CloseCheck {
   readonly merged: boolean;
