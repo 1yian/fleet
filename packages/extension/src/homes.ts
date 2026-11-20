@@ -275,6 +275,39 @@ type LaneMatch =
   | { workspace: string; state: "matched" | "running" }
   | { workspace: string; state: "idle"; pane: string };
 
+async function findLegacy(
+  rows: readonly Record<string, unknown>[],
+  home: string,
+  purpose: "liveness" | "placement" | "close" | "restart-held",
+  deadline?: number,
+): Promise<LaneMatch | undefined> {
+  const verified: { workspace: string; pane: string }[] = [];
+  for (const row of rows) {
+    const workspace = String(row["workspace_id"]);
+    const panes = await panesOf(workspace, row["pane_count"], deadline);
+    const [first] = panes;
+    if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
+    const closing = purpose === "close" || purpose === "restart-held";
+    if (!closing && panes.length !== 1)
+      throw new HostUnread(`cannot verify the root pane for split workspace ${workspace}`);
+    const cwd = requiredCwd(first.cwd, workspace);
+    if (canonical(cwd) === canonical(home)) verified.push({ workspace, pane: first.pane });
+  }
+  if (verified.length > 1)
+    throw new HostUnread(
+      `herdr lists ${String(verified.length)} legacy workspaces rooted in ${home}`,
+    );
+  const [only] = verified;
+  if (only === undefined) return undefined;
+  if (purpose === "close") return { workspace: only.workspace, state: "matched" };
+  const state = await lanePaneState(only.pane, deadline);
+  if (purpose === "restart-held")
+    return state !== "down" ? { workspace: only.workspace, state: "running" } : undefined;
+  if (purpose === "placement" && state !== "pi") return undefined;
+  if (state !== "down") return { workspace: only.workspace, state: "running" };
+  return { workspace: only.workspace, state: "idle", pane: only.pane };
+}
+
 async function findWorkspace(
   rows: readonly Record<string, unknown>[],
   home: string,
@@ -282,23 +315,17 @@ async function findWorkspace(
   legacy: boolean,
   deadline?: number,
 ): Promise<LaneMatch | undefined> {
+  if (legacy) return findLegacy(rows, home, purpose, deadline);
   const matchesHome = (cwd: string | undefined) =>
     cwd !== undefined && cwd !== "" && canonical(cwd) === canonical(home);
   for (const row of rows) {
     const workspace = String(row["workspace_id"]);
-    if (!legacy && purpose === "close") return { workspace, state: "matched" };
+    if (purpose === "close") return { workspace, state: "matched" };
     const panes = await panesOf(workspace, row["pane_count"], deadline);
     const [first] = panes;
     if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
-    if (purpose === "close" || (legacy && purpose === "restart-held")) {
-      if (!matchesHome(requiredCwd(first.cwd, workspace))) continue;
-      if (purpose === "close") return { workspace, state: "matched" };
-      return (await lanePaneState(first.pane, deadline)) !== "down"
-        ? { workspace, state: "running" }
-        : undefined;
-    }
     if (panes.length !== 1) {
-      if (legacy || purpose === "placement")
+      if (purpose === "placement")
         throw new HostUnread(`cannot verify the root pane for split workspace ${workspace}`);
       for (const { pane, cwd } of panes) {
         if (matchesHome(cwd) && (await lanePaneState(pane, deadline)) === "pi")
@@ -306,8 +333,7 @@ async function findWorkspace(
       }
       throw new HostUnread(`no Pi observed in the lane home for split workspace ${workspace}`);
     }
-    if ((legacy || purpose === "placement") && !matchesHome(requiredCwd(first.cwd, workspace)))
-      continue;
+    if (purpose === "placement" && !matchesHome(requiredCwd(first.cwd, workspace))) continue;
     const state = await lanePaneState(first.pane, deadline);
     if (purpose === "placement" && state !== "pi") continue;
     if (state !== "down") return { workspace, state: "running" };
