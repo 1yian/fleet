@@ -61,6 +61,23 @@ function nudgeOnce(pi: ExtensionAPI, report: (event: Record<string, unknown>) =>
   });
 }
 
+function observe(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  observeMouse(report);
+  observeTools(pi, report);
+}
+
+function observeTools(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  pi.on("tool_execution_end", (event) => {
+    const content: unknown = isRecord(event.result) ? event.result["content"] : undefined;
+    const text = Array.isArray(content)
+      ? content
+          .map((part: unknown) => (isRecord(part) ? optionalString(part, "text") : ""))
+          .join("")
+      : "";
+    report({ type: "tool_execution_end", tool: event.toolName, error: event.isError, text });
+  });
+}
+
 export default function probe(pi: ExtensionAPI): void {
   registerReload(pi);
   const url = (process.env["FLEET_CONTROL_URL"] ?? "").replace(/^http/, "ws");
@@ -75,7 +92,7 @@ export default function probe(pi: ExtensionAPI): void {
     for (const line of outbox.splice(0)) socket.send(line);
   });
 
-  observeMouse(report);
+  observe(pi, report);
   const edit = probeEdits(pi, report);
 
   let release: (() => void) | undefined;
