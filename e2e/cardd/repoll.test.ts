@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS, type BoardCard, type Card, type Entry, type Pulse } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
@@ -165,6 +166,60 @@ test("a note after a working report is news, and a re-run that exits differently
     return Date.now() - pulse.movedAt < MINUTE ? pulse : undefined;
   }, "the passing re-run to move the card");
   assert.equal(moved.notice, "none");
+});
+
+test("delivered startup fences do not advance card movement, but an executed job does", async () => {
+  const card = await newCard(cleo, "Run the suite");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", { status: "working", text: "Preparing the suite." });
+  ageCard(fleet.cardd, card, IDLE_LIMIT + MINUTE);
+  const before = await pulseOf(card);
+  assert.equal(before.state, "idle");
+  for (let i = 0; i < 2; i += 1) {
+    const { job } = check(
+      OPS["job.prepare"].result,
+      await worker.call("job.prepare", {
+        label: "suite",
+        command: "npm test",
+        launch: randomUUID(),
+      }),
+    );
+    assert.deepEqual(await worker.call("job.stop", { job }), {
+      label: "suite",
+      running: false,
+      cancelled: true,
+    });
+    await worker.waitForEntry(
+      (entry) =>
+        entry.kind === "job-result" &&
+        entry.fields["job"] === job &&
+        entry.fields["exitCode"] === 130,
+      "the fenced reservation's durable result",
+    );
+  }
+  const still = await pulseOf(card);
+  assert.deepEqual([still.state, still.movedAt], ["idle", before.movedAt]);
+
+  const launch = randomUUID();
+  const { job } = check(
+    OPS["job.prepare"].result,
+    await worker.call("job.prepare", {
+      label: "suite",
+      command: "npm test",
+      launch,
+    }),
+  );
+  assert.deepEqual(await worker.call("job.register", { job, launch, pid: 1234 }), {
+    registered: true,
+  });
+  await worker.call("job.finish", { job, exitCode: 0, outputTail: "suite passed" });
+  const result = await worker.waitForEntry(
+    (entry) =>
+      entry.kind === "job-result" && entry.fields["job"] === job && entry.fields["exitCode"] === 0,
+    "the completed suite's result",
+  );
+  assert.ok(result.createdAt > before.movedAt);
+  assert.equal((await pulseOf(card)).movedAt, result.createdAt);
 });
 
 test("a repeated poll and a fresh suite on one card: the suite covers, and both jobs are counted", async () => {

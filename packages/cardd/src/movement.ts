@@ -72,12 +72,10 @@ const changes =
   (entry: Entry): boolean =>
     MOVEMENT.has(entry.kind) && !AUTOMATIC.has(entry.author) && !repeated.has(entry.id);
 
-const finishes =
-  (again: ReadonlySet<number>, differs: ReadonlySet<number>) =>
-  (entry: Entry): boolean =>
-    entry.kind === "job-result" &&
-    entry.fields["lost"] !== true &&
-    (!again.has(Number(entry.fields["job"])) || differs.has(entry.id));
+const completion = (entry: Entry): boolean =>
+  entry.kind === "job-result" &&
+  entry.fields["lost"] !== true &&
+  entry.fields["startupFenced"] !== true;
 
 function changedExits(entries: readonly Entry[], runs: readonly Run[]): ReadonlySet<number> {
   const labels = new Map(runs.map((run) => [run.id, run.label]));
@@ -86,7 +84,7 @@ function changedExits(entries: readonly Entry[], runs: readonly Run[]): Readonly
   for (const entry of entries) {
     const label = labels.get(Number(entry.fields["job"]));
     const code = entry.fields["exitCode"];
-    if (entry.kind !== "job-result" || label === undefined || typeof code !== "number") continue;
+    if (label === undefined || typeof code !== "number") continue;
     if (last.has(label) && last.get(label) !== code) differs.add(entry.id);
     last.set(label, code);
   }
@@ -108,10 +106,14 @@ export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movemen
   const changed = entries.findLast(changes(repeated))?.createdAt ?? 0;
   const base = Math.max(card.createdAt, changed, progressAt(db, card.id));
   const runs = runsOf(db, card.id);
-  const differs = changedExits(entries, runs);
-  const exitAt = entries.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;
+  const completions = entries.filter(completion);
+  const differs = changedExits(completions, runs);
+  const exitAt = completions.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;
   const again = startedAgain(runs, Math.max(base, exitAt));
-  const finished = entries.findLast(finishes(again, differs))?.createdAt ?? 0;
+  const finished =
+    completions.findLast(
+      (entry) => !again.has(Number(entry.fields["job"])) || differs.has(entry.id),
+    )?.createdAt ?? 0;
   const running = runs.filter((run) => run.running);
   return {
     movedAt: Math.max(base, finished),

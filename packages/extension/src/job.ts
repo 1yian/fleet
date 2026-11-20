@@ -238,13 +238,7 @@ async function register(job: Job, launch: string): Promise<boolean> {
       launch,
       pid: process.pid,
     })
-      .then((reply) =>
-        reply.ok
-          ? check(OPS["job.register"].result, reply.value).registered
-          : reply.status < 500
-            ? false
-            : undefined,
-      )
+      .then((reply) => reply.ok && check(OPS["job.register"].result, reply.value).registered)
       .catch(() => undefined);
     if (outcome !== undefined) return outcome;
     if (attempt + 1 < REGISTRATION_ATTEMPTS) await sleep(250);
