@@ -559,6 +559,11 @@ for (const fault of ["failed", "hanging"] as const) {
     pi.prompt("Check whether the job is still being waited on");
     await settled(2);
     assert.equal(said("Your run is ending without a handoff"), false);
+    const published = await untilAsync(async () => {
+      const state = (await cardView()).card.activity?.state;
+      return state === "running" ? undefined : state;
+    }, "the worker to publish its settled activity");
+    assert.equal(published, "waiting");
     const beforeFault = lists.length;
     mode = fault;
     disconnect();
@@ -752,6 +757,61 @@ exec ${quote(herdr)} "$@"
   assert.equal(said("Started job 1"), false);
   assert.deepEqual(await jobResults(), [
     [1, 127, "could not start: wrapper did not register before the startup deadline"],
+  ]);
+});
+
+test("a registered no-start result received before the pane reply rejects the launch as not started", async (t) => {
+  const release = join(jobDir, "release-reply");
+  const accepted = join(jobDir, "pane-accepted");
+  const marker = join(jobDir, "not-executed");
+  await jobProxy(t, async (op, args) => {
+    const result = await callCardd(op, args);
+    return op === "job.register" ? { ...result, body: '{"ok":true,"value":{} }' } : result;
+  });
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
+const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  response=$(${quote(herdr)} "$@") || exit "$?"
+  touch ${quote(accepted)}
+  node -e ${quote(waitForRelease)} || exit "$?"
+  printf '%s\\n' "$response"
+  exit 0
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  t.after(() => writeFileSync(release, ""));
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "unconfirmed", command: `touch ${quote(marker)}` },
+  }));
+  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job did not start" } }));
+  worker();
+  await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
+  await untilAsync(
+    async () => ((await jobResults()).length === 1 ? true : undefined),
+    "the wrapper's durable no-start result",
+  );
+  await h.waitFor(
+    (event) => event["type"] === "fleet_delivered",
+    "the no-start result to reach the worker before the pane reply",
+  );
+  writeFileSync(release, "");
+  await h.waitForCall(1);
+  assert.ok(said("did not start: its wrapper reported that the command never ran"));
+  assert.equal(said("Started job 1"), false);
+  assert.equal(existsSync(marker), false);
+  assert.deepEqual(await jobResults(), [
+    [1, 127, "could not start: cardd did not confirm wrapper registration"],
   ]);
 });
 
