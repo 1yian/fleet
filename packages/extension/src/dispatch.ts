@@ -148,18 +148,24 @@ async function confirmStays(
   }
 }
 
+export class DidNotStart extends Error {}
+
 async function startAgent(
   host: string,
   pane: string,
   args: string[],
   worker: { session: string; token: string },
   lost: (text: string) => void,
+  refundUninspectable = false,
 ): Promise<void> {
   try {
     await launchAgent(host, pane, args);
   } catch (error) {
-    if (await piRunning(host, pane).catch(() => true)) throw error;
-    throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+    const running = await piRunning(host, pane).catch(() => undefined);
+    if (running === true || (running === undefined && !refundUninspectable)) throw error;
+    const message =
+      running === undefined ? toError(error).message : await exitedMessage(host, pane, worker);
+    throw new DidNotStart(message, { cause: error });
   }
   confirmStays(host, pane, worker).catch((error: unknown) => {
     lost(error instanceof Error ? error.message : String(error));
@@ -259,22 +265,21 @@ async function closeWorkspace(host: string, clone: string, session: string): Pro
   if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
 }
 
-export class DidNotStart extends Error {}
-
 interface Recovery {
   card: number;
   host: string;
   repeat: boolean;
-  notice?: string | undefined;
+  notice?: number | undefined;
 }
 
 interface Replacement {
   plan: Plan;
   pane: string;
   path: string;
+  extension: string;
 }
 
-async function freshPane(plan: Plan, recovery: Recovery): Promise<Replacement> {
+async function freshPane(plan: Plan, recovery: Recovery): Promise<{ pane: string; path: string }> {
   const old = await worktreePane(recovery.host, plan, recovery.card);
   if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
   await closeWorkspace(recovery.host, plan.clone, plan.session);
@@ -282,14 +287,13 @@ async function freshPane(plan: Plan, recovery: Recovery): Promise<Replacement> {
   const { pane, path, workspace } = await worktreePane(recovery.host, plan, recovery.card);
   await claimOwned(recovery.host, workspace, plan, recovery.card);
   await contain(recovery.host, pane, path);
-  return { plan, pane, path };
+  return { pane, path };
 }
 
-async function startReplacement(
+async function prepareReplacement(
   link: Link,
   launch: Launch,
   recovery: Recovery,
-  avoid: readonly string[],
 ): Promise<string | Replacement> {
   const plan = await link.call("attempt.resume", { card: recovery.card });
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
@@ -298,10 +302,24 @@ async function startReplacement(
   const extension = await extensionOn(recovery.host, launch.extension);
   const fresh = await freshPane(plan, recovery);
   if (recovery.notice !== undefined)
-    await link.call("comment", { card: recovery.card, text: recovery.notice });
+    await link.call("card.restart.notice", { card: recovery.card, request: recovery.notice });
+  return { plan, ...fresh, extension };
+}
+
+export async function replaceWorker(
+  link: Link,
+  launch: Launch,
+  recovery: Recovery,
+  avoid: readonly string[] = [],
+): Promise<string> {
+  const fresh = await prepareReplacement(link, launch, recovery).catch((error: unknown) => {
+    throw new DidNotStart(toError(error).message, { cause: error });
+  });
+  if (typeof fresh === "string") return fresh;
+  const { plan, pane, path, extension } = fresh;
   await startAgent(
     recovery.host,
-    fresh.pane,
+    pane,
     [
       [
         "agent",
@@ -310,7 +328,7 @@ async function startReplacement(
         "--kind",
         "pi",
         "--pane",
-        fresh.pane,
+        pane,
         "--timeout",
         String(HERDR_READY_WAIT_MS),
         "--",
@@ -333,22 +351,8 @@ async function startReplacement(
     ].flat(),
     plan,
     launch.lost,
+    true,
   );
-  return fresh;
-}
-
-export async function replaceWorker(
-  link: Link,
-  launch: Launch,
-  recovery: Recovery,
-  avoid: readonly string[] = [],
-): Promise<string> {
-  const started = await startReplacement(link, launch, recovery, avoid).catch((error: unknown) => {
-    throw new DidNotStart(error instanceof Error ? error.message : String(error), {
-      cause: error,
-    });
-  });
-  if (typeof started === "string") return started;
-  await contain(recovery.host, started.pane, started.path);
-  return `Started ${started.plan.session} again on ${recovery.host}, on its own session and branch ${started.plan.branch}.`;
+  await contain(recovery.host, pane, path);
+  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
 }

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Move, Turn } from "../support/harness.ts";
 import {
   lastUser,
   mateConnected,
+  plan,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -35,14 +35,6 @@ const cardOne = async () => (await parts.cardd.board()).cards.find((card) => car
 
 const promptMate = (text: string): void => {
   parts.mate.prompt(text, "followUp");
-};
-
-const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Move => {
-  const at = turns.findLastIndex((turn) => turn.role === "user");
-  const done = turns.slice(at).filter((turn) => turn.role === "toolResult").length;
-  const ask = turns[at]?.text ?? "";
-  const moves = Object.entries(plans).find(([key]) => ask.includes(key))?.[1] ?? [];
-  return moves[done] ?? { text: "noted" };
 };
 
 test("restart_card reconnects the worker of a paused card whose process is gone, keeps the card paused, and the next comment reaches it", async () => {

@@ -73,8 +73,21 @@ function writeIncidentDatabase(file: string): void {
   db.prepare(
     `INSERT INTO incidents (id, actor, card, parent, generation, phase, classification, error, source,
        intent, state, eligible_at, due_told, first_at, last_at)
-     VALUES (5, 'c-5-a1', 5, 'cleo', 1, 'turn', 'unknown', 'odd failure', 'turn', 'working', 'open', NULL, 1, ?, ?)`,
-  ).run(T, T);
+     VALUES (5, 'c-5-a1', 5, 'cleo', 1, 'turn', 'unknown', 'odd failure', 'turn', 'working', 'open', ?, 1, ?, ?)`,
+  ).run(past, T, T);
+  const stale = db
+    .prepare(
+      `INSERT INTO entries (card, author, kind, body, fields, created_at)
+       VALUES (5, 'check', 'finding', ?, ?, ?)`,
+    )
+    .run(
+      "runtime failure: odd failure. Incident 5, process generation 1. Recover with restart_card(card=5, incident=5, generation=1, mode=replace).",
+      JSON.stringify({ condition: "runtime-failure" }),
+      T,
+    );
+  db.prepare(
+    "INSERT INTO deliveries (session, entry, state, updated_at) VALUES ('cleo', ?, 'pending', ?)",
+  ).run(Number(stale.lastInsertRowid), T);
   db.close();
 }
 
@@ -122,12 +135,6 @@ test("a fleet's live incidents survive the intent migration, an old merging inci
           "4 blocked completed told=0",
         ],
       );
-      const moved = db.prepare("SELECT state, generation FROM incidents WHERE id = 5").get();
-      assert.deepEqual(
-        [moved?.["state"], moved?.["generation"]],
-        ["open", 2],
-        "an open incident that a replacement left on its old generation follows the actor",
-      );
       assert.throws(
         () =>
           db
@@ -158,6 +165,29 @@ test("a fleet's live incidents survive the intent migration, an old merging inci
       }),
     );
     assert.deepEqual([plan.incident, plan.card, plan.mode, plan.actor], [1, 1, "retry", "c-1-a1"]);
+
+    const refreshed = await cleo.waitForEntry(
+      (entry) => entry.card === 5 && entry.body.includes("is eligible for recovery now"),
+      "the migrated incident's recovery command",
+    );
+    assert.match(refreshed.body, /restart_card\(card=5, incident=5, generation=2, mode=retry/);
+    assert.ok(
+      !cleo.entries.some(
+        (push) => push.entry.card === 5 && push.entry.body.includes("generation=1"),
+      ),
+      "a finding queued with the old generation is never sent",
+    );
+    const migrated = check(
+      OPS["card.restart"].result,
+      await cleo.call("card.restart", {
+        card: 5,
+        incident: 5,
+        generation: 2,
+        mode: "retry",
+        key: "migrated-generation",
+      }),
+    );
+    assert.deepEqual([migrated.incident, migrated.generation, migrated.mode], [5, 2, "retry"]);
   } finally {
     await cardd.stop();
   }

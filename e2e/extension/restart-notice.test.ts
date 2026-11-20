@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, test } from "node:test";
+import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import {
   mateConnected,
+  plan,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -13,6 +15,7 @@ import {
   workersOf,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
+import { poll, type Turn } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const SLOW = fileURLToPath(new URL("../support/slow-transport.ts", import.meta.url));
@@ -24,41 +27,72 @@ afterEach(async (t) => {
   await stopDispatchLab(parts);
 });
 
-test("a restarted worker hears that it was restarted in its first turn, even when the restart is slow to return", async () => {
+const DISPATCH = {
+  tool: "dispatch",
+  args: {
+    title: "Users see one scrollbar",
+    name: "one-scrollbar",
+    kind: "ship",
+    project: "site",
+    intent: "Fix the scrollbar",
+    host: "slow",
+    task: "fix the scrollbar",
+  },
+} as const;
+const NOTICE = "Your session was restarted on the same card and conversation.";
+
+async function waitForJobResult({ cardd, mainToken }: DispatchLab): Promise<void> {
+  const deadline = Date.now() + WORKER_WAIT_MS;
+  for (;;) {
+    const { body } = await cardd.post(mainToken, "card", { card: 1 });
+    const result = check(HttpOutcomeSchema, body);
+    assert.ok(result.ok, "the mate can read the card");
+    const thread = check(OPS.card.result, result.value);
+    if (
+      thread.entries.some(
+        (entry) => entry.kind === "job-result" && entry.fields["exitCode"] === 130,
+      )
+    )
+      return;
+    assert.ok(Date.now() < deadline, "the old job's result did not reach the card");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
+test("a restarted worker hears the restart notice on its first turn even when an interrupted job result is already queued", async () => {
   const armed = join(tempDir("slow-restart-"), "armed");
+  const jobStarted = `${armed}.job`;
   parts = await startDispatchLab({
     hosts: { slow: ["node", SLOW, armed] },
     roots: { slow: CHECKOUT },
   });
   const { h, mate, lab } = parts;
-  h.onModel(() => ({ tool: "board", args: {} }), "mate");
-  h.onModel(
-    () => ({
-      tool: "dispatch",
-      args: {
-        title: "Users see one scrollbar",
-        name: "one-scrollbar",
-        kind: "ship",
-        project: "site",
-        intent: "Fix the scrollbar",
-        host: "slow",
-        task: "fix the scrollbar",
-      },
-    }),
-    "mate",
-  );
-  h.onModel(() => ({ text: "dispatched" }), "mate");
-  h.onModel(() => {
-    writeFileSync(armed, "armed\n");
-    return { tool: "restart_card", args: { card: 1 } };
-  }, "mate");
-  h.onModel(() => ({ text: "restarted" }), "mate");
-  h.onModel(() => ({ tool: "run_long", args: { label: "wait", command: "sleep 600" } }), "worker");
-  h.onModel(() => ({ text: "waiting for the job" }), "worker");
+  for (let call = 0; call < 12; call += 1) {
+    h.onModel(
+      (turns) =>
+        plan(turns, {
+          "ship the scrollbar fix": [DISPATCH],
+          "restart it": [{ tool: "restart_card", args: { card: 1 } }],
+        }),
+      "mate",
+    );
+    h.onModel(
+      (turns) =>
+        plan(turns, {
+          "fix the scrollbar": [
+            {
+              tool: "run_long",
+              args: { label: "wait", command: `touch '${jobStarted}' && exec sleep 600` },
+            },
+          ],
+        }),
+      "worker",
+    );
+  }
   await mateConnected(h);
   mate.prompt("ship the scrollbar fix");
   await h.waitForCall(1, "worker", WORKER_WAIT_MS);
-  await h.waitForCall(2, "mate", WORKER_WAIT_MS);
+  await poll(() => existsSync(jobStarted) || undefined, "the worker's job to run", WORKER_WAIT_MS);
 
   const group = await workerGroupOf(lab, "c-1-a1");
   assert.ok(group !== undefined && group > 0);
@@ -68,13 +102,20 @@ test("a restarted worker hears that it was restarted in its first turn, even whe
     assert.ok(Date.now() < deadline, "the killed worker still runs");
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  mate.prompt("the worker died; restart it", "followUp");
+  writeFileSync(armed, "armed\n");
+  mate.prompt("restart it", "followUp");
 
-  const results = toolResults(await h.waitForCall(4, "mate", WORKER_WAIT_MS));
-  assert.match(results.at(-1) ?? "", /^Started c-1-a1 again on slow/);
-  const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
+  await waitForJobResult(parts);
+  const next = h.callsOf("worker").length;
+  writeFileSync(`${armed}.launch`, "launch\n");
+  const first = await h.waitForCall(next, "worker", WORKER_WAIT_MS);
+  writeFileSync(`${armed}.released`, "released\n");
+
   assert.ok(
-    resumed.some((turn) => turn.text.includes("Your session was restarted on the same card")),
-    "the restarted worker's first turn did not carry the restart notice",
+    first.some((turn) => turn.text.includes(NOTICE)),
+    "the first turn carries the restart notice",
   );
+  const returned = (turns: Turn[]): boolean =>
+    toolResults(turns).some((result) => result.startsWith("Started c-1-a1 again on slow"));
+  await poll(() => h.callsOf("mate").find(returned), "the restart to return", WORKER_WAIT_MS);
 });

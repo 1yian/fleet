@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { check, OPS, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
+import { TestClock } from "../support/clock.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { tempDir } from "../support/run-root.ts";
 
@@ -19,12 +20,15 @@ function setClock(file: string, ms: number): void {
   renameSync(next, file);
 }
 
-async function started(scale = "0.001"): Promise<{ fleet: Fleet; clock: string }> {
+async function started(
+  scale = "0.001",
+  env: Record<string, string> = {},
+): Promise<{ fleet: Fleet; clock: string }> {
   const dir = tempDir("incident-clock-");
   mkdirSync(dir, { recursive: true });
   const clock = join(dir, "clock");
   setClock(clock, Date.now());
-  fleet = await startFleet({ CARDD_TIMING_SCALE: scale, CARDD_CLOCK_FILE: clock });
+  fleet = await startFleet({ ...env, CARDD_TIMING_SCALE: scale, CARDD_CLOCK_FILE: clock });
   return { fleet, clock };
 }
 
@@ -171,7 +175,8 @@ test("an incident intent outside the lifecycle is rejected by the database", asy
 });
 
 test("a recovery whose replacement does not verify leaves the incident on the replacement's generation, so the suggested restart runs", async () => {
-  const { fleet: current } = await started("0.01");
+  const deadlineClock = new TestClock(Date.now());
+  const { fleet: current } = await started("0.01", deadlineClock.env());
   const card = await newCard(current.main, "replaced without an answer");
   const token = await begin(current.main, card);
   const first = await current.cardd.connect(token);
@@ -194,6 +199,11 @@ test("a recovery whose replacement does not verify leaves the incident on the re
   await first.close();
   current.cardd.startNewProcess(token);
   const second = await current.cardd.connect(token);
+  await second.waitForEntry(
+    (entry) => entry.body.startsWith(`recovery check ${String(opened.incident)} `),
+    "the recovery check on the replacement",
+  );
+  await deadlineClock.advance(10_000);
 
   const failed = await current.main.waitForEntry(
     (entry) => entry.card === card.id && entry.body.includes("did not verify"),
