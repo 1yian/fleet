@@ -155,29 +155,31 @@ const LaneParams = Type.Object({
   action: Type.Enum(["start", "stop", "restart"]),
 });
 
-let lanesHeld = false;
-let lanesQueue: Promise<void> = Promise.resolve();
+const heldHosts = new Set<string>();
+const hostQueues = new Map<string, Promise<void>>();
 
-export function withLanes<T>(work: () => Promise<T>): Promise<T> {
-  const run = lanesQueue.then(async () => {
-    lanesHeld = true;
+export function withLanes<T>(hosts: readonly string[], work: () => Promise<T>): Promise<T> {
+  const earlier = Promise.all(hosts.map((host) => hostQueues.get(host) ?? Promise.resolve()));
+  const run = earlier.then(async () => {
+    for (const host of hosts) heldHosts.add(host);
     try {
       return await work();
     } finally {
-      lanesHeld = false;
+      for (const host of hosts) heldHosts.delete(host);
     }
   });
-  lanesQueue = run.then(
+  const finished = run.then(
     () => undefined,
     () => undefined,
   );
+  for (const host of hosts) hostQueues.set(host, finished);
   return run;
 }
 
 export async function restartLane(home: string, lane: string): Promise<string> {
   const config = readLaneConfig(home);
   if (config === undefined) throw new Error("only a mate with lanes can restart one");
-  return withLanes(() => act(config, lane, "restart"));
+  return withLanes(hostsOf(config), () => act(config, lane, "restart"));
 }
 
 async function restartAll(config: LaneConfig): Promise<string[]> {
@@ -226,11 +228,11 @@ export function registerLanes(
       if (name !== "all") {
         if (action === "stop")
           await link.call("lane.stopping", { lane: name }).catch(() => undefined);
-        return reply(await withLanes(() => act(config, name, action)));
+        return reply(await withLanes(hostsOf(config), () => act(config, name, action)));
       }
       if (action !== "restart")
         throw new Error('lane "all" only restarts: name each lane to start or stop it');
-      return reply((await withLanes(() => restartAll(config))).join("\n"));
+      return reply((await withLanes(hostsOf(config), () => restartAll(config))).join("\n"));
     },
   });
   keepRunning(pi, config, home, ctx);
@@ -315,6 +317,35 @@ function diskWatcher(
   });
 }
 
+function costNotice(
+  pi: ExtensionAPI,
+  config: LaneConfig,
+  home: string,
+  isDown: () => boolean,
+): () => Promise<void> {
+  let costing = false;
+  return async () => {
+    if (costing || isDown() || !noticeDue(home, Date.now())) return;
+    costing = true;
+    try {
+      const lines = await costLines(config).catch(() => []);
+      if (lines.length === 0 || isDown()) return;
+      mkdirSync(join(home, "state"), { recursive: true });
+      writeFileSync(join(home, COST_NOTICE), String(Date.now()));
+      pi.sendMessage(
+        {
+          customType: "fleet-cost",
+          content: `[fleet] cost, last 24 hours:\n${lines.join("\n")}`,
+          display: true,
+        },
+        { triggerTurn: true, deliverAs: "followUp" },
+      );
+    } finally {
+      costing = false;
+    }
+  };
+}
+
 function keepRunning(
   pi: ExtensionAPI,
   config: LaneConfig,
@@ -323,7 +354,7 @@ function keepRunning(
 ): void {
   const unreachable = new Set<string>();
   const unshared = new Set<string>();
-  let ticking = false;
+  const supervising = new Set<string>();
   let shutDown = false;
   const isDown = (): boolean => shutDown;
   const tell = (lines: readonly string[], urgent: boolean): void => {
@@ -374,32 +405,19 @@ function keepRunning(
       reportDown(host, error);
     }
   };
-  const dailyCost = async (): Promise<void> => {
-    if (isDown() || !noticeDue(home, Date.now())) return;
-    const lines = await costLines(config).catch(() => []);
-    if (lines.length === 0 || isDown()) return;
-    mkdirSync(join(home, "state"), { recursive: true });
-    writeFileSync(join(home, COST_NOTICE), String(Date.now()));
-    pi.sendMessage(
-      {
-        customType: "fleet-cost",
-        content: `[fleet] cost, last 24 hours:\n${lines.join("\n")}`,
-        display: true,
-      },
-      { triggerTurn: true, deliverAs: "followUp" },
-    );
-  };
-  const tick = async (): Promise<void> => {
-    if (ticking || lanesHeld) return;
-    ticking = true;
+  const superviseHost = async (host: string): Promise<void> => {
+    if (supervising.has(host) || heldHosts.has(host)) return;
+    supervising.add(host);
     try {
-      await withLanes(async () => {
-        for (const host of hostsOf(config)) await checkHost(host);
-      });
-      await dailyCost();
+      await withLanes([host], () => checkHost(host));
     } finally {
-      ticking = false;
+      supervising.delete(host);
     }
+  };
+  const dailyCost = costNotice(pi, config, home, isDown);
+  const tick = async (): Promise<void> => {
+    await Promise.all(hostsOf(config).map(superviseHost));
+    await dailyCost();
   };
   const timer = setInterval(() => void tick(), INTERVAL_MS);
   timer.unref();
