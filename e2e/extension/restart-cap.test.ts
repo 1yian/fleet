@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { poll } from "../support/harness.ts";
 import {
   mateConnected,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
   WORKER_WAIT_MS,
-  workersOf,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
+
+const RESTART_NOTICE = "Your session was restarted on the same card and conversation.";
 
 let parts: DispatchLab;
 afterEach(async (t) => {
@@ -20,7 +22,7 @@ afterEach(async (t) => {
 
 test("a restart whose process could not be started never counts toward the hourly cap, so the mate can try again", async () => {
   parts = await startDispatchLab();
-  const { h, mate, cardd, lab } = parts;
+  const { h, mate, cardd } = parts;
   const down = join(h.dir, "far-down");
   const restart = { tool: "restart_card", args: { card: 1 } };
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
@@ -60,7 +62,13 @@ test("a restart whose process could not be started never counts toward the hourl
     assert.doesNotMatch(refused, /was restarted 3 times/);
   }
   assert.match(results.at(-1) ?? "", /^Started c-1-a1 again on far/);
-  assert.deepEqual(await workersOf(lab), ["c-1-a1"]);
+  const carriesNotice = (turns: readonly { text: string }[]): boolean =>
+    turns.some((turn) => turn.text.includes(RESTART_NOTICE));
+  await poll(
+    () => h.callsOf("worker").find(carriesNotice),
+    "the restarted worker's turn with the restart notice",
+    WORKER_WAIT_MS,
+  );
   const thread = await cardd.thread(1);
   assert.equal(
     thread.entries.filter((entry) => entry.fields["restartFailed"] !== undefined).length,
