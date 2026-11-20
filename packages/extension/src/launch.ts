@@ -300,9 +300,16 @@ try {
           ? undefined
           : Buffer.from(values.content ?? "", "base64").toString("utf8");
       const { results, unread } = convergeSharedPreferences(root, bytes);
-      for (const { lane: name, result } of results)
-        console.log(`${name}: shared preferences ${result}`);
-      if (unread.length > 0) throw new Error(unreadFailure(unread));
+      const lines = results.map(
+        ({ lane: name, result }) => `${name}: shared preferences ${result}`,
+      );
+      for (const line of lines) console.log(line);
+      if (unread.length > 0)
+        throw new Error(
+          [unreadFailure(unread), ...lines.filter((line) => line.includes("preserved as"))].join(
+            "\n",
+          ),
+        );
       break;
     }
     case "arrange": {
@@ -325,12 +332,7 @@ try {
       break;
     case "restart":
       checkLaunchPrerequisites(root);
-      const restarted = await restart(root, rest[0]);
-      show(restarted);
-      const unread = restarted.flatMap(({ lane: name, action, detail }) =>
-        action === "unread" ? [{ lane: name, message: detail ?? "" }] : [],
-      );
-      if (unread.length > 0) throw new Error(unreadFailure(unread));
+      show(await restart(root, rest[0]));
       break;
     case "home": {
       if (rest[0] === "transport") {

@@ -290,6 +290,10 @@ for (const fault of ["malformed", "unreadable"]) {
       token: cardd.addLane("near", "main"),
       args: mateArgs(h),
     });
+    writeFileSync(
+      join(`${p620.root}.worktrees`, "lane-near", "data", "captain-shared.md"),
+      "local edit\n",
+    );
     writeFileSync(marker, "down");
     renameSync(config, backup);
     if (fault === "malformed") writeFileSync(config, "");
@@ -299,8 +303,8 @@ for (const fault of ["malformed", "unreadable"]) {
     const outage = await h.waitForCall(0, "mate", WAIT_MS);
     assert.match(users(outage), /p620 cannot be reached/);
     rmSync(marker);
-    const detail = fault === "malformed" ? "Unexpected end of JSON input" : "EISDIR";
-    const failed = `[fleet] lanes: p620 failed: lane far could not be read: ${detail}`;
+    const detail = fault === "malformed" ? "is not valid JSON" : "EISDIR";
+    const failed = "[fleet] lanes: p620 failed: lane far could not be read: ";
     const recovered = "p620 can be reached again";
     const started = "far started on p620";
     await until(
@@ -316,6 +320,11 @@ for (const fault of ["malformed", "unreadable"]) {
       () => (sessionText().includes("near started on p620") ? true : undefined),
       "a healthy sibling lane to start while far is unreadable",
     );
+    await until(
+      () => (sessionText().includes("edited copy preserved as data/") ? true : undefined),
+      "main to hear where near's edited preferences were kept despite far's failure",
+    );
+    assert.match(sessionText(), /preserved as data\/[^\n]* \(on p620\)/);
     await waitState(p620, "near", "running");
     const rows = rowsOf(p620, ["status"]);
     assert.equal(rows.find((row) => row["lane"] === "near")?.["state"], "running");

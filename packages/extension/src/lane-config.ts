@@ -175,7 +175,12 @@ export function readLaneConfig(home: string): LaneConfig | undefined {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
     throw error;
   }
-  const config: unknown = JSON.parse(text);
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    throw new Error(`${file} is not valid JSON`);
+  }
   return parseLaneConfig(file, config);
 }
 
