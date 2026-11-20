@@ -113,11 +113,14 @@ export async function mailCommand(lane: string, args: string[]) {
 }
 
 export async function brokerStatus(lane: string) {
-  const status = await daemon.get<{ ratelimit: string; localReadsLast24h: number; localDailyBudget: number }>(
-    lane,
-    "broker-status",
-  );
+  const status = await daemon.get<{
+    ratelimit: string;
+    localReadsLast24h: number;
+    localDailyBudget: number;
+    vaults: Record<string, string>;
+  }>(lane, "broker-status");
   return {
+    vault: status.vaults[lane] ?? "lane not set up in the broker",
     local_reads_24h: `${status.localReadsLast24h} of ${status.localDailyBudget}`,
     ratelimit: status.ratelimit.split("\n"),
   };

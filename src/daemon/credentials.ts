@@ -340,9 +340,11 @@ export class Credentials {
     const status =
       code === "ITEM_NOT_FOUND" || code === "NO_MESSAGE"
         ? 404
-        : code === "RATE_LIMITED" || code === "BUDGET"
-          ? 429
-          : 502;
+        : code === "NOT_ALLOWED"
+          ? 403
+          : code === "RATE_LIMITED" || code === "BUDGET"
+            ? 429
+            : 502;
     return new HttpError(status, message);
   }
 }

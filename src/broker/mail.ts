@@ -1,7 +1,8 @@
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import type { MailData } from "../shared/broker-protocol.js";
-import { BrokerError, type ItemData } from "./op.js";
+import { BrokerError } from "./errors.js";
+import type { ItemData } from "./op.js";
 
 const MAX_MESSAGES = 20;
 const DEFAULT_CODE = /(?<![\w-])(\d{6})(?![\w-])/;

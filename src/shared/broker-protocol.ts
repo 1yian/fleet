@@ -30,11 +30,12 @@ export interface StatusData {
   ratelimit: string;
   localReadsLast24h: number;
   localDailyBudget: number;
+  vaults: Record<string, string>;
 }
 
 export type BrokerErrorCode =
-  | "NO_TOKEN"
   | "BAD_TOKEN"
+  | "NOT_ALLOWED"
   | "ITEM_NOT_FOUND"
   | "RATE_LIMITED"
   | "BUDGET"

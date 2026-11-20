@@ -7,6 +7,7 @@ Type=simple
 User=fleet-browser-broker
 Group=fleet-browser
 Environment=FLEET_BROWSER_BROKER_CONFIG=/etc/fleet-browser-broker/config.json
+LoadCredential=op-token:/etc/fleet-browser-broker/op-token
 ExecStart=@NODE_BIN@ @APP_DIR@/dist/broker/main.js
 RuntimeDirectory=fleet-browser-broker
 RuntimeDirectoryMode=0755

@@ -84,27 +84,32 @@ fi
   fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
 ' "$CONF_DIR/config.json" "$SOLVER_DIR" "${FLEET_BROWSER_SOLVER_MODEL:-}" "$CONF_DIR/openai.key"
 chmod 644 "$CONF_DIR/config.json"
-install -d -m 750 -o "$NAME-broker" -g "$NAME-broker" "/etc/$NAME-broker"
-install -d -m 750 -o "$NAME-broker" -g "$NAME-broker" "/etc/$NAME-broker/tokens"
+install -d -m 755 -o root -g root "/etc/$NAME-broker"
 if [ ! -f "/etc/$NAME-broker/config.json" ]; then
   cat >"/etc/$NAME-broker/config.json" <<JSON
 {
   "socket": "/run/$NAME-broker/broker.sock",
   "opPath": "/usr/local/bin/op",
-  "tokenDir": "/etc/$NAME-broker/tokens",
   "stateDir": "/var/lib/$NAME-broker",
-  "dailyReadBudget": 800
+  "dailyReadBudget": 800,
+  "sourceVault": "Personal",
+  "lanes": {}
 }
 JSON
 fi
-chown "$NAME-broker:$NAME-broker" "/etc/$NAME-broker/config.json"
-chmod 600 "/etc/$NAME-broker/config.json"
+chown "root:$NAME-broker" "/etc/$NAME-broker/config.json"
+chmod 640 "/etc/$NAME-broker/config.json"
 install -m 644 "$APP_DIR/deploy/$NAME.nft" "$CONF_DIR/$NAME.nft"
 sed -e "s|@NODE_BIN@|$NODE_BIN|" -e "s|@APP_DIR@|$APP_DIR|" "$APP_DIR/deploy/$NAME.service" >"/etc/systemd/system/$NAME.service"
 sed -e "s|@NODE_BIN@|$NODE_BIN|" -e "s|@APP_DIR@|$APP_DIR|" "$APP_DIR/deploy/$NAME-broker.service" >"/etc/systemd/system/$NAME-broker.service"
 systemctl daemon-reload
 systemctl enable "$NAME-broker.service" "$NAME.service" >/dev/null
-systemctl restart "$NAME-broker.service"
+if [ -f "/etc/$NAME-broker/op-token" ]; then
+  systemctl restart "$NAME-broker.service"
+else
+  systemctl stop "$NAME-broker.service" 2>/dev/null || true
+  echo "broker not started: run 'sudo deploy/broker-token.sh set' first" >&2
+fi
 systemctl restart "$NAME.service"
 
 echo "$NAME installed: chrome $CHROME_VERSION, stream api on $STREAM_HOST:$STREAM_PORT, tokens in $CONF_DIR/tokens.d"

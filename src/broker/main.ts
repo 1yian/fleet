@@ -1,23 +1,43 @@
-import { appendFileSync, chmodSync, rmSync } from "node:fs";
+import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import type { BrokerErrorCode, BrokerRequest, BrokerResponse } from "../shared/broker-protocol.js";
 import { loadBrokerConfig } from "./config.js";
+import { BrokerError } from "./errors.js";
 import { findMessage } from "./mail.js";
-import { BrokerError, OnePassword } from "./op.js";
+import { OnePassword } from "./op.js";
+import { syncLane } from "./vaults.js";
 
 const config = loadBrokerConfig();
-const onePassword = new OnePassword(config);
+const token = readFileSync(config.tokenFile, "utf8").trim();
+if (token === "") throw new Error("the broker's 1Password token file is empty");
+const onePassword = new OnePassword(config, token);
 const auditPath = join(config.stateDir, "audit.log");
+const vaultState = new Map<string, string>();
+
+function auditLine(text: string): void {
+  appendFileSync(auditPath, `${new Date().toISOString()} ${text}\n`, { mode: 0o600 });
+}
 
 function audit(request: BrokerRequest, outcome: string): void {
   const item = "item" in request ? request.item : "-";
-  appendFileSync(
-    auditPath,
-    `${new Date().toISOString()} ${request.op} lane=${request.lane} item=${item} ${outcome}\n`,
-    { mode: 0o600 },
-  );
+  auditLine(`${request.op} lane=${request.lane} item=${item} ${outcome}`);
 }
+
+async function syncAll(): Promise<void> {
+  for (const [lane, titles] of Object.entries(config.lanes)) {
+    try {
+      const done = await syncLane(onePassword.opCli, config, lane, titles, auditLine);
+      vaultState.set(lane, `ready: ${done.copied} copied, ${done.failed} failed, ${done.removed} removed`);
+    } catch (error) {
+      const code = error instanceof BrokerError ? error.code : "OP_ERROR";
+      vaultState.set(lane, `error=${code}`);
+      auditLine(`sync lane=${lane} item=- error=${code}`);
+    }
+  }
+}
+
+const synced = syncAll();
 
 function parseRequest(line: string): BrokerRequest | null {
   try {
@@ -48,6 +68,7 @@ function parseRequest(line: string): BrokerRequest | null {
 }
 
 async function handle(request: BrokerRequest): Promise<BrokerResponse<unknown>> {
+  if (request.op !== "status") await synced;
   switch (request.op) {
     case "secret": {
       const item = await onePassword.item(request.lane, request.item);
@@ -71,9 +92,10 @@ async function handle(request: BrokerRequest): Promise<BrokerResponse<unknown>> 
       return {
         ok: true,
         data: {
-          ratelimit: await onePassword.ratelimit(request.lane),
+          ratelimit: await onePassword.ratelimit(),
           localReadsLast24h: onePassword.readsLast24h(),
           localDailyBudget: config.dailyReadBudget,
+          vaults: Object.fromEntries(vaultState),
         },
       };
   }

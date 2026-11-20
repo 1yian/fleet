@@ -2,37 +2,36 @@
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "run as root: sudo $0 set <lane> | remove <lane>" >&2
+  echo "run as root: sudo $0 set | remove" >&2
   exit 1
 fi
 
 NAME=fleet-browser
-DIR=/etc/$NAME-broker/tokens
-action=${1:-}
-lane=${2:-}
-[[ "$lane" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo "lane must be lowercase letters, digits and hyphens" >&2; exit 1; }
+FILE=/etc/$NAME-broker/op-token
 
-case "$action" in
+case "${1:-}" in
   set)
     if [ -t 0 ]; then
-      read -rsp "1Password service account token for lane $lane (input hidden): " token
+      read -rsp "1Password service account token for the broker (input hidden): " token
       echo
     else
       read -r token
     fi
     [ -n "$token" ] || { echo "empty token" >&2; exit 1; }
-    install -d -m 750 -o "$NAME-broker" -g "$NAME-broker" "$DIR"
-    (umask 077 && printf '%s\n' "$token" >"$DIR/$lane.token")
-    chown "$NAME-broker:$NAME-broker" "$DIR/$lane.token"
-    chmod 600 "$DIR/$lane.token"
-    echo "token for lane $lane stored; vault expected: $NAME-$lane"
+    install -d -m 755 -o root -g root "/etc/$NAME-broker"
+    (umask 077 && printf '%s\n' "$token" >"$FILE")
+    chown root:root "$FILE"
+    chmod 600 "$FILE"
+    systemctl restart "$NAME-broker.service"
+    echo "broker token stored (root only); broker restarted and lane vaults synced"
     ;;
   remove)
-    rm -f "$DIR/$lane.token"
-    echo "token for lane $lane removed"
+    systemctl stop "$NAME-broker.service" || true
+    rm -f "$FILE"
+    echo "broker token removed; broker stopped"
     ;;
   *)
-    echo "usage: $0 set <lane> | remove <lane>" >&2
+    echo "usage: $0 set | remove" >&2
     exit 1
     ;;
 esac
