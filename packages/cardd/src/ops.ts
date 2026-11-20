@@ -129,7 +129,7 @@ function reportRecipients(
   db: DatabaseSync,
   session: Session,
   card: Card,
-  args: OpArgs<"report">,
+  args: Omit<OpArgs<"report">, "status"> & { status: ReportStatus },
   unwatched: boolean,
 ): string[] {
   if (args.replyTo === undefined)

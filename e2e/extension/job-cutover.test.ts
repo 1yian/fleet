@@ -315,7 +315,7 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
 
   writeFileSync(go, "");
   assert.equal((await waitResult(card.id, first.job, 17)).body, "drained");
-  await waitTabClosed(workspace, first.job, first.label);
+  await waitTabClosed(String(workspace), first.job, first.label);
   const helperPid = Number(readFileSync(natural, "utf8"));
   const helperIdentity = groupIdentity(helperPid);
   assert.ok(helperIdentity, "the detached helper survived its wrapper and command");
@@ -333,7 +333,7 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   const pid = Number(readFileSync(interrupt, "utf8"));
   assert.ok(Number.isInteger(pid) && pid > 1);
   await waitGroupExit(pid);
-  await waitTabClosed(workspace, second.job, second.label);
+  await waitTabClosed(String(workspace), second.job, second.label);
   const remaining = cutover(
     1,
     "confirm-stop",
