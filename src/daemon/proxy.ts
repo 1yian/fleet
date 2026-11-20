@@ -49,7 +49,7 @@ export function proxyAgentConnection(client: WebSocket, lane: Lane, upstreamUrl:
         method === "Target.activateTarget"
           ? command.params?.targetId
           : sessionTargets.get(command.sessionId ?? "");
-      if (typeof target === "string") lane.emit("activate", target);
+      if (typeof target === "string") lane.activate(target);
     }
     upstream.send(text);
   };

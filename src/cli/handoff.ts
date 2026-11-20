@@ -19,9 +19,9 @@ export async function waitForHandoff(lane: string, current: Handoff | null) {
   };
 }
 
-export async function askCaptain(lane: string, reason: string, waitSeconds: number) {
+export async function askCaptain(lane: string, reason: string, waitSeconds: number, target?: string) {
   const before = await daemon.currentHandoff(lane);
-  const opened = await daemon.openHandoff(lane, reason, waitSeconds);
+  const opened = await daemon.openHandoff(lane, reason, waitSeconds, target);
   if (opened.id !== before?.id) ringHerdr(`Browser needs you: ${lane}`, reason);
   return waitForHandoff(lane, opened);
 }

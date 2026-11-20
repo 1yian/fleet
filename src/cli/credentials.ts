@@ -1,4 +1,5 @@
 import { AxiError } from "axi-sdk-js";
+import { ownTab } from "./browser.js";
 import { daemon } from "./client.js";
 import { parseDuration } from "./duration.js";
 
@@ -36,7 +37,7 @@ const NEXT: Record<string, string> = {
 
 export async function loginCommand(lane: string, args: string[]) {
   const item = need(args[0], "Run `fleet-browser login <item>` where <item> is the vault item name");
-  const result = await daemon.post<LoginResult>(lane, "login", { item });
+  const result = await daemon.post<LoginResult>(lane, "login", { item, target: await ownTab(lane) });
   return {
     login: result.outcome,
     steps: result.steps.join(", ") || "none",
@@ -56,6 +57,7 @@ export async function otpCommand(lane: string, args: string[]) {
   const result = await daemon.post<{ typed: boolean; url: string; title: string }>(lane, "otp", {
     item,
     submit,
+    target: await ownTab(lane),
   });
   return {
     otp: submit ? "typed and submitted" : "typed",
@@ -98,6 +100,7 @@ export async function mailCommand(lane: string, args: string[]) {
     sinceSeconds: since ? parseDuration(since) : 600,
     waitSeconds: wait ? parseDuration(wait) : 0,
     submit,
+    target: await ownTab(lane),
   });
   return {
     mail:

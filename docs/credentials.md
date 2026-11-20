@@ -22,6 +22,8 @@ fleet-browser broker status                      local read budget and 1Password
 
 `<item>` is an item title in the lane's vault (`fleet-browser-<lane>`). `login` and `otp` use a Login item (username, password, one-time password, website). `mail` uses an item that holds the lane's mailbox: username, password (an app password) and optional custom fields `server`, `port`, `tls` (default Zoho IMAP, `imap.zoho.com:993`).
 
+The step runs on the calling card's own tab (the active tab of its pinned `fleet-browser` session), so two cards of one lane can sign in side by side. A card without `FLEET_ATTEMPT` has no tab of its own and the step uses the tab the lane worked in last. The service refuses a tab that is not an open page of the lane with `409`. While the step runs, the board's viewer shows that tab, and page commands from every card of the lane are paused.
+
 What the agent sees back: the steps taken (`username, password, otp`), the resulting page title and URL, and the words from a fixed list that the page showed (`incorrect`, `try again`, `locked`, `captcha`, ...). Page text is never copied into the answer.
 
 ## Rules the service enforces

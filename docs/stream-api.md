@@ -61,7 +61,7 @@ Events:
 - `event: frame`, data `{ "seq": 41, "meta": { "deviceWidth": 1439, "deviceHeight": 812, "offsetTop": 0, "pageScaleFactor": 1, "scrollOffsetX": 0, "scrollOffsetY": 0, "targetId": "..." }, "jpeg": "<base64>" }`. Latest-frame-wins: a slow consumer skips frames. The screencast only sends frames when the page changes; the first frame arrives right after connect.
 - `event: notice`, data `{ "text": "..." }`.
 
-The view follows the tab the agent last worked in (navigate, click, evaluate, activate), and any newly opened tab.
+The view follows the tab the agent last worked in (navigate, click, evaluate, activate), and any newly opened tab. Several cards can work in one lane, each in its own tab, so the tab shown is the one whichever card acted last. While a card's credential step (`login`, `otp`, `mail`) or captcha solve runs, and when a card opens a handoff, the view moves to that card's tab and stays there; `activeTab` in `state` and `meta.targetId` in `frame` name it.
 
 ## Input (control only)
 
@@ -94,7 +94,7 @@ For a phone the board can do either or both: pinch-zoom the full-resolution fram
 
 ## Handoff lifecycle (agent side, for reference)
 
-The agent runs `fleet-browser handoff "<reason>" [--wait 30m]`: the lane locks to the captain, the agent's herdr rings, the host can push a phone notification (see below), and the agent waits. `done` (Done button), `cancelled` and `expired` all release the lane. The board sees it through `/v1/events` and the snapshot.
+The agent runs `fleet-browser handoff "<reason>" [--wait 30m]`: the lane locks to the captain (every card of the lane, not only the one that asked), the view moves to the tab of the card that asked (the lane's last-used tab when that card has none), the agent's herdr rings, the host can push a phone notification (see below), and the agent waits. `done` (Done button), `cancelled` and `expired` all release the lane. The board sees it through `/v1/events` and the snapshot.
 
 ## Errors
 

@@ -33,6 +33,13 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   }
 }
 
+function targetOf(body: Record<string, unknown>): string | undefined {
+  if (body.target === undefined) return undefined;
+  if (typeof body.target !== "string" || body.target.length === 0 || body.target.length > 64)
+    throw new HttpError(400, "target must be the id of one of the lane's tabs");
+  return body.target;
+}
+
 function laneFromPath(segment: string | undefined): LaneName | null {
   return isLaneName(segment) ? segment : null;
 }
@@ -103,7 +110,11 @@ async function routeAgent(daemon: Daemon, req: IncomingMessage, res: ServerRespo
     const body = (await readJson(req)) as Record<string, unknown>;
     const kind =
       body.kind === "hcaptcha" || body.kind === "recaptcha" || body.kind === "turnstile" ? body.kind : "auto";
-    return json(res, 200, await daemon.captcha.run(lane, body.detect === true ? "detect" : "solve", kind));
+    return json(
+      res,
+      200,
+      await daemon.captcha.run(lane, body.detect === true ? "detect" : "solve", kind, targetOf(body)),
+    );
   }
   if (action === "broker-status" && method === "GET")
     return json(res, 200, await daemon.credentials.status(lane));
@@ -119,8 +130,10 @@ async function agentCredentials(
 ): Promise<void> {
   const item = typeof body.item === "string" ? body.item.trim() : "";
   if (!item || item.length > 120) throw new HttpError(400, "item is required");
-  if (action === "login") return json(res, 200, await daemon.credentials.login(lane, item));
-  if (action === "otp") return json(res, 200, await daemon.credentials.otp(lane, item, body.submit === true));
+  const target = targetOf(body);
+  if (action === "login") return json(res, 200, await daemon.credentials.login(lane, item, target));
+  if (action === "otp")
+    return json(res, 200, await daemon.credentials.otp(lane, item, body.submit === true, target));
   const kind = body.kind === "code" ? "code" : body.kind === "link" ? "link" : null;
   if (!kind) throw new HttpError(400, "kind must be link or code");
   const seconds = (value: unknown, fallback: number, max: number): number =>
@@ -134,6 +147,7 @@ async function agentCredentials(
       sinceSeconds: seconds(body.sinceSeconds, 600, 24 * 3600),
       waitSeconds: seconds(body.waitSeconds, 0, 280),
       submit: body.submit === true,
+      target,
     }),
   );
 }
@@ -156,7 +170,9 @@ async function agentHandoff(
     const wait =
       typeof body.waitSeconds === "number" ? body.waitSeconds : daemon.config.handoff.defaultWaitSeconds;
     await lane.start();
-    return json(res, 200, lane.openHandoff(reason, Math.max(10, Math.min(wait, 24 * 3600))));
+    const target = targetOf(body);
+    if (target) await lane.pageFor(target);
+    return json(res, 200, lane.openHandoff(reason, Math.max(10, Math.min(wait, 24 * 3600)), target));
   }
   if (!id && method === "GET") return json(res, 200, lane.handoff);
   if (id && parts[5] === "wait" && method === "GET") {

@@ -9,6 +9,8 @@ fleet-browser captcha --kind hcaptcha   only that kind
 fleet-browser captcha --no-handoff      report the failure instead of asking the captain
 ```
 
+It works on the calling card's own tab, like the credential commands (see [credentials.md](credentials.md)); a tab that is not an open page of the lane is refused with `409`.
+
 The agent output is the outcome (`solved`, `none`, `failed`, `error`), the kind, seconds, and how many model calls it took. On `failed` and `error` the captain is asked through the usual handoff (herdr ring, board `handoff` event, optional phone notification) and the command returns when the captain presses Done, or on expiry.
 
 ## How it works

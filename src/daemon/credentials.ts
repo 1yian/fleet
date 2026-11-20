@@ -106,11 +106,11 @@ export class Credentials {
     this.config = config;
   }
 
-  async login(lane: Lane, item: string): Promise<LoginResult> {
+  async login(lane: Lane, item: string, target?: string): Promise<LoginResult> {
     const release = lane.beginStep("credentials");
     let page: PageSession | null = null;
     try {
-      page = await PageSession.open(lane);
+      page = await PageSession.open(lane, target);
       const secrets = await this.secret(lane, item);
       const summary = await pageSummary(page);
       const pageHost = hostOf(summary.url);
@@ -196,11 +196,12 @@ export class Credentials {
     lane: Lane,
     item: string,
     submit: boolean,
+    tab?: string,
   ): Promise<{ typed: boolean; url: string; title: string }> {
     const release = lane.beginStep("credentials");
     let page: PageSession | null = null;
     try {
-      page = await PageSession.open(lane);
+      page = await PageSession.open(lane, tab);
       const secrets = await this.secret(lane, item, "otp");
       if (!secrets.totp) throw new HttpError(404, `item ${item} has no one-time password`);
       const pageHost = hostOf((await pageSummary(page)).url);
@@ -235,7 +236,14 @@ export class Credentials {
     lane: Lane,
     item: string,
     kind: "link" | "code",
-    options: { match?: string; pattern?: string; sinceSeconds: number; waitSeconds: number; submit: boolean },
+    options: {
+      match?: string;
+      pattern?: string;
+      sinceSeconds: number;
+      waitSeconds: number;
+      submit: boolean;
+      target?: string;
+    },
   ): Promise<{
     kind: string;
     subject: string;
@@ -271,7 +279,7 @@ export class Credentials {
     const release = lane.beginStep("credentials");
     let page: PageSession | null = null;
     try {
-      page = await PageSession.open(lane);
+      page = await PageSession.open(lane, options.target);
       if (kind === "link") {
         await page.send("Page.navigate", { url: found.value });
         await waitForLoad(page);

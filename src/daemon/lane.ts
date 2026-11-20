@@ -69,9 +69,6 @@ export class Lane extends EventEmitter {
     this.config = config;
     this.dir = join(config.dataDir, "lanes", name);
     this.setMaxListeners(100);
-    this.on("activate", (targetId: string) => {
-      this.activeTarget = targetId;
-    });
   }
 
   get profileDir(): string {
@@ -132,6 +129,24 @@ export class Lane extends EventEmitter {
     const response = await fetch(`http://127.0.0.1:${this.slot.cdpPort}/json/list`);
     const targets = (await response.json()) as JsonTarget[];
     return targets.filter((t) => t.type === "page").map((t) => ({ id: t.id, title: t.title, url: t.url }));
+  }
+
+  async pageFor(target?: string): Promise<TabInfo> {
+    const tabs = await this.tabs();
+    const page =
+      target === undefined
+        ? (tabs.find((tab) => tab.id === this.activeTarget) ?? tabs[0])
+        : tabs.find((tab) => tab.id === target);
+    if (page) return page;
+    throw new HttpError(
+      409,
+      target === undefined ? "the lane has no open page" : `tab ${target} is not an open page of this lane`,
+    );
+  }
+
+  activate(targetId: string): void {
+    this.activeTarget = targetId;
+    this.emit("activate", targetId);
   }
 
   async snapshot(): Promise<LaneSnapshot> {
@@ -214,8 +229,9 @@ export class Lane extends EventEmitter {
     }
   }
 
-  openHandoff(reason: string, waitSeconds: number): Handoff {
+  openHandoff(reason: string, waitSeconds: number, target?: string): Handoff {
     if (this.handoff?.status === "open") return this.handoff;
+    if (target) this.activate(target);
     const now = Date.now();
     this.handoff = {
       id: randomBytes(6).toString("hex"),
@@ -365,12 +381,29 @@ export class Lane extends EventEmitter {
         throw new Error(`Chrome exited with ${chrome.exitCode}; see ${join(this.dir, "chrome.log")}`);
       try {
         await this.jsonVersion();
+        await this.settleTabs();
         return;
       } catch {
         await sleep(100);
       }
     }
     throw new Error("Chrome did not open its debugging port");
+  }
+
+  private async settleTabs(): Promise<void> {
+    let previous = "";
+    let steady = 0;
+    for (let i = 0; i < 50 && steady < 3; i += 1) {
+      const response = await fetch(`http://127.0.0.1:${this.slot.cdpPort}/json/list`);
+      const targets = (await response.json()) as JsonTarget[];
+      const key = targets
+        .filter((t) => t.type === "page")
+        .map((t) => t.id)
+        .join(",");
+      steady = key !== "" && key === previous ? steady + 1 : 0;
+      previous = key;
+      if (steady < 3) await sleep(100);
+    }
   }
 
   private onChromeExit(chrome: ChildProcess, code: number | null, signal: NodeJS.Signals | null): void {

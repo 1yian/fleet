@@ -22,7 +22,7 @@ export class Captcha {
     this.config = config;
   }
 
-  async run(lane: Lane, command: "solve" | "detect", kind: string): Promise<CaptchaResult> {
+  async run(lane: Lane, command: "solve" | "detect", kind: string, target?: string): Promise<CaptchaResult> {
     const settings = this.config.captcha;
     if (!settings)
       throw new HttpError(503, "captcha solving is not configured on this host (config captcha block)");
@@ -30,12 +30,11 @@ export class Captcha {
       throw new HttpError(503, "captcha.model is not set in the host config");
     const key = command === "solve" ? this.readKey(settings.keyFile) : "";
     await lane.start();
-    const tabs = await lane.tabs();
-    const target = tabs.find((tab) => tab.id === lane.activeTarget) ?? tabs[0];
-    if (!target) throw new HttpError(409, "the lane has no open page");
+    const page = await lane.pageFor(target);
     const release = lane.beginStep("captcha");
+    lane.activate(page.id);
     try {
-      return await this.spawnSolver(settings, lane.cdpPort, target.id, command, kind, key);
+      return await this.spawnSolver(settings, lane.cdpPort, page.id, command, kind, key);
     } finally {
       release();
     }

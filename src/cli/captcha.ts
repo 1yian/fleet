@@ -1,4 +1,5 @@
 import { AxiError } from "axi-sdk-js";
+import { ownTab } from "./browser.js";
 import { daemon } from "./client.js";
 import { askCaptain } from "./handoff.js";
 
@@ -34,7 +35,8 @@ export async function captchaCommand(lane: string, args: string[]) {
       "Run `fleet-browser captcha`",
     ]);
   }
-  const result = await daemon.post<CaptchaResult>(lane, "captcha", { kind, detect });
+  const target = await ownTab(lane);
+  const result = await daemon.post<CaptchaResult>(lane, "captcha", { kind, detect, target });
   if (detect) {
     return {
       captchas: (result.captchas ?? []).map((c) => `${c.kind}${c.visible ? " (visible)" : " (hidden)"}`),
@@ -56,6 +58,7 @@ export async function captchaCommand(lane: string, args: string[]) {
     lane,
     `captcha could not be solved automatically${why}. Please solve it on the page`,
     1800,
+    target,
   );
   return { ...summarize(result), ...handoff };
 }

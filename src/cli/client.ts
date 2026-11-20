@@ -23,11 +23,11 @@ export const daemon = {
   start: (lane: string) => call<LaneSnapshot>(`/v1/lanes/${lane}/start`, { method: "POST" }),
   stop: (lane: string) => call<LaneSnapshot>(`/v1/lanes/${lane}/stop`, { method: "POST" }),
   restart: (lane: string) => call<LaneSnapshot>(`/v1/lanes/${lane}/restart`, { method: "POST" }),
-  openHandoff: (lane: string, reason: string, waitSeconds: number) =>
+  openHandoff: (lane: string, reason: string, waitSeconds: number, target?: string) =>
     call<Handoff>(`/v1/lanes/${lane}/handoff`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ reason, waitSeconds }),
+      body: JSON.stringify({ reason, waitSeconds, target }),
     }),
   post: <T>(lane: string, action: string, body: Record<string, unknown>) =>
     call<T>(`/v1/lanes/${lane}/${action}`, {

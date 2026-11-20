@@ -1,5 +1,12 @@
 import { AxiError, runAxiCli } from "axi-sdk-js";
-import { cleanOutput, mergedConsole, PASS_THROUGH, runAgentBrowser } from "./browser.js";
+import {
+  cleanOutput,
+  guardTabClose,
+  mergedConsole,
+  ownTab,
+  PASS_THROUGH,
+  runAgentBrowser,
+} from "./browser.js";
 import { captchaCommand } from "./captcha.js";
 import { daemon } from "./client.js";
 import { brokerStatus, loginCommand, mailCommand, otpCommand } from "./credentials.js";
@@ -47,12 +54,19 @@ function takeLane(args: string[]): { lane: string; rest: string[] } {
 async function passThrough(verb: string, args: string[]): Promise<string> {
   const { lane, rest } = takeLane(args);
   await daemon.start(lane);
+  await guardTabClose(lane, verb, rest);
   if (verb === "console") return mergedConsole((a) => runAgentBrowser(lane, a), rest);
   const result = await runAgentBrowser(lane, [verb, ...rest]);
   const text = cleanOutput(result.stdout + result.stderr).trimEnd();
   if (result.code !== 0)
     throw new AxiError(text || `agent-browser exited with ${result.code}`, "BROWSER_COMMAND_FAILED");
   return text;
+}
+
+async function laneStatus(lane: string) {
+  const snapshot = await daemon.snapshot(lane);
+  const own = snapshot.status === "ready" ? await ownTab(lane).catch(() => undefined) : undefined;
+  return renderStatus(snapshot, own);
 }
 
 const commands = {
@@ -62,7 +76,7 @@ const commands = {
       await watchStatus(lane);
       return "";
     }
-    return renderStatus(await daemon.snapshot(lane));
+    return laneStatus(lane);
   },
   start: async (args: string[]) => renderStatus(await daemon.start(takeLane(args).lane)),
   stop: async (args: string[]) => renderStatus(await daemon.stop(takeLane(args).lane)),
@@ -140,7 +154,7 @@ async function handoffCommand(args: string[]) {
     throw new AxiError("a reason is required", "NO_REASON", [
       'Run `fleet-browser handoff "solve the captcha on the page"`',
     ]);
-  return askCaptain(lane, reason, waitSeconds);
+  return askCaptain(lane, reason, waitSeconds, await ownTab(lane).catch(() => undefined));
 }
 
 await runAxiCli({
@@ -149,7 +163,7 @@ await runAxiCli({
   topLevelHelp: HELP,
   home: async () => {
     const { lane } = takeLane([]);
-    return renderStatus(await daemon.snapshot(lane));
+    return laneStatus(lane);
   },
   commands,
 });

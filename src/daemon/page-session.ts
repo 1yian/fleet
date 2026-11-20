@@ -10,14 +10,13 @@ export class PageSession {
     this.sessionId = sessionId;
   }
 
-  static async open(lane: Lane): Promise<PageSession> {
+  static async open(lane: Lane, target?: string): Promise<PageSession> {
     await lane.start();
-    const tabs = await lane.tabs();
-    const target = tabs.find((tab) => tab.id === lane.activeTarget) ?? tabs[0];
-    if (!target) throw new Error("the lane has no open page");
+    const page = await lane.pageFor(target);
+    lane.activate(page.id);
     const cdp = await CdpClient.connect(await lane.browserWsUrl());
     const { sessionId } = await cdp.send<{ sessionId: string }>("Target.attachToTarget", {
-      targetId: target.id,
+      targetId: page.id,
       flatten: true,
     });
     await cdp.send("Page.enable", {}, sessionId);
