@@ -16,3 +16,8 @@ export const TiersAccountsSchema = Type.Object({
     }),
   ),
 });
+
+export const TiersCatalogSchema = Type.Object({
+  tiers: Type.Record(Type.String(), Type.Object({ description: Type.Optional(Type.String()) })),
+  auto: Type.Optional(Type.Object({ classifier: Type.String({ pattern: "^[^/\\s]+/\\S+$" }) })),
+});
