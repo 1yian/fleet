@@ -266,6 +266,42 @@ for (const delivery of ["queued", "pushed", "posted during suppression"] as cons
   });
 }
 
+for (const context of ["missing", "in the file", "settled"] as const) {
+  test(`refunding a successor restores replay only for missing unsettled context: ${context}`, async () => {
+    const token = await begin(fleet.main, card);
+    const first = await fleet.cardd.connect(token, [], false, true);
+    const [task] = await first.waitForEntries(1);
+    assert.ok(task !== undefined);
+    const older = requestOf(await restart("older"));
+    assert.deepEqual(await notice(older), { posted: true });
+    const original = await first.waitForEntry(
+      (entry) => entry.fields["restartNotice"] === older,
+      "the original notice",
+    );
+    first.read(original.id);
+    if (context === "settled") first.ack(original.id);
+    await first.call("hold.open", {});
+    await first.close();
+
+    const successor = await restart("successor");
+    const before = "Check the footer while the successor is pending.";
+    await fleet.main.call("comment", { card: card.id, text: before });
+    const inFile = context === "in the file" ? [task.id, original.id] : [task.id];
+    const worker = await fleet.cardd.connect(token, inFile, false, true);
+    await worker.waitForEntry((entry) => entry.body === before, "the comment after reconnect");
+    const replays = () => worker.entries.filter(({ entry }) => entry.id === original.id);
+    assert.deepEqual(replays(), []);
+    assert.equal((await restart("older")).generation, successor.generation);
+
+    assert.deepEqual(await restartFailed("successor", requestOf(successor)), { recorded: true });
+    await worker.call("hold.open", {});
+    assert.deepEqual(
+      replays().map(({ entry, again }) => [entry.body, again]),
+      context === "missing" ? [[original.body, true]] : [],
+    );
+  });
+}
+
 test("the next replacement receives only its notice while both restart requests still count", async () => {
   const token = await begin(fleet.main, card);
   await (await fleet.cardd.connect(token)).close();
