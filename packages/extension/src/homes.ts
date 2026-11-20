@@ -331,8 +331,11 @@ async function workspaceOf(
   const legacyTitle = `${legacyMatePrefix}${info.lane}`;
   const read = async () => {
     const listed = await observeList("workspace", [], ["workspace_id", "label"], deadline);
+    const current = listed.filter((row) => row["label"] === title);
+    if (current.length > 1)
+      throw new HostUnread(`herdr lists ${String(current.length)} workspaces titled ${title}`);
     return {
-      current: listed.filter((row) => row["label"] === title),
+      current,
       legacy: listed.filter((row) => row["label"] === legacyTitle && !isWorkerWorkspace(row)),
     };
   };
@@ -612,10 +615,10 @@ async function restartOne(root: string, info: LaneHome, all: boolean): Promise<O
     return { lane: info.lane, action: "stopped", detail: held };
   if (match !== undefined) await close(info, match.workspace);
   const observed = await workspaceOf(info, "liveness");
-  if (observed?.state === "running") {
-    if (held !== undefined) liftHold(info.home);
-    return { lane: info.lane, action: "running" };
-  }
+  if (observed?.state === "running")
+    throw new HostUnread(
+      `${info.lane} still has a running mate in workspace ${observed.workspace} after restart closed its own`,
+    );
   await start(root, info, observed?.state === "idle" ? observed.pane : undefined, true);
   return { lane: info.lane, action: "started" };
 }
