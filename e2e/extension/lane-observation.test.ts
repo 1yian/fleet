@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
@@ -41,15 +42,24 @@ case "$1 $2:$HERDR_FAULT" in
       exit 0
     fi ;;
   'pane list:panes') printf '%s' '{"result":{}}'; exit 0 ;;
-  'pane list:cwd')
+  'pane list:cwd'|'pane list:split-only'|'pane list:duplicate'|'pane list:foreign')
     reply=$("$REAL_HERDR" "$@") || exit $?
     printf '%s' "$reply" | node -e '
       const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
       const pane = reply.result.panes.find((row) => row.pane_id === process.env.FAULT_PANE);
-      delete pane.cwd;
+      switch (process.env.HERDR_FAULT) {
+        case "cwd": delete pane.cwd; break;
+        case "split-only": reply.result.panes = [pane]; break;
+        case "duplicate": reply.result.panes = [pane, pane]; break;
+        case "foreign": pane.workspace_id = "foreign"; break;
+      }
       console.log(JSON.stringify(reply));
     '
     exit $? ;;
+  'pane process-info:vanished')
+    if [ "\${4%:*}" = "$FAULT_PANE" ]; then
+      "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
+    fi ;;
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
   'pane process-info:hanging-panes')
@@ -102,6 +112,7 @@ function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1
       HERDR_FAULT_LOG: faultLog(),
       FAULT_PANE: pane,
       FLEET_PROBE_TIMEOUT_MS: probeTimeout,
+      FLEET_LIFECYCLE_WAIT_MS: "100",
       PATH: `${bin}:${process.env["PATH"] ?? ""}`,
     },
   });
@@ -163,7 +174,7 @@ test("a workspace omitted once neither restarts nor crash-holds a running mate",
   }
 });
 
-test("only home matching needs the root pane's cwd, and no check needs a split's cwd", async () => {
+test("home matching needs the mate's cwd, not the cwd of an unrelated split", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
   const created = await lab.run([
     "workspace",
@@ -176,28 +187,82 @@ test("only home matching needs the root pane's cwd, and no check needs a split's
   ]);
   const root = records([created["root_pane"]])[0]?.["pane_id"];
   assert.ok(typeof root === "string");
-  await lab.run(["pane", "split", root, "--direction", "right", "--no-focus"]);
   const id = (await workspace("ops"))?.["workspace_id"];
   assert.ok(typeof id === "string");
-  const panes = await lab.run(["pane", "list", "--workspace", id]);
-  const split = records(panes["panes"]).find((pane) => pane["pane_id"] !== root)?.["pane_id"];
-  assert.ok(typeof split === "string");
-
   await lab.run(["workspace", "rename", id, "fleet-ops"]);
   assert.deepEqual(maintain("cwd", root), action("ops", "unread"));
-  assert.deepEqual(JSON.parse(fleet(["status", "--json"], "cwd", split)), [
-    { lane: "ops", state: "down" },
-  ]);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
   await lab.run(["workspace", "rename", id, "2ndmate-ops"]);
 
   assert.deepEqual(maintain("cwd", root), action("ops", "started"));
   assert.deepEqual(JSON.parse(fleet(["status", "--json"], "cwd", root)), [
     { lane: "ops", state: "running" },
   ]);
-  assert.deepEqual(maintain("cwd", split), action("ops", "running"));
   const placement = ["status", "--placement", "--json"];
-  assert.deepEqual(JSON.parse(fleet(placement, "cwd", split)), [{ lane: "ops", mate: true }]);
   assert.throws(() => fleet(placement, "cwd", root), /no root pane cwd/);
+
+  const added = await lab.run(["pane", "split", root, "--direction", "right", "--no-focus"]);
+  const split = records([added["pane"]])[0]?.["pane_id"];
+  assert.ok(typeof split === "string");
+  assert.deepEqual(maintain("cwd", split), action("ops", "running"));
+  assert.deepEqual(JSON.parse(fleet(placement, "cwd", split)), [{ lane: "ops", mate: true }]);
+  assert.throws(() => fleet(placement, "cwd", root), /no Pi observed/);
+
+  const starts = join(home, "state", "starts");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  writeFileSync(starts, history);
+  for (const fault of ["split-only", "duplicate", "foreign"]) {
+    assert.deepEqual(maintain(fault, split), action("ops", "unread"), fault);
+    assert.throws(() => fleet(placement, fault, split), /incomplete pane list/);
+    assert.equal(readFileSync(starts, "utf8"), history);
+    assert.equal(existsSync(join(home, "state", "stopped")), false);
+  }
+});
+
+test("an idle split workspace is unread until only one pane remains", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const created = await lab.run([
+    "workspace",
+    "create",
+    "--cwd",
+    home,
+    "--label",
+    "2ndmate-ops",
+    "--no-focus",
+  ]);
+  const root = records([created["root_pane"]])[0]?.["pane_id"];
+  assert.ok(typeof root === "string");
+  const added = await lab.run(["pane", "split", root, "--direction", "right", "--no-focus"]);
+  const split = records([added["pane"]])[0]?.["pane_id"];
+  assert.ok(typeof split === "string");
+  assert.deepEqual(maintain(), action("ops", "unread"));
+  assert.equal(existsSync(join(home, "state", "starts")), false);
+  await lab.run(["pane", "close", split]);
+  assert.deepEqual(maintain(), action("ops", "started"));
+});
+
+test("a pane disappearing between list and process info leaves the lane unread", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  const home = `${here.root}.worktrees/lane-ops`;
+  const starts = join(home, "state", "starts");
+  const original = readFileSync(starts, "utf8");
+  const crashHistory = `${String(Date.now())}\n`.repeat(3);
+  for (const history of [original, crashHistory]) {
+    const id = (await workspace("ops"))?.["workspace_id"];
+    assert.ok(typeof id === "string");
+    writeFileSync(starts, history);
+    assert.deepEqual(maintain("vanished", id), action("ops", "unread"));
+    assert.equal(await workspace("ops"), undefined);
+    assert.equal(readFileSync(starts, "utf8"), history);
+    assert.equal(existsSync(join(home, "state", "stopped")), false);
+    writeFileSync(starts, original);
+    assert.deepEqual(maintain(), action("ops", "started"));
+  }
+  const id = (await workspace("ops"))?.["workspace_id"];
+  assert.ok(typeof id === "string");
+  const rows: unknown = JSON.parse(fleet(["status", "--json"], "vanished", id));
+  assert.equal(records(rows)[0]?.["state"], "unknown");
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "down" }]);
 });
 
 test("maintenance returns a completed start even when the next lane cannot be read", async () => {
@@ -221,6 +286,23 @@ test("maintenance returns a completed start even when the next lane cannot be re
     { lane: "zz", state: "unknown", reason: "server not running" },
   ]);
   assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "running")]);
+});
+
+test("maintenance returns a completed start alongside a later lifecycle failure", async () => {
+  const home = addLane("zz");
+  const lock = new DatabaseSync(join(home, "state", "lifecycle.db"));
+  try {
+    lock.exec("BEGIN IMMEDIATE");
+    const reply = maintain();
+    assert.equal(typeof reply, "object");
+    assert.notEqual(reply, null);
+    assert.deepEqual(Reflect.get(Object(reply), "outcomes"), action("ops", "started"));
+    assert.match(String(Reflect.get(Object(reply), "failed")), /another fleet command.*lane zz/);
+    assert.equal(await workspace("zz"), undefined);
+  } finally {
+    lock.close();
+  }
+  assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "started")]);
 });
 
 test("maintenance returns an accepted start before the caller times out on two hanging reads", async () => {

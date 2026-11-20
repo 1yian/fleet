@@ -230,8 +230,8 @@ const maintenance = command === "up" && values.maintenance === true;
 const maintenanceJson = maintenance && values.json === true;
 const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
-function maintenanceFailure(message: string): void {
-  console.log(JSON.stringify({ failed: message }));
+function maintenanceFailure(failed: string, outcomes: readonly Outcome[] = []): void {
+  console.log(JSON.stringify({ failed, outcomes }));
 }
 
 if (command === "up" || command === "restart") {
@@ -267,7 +267,12 @@ switch (command ?? "") {
   }
   case "up":
     try {
-      show(await up(root, rest[0], maintenanceDeadline));
+      const { outcomes, failed } = await up(root, rest[0], maintenanceDeadline);
+      if (failed !== undefined && maintenanceJson) maintenanceFailure(failed, outcomes);
+      else {
+        show(outcomes);
+        if (failed !== undefined) throw new Error(failed);
+      }
     } catch (error) {
       if (!maintenanceJson) throw error;
       maintenanceFailure(error instanceof Error ? error.message : String(error));

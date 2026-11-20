@@ -45,6 +45,11 @@ export interface Outcome {
   readonly detail?: string;
 }
 
+interface SweepResult {
+  readonly outcomes: Outcome[];
+  readonly failed?: string;
+}
+
 const STARTS_BEFORE_HOLD = 3;
 const CRASH_WINDOW_MS = 10 * 60_000;
 
@@ -181,12 +186,17 @@ async function observeList(
   return rows;
 }
 
-async function rootOfWorkspace(workspace: string, deadline?: number) {
-  const [root] = await observeList("pane", ["--workspace", workspace], [], deadline);
-  const pane = field(root, "pane_id");
-  if (pane === undefined || pane === "")
-    throw new HostUnread(`herdr returned no root pane for ${workspace}`);
-  return { pane, cwd: field(root, "cwd") };
+async function panesOf(workspace: string, count: unknown, deadline?: number) {
+  const rows = await observeList("pane", ["--workspace", workspace], ["pane_id"], deadline);
+  const panes = rows.map((row) => ({ pane: String(row["pane_id"]), cwd: field(row, "cwd") }));
+  if (
+    panes.length === 0 ||
+    panes.length !== count ||
+    new Set(panes.map(({ pane }) => pane)).size !== panes.length ||
+    rows.some((row) => row["workspace_id"] !== workspace)
+  )
+    throw new HostUnread(`herdr returned an incomplete pane list for ${workspace}`);
+  return panes;
 }
 
 const ifUnread =
@@ -204,48 +214,55 @@ function heldReason(home: string): string | undefined {
   }
 }
 
-async function candidateMatches(
-  workspace: string,
-  home: string,
-  placement: boolean,
-  deadline?: number,
-): Promise<boolean> {
-  const { pane, cwd } = await rootOfWorkspace(workspace, deadline);
-  if (cwd === undefined || cwd === "")
-    throw new HostUnread(`herdr returned no root pane cwd for ${workspace}`);
-  if (canonical(cwd) !== canonical(home)) return false;
-  return !placement || (await lanePaneState(pane, deadline)) === "pi";
-}
+type LaneMatch =
+  | { workspace: string; state: "matched" | "running" }
+  | { workspace: string; state: "idle"; pane: string };
 
 async function workspaceOf(
   { lane, home }: LaneHome,
-  placement = false,
+  purpose: "liveness" | "placement" | "close",
   deadline?: number,
-): Promise<string | undefined> {
+): Promise<LaneMatch | undefined> {
+  const matchesHome = (cwd: string | undefined) =>
+    cwd !== undefined && cwd !== "" && canonical(cwd) === canonical(home);
   for (const row of await observeList("workspace", [], ["workspace_id", "label"], deadline)) {
     const workspace = String(row["workspace_id"]);
     const current = row["label"] === mateTitle(lane);
     const legacy = row["label"] === `${legacyMatePrefix}${lane}` && !isWorkerWorkspace(row);
-    if (current && !placement) return workspace;
     if (!current && !legacy) continue;
-    if (await candidateMatches(workspace, home, placement, deadline)) return workspace;
+    if (current && purpose === "close") return { workspace, state: "matched" };
+    const panes = await panesOf(workspace, row["pane_count"], deadline);
+    const [single] = panes;
+    if (panes.length !== 1 || single === undefined) {
+      for (const { pane, cwd } of panes) {
+        if (matchesHome(cwd) && (await lanePaneState(pane, deadline)) === "pi")
+          return { workspace, state: "running" };
+      }
+      throw new HostUnread(`no Pi observed in the lane home for split workspace ${workspace}`);
+    }
+    if (legacy || purpose === "placement") {
+      if (single.cwd === undefined || single.cwd === "")
+        throw new HostUnread(`herdr returned no root pane cwd for ${workspace}`);
+      if (!matchesHome(single.cwd)) continue;
+    }
+    if (purpose === "close") return { workspace, state: "matched" };
+    const state = await lanePaneState(single.pane, deadline);
+    if (purpose === "placement" && state !== "pi") continue;
+    if (state !== "down") return { workspace, state: "running" };
+    return { workspace, state: "idle", pane: single.pane };
   }
   return undefined;
 }
 
 async function observedLane(info: LaneHome, confirmAbsence = false, deadline?: number) {
-  const first = await workspaceOf(info, false, deadline);
-  const workspace =
-    first ?? (confirmAbsence ? await workspaceOf(info, false, deadline) : undefined);
-  if (workspace === undefined) return undefined;
-  const { pane } = await rootOfWorkspace(workspace, deadline);
-  return { pane, running: (await lanePaneState(pane, deadline)) !== "down" };
+  const first = await workspaceOf(info, "liveness", deadline);
+  return first ?? (confirmAbsence ? await workspaceOf(info, "liveness", deadline) : undefined);
 }
 
 async function statusOf(info: LaneHome): Promise<Status> {
   const { lane, home } = info;
   try {
-    if ((await observedLane(info))?.running === true) return { lane, state: "running" };
+    if ((await observedLane(info))?.state === "running") return { lane, state: "running" };
     const reason = heldReason(home);
     return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
   } catch (error) {
@@ -265,7 +282,7 @@ export async function placementStatus(
 ): Promise<{ lane: string; mate: boolean; host?: string }[]> {
   const out: { lane: string; mate: boolean; host?: string }[] = [];
   for (const info of laneHomes(root)) {
-    const mate = (await workspaceOf(info, true)) !== undefined;
+    const mate = (await workspaceOf(info, "placement")) !== undefined;
     out.push({
       lane: info.lane,
       mate,
@@ -369,7 +386,7 @@ async function upOne(
   const { lane, home } = info;
   const observed = await observedLane(info, true, deadline);
   const reason = heldReason(home);
-  if (observed?.running === true) {
+  if (observed?.state === "running") {
     if (reason !== undefined) liftHold(home);
     return { lane, action: "running" };
   }
@@ -380,7 +397,7 @@ async function upOne(
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
     return { lane, action: "held", detail };
   }
-  await start(root, info, observed?.pane, lift, deadline);
+  await start(root, info, observed?.state === "idle" ? observed.pane : undefined, lift, deadline);
   return { lane, action: "started" };
 }
 
@@ -388,26 +405,33 @@ export async function up(
   root: string,
   only: string | undefined,
   deadline?: number,
-): Promise<Outcome[]> {
-  const out: Outcome[] = [];
+): Promise<SweepResult> {
+  const outcomes: Outcome[] = [];
   for (const info of named(root, only)) {
-    const work = withLifecycleLock(
-      info.home,
-      info.lane,
-      () => upOne(root, info, only, deadline),
-      deadline,
-    );
-    const unread: Outcome = { lane: info.lane, action: "unread" };
-    out.push(await (deadline === undefined ? work : work.catch(ifUnread(unread))));
+    try {
+      outcomes.push(
+        await withLifecycleLock(
+          info.home,
+          info.lane,
+          () => upOne(root, info, only, deadline),
+          deadline,
+        ),
+      );
+    } catch (error) {
+      if (deadline === undefined) throw error;
+      if (!(error instanceof HostUnread))
+        return { outcomes, failed: error instanceof Error ? error.message : String(error) };
+      outcomes.push({ lane: info.lane, action: "unread" });
+    }
   }
-  return out;
+  return { outcomes };
 }
 
 async function close(info: LaneHome): Promise<void> {
-  const workspace = await workspaceOf(info);
-  if (workspace === undefined) return;
-  await claimFollowers(info.lane, workspace).catch(() => undefined);
-  await laneHerdr(["workspace", "close", workspace], "mutate");
+  const match = await workspaceOf(info, "close");
+  if (match === undefined) return;
+  await claimFollowers(info.lane, match.workspace).catch(() => undefined);
+  await laneHerdr(["workspace", "close", match.workspace], "mutate");
 }
 
 export async function stop(root: string, lane: string): Promise<void> {
@@ -422,15 +446,15 @@ export async function stop(root: string, lane: string): Promise<void> {
 
 async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
-  if (all && held !== undefined && !(await observedLane(info))?.running)
+  if (all && held !== undefined && (await observedLane(info))?.state !== "running")
     return { lane: info.lane, action: "stopped", detail: held };
   await close(info);
   const observed = await observedLane(info, true);
-  if (observed?.running === true) {
+  if (observed?.state === "running") {
     if (held !== undefined) liftHold(info.home);
     return { lane: info.lane, action: "running" };
   }
-  await start(root, info, observed?.pane, true);
+  await start(root, info, observed?.state === "idle" ? observed.pane : undefined, true);
   return { lane: info.lane, action: "started" };
 }
 
