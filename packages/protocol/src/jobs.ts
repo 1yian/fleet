@@ -158,6 +158,7 @@ export const JOB_OPS = {
       exitCode: Type.Integer(),
       outputTail: Type.String(),
       beforeRegistration: Type.Optional(JobLaunchId),
+      commandNotStarted: Type.Optional(Type.Literal(true)),
     }),
     result: Type.Object({ recorded: Type.Boolean() }),
   },
@@ -168,6 +169,7 @@ export const JOB_OPS = {
       label: Type.String(),
       running: Type.Boolean(),
       cancelled: Type.Optional(Type.Literal(true)),
+      legacy: Type.Optional(Type.Literal(true)),
     }),
   },
   "job.drop": {

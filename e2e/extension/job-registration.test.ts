@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { CardViewSchema, check, HttpCallSchema, HttpOutcomeSchema, OPS } from "@fleet/protocol";
+import { check, HttpCallSchema, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { begin, newCard, startFleet } from "../support/fleet.ts";
 import { spawnGuarded } from "../support/guarded.ts";
@@ -112,13 +112,38 @@ test("a prepared wrapper does not run Bash until a complete registration receipt
   assert.deepEqual(await first.exited, [0, null]);
   assert.equal(existsSync(first.marker), true);
 
+  const worker = await cardd.connect(token);
+  const movedAt = async () => {
+    const pulse = check(OPS.board.result, await main.call("board", {})).find(
+      (each) => each.id === card.id,
+    )?.pulse;
+    assert.ok(pulse);
+    return pulse.movedAt;
+  };
+  const before = await movedAt();
   mode = "always-torn";
   const second = await start("unconfirmed");
   assert.deepEqual(await second.exited, [127, null]);
   assert.equal(existsSync(second.marker), false);
   assert.equal(seen.filter(({ job }) => job === second.job).length, 3);
-  const view = check(CardViewSchema, await main.call("card", { card: card.id }));
-  const result = view.entries.find((entry) => entry.fields["job"] === second.job);
-  assert.equal(result?.fields["exitCode"], 127);
-  assert.match(result?.body ?? "", /did not confirm wrapper registration/);
+  const result = await worker.waitForEntry(
+    (entry) => entry.kind === "job-result" && entry.fields["job"] === second.job,
+    "the wrapper's no-start result",
+  );
+  assert.equal(result.fields["exitCode"], 127);
+  assert.equal(result.fields["commandNotStarted"], true);
+  assert.equal(result.fields["startupFenced"], undefined);
+  assert.match(result.body, /did not confirm wrapper registration/);
+  assert.equal(await movedAt(), before);
+
+  mode = "retry";
+  const third = await start("unconfirmed");
+  assert.deepEqual(await third.exited, [0, null]);
+  const completed = await worker.waitForEntry(
+    (entry) => entry.kind === "job-result" && entry.fields["job"] === third.job,
+    "the same-label command that actually ran",
+  );
+  assert.equal(completed.fields["exitCode"], 0);
+  assert.ok(completed.createdAt > before);
+  assert.equal(await movedAt(), completed.createdAt);
 });

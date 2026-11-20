@@ -326,8 +326,12 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   },
   "job.stop": (db, session, raw) => {
     const args = check(OPS["job.stop"].args, raw);
-    const { label, running, result, launch } = stopJob(db, session.id, args.job);
-    if (result === undefined) return { value: { label, running }, notify: [] };
+    const { label, running, result, launch, legacy } = stopJob(db, session.id, args.job);
+    if (result === undefined)
+      return {
+        value: { label, running, ...(legacy === true ? { legacy: true } : {}) },
+        notify: [],
+      };
     return {
       value: { label, running, cancelled: true },
       notify: recordJobResult(db, session, args.job, label, result, launch),

@@ -17,7 +17,7 @@ const STARTUP_EXPIRED = {
   outputTail: "could not start: wrapper did not register before the startup deadline",
 };
 
-type JobResult = { exitCode: number; outputTail: string };
+type JobResult = { exitCode: number; outputTail: string; commandNotStarted?: true };
 
 export const jobStateSql = (column: string, state: JobState): string => `${column} = '${state}'`;
 
@@ -213,6 +213,7 @@ export function recordJobResult(
         job,
         label,
         exitCode: result.exitCode,
+        ...(result.commandNotStarted === true ? { commandNotStarted: true } : {}),
         ...(fencedLaunch === null ? {} : { startupFenced: true, startupLaunch: fencedLaunch }),
       },
     },
@@ -260,7 +261,7 @@ export function stopJob(db: DatabaseSync, session: string, job: number) {
     throw new Error(`job ${String(job)} is not one of this worker's jobs: nothing was stopped`);
   const { label, life, launched } = owned;
   const running = jobIsRunning(life.state);
-  if (!running || launched) return { label, running };
+  if (!running || launched) return { label, running, legacy: running && owned.launch === null };
 
   const result = { exitCode: 130, outputTail: "stopped before wrapper registration" };
   transitionJob(db, owned, { name: "finish", ...result }, Date.now());
