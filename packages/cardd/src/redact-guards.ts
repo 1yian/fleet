@@ -8,6 +8,7 @@ const COOKIE_HEADER = new RegExp(
     String.raw`[\u0001<>]\s*${RECORD_NAME}\s*:`,
     String.raw`\]\s*\[\s*${RECORD_NAME}\s*:`,
     String.raw`[:,\[{]\s*["']\s*${RECORD_NAME}\s*:`,
+    String.raw`(?<![a-z\d])authorization["']?\s*[:=]\s*(?!(?:Basic|Bearer)\b|\[hidden\])[a-z][\w.-]*[ \t]+\S`,
   ].join("|"),
   "i",
 );
