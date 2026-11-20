@@ -116,7 +116,8 @@ export function comment(
     ...delivered,
     ...owes,
   };
-  const to = withEcho(db, session, card, recipient === undefined ? [] : [recipient]);
+  const recipients = recipient === undefined ? [] : [recipient];
+  const to = restartNotice === undefined ? withEcho(db, session, card, recipients) : recipients;
   const draft: Draft = {
     card: card.id,
     author: `mate:${session.lane}`,

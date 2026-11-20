@@ -216,7 +216,7 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     return { value: args, notify: [] };
   },
   projects: (db) => ({ value: listProjects(db), notify: [] }),
-  comment,
+  comment: (db, session, raw) => comment(db, session, raw),
   "lane.plan": (db, session, _raw, timing) => ({
     value: loadPlan(db, session.lane, timing.wall()),
     notify: [],
