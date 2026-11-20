@@ -242,6 +242,8 @@ test("ambiguous credential values are withheld from both issue fields", async ()
     "pass\\\nword: paper\n  canoe",
     "Auth\\\norization: paper\n  canoe",
     "x_Auth\\\norization: paper\n  canoe",
+    "Auth\\\norization: Basic paper\n  canoe",
+    "x_Auth\\\norization: Bearer paper\n  canoe",
     "password: pa\\\nper\n  canoe",
     "token:\\\n paper\n  canoe",
     'Tool printed password=\\\n"paper canoe',
@@ -259,6 +261,7 @@ test("URL authorities split by shell quoting or line continuations are withheld 
     "curl 'https://build:'paper\\\ncanoe@localhost/api",
     "curl https://build:paper\\\ncanoe@localhost/api",
     "Git printed https://build:pa@ss\\\nword@localhost/path",
+    "Git printed https:///build:pa@ss\\\nword@localhost/path",
   ];
   const expected = "[URL withheld: credential boundaries unclear]";
   for (const [index, text] of examples.entries()) {

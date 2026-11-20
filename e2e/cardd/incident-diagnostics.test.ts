@@ -81,6 +81,8 @@ for (const [name, diagnostic] of [
   ["spliced multiline scalar", "pass\\\nword: paper\n  canoe"],
   ["spliced authorization scalar", "Auth\\\norization: paper\n  canoe"],
   ["spliced prefixed authorization scalar", "x_Auth\\\norization: paper\n  canoe"],
+  ["spliced authorization scheme tail", "Auth\\\norization: Basic paper\n  canoe"],
+  ["spliced prefixed bearer tail", "x_Auth\\\norization: Bearer paper\n  canoe"],
   ["spliced scalar value", "password: pa\\\nper\n  canoe"],
   ["spliced URL userinfo", "Git printed https://build:pa@ss\\\nword@localhost/path"],
   ["spliced unterminated value", 'Tool printed password=\\\n"paper canoe'],

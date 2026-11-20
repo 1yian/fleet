@@ -105,7 +105,7 @@ const QUOTED_VALUE = new RegExp(QUOTED, "y");
 const QUOTED_SPANS = new RegExp(QUOTED, "g");
 const URL_WITHHELD = "[URL withheld: credential boundaries unclear]";
 const URL_AUTHORITY =
-  /(?<=(?:[a-z0-9+.-]|\\+u[\da-f]{4})+(?::|\\+u003a)(?:\\?\/|\\+u002f)(?:\\?\/|\\+u002f))(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
+  /(?<=(?:[a-z0-9+.-]|\\+u[\da-f]{4})+(?::|\\+u003a)(?:(?:\\?\/|\\+u002f)){1,3})(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
 const URL_AUTHORITY_TOKEN = /\\(?:u[\da-f]{4}|["\\bfnrt])|\\|"[,\]}]|@/gi;
 const SECRET_PATTERNS: readonly RegExp[] = [
   /(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|(?<![\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-])[\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-]+)@(?:[\p{L}\p{M}\p{N}-]+[.。．｡])+[\p{L}][\p{L}\p{M}\p{N}-]*/gu,
@@ -305,8 +305,12 @@ function redactYamlScalars(text: string): string {
 }
 
 const AUTHORIZATION_KEY = new RegExp(
-  String.raw`(?<![\w-])${Array.from("authorization").join(LINE_SPLICE)}(?=(?:\\?["'])?\s*[:=]\s*(?:\\\r?\n[ \t]*)*(?:${AUTH_WORD})${LINE_SPLICE}\s+)`,
+  String.raw`(?<![\w-])${Array.from("authorization").join(LINE_SPLICE)}(?=(?:\\?["'])?\s*[:=]\s*(?:\\\r?\n[ \t]*)*(?:${AUTH_WORD})${LINE_SPLICE}\s+(?![^\n]*\n[ \t]+\S))`,
   "gi",
+);
+const SCHEME_CONTINUATION = new RegExp(
+  String.raw`\b(?:[a-z\d]+[-_])*authorization(?:\\?["'])?[ \t]*[:=][ \t]*(?:${AUTH_WORD})[ \t]+[^\n]*\n[ \t]+(?![^\s:]+:(?:[ \t]|$))\S`,
+  "i",
 );
 const neutralAuthorization = (text: string): string => text.replace(AUTHORIZATION_KEY, "x-auth");
 
@@ -323,7 +327,8 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   const sourceViews = [source, logicalView(source)];
   if (sourceViews.some((view) => hasCredentialCollection(view) || hasEscapedCredentialKey(view)))
     return YAML_WITHHELD;
-  if (yamlSplicesDisagree(source)) return YAML_WITHHELD;
+  if (yamlSplicesDisagree(source) || SCHEME_CONTINUATION.test(logicalView(source)))
+    return YAML_WITHHELD;
   const yaml = redactYamlScalars(source);
   if ([yaml, logicalView(yaml)].some(hasUnboundedSecret)) return YAML_WITHHELD;
   const urls = redactUrlUserinfo(yaml);
