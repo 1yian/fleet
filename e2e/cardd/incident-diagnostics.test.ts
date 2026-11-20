@@ -109,6 +109,11 @@ for (const [name, diagnostic] of [
   ["curl form password argument", "curl --data-urlencode 'password=paper canoe' https://localhost"],
   ["curl json body password", `curl -d '{"password":"paper canoe"}' https://localhost`],
   ["curl multipart secret", "curl -F 'client_secret=paper canoe' https://localhost"],
+  ["curl attached data argument", "curl -d'password=paper canoe' https://localhost"],
+  [
+    "curl grouped data argument",
+    "curl -sd 'user=demo name&password=paper canoe' https://localhost",
+  ],
   ["curl cookie option", "curl --cookie 'session=paper' https://localhost"],
   ["curl short cookie option", "curl -b 'session=paper' https://localhost"],
   ["curl cookie header", "curl -H 'Cookie: session=paper' https://localhost"],
@@ -178,6 +183,15 @@ for (const [name, diagnostic] of [
   ["a HAR cookie record", String.raw`[{"value":"sid=paper","name":"Cookie"}]`],
   ["a raw cookie header", "Cookie: session=paper"],
   ["a native cookies array", String.raw`{"cookies":[{"name":"sid","value":"paper"}]}`],
+  [
+    "a cookie header beside a curl credential",
+    "Cookie: session=paper\ncurl -u 'demo:paper canoe' https://localhost",
+  ],
+  [
+    "a cookie header beside URL userinfo",
+    "Cookie: session=paper\nhttps://demo:paper@localhost/path",
+  ],
+  ["a cookie header beside a YAML collection", "Cookie: session=paper\ntoken: [paper, canoe]"],
 ] as const) {
   test(`${name} without a trusted envelope is refused recovery through card.restart`, async () => {
     const card = await newCard(cleo, "Report a failing diagnostic");

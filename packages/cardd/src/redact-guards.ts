@@ -26,3 +26,6 @@ export const hasCookieHeader = (text: string): boolean =>
       .replace(CONTROL_ESCAPE, " ")
       .replace(/\\+/g, ""),
   );
+
+export const hasCookieRecord = (text: string): boolean =>
+  [text, logicalView(text)].some(hasCookieHeader);

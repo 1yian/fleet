@@ -1,5 +1,5 @@
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
-import { hasCookieHeader, logicalView, SECRET_NAME } from "./redact-guards.ts";
+import { hasCookieRecord, logicalView, SECRET_NAME } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
 const MAX_RETRIES = 2;
@@ -332,7 +332,7 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
   if (curlCredentialOption(urls)) return CURL_WITHHELD;
-  if ([urls, logicalView(urls)].some(hasCookieHeader)) return RECORD_WITHHELD;
+  if (hasCookieRecord(urls)) return RECORD_WITHHELD;
   if (hasUnprovenValue(urls)) return YAML_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
   const hidden = SECRET_PATTERNS.reduce(
@@ -428,8 +428,7 @@ export function diagnoseFailure(text: string): {
     const [line = "", status = "", inline] = envelope ?? [];
     const seconds =
       inline ?? (envelope === null ? undefined : headerRetryAfter(source.slice(line.length)));
-    const kind =
-      envelope === null && diagnostic === RECORD_WITHHELD ? "withheld" : classify(status);
+    const kind = envelope === null && hasCookieRecord(source) ? "withheld" : classify(status);
     return { error, signals: { kind, retryAfter: milliseconds(seconds) } };
   }
   return { error, signals: { kind: classify(error), retryAfter: retryAfterMs(diagnostic) } };

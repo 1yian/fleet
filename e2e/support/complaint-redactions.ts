@@ -212,6 +212,10 @@ export const COOKIE_COMPLAINTS = [
 
 export const CURL_DATA_COMPLAINTS = [
   "curl --data-urlencode 'password=paper canoe' https://localhost",
+  "curl -d'password=paper canoe' https://localhost",
+  "curl -F'client_secret=paper canoe' https://localhost",
+  "curl -sd 'user=demo name&password=paper canoe' https://localhost",
+  "curl --data-urlencode 'note=a b' --data-urlencode 'token=paper canoe' https://localhost",
   "curl -d 'token=paper canoe' https://localhost",
   "curl --data-raw 'user=demo&password=paper canoe' https://localhost",
   `curl -d '{"password":"paper canoe"}' https://localhost`,

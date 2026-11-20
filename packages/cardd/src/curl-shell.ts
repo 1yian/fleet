@@ -12,6 +12,6 @@ export const CURL_SHELL_EXPANSION = new RegExp(
 );
 
 export const CURL_DATA_SECRET = new RegExp(
-  String.raw`(?<=\s)(?:-[^-\s]*[dF]|--(?:data|form|json)[\w-]*)[=\s]\s*(?:\S*[&?{,])?${SECRET_NAME}\s*[=:]`,
+  String.raw`(?<=\s)(?:-[^-\s]*[dF]|--(?:data|form|json)[\w-]*)[\s\S]*?${SECRET_NAME}\s*[=:]`,
   "i",
 );
