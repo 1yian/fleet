@@ -69,18 +69,13 @@ interface LatestReport {
   readonly until: number | undefined;
 }
 
-interface StoppedReport {
-  readonly status: "stopped" | "stopped-if-idle";
-  readonly text: string;
-}
-
 function pauseHint(latest: LatestReport | undefined): boolean {
   return latest?.status === "paused" && latest.until !== undefined && latest.until > Date.now();
 }
 
 export class WorkerRun {
   private latest: LatestReport | undefined;
-  private unsent: StoppedReport | undefined;
+  private unsentPaneStop: string | undefined;
   private nudged = false;
   private recoveryCheck = false;
   private leaving = false;
@@ -100,7 +95,7 @@ export class WorkerRun {
 
   reset(): void {
     this.latest = undefined;
-    this.unsent = undefined;
+    this.unsentPaneStop = undefined;
     this.nudged = false;
     this.recoveryCheck = false;
   }
@@ -131,10 +126,10 @@ export class WorkerRun {
   }
 
   flush(): void {
-    const report = this.unsent;
-    if (report === undefined) return;
-    this.unsent = undefined;
-    void this.fileStopped(report);
+    const text = this.unsentPaneStop;
+    if (text === undefined) return;
+    this.unsentPaneStop = undefined;
+    void this.fileStopped("stopped", text);
   }
 
   register(pi: ExtensionAPI): void {
@@ -194,11 +189,7 @@ export class WorkerRun {
       const text = event.aborted
         ? "stopped from the pane"
         : `ended the run without a handoff: ${this.lastText}`;
-      this.latest = { status: "stopped", until: undefined };
-      await this.fileStopped({
-        status: event.aborted ? "stopped" : "stopped-if-idle",
-        text: text.slice(0, 2000),
-      });
+      await this.fileStopped(event.aborted ? "stopped" : "stopped-if-idle", text.slice(0, 2000));
     });
   }
 
@@ -214,20 +205,26 @@ export class WorkerRun {
     });
   }
 
-  private async fileStopped(report: StoppedReport): Promise<void> {
-    const latest = this.latest;
-    await this.link
-      .call("report", report, report.status === "stopped-if-idle" ? CARDD_DEADLINE_MS : undefined)
-      .then((card) => {
-        if (card.deferred === true) {
-          if (this.latest === latest) this.latest = undefined;
-          return;
-        }
-        return this.settlePane(false);
-      })
-      .catch(() => {
-        if (this.latest === latest) this.unsent = report;
-      });
+  private async fileStopped(status: "stopped" | "stopped-if-idle", text: string): Promise<void> {
+    const previous = this.latest;
+    const attempted = { status, until: undefined };
+    this.latest = attempted;
+    const card = await this.link
+      .call(
+        "report",
+        { status, text },
+        status === "stopped-if-idle" ? CARDD_DEADLINE_MS : undefined,
+      )
+      .catch(() => undefined);
+    if (card === undefined || card.deferred === true) {
+      if (this.latest === attempted) {
+        if (status === "stopped" && card === undefined) this.unsentPaneStop = text;
+        else this.latest = previous;
+      }
+      return;
+    }
+    if (this.latest === attempted) this.latest = { status: "stopped", until: undefined };
+    await this.settlePane(false);
   }
 
   private mayEnd(): boolean {
