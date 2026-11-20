@@ -15,13 +15,13 @@ const HANDOFFS: ReadonlySet<string> = new Set([
 ]);
 const BLOCKED_PANE = "blocked: reported";
 const STANDING_MS = Number(process.env["FLEET_STANDING_MS"]) || 15_000;
-const STANDING_DEADLINE_MS = 5_000;
+const CARDD_DEADLINE_MS = 5_000;
 const EXIT_SIGNALS = ["SIGTERM", "SIGHUP"] as const;
 export const LEAVING = "fleet:leaving";
 const NUDGE =
   "[fleet] Your run is ending without a handoff. Report done, failed, blocked, or " +
   "needs-decision, or report paused with an until date if you wait on a time or an outside event. " +
-  "Otherwise your card goes back to your mate as stopped.";
+  "If no job is waiting, your card goes back to your mate as stopped.";
 
 const ReportParams = Type.Object({
   status: Type.Enum(
@@ -69,13 +69,18 @@ interface LatestReport {
   readonly until: number | undefined;
 }
 
+interface StoppedReport {
+  readonly status: "stopped" | "stopped-if-idle";
+  readonly text: string;
+}
+
 function pauseHint(latest: LatestReport | undefined): boolean {
   return latest?.status === "paused" && latest.until !== undefined && latest.until > Date.now();
 }
 
 export class WorkerRun {
   private latest: LatestReport | undefined;
-  private unsent: string | undefined;
+  private unsent: StoppedReport | undefined;
   private nudged = false;
   private recoveryCheck = false;
   private leaving = false;
@@ -108,7 +113,7 @@ export class WorkerRun {
   private async settlePane(fallback: boolean): Promise<void> {
     const epoch = ++this.paneEpoch;
     clearTimeout(this.recheck);
-    const blocked = await this.link.call("standing", {}, STANDING_DEADLINE_MS).then(
+    const blocked = await this.link.call("standing", {}, CARDD_DEADLINE_MS).then(
       (shown) => shown.attention === "blocked",
       () => fallback,
     );
@@ -126,10 +131,10 @@ export class WorkerRun {
   }
 
   flush(): void {
-    const text = this.unsent;
-    if (text === undefined) return;
+    const report = this.unsent;
+    if (report === undefined) return;
     this.unsent = undefined;
-    void this.fileStopped(text);
+    void this.fileStopped(report);
   }
 
   register(pi: ExtensionAPI): void {
@@ -190,7 +195,10 @@ export class WorkerRun {
         ? "stopped from the pane"
         : `ended the run without a handoff: ${this.lastText}`;
       this.latest = { status: "stopped", until: undefined };
-      await this.fileStopped(text.slice(0, 2000));
+      await this.fileStopped({
+        status: event.aborted ? "stopped" : "stopped-if-idle",
+        text: text.slice(0, 2000),
+      });
     });
   }
 
@@ -206,12 +214,19 @@ export class WorkerRun {
     });
   }
 
-  private async fileStopped(text: string): Promise<void> {
+  private async fileStopped(report: StoppedReport): Promise<void> {
+    const latest = this.latest;
     await this.link
-      .call("report", { status: "stopped", text })
-      .then(() => this.settlePane(false))
+      .call("report", report, report.status === "stopped-if-idle" ? CARDD_DEADLINE_MS : undefined)
+      .then((card) => {
+        if (card.deferred === true) {
+          if (this.latest === latest) this.latest = undefined;
+          return;
+        }
+        return this.settlePane(false);
+      })
       .catch(() => {
-        if (this.latest?.status === "stopped") this.unsent = text;
+        if (this.latest === latest) this.unsent = report;
       });
   }
 

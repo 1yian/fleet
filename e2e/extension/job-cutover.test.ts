@@ -91,6 +91,8 @@ function launch(label: string, command: string, agent = "default"): void {
 }
 
 const file = (path: string) => until(() => (existsSync(path) ? true : undefined), path);
+const fleetConnected = (event: Record<string, unknown>): boolean =>
+  event["type"] === "fleet_connected";
 const waitResult = (card: number, job: number, code: number) =>
   until(
     async () => {
@@ -107,15 +109,18 @@ const waitResult = (card: number, job: number, code: number) =>
   );
 
 const waitGroupExit = (pid: number) =>
-  until(() => {
-    try {
-      process.kill(-pid, 0);
-      return undefined;
-    } catch (error) {
-      if (Reflect.get(Object(error), "code") !== "ESRCH") throw error;
-      return true;
-    }
-  }, `process group ${String(pid)} to exit`);
+  until(
+    () => {
+      try {
+        process.kill(-pid, 0);
+        return undefined;
+      } catch (error) {
+        if (Reflect.get(Object(error), "code") !== "ESRCH") throw error;
+        return true;
+      }
+    },
+    `process group ${String(pid)} to exit`,
+  );
 
 const waitTabClosed = (workspace: string, job: number, label: string) =>
   until(async () => {
@@ -196,7 +201,9 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   pi.prompt("Launch with the older worker code after the pull");
   await file(interrupt);
   await h.waitForCall(3);
+  const beforeUpgrade = h.events.filter(fleetConnected).length;
   await upgradeDaemon();
+  await h.waitForNth(fleetConnected, beforeUpgrade + 1, "the older worker to reconnect");
 
   assert.equal(cutover(1, "status").state, "open");
   const sealed = cutover(1, "seal");
@@ -243,9 +250,10 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
     "Verified the only command process group exited and the wrapper closed its tab after stop_job",
   );
   assert.equal(remaining.state, "draining");
-  assert.deepEqual(remaining.blockers.map(({ job, state }) => [job, state]), [
-    [first.job, "finished"],
-  ]);
+  assert.deepEqual(
+    remaining.blockers.map(({ job, state }) => [job, state]),
+    [[first.job, "finished"]],
+  );
   assert.equal(groupIdentity(helperPid), helperIdentity);
   assert.ok(signalOwnedGroup(helperPid, helperIdentity, "SIGTERM"));
   await waitGroupExit(helperPid);
@@ -260,11 +268,12 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   );
 
   await pi.kill();
+  const beforeFresh = h.events.filter(fleetConnected).length;
   launch("registered", "echo from-the-new-wrapper", "fresh");
   const fresh = h.startPi("c-1-a1", { ...env, FLEET_FAKE_AGENT: "fresh" }, [
     join(workerCode.root, EXTENSION),
   ]);
-  await fresh.state();
+  await h.waitForNth(fleetConnected, beforeFresh + 1, "the new worker to connect");
   fresh.prompt("Run a registered job after handover");
   assert.equal((await waitResult(card.id, second.job + 1, 0)).body, "from-the-new-wrapper");
   assert.deepEqual(cutover(0, "status"), READY);

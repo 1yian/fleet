@@ -99,6 +99,7 @@ async function jobProxy(
   call: (op: string, args: unknown) => Promise<{ status: number; body: unknown }>,
   dropFence = false,
   jobsReply?: (reply: CallResult) => CallResult | undefined,
+  onReportReply?: () => void,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -121,15 +122,17 @@ async function jobProxy(
   sockets.on("connection", (client) => {
     const upstream = new WebSocket(fleet.cardd.url);
     const jobReads = new Set<number>();
+    const reports = new Set<number>();
     client.pause();
     upstream.on("open", () => {
       client.resume();
     });
     client.on("message", (raw) => {
       const text = rawText(raw);
-      if (jobsReply !== undefined) {
+      if (jobsReply !== undefined || onReportReply !== undefined) {
         const message = parseClientMessage(text);
         if (message.t === "call" && message.op === "jobs") jobReads.add(message.id);
+        if (message.t === "call" && message.op === "report") reports.add(message.id);
       }
       if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
     });
@@ -144,6 +147,7 @@ async function jobProxy(
           const reply = jobsReply(message);
           if (reply !== undefined) client.send(JSON.stringify(reply));
         } else client.send(text);
+        if (message.t === "result" && reports.delete(message.id)) onReportReply?.();
       }
     });
     upstream.on("error", () => client.terminate());
@@ -538,6 +542,71 @@ for (const fault of ["failed", "hanging"] as const) {
       "the durable result despite the list failure",
     );
     assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
+  });
+}
+
+for (const fault of ["failed", "partial"] as const) {
+  test(`an automatic stop after cold reload respects a running job despite a ${fault} initial list`, async (t) => {
+    const faultSent = Promise.withResolvers<number[]>();
+    const reportAnswered = Promise.withResolvers<void>();
+    let reloading = false;
+    await jobProxy(
+      t,
+      callCardd,
+      false,
+      (reply) => {
+        if (!reloading) return reply;
+        assert.ok(reply.ok);
+        faultSent.resolve(check(OPS.jobs.result, reply.value).map(({ id }) => id));
+        return fault === "failed"
+          ? { t: "result", id: reply.id, ok: false, error: "jobs read unavailable" }
+          : { ...reply, value: [] };
+      },
+      reportAnswered.resolve,
+    );
+    const slow = commandAwaitingGo(82);
+    t.after(() => {
+      if (existsSync(jobDir)) writeFileSync(slow.go, "");
+    });
+    h.onModel(() => ({ tool: "run_long", args: { label: "cold", command: slow.command } }));
+    h.onModel(() => ({ text: "Waiting for the command" }));
+    const first = worker();
+    await until(() => (existsSync(slow.ready) ? true : undefined), "the registered command to run");
+    await settled(1);
+    await first.kill();
+
+    reloading = true;
+    const second = worker();
+    await h.waitForNth(
+      (e) => e["type"] === "fleet_connected",
+      2,
+      "the new worker process to connect",
+    );
+    assert.deepEqual(await faultSent.promise, [1]);
+    h.onModel(() => ({ text: "The command still has work" }));
+    h.onModel(() => ({ text: "I am still waiting for it" }));
+    second.prompt("Check on the command after reload");
+    await settled(2);
+    await reportAnswered.promise;
+    const reports = async () =>
+      check(CardViewSchema, await fleet.main.call("card", { card: card.id }))
+        .entries.filter((entry) => entry.kind === "report")
+        .map((entry) => [entry.fields["status"], entry.body]);
+    assert.deepEqual(await reports(), []);
+    assert.equal(await status(fleet.main, card), "working");
+
+    h.onModel(() => ({ text: "The command has finished" }));
+    h.onModel(() => ({ text: "Nothing else to report" }));
+    writeFileSync(slow.go, "");
+    await fleet.main.waitForEntry(
+      (entry) => entry.kind === "report" && entry.fields["status"] === "stopped",
+      "the stopped handoff after the command exits",
+    );
+    assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
+    assert.deepEqual(await reports(), [
+      ["stopped", "ended the run without a handoff: Nothing else to report"],
+    ]);
+    assert.equal(await status(fleet.main, card), "with-mate");
   });
 }
 
