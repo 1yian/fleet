@@ -402,11 +402,12 @@ function syncHome(root: string, home: string, deadline?: number): void {
 
 function recentStarts(home: string, now: number): number[] {
   const text = readState(startsFile(home), "state/starts");
-  if (text === undefined) return [];
-  return text
-    .split("\n")
-    .map(Number)
-    .filter((time) => time > now - CRASH_WINDOW_MS);
+  if (text === undefined || text === "") return [];
+  const lines = text.split("\n");
+  const complete = lines.pop() === "";
+  if (!complete || !lines.every((line) => /^[1-9]\d{0,15}$/.test(line)))
+    throw new HostUnread("state/starts is incomplete");
+  return lines.map(Number).filter((time) => time > now - CRASH_WINDOW_MS);
 }
 
 const LANE_OBSERVATION_MS = 18_000;
@@ -464,7 +465,7 @@ async function start(
   if (lift) liftHold(info.home);
   mkdirSync(join(info.home, "state"), { recursive: true });
   const starts = [...(lift ? [] : history), Date.now()];
-  writeFileSync(startsFile(info.home), `${starts.join("\n")}\n`);
+  replaceFile(startsFile(info.home), `${starts.join("\n")}\n`);
   await untilPiShows(pane, deadline !== undefined);
   const host = info.config.host ?? process.env["FLEET_HOST"] ?? "local";
   if (deadline === undefined) await arrangeHere(host).catch(() => undefined);
@@ -573,6 +574,7 @@ export async function stop(root: string, lane: string): Promise<void> {
   if (unread.length > 0) throw new Error(unreadFailure(unread));
   for (const info of homes) {
     await withLifecycleLock(info.home, info.lane, async () => {
+      recentStarts(info.home, Date.now());
       const match = await workspaceOf(info, "close");
       mkdirSync(join(info.home, "state"), { recursive: true });
       writeFileSync(stoppedFile(info.home), "stopped by hand\n");

@@ -84,6 +84,11 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
+  'pane process-info:empty-busy')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":2,"foreground_processes":[]}}}'
+      exit 0
+    fi ;;
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
   'pane process-info:hanging-panes')
@@ -538,15 +543,47 @@ test("a hold with unread start history neither starts, closes, nor lifts anythin
   await idlePane("ops", home);
   const before = (await workspace("ops"))?.["workspace_id"];
   const stopped = join(home, "state", "stopped");
-  writeFileSync(stopped, "stopped by hand\n");
+  writeFileSync(stopped, "held by operator\n");
   mkdirSync(join(home, "state", "starts"));
-  for (const args of [["up", "ops", "--json"], ["restart", "ops"], ["restart"]]) {
+  for (const args of [["up", "ops", "--json"], ["restart", "ops"], ["restart"], ["stop", "ops"]]) {
     assert.throws(() => fleet(args), /could not read state\/starts \(EISDIR\)/);
-    assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n", args.join(" "));
+    assert.equal(readFileSync(stopped, "utf8"), "held by operator\n", args.join(" "));
     assert.equal((await workspace("ops"))?.["workspace_id"], before, args.join(" "));
   }
   assert.deepEqual(maintain(), action("ops", "unread"));
-  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.equal(readFileSync(stopped, "utf8"), "held by operator\n");
+});
+
+test("a torn start history is unread and never authorizes another launch", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  await idlePane("ops", home);
+  const starts = join(home, "state", "starts");
+  const now = String(Date.now());
+  const torn = `${now}\n${now}\n${now.slice(0, 7)}`;
+  writeFileSync(starts, torn);
+  assert.deepEqual(maintain(), action("ops", "unread"));
+  assert.equal(readFileSync(starts, "utf8"), torn);
+  assert.equal(existsSync(join(home, "state", "stopped")), false);
+  assert.throws(() => fleet(["stop", "ops"]), /state\/starts is incomplete/);
+  writeFileSync(starts, `${now}\n${now}\n${now}\n`);
+  assert.deepEqual(maintain(), [
+    { lane: "ops", action: "held", detail: "started 3 times in 10 minutes" },
+  ]);
+});
+
+test("an empty foreground list with a foreign group never lifts a hold or erases history", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const pane = await idlePane("ops", home);
+  const stopped = join(home, "state", "stopped");
+  const starts = join(home, "state", "starts");
+  const history = `${String(Date.now())}\n`;
+  writeFileSync(stopped, "held by operator\n");
+  writeFileSync(starts, history);
+  assert.deepEqual(maintain("empty-busy", pane), action("ops", "unread"));
+  assert.equal(readFileSync(stopped, "utf8"), "held by operator\n");
+  assert.equal(readFileSync(starts, "utf8"), history);
+  const status = records(JSON.parse(fleet(["status", "--json"], "empty-busy", pane)));
+  assert.equal(status[0]?.["state"], "unknown");
 });
 
 test("a failure after the aside is written still reports where the edited copy was kept", async () => {
