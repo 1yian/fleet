@@ -105,7 +105,7 @@ CREATE TABLE "deliveries" (
   ),
   updated_at INTEGER NOT NULL,
   resends INTEGER NOT NULL DEFAULT 0,
-  told_at INTEGER,
+  told_at INTEGER, retired_at INTEGER,
   PRIMARY KEY (session, entry)
 ) STRICT, WITHOUT ROWID;
 

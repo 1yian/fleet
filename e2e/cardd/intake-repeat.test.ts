@@ -134,6 +134,25 @@ async function missedAfterResends(main: Session, worker: Session, source: Entry)
   );
 }
 
+async function replaceByIncident(cleo: Session, worker: Session, card: number): Promise<void> {
+  const { incident } = check(
+    OPS["incident.report"].result,
+    await worker.call("incident.report", { error: "something odd happened" }),
+  );
+  await worker.close();
+  const plan = check(
+    OPS["card.restart"].result,
+    await cleo.call("card.restart", {
+      card,
+      incident,
+      generation: 1,
+      mode: "replace",
+      key: "incident-replacement",
+    }),
+  );
+  assert.equal(plan.repeat, false);
+}
+
 for (const by of ["hold", "refund", "incident replacement", "generation advance"] as const) {
   test(`a restart notice retired by ${by} stops replay and chase of its missed finding`, async () => {
     const { cardd, mainToken } = fleet;
@@ -175,22 +194,7 @@ for (const by of ["hold", "refund", "incident replacement", "generation advance"
         recorded: true,
       });
     } else if (by === "incident replacement") {
-      const { incident } = check(
-        OPS["incident.report"].result,
-        await worker.call("incident.report", { error: "something odd happened" }),
-      );
-      await worker.close();
-      const plan = check(
-        OPS["card.restart"].result,
-        await cleo.call("card.restart", {
-          card: card.id,
-          incident,
-          generation: 1,
-          mode: "replace",
-          key: "incident-replacement",
-        }),
-      );
-      assert.equal(plan.repeat, false);
+      await replaceByIncident(cleo, worker, card.id);
     } else {
       await worker.close();
       const nextKey = "new-worker-process";

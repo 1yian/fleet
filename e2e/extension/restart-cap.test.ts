@@ -323,7 +323,7 @@ for (const { mode, situation, generation, error } of readinessCases) {
     await h.waitForCall(0, "worker", WORKER_WAIT_MS);
     const original = await workerGroupOf(lab, "c-1-a1");
     assert.ok(original !== undefined && original > 0);
-    if (mode === "before") execFileSync("mkfifo", [gateOf(launchArgsOf(h))]);
+    if (mode === "before") execFileSync("sh", ["-c", 'mkfifo "$0"', gateOf(launchArgsOf(h))]);
     writeFileSync(armed, mode);
     mate.prompt("restart after dispatch", "followUp");
     const group = await replacementGroup(parts, original, generation);

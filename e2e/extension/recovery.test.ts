@@ -164,9 +164,9 @@ test("a worker with a stale module is replaced on its own conversation and work,
 
 function assertRecoveredConversation(h: Harness, incident: number): void {
   const checkText = `recovery check ${String(incident)} from main: this is a health check, not new work`;
-  const fresh = h.callsOf("worker").find(
-    (turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText),
-  );
+  const fresh = h
+    .callsOf("worker")
+    .find((turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText));
   assert.ok(fresh, "the replacement did not receive its recovery check");
   assert.ok(
     fresh.some((turn) => turn.text.includes("fix the scrollbar")),
@@ -414,12 +414,6 @@ test("a replacement requested again with the same key while it is still starting
     }, "worker");
   await mateConnected(h);
   mate.prompt("ship it");
-
-  await waitFor(
-    () => Promise.resolve(existsSync(gate)),
-    (exists) => exists,
-    WORKER_WAIT_MS,
-  );
   const starting = await waitFor(
     () => workerGroupOf(lab, "c-1-a1"),
     (group) => group !== undefined && group !== original,
@@ -439,8 +433,7 @@ test("a replacement requested again with the same key while it is still starting
     results.at(-1),
     "This restart key was already recorded. No new launch was attempted.",
   );
-  const sessions = (await cardd.post(parts.mainToken, "card", { card: 1 })).status;
-  assert.equal(sessions, 200);
+  assert.equal((await cardd.post(parts.mainToken, "card", { card: 1 })).status, 200);
   assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
   await waitFor(
     () => entriesOf(1),
