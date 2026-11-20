@@ -82,7 +82,7 @@ function steps(files) {
 
 function run(step) {
   return new Promise((resolve, reject) => {
-    const child = spawn("npm", ["run", "--silent", step.script, ...step.args], {
+    const child = spawn("bun", ["run", "--silent", step.script, ...step.args], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -136,7 +136,7 @@ async function prePush() {
   process.chdir(top);
   if (!existsSync("node_modules")) {
     console.warn(
-      "pre-push: dependencies are not installed, so the checks were skipped. Run npm ci.",
+      "pre-push: dependencies are not installed, so the checks were skipped. Run bun install.",
     );
     return 0;
   }

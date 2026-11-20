@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { addRemote, git } from "../support/remote.ts";
 import { Scratch } from "../support/scratch.ts";
+import { pathWithout } from "../support/tool-stubs.ts";
 
 const PROBE = "e2e/hook-probe.ts";
 const BROKEN = 'export const probe : number = "text" // comment\n';
@@ -21,8 +22,11 @@ afterEach(() => {
   scratch.dispose();
 });
 
-const push = (...args: string[]) =>
-  spawnSync("git", ["-C", scratch.root, "push", ...args, "origin", "HEAD"], { encoding: "utf8" });
+const push = (args: string[] = [], env: Record<string, string> = {}) =>
+  spawnSync("git", ["-C", scratch.root, "push", ...args, "origin", "HEAD"], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
 
 const remoteBranches = (): string => git(remote, "branch", "--list", "feat/*");
 
@@ -57,8 +61,18 @@ test("the same push goes through once the file is clean, and --no-verify skips t
 
   git(scratch.root, "switch", "-q", "-c", "feat/skipped");
   commitProbe(BROKEN);
-  const skipped = push("--no-verify");
+  const skipped = push(["--no-verify"]);
   assert.equal(skipped.status, 0, skipped.stderr);
   assert.doesNotMatch(skipped.stderr, /pre-push:/);
   assert.match(remoteBranches(), /feat\/skipped/);
+});
+
+test("a push goes through with a message when bun is not on PATH", () => {
+  git(scratch.root, "switch", "-q", "-c", "feat/no-bun");
+  commitProbe(BROKEN);
+  const result = push([], { PATH: pathWithout("bun") });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /pre-push: bun is not on PATH, so the checks were skipped/);
+  assert.match(result.stderr, /Install bun/);
+  assert.match(remoteBranches(), /feat\/no-bun/);
 });

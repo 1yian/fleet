@@ -6,7 +6,17 @@ import { tempDir } from "./run-root.ts";
 
 const STUBS = fileURLToPath(new URL("./stubs", import.meta.url));
 const PROBES = join(STUBS, "probes");
-const PREREQUISITES = ["node", "git", "gh", "herdr", "zstd", "lavish-axi", "no-mistakes", "direnv"];
+const PREREQUISITES = [
+  "node",
+  "bun",
+  "git",
+  "gh",
+  "herdr",
+  "zstd",
+  "lavish-axi",
+  "no-mistakes",
+  "direnv",
+];
 
 const SHELL = ["sh", "env", "dirname", "realpath"];
 

@@ -144,7 +144,7 @@ function assertMateContext(mateSystem: string, scratch: Scratch, mateNoContext: 
   assert.match(mateSystem, /Prefer plain reports/);
   assert.match(mateSystem, /Keep this lane focused/);
   assert.match(mateSystem, /Use the isolated lab/);
-  assert.doesNotMatch(mateSystem, /npm run check|fleet\/no-comments|Migrations.*append-only/);
+  assert.doesNotMatch(mateSystem, /bun run check|fleet\/no-comments|Migrations.*append-only/);
   assert.doesNotMatch(mateSystem, /^# Worker role contract$/m);
 }
 
@@ -152,7 +152,7 @@ function assertGuideContent(guideBlocks: readonly string[], expectedGuides: numb
   if (expectedGuides === 0) return;
   const workerGuide = guideBlocks[1]?.split("</project_instructions>")[0] ?? "";
   assert.ok(workerGuide.includes(WORKER_GUIDE_MARKER));
-  assert.match(workerGuide, /npm run check/);
+  assert.match(workerGuide, /bun run check/);
   assert.match(workerGuide, /fleet\/no-comments/);
   assert.match(workerGuide, /Migrations.*append-only/);
   assert.match(workerGuide, /Do not test by reading source files for strings/);
@@ -276,7 +276,7 @@ function assertWorkerGuide(workerSystem: string, tree: string, variant: Variant)
   assert.equal(workerSystem.split(WORKER_GUIDE_MARKER).length - 1, expectedGuides);
   assert.ok(!workerSystem.includes(LINK_TARGET_MARKER));
   if (expectedGuides === 0)
-    assert.doesNotMatch(workerSystem, /# Contributing to fleet|npm run check/);
+    assert.doesNotMatch(workerSystem, /# Contributing to fleet|bun run check/);
   assertGuideContent(guideBlocks, expectedGuides);
   assert.doesNotMatch(workerSystem, /Keep the fixture fleet running|Prefer plain reports/);
   assertAncestor(workerSystem, variant);

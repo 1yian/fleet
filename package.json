@@ -18,9 +18,9 @@
     "knip": "knip --treat-config-hints-as-errors",
     "deps": "depcruise .",
     "migrations:check": "node packages/cardd/scripts/check-migrations.ts",
-    "test:e2e": "npm run build && node e2e/run.ts",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run knip && npm run deps && npm run migrations:check",
-    "build": "npm run -w @fleet/board build",
+    "test:e2e": "bun run build && node e2e/run.ts",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run deps && bun run migrations:check",
+    "build": "bun run --cwd packages/board build",
     "prepare": "node githooks.js install"
   },
   "devDependencies": {

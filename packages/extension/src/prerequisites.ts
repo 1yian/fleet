@@ -18,6 +18,13 @@ const PROBE_TIMEOUT_MS = Number(process.env["FLEET_PROBE_TIMEOUT_MS"]) || 30_000
 const BREW_OR_APT = (name: string): string =>
   `brew install ${name} (macOS) or apt install ${name} (Debian)`;
 
+const BUN: Tool = {
+  name: "bun",
+  version: ["--version"],
+  floor: "1.3.13",
+  fix: "install bun 1.3.13 or later: brew install oven-sh/bun/bun (macOS), or see https://bun.sh/docs/installation",
+};
+
 const TOOLS: readonly Tool[] = [
   {
     name: "node",
@@ -25,6 +32,7 @@ const TOOLS: readonly Tool[] = [
     floor: "24.0.0",
     fix: "install Node 24 or later: brew install node@24 (macOS), or see https://nodejs.org",
   },
+  BUN,
   { name: "git", version: ["--version"], floor: "2.31.0", fix: BREW_OR_APT("git") },
   {
     name: "gh",
@@ -171,6 +179,8 @@ function memoryProblems(root: string, host: string): string[] {
     ];
   });
 }
+
+export const bunProblems = (): string[] => [toolProblem(BUN, hostname(), false) ?? []].flat();
 
 export function hostProblems(root: string, checkLogin = true): string[] {
   const host = hostname();
