@@ -13,6 +13,7 @@ const ONE_TEST = "/updatefleet orders every host's sidebar when no mate starts a
 const PROBE = fileURLToPath(new URL("./cardd-probe.test.ts", import.meta.url));
 const PROBE_TEST = "main is told once when cardd refuses new connections";
 const RUN_MS = 240_000;
+const GUARDED = new URL("../support/guarded.ts", import.meta.url).href;
 
 let live: string;
 let tripwire: string;
@@ -36,15 +37,21 @@ function liveMateEnvironment(): Record<string, string> {
   };
 }
 
-async function runFrom(
+function runFrom(
   env: Record<string, string>,
   file = SIDEBAR,
   name = ONE_TEST,
 ): Promise<{ code: string; output: string }> {
+  return nodeFrom(env, ["--test", "--test-concurrency=1", `--test-name-pattern=${name}`, file]);
+}
+
+async function nodeFrom(
+  env: Record<string, string>,
+  args: readonly string[],
+): Promise<{ code: string; output: string }> {
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => name !== "NODE_TEST_CONTEXT"),
   );
-  const args = ["--test", "--test-concurrency=1", `--test-name-pattern=${name}`, file];
   const child = spawnGuarded("node", args, {
     env: { ...inherited, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -104,5 +111,46 @@ test("an end-to-end run started from a worker's herdr pane leaves that pane's wo
     assert.equal(code, "0", output.split("\n").slice(-80).join("\n"));
   } finally {
     await lab.stop();
+  }
+});
+
+test("a herdr command from an end-to-end process that names no lab fails loudly, even when its shell carries a live session", async () => {
+  const shell = await HerdrLab.start({});
+  try {
+    const created = await shell.run([
+      "workspace",
+      "create",
+      "--cwd",
+      live,
+      "--label",
+      "live",
+      "--no-focus",
+    ]);
+    const pane = String(records([created["root_pane"]])[0]?.["pane_id"]);
+    const attempt = [
+      `await import(${JSON.stringify(GUARDED)});`,
+      `const { spawnSync } = await import("node:child_process");`,
+      `const made = spawnSync("herdr", ["workspace", "create", "--cwd", process.cwd(), "--label", "leaked", "--no-focus"], { encoding: "utf8" });`,
+      `console.log("herdr-result", JSON.stringify({ status: made.status, said: made.stdout + made.stderr }));`,
+    ].join("\n");
+    const { code, output } = await nodeFrom(
+      {
+        HERDR_ENV: "1",
+        HERDR_SOCKET_PATH: await shell.socket(),
+        HERDR_SESSION: shell.name,
+        HERDR_PANE_ID: pane,
+      },
+      ["--input-type=module", "-e", attempt],
+    );
+    assert.equal(code, "0", output);
+    const herdr: unknown = JSON.parse(/^herdr-result (.*)$/m.exec(output)?.[1] ?? "null");
+    assert.notEqual(Reflect.get(Object(herdr), "status"), 0, output);
+    assert.match(String(Reflect.get(Object(herdr), "said")), /server_not_running/);
+    const labels = records((await shell.run(["workspace", "list"]))["workspaces"]).map((each) =>
+      String(each["label"]),
+    );
+    assert.deepEqual(labels, ["live"], "an end-to-end process reached the live herdr session");
+  } finally {
+    await shell.stop();
   }
 });

@@ -33,21 +33,30 @@ async function laterCheck(): Promise<void> {
   );
 }
 
-async function worker(card: Card): Promise<void> {
+const incidentIn = (entry: Entry): number =>
+  Number(/Incident (\d+), process generation \d+\./.exec(entry.body)?.[1]);
+
+async function worker(card: Card): Promise<number> {
   const env = {
     FLEET_URL: fleet.cardd.url,
     FLEET_TOKEN: await begin(fleet.main, card, "the task"),
     FLEET_ROLE: "worker",
   };
+  const startup = await fleet.main.waitForEntry(
+    (entry) => entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
+    "the start-up watchdog to fire before the worker connects",
+  );
   h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
+  return incidentIn(startup);
 }
 
 const STALE =
   "Cannot find module '/pi/dist/bundle/chunks/openai-completions-BGCEXFAB.js' imported from /pi/dist/bundle/chunk-66G7ITPS.js";
 
-async function assertStaleIncident(card: Card): Promise<void> {
+async function assertStaleIncident(card: Card, startup: number): Promise<void> {
   const heard = await fleet.main.waitForEntry(isFailure, "the stale module incident");
-  assert.match(heard.body, /Classified stale-module\. Incident 1, process generation 1\./);
+  assert.match(heard.body, /Classified stale-module\. Incident \d+, process generation 1\./);
+  assert.ok(incidentIn(heard) > startup, heard.body);
   assert.match(heard.body, /mode=replace\)\.$/);
   await laterCheck();
   const entries = await thread(card);
@@ -62,14 +71,12 @@ async function assertStaleIncident(card: Card): Promise<void> {
 test("an import failure at the start of a turn opens one stale-module incident with a generation, and no stopped report", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   h.onModel(() => ({ fail: STALE }));
-  await worker(card);
-  await assertStaleIncident(card);
+  await assertStaleIncident(card, await worker(card));
 });
 
 test("an import failure on the nudge turn after a run without a handoff opens one stale-module incident, and no stopped report", async () => {
   const card = await newCard(fleet.main, "Users see one scrollbar");
   h.onModel(() => ({ text: "I think I am done" }));
   h.onModel(() => ({ fail: STALE }));
-  await worker(card);
-  await assertStaleIncident(card);
+  await assertStaleIncident(card, await worker(card));
 });
