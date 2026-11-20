@@ -625,6 +625,11 @@ for (const fault of ["failed", "partial"] as const) {
     second.prompt("Check on the command after reload");
     await settled(2);
     await reportAnswered.promise;
+    const published = await untilAsync(async () => {
+      const state = (await cardView()).card.activity?.state;
+      return state === "running" ? undefined : state;
+    }, "the worker to publish its settled activity");
+    assert.equal(published, "waiting");
     assert.equal(said("Your run is ending without a handoff"), false);
     assert.deepEqual(await cardReports(), []);
     assert.equal(await status(fleet.main, card), "working");
@@ -840,6 +845,60 @@ exec ${quote(herdr)} "$@"
   assert.deepEqual(await jobResults(), [
     [1, 127, "could not start: cardd did not confirm wrapper registration"],
   ]);
+});
+
+test("a successful result received before the pane reply still reports the launch as started", async (t) => {
+  const release = join(jobDir, "release-reply");
+  const accepted = join(jobDir, "pane-accepted");
+  await jobProxy(t, callCardd);
+  const bin = join(jobDir, "bin");
+  mkdirSync(bin);
+  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+  const waitForRelease = `const fs = require('node:fs'); const timer = setTimeout(() => process.exit(1), 30000);
+const finish = () => { if (fs.existsSync(${JSON.stringify(release)})) { watcher.close(); clearTimeout(timer); } };
+const watcher = fs.watch(${JSON.stringify(jobDir)}, finish); finish();`;
+  writeFileSync(
+    join(bin, "herdr"),
+    `#!/bin/sh
+if [ "$1 $2" = 'pane run' ]; then
+  response=$(${quote(herdr)} "$@") || exit "$?"
+  touch ${quote(accepted)}
+  node -e ${quote(waitForRelease)} || exit "$?"
+  printf '%s\\n' "$response"
+  exit 0
+fi
+exec ${quote(herdr)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+  t.after(() => writeFileSync(release, ""));
+  h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "quick", command: "echo finished-before-ack" },
+  }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "The job succeeded" } }));
+  worker();
+  await until(() => (existsSync(accepted) ? true : undefined), "Herdr to accept the dispatch");
+  const result = await untilAsync(
+    async () =>
+      (await cardView()).entries.find(
+        (entry) => entry.kind === "job-result" && entry.fields["exitCode"] === 0,
+      ),
+    "the command's durable successful result",
+  );
+  await h.waitFor(
+    (event) => event["type"] === "fleet_delivered" && event["entryId"] === result.id,
+    "the exact successful result to reach the worker before the pane reply",
+  );
+  writeFileSync(release, "");
+  await h.waitForCall(1);
+  assert.ok(said("Started job 1 (quick) in tab job-1-quick."));
+  await until(
+    () => (said("job 1 (quick) exited 0: finished-before-ack") ? true : undefined),
+    "the successful result in the model's context",
+  );
+  assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
 });
 
 test("a failed job-file write cannot hand off as stopped until cardd fences the reservation", async (t) => {
