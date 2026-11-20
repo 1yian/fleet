@@ -6,13 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
-import {
-  configureMain,
-  roomyDiskEnv,
-  Scratch,
-  settingsArgs,
-  startMain,
-} from "../support/scratch.ts";
+import { configureMain, Scratch, settingsArgs, startMain } from "../support/scratch.ts";
 import { tempDir } from "../support/run-root.ts";
 
 const FAKE_MODEL = fileURLToPath(new URL("../support/fake-model.ts", import.meta.url));
@@ -42,7 +36,6 @@ beforeEach(async () => {
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
-    ...roomyDiskEnv(),
   });
 });
 afterEach(async (t) => {

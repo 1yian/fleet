@@ -24,3 +24,8 @@ for (const name of LIVE_ENVIRONMENT) Reflect.deleteProperty(process.env, name);
 
 process.env["FLEET_TAILSCALE"] = "false";
 process.env["ELEMENT_HOME"] = tempDir("element-");
+
+const ROOMY_DISK = `--import=${new URL("./roomy-disk.ts", import.meta.url).href}`;
+const nodeOptions = process.env["NODE_OPTIONS"] ?? "";
+if (!nodeOptions.split(" ").includes(ROOMY_DISK))
+  process.env["NODE_OPTIONS"] = `${nodeOptions} ${ROOMY_DISK}`.trim();
