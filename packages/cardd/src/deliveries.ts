@@ -217,20 +217,20 @@ export function dueBatches(db: DatabaseSync, batching: Batching): string[] {
     .map((row) => String(row["id"]));
 }
 
-function keepDelivery(
+function deliveryEligibility(
   db: DatabaseSync,
   session: string,
   entry: number,
   card: number,
   restartNotice: unknown,
-): boolean {
-  if (typeof restartNotice !== "number") return true;
+): ReturnType<typeof noticeState> {
+  if (typeof restartNotice !== "number") return "eligible";
   const state = noticeState(db, getCard(db, card), restartNotice);
   if (state === "retired")
     db.prepare(
       `DELETE FROM deliveries WHERE session = ? AND entry = ? AND state IN (${UNREAD_DELIVERY})`,
     ).run(session, entry);
-  return state === "eligible";
+  return state;
 }
 
 export function toPush(
@@ -255,9 +255,25 @@ export function toPush(
       .map((row) => Number(row["entry"])),
   );
   const lane = String(db.prepare("SELECT lane FROM sessions WHERE id = ?").get(session)?.["lane"]);
+  const deferRead = atConnect
+    ? db.prepare(
+        "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ? AND state = 'read'",
+      )
+    : undefined;
+  const now = Date.now();
   const all = rows.flatMap((row) => {
     const { entry: raw, name, again = false } = check(PushedEntrySchema, row);
-    if (!keepDelivery(db, session, raw.id, raw.card, raw.fields["restartNotice"])) return [];
+    const eligibility = deliveryEligibility(
+      db,
+      session,
+      raw.id,
+      raw.card,
+      raw.fields["restartNotice"],
+    );
+    if (eligibility !== "eligible") {
+      if (eligibility === "suppressed") deferRead?.run(afterResend("read"), now, session, raw.id);
+      return [];
+    }
     const entry = identified(db, lane, holdFor(db, lane, raw));
     const push = {
       entry,
@@ -276,7 +292,6 @@ export function toPush(
   const write = db.prepare(
     "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ?",
   );
-  const now = Date.now();
   for (const { entry } of pushes) apply(read, write, session, entry.id, "push", now);
   return pushes;
 }
@@ -375,7 +390,10 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
     .flatMap((row) => {
       const session = String(row["session"]);
       const entry = check(EntrySchema, JSON.parse(String(row["j"])));
-      if (!keepDelivery(db, session, entry.id, entry.card, entry.fields["restartNotice"]))
+      if (
+        deliveryEligibility(db, session, entry.id, entry.card, entry.fields["restartNotice"]) !==
+        "eligible"
+      )
         return [];
       const due = now - Number(row["updated"]) >= t.intake;
       const resends = Number(row["resends"]) + (due ? 1 : 0);
@@ -404,8 +422,10 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
        ORDER BY e.id`,
     )
     .all(session)
-    .filter((row) =>
-      keepDelivery(db, session, Number(row["id"]), Number(row["card"]), row["notice"]),
+    .filter(
+      (row) =>
+        deliveryEligibility(db, session, Number(row["id"]), Number(row["card"]), row["notice"]) ===
+        "eligible",
     );
   if (rows.length === 0) return;
   const unread = rows
