@@ -285,6 +285,11 @@ for (const fault of ["malformed", "unreadable"]) {
   test(`an ${fault === "malformed" ? "invalid" : fault} lane config prevents maintenance recovery until repaired`, async () => {
     const config = join(`${p620.root}.worktrees`, "lane-far", "config", "lane.json");
     const backup = `${config}.backup`;
+    p620.addLane("near", {
+      url: cardd.url,
+      token: cardd.addLane("near", "main"),
+      args: mateArgs(h),
+    });
     writeFileSync(marker, "down");
     renameSync(config, backup);
     if (fault === "malformed") writeFileSync(config, "");
@@ -295,7 +300,7 @@ for (const fault of ["malformed", "unreadable"]) {
     assert.match(users(outage), /p620 cannot be reached/);
     rmSync(marker);
     const detail = fault === "malformed" ? "Unexpected end of JSON input" : "EISDIR";
-    const failed = `[fleet] lanes: p620 failed: ${detail}`;
+    const failed = `[fleet] lanes: p620 failed: lane far could not be read: ${detail}`;
     const recovered = "p620 can be reached again";
     const started = "far started on p620";
     await until(
@@ -307,8 +312,17 @@ for (const fault of ["malformed", "unreadable"]) {
       "main to report a definite prerequisite failure on p620",
       async () => h.callsOf("mate").map(users).at(-1) ?? "no model call",
     );
-    for (const args of [["status"], ["status", "--placement"]])
-      assert.throws(() => rowsOf(p620, args), new RegExp(detail));
+    await until(
+      () => (sessionText().includes("near started on p620") ? true : undefined),
+      "a healthy sibling lane to start while far is unreadable",
+    );
+    await waitState(p620, "near", "running");
+    const rows = rowsOf(p620, ["status"]);
+    assert.equal(rows.find((row) => row["lane"] === "near")?.["state"], "running");
+    const unread = rows.find((row) => row["lane"] === "far");
+    assert.equal(unread?.["state"], "unknown");
+    assert.match(String(unread?.["reason"]), new RegExp(detail));
+    assert.throws(() => rowsOf(p620, ["status", "--placement"]), new RegExp(detail));
     const beforeRepair = sessionText();
     assert.ok(!beforeRepair.includes(recovered));
     assert.ok(!beforeRepair.includes(started));

@@ -427,6 +427,56 @@ test("restart-all restarts a held current-title mate in a non-first pane", async
   assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "running" }]);
 });
 
+test("restart-all keeps a held lane stopped when its idle current pane precedes a running legacy workspace", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const legacy = await idlePane("ops", home, "fleet-ops");
+  await idlePane("ops", home);
+  const stopped = join(home, "state", "stopped");
+  writeFileSync(stopped, "stopped by hand\n");
+  const labels = async () =>
+    records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["label"]);
+  assert.deepEqual(await labels(), ["fleet-ops", "2ndmate-ops"]);
+  assert.match(fleet(["restart"], "pi-in-split", legacy), /ops: stopped: stopped by hand/);
+  assert.deepEqual(await labels(), ["fleet-ops", "2ndmate-ops"]);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("an unreadable lane config is reported while healthy lanes still converge and start", async () => {
+  addLane("zz");
+  const ops = `${here.root}.worktrees/lane-ops`;
+  writeFileSync(`${here.root}.worktrees/lane-zz/config/lane.json`, "");
+  const content = Buffer.from("- shared\n").toString("base64");
+  assert.throws(
+    () => fleet(["shared", "--content", content]),
+    (error: unknown) => {
+      assert.match(String(Reflect.get(Object(error), "stdout")), /ops: shared preferences updated/);
+      assert.match(
+        String(Reflect.get(Object(error), "stderr")),
+        /lane zz could not be read: Unexpected end of JSON input/,
+      );
+      return true;
+    },
+  );
+  assert.equal(readFileSync(join(ops, "data", "captain-shared.md"), "utf8"), "- shared\n");
+  const reply = maintain();
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops", "zz"]);
+  assert.deepEqual(reply["outcomes"], action("ops", "started"));
+  assert.match(
+    String(reply["failed"]),
+    /^lane zz could not be read: Unexpected end of JSON input$/,
+  );
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
+    { lane: "ops", state: "running" },
+    {
+      lane: "zz",
+      state: "unknown",
+      reason: "Unexpected end of JSON input",
+    },
+  ]);
+  assert.throws(() => fleet(["status", "--placement", "--json"]), /lane zz could not be read/);
+});
+
 test("legacy split workspaces close by the original pane's home, not by Pi in a split", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
   for (const cwd of [here.root, home]) {

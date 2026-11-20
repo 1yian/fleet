@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { ghLogin, type GhRun } from "./gh-login.ts";
-import { laneHomes } from "./homes.ts";
+import { discoverLanes } from "./homes.ts";
 import { isRecord, readLaneConfig } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
@@ -176,7 +176,7 @@ function memoryProblems(root: string, host: string): string[] {
   const main = readLaneConfig(root);
   const homes = [
     ...(main === undefined ? [] : [{ lane: main.lane, home: root }]),
-    ...laneHomes(root),
+    ...discoverLanes(root).homes,
   ];
   return homes.flatMap(({ lane, home }) => {
     const settings = settingsOf(home);
