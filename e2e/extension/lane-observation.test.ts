@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -89,6 +89,17 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":2,"foreground_processes":[]}}}'
       exit 0
     fi ;;
+  'pane process-info:gated-ready')
+    if [ "$4" = "$FAULT_PANE" ] && [ -e "$HERDR_FAULT_LOG.gate" ]; then
+      if [ -e "$HERDR_FAULT_LOG.ran" ]; then : > "$HERDR_FAULT_LOG.polled"; fi
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[]}}}'
+      exit 0
+    fi ;;
+  'pane run:gated-ready')
+    "$REAL_HERDR" "$@"
+    code=$?
+    if [ "$code" -eq 0 ]; then : > "$HERDR_FAULT_LOG.ran"; fi
+    exit $code ;;
   'pane process-info:processes') printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1}}}'; exit 0 ;;
   'pane process-info:later') if [ "$4" = "$FAULT_PANE" ]; then printf '%s' '{"result"'; exit 0; fi ;;
   'pane process-info:hanging-panes')
@@ -629,6 +640,89 @@ test("an accepted start is still waited on and reported when recording it fails"
   assert.match(String(reply["failed"]), /ops started, but recording the start failed/);
   assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [{ lane: "ops", state: "running" }]);
   assert.deepEqual(maintain(), action("ops", "running"));
+});
+
+test("an accepted start keeps the lifecycle lock until Pi shows, even when recording it fails", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const pane = await idlePane("ops", home);
+  mkdirSync(join(home, "state", "starts.next"));
+  const gate = `${faultLog()}.gate`;
+  writeFileSync(gate, "");
+  const sweep = spawn(process.execPath, [here.launch, ...typedMaintenance], {
+    env: {
+      ...process.env,
+      ...lab.env,
+      HERDR_SESSION: lab.name,
+      REAL_HERDR: real,
+      HERDR_FAULT: "gated-ready",
+      HERDR_FAULT_LOG: faultLog(),
+      FAULT_PANE: pane,
+      FLEET_PROBE_TIMEOUT_MS: "5000",
+      FLEET_LIFECYCLE_WAIT_MS: "100",
+      PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+    },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let stdout = "";
+  sweep.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString();
+  });
+  const finished = new Promise<number | null>((resolve) => {
+    sweep.once("exit", resolve);
+  });
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(`${faultLog()}.polled`)) {
+    assert.ok(Date.now() < deadline, "the sweep never reached its readiness wait");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.throws(() => fleet(["up", "ops", "--json"]), /another fleet command is starting/);
+  assert.throws(() => fleet(["stop", "ops"]), /another fleet command is starting/);
+  rmSync(gate);
+  assert.equal(await finished, 0);
+  const reply: unknown = JSON.parse(stdout);
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["outcomes"], action("ops", "started"));
+  assert.match(String(reply["failed"]), /ops started, but recording the start failed/);
+  assert.deepEqual(JSON.parse(fleet(["up", "ops", "--json"])), action("ops", "running"));
+});
+
+test("two current-title workspaces are ambiguous and never pick a pane to start, close, or report", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const first = await idlePane("ops", home);
+  const second = await idlePane("ops", home);
+  const listed = async () =>
+    records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["workspace_id"]);
+  const before = await listed();
+  assert.equal(before.length, 2);
+  assert.deepEqual(maintain("pi-in-split", second), action("ops", "unread"));
+  assert.equal(existsSync(join(home, "state", "starts")), false);
+  const status = records(JSON.parse(fleet(["status", "--json"], "pi-in-split", second)));
+  assert.equal(status[0]?.["state"], "unknown");
+  assert.match(String(status[0]?.["reason"]), /2 workspaces titled 2ndmate-ops/);
+  assert.throws(() => fleet(["stop", "ops"]), /2 workspaces titled 2ndmate-ops/);
+  assert.throws(() => fleet(["restart", "ops"]), /2 workspaces titled 2ndmate-ops/);
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "pi-in-split", first),
+    /2 workspaces titled/,
+  );
+  assert.deepEqual(await listed(), before);
+  assert.equal(existsSync(join(home, "state", "stopped")), false);
+});
+
+test("restart never counts a surviving legacy mate as its replacement", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const legacy = await idlePane("ops", home, "fleet-ops");
+  await idlePane("ops", home);
+  const labels = async () =>
+    records((await lab.run(["workspace", "list"]))["workspaces"]).map((row) => row["label"]);
+  const stopped = join(home, "state", "stopped");
+  assert.throws(
+    () => fleet(["restart", "ops"], "pi-in-split", legacy),
+    /still has a running mate in workspace .* after restart closed its own/,
+  );
+  assert.deepEqual(await labels(), ["fleet-ops"]);
+  assert.equal(existsSync(stopped), false);
+  assert.equal(existsSync(join(home, "state", "starts")), false);
 });
 
 test("status never publishes a definite state over unreadable lifecycle files", async () => {
