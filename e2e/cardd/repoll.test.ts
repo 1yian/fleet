@@ -3,7 +3,16 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, test } from "node:test";
 import { check, OPS, type BoardCard, type Card, type Entry, type Pulse } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
-import { ageCard, begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import {
+  ageCard,
+  begin,
+  lastReportAt,
+  newCard,
+  pastClock,
+  registeredAt,
+  startFleet,
+  type Fleet,
+} from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
 
 const SCALE = 0.01;
@@ -249,11 +258,13 @@ test("repeat accounting counts a registered job from its first registration, whi
     status: "note",
     text: "Found the cause while the launch waited.",
   });
-  await onBoard(late);
+  const lateNote = lastReportAt(fleet.cardd, late);
+  pastClock(lateNote);
   assert.deepEqual(
     await lateWorker.call("job.register", { job: reserved.job, launch: lateLaunch, pid: 4100 }),
     { registered: true },
   );
+  assert.ok(registeredAt(fleet.cardd, reserved.job) > lateNote);
   await lateWorker.call("job.finish", { job: reserved.job, exitCode: 0, outputTail: "passed" });
   const retry = await registered(lateWorker, "suite", 4101);
   const again = await pulseOf(late);
@@ -275,8 +286,12 @@ test("repeat accounting counts a registered job from its first registration, whi
     }),
   );
   await replayWorker.call("job.register", { job: first.job, launch: replayLaunch, pid: 4200 });
+  const firstRegistered = registeredAt(fleet.cardd, first.job);
+  pastClock(firstRegistered);
   await replayWorker.call("report", { status: "note", text: "Found the cause after registering." });
-  await onBoard(replayed);
+  const replayNote = lastReportAt(fleet.cardd, replayed);
+  assert.ok(replayNote > firstRegistered);
+  pastClock(replayNote);
   assert.deepEqual(
     await replayWorker.call("job.register", {
       job: first.job,
@@ -285,6 +300,7 @@ test("repeat accounting counts a registered job from its first registration, whi
     }),
     { registered: true },
   );
+  assert.equal(registeredAt(fleet.cardd, first.job), firstRegistered);
   await replayWorker.call("job.finish", { job: first.job, exitCode: 0, outputTail: "passed" });
   const next = await registered(replayWorker, "suite", 4201);
   assert.deepEqual((await pulseOf(replayed)).running, {
@@ -312,12 +328,17 @@ test("repeat accounting follows registration order, not reservation order, for o
     status: "note",
     text: "Found the cause while both launches waited.",
   });
-  await onBoard(card);
+  const note = lastReportAt(fleet.cardd, card);
+  pastClock(note);
   const register = (run: { job: number; launch: string }, pid: number) =>
     worker.call("job.register", { job: run.job, launch: run.launch, pid });
   assert.deepEqual(await register(second, 4300), { registered: true });
-  await onBoard(card);
+  const secondRegistered = registeredAt(fleet.cardd, second.job);
+  pastClock(secondRegistered);
   assert.deepEqual(await register(first, 4301), { registered: true });
+  const firstRegistered = registeredAt(fleet.cardd, first.job);
+  assert.ok(secondRegistered > note);
+  assert.ok(firstRegistered > secondRegistered);
   await worker.call("job.finish", { job: second.job, exitCode: 0, outputTail: "passed" });
 
   assert.deepEqual((await pulseOf(card)).running, {
