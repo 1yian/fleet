@@ -260,11 +260,11 @@ const stopBeforeRun = (): void => {
   stopped = true;
 };
 for (const signal of STOP_SIGNALS) process.on(signal, stopBeforeRun);
-const confirmed = job.launch === undefined || (await register(job, job.launch));
-for (const signal of STOP_SIGNALS) process.off(signal, stopBeforeRun);
 const heartbeat = setInterval(() => {
   void call(job, "job.alive", { job: job.job });
 }, job.heartbeatMs);
+const confirmed = job.launch === undefined || (await register(job, job.launch));
+for (const signal of STOP_SIGNALS) process.off(signal, stopBeforeRun);
 const result: JobResult = stopped
   ? { exitCode: INTERRUPTED_EXIT, outputTail: "interrupted", commandNotStarted: true }
   : confirmed
