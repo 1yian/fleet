@@ -333,7 +333,6 @@ interface Recovery {
   host: string;
   actor: string;
   generation: number;
-  repeat: boolean;
   notice?: number | undefined;
 }
 
@@ -359,11 +358,9 @@ async function prepareReplacement(
   link: Link,
   launch: Launch,
   recovery: Recovery,
-): Promise<string | Replacement> {
+): Promise<Replacement> {
   const plan = await link.call("attempt.resume", { card: recovery.card });
   if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
-  if (recovery.repeat)
-    return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
   const extension = await extensionOn(recovery.host, launch.extension);
   const fresh = await freshPane(plan, recovery);
   if (recovery.notice !== undefined)
@@ -377,11 +374,11 @@ export async function replaceWorker(
   recovery: Recovery,
   avoid: readonly string[] = [],
 ): Promise<string> {
-  const fresh = await prepareReplacement(link, launch, recovery).catch((error: unknown) => {
-    throw new DidNotStart(error);
-  });
-  if (typeof fresh === "string") return fresh;
-  const { plan, pane, path, extension } = fresh;
+  const { plan, pane, path, extension } = await prepareReplacement(link, launch, recovery).catch(
+    (error: unknown) => {
+      throw new DidNotStart(error);
+    },
+  );
   await startAgent(
     recovery.host,
     pane,

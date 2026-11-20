@@ -351,10 +351,7 @@ for (const { mode, situation, generation, error } of readinessCases) {
       "the mate's tool result for the same restart key",
       WORKER_WAIT_MS,
     );
-    assert.equal(
-      repeated,
-      "A process of c-1-a1 already runs or is starting on far, so this repeated request left it alone.",
-    );
+    assert.equal(repeated, "This restart key was already recorded. No new launch was attempted.");
     assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
 
     await verifyCountedRestart(parts, restart.key, generation);

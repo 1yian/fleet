@@ -72,9 +72,7 @@ const incidentOf = (plan: Plan): string =>
 
 async function restartMate(home: string | undefined, plan: Plan): Promise<string> {
   if (home === undefined) throw new Error(`only main can replace the process of ${plan.actor}`);
-  return plan.repeat
-    ? `A restart of ${plan.lane} was already requested, so this repeat did nothing.`
-    : await restartLane(home, plan.lane);
+  return restartLane(home, plan.lane);
 }
 
 async function restartWorker(
@@ -106,7 +104,7 @@ async function carryOut(
   const who = plan.role === "worker" ? `the worker on c-${String(plan.card)}` : plan.actor;
   if (plan.mode === "retry")
     return `Sent a recovery check to ${who}${incidentOf(plan)}. ${CHECK_NOTE}`;
-  if (plan.replaced) return `${who} already runs a new process${incidentOf(plan)}.`;
+  if (plan.repeat) return "This restart key was already recorded. No new launch was attempted.";
   return plan.role === "mate"
     ? restartMate(home, plan)
     : restartWorker(link, launch, plan, key, avoid);

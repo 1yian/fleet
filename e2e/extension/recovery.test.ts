@@ -138,7 +138,10 @@ test("a worker with a stale module is replaced on its own conversation and work,
     results.at(-2) ?? "",
     /^Started c-1-a1 again on local, on its own session and branch c-1-a1\. The recovery check reaches it/,
   );
-  assert.match(results.at(-1) ?? "", /already runs a new process|left it alone|already runs on/);
+  assert.equal(
+    results.at(-1),
+    "This restart key was already recorded. No new launch was attempted.",
+  );
 
   const after = await workerGroupOf(lab, "c-1-a1");
   assert.ok(
@@ -413,9 +416,9 @@ test("a replacement requested again with the same key while it is still starting
 
   const results = await mateResults(h, 4);
   assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on local/);
-  assert.match(
-    results.at(-1) ?? "",
-    /already runs or is starting on local, so this repeated request left it alone/,
+  assert.equal(
+    results.at(-1),
+    "This restart key was already recorded. No new launch was attempted.",
   );
   const sessions = (await cardd.post(parts.mainToken, "card", { card: 1 })).status;
   assert.equal(sessions, 200);
