@@ -441,19 +441,25 @@ test("restart-all keeps a held lane stopped when its idle current pane precedes 
   assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
 });
 
-test("an unreadable lane config is reported while healthy lanes still converge and start", async () => {
+test("an unreadable lane config is reported safely while healthy lanes still converge and start", async () => {
   addLane("zz");
   const ops = `${here.root}.worktrees/lane-ops`;
-  writeFileSync(`${here.root}.worktrees/lane-zz/config/lane.json`, "");
+  const sentinel = "ZSENTINELTOKENZ";
+  writeFileSync(
+    `${here.root}.worktrees/lane-zz/config/lane.json`,
+    `{"lane":"zz","token": ${sentinel}}`,
+  );
+  writeFileSync(join(ops, "data", "captain-shared.md"), "local edit\n");
   const content = Buffer.from("- shared\n").toString("base64");
   assert.throws(
     () => fleet(["shared", "--content", content]),
     (error: unknown) => {
-      assert.match(String(Reflect.get(Object(error), "stdout")), /ops: shared preferences updated/);
-      assert.match(
-        String(Reflect.get(Object(error), "stderr")),
-        /lane zz could not be read: Unexpected end of JSON input/,
-      );
+      const stdout = String(Reflect.get(Object(error), "stdout"));
+      const stderr = String(Reflect.get(Object(error), "stderr"));
+      assert.match(stdout, /ops: shared preferences updated, edited copy preserved as data\//);
+      assert.match(stderr, /lane zz could not be read: \S+lane\.json is not valid JSON/);
+      assert.match(stderr, /ops: shared preferences updated, edited copy preserved as data\//);
+      assert.ok(!stdout.includes(sentinel) && !stderr.includes(sentinel));
       return true;
     },
   );
@@ -464,17 +470,17 @@ test("an unreadable lane config is reported while healthy lanes still converge a
   assert.deepEqual(reply["outcomes"], action("ops", "started"));
   assert.match(
     String(reply["failed"]),
-    /^lane zz could not be read: Unexpected end of JSON input$/,
+    /^lane zz could not be read: \S+lane\.json is not valid JSON$/,
   );
-  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
-    { lane: "ops", state: "running" },
-    {
-      lane: "zz",
-      state: "unknown",
-      reason: "Unexpected end of JSON input",
-    },
-  ]);
+  const status = records(JSON.parse(fleet(["status", "--json"])));
+  assert.deepEqual(status[0], { lane: "ops", state: "running" });
+  assert.equal(status[1]?.["state"], "unknown");
+  assert.match(String(status[1]?.["reason"]), /lane\.json is not valid JSON$/);
+  assert.ok(!JSON.stringify(status).includes(sentinel));
   assert.throws(() => fleet(["status", "--placement", "--json"]), /lane zz could not be read/);
+  const before = (await workspace("ops"))?.["workspace_id"];
+  assert.throws(() => fleet(["restart"]), /lane zz could not be read/);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before);
 });
 
 test("legacy split workspaces close by the original pane's home, not by Pi in a split", async () => {

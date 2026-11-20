@@ -141,6 +141,17 @@ const preservedLines = (host: string, out: string): string[] =>
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+function sharedFailure(host: string, error: unknown): { notes: string[]; failure: string } {
+  const message = messageOf(error);
+  return {
+    notes: preservedLines(host, message),
+    failure: message
+      .split("\n")
+      .filter((line) => !line.includes("preserved as"))
+      .join("\n"),
+  };
+}
+
 export async function publishShared(home: string): Promise<string | undefined> {
   const config = readLaneConfig(home);
   if (config === undefined) return undefined;
@@ -150,7 +161,9 @@ export async function publishShared(home: string): Promise<string | undefined> {
     try {
       notes.push(...preservedLines(host, await fleet(config, host, sharedArgs(home))));
     } catch (error) {
-      failures.push(`${host}: ${messageOf(error)}`);
+      const { notes: kept, failure } = sharedFailure(host, error);
+      notes.push(...kept);
+      failures.push(`${host}: ${failure}`);
     }
   }
   if (failures.length > 0) notes.push(`Shared preferences did not reach ${failures.join("; ")}`);
@@ -477,9 +490,11 @@ function keepRunning(
       if (unshared.delete(host)) tell([`shared preferences reach ${host} again`], false);
     } catch (error) {
       if (error instanceof HostUnreachable) throw error;
+      const { notes, failure } = sharedFailure(host, error);
+      tell(notes, false);
       if (unshared.has(host)) return;
       unshared.add(host);
-      tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
+      tell([`shared preferences did not reach ${host}: ${failure}`], false);
     }
   };
   const watchDisk = diskWatcher(pi, config, ctx, isDown);

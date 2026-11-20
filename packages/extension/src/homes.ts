@@ -586,6 +586,7 @@ async function restartOne(root: string, info: LaneHome, all: boolean): Promise<O
 
 export async function restart(root: string, lane: string | undefined): Promise<Outcome[]> {
   const { homes, unread } = named(root, lane);
+  if (unread.length > 0) throw new Error(unreadFailure(unread));
   const out: Outcome[] = [];
   for (const info of homes)
     out.push(
@@ -593,7 +594,5 @@ export async function restart(root: string, lane: string | undefined): Promise<O
         restartOne(root, info, lane === undefined),
       ),
     );
-  for (const { lane: name, message } of unread)
-    out.push({ lane: name, action: "unread", detail: message });
   return out;
 }
