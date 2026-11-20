@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import console from "node:console";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import process from "node:process";
@@ -80,10 +80,21 @@ function steps(files) {
   ];
 }
 
-function run({ script, args }) {
-  const result = spawnSync("npm", ["run", "--silent", script, ...args], { stdio: "inherit" });
-  if (result.error) throw result.error;
-  return result.status === 0;
+function run(step) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("npm", ["run", "--silent", step.script, ...step.args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    for (const stream of [child.stdout, child.stderr]) {
+      stream.setEncoding("utf8");
+      stream.on("data", (chunk) => {
+        output += chunk;
+      });
+    }
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ ...step, ok: code === 0, output }));
+  });
 }
 
 function checkedCommits(input) {
@@ -95,18 +106,23 @@ function checkedCommits(input) {
   return pushed.filter(({ sha }) => sha === head);
 }
 
-function runChecks(files) {
+async function runChecks(files) {
   console.error(
     files
       ? `pre-push: checking ${String(files.length)} changed files`
       : "pre-push: checking the whole project",
   );
   const started = Date.now();
-  const failed = steps(files).filter((step) => !run(step));
+  const results = await Promise.all(steps(files).map(run));
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  const failed = results.filter(({ ok }) => !ok);
   if (!failed.length) {
     console.error(`pre-push: passed in ${seconds}s`);
     return 0;
+  }
+  for (const { name, output } of failed) {
+    console.error(`pre-push: ${name} failed`);
+    process.stderr.write(output);
   }
   console.error(
     `pre-push: ${failed.map(({ name }) => name).join(", ")} failed after ${seconds}s. Fix it and push again, or push with --no-verify to leave it to CI.`,
@@ -114,7 +130,7 @@ function runChecks(files) {
   return 1;
 }
 
-function prePush() {
+async function prePush() {
   const top = git(["rev-parse", "--show-toplevel"])?.trim();
   if (!top) return 0;
   process.chdir(top);
@@ -128,13 +144,13 @@ function prePush() {
   if (!commits.length) return 0;
   const found = changedFiles(process.argv[3] ?? "origin", commits);
   if (found?.length === 0) return 0;
-  return runChecks(found && found.length <= maxScopedFiles ? found : undefined);
+  return await runChecks(found && found.length <= maxScopedFiles ? found : undefined);
 }
 
 const command = process.argv[2];
 try {
   if (command === "install") install();
-  else if (command === "pre-push") process.exitCode = prePush();
+  else if (command === "pre-push") process.exitCode = await prePush();
   else {
     console.error("Usage: node githooks.js install | pre-push");
     process.exitCode = 2;
