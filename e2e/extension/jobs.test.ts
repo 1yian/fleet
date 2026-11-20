@@ -135,6 +135,7 @@ async function jobProxy(
     const jobReads = new Set<number>();
     const reports = new Set<number>();
     const idleReads = new Set<number>();
+    let held: { id: number; release: true | Promise<void> } | undefined;
     client.pause();
     upstream.on("open", () => {
       client.resume();
@@ -169,15 +170,18 @@ async function jobProxy(
       const text = rawText(raw);
       const message = parseServerMessage(text);
       if (
+        held === undefined &&
         dropFence &&
         message.t === "entry" &&
         (message.entry.fields["startupFenced"] === true || message.entry.fields["lost"] === true)
       ) {
-        const fence = dropFence;
+        held = { id: message.entry.id, release: dropFence };
         dropFence = false;
-        if (fence === true) client.terminate();
+      }
+      if (held !== undefined && message.t === "entry" && message.entry.id === held.id) {
+        if (held.release === true) client.terminate();
         else
-          void fence.then(() => {
+          void held.release.then(() => {
             if (client.readyState === WebSocket.OPEN) client.send(text);
           });
       } else if (client.readyState === WebSocket.OPEN) {
@@ -1192,9 +1196,18 @@ exec ${quote(herdr)} "$@"
     assert.equal(said(lostMessage), false);
     assert.equal(launchFiles().length, 1);
     const path = join(jobDir, name);
+    const replacementTmp = join(h.dir, "replacement-tmp");
+    const decoy = join(replacementTmp, name);
     if (fault === "worker reload") {
+      mkdirSync(replacementTmp);
+      writeFileSync(decoy, "not the launch file");
       await first.kill();
+      env["TMPDIR"] = replacementTmp;
       worker();
+      await h.waitFor(
+        (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+        "the replacement worker to receive the exact loss entry",
+      );
     } else {
       rmSync(path);
       mkdirSync(path);
@@ -1207,6 +1220,7 @@ exec ${quote(herdr)} "$@"
         () => (launchFiles().length === 0 ? true : undefined),
         "the launch file to be removed by the replacement worker",
       );
+      assert.equal(readFileSync(decoy, "utf8"), "not the launch file");
     } else {
       await until(
         () => (said(`launch file ${path} could not be removed`) ? true : undefined),
