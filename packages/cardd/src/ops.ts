@@ -362,6 +362,7 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     const { status, attention, until } = loadCard(db, session.card).standing;
     return { value: { status, attention, until }, notify: [] };
   },
+  "job.idle": (db, session) => ({ value: { idle: !hasJobWait(db, session.id) }, notify: [] }),
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),

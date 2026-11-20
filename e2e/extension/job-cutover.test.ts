@@ -216,7 +216,6 @@ test("an updated worker can stop its legacy job after reload but cannot hand off
     false,
   );
   h.onModel(() => ({ text: "There is nothing in the queue." }), "idle-old");
-  h.onModel(() => ({ text: "I have no handoff." }), "idle-old");
   const idlePi = h.startPi(
     `c-${String(idle.id)}-a1`,
     {
@@ -226,13 +225,13 @@ test("an updated worker can stop its legacy job after reload but cannot hand off
     },
     [join(workerCode.root, EXTENSION)],
   );
-  const nudged = await h.waitForCall(1, "idle-old");
-  assert.ok(nudged.some(({ text }) => text.includes("Your run is ending without a handoff")));
+  await h.waitForCall(0, "idle-old");
   const view = async () => check(CardViewSchema, await main.call("card", { card: idle.id }));
   await until(async () => {
     const card = (await view()).card;
     return card.activity?.state === "idle" ? card : undefined;
   }, "the updated worker to finish its idle turn on old cardd");
+  assert.equal(h.callsOf("idle-old").length, 1);
   assert.deepEqual(
     (await view()).entries.filter((entry) => entry.kind === "report"),
     [],

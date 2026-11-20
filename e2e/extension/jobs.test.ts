@@ -617,10 +617,10 @@ for (const fault of ["failed", "partial"] as const) {
     );
     assert.deepEqual(await faultSent.promise, [1]);
     h.onModel(() => ({ text: "The command still has work" }));
-    h.onModel(() => ({ text: "I am still waiting for it" }));
     second.prompt("Check on the command after reload");
     await settled(2);
     await reportAnswered.promise;
+    assert.equal(said("Your run is ending without a handoff"), false);
     assert.deepEqual(await cardReports(), []);
     assert.equal(await status(fleet.main, card), "working");
 
@@ -632,6 +632,7 @@ for (const fault of ["failed", "partial"] as const) {
       "the stopped handoff after the command exits",
     );
     assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
+    assert.ok(said("Your run is ending without a handoff"));
     assert.deepEqual(await cardReports(), [
       ["stopped", "ended the run without a handoff: Nothing else to report"],
     ]);
