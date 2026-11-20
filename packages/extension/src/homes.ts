@@ -220,23 +220,17 @@ type LaneMatch =
   | { workspace: string; state: "idle"; pane: string };
 
 async function findWorkspace(
-  { lane, home }: LaneHome,
+  rows: readonly Record<string, unknown>[],
+  home: string,
   purpose: "liveness" | "placement" | "close" | "restart-held",
+  legacy: boolean,
   deadline?: number,
 ): Promise<LaneMatch | undefined> {
   const matchesHome = (cwd: string | undefined) =>
     cwd !== undefined && cwd !== "" && canonical(cwd) === canonical(home);
-  const listed = await observeList("workspace", [], ["workspace_id", "label"], deadline);
-  const title = mateTitle(lane);
-  const currentRows = listed.filter((row) => row["label"] === title);
-  const legacyRows = listed.filter(
-    (row) => row["label"] === `${legacyMatePrefix}${lane}` && !isWorkerWorkspace(row),
-  );
-  for (const row of [...currentRows, ...legacyRows]) {
+  for (const row of rows) {
     const workspace = String(row["workspace_id"]);
-    const current = row["label"] === title;
-    const legacy = !current;
-    if (current && purpose === "close") return { workspace, state: "matched" };
+    if (!legacy && purpose === "close") return { workspace, state: "matched" };
     const panes = await panesOf(workspace, row["pane_count"], deadline);
     const [first] = panes;
     if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
@@ -277,7 +271,32 @@ async function workspaceOf(
   purpose: Parameters<typeof findWorkspace>[1],
   deadline?: number,
 ): Promise<LaneMatch | undefined> {
-  return (await findWorkspace(info, purpose, deadline)) ?? findWorkspace(info, purpose, deadline);
+  const title = mateTitle(info.lane);
+  const legacyTitle = `${legacyMatePrefix}${info.lane}`;
+  const read = async () => {
+    const listed = await observeList("workspace", [], ["workspace_id", "label"], deadline);
+    return {
+      current: listed.filter((row) => row["label"] === title),
+      legacy: listed.filter((row) => row["label"] === legacyTitle && !isWorkerWorkspace(row)),
+    };
+  };
+  const first = await read();
+  const current = await findWorkspace(first.current, info.home, purpose, false, deadline);
+  if (current !== undefined) return current;
+  const fresh = await read();
+  const found = await findWorkspace(fresh.current, info.home, purpose, false, deadline);
+  if (found !== undefined) return found;
+  const same = (before: typeof first.current, after: typeof fresh.current) =>
+    before.length === after.length &&
+    before.every((row, index) => {
+      const next = after[index];
+      return (
+        row["workspace_id"] === next?.["workspace_id"] && row["pane_count"] === next?.["pane_count"]
+      );
+    });
+  if (!same(first.current, fresh.current) || !same(first.legacy, fresh.legacy))
+    throw new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
+  return findWorkspace(fresh.legacy, info.home, purpose, true, deadline);
 }
 
 async function statusOf(info: LaneHome): Promise<Status> {

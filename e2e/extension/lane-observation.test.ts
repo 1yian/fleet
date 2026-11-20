@@ -40,6 +40,17 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"workspaces":[]}}'
       exit 0
     fi ;;
+  'workspace list:omit-title-once')
+    if [ ! -e "$HERDR_FAULT_LOG" ]; then
+      : > "$HERDR_FAULT_LOG"
+      reply=$("$REAL_HERDR" "$@") || exit $?
+      printf '%s' "$reply" | node -e '
+        const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+        reply.result.workspaces = reply.result.workspaces.filter((row) => row.label !== process.env.FAULT_PANE);
+        console.log(JSON.stringify(reply));
+      '
+      exit $?
+    fi ;;
   'pane list:panes') printf '%s' '{"result":{}}'; exit 0 ;;
   'pane list:cwd'|'pane list:empty-cwd'|'pane list:split-only'|'pane list:duplicate'|'pane list:foreign')
     reply=$("$REAL_HERDR" "$@") || exit $?
@@ -219,7 +230,10 @@ test("a workspace omitted once neither restarts nor crash-holds a running mate",
   for (const history of [original, repeated]) {
     writeFileSync(startsFile, history);
     rmSync(faultLog(), { force: true });
-    assert.deepEqual(maintain("omit-once"), action("ops", "running"));
+    assert.deepEqual(
+      maintenanceOutcomes(fleet(typedMaintenance, "omit-once", "", "5000")),
+      action("ops", "running"),
+    );
     assert.equal(readFileSync(startsFile, "utf8"), history);
     assert.equal(existsSync(join(home, "state", "stopped")), false);
   }
@@ -424,6 +438,44 @@ test("a legacy split listed first cannot mask the current-title lane", async () 
   assert.deepEqual(await labels(), ["fleet-ops"]);
   assert.deepEqual(maintain(), action("ops", "unread"));
   assert.equal(readFileSync(join(home, "state", "stopped"), "utf8"), "stopped by hand\n");
+});
+
+test("an omitted current title cannot authorize a legacy start, hold, or close", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  const home = `${here.root}.worktrees/lane-ops`;
+  const legacyPane = await idlePane("ops", home, "fleet-ops");
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const afterOmission = (args: string[], title = "2ndmate-ops") => {
+    rmSync(faultLog(), { force: true });
+    return fleet(args, "omit-title-once", title);
+  };
+  assert.deepEqual(JSON.parse(afterOmission(["status", "--json"])), [
+    { lane: "ops", state: "running" },
+  ]);
+  assert.deepEqual(JSON.parse(afterOmission(["status", "--placement", "--json"])), [
+    { lane: "ops", mate: true },
+  ]);
+  const original = readFileSync(starts, "utf8");
+  for (const history of [original, `${String(Date.now())}\n`.repeat(3)]) {
+    writeFileSync(starts, history);
+    assert.deepEqual(
+      maintenanceOutcomes(afterOmission(typedMaintenance)),
+      action("ops", "running"),
+    );
+    assert.equal(readFileSync(starts, "utf8"), history);
+    assert.equal(existsSync(stopped), false);
+  }
+  assert.equal(afterOmission(["stop", "ops"]).trim(), "ops: stopped");
+  assert.equal(await workspace("ops"), undefined);
+  const panes = await lab.run(["pane", "list"]);
+  assert.ok(records(panes["panes"]).some((row) => row["pane_id"] === legacyPane));
+  assert.deepEqual(
+    maintenanceOutcomes(afterOmission(typedMaintenance, "fleet-ops")),
+    action("ops", "unread"),
+  );
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.deepEqual(maintain(), [{ lane: "ops", action: "stopped", detail: "stopped by hand" }]);
 });
 
 test("a pane disappearing between list and process info leaves the lane unread", async () => {
